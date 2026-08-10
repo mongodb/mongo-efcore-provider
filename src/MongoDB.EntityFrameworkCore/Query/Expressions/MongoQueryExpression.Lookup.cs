@@ -20,12 +20,9 @@ using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
-// TODO(EF-317): Cross-collection $lookup workaround state. The C# driver's LINQ provider has no native
-// LeftJoin translator and cannot express collection / multi-hop joins, so the provider registers manual
-// $lookup + $unwind stages and tracks the inner collections itself. When the driver ships native LeftJoin
-// support, the $lookup-emission members here (the pending-lookup list and its dependency ordering) are
-// expected to be removed; the inner-collection tracking and UsesDriverJoinFields decision are the
-// driver-native seam and will likely shrink rather than disappear.
+// Cross-collection $lookup workaround state. The C# driver's LINQ provider has no native LeftJoin translator
+// and cannot express collection / multi-hop joins, so the provider registers manual $lookup + $unwind stages
+// and tracks the inner collections itself.
 internal sealed partial class MongoQueryExpression
 {
     private readonly List<LookupExpression> _pendingLookups = [];

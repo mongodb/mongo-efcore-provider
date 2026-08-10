@@ -84,7 +84,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         return DocParameter;
                     }
 
-                    // EF-322 slice A1, Task 6 (the A2-lesson fix): a native numeric-cast projection leaf
+                    // A native numeric-cast projection leaf
                     // (`new { X = (int)x.D }`) is registered on the WRITE side as the whole
                     // UnaryExpression{Convert} node (see MongoProjectionBindingExpressionVisitor.Visit), and the
                     // $project alias holds the CONVERTED value ($toInt/$toLong/$toDouble/$toDecimal), never the
@@ -170,10 +170,8 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                             var projection = GetProjection(projectionBindingExpression);
                             // Both array-projection node kinds are admissible: a navigation-driven
                             // ObjectArrayProjectionExpression (a projected reference collection) and an
-                            // ArrayAliasProjectionExpression (a native $project alias, EF-322 slice 8).
-                            // This USED TO BE an unchecked cast to ObjectArrayProjectionExpression, which
-                            // would throw InvalidCastException rather than declining. Anything that is not an
-                            // array projection is a translation failure.
+                            // ArrayAliasProjectionExpression (a native $project alias). Anything that is not
+                            // an array projection is a translation failure, not an unchecked-cast crash.
                             if (projection.Expression is not IArrayProjectionExpression fromProjection)
                             {
                                 throw new InvalidOperationException(CoreStrings.TranslationFailed(extensionExpression.Print()));
@@ -225,7 +223,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         arrayName = arrayFieldName;
                     }
 
-                    // EF-358: normalize a MISSING or explicitly-BSON-null stored array to an EMPTY BsonArray, so the
+                    // Normalize a MISSING or explicitly-BSON-null stored array to an EMPTY BsonArray, so the
                     // shaper below enumerates nothing and PopulateCollection returns an EMPTY collection rather than
                     // null. Empty-not-null is EF Core's contract for a collection navigation, and without this the
                     // result depends on the POCO's field initializer (IncludeCollection skips GetOrCreate when the
@@ -239,8 +237,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     // Coalesce there throws InvalidCastException for every shaper in every query mode.
                     //
                     // Note TypeAs yields null both for an ABSENT element and for a present-but-not-an-array element, so
-                    // this treats the two alike; both produced null before, so that is not a regression. See the design
-                    // doc for the superseded root-cause account this comment used to carry.
+                    // this treats the two alike; both produced null before, so that is not a regression.
                     bsonArrayExpression = Expression.Coalesce(bsonArrayExpression, Expression.New(typeof(BsonArray)));
 
                     var jObjectParameter = Expression.Parameter(typeof(BsonDocument), arrayName + "Object");
@@ -337,8 +334,8 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     // BsonDocument/BsonArray variable assignment is always an Expression.TypeAs — a
                     // UnaryExpression — so this cast is safe. If that visitor ever needs a different node
                     // shape there (a Coalesce, a New), this cast must be widened in the SAME change, or every
-                    // entity and collection shaper throws InvalidCastException in every query mode. EF-358
-                    // ran into exactly this and put its normalization at the point of use instead.
+                    // entity and collection shaper throws InvalidCastException in every query mode — which is
+                    // why the missing/null-array normalization above lives at its point of use instead.
                     var projectionExpression = ((UnaryExpression)binaryExpression.Right).Operand;
                     if (projectionExpression is ProjectionBindingExpression projectionBindingExpression)
                     {
@@ -539,12 +536,11 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         {
             var entityType = (IReadOnlyEntityType)property.DeclaringType;
 
-            // EF-347 Task 3 (bare-owned whole-element SelectMany): the shaper is re-rooted at THIS owned
+            // Bare-owned whole-element SelectMany: the shaper is re-rooted at THIS owned
             // element (via $replaceRoot — see MongoShapedQueryCompilingExpressionVisitor's WholeElement branch),
             // which merged the owner key + array ordinal into the re-rooted document under sentinel field
             // names, specifically so the owned key materializes NON-NULL (EF Core's own no-tracking null-key
-            // guard rejects a partially-null owned key — see the spike note
-            // .superpowers/sdd/EF-347-bare-owned-selectmany-spike.md). Read those sentinel fields directly
+            // guard rejects a partially-null owned key). Read those sentinel fields directly
             // instead of falling through to the ordinary owner/ordinal-mapping lookup below, which has no entry
             // for a re-rooted document (the query root — CollectionExpression.EntityType — is always a
             // document-root type, so entityType == _rootEntityType is true here ONLY in this re-rooted
@@ -1129,7 +1125,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         IClrCollectionAccessor accessor,
         IEnumerable<TEntity> entities)
     {
-        // TODO(EF-409): throw a diagnosable exception for a non-ICollection<T> collection navigation. As it
+        // TODO: throw a diagnosable exception for a non-ICollection<T> collection navigation. As it
         // stands, such a model surfaces as a bare InvalidCastException from the cast below, naming driver/EF
         // internal types rather than the navigation the user got wrong.
         var collection = (ICollection<TEntity>)accessor.Create();

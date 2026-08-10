@@ -112,11 +112,11 @@ public class MongoClientWrapper : IMongoClientWrapper
             {
                 Debug.Assert(executableQuery.OutputSerializer != null, "Streaming native path requires output serializer.");
 
-                // One-pass "deserialize IS materialize" (SP7 P1.2): the custom output serializer runs the
-                // compiled EF materializer off the cursor's own IBsonReader, so the Aggregate cursor yields
-                // finished (T == the shaped entity) instances directly — a single forward pass, no
-                // RawBsonDocument wrapper + second materialization pass. T is the shaped result type, so the
-                // supplied serializer is an IBsonSerializer<T>.
+                // One-pass "deserialize IS materialize": the custom output serializer runs the compiled EF
+                // materializer off the cursor's own IBsonReader, so the Aggregate cursor yields finished
+                // (T == the shaped entity) instances directly — a single forward pass, no RawBsonDocument
+                // wrapper + second materialization pass. T is the shaped result type, so the supplied
+                // serializer is an IBsonSerializer<T>.
                 var entityCollection = Database.GetCollection<BsonDocument>(executableQuery.CollectionNamespace.CollectionName);
                 PipelineDefinition<BsonDocument, BsonDocument> basePipe = loggedStages;
                 var typedPipeline = basePipe.As((IBsonSerializer<T>)executableQuery.OutputSerializer);

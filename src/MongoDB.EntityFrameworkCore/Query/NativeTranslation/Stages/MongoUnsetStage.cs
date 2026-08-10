@@ -21,18 +21,11 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 /// Represents an <c>$unset</c> aggregation stage that removes one or more top-level fields from each document.
 /// </summary>
 /// <remarks>
-/// EF-401 (stream 1, slice B). Removes the synthetic sort fields <see cref="MongoAddFieldsStage"/> added.
-/// <para>
-/// <b>Neither shaper needs this stage — it ships for SET-OP HYGIENE, and the comment is here so the next
-/// reader does not measure that and delete it.</b> MEASURED (spike §3.2): with the <c>$unset</c> suppressed,
-/// the streaming materializer, the DOM shaper, a trailing projection and a tracking round-trip all behave
-/// identically, and no synthetic element is written back on <c>SaveChanges</c>. But the synthetic value
-/// survives into the document STREAM, and two native operations downstream compare WHOLE documents —
-/// <c>Union</c>'s dedup (<c>$group {_id: "$$ROOT"}</c>) and <c>Intersect</c>/<c>Except</c>'s source tagging
-/// (<c>$group {_id: "$_doc"}</c>) — while a set-op operand is explicitly allowed to carry a sort
-/// (<c>IsPlainWholeEntitySelect</c>). Without the <c>$unset</c> the synthetic value would fold into the
-/// comparison key and change set semantics. One stage per query makes that structurally impossible.
-/// </para>
+/// Removes the synthetic sort fields <see cref="MongoAddFieldsStage"/> added.
+/// <b>Required for set-op correctness, not just shaper hygiene:</b> a set-op operand is allowed to carry a
+/// sort, but <c>Union</c>'s dedup (<c>$group {_id: "$$ROOT"}</c>) and <c>Intersect</c>/<c>Except</c>'s source
+/// tagging (<c>$group {_id: "$_doc"}</c>) compare WHOLE documents downstream. Without this <c>$unset</c> the
+/// synthetic sort field would fold into that comparison key and silently change set semantics.
 /// </remarks>
 internal sealed class MongoUnsetStage : MongoPipelineStage
 {

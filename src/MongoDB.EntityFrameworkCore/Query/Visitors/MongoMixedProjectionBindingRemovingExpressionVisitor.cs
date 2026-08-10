@@ -169,37 +169,50 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     }
 
     /// <summary>
-    /// Binds a scalar member access on a singleton (reference) navigation in a mixed projection
-    /// (e.g. <c>select new { A = o.Customer, B = o.Customer.City }</c>). The mapped expression is a
-    /// <see cref="MemberExpression"/> (EF Core's <c>PropertyExpression</c>) whose source is the navigation
-    /// target's <see cref="StructuralTypeShaperExpression"/>. Because the accessed property belongs to the
-    /// navigation target rather than the query root, it is read from the joined sub-document: the driver's
-    /// native LeftJoin places the lone joined reference under <c>"_inner"</c>. Returns <see langword="false"/>
-    /// for anything that is not such a navigation member access so the caller can fall back to its other
-    /// resolution paths.
+    /// Binds a scalar property access on a singleton (reference) navigation in a mixed projection
+    /// (e.g. <c>select new { A = o.Customer, B = o.Customer.City }</c>, or <c>EF.Property&lt;T&gt;(o.Customer,
+    /// "City")</c> for a shadow property, which has no CLR member and so can only be read this way). The mapped
+    /// expression is either a <see cref="MemberExpression"/> (EF Core's <c>PropertyExpression</c>) or an
+    /// <c>EF.Property</c> <see cref="MethodCallExpression"/>, whose source is the navigation target's
+    /// <see cref="StructuralTypeShaperExpression"/>. Because the accessed property belongs to the navigation
+    /// target rather than the query root, it is read from the joined sub-document: the driver's native LeftJoin
+    /// places the lone joined reference under <c>"_inner"</c>. Returns <see langword="false"/> for anything that
+    /// is not such a navigation property access so the caller can fall back to its other resolution paths.
     /// </summary>
     private bool TryBindNavigationMemberAccess(Expression? mappedExpression, Type resultType, out Expression result)
     {
         result = null!;
 
-        if (mappedExpression is not MemberExpression memberExpression
-            || memberExpression.Expression is not StructuralTypeShaperExpression shaper
-            || shaper.StructuralType is not IEntityType targetEntityType)
+        StructuralTypeShaperExpression shaper;
+        IProperty? property;
+        switch (mappedExpression)
         {
-            return false;
+            case MemberExpression { Expression: StructuralTypeShaperExpression memberShaper } memberExpression:
+                shaper = memberShaper;
+                property = shaper.StructuralType is IEntityType memberEntityType
+                    ? memberEntityType.FindProperty(memberExpression.Member)
+                    : null;
+                break;
+
+            case MethodCallExpression methodCallExpression
+                when methodCallExpression.Method.IsEFPropertyMethod()
+                     && methodCallExpression.Arguments[0] is StructuralTypeShaperExpression efPropertyShaper
+                     && methodCallExpression.Arguments[1] is ConstantExpression { Value: string propertyName }:
+                shaper = efPropertyShaper;
+                property = shaper.StructuralType is IEntityType efPropertyEntityType
+                    ? efPropertyEntityType.FindProperty(propertyName)
+                    : null;
+                break;
+
+            default:
+                return false;
         }
 
-        // Only handle member access on a JOINED navigation target. A member access on the root entity's own
-        // shaper (e.g. select new { o, o.CustomerID }) is a root-level property and is handled by the
+        // Only handle a property access on a JOINED navigation target. A property access on the root entity's
+        // own shaper (e.g. select new { o, o.CustomerID }) is a root-level property and is handled by the
         // existing TryResolveFieldAccess path, which reads it from "_outer". Reading it from "_inner" here
         // would return the wrong (joined) document's value.
-        if (targetEntityType == _rootEntityType)
-        {
-            return false;
-        }
-
-        var property = targetEntityType.FindProperty(memberExpression.Member);
-        if (property == null)
+        if (property == null || shaper.StructuralType == _rootEntityType)
         {
             return false;
         }

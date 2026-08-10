@@ -31,13 +31,12 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
-// TODO(EF-317): Cross-collection $lookup Include machinery. EF Core lowers cross-collection collection
-// navigations (Include / projected collections / nested ThenInclude / filtered Include) onto manual
-// $lookup + $unwind pipeline stages because the C# driver's LINQ provider has no native LeftJoin and
-// cannot express collection or multi-hop joins. When the driver ships native LeftJoin support, the
-// members in this file are expected to be removed; the only entry points from the rest of the visitor
-// are the TryBindProjectedCollectionNavigation / TryBindProjectedCollectionNavigationCount dispatch
-// calls in VisitMethodCall.
+// Cross-collection $lookup Include machinery. EF Core lowers cross-collection collection navigations
+// (Include / projected collections / nested ThenInclude / filtered Include) onto manual $lookup +
+// $unwind pipeline stages because the C# driver's LINQ provider has no native LeftJoin and cannot
+// express collection or multi-hop joins. The only entry points from the rest of the visitor are the
+// TryBindProjectedCollectionNavigation / TryBindProjectedCollectionNavigationCount dispatch calls in
+// VisitMethodCall.
 internal sealed partial class MongoProjectionBindingExpressionVisitor : ExpressionVisitor
 {
     /// <summary>

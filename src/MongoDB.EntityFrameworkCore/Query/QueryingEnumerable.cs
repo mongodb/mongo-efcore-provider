@@ -199,11 +199,11 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
                 _currentRow = row;
                 Current = row is null ? default! : _shaper(_queryContext, row);
 
-                // Under the default one-pass native streaming path (SP7), TSource == TResult: the cursor
-                // yields the fully-materialized entity directly, the shaper is identity, and _currentRow /
-                // Current / the entity handed to the caller are the SAME reference — it must NOT be disposed
-                // here even if the entity type happens to implement IDisposable. Only the dormant
-                // RawBsonDocument fallback row type (see ReleaseCurrentRow) is ever released.
+                // On the default one-pass native streaming path, TSource == TResult: the cursor yields the
+                // fully-materialized entity directly, the shaper is identity, and _currentRow / Current / the
+                // entity handed to the caller are the SAME reference — must NOT be disposed here even if the
+                // entity type implements IDisposable. Only the dormant RawBsonDocument fallback row type
+                // (see ReleaseCurrentRow) is ever released.
                 ReleaseCurrentRow();
 
                 if (!_gotResults)
@@ -224,15 +224,14 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
             return hasNext;
         }
 
-        // Releases a fetched-but-not-yet-released RawBsonDocument byte buffer (the dormant, pre-SP7 streaming
-        // row type — retained but currently unreachable, see the class-level notes; TODO(EF-419) tracks
-        // removing that row type along with BsonRowReader). The default one-pass
-        // native streaming row is the materialized entity itself (TSource == TResult), which must NEVER be
-        // disposed here — disposing it would dispose the entity the caller just received (and, on the tracked
-        // path, an entity now owned by the state manager). Narrowly typed to RawBsonDocument specifically
-        // (rather than "any IDisposable _currentRow") so an entity type that happens to implement IDisposable
-        // is never mistaken for a releasable row. Nulls the tracked field afterwards so a subsequent Dispose /
-        // DisposeAsync does not double-dispose it.
+        // Releases a fetched-but-not-yet-released RawBsonDocument byte buffer — a dormant streaming row type,
+        // retained but currently unreachable (removal tracked separately along with BsonRowReader). The
+        // default one-pass native streaming row is the materialized entity itself (TSource == TResult), which
+        // must NEVER be disposed here — that would dispose the entity the caller just received (and, on the
+        // tracked path, an entity now owned by the state manager). Narrowly typed to RawBsonDocument
+        // specifically, rather than "any IDisposable _currentRow", so an entity type that implements
+        // IDisposable is never mistaken for a releasable row. Nulls the field afterwards so a later
+        // Dispose/DisposeAsync does not double-dispose it.
         private void ReleaseCurrentRow()
         {
             if (_currentRow is RawBsonDocument raw)

@@ -86,16 +86,15 @@ internal static class NativeGroupByBinder
         return true;
     }
 
-    // A grouping key becomes the group's _id and is read back through a GENERIC CLR-type serializer by the
-    // grouped-row shaper (the flattened _id has no backing IProperty, so MongoProjectionBindingRemovingExpression
-    // Visitor takes the raw CreateGetElementValue path). That generic read only reproduces the property's
-    // materialized value when the property serializes with the default/identity representation. A property with
-    // a value converter (its stored form is the provider value, needing reverse conversion) or a non-default
-    // BsonRepresentation (e.g. enum-as-string, Guid-as-string) would either throw at materialization or return
-    // the raw stored value — diverging from the driver-LINQ path. Reject such keys so the query falls back
-    // (and throws only under NativeOnly), preserving the Native == DriverLinq invariant. The accumulator
-    // OPERAND is deliberately NOT checked here: Sum/Min/Max over a represented field is the pre-existing,
-    // documented EF-337 shared caveat (Native and DriverLinq are wrong the same way — no divergence).
+    // A grouping key becomes the group's _id and is read back through a generic CLR-type serializer by the
+    // grouped-row shaper (the flattened _id has no backing IProperty). That generic read only reproduces the
+    // property's materialized value when the property serializes with the default/identity representation. A
+    // property with a value converter (stored as the provider value, needing reverse conversion) or a
+    // non-default BsonRepresentation (e.g. enum-as-string) would either throw at materialization or return
+    // the raw stored value, diverging from the driver-LINQ path. Reject such keys so the query falls back
+    // instead, preserving the Native == DriverLinq invariant. The accumulator operand is deliberately not
+    // checked here: Sum/Min/Max over a represented field is a pre-existing shared caveat where native and
+    // driver-LINQ are wrong the same way (no divergence).
     // Internal (not private) — also shared by the QMTEV's TranslateOfType discriminator guard, which rejects a
     // value-converted / non-default-BsonRepresentation discriminator for the identical generic-readback reason.
     internal static bool HasDefaultKeySerialization(IProperty property)
@@ -340,38 +339,30 @@ internal static class NativeGroupByBinder
         var select = mongoQ.Select;
         // A projected SelectMany is itself a terminal (its UnwindSource is set): converting its Projection
         // into a degenerate $group here would leave UnwindSource set alongside the new Grouping, and the
-        // lowerer's UnwindSource branch runs BEFORE its Grouping branch and returns early — silently dropping
+        // lowerer's UnwindSource branch runs before its Grouping branch and returns early — silently dropping
         // the $group and emitting a flatten $project that reads "_id.<alias>" fields that were never grouped
-        // into existence (EF-347 slice 5 fix: silent-null Distinct-after-SelectMany). Decline so this falls
-        // back to driver-LINQ (or hard-fails, for the reference form, which has no driver-LINQ baseline)
-        // instead of building a pipeline that silently returns nulls.
+        // into existence. Decline so this falls back to driver-LINQ (or hard-fails, for the reference form,
+        // which has no driver-LINQ baseline) instead of building a pipeline that silently returns nulls.
         //
-        // EF-347 C1 Task 4b: for a PROJECTED-OPERAND set op (SetOperation.OperandsProjected == true),
-        // select.Projection is operand-1's OWN projection — emitted BEFORE the set-op stage by the lowerer,
-        // not a trailing post-set-op projection — so converting it into a degenerate $group here corrupts
-        // operand-1's pipeline (the lowerer's OperandsProjected branch then emits the corrupted Projection
-        // as operand-1's $project, producing a malformed pipeline that crashes at BSON deserialization).
-        // Declining makes TranslateDistinct fall back gracefully instead (correct results, matching pre-C1
-        // behavior). This must stay narrowed to OperandsProjected: true, NOT a blanket SetOperation != null:
-        // a WHOLE-ENTITY set op with a TRAILING projection (slice C2, OperandsProjected == false — e.g.
-        // Union(A,B).Select(p).Distinct()) has its Projection applied AFTER the set-op stage as a genuine
-        // trailing projection, which this method converts to a $group safely and correctly — a documented
-        // native capability that must be preserved.
-        // EF-322 step 3a: decline a BARE projection (Select(o => o.Country).Distinct()). This is the fifth
-        // provenance-shaped decline on this line and, like the others, it is a CORRECTNESS guard rather than a
-        // scope choice — MEASURED, not reasoned about. Binding it would clear Projection, install a Grouping and
-        // flip Route to NativeRoute.GroupBy; MongoQueryExpression.ApplyProjection's own
-        // `Route == NativeRoute.Projection` conjunct then reverts the bare body's alias to null AFTER the emit
-        // side has already committed, so the shaper's ProjectionExpression has no alias, the binding remover
-        // hands back the whole BsonDocument, and the shaper's result type becomes BsonDocument. Measured with
-        // this conjunct removed: Distinct_Scalar and OrderBy_Distinct (async: False/True each — 4 cases) fail
-        // with `ArgumentException: Expression of type 'QueryingEnumerable`2[BsonDocument,BsonDocument]' cannot
-        // be used`, in Native AND NativeOnly, from a base state of PASSING under Native.
+        // For a projected-operand set op (SetOperation.OperandsProjected == true), select.Projection is
+        // operand-1's own projection — emitted before the set-op stage by the lowerer, not a trailing
+        // post-set-op projection — so converting it into a degenerate $group here would corrupt operand-1's
+        // pipeline. Declining makes TranslateDistinct fall back gracefully instead. This must stay narrowed
+        // to OperandsProjected: true, not a blanket SetOperation != null: a whole-entity set op with a
+        // trailing projection (OperandsProjected == false — e.g. Union(A,B).Select(p).Distinct()) has its
+        // Projection applied after the set-op stage as a genuine trailing projection, which this method
+        // converts to a $group safely and correctly — a documented native capability that must be preserved.
         //
-        // Note what this does NOT decline: a Distinct after a WRAPPED projection, and a Distinct after a
-        // whole-entity set op's TRAILING wrapped projection, both of which stay native exactly as before —
-        // IsBareProjection is true only when a bare selector body populated Projection. Bare Distinct
-        // composition belongs with the other composition relaxations, not with the boundary slice. Pinned by
+        // A bare projection (Select(o => o.Country).Distinct()) is also declined — a correctness guard, not
+        // a scope choice: binding it would clear Projection, install a Grouping and flip Route to
+        // NativeRoute.GroupBy, but MongoQueryExpression.ApplyProjection's own `Route == NativeRoute.Projection`
+        // conjunct then reverts the bare body's alias to null after the emit side has already committed, so
+        // the shaper's ProjectionExpression has no alias and the shaper's result type becomes BsonDocument
+        // instead of the scalar type — a runtime crash.
+        //
+        // Note what this does NOT decline: a Distinct after a wrapped projection, and a Distinct after a
+        // whole-entity set op's trailing wrapped projection, both of which stay native exactly as before —
+        // IsBareProjection is true only when a bare selector body populated Projection. Pinned by
         // NativeBareProjectionTests.
         if (select.Projection.Count == 0 || select.Grouping != null || select.Cardinality != null || select.HasPaging
             || select.UnwindSource != null || select.SetOperation is { OperandsProjected: true }
@@ -391,14 +382,12 @@ internal static class NativeGroupByBinder
 
         select.ClearProjections();
         select.Grouping = new MongoGrouping(keyParts, []);
-        // Record DISTINCT provenance (NOT IsGroupBy) so the post-group operator guards in NativeSlotPopulator
-        // (slot ops) and NativeCardinalityBinder (aggregates/reducers) — both keyed on IsGroupBy || IsDistinct
-        // — also cover an operator applied AFTER this Distinct (e.g. a Where whose member name happens to
-        // collide with a real entity property, which would otherwise resolve against the entity and be hoisted
-        // to a pre-group $match). A separate flag (not IsGroupBy) is deliberate: the QMTEV's join-decline path
-        // must treat Distinct+Join as a GRACEFUL fallback (driver-LINQ joins a flat row set correctly), whereas
-        // a genuine GroupBy+Join is a HARD decline (driver-LINQ returns silently-empty joins). See IsDistinct's
-        // doc on MongoSelectDefinition and TranslateJoinCore.
+        // Record Distinct provenance (not IsGroupBy) so the post-group operator guards in NativeSlotPopulator
+        // and NativeCardinalityBinder — both keyed on IsGroupBy || IsDistinct — also cover an operator applied
+        // after this Distinct. A separate flag is deliberate: the QMTEV's join-decline path treats Distinct+Join
+        // as a graceful fallback (driver-LINQ joins a flat row set correctly), whereas a genuine GroupBy+Join
+        // is a hard decline (driver-LINQ returns silently-empty joins). See IsDistinct's doc on
+        // MongoSelectDefinition and TranslateJoinCore.
         select.IsDistinct = true;
         foreach (var f in flatten)
             select.AddProjection(f);

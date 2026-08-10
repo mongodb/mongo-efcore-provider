@@ -19,8 +19,8 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
 /// Which kind of collection a terminal native SelectMany's <see cref="MongoUnwindSource"/> unwinds:
-/// <see cref="Owned"/> — an embedded array already present on the root document (EF-347 slice 3/4) — or
-/// <see cref="Reference"/> — a separate collection reached via a <c>$lookup</c> (EF-347 slice 5).
+/// <see cref="Owned"/> — an embedded array already present on the root document — or
+/// <see cref="Reference"/> — a separate collection reached via a <c>$lookup</c>.
 /// </summary>
 internal enum MongoUnwindSourceKind
 {
@@ -33,13 +33,13 @@ internal enum MongoUnwindSourceKind
 
 /// <summary>
 /// A terminal SelectMany's collection source: the document scope to <c>$unwind</c> before the result-selector
-/// <c>$project</c>. EF-347 slice 3 introduced this for an owned (embedded) collection (<see cref="Kind"/> ==
-/// <see cref="MongoUnwindSourceKind.Owned"/> — no <see cref="Lookup"/>); EF-347 slice 5 generalizes it to also
-/// cover a reference (cross-collection) navigation (<see cref="Kind"/> == <see cref="MongoUnwindSourceKind.Reference"/>
-/// — unwound from its own <c>$lookup</c>, carried in <see cref="Lookup"/>). Whole native SelectMany is
-/// terminal-only, in either case. Construct via <see cref="Owned"/>/<see cref="Reference"/> rather than the
-/// constructor directly — they make the <see cref="Lookup"/> invariant (null for Owned, non-null for Reference)
-/// impossible to get wrong at the call site.
+/// <c>$project</c>. Covers an owned (embedded) collection (<see cref="Kind"/> == <see cref="MongoUnwindSourceKind.Owned"/>
+/// — no <see cref="Lookup"/>) and a reference (cross-collection) navigation (<see cref="Kind"/> ==
+/// <see cref="MongoUnwindSourceKind.Reference"/> — unwound from its own <c>$lookup</c>, carried in
+/// <see cref="Lookup"/>). Native SelectMany is terminal-only in either case. Construct via
+/// <see cref="Owned"/>/<see cref="Reference"/> rather than the constructor directly — they make the
+/// <see cref="Lookup"/> invariant (null for Owned, non-null for Reference) impossible to get wrong at the
+/// call site.
 /// </summary>
 internal sealed class MongoUnwindSource
 {
@@ -71,7 +71,7 @@ internal sealed class MongoUnwindSource
     public string InnerScopePath { get; }
 
     /// <summary>The inner entity type unwound from <see cref="InnerScopePath"/> — used to resolve
-    /// ti.Inner member accesses to element names in the trailing SelectMany projection (EF-347 slice 4).</summary>
+    /// inner-element member accesses to element names in the trailing SelectMany projection.</summary>
     public IEntityType InnerEntityType { get; }
 
     /// <summary>The <c>$lookup</c> this source unwinds, for <see cref="MongoUnwindSourceKind.Reference"/>;

@@ -16,7 +16,7 @@
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 /// <summary>
-/// A <c>$unwind</c> over an owned-collection element path (EF-347 slice 3 — owned SelectMany). Distinct from
+/// A <c>$unwind</c> over an owned-collection element path (owned SelectMany). Distinct from
 /// <see cref="MongoUnwindStage"/>, which unwinds a reference-Include <see cref="Expressions.LookupExpression"/>
 /// join alias; this one flattens an embedded array by its stored element path and needs no lookup.
 /// </summary>
@@ -32,9 +32,9 @@ internal sealed class MongoUnwindFieldStage : MongoPipelineStage
 
     /// <summary>
     /// The output field to write the zero-based array index to (<c>includeArrayIndex</c>), or
-    /// <see langword="null"/> to omit it. Set for a bare whole-inner-element owned SelectMany (EF-347) so a
-    /// following <see cref="MongoReplaceRootStage"/> can carry the ordinal into the re-rooted element as the
-    /// owned collection's synthesized ordinal key.
+    /// <see langword="null"/> to omit it. Set for a bare whole-inner-element owned SelectMany so a following
+    /// <see cref="MongoReplaceRootStage"/> can carry the ordinal into the re-rooted element as the owned
+    /// collection's synthesized ordinal key.
     /// </summary>
     public string? IncludeArrayIndex { get; }
 }

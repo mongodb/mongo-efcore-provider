@@ -39,34 +39,20 @@ internal static class NativeCardinalityBinder
     {
         var select = mongoQ.Select;
 
-        // Post-group guard (symmetric to NativeSlotPopulator's post-group slot-operator guard and to
-        // TryBindAggregate below). A reducer applied AFTER a finalized GroupBy(key).Select(anon) must fall
-        // back: a reducer sets Cardinality.Reducer (not .Aggregate), so Route stays GroupBy and the lowerer
-        // emits the [$group, $project] pipeline — but the reducer would also stamp a $limit onto that grouped
-        // pipeline (select.AppendLimit below), truncating the group rows and yielding a wrong/non-deterministic
-        // single result instead of reducing over the grouped sequence. Fall back cleanly. See the Query
-        // AGENTS.md GroupBy note. (The aggregate path in TryBindAggregate is worse — it flips Route to
-        // ScalarAggregate and crashes; documented there.) IsDistinct rides the same guard: a projected Distinct
-        // binds the same degenerate $group, so a post-Distinct reducer must fall back for the identical reason.
-        // (Centralized as HasTerminalOperator, EF-347 review follow-up — see MongoSelectDefinition.)
-        // EF-347 slice B: a set-op-only terminal is EXEMPT — an aggregate/reducer composed after a set op
-        // binds here and goes native. The reducer $limit / aggregate-injected predicate record into
-        // TrailingOps (ActiveOps flips once SetOperation is attached), landing AFTER the set-op stage, and the
-        // lowerer emits the $count/$group/$limit after the set-op stage (it keys off SetOperation, not Route,
-        // and no longer early-returns). A GroupBy/Distinct/SelectMany terminal still falls back.
+        // A reducer applied after a finalized GroupBy(key).Select(anon)/Distinct must fall back: setting
+        // Cardinality.Reducer would leave Route on GroupBy, so the lowerer still emits [$group, $project] and
+        // the reducer's own $limit (below) would truncate the grouped rows instead of reducing over them.
+        // A set-op-only terminal is exempt: a reducer composed after a set op goes native, recording its
+        // $limit into TrailingOps (after the set-op stage) instead of PipelineOps.
         if (select.HasTerminalOperator && !select.IsSetOpTerminalOnly)
             return false;
 
         // A user Take/Skip already populated the limit slot; composing a reducer limit on top is not
         // representable in canonical order. Fall back rather than reconcile two limits.
-        // EF-347 slice B note: HasLimit deliberately scans PipelineOps only, not TrailingOps (see
-        // MongoSelectDefinition). For a set-op terminal (e.g. Union(a,b).Take(n).First()), the preceding
-        // Take's limit is recorded in TrailingOps (post-set-op ops), so this guard does not see it and does
-        // not fire here — the reducer instead appends its OWN $limit onto TrailingOps too (ActiveOps still
-        // targets TrailingOps), producing two consecutive $limit stages after the set-op stage. That composes
-        // correctly (verified): the second $limit only ever narrows the first, so First/Single still see at
-        // most 1/2 rows. This is a deliberate divergence from the non-set-op Take(n).First() path, which
-        // falls back here — not a bug.
+        // HasLimit only scans PipelineOps, not TrailingOps: after a set-op terminal, a preceding Take's limit
+        // lives in TrailingOps and this guard doesn't see it, so the reducer appends a second $limit onto
+        // TrailingOps too. Two consecutive $limit stages compose correctly (the second only narrows the
+        // first), so this is a deliberate, safe divergence from the non-set-op path, not a bug.
         if (select.HasLimit)
             return false;
 
@@ -91,21 +77,13 @@ internal static class NativeCardinalityBinder
     {
         var select = mongoQ.Select;
 
-        // Post-group guard (symmetric to NativeSlotPopulator's post-group slot-operator guard, and to
-        // TryBindReducer above). A scalar aggregate applied AFTER a finalized GroupBy(key).Select(anon)
-        // must fall back: setting Cardinality on an already-grouped select flips
-        // MongoSelectDefinition.Route to ScalarAggregate (Cardinality is prioritized above Grouping) while
-        // the lowerer's grouping branch still emits a [$group, $project] pipeline with no terminal
-        // $count/aggregate stage — the scalar shaper then reads a nonexistent element and crashes with
-        // KeyNotFoundException instead of falling back cleanly. See the Query AGENTS.md GroupBy note.
-        // IsDistinct rides the same guard: a projected Distinct binds the same degenerate $group, so a
-        // post-Distinct scalar aggregate must fall back for the identical reason.
-        // (Centralized as HasTerminalOperator, EF-347 review follow-up — see MongoSelectDefinition.)
-        // EF-347 slice B: a set-op-only terminal is EXEMPT — an aggregate/reducer composed after a set op
-        // binds here and goes native. The reducer $limit / aggregate-injected predicate record into
-        // TrailingOps (ActiveOps flips once SetOperation is attached), landing AFTER the set-op stage, and the
-        // lowerer emits the $count/$group/$limit after the set-op stage (it keys off SetOperation, not Route,
-        // and no longer early-returns). A GroupBy/Distinct/SelectMany terminal still falls back.
+        // A scalar aggregate applied after a finalized GroupBy(key).Select(anon)/Distinct must fall back:
+        // setting Cardinality on an already-grouped select flips Route to ScalarAggregate (which takes
+        // priority over Grouping), but the lowerer's grouping branch still emits [$group, $project] with no
+        // terminal $count/aggregate stage — the scalar shaper then reads a nonexistent element and crashes
+        // with KeyNotFoundException instead of falling back cleanly.
+        // A set-op-only terminal is exempt: an aggregate composed after a set op goes native, recording its
+        // injected predicate/$limit into TrailingOps (after the set-op stage) instead of PipelineOps.
         if (select.HasTerminalOperator && !select.IsSetOpTerminalOnly)
             return false;
 
@@ -122,22 +100,18 @@ internal static class NativeCardinalityBinder
 
         // An aggregate that injects a predicate as a $match (All always does; Count/Any defensively when an
         // unnormalized predicate overload reaches here) is safe to inject even when paging (Take/Skip) is
-        // already present on the select: AddPredicateConjunct (below) always ANDs into — or appends after —
-        // the TAIL of the ordered op list, i.e. AFTER any $skip/$limit already recorded, never hoisting ahead
-        // of it. So Take(n).All(pred)/Count(pred)/Any(pred) correctly evaluate the predicate over only the
-        // first n rows, matching MongoDB's sequential pipeline semantics (EF-347 Task 3 — this used to be a
-        // guarded fallback before the ordered op list made tail-append the natural, always-correct behavior).
+        // already present: AddPredicateConjunct always appends to the TAIL of the ordered op list, i.e. after
+        // any $skip/$limit already recorded, never hoisting ahead of it. So Take(n).All(pred)/Count(pred)/
+        // Any(pred) correctly evaluate the predicate over only the first n rows.
 
         if (op is MongoAggregateOperator.All)
         {
             // All(pred) ≡ no row fails pred. Push the EXACT COMPLEMENT of the predicate as a $match; presence
             // of any surviving row (after $count) means at least one row failed pred, so All is false.
-            //
-            // The complement is built by MongoExpressionNegator over the TRANSLATED tree, not by wrapping the
-            // LINQ body in Expression.Not (which is what this did before EF-335). The old form translated a
-            // negated comparison into MongoUnaryExpression(Not, comparison) — a node the renderer had no case
-            // for, so it threw at RENDER time and the gate silently fell back. Negating after translation also
-            // means De Morgan applies, so a conjunctive/disjunctive predicate goes native too.
+            // The complement is built by MongoExpressionNegator over the TRANSLATED tree (not by wrapping the
+            // LINQ body in Expression.Not, which would translate to a MongoUnaryExpression(Not, comparison)
+            // the renderer can't render). Negating after translation also means De Morgan applies, so a
+            // conjunctive/disjunctive predicate goes native too.
             if (predicate is null)
                 return false;
 

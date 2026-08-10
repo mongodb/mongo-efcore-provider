@@ -173,12 +173,10 @@ internal sealed class LookupExpression
 
     /// <summary>
     /// A single-level collection Include the native pipeline can emit as a <c>$lookup</c> array (no
-    /// <c>$unwind</c>) and the DOM collection materializer can read back from a root-level
+    /// <c>$unwind</c>), readable by the DOM collection materializer from a root-level
     /// <c>_lookup_&lt;Nav&gt;</c> field: a collection nav, no filtered-Include pipeline stages, not
-    /// force-unwound (an explicit Join is not a collection Include), and un-prefixed — its <see cref="As"/>
-    /// equals the plain <c>_lookup_&lt;Nav&gt;</c> alias, which excludes the driver-LeftJoin
-    /// (<c>_outer</c>/<c>_inner</c>) and flat-nested (<c>_lookup_&lt;Nav&gt;._lookup_&lt;Coll&gt;</c>) shapes
-    /// that remain fallback-only in this sub-project.
+    /// force-unwound, and <see cref="As"/> equal to the plain alias (excludes the driver-LeftJoin and
+    /// flat-nested shapes, which remain fallback-only).
     /// </summary>
     public bool IsNativeCollectionLookup
         => Navigation.IsCollection

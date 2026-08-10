@@ -34,10 +34,9 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// and projection leaf all reach <see cref="MongoExpressionTranslator.TryResolveMember"/>).
 /// </summary>
 /// <remarks>
-/// Split out of the single-file translator as EF-322 stream 1's slice 0 — a pure <c>partial class</c> file
-/// move, no signature or semantics change. These members read the private scope state
-/// (<c>_entityType</c>/<c>_outerParam</c>/<c>_outerEntityType</c>/<c>_innerPrefix</c>), which is why the split
-/// is <c>partial</c> and NOT an extracted type: the by-name-retarget hazard documented on
+/// These members read the private scope state
+/// (<c>_entityType</c>/<c>_outerParam</c>/<c>_outerEntityType</c>/<c>_innerPrefix</c>), which is why this is
+/// a <c>partial</c> split rather than an extracted type: the by-name-retarget hazard documented on
 /// <see cref="TryResolveOwnedCollectionPath"/> is exactly a hazard about which scope a member resolves against.
 /// </remarks>
 internal sealed partial class MongoExpressionTranslator
@@ -53,34 +52,31 @@ internal sealed partial class MongoExpressionTranslator
         property = null;
         fieldPath = null;
 
-        // Peel Nullable<T>.Value: `x.A.Value` is a MemberExpression whose RECEIVER is the member access we
+        // Peel Nullable<T>.Value: `x.A.Value` is a MemberExpression whose receiver is the member access we
         // actually want, so without this it misses the fast path below and is handed to the owned dotted-path
-        // resolver, which walks hops requiring embedded navigations and declines (EF-322 slice A5 / EF-400).
-        // The peel is safe because the resolved property keeps its own nullability — `.Value` changes the CLR
-        // type, never the stored element — so the emitted field ref is identical to the one `x.A` produces.
+        // resolver, which walks hops requiring embedded navigations and declines. The peel is safe because the
+        // resolved property keeps its own nullability — `.Value` changes the CLR type, never the stored
+        // element — so the emitted field ref is identical to the one `x.A` produces.
         //
-        // The `Nullable.GetUnderlyingType(...) is not null` conjunct is LOAD-BEARING, not a redundant sibling of
-        // the name test: a user type may declare its own member called `Value`, and when that user type is the
-        // CLR type of a MAPPED scalar property (a value-converted strongly-typed id, say), peeling it would
-        // resolve the RECEIVER — silently answering a question about `x.Code` when the query asked about
+        // The `Nullable.GetUnderlyingType(...) is not null` conjunct is load-bearing, not a redundant sibling
+        // of the name test: a user type may declare its own member called `Value`, and when that user type is
+        // the CLR type of a mapped scalar property (a value-converted strongly-typed id, say), peeling it would
+        // resolve the receiver — silently answering a question about `x.Code` when the query asked about
         // `x.Code.Value`, and bypassing the value converter while doing so. Pinned by
-        // MongoExpressionTranslatorTests.A_user_type_member_named_Value_is_NOT_peeled. (Same shape of reasoning
-        // as ClassifyJoinHop's IsTransparentIdentifierType conjunct, recorded in Query/AGENTS.md.)
+        // MongoExpressionTranslatorTests.A_user_type_member_named_Value_is_NOT_peeled.
         while (node is MemberExpression { Member.Name: nameof(Nullable<int>.Value), Expression: { } nullableReceiver }
                && Nullable.GetUnderlyingType(nullableReceiver.Type) is not null)
         {
             node = nullableReceiver;
         }
 
-        // Fast path: a top-level scalar access on the query parameter, in EITHER spelling EF produces —
-        // a bare member (p.Foo) or the shadow-safe EF.Property<T>(p, "Foo") call. Both name ONE hop off the
-        // parameter and must resolve identically; the EF.Property spelling used to fall into a gap, because
-        // this method delegated it to TryResolveOwnedFieldPath, whose own `names.Count < 2` check declines a
-        // single hop on the (correct) assumption that this fast path already handled it (EF-322 slice A2).
+        // Fast path: a top-level scalar access on the query parameter, in either spelling EF produces — a
+        // bare member (p.Foo) or the shadow-safe EF.Property<T>(p, "Foo") call. Both name one hop off the
+        // parameter and must resolve identically.
         //
-        // Everything else — a member rooted on another hop, or a MULTI-hop EF.Property chain from owned-nav
-        // expansion — is still delegated to the owned dotted-path resolver, which declines cleanly for any
-        // shape that is not a valid owned chain.
+        // Everything else — a member rooted on another hop, or a multi-hop EF.Property chain from owned-nav
+        // expansion — is delegated to the owned dotted-path resolver, which declines cleanly for any shape
+        // that is not a valid owned chain (including a single hop, which this fast path already handles).
         ParameterExpression param;
         string memberName;
         switch (node)
@@ -194,12 +190,11 @@ internal sealed partial class MongoExpressionTranslator
             var navigation = scopeType.FindNavigation(names[i]);
             if (navigation is null || !navigation.IsEmbedded() || navigation.IsCollection)
             {
-                // Cross-collection or owned-COLLECTION intermediate → fall back. The owned-collection half is a
-                // real capability gap, not just a scoping rule: an array intermediate has no single dotted path
-                // to address, so a leaf underneath one (e.g. b.Posts[..].Title as a predicate/sort/projection
-                // leaf) has no native form here at all. TODO(EF-424) tracks it. Note an `Any`/`All` quantifier
-                // over the same collection is a DIFFERENT resolver (TryResolveOwnedCollectionPath) and does go
-                // native — do not read this decline as covering quantifiers.
+                // Cross-collection or owned-collection intermediate: fall back. An array intermediate has no
+                // single dotted path to address, so a leaf underneath one (e.g. b.Posts[..].Title as a
+                // predicate/sort/projection leaf) has no native form here at all. An Any/All quantifier over
+                // the same collection is a different resolver (TryResolveOwnedCollectionPath) and does go
+                // native — this decline does not cover quantifiers.
                 return false;
             }
             scopeType = navigation.TargetEntityType;
@@ -270,15 +265,15 @@ internal sealed partial class MongoExpressionTranslator
     /// array relative to the element, which is exactly what the enclosing <c>$elemMatch</c> expects.
     /// </para>
     /// <para>
-    /// Two-scope mode is still declined: a cross-scope quantifier is out of scope for this slice.
+    /// Two-scope mode is still declined: a cross-scope quantifier is out of scope.
     /// </para>
     /// <para>
-    /// <b>Why accepting ANY <see cref="ParameterExpression"/> root is safe.</b> This walk does not check WHICH
-    /// parameter roots the chain, so on its own it would resolve a source rooted on an ENCLOSING parameter
+    /// <b>Why accepting any <see cref="ParameterExpression"/> root is safe.</b> This walk does not check which
+    /// parameter roots the chain, so on its own it would resolve a source rooted on an enclosing parameter
     /// (<c>b.Posts.Any(p =&gt; b.Posts.Any(q =&gt; …))</c>) against this translator's own scope type. That shape cannot
     /// reach here: the enclosing parameter is free in the element-predicate body, so the <c>Any</c> arm's
     /// <see cref="ReferencesEnclosingScope"/> guard declines the whole quantifier before the element-scoped child
-    /// translator is even constructed. At the outermost level the only parameter in scope IS the query parameter.
+    /// translator is even constructed. At the outermost level the only parameter in scope is the query parameter.
     /// </para>
     /// </remarks>
     private bool TryResolveOwnedCollectionPath(

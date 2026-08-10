@@ -151,24 +151,16 @@ internal static class BsonBinding
 
     /// <summary>
     /// Resolves <paramref name="name"/> against <paramref name="document"/>, walking a DOTTED name segment by
-    /// segment instead of looking it up as a single literal key (EF-362).
+    /// segment instead of looking it up as a single literal key.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// A dotted name reaches here only from an alias the emit side chose to be a leaf's root-relative DOCUMENT
-    /// PATH, which is what makes the alias-addressed read and the document-path read the same read. Both shapes
-    /// the shaper can be handed are nested, so both need the walk: an un-projected document nests by
-    /// construction, and MongoDB renders <c>$project: {"Home.Notes": "$Home.Notes"}</c> as a NESTED output
-    /// document too (measured, not assumed).
-    /// </para>
-    /// <para>
-    /// An absent segment anywhere along the path yields <see langword="false"/> — the same disposition a missing
-    /// top-level element already had — so a missing owner and a missing leaf are indistinguishable here, exactly
-    /// as they are for the whole-document read this mirrors. An intermediate segment that is present but is not
-    /// a document (a malformed row, or a genuine stored field whose own name contains a dot) also yields
-    /// <see langword="false"/> rather than throwing, so this can never turn a readable document into a cast
+    /// A dotted name reaches here only from an alias that is a leaf's root-relative document path, so a
+    /// dotted-path read and a nested-document read are the same read — MongoDB itself renders
+    /// <c>$project: {"Home.Notes": "$Home.Notes"}</c> as a nested output document, not a flat dotted key. An
+    /// absent segment anywhere along the path yields <see langword="false"/>, same as a missing top-level
+    /// element; an intermediate segment that is present but not a document also yields
+    /// <see langword="false"/> rather than throwing, so this never turns a readable document into a cast
     /// failure.
-    /// </para>
     /// </remarks>
     private static bool TryGetValueAtPath(BsonDocument document, string name, out BsonValue? value)
     {

@@ -19,11 +19,13 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
 /// A raw reference to a document element by its (possibly dotted) path, with no associated
-/// <see cref="Microsoft.EntityFrameworkCore.Metadata.IProperty"/>. Used by the native <c>$group</c>
-/// flattening <c>$project</c> to read back the grouped output — the group <c>_id</c> (scalar key), a
-/// composite sub-key (<c>_id.&lt;Name&gt;</c>), or an accumulator output field — into a top-level result
-/// alias. Renders in the aggregation-expression dialect as <c>"$" + Path</c>.
+/// <see cref="Microsoft.EntityFrameworkCore.Metadata.IProperty"/>.
 /// </summary>
+/// <remarks>
+/// Used by the native <c>$group</c> flattening <c>$project</c> to lift grouped output (<c>_id</c>, a
+/// composite <c>_id.&lt;Name&gt;</c> sub-key, or an accumulator field) into a top-level result alias.
+/// Renders in the aggregation-expression dialect as <c>"$" + Path</c>.
+/// </remarks>
 internal sealed class MongoElementRefExpression(string path, Type clrType) : MongoExpression
 {
     /// <summary>The (possibly dotted) element path, e.g. <c>_id</c>, <c>_id.Country</c>, or <c>Total</c>.</summary>

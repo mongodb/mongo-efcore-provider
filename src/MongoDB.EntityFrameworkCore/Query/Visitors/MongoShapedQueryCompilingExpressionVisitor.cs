@@ -161,7 +161,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             throw new NotSupportedException($" Unhandled expression node type '{nameof(shapedQueryExpression.QueryExpression)}'");
         }
 
-        // The is-native disposition is centralized in ClassifyNativeDisposition (EF-334). Here we act only on
+        // The is-native disposition is centralized in ClassifyNativeDisposition. Here we act only on
         // HardDecline: a GroupBy+Join or paged-join-inner whose driver-LINQ fallback returns silently wrong
         // data must throw under Native/NativeOnly rather than route to that fallback (explicit DriverLinq stays
         // the user's opt-in). (The classification also evaluates ContainsVectorSearch, which the HardDecline
@@ -170,23 +170,20 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var mode = ((MongoQueryCompilationContext)QueryCompilationContext).QueryMode;
         if (ClassifyNativeDisposition(mongoQueryExpression, mode) == NativeDisposition.HardDecline)
         {
-            // TODO(EF-406): drop the paged-inner cause (and its list entry below) when the driver stops folding
-            // an uncorrelated join inner's $sort/$skip/$limit into the correlated $lookup sub-pipeline. THE
-            // TRIGGER IS THE TRIPWIRE TEST GOING RED —
+            // Drop the paged-inner cause (and its list entry below) once the driver stops folding an
+            // uncorrelated join inner's $sort/$skip/$limit into the correlated $lookup sub-pipeline. The
+            // trigger is the tripwire test
             // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
-            // — NOT CSHARP-6017 closing: that driver ticket is already Closed/Done at fixVersion 3.10.0, the
-            // driver version this branch pins, and the fold is MEASURED still live against it (the tripwire
-            // still passes). CSHARP-6017 is kept here as the defect's historical provenance only.
-            // At that point NativeJoinPagedInnerDeclineTests.Join_with_grouped_outer_and_paged_inner_reports_both_causes
-            // degenerates to a single-cause message and should be updated (or removed) together with the rest
-            // of the EF-406 removal checklist.
+            // going red, not the underlying driver ticket closing (it is already closed, and the fold is
+            // still live against the pinned driver version). At that point
+            // NativeJoinPagedInnerDeclineTests.Join_with_grouped_outer_and_paged_inner_reports_both_causes
+            // degenerates to a single-cause message and should be updated (or removed) alongside it.
             // The two causes are independent provenances that can BOTH be set on the SAME query — e.g.
             // db.Orders.GroupBy(o => o.Country).Select(g => new { g.Key, Max = g.Max(o => o.Amount) })
             //     .Join(db.Regions.OrderBy(r => r.Country).Take(2), a => a.Key, r => r.Country, (a, r) => new { r })
             // sets IsGroupByFallbackUnsafe (outer is grouped) AND IsPagedJoinInnerFallbackUnsafe (inner pages
-            // itself) on the SAME outer MongoSelectDefinition — measured, not hypothetical, and pinned by the
-            // test above. List every cause that applies rather than picking one, so a query with both never
-            // silently loses one from the message.
+            // itself) on the SAME outer MongoSelectDefinition. List every cause that applies rather than
+            // picking one, so a query with both never silently loses one from the message.
             var causes = new List<string>();
             if (mongoQueryExpression.Select.IsGroupByFallbackUnsafe)
             {
@@ -217,27 +214,26 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 ? shapedQueryExpression.Type.TryGetItemType()!
                 : shapedQueryExpression.Type);
 
-        // Whole-element owned SelectMany (EF-347 Task 3): the QMTEV's TranslateSelect sets
-        // UnwindSource.WholeElement for a bare-nav owned SelectMany whose trailing selector projects the whole
-        // inner element (`from o in q from i in o.Items select i`). The lowerer emits $unwind(includeArrayIndex)
-        // + $replaceRoot($mergeObjects) for this shape, so after that stage the unwound OWNED element IS the
-        // root document — root the shaper at the ELEMENT (owned) entity type, using the SAME standard
+        // Whole-element owned SelectMany: the QMTEV's TranslateSelect sets UnwindSource.WholeElement for a
+        // bare-nav owned SelectMany whose trailing selector projects the whole inner element (`from o in q
+        // from i in o.Items select i`). The lowerer emits $unwind(includeArrayIndex) + $replaceRoot
+        // ($mergeObjects) for this shape, so after that stage the unwound OWNED element IS the root document
+        // — root the shaper at the ELEMENT (owned) entity type, using the SAME standard
         // MongoProjectionBindingRemovingExpressionVisitor (just constructed with rootEntityType = the owned
         // type), and force the DOM shaper (allowStreaming: false): owned/collection elements are streaming-
         // ineligible anyway, and StreamingEligibility.IsEligible(rootEntityType) would otherwise be evaluated
         // against the OUTER root (Owner), which has no bearing on whether the re-rooted element document can be
         // streamed, and would read the wrong root regardless.
         //
-        // This check MUST run before the projectedEntityType == null fallback immediately below (EF-347 Task 3
-        // fix wave 1 / M1): projectedEntityType is looked up via QueryCompilationContext.Model.FindEntityType on
-        // the result CLR type, which returns null for a SHARED-TYPE entity type (the same owned CLR type reused
-        // by more than one owner/navigation) even when that type is otherwise perfectly representable via the
-        // WholeElement mechanism above. wholeElementUnwind.InnerEntityType came from the binder's
+        // This check MUST run before the projectedEntityType == null fallback immediately below:
+        // projectedEntityType is looked up via QueryCompilationContext.Model.FindEntityType on the result CLR
+        // type, which returns null for a SHARED-TYPE entity type (the same owned CLR type reused by more than
+        // one owner/navigation) even when that type is otherwise perfectly representable via the WholeElement
+        // mechanism above. wholeElementUnwind.InnerEntityType came from the binder's
         // navigation.TargetEntityType (the owner-scoped IEntityType the model actually built for this
         // navigation), never from FindEntityType(clrType) — so it is correct regardless of whether the element
         // CLR type happens to be shared. Running this check first means a shared-type owned element still
-        // routes through the correct re-rooted shaper instead of silently falling into VisitProjectedQuery,
-        // whose behavior for this shape was previously undetermined and untested.
+        // routes through the correct re-rooted shaper instead of silently falling into VisitProjectedQuery.
         if (mongoQueryExpression.Select.UnwindSource is { WholeElement: true } wholeElementUnwind)
         {
             var elementType = wholeElementUnwind.InnerEntityType;
@@ -279,7 +275,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         VerifyNoClientConstant(shapedQueryExpression.ShaperExpression);
 
-        // Native GroupBy (EF-344): GroupBy(key).Select(aggregate) was bound to MongoSelectDefinition.Grouping
+        // Native GroupBy: GroupBy(key).Select(aggregate) was bound to MongoSelectDefinition.Grouping
         // and lowered to a $group + flattening $project. Emit the native pipeline and shape each grouped row
         // with the DOM binding-removing shaper (which reads each result member by its top-level alias). Placed
         // before the NativeOnly guard so a representable grouping succeeds natively instead of being rejected.
@@ -292,18 +288,18 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 allowStreaming: false);
         }
 
-        // Native projection pushdown (SP3): a terminal member-access anonymous/DTO Select was lowered to a
+        // Native projection pushdown: a terminal member-access anonymous/DTO Select was lowered to a
         // $project slot in the QMTEV. Emit it as a native pipeline and shape the projected documents with the
         // DOM binding-removing shaper (which reads each field by its projection alias). Placed before the
         // NativeOnly guard so a representable projection succeeds natively instead of being rejected.
         if (queryMode != MongoQueryMode.DriverLinq
             && mongoQueryExpression.Select.Route == NativeRoute.Projection)
         {
-            // stripBareProjectionOnFallback (EF-322 step 3a, Task 1b): the tier is read HERE, on the one branch
-            // that builds the alias-addressed DOM shaper for a projection, and acted on inside
-            // CompileShapedQuery the moment TryBuildNativeFactory declines. Reading it here rather than there is
-            // what keeps the strip structurally disjoint from the mixed path's own StripPushedDownSelect call
-            // below — the two can never both fire on one query, so the captured chain is never stripped twice.
+            // stripBareProjectionOnFallback: the tier is read HERE, on the one branch that builds the
+            // alias-addressed DOM shaper for a projection, and acted on inside CompileShapedQuery the moment
+            // TryBuildNativeFactory declines. Reading it here rather than there is what keeps the strip
+            // structurally disjoint from the mixed path's own StripPushedDownSelect call below — the two can
+            // never both fire on one query, so the captured chain is never stripped twice.
             return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
                 (bsonDoc, behavior) => new MongoProjectionBindingRemovingExpressionVisitor(
                     rootEntityType, mongoQueryExpression, bsonDoc, behavior),
@@ -311,7 +307,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 stripBareProjectionOnFallback: ShouldStripBareProjectionOnFallback(mongoQueryExpression.Select));
         }
 
-        // Native scalar-aggregate path (EF-SP4 Task 5): Count/LongCount/Sum/Min/Max/Average/Any/All were
+        // Native scalar-aggregate path: Count/LongCount/Sum/Min/Max/Average/Any/All were
         // bound to MongoSelectDefinition.Cardinality by NativeCardinalityBinder and lowered to a terminal
         // $count/$group/$limit stage by MongoSelectLowerer. Emit the native pipeline and read the single
         // "v" field, applying the empty-input contract. Placed before the NativeOnly guard so a
@@ -419,7 +415,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// <summary>
     /// Whether a native-factory failure on the <see cref="NativeRoute.Projection"/> route must strip the
     /// pushed-down <c>Select</c> out of the captured chain before that chain is handed to the driver-LINQ
-    /// bridge (EF-322 step 3a, Task 1b; widened by EF-362).
+    /// bridge.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -434,15 +430,13 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// <list type="bullet">
     /// <item><description>
     /// a BARE selector body — the driver names a bare projection <c>_v</c>, the emit side named it the leaf's
-    /// document path (step 3a);
+    /// document path;
     /// </description></item>
     /// <item><description>
     /// an <c>OwnsOne</c>-hop array leaf — the driver names it by MEMBER (<c>Notes</c>), the emit side named it
-    /// by full document path (<c>Home.Notes</c>). <b>MEASURED, and it refutes what this method's first version
-    /// asserted:</b> a named override was documented as needing no strip because "the driver's own alias for it
-    /// is the member name, not <c>_v</c>, so there is nothing to strip". The driver's alias being the member
-    /// name is precisely the problem — it is not the name the shaper reads by. Left un-stripped, the wrapped
-    /// hop shape returned EMPTY collections, silently, under the default mode (EF-362).
+    /// by full document path (<c>Home.Notes</c>). The driver's alias being the member name is the problem — it
+    /// is not the name the shaper reads by; left un-stripped, the wrapped hop shape returns EMPTY collections
+    /// silently under the default mode.
     /// </description></item>
     /// </list>
     /// <para>
@@ -459,15 +453,13 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// So the strip is TIER-CONDITIONAL, and both arms matter: strip for
     /// <see cref="ProjectionAliasTier.DocumentPath"/> (path-addressable, therefore whole-document-readable);
     /// do NOT strip for <see cref="ProjectionAliasTier.Synthetic"/>, whose <c>_v</c> alias has no document path
-    /// at all — leaving the driver's own push-down in place is exactly what makes that read hit, and stripping
-    /// it instead was measured to turn a working query into
-    /// <c>Document element '_v' is missing but required</c>.
+    /// at all — leaving the driver's own push-down in place is exactly what makes that read hit. Stripping it
+    /// instead turns a working query into <c>Document element '_v' is missing but required</c>.
     /// </para>
     /// <para>
-    /// <b>The <see cref="ProjectionAliasTier.Synthetic"/> arm's long-term disposition is OPEN and tracked as
-    /// EF-418</b> — depending on the driver's own <c>_v</c> push-down is what makes that arm work, so the tier
-    /// cannot simply be deleted when the driver-LINQ fallback is retired. Nothing here blocks merging; EF-418
-    /// exists so that decision has an owner. (The merge plan's §5.3 account of this is STALE — read EF-418.)
+    /// The <see cref="ProjectionAliasTier.Synthetic"/> arm's long-term disposition is open — depending on the
+    /// driver's own <c>_v</c> push-down is what makes that arm work, so the tier cannot simply be deleted when
+    /// the driver-LINQ fallback is retired.
     /// </para>
     /// <para>
     /// The tier is read as DATA off the override the emit side registered — never by sniffing the alias string
@@ -480,7 +472,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// <see cref="NativeRoute.Projection"/> branch of <see cref="VisitProjectedQuery"/>, and by the time the
     /// gate runs every route flip has already happened, so the branch itself is the routing gate. The method is
     /// <c>internal</c> rather than <c>private</c> only so the unit tests can pin the tier-vs-alias-string
-    /// decision directly — the same reason, and the same precedent, as EF-373's <c>DependenciesPrecede</c>.
+    /// decision directly.
     /// </para>
     /// </remarks>
     internal static bool ShouldStripBareProjectionOnFallback(MongoSelectDefinition select)
@@ -498,17 +490,16 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var trackingBehavior = QueryCompilationContext.QueryTrackingBehavior;
         var mode = ((MongoQueryCompilationContext)QueryCompilationContext).QueryMode;
 
-        // ── The native-vs-driver gate (EF-323 B2) ──────────────────────────────────────────────
-        // Unlike the spike (B1), which builds the native pipeline per execution inside TranslateQuery
-        // and falls back to driver-LINQ at run time, this decision is made deterministically here at
-        // COMPILE time. A native query that can be lowered/rendered yields a MongoPipelineFactory captured
-        // into the executor; per execution it is only re-bound (factory.Build over a MongoNativeBuildContext,
-        // which also constructs any deferred stage slot) — never re-translated. Because fallback happens here
-        // (not at run time), we compile EXACTLY ONE shaper
-        // (streaming, DOM-native, or driver-DOM) and need no run-time dual-shaper dispatch.
+        // ── The native-vs-driver gate ───────────────────────────────────────────────────────────
+        // This decision is made deterministically here at COMPILE time, not per execution. A native query
+        // that can be lowered/rendered yields a MongoPipelineFactory captured into the executor; per
+        // execution it is only re-bound (factory.Build over a MongoNativeBuildContext, which also
+        // constructs any deferred stage slot) — never re-translated. Because fallback happens here (not at
+        // run time), we compile EXACTLY ONE shaper (streaming, DOM-native, or driver-DOM) and need no
+        // run-time dual-shaper dispatch.
         var nativeFactory = TryBuildNativeFactory(mode, mongoQueryExpression);
 
-        // The late-fallback bare-projection strip (EF-322 step 3a, Task 1b). The shaper above was built
+        // The late-fallback bare-projection strip. The shaper above was built
         // alias-addressed for the native $project; the driver-LINQ fallback renders the captured chain
         // INCLUDING the pushed-down bare Select, which the driver aliases `_v`. For a path-addressable
         // (tier-1) bare leaf the two disagree, so remove the Select and let the fallback yield whole
@@ -548,7 +539,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         if (streaming)
         {
-            // One-pass "deserialize IS materialize" (SP7 P1.2): rewrite the post-injection materializer to read
+            // One-pass "deserialize IS materialize": rewrite the post-injection materializer to read
             // exactly one document off a passed-in IBsonReader (ReadStartDocument … fill loop … ReadEndDocument;
             // no open, no dispose — the driver cursor owns the reader). The compiled shaper becomes the
             // Deserialize body of a custom IBsonSerializer<TEntity> supplied to Aggregate as the pipeline output
@@ -687,15 +678,15 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // ScalarAggregate) are not yet lowered by the pipeline and remain on the driver-LINQ path.
         //
         // A VectorSearch query is native when — and only when — NativeSlotPopulator bound it into
-        // MongoSelectDefinition.VectorSearch (EF-322 VectorSearch slice). The lowerer emits the $vectorSearch
-        // stage (plus its $addFields{__score} companion) from that slot, ahead of every other stage, and
+        // MongoSelectDefinition.VectorSearch. The lowerer emits the $vectorSearch stage (plus its
+        // $addFields{__score} companion) from that slot, ahead of every other stage, and
         // MongoPipelineFactory's deferred slot runs the SAME VectorSearchStageBuilder the driver-LINQ bridge
         // does — so the index resolution, the VectorSearchNeedsIndex warning and the AdditionalState the
         // zero-results diagnostic reads are all produced identically on both paths. An UNBOUND vector search
         // (the binder declined) classifies as Fallback via hasUnboundVectorSearch, so it keeps the driver path;
         // the lowerer can never be reached with a vector search it has no slot to emit.
         // This builder handles the whole-entity / reducer / projection / group native pipelines. It declines
-        // when the query is not native at all (ClassifyNativeDisposition != Native — EF-334) AND, additionally,
+        // when the query is not native at all (ClassifyNativeDisposition != Native) AND, additionally,
         // when Route == ScalarAggregate: that shape IS native but is built by TryBuildAggregateFactory, so
         // control must fall through to it here. (A HardDecline was already thrown in VisitShapedQuery before
         // reaching this builder under Native/NativeOnly; under DriverLinq no native factory is attempted.)
@@ -841,10 +832,27 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         }
 
         var targetType = Nullable.GetUnderlyingType(typeof(TResult)) ?? typeof(TResult);
-        var converted = targetType.IsInstanceOfType(mapped) ? mapped : Convert.ChangeType(mapped, targetType);
+        var converted = targetType.IsInstanceOfType(mapped) ? mapped : ConvertNumericNarrowing(mapped, targetType);
 
         return (TResult)converted!;
     }
+
+    // $sum widens its accumulator as the running total grows past int32's then int64's range (server-side,
+    // unconditionally — there is no way to ask Mongo for checked BCL semantics), so the value read back can
+    // be wider than TResult's underlying numeric type. Convert.ChangeType performs a *checked* narrowing and
+    // throws OverflowException the moment the widened total falls outside TResult's range — which does not
+    // reproduce BCL Sum's per-element checked-overflow semantics (that would require throwing at the exact
+    // element where the running total first overflowed, not after the fact against the final widened total)
+    // and is an accepted, documented divergence — but an unhandled exception here would still be worse than
+    // that divergence. Narrow with an explicit unchecked cast instead, so an overflowing/imprecise total is
+    // returned (wrapped or rounded) rather than throwing.
+    private static object ConvertNumericNarrowing(object mapped, Type targetType) => mapped switch
+    {
+        long l when targetType == typeof(int) => unchecked((int)l),
+        double d when targetType == typeof(int) => unchecked((int)d),
+        double d when targetType == typeof(long) => unchecked((long)d),
+        _ => Convert.ChangeType(mapped, targetType)
+    };
 
     // Under MongoQueryMode.NativeOnly the driver-LINQ fallback is forbidden, so a query the native path cannot
     // handle is a compile-time coverage failure rather than a silent fallback. Centralizes that policy so every
@@ -878,7 +886,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
     /// <summary>
     /// Classify a query's native disposition from the three authoritative is-native signals, read here in one
-    /// place. This is the single source of truth for the is-native gate decision (EF-334); all gate sites
+    /// place. This is the single source of truth for the is-native gate decision; all gate sites
     /// consult it rather than re-deriving. Pure over its inputs so it is unit-testable in isolation.
     /// </summary>
     /// <param name="route">The slot/projection representability route (<see cref="MongoSelectDefinition.Route"/>).</param>
@@ -887,10 +895,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// <see cref="MongoSelectDefinition.IsFallbackWrongData"/>.</param>
     /// <param name="hasUnboundVectorSearch">
     /// Whether the captured chain contains a lifted-out <c>VectorSearch</c> that the native slot populator did
-    /// NOT bind into <see cref="MongoSelectDefinition.VectorSearch"/> (EF-322 VectorSearch slice). This is one
-    /// fact read twice: a BOUND slot makes this <see langword="false"/>, so the query classifies Native AND the
-    /// lowerer has a <c>$vectorSearch</c> stage to emit; an UNBOUND one makes it <see langword="true"/>, and the
-    /// binder's only other exit is <c>MarkNotNativelyRepresentable()</c>, so <paramref name="route"/> is
+    /// NOT bind into <see cref="MongoSelectDefinition.VectorSearch"/>. This is one fact read twice: a BOUND
+    /// slot makes this <see langword="false"/>, so the query classifies Native AND the lowerer has a
+    /// <c>$vectorSearch</c> stage to emit; an UNBOUND one makes it <see langword="true"/>, and the binder's
+    /// only other exit is <c>MarkNotNativelyRepresentable()</c>, so <paramref name="route"/> is
     /// <see cref="NativeRoute.Fallback"/> as well. The dangerous middle state — native route, no stage emitted,
     /// which returns the right ROW COUNT in INSERTION order rather than score order with no exception — is
     /// therefore unreachable rather than merely avoided.
@@ -927,8 +935,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// signal that cannot live wholly on <see cref="MongoSelectDefinition"/> is vector search: the
     /// <c>VectorSearch</c> call is lifted out of the tree before the Select is built, so its PRESENCE is read
     /// from the captured chain here — and paired with the slot the native binder either did or did not fill, so
-    /// the two gates open and close together (EF-322 VectorSearch slice; see the
-    /// <c>hasUnboundVectorSearch</c> parameter documentation).
+    /// the two gates open and close together (see the <c>hasUnboundVectorSearch</c> parameter documentation).
     /// </summary>
     private static NativeDisposition ClassifyNativeDisposition(MongoQueryExpression q, MongoQueryMode mode)
         => ClassifyNativeDisposition(
@@ -949,30 +956,16 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// (a collection include, a filtered include with pipeline stages, a transitive/nested lookup, or any join
     /// shape not mappable to a direct root reference navigation) stays on the DOM / driver-LINQ path.
     /// <para>
-    /// EF-368 fix round 1 (I3): also NOT streamable when the looked-up navigation's TARGET has an
-    /// eager-loaded navigation of its own (an owned/embedded reference or collection, auto-included by EF
-    /// Core convention — the same condition <c>MongoQueryableMethodTranslatingExpressionVisitor</c>'s
-    /// <c>HasNonEmbeddedThenInclude</c> now lets THROUGH at confirmation time, per I3's fix). Narrowing
-    /// TryConfirmReferenceInclude to admit that shape surfaced a SEPARATE, pre-existing gap one layer
-    /// down: <c>MongoStreamingEntityMaterializerRewriter</c> has no plan for a nested include on a looked-up
-    /// reference's target and throws <c>NativeTranslationNotSupportedException</c> the moment the STREAMING
-    /// shaper is attempted for a query in this shape.
-    /// </para>
-    /// <para>
-    /// Fix round 2 (review finding A) corrects this note's original severity claim, which was measured
-    /// false: it said the throw was "uncaught, in every mode, not merely a missed optimization". Removing
-    /// this guard and probing all three <see cref="Infrastructure.MongoQueryMode"/>s on the owned-target
-    /// Include shows <c>Native</c> and <c>DriverLinq</c> both succeed with correct data (the pre-existing
-    /// <c>catch (Exception) when (mode != MongoQueryMode.NativeOnly)</c> around the streaming-shaper
-    /// build already falls back to the DOM shaper) — only <c>NativeOnly</c> throws, which is the intended,
-    /// designed decline behavior for a `NativeOnly`-forbidden fallback, not a crash. So the pre-fix severity
-    /// was a <c>NativeOnly</c>-only decline, not an every-mode failure. The fix itself is still correct and
-    /// worth having independent of that correction: it makes the shape succeed under <c>NativeOnly</c> too,
-    /// by routing straight to the DOM shaper (which already materializes nested owned data correctly, see
-    /// <c>MongoOwnedReferenceWholeEntityTests</c>) instead of attempting streaming and catching the failure
-    /// — mirroring the identical pattern
+    /// Also NOT streamable when the looked-up navigation's TARGET has an eager-loaded navigation of its own
+    /// (an owned/embedded reference or collection, auto-included by EF Core convention — a shape
+    /// <c>MongoQueryableMethodTranslatingExpressionVisitor</c>'s <c>HasNonEmbeddedThenInclude</c> lets through
+    /// at confirmation time). <c>MongoStreamingEntityMaterializerRewriter</c> has no plan for a nested include
+    /// on a looked-up reference's target and throws <c>NativeTranslationNotSupportedException</c> the moment
+    /// the STREAMING shaper is attempted for a query in this shape. Routing straight to the DOM shaper here
+    /// (which already materializes nested owned data correctly) instead of attempting streaming and catching
+    /// the failure makes the shape succeed under <c>NativeOnly</c> too — mirroring the identical pattern
     /// <c>MongoQueryableMethodTranslatingExpressionVisitor.IsWholeElementRepresentable</c> already applies for
-    /// the analogous owned-SelectMany bare-entity-result gap (EF-360).
+    /// the analogous owned-SelectMany bare-entity-result gap.
     /// </para>
     /// </summary>
     private static bool AllPendingLookupsAreStreamable(MongoQueryExpression mongoQueryExpression)
@@ -1008,7 +1001,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         var transaction = mongoQueryContext.Context.Database.CurrentTransaction as MongoTransaction;
 
-        // Native path (EF-323 B2): the factory was built once at compile time. Per execution we only bind the
+        // Native path: the factory was built once at compile time. Per execution we only bind the
         // current parameter values into the cached template (factory.Build) and run the resulting pipeline via
         // MongoClientWrapper.Execute. The driver-LINQ Query is left as Expression.Empty() — it is never used.
         if (nativeFactory != null)
@@ -1210,10 +1203,9 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     // read path's TranslateQuery (which applies Where/OrderBy/Skip/Take/Distinct via the driver and reads the
     // ambient transaction session) and asking the driver provider for BsonDocument results.
     //
-    // ARCHITECTURE DEBT — TRACKED AS EF-416. This is the coupling that stops the driver-LINQ bridge being
-    // retired along with the query fallback: the EF9+ bulk path routes through it unconditionally, so
-    // MongoEFToLinqTranslatingExpressionVisitor stays live even once no READ query falls back. Nothing here
-    // blocks merging the native work; EF-416 exists so the decision has an owner rather than being silence.
+    // ARCHITECTURE NOTE: this is the coupling that stops the driver-LINQ bridge being retired along with the
+    // query fallback — the EF9+ bulk path routes through it unconditionally, so
+    // MongoEFToLinqTranslatingExpressionVisitor stays live even once no READ query falls back.
     // Note: this fetches whole documents and keeps only _id; a future optimization could push a
     // { _id: 1 } projection server-side to reduce transfer for large target sets.
     private static IQueryable<BsonDocument> BuildIdDocumentQuery<TSource>(
@@ -1226,11 +1218,11 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             queryContext, entityType, bsonSerializerFactory, nonQuery.SourceQuery, ResultCardinality.Enumerable,
             nativeFactory: null, streaming: false,
             (translator, expression) =>
-                // guardUnstrippableForceUnwindJoin: false — EF-368 final fix wave, Finding 3. That guard exists
-                // because the READ path's whole-entity shaper is pre-built assuming the flat _lookup_<Nav>
-                // shape; the bulk path builds no shaper at all (it asks the driver for raw BsonDocuments and
-                // keeps only _id), so the guard's premise does not hold and it would be a pure false-positive
-                // throw surface for ExecuteUpdate/ExecuteDelete.
+                // guardUnstrippableForceUnwindJoin: false. That guard exists because the READ path's
+                // whole-entity shaper is pre-built assuming the flat _lookup_<Nav> shape; the bulk path builds
+                // no shaper at all (it asks the driver for raw BsonDocuments and keeps only _id), so the
+                // guard's premise does not hold and it would be a pure false-positive throw surface for
+                // ExecuteUpdate/ExecuteDelete.
                 translator.Translate(
                     MongoNonQueryExpression.UnwrapBulkOperator(expression)!, ResultCardinality.Enumerable,
                     guardUnstrippableForceUnwindJoin: false));

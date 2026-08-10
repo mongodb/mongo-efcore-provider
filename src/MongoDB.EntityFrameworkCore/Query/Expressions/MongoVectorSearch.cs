@@ -42,7 +42,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// element path because the driver's own <c>PipelineStageDefinitionBuilder.VectorSearch</c> takes an
 /// <c>Expression&lt;Func&lt;TDoc, TField&gt;&gt;</c> and derives the document path from it — which is how a
 /// nested selector such as <c>e =&gt; e.Preface.Floats</c> renders as <c>"Preface.Floats"</c> for free, and
-/// is part of why this slice re-baselines no MQL.
+/// is why this feature needs no MQL path-rendering logic of its own.
 /// </para>
 /// </remarks>
 /// <param name="EntityType">

@@ -32,26 +32,16 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <see cref="Build(in MongoNativeBuildContext)"/>.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Constructed once per compiled query via <see cref="Create"/>. At compile time the stage-walk renders
-/// each stage to a <see cref="BsonDocument"/>, baking constants inline and recording parameter sites as
-/// placeholder sentinels in a shared <see cref="PlaceholderTable"/>. The resulting template is immutable.
-/// </para>
-/// <para>
-/// A template slot is therefore normally a rendered <see cref="BsonDocument"/>. It may instead be
-/// <em>deferred</em> — a <see cref="Func{T, TResult}"/> invoked at Build time — for the rare stage whose
-/// BSON <em>shape</em>, not merely its values, depends on runtime state and so cannot be expressed as a
-/// value sentinel. A deferred slot is built by <see cref="Build(in MongoNativeBuildContext)"/> only;
-/// the parameter-values-only overload throws rather than emit a pipeline with a hole.
-/// </para>
-/// <para>
-/// At execution time Build clones the template and substitutes every sentinel with the serialized runtime
-/// value. Constants are already baked — they are never touched by Build. The substitution pass runs over a
-/// deferred slot's freshly built document too, so anything it embeds that was rendered at compile time into
-/// the shared <see cref="PlaceholderTable"/> resolves in the same pass.
-/// No EF-version-conditional code appears here; bridging <c>QueryContext.Parameters</c> (EF10) vs
-/// <c>QueryContext.ParameterValues</c> (EF8/EF9) is the caller's responsibility.
-/// </para>
+/// Constructed once per compiled query via <see cref="Create"/>: the stage-walk renders each stage to a
+/// <see cref="BsonDocument"/>, baking constants inline and recording parameter sites as placeholder sentinels
+/// in a shared <see cref="PlaceholderTable"/>. A slot is normally such a rendered, immutable document; it may
+/// instead be <em>deferred</em> — a builder invoked at Build time — for a stage whose BSON <em>shape</em>
+/// (not just its values) depends on runtime state and so can't be expressed as a sentinel. A deferred slot
+/// requires <see cref="Build(in MongoNativeBuildContext)"/>; the parameter-values-only overload throws rather
+/// than emit a pipeline with a hole. At execution time, Build clones the template and substitutes every
+/// sentinel with the serialized runtime value (constants are already baked and untouched); substitution also
+/// runs over a deferred slot's freshly built document, so anything it embeds via the shared
+/// <see cref="PlaceholderTable"/> resolves in the same pass.
 /// </remarks>
 internal sealed class MongoPipelineFactory
 {
@@ -201,25 +191,18 @@ internal sealed class MongoPipelineFactory
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// Builds the deferred slot for a <c>$vectorSearch</c> stage: the pre-filter is rendered NOW, at
-    /// compile time, into the SHARED placeholder table; everything else is constructed per execution.
+    /// Builds the deferred slot for a <c>$vectorSearch</c> stage: the pre-filter is rendered now, at
+    /// compile time, into the shared placeholder table; everything else is constructed per execution.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// Deferral is necessary, not a convenience. The body's SHAPE — whether the <c>exact</c> or
-    /// <c>numCandidates</c> key is present at all, and which <c>index</c> is used (a choice that can itself
-    /// throw or warn) — depends on a runtime <c>VectorQueryOptions</c>, which no value sentinel can express.
-    /// And the driver's own builder DERIVES <c>numCandidates</c> from the runtime <c>limit</c> when the caller
-    /// leaves it null; reusing that builder, rather than hand-writing the body, is what keeps the emitted MQL
-    /// byte-identical to the driver-LINQ path's.
-    /// </para>
-    /// <para>
-    /// The pre-filter is rendered once, here, so a parameter captured inside it lands in the same
-    /// <see cref="PlaceholderTable"/> as every other stage's and resolves in Build's ordinary substitution
-    /// pass — which runs over a deferred slot's freshly built document too. It is DEEP-CLONED per execution
-    /// because that substitution pass rewrites sentinels in place; embedding the template document itself
-    /// would let the first execution consume the sentinels for good.
-    /// </para>
+    /// Deferral is necessary because the body's shape — whether <c>exact</c>/<c>numCandidates</c> is present
+    /// at all, and which index is used — depends on a runtime <c>VectorQueryOptions</c>, which no value
+    /// sentinel can express. The driver's own stage builder is reused (rather than hand-writing the body)
+    /// because it derives <c>numCandidates</c> from the runtime <c>limit</c> when left null, which keeps the
+    /// emitted MQL identical to the driver-LINQ path's. The pre-filter is rendered once here so a parameter
+    /// inside it lands in the same <see cref="PlaceholderTable"/> as every other stage's and resolves in
+    /// Build's ordinary substitution pass; it is deep-cloned per execution because that pass rewrites
+    /// sentinels in place.
     /// </remarks>
     private static Func<MongoNativeBuildContext, BsonDocument> CreateVectorSearchBuilder(
         MongoVectorSearch search,
@@ -234,15 +217,14 @@ internal sealed class MongoPipelineFactory
         {
             var entityType = search.EntityType;
 
-            // The three runtime arguments, resolved exactly as the driver-LINQ bridge's own ParamValue<T>
-            // does — via NativeQueryParameter, which is where the EF8/EF9-vs-EF10 query-parameter node
-            // difference lives, so no version-conditional compilation is needed here.
+            // Resolved via NativeQueryParameter, which bridges the EF8/EF9-vs-EF10 query-parameter node
+            // difference, exactly as the driver-LINQ bridge's own ParamValue<T> does.
             var queryVector = (QueryVector)ResolveVectorSearchArgument(search.QueryVectorArgument, context.ParameterValues)!;
             var limit = (int)ResolveVectorSearchArgument(search.LimitArgument, context.ParameterValues)!;
             var options = (VectorQueryOptions?)ResolveVectorSearchArgument(search.OptionsArgument, context.ParameterValues);
 
-            // Guard / member resolution / index resolution + the VectorSearchNeedsIndex warning. Reflection-free
-            // and shared with the driver-LINQ bridge, so its exceptions surface identically on both paths.
+            // Shared with the driver-LINQ bridge so member/index resolution and its exceptions/warnings
+            // (VectorSearchNeedsIndex) surface identically on both paths.
             var resolved = VectorSearchStageBuilder.Resolve(
                 entityType, entityType.ClrType, search.PropertyLambda, options, context.QueryLogger);
 
@@ -250,9 +232,9 @@ internal sealed class MongoPipelineFactory
             context.AdditionalState[MongoExecutableQuery.VectorQueryProperty] = resolved.Member;
             context.AdditionalState[MongoExecutableQuery.VectorQueryIndexName] = resolved.Options.IndexName!;
 
-            // A BsonDocumentFilterDefinition, not the bridge's ExpressionFilterDefinition: the pre-filter is
-            // already rendered. The driver embeds the document verbatim, so its sentinels ride through to the
-            // substitution pass.
+            // A BsonDocumentFilterDefinition, not the bridge's ExpressionFilterDefinition, since the
+            // pre-filter is already rendered; the driver embeds it verbatim so its sentinels ride through to
+            // the substitution pass.
             object? filterDefinition = preFilterTemplate is null
                 ? null
                 : Activator.CreateInstance(
@@ -305,9 +287,9 @@ internal sealed class MongoPipelineFactory
         var body = new BsonDocument();
         foreach (var ordering in stage.Orderings)
         {
-            // A COMPUTED key arrives here already rewritten by the lowerer into a MongoElementRefExpression
-            // naming the synthetic field its $set wrote (EF-401 slice B). $sort takes field PATHS, so both
-            // arms contribute a bare path — never a "$"-prefixed aggregation field reference.
+            // A computed key arrives here already rewritten by the lowerer into a MongoElementRefExpression
+            // naming the synthetic field its preceding $set wrote. $sort takes field paths, so both arms
+            // contribute a bare path, never a "$"-prefixed aggregation field reference.
             var path = ordering.KeySelector switch
             {
                 MongoFieldExpression field => field.ElementName,
@@ -341,39 +323,21 @@ internal sealed class MongoPipelineFactory
         return new BsonDocument("$project", body);
     }
 
-    // $set (a.k.a. $addFields) — adds computed fields, leaving existing ones alone. Unlike $project, a BARE
-    // scalar here is a LITERAL, not an inclusion flag, which is what lets a constant sort key
-    // (OrderBy(x => 1)) render as { "__sort0" : 1 } and mean it. The placeholder table is threaded through
-    // because a sort key may be a query parameter (OrderBy(x => capturedLocal)).
+    // $set (a.k.a. $addFields) adds computed fields, leaving existing ones alone. Unlike $project, a bare
+    // scalar here is a LITERAL, not an inclusion flag — which is what lets a constant sort key
+    // (OrderBy(x => 1)) render as { "__sort0" : 1 } and mean it.
     //
-    // A top-level bare MongoConstantExpression/MongoParameterExpression body is $literal-WRAPPED (EF-401
-    // fix round 1, Important 1) — MongoAggregationExpressionRenderer.Render emits it UNWRAPPED (a bare
-    // BsonValue, or a bare parameter sentinel that substitutes to a bare BsonValue), and MongoDB reads an
-    // unwrapped STRING VALUE STARTING WITH '$' as a FIELD PATH, not a literal: OrderBy(x => "$Label"), or
-    // OrderBy(x => capturedString) where the runtime value happens to start with '$', would silently sort
-    // by the named field instead of tying every row on the literal string — a silent-wrong-ORDER hole,
-    // under the default Native mode, where the pre-slice fallback was correct. This wrap is scoped to
-    // RenderAddFields ONLY — MongoAggregationExpressionRenderer itself is unchanged, since RenderProject
-    // and the predicate ($expr) path share it and a bare constant is never their WHOLE body (RenderProject
-    // requires a binary-arithmetic/size top node to admit a computed leaf at all; a predicate constant only
-    // ever appears as a comparison operand, never as the entire rendered document).
+    // A top-level bare MongoConstantExpression/MongoParameterExpression body is $literal-wrapped:
+    // MongoAggregationExpressionRenderer.Render emits it unwrapped, and MongoDB reads an unwrapped string
+    // value starting with '$' as a FIELD PATH rather than a literal — so OrderBy(x => "$Label") (or a
+    // captured string parameter whose runtime value happens to start with '$') would otherwise silently sort
+    // by the named field instead of tying every row on the literal string. The wrap is scoped to
+    // RenderAddFields only: RenderProject and the predicate ($expr) path share the same renderer but a bare
+    // constant is never their whole body.
     //
-    // Substitution survives the wrap: MongoPipelineFactory.Build's SubstituteValue walk tests EVERY BsonValue
-    // for a placeholder sentinel BEFORE recursing into it as a document, so a parameter sentinel nested one
-    // level inside { "$literal": <sentinel> } is still found and replaced — Build produces
-    // { "$literal": <the runtime value> }, exactly as a constant would render directly.
-    //
-    // COVERAGE, corrected (EF-401 Task 4): an earlier revision of this comment cited
-    // NativeComputedSortTests.Parameterized_computed_sort_key_value_is_correctly_substituted as verifying
-    // substitution THROUGH the wrap. It does NOT — that test's sort key is `x.A * factor`, a
-    // MongoBinaryExpression, so the `field.Expression is MongoConstantExpression or MongoParameterExpression`
-    // test below is FALSE for it and its sentinel is never wrapped; it proves substitution in general, not
-    // substitution inside a $literal. The wrapped-parameter path is pinned instead by
-    // MongoPipelineFactoryTests.Build_substitutes_a_parameter_sentinel_nested_inside_a_literal_wrap, which
-    // asserts the built stage is exactly { "$set" : { "__sort0" : { "$literal" : <value> } } }, and — at the
-    // functional level, through the whole translator — by the re-based specification baseline
-    // NorthwindMiscellaneousQueryMongoTest.OrderBy_parameter. .Dollar_prefixed_string_sort_key_does_not_get_
-    // interpreted_as_a_field_path covers the CONSTANT half of the wrap (it was also mutation-verified).
+    // Substitution survives the wrap: SubstituteValue tests every BsonValue for a placeholder sentinel before
+    // recursing into it as a document, so a parameter sentinel nested inside { "$literal": <sentinel> } is
+    // still found and replaced, producing { "$literal": <runtime value> }.
     private static BsonDocument RenderAddFields(MongoAddFieldsStage stage, PlaceholderTable placeholders)
     {
         var body = new BsonDocument();

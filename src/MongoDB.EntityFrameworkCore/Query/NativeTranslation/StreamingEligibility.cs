@@ -82,14 +82,10 @@ internal static class StreamingEligibility
             }
 
             // The streaming rewriter's forward-only reader has no IncludeExpression case for a collection
-            // element (FindCollectionShaper doesn't descend into one), so a collection whose element
-            // carries ANY navigation of its own — a nested owned single reference just as much as a
-            // nested owned/non-owned collection — is streaming-ineligible: it crashes at shaper-compile
-            // with NativeTranslationNotSupportedException rather than materializing correctly. Reject any
-            // such collection here so it routes to the native DOM shaper instead, which handles it fine.
-            // Collection-of-collection was already rejected by this check before; a collection element with
-            // a nested single reference is a NEW rejection (EF-322 owned-collection slice) — it used to be
-            // (wrongly) deemed streaming-eligible.
+            // element (FindCollectionShaper doesn't descend into one), so a collection whose element carries
+            // ANY navigation of its own — a nested owned single reference just as much as a nested
+            // owned/non-owned collection — is streaming-ineligible: it would crash at shaper-compile with
+            // NativeTranslationNotSupportedException. Reject it here so it routes to the DOM shaper instead.
             if (navigation.IsCollection && navigation.TargetEntityType.GetNavigations().Any())
             {
                 return false;

@@ -53,10 +53,10 @@ public record MongoExecutableQuery(
     internal bool Streaming { get; init; }
 
     /// <summary>
-    /// The per-execution one-pass output serializer (SP7 P1.2). When set (and <see cref="Streaming"/> is true),
+    /// The per-execution one-pass output serializer. When set (and <see cref="Streaming"/> is true),
     /// <c>MongoClientWrapper.Execute</c> supplies it to <c>Aggregate</c> as the pipeline output serializer, so
-    /// each cursor row is deserialized directly into the finished entity (deserialize IS materialize — a single
-    /// forward pass). Null for the RawBsonDocument streaming fallback and for all non-streaming paths.
+    /// each cursor row deserializes directly into the finished entity in a single forward pass. Null for the
+    /// RawBsonDocument streaming fallback and for all non-streaming paths.
     /// </summary>
     internal IBsonSerializer? OutputSerializer { get; init; }
 }

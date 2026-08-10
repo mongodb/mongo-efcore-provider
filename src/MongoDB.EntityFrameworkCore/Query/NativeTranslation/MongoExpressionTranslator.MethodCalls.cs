@@ -33,10 +33,6 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// translator understands (quantifiers, element counts, <c>Contains</c>, the string regex family) and the
 /// scope guard that keeps a correlated element predicate out of the element-scoped translator.
 /// </summary>
-/// <remarks>
-/// Split out of the single-file translator as EF-322 stream 1's slice 0 — a pure <c>partial class</c> file
-/// move, no signature or semantics change.
-/// </remarks>
 internal sealed partial class MongoExpressionTranslator
 {
     /// <summary>Which quantifier <see cref="TryMatchQuantifierMethod"/> matched.</summary>
@@ -119,46 +115,34 @@ internal sealed partial class MongoExpressionTranslator
     /// <summary>
     /// Matches an element-count expression over a collection — the <c>Count</c> property on the collection
     /// itself, a PARAMETERLESS <c>Count()</c>/<c>LongCount()</c> call, or a PREDICATED
-    /// <c>Count(predicate)</c>/<c>LongCount(predicate)</c> call (EF-359) — and yields the collection SOURCE with
+    /// <c>Count(predicate)</c>/<c>LongCount(predicate)</c> call — and yields the collection SOURCE with
     /// any <c>AsQueryable()</c> wrapper stripped, plus the predicate lambda (<see langword="null"/> for the
     /// predicate-less forms).
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Both no-predicate shapes are live, for different callers</b> (Task 1 spike, measured on EF8/EF9/EF10):
-    /// EF's own preprocessing normalizes a <c>.Count</c> PROPERTY access into the method-call form before the
-    /// native translator ever sees it, so every real query arrives as
-    /// <c>Queryable.Count(EF.Property(b, "Posts").AsQueryable())</c> — the <c>Count</c> property and
-    /// <c>Count()</c> call are byte-identical trees by then. The <see cref="MemberExpression"/> arm is
-    /// nonetheless required, because a HAND-BUILT expression tree (a unit test calling
-    /// <c>TryTranslate</c> on a raw C# lambda, which bypasses EF's pipeline entirely) does carry a real
-    /// <c>List&lt;T&gt;.Count</c> member access. This mirrors why
-    /// <see cref="TryMatchQuantifierMethod"/> accepts the <see cref="Enumerable"/> spelling as well as
-    /// <see cref="Queryable"/>: so a hand-built tree translates identically to an EF-produced one.
+    /// Both no-predicate shapes are matched because EF's own preprocessing normalizes a <c>.Count</c>
+    /// property access into the method-call form before the native translator ever sees it, so every real
+    /// query arrives as <c>Queryable.Count(EF.Property(b, "Posts").AsQueryable())</c>. The
+    /// <see cref="MemberExpression"/> arm is still required for a hand-built expression tree (e.g. a unit
+    /// test calling <c>TryTranslate</c> directly), which carries a real <c>List&lt;T&gt;.Count</c> member
+    /// access.
     /// </para>
     /// <para>
-    /// <b>The PREDICATED overloads (EF-359)</b> are matched by canonical <see cref="MethodInfo"/> via
-    /// <see cref="IsCanonicalCountWithPredicate"/> rather than by name — unlike the no-predicate arms above,
-    /// which are left exactly as they were so no previously-shipped path's behavior moves. <see cref="TranslateOperand"/>'s
-    /// caller decides what a predicated match means (a <see cref="MongoFilteredSizeExpression"/>, filtered by the
-    /// element predicate) — this matcher only recognizes the shape and hands back the lambda unevaluated.
+    /// The predicated overloads are matched by canonical <see cref="MethodInfo"/> via
+    /// <see cref="IsCanonicalCountWithPredicate"/> rather than by name. <see cref="TranslateOperand"/>'s
+    /// caller decides what a predicated match means (a <see cref="MongoFilteredSizeExpression"/> filtered by
+    /// the element predicate) — this matcher only recognizes the shape and hands back the lambda unevaluated.
     /// </para>
     /// <para>
-    /// This matcher is PURE and must stay that way: the spike observed
-    /// <see cref="TranslateComparison"/> being entered twice per query, so any recognition hung off it has to be
-    /// idempotent.
+    /// This matcher must stay pure/idempotent: <see cref="TranslateComparison"/> can enter it twice per query.
     /// </para>
     /// <para>
-    /// <b>This matcher is name-based (for the no-predicate arms) and therefore not sufficient on its own</b> — an
-    /// entity may legitimately have a mapped scalar property called <c>Count</c>. What makes that safe is
-    /// <b>structural</b>, not the call-site ordering: every match is gated on
+    /// The name-based match (for the no-predicate arms) is safe even though an entity may legitimately have a
+    /// mapped scalar property called <c>Count</c>: every match is gated on
     /// <see cref="TryResolveOwnedCollectionPath"/>, which requires the source chain to be rooted at the query
-    /// parameter with at least one hop and its FINAL hop to be an embedded collection navigation. A mapped
-    /// scalar's receiver is an entity, never a collection, so a same-named scalar cannot resolve to an array path.
-    /// The call site in <see cref="TranslateOperand"/> additionally runs this after <see cref="TryResolveMember"/>,
-    /// which is worth keeping as defence-in-depth and to avoid the work, but it is not what prevents the
-    /// collision. The predicated arm is matched by canonical <see cref="MethodInfo"/>, so it needs no equivalent
-    /// name-collision argument — a same-named scalar property has no 2-argument overload to collide with.
+    /// parameter with its final hop an embedded collection navigation. A mapped scalar's receiver is an
+    /// entity, never a collection, so it cannot resolve to an array path.
     /// </para>
     /// </remarks>
     private static bool TryMatchCountExpression(
@@ -190,9 +174,9 @@ internal sealed partial class MongoExpressionTranslator
                 source = UnwrapAsQueryable(call.Arguments[0]);
                 return true;
 
-            // The PREDICATED overloads (EF-359). Matched by canonical MethodInfo rather than by name — unlike the
-            // arm above, which is left exactly as it was so no shipped path's behaviour moves. Generic methods are
-            // compared as DEFINITIONS: an open definition and a constructed instantiation are never reference-equal.
+            // The predicated overloads, matched by canonical MethodInfo rather than by name. Generic methods
+            // are compared as definitions: an open definition and a constructed instantiation are never
+            // reference-equal.
             case MethodCallExpression { Arguments.Count: 2 } call when IsCanonicalCountWithPredicate(call.Method):
                 source = UnwrapAsQueryable(call.Arguments[0]);
                 predicate = call.Arguments[1].UnwrapLambdaFromQuote();
@@ -225,33 +209,28 @@ internal sealed partial class MongoExpressionTranslator
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>The hazard — identity, not name, decides scope.</b> The <c>Any</c> arm translates its element predicate
-    /// with a SINGLE-SCOPE <see cref="MongoExpressionTranslator"/> built on the element entity type, and
-    /// single-scope <see cref="TryResolveMember"/> resolves a member access by <em>name</em> against that one
-    /// scope with no parameter-identity check (it never needs one for its other callers, which only ever
-    /// translate a genuinely single-parameter lambda body). So a member rooted on the ENCLOSING query parameter
-    /// would be silently resolved against the ELEMENT type whenever both types declare a property of the same
-    /// name — extremely common (<c>Name</c>, <c>Id</c>, <c>Status</c>, …) — retargeting the condition from the
-    /// owner to the element and returning WRONG ROWS rather than declining. This mirrors the rule, and the
-    /// reasoning, behind <c>NativeSelectManyBinder.ReferencesParameter</c>: scope is decided by reference
-    /// identity, never by member name.
+    /// <b>The hazard: identity, not name, decides scope.</b> The <c>Any</c> arm translates its element
+    /// predicate with a single-scope <see cref="MongoExpressionTranslator"/> built on the element entity
+    /// type, and single-scope <see cref="TryResolveMember"/> resolves a member access by name against that
+    /// one scope with no parameter-identity check. A member rooted on the enclosing query parameter would
+    /// therefore be silently resolved against the element type whenever both types declare a property of the
+    /// same name (e.g. <c>Name</c>, <c>Id</c>), retargeting the condition and returning wrong rows instead of
+    /// declining. This mirrors <c>NativeSelectManyBinder.ReferencesParameter</c>: scope must be decided by
+    /// reference identity, never by member name.
     /// </para>
     /// <para>
     /// <b>Free, not merely present.</b> A <see cref="ParameterExpression"/> declared by a
-    /// <see cref="LambdaExpression"/> INSIDE the body is bound, not free, and must not trigger a decline — a
-    /// nested quantifier (<c>Any(p =&gt; p.Comments.Any(c =&gt; c.Text == "t"))</c>) is supported and its inner
-    /// <c>c</c> is bound by the inner lambda. Parameters bound while descending are therefore tracked and
-    /// exempted. EF query parameters are exempt too: on EF8/EF9 a query parameter IS a
-    /// <see cref="ParameterExpression"/> (a <c>__</c>-prefixed name — see
-    /// <see cref="NativeQueryParameter.TryGetQueryParameterName"/>), so a captured value in the element
-    /// predicate (<c>Any(i =&gt; i.Name == captured)</c>) would otherwise decline on those versions only.
+    /// <see cref="LambdaExpression"/> inside the body is bound, not free, and must not trigger a decline — a
+    /// nested quantifier (<c>Any(p =&gt; p.Comments.Any(c =&gt; c.Text == "t"))</c>) is supported. Parameters
+    /// bound while descending are tracked and exempted; EF query parameters are exempt too, since on EF8/EF9
+    /// a query parameter is itself a <see cref="ParameterExpression"/> (see
+    /// <see cref="NativeQueryParameter.TryGetQueryParameterName"/>).
     /// </para>
     /// <para>
-    /// <b>Deferred, not impossible — tracked as EF-421.</b> Supporting a correlated element predicate is a
-    /// legitimate follow-on slice, but it needs more than a two-scope translator: <c>$elemMatch</c> itself cannot reference the
-    /// enclosing document at all, so the correlated form would have to render as a top-level <c>$expr</c> over
-    /// <c>$filter</c>/<c>$anyElementTrue</c> instead. Declining keeps the shape on the driver-LINQ path, which
-    /// translates it correctly today.
+    /// A correlated element predicate is deferred, not impossible: <c>$elemMatch</c> can't reference the
+    /// enclosing document at all, so supporting it would need a top-level <c>$expr</c> over
+    /// <c>$filter</c>/<c>$anyElementTrue</c> instead of a two-scope translator. Declining keeps the shape on
+    /// the driver-LINQ path, which translates it correctly today.
     /// </para>
     /// </remarks>
     private static bool ReferencesEnclosingScope(Expression body, ParameterExpression elementParameter)

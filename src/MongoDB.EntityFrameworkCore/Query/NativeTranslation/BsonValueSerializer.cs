@@ -41,7 +41,6 @@ internal static class BsonValueSerializer
     /// Coerces a CLR value to <paramref name="target"/> so the property/value serializer (which casts hard to
     /// its exact type) accepts it. Handles <c>Nullable&lt;T&gt;</c> by unwrapping to the underlying type, then
     /// applies enum and numeric promotion. Returns the value unchanged if no safe coercion applies.
-    /// Ported verbatim from the spike's <c>MongoPredicateTranslator.CoerceToPropertyType</c>.
     /// </summary>
     public static object? Coerce(Type target, object? value)
     {

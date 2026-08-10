@@ -25,11 +25,11 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// surfacing the unsupported query shape to the caller.
 /// </summary>
 /// <remarks>
-/// <b>Visibility is an OPEN question, tracked as EF-420.</b> This type is <c>internal</c>, yet under
-/// <see cref="MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.NativeOnly"/> it is the exception a
-/// USER sees and would reasonably want to catch by type. Making it public is a public-API decision (see the
-/// versioning rubric in the repo's AGENTS.md), so it is ticketed rather than changed here. Nothing blocks
-/// merging on it; EF-420 exists so the decision is on record rather than defaulted by silence.
+/// This type is intentionally <c>internal</c> even though, under
+/// <see cref="MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.NativeOnly"/>, it is the exception a
+/// caller sees and might want to catch by type. Per the exception-type rule in the top-level AGENTS.md
+/// versioning rubric, the exception type thrown for an unsupported shape is not part of the public contract,
+/// so making this public is a deliberate public-API decision, not something to change incidentally here.
 /// </remarks>
 internal sealed class NativeTranslationNotSupportedException : Exception
 {

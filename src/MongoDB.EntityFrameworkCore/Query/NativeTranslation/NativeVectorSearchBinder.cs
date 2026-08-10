@@ -21,22 +21,18 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <summary>
 /// Binds a <c>MongoQueryableExtensions.VectorSearch</c> call into
 /// <see cref="MongoSelectDefinition.VectorSearch"/> — the native translator's counterpart to the driver-LINQ
-/// bridge's <c>ProcessVectorSearch</c> (EF-322 VectorSearch slice, Task 4).
+/// bridge's <c>ProcessVectorSearch</c>.
 /// </summary>
 /// <remarks>
+/// <b>Binding the slot is what opens both gates.</b> The compile-time gate reads
+/// <c>ContainsVectorSearch(CapturedExpression) &amp;&amp; Select.VectorSearch is null</c>, so a bound slot
+/// simultaneously means "the disposition is Native" and "the lowerer has a <c>$vectorSearch</c> stage to
+/// emit". The dangerous state — native route with no stage emitted, which would silently return rows in
+/// insertion order instead of score order — is unreachable: this binder either binds the slot or the caller
+/// marks the query non-representable.
 /// <para>
-/// <b>Binding the slot is what opens BOTH gates, and that is the whole point of the design.</b> The gate reads
-/// <c>ContainsVectorSearch(CapturedExpression) &amp;&amp; Select.VectorSearch is null</c> —
-/// <c>hasUnboundVectorSearch</c> — so a bound slot simultaneously means "the disposition is Native" and "the
-/// lowerer has a <c>$vectorSearch</c> stage to emit". There is no ordering to get wrong, and the dangerous
-/// state (native route, no stage emitted — which returns the right ROW COUNT in INSERTION order instead of
-/// score order, silently, with no exception) is unreachable: this binder either binds the slot or the caller
-/// marks the query non-representable, and there is no third exit.
-/// </para>
-/// <para>
-/// Every decline path leaves the query expression completely unmutated, so a declined query falls back to
-/// driver-LINQ with the <c>VectorSearch</c> still in the captured chain — where it executes correctly, exactly
-/// as it did before this slice.
+/// Every decline path leaves the query expression unmutated, so a declined query falls back to driver-LINQ
+/// with <c>VectorSearch</c> still in the captured chain, where it executes correctly.
 /// </para>
 /// </remarks>
 internal static class NativeVectorSearchBinder

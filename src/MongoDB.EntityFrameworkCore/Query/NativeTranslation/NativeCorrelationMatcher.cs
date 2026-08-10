@@ -24,9 +24,8 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <summary>
 /// Recognizes a correlated <c>Where</c>-over-<see cref="Microsoft.EntityFrameworkCore.Query.EntityQueryRootExpression"/>
 /// shape — EF Core's standard FK correlation predicate, comparing an outer key against a dependent-side FK
-/// property — and resolves it to the single matching collection navigation off the outer entity. Extracted
-/// (EF-347 slice 5, Task 1) from <see cref="NativeProjectionBinder"/>'s projected-<c>Count</c> recognition so
-/// it can be shared with a reference-<c>SelectMany</c> binder.
+/// property — and resolves it to the single matching collection navigation off the outer entity. Shared by
+/// <see cref="NativeProjectionBinder"/>'s projected-<c>Count</c> recognition and a reference-<c>SelectMany</c> binder.
 /// </summary>
 internal static class NativeCorrelationMatcher
 {

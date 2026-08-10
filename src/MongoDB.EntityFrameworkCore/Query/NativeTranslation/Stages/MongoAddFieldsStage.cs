@@ -23,11 +23,10 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 /// each document, leaving every existing field in place.
 /// </summary>
 /// <remarks>
-/// EF-401 (stream 1, slice B). Emitted only as part of the <c>$set</c> → <c>$sort</c> → <c>$unset</c> triple
-/// the lowerer produces for a COMPUTED sort key: MQL <c>$sort</c> accepts field paths only, so a non-field
-/// key has to be materialized into a synthetic field first. The payload mirrors
-/// <see cref="MongoProjectStage"/>'s — alias/expression pairs rendered through
-/// <c>MongoAggregationExpressionRenderer</c> — which is what keeps the lowerer BSON-free.
+/// Emitted only as part of the <c>$set</c> → <c>$sort</c> → <c>$unset</c> triple the lowerer produces for a
+/// COMPUTED sort key: MQL <c>$sort</c> accepts field paths only, so a non-field key must be materialized
+/// into a synthetic field first. The payload mirrors <see cref="MongoProjectStage"/>'s — alias/expression
+/// pairs rendered through <c>MongoAggregationExpressionRenderer</c> — keeping the lowerer BSON-free.
 /// </remarks>
 internal sealed class MongoAddFieldsStage : MongoPipelineStage
 {

@@ -44,10 +44,8 @@ internal static class EnumerableMethods
             nameof(Enumerable.LongCount), 1,
             types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
 
-        // The PREDICATED overloads (EF-359) — needed so a hand-built or Enumerable-spelled
-        // Count(source, predicate)/LongCount(source, predicate) tree can be matched by canonical MethodInfo,
-        // mirroring QueryableMethods.CountWithPredicate/LongCountWithPredicate (EF Core's own port already
-        // exposes those; this file only needed the Enumerable-side pair added).
+        // Predicated overloads, mirroring QueryableMethods.CountWithPredicate/LongCountWithPredicate, so a
+        // hand-built or Enumerable-spelled Count/LongCount(source, predicate) tree matches a canonical MethodInfo.
         CountWithPredicate = GetMethod(
             nameof(Enumerable.Count), 1,
             types => [typeof(IEnumerable<>).MakeGenericType(types[0]), typeof(Func<,>).MakeGenericType(types[0], typeof(bool))]);

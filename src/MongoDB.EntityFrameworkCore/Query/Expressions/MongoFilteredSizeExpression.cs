@@ -23,19 +23,15 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>This is deliberately a SIBLING of <see cref="MongoSizeExpression"/> rather than a flag on it, and the
-/// reason is silent wrong data.</b> Four sites match on <c>is MongoSizeExpression</c>, and three of them must
-/// NOT fire for a filtered count:
+/// A deliberate SIBLING of <see cref="MongoSizeExpression"/> rather than a flag on it, to avoid silent wrong
+/// data. Several sites match on <c>is MongoSizeExpression</c> and must NOT fire for a filtered count:
 /// <c>MongoQueryLanguageRenderer.TryRenderSizeComparison</c> would render an integer-constant comparison as an
-/// array-index existence test (<c>{"Posts.2": {$exists: true}}</c>) — which answers the UNFILTERED count's
-/// question, i.e. the wrong rows, with no error;
-/// <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c> would admit it inside <c>$elemMatch</c>, where
-/// <c>$expr</c> is a hard server error;
-/// and <c>MongoExpressionNegator</c> would INVERT the operator, which is the exact complement only because the
-/// rendered <c>$exists</c> form partitions the value space — the <c>$expr</c> form's operators do not.
-/// As a distinct type all three fail CLOSED by construction: a pattern naming
-/// <see cref="MongoSizeExpression"/> simply does not match. With a flag, each would be wrong by default and
-/// right only if a future editor remembered a guard.
+/// array-index existence test (<c>{"Posts.2": {$exists: true}}</c>), answering the UNFILTERED count's
+/// question instead; <c>IsQueryDialectRenderable</c> would admit it inside <c>$elemMatch</c>, where
+/// <c>$expr</c> is a hard server error; and <c>MongoExpressionNegator</c> would INVERT the operator, which is
+/// only the exact complement because the rendered <c>$exists</c> form partitions the value space — the
+/// <c>$expr</c> form's operators do not. As a distinct type, all three fail CLOSED by construction rather than
+/// depending on every site remembering a guard.
 /// </para>
 /// <para>
 /// There is no <c>NullSafe</c> flag. <see cref="MongoSizeExpression"/> carries one because its unfiltered form

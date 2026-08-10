@@ -48,9 +48,8 @@ internal sealed partial class MongoQueryExpression : Expression
 
     /// <summary>
     /// The native-translation logical query IR (filter / sort / paging / projection) for this collection.
-    /// <c>NativeSlotPopulator</c> / <c>NativeProjectionBinder</c> (invoked by the QMTEV) populate its slots;
-    /// the gate and lowerer read them. The property is get-only —
-    /// callers mutate the <see cref="MongoSelectDefinition"/>'s members, they never reassign it.
+    /// <c>NativeSlotPopulator</c> / <c>NativeProjectionBinder</c> populate its slots; the gate and lowerer
+    /// read them. Get-only — callers mutate the <see cref="MongoSelectDefinition"/>'s members, never reassign it.
     /// </summary>
     public MongoSelectDefinition Select { get; } = new();
 
@@ -105,12 +104,10 @@ internal sealed partial class MongoQueryExpression : Expression
         Dictionary<ProjectionMember, Expression> result = new();
         foreach (var (projectionMember, expression) in _projectionMapping)
         {
-            // EF-322 step 3a: the alias normally IS the projection member's own name, but the emit side may
-            // have registered an override for it (see MongoSelectDefinition.AddProjectionAliasOverride) —
-            // notably for a BARE selector body, whose ProjectionMember has no last member at all and would
-            // otherwise yield a null alias. Reading the override here is what keeps the emitted $project key
-            // and the name the DOM shaper reads by the SAME fact rather than two independently derived ones.
-            // The table is empty unless the binder registered something, so this is inert by default.
+            // The alias is normally the projection member's own name, but the emit side may have registered
+            // an override (see MongoSelectDefinition.AddProjectionAliasOverride) — notably for a bare
+            // selector body, whose ProjectionMember has no last member and would otherwise get a null alias.
+            // Reading the override keeps the emitted $project key and the name the DOM shaper reads in sync.
             var memberName = projectionMember.Last?.Name;
             var alias = Select.Route == NativeRoute.Projection
                         && Select.TryGetProjectionAlias(memberName, out var overriddenAlias)

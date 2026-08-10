@@ -18,13 +18,13 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 /// <summary>
 /// A <c>$replaceRoot</c> stage that promotes a field to the root document.
 /// <para>
-/// When <see cref="MergeOwnerKeySentinels"/> is <see langword="true"/> (owned bare-element SelectMany, EF-347):
+/// When <see cref="MergeOwnerKeySentinels"/> is <see langword="true"/> (owned bare-element SelectMany):
 /// merges in the owner key and array ordinal under sentinel field names so the re-rooted owned element's
 /// shadow key properties materialize non-null:
 /// <c>{ $replaceRoot: { newRoot: { $mergeObjects: [ "$&lt;NewRoot&gt;", { __ownerKey: "$_id", __ord: "$__ord" } ] } } }</c>.
 /// </para>
 /// <para>
-/// When <see cref="MergeOwnerKeySentinels"/> is <see langword="false"/> (reference bare-entity SelectMany, EF-347):
+/// When <see cref="MergeOwnerKeySentinels"/> is <see langword="false"/> (reference bare-entity SelectMany):
 /// a plain <c>{ $replaceRoot: { newRoot: "$&lt;NewRoot&gt;" } }</c> — a reference entity carries its own real
 /// stored key, so no sentinel merge is needed.
 /// </para>

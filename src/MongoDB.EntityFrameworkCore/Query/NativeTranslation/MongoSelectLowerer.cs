@@ -27,7 +27,7 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <summary>
 /// Converts the native-translation IR on a <see cref="MongoQueryExpression"/> into a fully-typed
 /// <see cref="MongoPipelineStage"/> list: the filter/sort/page ops (<see cref="MongoSelectDefinition.PipelineOps"/>)
-/// are emitted verbatim in their recorded arrival order (EF-347 — no fixed canonical order), followed by
+/// are emitted verbatim in their recorded arrival order (no fixed canonical order), followed by
 /// <c>$lookup</c>/<c>$unwind</c> and any terminal stage (<c>$unionWith</c>/<c>$group</c>/<c>$project</c>/aggregate).
 /// </summary>
 /// <remarks>
@@ -79,14 +79,14 @@ internal sealed class MongoSelectLowerer
         }
 
         // 1. $match / $sort / $skip / $limit ops, emitted verbatim in the order they were recorded
-        // (Select.PipelineOps — EF-347: no fixed canonical order; arrival order IS emission order).
+        // (Select.PipelineOps — no fixed canonical order; arrival order is emission order).
         AppendSelectOpStages(select.PipelineOps, stages, sortFields);
 
-        // 2. $lookup/$unwind — cross-collection includes (group-3 lookup state stays on the query node).
-        // A projected collection-navigation Count (NativeProjectionBinder.TryTranslateProjectedCollectionCount)
-        // registers an IsNativeCollectionLookup $lookup here (InjectAfterRoot=true) so its _lookup_<Nav> array
-        // is already present by the time the $project below reads it via $size — placing lookups after the
-        // filter/sort/page block (but before $project) already satisfies that without any lowerer change.
+        // 2. $lookup/$unwind — cross-collection includes (lookup state stays on the query node).
+        // A projected collection-navigation Count registers an IsNativeCollectionLookup $lookup here
+        // (InjectAfterRoot=true) so its _lookup_<Nav> array is already present by the time the $project
+        // below reads it via $size — placing lookups after the filter/sort/page block (but before $project)
+        // satisfies that without any lowerer change.
         AppendLookupStages(query, stages);
 
         // Set operation terminal ($unionWith [+ dedup] or a set-difference shape for Intersect/Except).
@@ -94,13 +94,13 @@ internal sealed class MongoSelectLowerer
         // grouping/projection/cardinality/lookups), so the operand lowers to its own filter/sort/page ops only.
         if (select.SetOperation is { } setOp)
         {
-            // EF-347 slice C1: projected operands. Each operand's own $project is part of ITS pipeline and
-            // must be emitted BEFORE the combine — source1's ahead of the set-op stage (appended to `stages`
-            // right after source1's PipelineOps above), the operand's inside the nested `operandStages`. The
-            // dedup ($group{_id:$$ROOT}) and Intersect/Except source-tagging then operate over the PROJECTED
-            // documents (correct: BCL dedups/compares the projected values). Contrast slice C2 (a trailing
-            // projection over the COMBINED result), where OperandsProjected is false and select.Projection is
-            // emitted AFTER the set-op stage by the fall-through Projection block below.
+            // Projected operands: each operand's own $project is part of ITS pipeline and must be emitted
+            // before the combine — source1's ahead of the set-op stage (appended to `stages` right after
+            // source1's PipelineOps above), the operand's inside the nested `operandStages`. The dedup
+            // ($group{_id:$$ROOT}) and Intersect/Except source-tagging then operate over the projected
+            // documents (correct: dedup/compare the projected values). Contrast a trailing projection over
+            // the combined result, where OperandsProjected is false and select.Projection is emitted after
+            // the set-op stage by the fall-through Projection block below.
             if (setOp.OperandsProjected)
             {
                 stages.Add(new MongoProjectStage(select.Projection));
@@ -123,21 +123,21 @@ internal sealed class MongoSelectLowerer
                     operandStages, setOp.OperandCollectionName, dedup: setOp.Kind == MongoSetOperationKind.Union));
             }
 
-            // EF-347 slice B: post-set-op composition. Trailing $match/$sort/$skip/$limit emit AFTER the
-            // set-op stage (they operate on the COMBINED result), then fall through to the Projection block
-            // (EF-347 slice C2: a trailing anonymous/DTO Select after a set op populates Select.Projection,
-            // emitted here as a $project after the set-op stage and TrailingOps) and the Cardinality block
-            // (post-set-op aggregate/reducer). UnwindSource/Grouping stay empty for a set-op query and their
-            // blocks are skipped.
+            // Post-set-op composition: trailing $match/$sort/$skip/$limit emit after the set-op stage (they
+            // operate on the combined result), then fall through to the Projection block (a trailing
+            // anonymous/DTO Select after a set op populates Select.Projection, emitted here as a $project
+            // after the set-op stage and TrailingOps) and the Cardinality block (post-set-op
+            // aggregate/reducer). UnwindSource/Grouping stay empty for a set-op query and their blocks are
+            // skipped.
             AppendSelectOpStages(select.TrailingOps, stages, sortFields);
             // NB: no early return — control continues to the Cardinality block.
         }
 
-        // Terminal native SelectMany (EF-347 slices 3-5), then $project the result selector (populated in
-        // Select.Projection by NativeSelectManyBinder). Terminal — nothing follows.
-        // Owned (embedded, slice 3/4): $unwind the embedded array directly here.
-        // Reference (cross-collection, slice 5): the $lookup + $unwind were already appended above by
-        // AppendLookupStages (stage 5, ForceUnwind-collection branch) — nothing further to add here.
+        // Terminal native SelectMany, then $project the result selector (populated in Select.Projection by
+        // NativeSelectManyBinder). Terminal — nothing follows.
+        // Owned (embedded): $unwind the embedded array directly here.
+        // Reference (cross-collection): the $lookup + $unwind were already appended above by
+        // AppendLookupStages (the ForceUnwind-collection branch) — nothing further to add here.
         if (select.UnwindSource is { } unwind)
         {
             if (unwind.Kind == MongoUnwindSourceKind.Owned)
@@ -147,10 +147,9 @@ internal sealed class MongoSelectLowerer
 
             // Inner-element-only user filter (o.Refs.Where(pred)): a $match on the unwound element, emitted
             // after the $unwind (owned: just above; reference: already emitted by AppendLookupStages) and
-            // before the $replaceRoot (WholeElement) / $project (projected).
-            // Already scope-prefixed by the binder (reference: "_lookup_Refs.Total"; owned: "Items.Total").
-            // EF-347 filtered-inner slice — populated for BOTH reference (TryBindReferenceNavUnwind) and owned
-            // (TryBind / TryBindBareNavUnwind); the emission here is kind-agnostic.
+            // before the $replaceRoot (WholeElement) / $project (projected). Already scope-prefixed by the
+            // binder (reference: "_lookup_Refs.Total"; owned: "Items.Total"); the emission here is
+            // kind-agnostic.
             if (unwind.Filter is { } filter)
                 stages.Add(new MongoMatchStage(filter));
 
@@ -158,10 +157,10 @@ internal sealed class MongoSelectLowerer
             {
                 // Bare whole-inner-element SelectMany: promote the unwound element to root.
                 // Owned (embedded, shadow key): $mergeObjects the owner key + array ordinal in under sentinel
-                // fields so the owned element's shadow key materializes non-null (EF-347 bare-owned spike).
-                // Reference (cross-collection): the $lookup + $unwind were already appended by AppendLookupStages
-                // above; a reference entity carries its own real stored key, so a PLAIN $replaceRoot suffices —
-                // no sentinel merge (EF-347 ref-bare-entity slice).
+                // fields so the owned element's shadow key materializes non-null.
+                // Reference (cross-collection): the $lookup + $unwind were already appended by
+                // AppendLookupStages above; a reference entity carries its own real stored key, so a plain
+                // $replaceRoot suffices — no sentinel merge.
                 stages.Add(new MongoReplaceRootStage(
                     unwind.InnerScopePath,
                     mergeOwnerKeySentinels: unwind.Kind == MongoUnwindSourceKind.Owned));
@@ -191,12 +190,12 @@ internal sealed class MongoSelectLowerer
             return stages;
         }
 
-        // 6. $project — server-side projection (terminal member-access anonymous/DTO Select). Emitted
-        // last here: the projection is the final logical operation for the SP3 terminal slice, after
-        // the filter/sort/page ops and any $lookup.
-        // A projected-operand set op (slice C1) already emitted source1's $project above, ahead of the
-        // set-op stage — don't re-emit it here. A trailing projection after a set op (slice C2, OperandsProjected
-        // false) and a plain projected Select (no set op) both still emit here.
+        // 6. $project — server-side projection (terminal member-access anonymous/DTO Select). Emitted last
+        // here: the projection is the final logical operation, after the filter/sort/page ops and any
+        // $lookup.
+        // A projected-operand set op already emitted source1's $project above, ahead of the set-op stage —
+        // don't re-emit it here. A trailing projection after a set op (OperandsProjected false) and a plain
+        // projected Select (no set op) both still emit here.
         if (select.Projection.Count > 0 && !(select.SetOperation?.OperandsProjected ?? false))
         {
             stages.Add(new MongoProjectStage(select.Projection));
@@ -233,7 +232,7 @@ internal sealed class MongoSelectLowerer
     /// in their recorded order. Shared by the outer query's own <see cref="MongoSelectDefinition.PipelineOps"/>,
     /// a set-operation operand's <see cref="MongoSelectDefinition.PipelineOps"/>
     /// (<see cref="MongoSetOperation.OperandSelect"/>, a plain whole-entity select), and the outer query's
-    /// post-set-op <see cref="MongoSelectDefinition.TrailingOps"/> (EF-347 slice B).
+    /// post-set-op <see cref="MongoSelectDefinition.TrailingOps"/>.
     /// </summary>
     private static void AppendSelectOpStages(
         IReadOnlyList<MongoSelectOp> ops,
@@ -260,21 +259,20 @@ internal sealed class MongoSelectLowerer
     }
 
     /// <summary>
-    /// Emits one <see cref="MongoSortOp"/>. A key that is already a field path is emitted as-is; a COMPUTED
+    /// Emits one <see cref="MongoSortOp"/>. A key that is already a field path is emitted as-is; a computed
     /// key is materialized into a synthetic field by a preceding <c>$set</c> and removed again by a following
-    /// <c>$unset</c>, because MQL <c>$sort</c> accepts field paths only (EF-401, stream 1 slice B).
+    /// <c>$unset</c>, because MQL <c>$sort</c> accepts field paths only.
     /// </summary>
     /// <remarks>
-    /// <b>ONE <c>$set</c> and ONE <c>$unset</c> per sort STAGE, carrying every computed key of that stage</b> —
-    /// a <see cref="MongoSortOp"/> already holds a whole <c>OrderBy</c>/<c>ThenBy</c> chain's orderings as one
-    /// op (EF-347), so the three stages bracket the whole sort.
+    /// One <c>$set</c> and one <c>$unset</c> per sort stage, carrying every computed key of that stage — a
+    /// <see cref="MongoSortOp"/> already holds a whole <c>OrderBy</c>/<c>ThenBy</c> chain's orderings as one
+    /// op, so the three stages bracket the whole sort.
     /// <para>
-    /// <b>The no-computed-key early return is LOAD-BEARING, not tidiness.</b> MEASURED (spike §6.2) with a
-    /// <c>queryPlanner</c> explain: <c>{$sort: {A: 1}}</c> over an indexed <c>A</c> is an <c>IXSCAN</c>, and
-    /// the IDENTICAL sort preceded by an unrelated <c>$set</c> is a <c>COLLSCAN</c>. Emitting the <c>$set</c>
-    /// unconditionally would silently cost every existing field sort its index. (It follows that a MIXED sort
-    /// does not keep its field key index-usable either — that cost is accepted, since the alternative is not
-    /// supporting computed sort keys at all; a <c>$match</c> ahead of the sort keeps its own index normally.)
+    /// The no-computed-key early return is load-bearing, not tidiness: an indexed field sort preceded by an
+    /// unrelated <c>$set</c> loses its index (measured via <c>explain</c>: an <c>IXSCAN</c> becomes a
+    /// <c>COLLSCAN</c>). Emitting the <c>$set</c> unconditionally would silently cost every existing field
+    /// sort its index. A mixed sort still pays this cost on its field key — accepted, since the alternative
+    /// is not supporting computed sort keys at all.
     /// </para>
     /// </remarks>
     private static void AppendSortStages(
@@ -329,14 +327,12 @@ internal sealed class MongoSelectLowerer
         {
             if (lookup.IsStreamableReference)
             {
-                // EF-368 Task 5: the $unwind must follow the navigation's own requiredness (INNER for a
-                // required nav so a dangling FK drops the row; LEFT-outer for an optional one so it
-                // survives with a null navigation) rather than the LEFT-outer default every earlier caller
-                // of this arm relied on. The registered LookupExpression already carries that decision on
-                // PreserveNullAndEmptyArrays (set at confirmation time in TryConfirmReferenceInclude); it
-                // must be threaded through here explicitly, not left to MongoUnwindStage's own
-                // LEFT-outer-by-default parameter, or every reference Include would silently unwind
-                // LEFT-outer regardless of requiredness.
+                // The $unwind must follow the navigation's own requiredness (inner for a required nav so a
+                // dangling FK drops the row; left-outer for an optional one so it survives with a null
+                // navigation), not a fixed default. The registered LookupExpression already carries that
+                // decision on PreserveNullAndEmptyArrays (set at confirmation time); it must be threaded
+                // through here explicitly, or every reference Include would silently unwind left-outer
+                // regardless of requiredness.
                 stages.Add(new MongoLookupStage(lookup));
                 stages.Add(new MongoUnwindStage(lookup, lookup.PreserveNullAndEmptyArrays));
             }
@@ -349,10 +345,10 @@ internal sealed class MongoSelectLowerer
             }
             else if (lookup.Navigation.IsCollection && lookup.ForceUnwind)
             {
-                // EF-347 slice 5: a cross-collection reference SelectMany flatten — $lookup the referenced
-                // collection, then $unwind to one row per child with INNER-JOIN semantics (preserve:false):
-                // a principal with no children drops out. (Include's reference $unwind uses preserve:true /
-                // LEFT-join; this is the opposite.)
+                // A cross-collection reference SelectMany flatten: $lookup the referenced collection, then
+                // $unwind to one row per child with inner-join semantics (preserve:false) — a principal with
+                // no children drops out. (Include's reference $unwind uses preserve:true / left-join; this
+                // is the opposite.)
                 stages.Add(new MongoLookupStage(lookup));
                 stages.Add(new MongoUnwindStage(lookup, preserveNullAndEmptyArrays: false));
             }
@@ -376,39 +372,22 @@ internal sealed class MongoSelectLowerer
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b>Per-invocation, deliberately — a process-global counter is a measured defect, not a style choice.</b>
-    /// The slice-B prototype used one and emitted <c>__sort3</c> for a specification test and <c>__sort4</c>
-    /// for its <c>async</c> twin, which would make every committed <c>AssertMql</c> baseline unstable across
-    /// runs.
+    /// Per-invocation, deliberately: a process-global counter would make emitted synthetic names (and so
+    /// committed <c>AssertMql</c> baselines) depend on execution order across runs.
     /// </para>
     /// <para>
-    /// <b>The reserved set is a collision guard, not decoration.</b> <c>$set</c> OVERWRITES a same-named
-    /// existing field silently — the same hazard the owned bare-element path guards against for
-    /// <c>$mergeObjects</c> (see <c>IsWholeElementRepresentable</c>'s sentinel-collision check). A model may
-    /// map a property to any element name, including one of these, via <c>HasElementName</c>.
+    /// The reserved set is a collision guard: <c>$set</c> silently overwrites a same-named existing field, and
+    /// a model may map a property to any element name, including one of these, via <c>HasElementName</c>.
     /// </para>
     /// <para>
-    /// <b>THIS GUARD IS INCOMPLETE. It is NOT "collisions are handled" — TWO KNOWN HOLES ARE OPEN, TRACKED AS
-    /// EF-408, AND EITHER ONE SILENTLY OVERWRITES A USER FIELD.</b> A property renamed onto a synthetic name via
-    /// <c>HasElementName</c> in either of the two shapes below is not in the reserved set, so <c>$set</c>
-    /// clobbers it and the query returns the sort key where the user's stored value should be — no exception,
-    /// under the default <c>Native</c> mode. Both holes are UNVERIFIED (neither has been shown reachable, and
-    /// neither has a test); "unverified" here means UNMEASURED, not "known safe". Do not read the reserved set
-    /// as complete hardening.
-    /// </para>
-    /// <para>
-    /// <b>The two gaps (EF-408), both accepted deliberately for this slice:</b>
-    /// (1) a set-op operand of a DIFFERENT entity type (only reachable via a projected different-collection
-    /// operand, EF-347 slice C1) is not covered — the reserved set is built once, from the ROOT entity type,
-    /// and <see cref="MongoSetOperation"/> exposes only <c>OperandSelect</c>/<c>OperandCollectionName</c>, not
-    /// the operand's own <see cref="IEntityType"/>, so covering it means widening that IR (out of scope here).
-    /// (2) a TPH DERIVED type's own members are not covered — <see cref="IEntityType.GetProperties"/> and
-    /// <see cref="IEntityType.GetNavigations"/> on the root return declared and INHERITED members only, not
-    /// derived ones, yet every derived type in a TPH hierarchy occupies the SAME top-level document namespace,
-    /// so a derived-only property renamed to a synthetic name would collide identically. Recorded as a
-    /// documented limitation rather than swept via <c>GetDerivedTypes()</c> — narrower surface for this task,
-    /// consistent with this file's own precedent of declining-and-documenting a narrow edge case rather than
-    /// fixing the underlying gap immediately (see the owned bare-element notes in this file's AGENTS.md).
+    /// <b>This guard is incomplete — two known gaps remain.</b> (1) A set-op operand of a
+    /// different entity type is not covered, since the reserved set is built once from the root entity type
+    /// and <see cref="MongoSetOperation"/> exposes no way to reach the operand's own <see cref="IEntityType"/>.
+    /// (2) A TPH derived type's own members are not covered, since <see cref="IEntityType.GetProperties"/>/
+    /// <see cref="IEntityType.GetNavigations"/> on the root return declared and inherited members only, not
+    /// derived ones, though every derived type occupies the same top-level document namespace. Either gap
+    /// means a property renamed via <c>HasElementName</c> onto one of these synthetic names would be silently
+    /// clobbered by <c>$set</c> under the default <c>Native</c> mode; neither has been shown reachable.
     /// </para>
     /// </remarks>
     private sealed class SyntheticSortFieldAllocator(IReadOnlyCollection<string> reservedElementNames)

@@ -154,29 +154,24 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
     }
 
     [Theory]
-    [InlineData(false)] // value converter on the discriminator (GetValueConverter guard clause)
-    [InlineData(true)]  // non-default BsonRepresentation on the discriminator (GetBsonRepresentation guard clause)
-    public void OfType_value_converted_or_represented_discriminator_falls_back(bool useBsonRepresentation)
+    [InlineData(false)] // value converter on the discriminator
+    [InlineData(true)]  // non-default BsonRepresentation on the discriminator
+    public void OfType_value_converted_or_represented_discriminator_goes_native(bool useBsonRepresentation)
     {
-        // A discriminator property with a value converter or a non-default BsonRepresentation must NOT go
-        // native. The driver-LINQ discriminator filter uses the RAW discriminator value (via
-        // MongoEFDiscriminator.GetDiscriminatorsForTypeAndSubTypes → BsonValue.Create(GetDiscriminatorValue())),
-        // bypassing the conversion, whereas the native predicate serializes THROUGH the property serializer,
-        // which applies it. The two therefore produce different discriminator BSON, so an unguarded native
-        // $eq/$in would return a DIFFERENT row set than the driver-LINQ path — violating Native == DriverLinq.
-        // (Empirically, the write applies the conversion — e.g. it stores "d:Client" for a value converter, or
-        // "1" for an int-as-string representation — while the driver's filter queries the raw model value, so
-        // the driver-LINQ path itself returns 0 rows for OfType here; the guard's job is to keep native
-        // IDENTICAL to that established driver-LINQ path, not to second-guess it.) TryBuildDiscriminatorPredicate's
-        // value-converter / BsonRepresentation guard rejects this discriminator so the query falls back to
-        // driver-LINQ (throwing only under NativeOnly).
+        // EF-349 fixed MongoEFDiscriminator.GetDiscriminator(sForTypeAndSubTypes) to build the driver-LINQ
+        // filter value by serializing THROUGH the discriminator property's serializer, the same transform
+        // the write path applies — so the driver-LINQ filter now matches the stored, converted/represented
+        // "_t" value instead of the raw model value. The native predicate already serialized through the
+        // property serializer (MongoConstantExpression.ForSerialization), so native and driver-LINQ now
+        // agree, and TryBuildDiscriminatorPredicate no longer needs to reject this discriminator shape —
+        // it goes native like any other OfType, and both paths return the correct 4-row Customer subtree
+        // (previously, pre-fix, the driver-LINQ path itself incorrectly returned 0 rows here).
         Action<ModelBuilder> model = useBsonRepresentation
             ? IntDiscriminatorStringRepresentationModel
             : ConvertedDiscriminatorModel;
         var collection = database.CreateCollection<BaseEntity>(values: [useBsonRepresentation]);
         SetupTestData(Make(collection, MongoQueryMode.Native, model));
 
-        // Native == DriverLinq: with the guard active, native falls back so both paths return the SAME rows.
         using (var nativeDb = Make(collection, MongoQueryMode.Native, model))
         using (var driverDb = Make(collection, MongoQueryMode.DriverLinq, model))
         {
@@ -184,15 +179,14 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
             var driverIds = driverDb.Entities.OfType<Customer>().OrderBy(e => e._id).Select(e => e._id).ToList();
 
             Assert.Equal(driverIds, nativeIds);
+            Assert.Equal(4, nativeIds.Count);
         }
 
-        // NativeOnly is the load-bearing assertion: it throws ONLY because the guard forced fallback. Without
-        // the guard the query would go native and NOT throw (it would return the 4 Customer-subtree rows,
-        // diverging from the driver-LINQ path's 0 — verified by temporarily removing the guard). So this throw
-        // proves both that the guard fires and that it is necessary to preserve parity.
+        // Succeeding under NativeOnly (rather than throwing) is the "went native" signal.
         using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly, model);
-        Assert.Throws<NativeTranslationNotSupportedException>(() =>
-            nativeOnlyDb.Entities.OfType<Customer>().ToList());
+        var result = nativeOnlyDb.Entities.OfType<Customer>().ToList();
+        Assert.Equal(4, result.Count);
+        Assert.All(result, e => Assert.IsAssignableFrom<Customer>(e));
     }
 
     [Fact]
@@ -368,9 +362,7 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
         mb.Entity<Contact>();
     }
 
-    // A shadow int discriminator whose element carries a non-default (String) BsonRepresentation. The int
-    // value is what MongoEFDiscriminator writes/queries RAW (bypassing the representation), so the native
-    // predicate — which would apply the representation — must be rejected by the guard.
+    // A shadow int discriminator whose element carries a non-default (String) BsonRepresentation.
     private static void IntDiscriminatorStringRepresentationModel(ModelBuilder mb)
     {
         mb.Entity<BaseEntity>()
@@ -385,9 +377,7 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
         mb.Entity<BaseEntity>().Property<int>("IntType").HasBsonRepresentation(BsonType.String);
     }
 
-    // A string discriminator with a value converter: the write stores a prefixed form ("d:Client") but the
-    // driver-LINQ discriminator filter uses the raw model value ("Client"), so a native predicate (which
-    // applies the converter) would diverge from the driver path — exercising the guard's value-converter clause.
+    // A string discriminator with a value converter: the write stores a prefixed form ("d:Client").
     private static void ConvertedDiscriminatorModel(ModelBuilder mb)
     {
         mb.Entity<BaseEntity>()

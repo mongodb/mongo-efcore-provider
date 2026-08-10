@@ -11,8 +11,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
 /// An array of owned entities read back from a native <c>$project</c> OUTPUT ALIAS rather than from the
-/// navigation's own document path — the alias-addressed sibling of
-/// <see cref="ObjectArrayProjectionExpression"/> (EF-322 owned-data slice 8).
+/// navigation's own document path — the alias-addressed sibling of <see cref="ObjectArrayProjectionExpression"/>.
 /// </summary>
 /// <remarks>
 /// <para>
