@@ -197,9 +197,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
     /// <summary>
     /// Rewrite the post-injection materializer into a forward-streaming materializer that reads from
-    /// <paramref name="readerParameter"/>. The caller is responsible for opening (via
-    /// <see cref="BsonRowReader.Open"/> or otherwise), positioning, and disposing the reader — this method
-    /// only reads the root document's fields (<c>ReadStartDocument</c> / fill loop / <c>ReadEndDocument</c>)
+    /// <paramref name="readerParameter"/>. The caller is responsible for opening, positioning, and disposing the reader
+    /// — this method only reads the root document's fields (<c>ReadStartDocument</c> / fill loop / <c>ReadEndDocument</c>)
     /// and rewrites the materializer body to consume the streamed locals.
     /// </summary>
     public BlockExpression Rewrite(

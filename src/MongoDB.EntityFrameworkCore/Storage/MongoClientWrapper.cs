@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -108,33 +109,20 @@ public class MongoClientWrapper : IMongoClientWrapper
             log = () => _commandLogger.ExecutedMqlQuery(executableQuery.CollectionNamespace, loggedStages);
             if (executableQuery.Streaming)
             {
-                if (executableQuery.OutputSerializer is { } outputSerializer)
-                {
-                    // One-pass "deserialize IS materialize" (SP7 P1.2): the custom output serializer runs the
-                    // compiled EF materializer off the cursor's own IBsonReader, so the Aggregate cursor yields
-                    // finished (T == the shaped entity) instances directly — a single forward pass, no
-                    // RawBsonDocument wrapper + second materialization pass. T is the shaped result type, so the
-                    // supplied serializer is an IBsonSerializer<T>.
-                    var entityCollection = Database.GetCollection<BsonDocument>(executableQuery.CollectionNamespace.CollectionName);
-                    PipelineDefinition<BsonDocument, BsonDocument> basePipe = loggedStages;
-                    var typedPipeline = basePipe.As<BsonDocument, BsonDocument, T>((IBsonSerializer<T>)outputSerializer);
-                    var typedCursor = executableQuery.Session is { } typedSession
-                        ? entityCollection.Aggregate(typedSession, typedPipeline)
-                        : entityCollection.Aggregate(typedPipeline);
-                    return (IEnumerable<T>)typedCursor.ToEnumerable();
-                }
+                Debug.Assert(executableQuery.OutputSerializer != null, "Streaming native path requires output serializer.");
 
-                // Fallback streaming path (no one-pass serializer built): forward-only RawBsonDocument rows
-                // materialized by the caller's compiled streaming shaper. Retained for streaming shapes the
-                // one-pass serializer path does not cover — but there are none today: SP7 made the one-pass
-                // serializer cover every streaming-eligible shape, so this branch is DEAD. TODO(EF-419) tracks
-                // deleting it together with Query/NativeTranslation/BsonRowReader.
-                var rawCollection = Database.GetCollection<RawBsonDocument>(executableQuery.CollectionNamespace.CollectionName);
-                PipelineDefinition<RawBsonDocument, RawBsonDocument> rawPipeline = loggedStages;
-                var rawCursor = executableQuery.Session is { } rawSession
-                    ? rawCollection.Aggregate(rawSession, rawPipeline)
-                    : rawCollection.Aggregate(rawPipeline);
-                return (IEnumerable<T>)rawCursor.ToEnumerable();
+                // One-pass "deserialize IS materialize" (SP7 P1.2): the custom output serializer runs the
+                // compiled EF materializer off the cursor's own IBsonReader, so the Aggregate cursor yields
+                // finished (T == the shaped entity) instances directly — a single forward pass, no
+                // RawBsonDocument wrapper + second materialization pass. T is the shaped result type, so the
+                // supplied serializer is an IBsonSerializer<T>.
+                var entityCollection = Database.GetCollection<BsonDocument>(executableQuery.CollectionNamespace.CollectionName);
+                PipelineDefinition<BsonDocument, BsonDocument> basePipe = loggedStages;
+                var typedPipeline = basePipe.As((IBsonSerializer<T>)executableQuery.OutputSerializer);
+                var typedCursor = executableQuery.Session is { } typedSession
+                    ? entityCollection.Aggregate(typedSession, typedPipeline)
+                    : entityCollection.Aggregate(typedPipeline);
+                return typedCursor.ToEnumerable();
             }
 
             var collection = Database.GetCollection<BsonDocument>(executableQuery.CollectionNamespace.CollectionName);

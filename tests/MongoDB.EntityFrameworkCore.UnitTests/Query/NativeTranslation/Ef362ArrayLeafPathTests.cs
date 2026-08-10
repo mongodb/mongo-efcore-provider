@@ -167,7 +167,7 @@ public class Ef362ArrayLeafPathTests
         var (root, _) = BuildModel();
         var posts = Navigation(root, nameof(Blog.Posts));
 
-        Assert.True(posts.TargetEntityType.GetNavigations().Any(n => n.IsEagerLoaded));
+        Assert.Contains(posts.TargetEntityType.GetNavigations(), n => n.IsEagerLoaded);
         Assert.False(NativeProjectionBinder.IsNativeArrayProjectionLeaf(posts, root, "Posts"));
     }
 }

@@ -6,7 +6,7 @@ plan recorded in draft PR #324 and in `docs/native-query-status-EF-322.md` §9.8
 *Every number here is **MEASURED** at `95162c86` unless tagged otherwise. The measurement method is recorded in
 status-doc §9.0 and must be reused for the checkpoint in §7 — this project has twice had a plan built on a
 bucket label that was wrong by 40%, so a number's provenance is part of the number.*
-
+    
 ***Two exceptions to that blanket claim, found on the final whole-phase review and now tagged in place:**
 §3's per-feature list for stream 1 is **CITED** from the 2026-08-06 message-bucket analysis, not measured here —
 five of its figures moved when the stream-1 spike re-derived them (see the boxed correction in §3); and §3's

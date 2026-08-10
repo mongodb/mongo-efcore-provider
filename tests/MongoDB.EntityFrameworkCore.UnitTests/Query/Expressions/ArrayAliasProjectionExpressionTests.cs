@@ -51,7 +51,7 @@ public class ArrayAliasProjectionExpressionTests
         var navigation = GetPostsNavigation();
         var sut = new ArrayAliasProjectionExpression(navigation, new RootReferenceExpression(navigation.DeclaringEntityType));
 
-        Assert.Null(((IArrayProjectionExpression)sut).ArrayFieldName);
+        Assert.Null(sut.ArrayFieldName);
     }
 
     [Fact]

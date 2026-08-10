@@ -145,7 +145,7 @@ internal static class BsonBinding
             {IsBsonArray: true} => bsonValue.AsBsonArray,
             {IsBsonNull: true} => null,
             _ => throw new InvalidOperationException(
-                $"Document element '{name}' is {bsonValue.BsonType} when {nameof(BsonArray)} is required.")
+                $"Document element '{name}' is {bsonValue?.BsonType} when {nameof(BsonArray)} is required.")
         };
     }
 
