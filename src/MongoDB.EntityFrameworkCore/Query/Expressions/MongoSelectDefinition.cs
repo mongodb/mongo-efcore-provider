@@ -711,7 +711,11 @@ internal sealed class MongoSelectDefinition
     /// enumerating metadata shapes. It does NOT close TPH discriminator narrowing: a TPH derived-type
     /// Include target is currently admitted natively (measured — <c>NativeOnly</c> succeeds, no decline
     /// — because EF does not record a discriminator predicate on the join's inner select for this shape),
-    /// which produces no measured wrong data and is not new to this branch.
+    /// which produces no measured wrong data and is not new to this branch. Read that last clause narrowly:
+    /// "no MEASURED wrong data" is a statement about the probes that were run, NOT about the shape.
+    /// TRACKED AS EF-426, which also owns reconciling with EF-374 — the same concern filed from the EF-368
+    /// side, with its own measurements. Whoever picks either one up must fold them together rather than
+    /// investigate both independently.
     /// </para>
     /// </summary>
     internal void MarkSawNonBareJoinInner() => _sawNonBareJoinInner = true;

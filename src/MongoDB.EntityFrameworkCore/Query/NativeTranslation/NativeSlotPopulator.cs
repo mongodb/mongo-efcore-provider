@@ -472,6 +472,11 @@ internal static class NativeSlotPopulator
     /// predicate, at its one source inside <c>MongoExpressionTranslator</c>'s filtered-size translation — that
     /// preserves the default-serialized common case and closes PREDICATE and PROJECTION position at the same
     /// time. It is NOT to re-add a node-kind decline in sort position only.
+    /// TRACKED AS EF-429 — an open correctness QUESTION, not a known bug: nothing here has been measured
+    /// wrong. That ticket carries the measurement that would settle it (native vs. explicit
+    /// <c>DriverLinq</c> vs. in-memory LINQ over the same <c>Expression</c>, run for a value-TRANSFORMING and
+    /// a RE-ENCODING converter on an element operand, asserting ORDER rather than a row count) and maps each
+    /// of the three possible outcomes to a disposition.
     /// </para>
     /// </remarks>
     private static bool TryTranslateComputedSortKey(

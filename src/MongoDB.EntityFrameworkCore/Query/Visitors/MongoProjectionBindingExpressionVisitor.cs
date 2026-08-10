@@ -604,7 +604,9 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 // Deliberately narrow. First/Any/Sum/... are stranded on the same fall-through for the same
                 // reason (never rebuilt against their Enumerable equivalents); adding a case per method changes
                 // type coercion on a path every projection walks, in all three modes, so it is left as a
-                // follow-on. The REBUILD branch below can only fire on a shape that throws today.
+                // follow-on. TRACKED AS EF-427, together with the non-bare filtered-count arm further down
+                // this same switch — one root cause, one file, but the two halves are separable.
+                // The REBUILD branch below can only fire on a shape that throws today.
                 //
                 // The DECLINE branch (visitedSource is not a CollectionShaperExpression) is intentionally
                 // `break`, not `return null`: falling through to the untouched generic fall-through below
@@ -671,6 +673,11 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 // OPERAND of the top-level `*`, not the selector body itself, so identity fails and this arm
                 // declines. Widening to "the Count call appears anywhere reachable from the root, with no
                 // interposed shaper reference" is a follow-on, not something this task claims.
+                // TRACKED AS EF-427, the same ticket as the stranded-terminal-operator arm above — note the
+                // asymmetry that ticket records: the UNFILTERED `Select(b => b.Posts.Count * 2)` is a graceful
+                // decline with correct values in the two fallback modes, while this FILTERED spelling is a hard
+                // fail in all three, and the WRAPPED filtered form is native. The `new {...}` is the difference,
+                // not the arithmetic.
                 //
                 // The Enumerable overload takes a Func<,>, not an Expression<Func<,>>, so the predicate lambda
                 // must be UNQUOTED — UnwrapLambdaFromQuote (used the same way by the adjacent Select case above)

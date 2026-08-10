@@ -99,6 +99,8 @@ Two further GitHub references appear in the codebase but are not `// Fails:`-tag
 
 These entries appear in `// Fails:` comments without an `EF-` or `CSHARP-` reference, or in test bodies as un-commented failure assertions. Each entry is assigned a **temporary** ticket id of the form `EF-X###` to be replaced with a real Jira number once filed; the `X` makes it obvious in `grep` results that the id is a placeholder.
 
+> **[EF-430](https://jira.mongodb.org/browse/EF-430) owns filing the real issues and replacing every `EF-X` key** — in this section and in the `// Fails:` tags across the spec-tests project; it carries the per-key tag counts, notes that `EF-X016` is used for two different subjects in the table below, and states explicitly that the `Count` column is **not** to be re-derived as part of that work (see the counting-basis note at the top of this file).
+
 | Temp ticket | Subject | Count |
 | --- | --- | --- |
 | EF-X001 | Sub-query selection across DbSets is not translated | 144 |

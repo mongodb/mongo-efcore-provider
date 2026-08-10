@@ -571,7 +571,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// Both are narrow edge cases (a real element literally named <c>__ord</c>/<c>__ownerKey</c>, or a nested
     /// owned member) that this Task's testing uncovered; declining cleanly rather than fixing the underlying
     /// re-rooted-projection-mapping/merge-order limitation keeps this Task scoped to recognition +
-    /// materialization wiring — fixing either properly is future work.
+    /// materialization wiring — fixing either properly is future work, TRACKED AS EF-428. That ticket also
+    /// covers the two final-review guards described immediately below, because the sentinel-naming question
+    /// they raise is the same one; it cross-references EF-408 (the analogous unverified holes in the
+    /// <c>$set</c> reserved-name collision guard) so the naming decision is taken once rather than twice.
     /// <para>
     /// Final-review hardening (two further narrow guards, same clean-decline posture as the two above):
     /// </para>
