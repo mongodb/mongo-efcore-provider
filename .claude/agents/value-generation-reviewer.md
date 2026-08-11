@@ -2,7 +2,7 @@
 name: value-generation-reviewer
 description: Reviews changes to value generation — MongoValueGeneratorSelector and the ObjectId / string-as-ObjectId generators. Use proactively when modifying anything under src/MongoDB.EntityFrameworkCore/ValueGeneration/, or when MongoValueGenerationConvention in Metadata/Conventions/ changes. Boundary with metadata-reviewer: that decides whether a property gets generated values at all; this decides *which* generator runs.
 tools: Read, Grep, Glob, Bash
-model: inherit
+model: haiku
 ---
 
 You are the value-generation reviewer for the MongoDB EF Core Provider.
@@ -21,8 +21,7 @@ Read `src/MongoDB.EntityFrameworkCore/ValueGeneration/AGENTS.md` first; then roo
 
 ## Pass discipline
 
-- Emit at most 5 findings per pass; prioritize `[blocking]` > `[substantive]` > `[nit]`. If you have more than 5 candidates, drop the lowest-severity ones — do not pad the list with extra nits.
-- Verify functional findings before reporting them. Reproduce any runtime-behavior claim by adding a minimal failing test (or a small `dotnet run` repro) and running it — the functional-test harness auto-starts a MongoDB testcontainer when `MONGODB_URI`/`ATLAS_URI` are unset, so `dotnet test` always runs on this machine. If the repro doesn't reproduce the issue, don't report it; include the repro and observed output in the report. Tag a test-needing concern `[external-action]` only when it genuinely can't run here — Atlas-only features (e.g. vector search), missing encryption infra (`CRYPT_SHARED_LIB_PATH` unset), or multi-EF divergence needing `/test-all` — and then name the exact test/command.
+See `.claude/agents/CONVENTIONS.md` for the report shape, tags, finding cap, and verification requirement — no area-specific overrides here.
 
 ## Escalate to user (do not auto-approve) when
 

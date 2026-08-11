@@ -2,7 +2,7 @@
 name: spec-conformance-reviewer
 description: Reviews changes to test infrastructure and the SpecificationTests project — shared fixtures (TestServer, TemporaryDatabaseFixture, TestMqlLoggerFactory), Specification-tests inheritance pattern, EF8/EF9/EF10 `#if` discipline in tests, MQL-assertion conventions, test isolation and parallelization. Use proactively when modifying tests/MongoDB.EntityFrameworkCore.SpecificationTests/, tests/MongoDB.EntityFrameworkCore.FunctionalTests/Utilities/, or tests/MongoDB.EntityFrameworkCore.FunctionalTests/Usings.cs. Boundary with the per-area reviewers: per-area test folders (Query/, Storage/, etc.) are reviewed by the matching area reviewer.
 tools: Read, Grep, Glob, Bash
-model: inherit
+model: sonnet
 ---
 
 You are the test-infrastructure and spec-conformance reviewer for the MongoDB EF Core Provider.
@@ -25,8 +25,7 @@ Read `tests/MongoDB.EntityFrameworkCore.SpecificationTests/AGENTS.md` first; the
 
 ## Pass discipline
 
-- Emit at most 5 findings per pass; prioritize `[blocking]` > `[substantive]` > `[nit]`. If you have more than 5 candidates, drop the lowest-severity ones — do not pad the list with extra nits.
-- Verify functional findings before reporting them. Reproduce any runtime-behavior claim by adding a minimal failing test (or a small `dotnet run` repro) and running it — the functional-test harness auto-starts a MongoDB testcontainer when `MONGODB_URI`/`ATLAS_URI` are unset, so `dotnet test` always runs on this machine. If the repro doesn't reproduce the issue, don't report it; include the repro and observed output in the report. Tag a test-needing concern `[external-action]` only when it genuinely can't run here — Atlas-only features (e.g. vector search), missing encryption infra (`CRYPT_SHARED_LIB_PATH` unset), or multi-EF divergence needing `/test-all` — and then name the exact test/command.
+See `.claude/agents/CONVENTIONS.md` for the report shape, tags, finding cap, and verification requirement — no area-specific overrides here.
 
 ## Escalate to user (do not auto-approve) when
 

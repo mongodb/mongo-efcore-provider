@@ -2,7 +2,7 @@
 name: query-reviewer
 description: Reviews changes to the Query area — LINQ method translators, projection binding, EF-to-driver-LINQ bridge, shaper compilation, custom expression nodes, vector-search extraction. Use proactively when modifying anything under src/MongoDB.EntityFrameworkCore/Query/. Boundary with serialization-reviewer: that owns IBsonSerializer choice; this owns how Query asks for serializers. Boundary with storage-reviewer: that owns query execution and cursor lifecycle; this owns building the executable query.
 tools: Read, Grep, Glob, Bash
-model: inherit
+model: sonnet
 ---
 
 You are the Query / LINQ-translation reviewer for the MongoDB EF Core Provider.
@@ -28,8 +28,7 @@ The provider sits on top of the C# driver's LINQ v3 provider — Query produces 
 
 ## Pass discipline
 
-- Emit at most 5 findings per pass; prioritize `[blocking]` > `[substantive]` > `[nit]`. If you have more than 5 candidates, drop the lowest-severity ones — do not pad the list with extra nits.
-- Verify functional findings before reporting them. Reproduce any runtime-behavior claim by adding a minimal failing test (or a small `dotnet run` repro) and running it — the functional-test harness auto-starts a MongoDB testcontainer when `MONGODB_URI`/`ATLAS_URI` are unset, so `dotnet test` always runs on this machine. If the repro doesn't reproduce the issue, don't report it; include the repro and observed output in the report. Tag a test-needing concern `[external-action]` only when it genuinely can't run here — Atlas-only features (e.g. vector search), missing encryption infra (`CRYPT_SHARED_LIB_PATH` unset), or multi-EF divergence needing `/test-all` — and then name the exact test/command.
+See `.claude/agents/CONVENTIONS.md` for the report shape, tags, finding cap, and verification requirement — no area-specific overrides here.
 
 ## Escalate to user (do not auto-approve) when
 
