@@ -17,6 +17,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
+using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
@@ -26,6 +27,13 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// cross-collection join projection must materialise the stored value, not null. The explicit
 /// LINQ <c>join</c> translates on all supported EF versions (EF8/EF9/EF10), and the defect
 /// reproduced on all three, so these tests are not version-guarded.
+///
+/// EF Core also wraps the entity argument of <c>EF.Property&lt;T&gt;(object entity, string name)</c>
+/// in a boxing <see cref="System.Linq.Expressions.ExpressionType.Convert"/> when the shaper's static
+/// type is the entity's CLR type rather than <see cref="object"/> (e.g. the fluent <c>Join</c> method
+/// syntax below) — the binder must see through that convert to recognise the call as a joined-shaper
+/// property access, or the read silently falls through to the root document and materializes as
+/// <see langword="null"/>.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class ShadowPropertyJoinProjectionTests(TemporaryDatabaseFixture database)
@@ -84,6 +92,42 @@ public class ShadowPropertyJoinProjectionTests(TemporaryDatabaseFixture database
         Assert.NotEmpty(results);
         Assert.All(results, r => Assert.NotNull(r.o));
         Assert.All(results, r => Assert.NotNull(r.Shadow));
+    }
+
+    [Fact]
+    public void Join_mixed_projection_reads_shadow_property_via_ef_property()
+    {
+        var suffix = Guid.NewGuid().ToString("N");
+        var ordersColl = nameof(Join_mixed_projection_reads_shadow_property_via_ef_property) + "_Orders" + suffix;
+        var customersColl = nameof(Join_mixed_projection_reads_shadow_property_via_ef_property) + "_Customers" + suffix;
+        var client = database.MongoDatabase.Client;
+        var dbName = database.MongoDatabase.DatabaseNamespace.DatabaseName;
+
+        var customerId = ObjectId.GenerateNewId();
+        var orderId = ObjectId.GenerateNewId();
+
+        using (var db = new FluentJoinContext(client, dbName, ordersColl, customersColl))
+        {
+            var customer = new FluentCustomer { Id = customerId, Name = "Alice" };
+            db.Customers.Add(customer);
+            db.Entry(customer).Property<string>("City").CurrentValue = "NYC";
+            db.Orders.Add(new FluentOrder { Id = orderId, Description = "Order 1", CustomerId = customerId });
+            db.SaveChanges();
+        }
+
+        using var db2 = new FluentJoinContext(client, dbName, ordersColl, customersColl);
+        var result = db2.Orders.AsNoTracking()
+            .Join(db2.Customers, o => o.CustomerId, c => c.Id, (o, c) => new
+            {
+                o,
+                c,
+                City = EF.Property<string>(c, "City")
+            })
+            .Where(x => x.o.Id == orderId)
+            .Single();
+
+        Assert.Equal("NYC", result.City);
+        Assert.Equal("Alice", result.c.Name);
     }
 
     private (string ordersName, string customersName) Seed()
@@ -153,6 +197,43 @@ public class ShadowPropertyJoinProjectionTests(TemporaryDatabaseFixture database
         {
             private static int _count;
             public object Create(DbContext context, bool designTime) => Interlocked.Increment(ref _count);
+        }
+    }
+
+    public class FluentOrder
+    {
+        public ObjectId Id { get; set; }
+        public string Description { get; set; } = null!;
+        public ObjectId CustomerId { get; set; }
+    }
+
+    public class FluentCustomer
+    {
+        public ObjectId Id { get; set; }
+        public string Name { get; set; } = null!;
+        // "City" is a shadow property — configured only via the ModelBuilder below, no CLR member —
+        // so the only way to read it in a query is EF.Property<string>(customer, "City").
+    }
+
+    private class FluentJoinContext(IMongoClient client, string dbName, string ordersColl, string customersColl) : DbContext
+    {
+        public DbSet<FluentOrder> Orders { get; set; } = null!;
+        public DbSet<FluentCustomer> Customers { get; set; } = null!;
+
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+            => optionsBuilder
+                .UseMongoDB(client, dbName)
+                .ConfigureWarnings(w =>
+                    w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+
+        protected override void OnModelCreating(ModelBuilder mb)
+        {
+            mb.Entity<FluentOrder>().ToCollection(ordersColl);
+            mb.Entity<FluentCustomer>(b =>
+            {
+                b.ToCollection(customersColl);
+                b.Property<string>("City");
+            });
         }
     }
 }

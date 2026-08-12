@@ -180,7 +180,8 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
 
             case MethodCallExpression methodCallExpression
                 when methodCallExpression.Method.IsEFPropertyMethod()
-                     && methodCallExpression.Arguments[0] is StructuralTypeShaperExpression efPropertyShaper
+                     && methodCallExpression.Arguments.Count == 2
+                     && methodCallExpression.Arguments[0].RemoveObjectConvert() is StructuralTypeShaperExpression efPropertyShaper
                      && methodCallExpression.Arguments[1] is ConstantExpression { Value: string propertyName }:
                 shaper = efPropertyShaper;
                 property = shaper.StructuralType is IEntityType efPropertyEntityType
