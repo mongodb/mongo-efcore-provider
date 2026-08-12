@@ -57,7 +57,7 @@ internal class MongoEFDiscriminator(IReadOnlyEntityType entityType) :
 
     // The discriminator is a normal IProperty, so its stored value has already been transformed by any
     // Mongo:BsonRepresentation or ValueConverter configured on it. Filters built from the raw discriminator
-    // value must be transformed the same way, or they won't match what's actually stored in "_t".
+    // value must be transformed the same way, or they won't match what's actually stored in the discriminator element.
     private BsonValue SerializeDiscriminatorValue(object? value)
     {
         if (value == null || _discriminatorProperty == null)
