@@ -89,12 +89,8 @@ the test process has exited** with a summary:
   "I'll report once the background task notifies me." Run the command, block until
   it exits, then parse. A reply sent while the run is still going is a failed
   dispatch, not a status — the controller must re-run it.
-- **`tee` the output to a log file and parse the log** (not scrollback), so the
-  counts survive: `dotnet test … 2>&1 | tee <logfile>`.
-- **A whole-solution run prints THREE summary blocks — one per test assembly**
-  (`UnitTests`, `FunctionalTests`, `SpecificationTests`). Grep the log for every
-  one (`grep -E "Passed!|Failed!|error"`) and sum the three per-assembly
-  `Passed`/`Failed`/`Skipped` totals. Reporting only the last block silently drops
+- **Write the output to a log file and parse the log** (not scrollback), so the counts survive: `dotnet test … > <logfile> 2>&1`.
+- **A whole-solution run prints THREE summary blocks — one per test assembly** (`UnitTests`, `FunctionalTests`, `SpecificationTests`). Search the log for each `Passed!`/`Failed!` block and sum the three per-assembly `Passed`/`Failed`/`Skipped` totals.
   two assemblies — `SpecificationTests` is usually last and is roughly half the
   tests, so reading only it undercounts by thousands.
 - `--no-build` above is correct **because Phase 2 built first**. If the build step
