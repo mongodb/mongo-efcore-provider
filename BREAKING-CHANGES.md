@@ -38,18 +38,7 @@ Empty-not-null is Entity Framework Core's contract for a collection navigation, 
 
 #### Mitigations
 
-If you need to tell an absent or `null` stored array apart from a present-but-empty one, ask the database rather than the materialized collection. A LINQ predicate cannot express it (`!b.Posts.Any()` is true for all three states), so query the documents through the driver, where the stored shape is visible:
-
-```c#
-var collection = client.GetDatabase("mydb").GetCollection<BsonDocument>("Blogs");
-var absentOrNull = collection.Find(
-        Builders<BsonDocument>.Filter.Or(
-            Builders<BsonDocument>.Filter.Exists("Posts", false),
-            Builders<BsonDocument>.Filter.Eq("Posts", BsonNull.Value)))
-    .ToList();
-```
-
-Use the same `IMongoClient` your `DbContext` is configured with, or a new `MongoClient` against the same connection string. If you were relying on `Select(b => b.Posts)` returning `null`, replace that test with the above.
+If you need to tell an absent or `null` stored array apart from a present-but-empty one, query with a LINQ predicate such as `context.Blogs.Where(b => b.Posts == null)`. This predicate is translated against the stored field, so it still matches missing or BSON-null values even though the returned navigation materializes as empty. Use the driver only when you need to distinguish missing from explicit BSON `null` (for example, with `Exists("Posts", false)` versus `Exists("Posts", true)` combined with `Eq("Posts", BsonNull.Value)`).
 
 Do that check **before** the documents pass through a read-modify-write cycle, because that cycle normalizes them (see *New behavior*). If you need the ragged stored shape preserved, avoid round-tripping those entities through the change tracker: update only the fields you actually want to change, either with `ExecuteUpdate` (whose setter API differs between EF Core versions — see the EF Core docs for the form your version takes) or with a driver update, which leaves the array field untouched:
 
