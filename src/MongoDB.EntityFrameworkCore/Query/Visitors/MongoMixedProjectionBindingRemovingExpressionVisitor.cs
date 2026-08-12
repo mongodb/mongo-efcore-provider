@@ -240,7 +240,8 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         var left = ResolveArithmeticOperand(binaryExpression.Left);
         var right = ResolveArithmeticOperand(binaryExpression.Right);
 
-        result = Expression.MakeBinary(binaryExpression.NodeType, left, right);
+        result = Expression.MakeBinary(
+            binaryExpression.NodeType, left, right, binaryExpression.IsLiftedToNull, binaryExpression.Method);
         if (result.Type != resultType)
         {
             result = Expression.Convert(result, resultType);
@@ -257,12 +258,12 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     /// </summary>
     private Expression ResolveArithmeticOperand(Expression operand)
     {
-        if (operand is ConstantExpression)
+        var unwrapped = operand.RemoveConvert();
+
+        if (unwrapped is ConstantExpression)
         {
             return operand;
         }
-
-        var unwrapped = operand.RemoveConvert();
 
         if (unwrapped is BinaryExpression { NodeType: ExpressionType.Add or ExpressionType.Subtract
                 or ExpressionType.Multiply or ExpressionType.Divide or ExpressionType.Modulo } nestedBinary)
@@ -270,7 +271,9 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
             Expression nestedResult = Expression.MakeBinary(
                 nestedBinary.NodeType,
                 ResolveArithmeticOperand(nestedBinary.Left),
-                ResolveArithmeticOperand(nestedBinary.Right));
+                ResolveArithmeticOperand(nestedBinary.Right),
+                nestedBinary.IsLiftedToNull,
+                nestedBinary.Method);
 
             return nestedResult.Type == operand.Type ? nestedResult : Expression.Convert(nestedResult, operand.Type);
         }
