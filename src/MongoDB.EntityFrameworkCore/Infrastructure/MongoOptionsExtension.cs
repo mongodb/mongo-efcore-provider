@@ -51,8 +51,10 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
         MongoClient = copyFrom.MongoClient;
         CryptProvider = copyFrom.CryptProvider;
         CryptProviderPath = copyFrom.CryptProviderPath;
+        CryptExtraOptions = copyFrom.CryptExtraOptions;
         KeyVaultNamespace = copyFrom.KeyVaultNamespace;
         KmsProviders = copyFrom.KmsProviders;
+        QueryableEncryptionSchemaMode = copyFrom.QueryableEncryptionSchemaMode;
         _loggableConnectionString = SanitizeConnectionStringForLogging(ConnectionString);
     }
 
