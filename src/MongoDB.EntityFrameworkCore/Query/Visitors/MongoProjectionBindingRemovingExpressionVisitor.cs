@@ -162,6 +162,15 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         bsonArrayExpression = BsonBinding.CreateGetBsonArray(parentDoc, objectArrayProjection.Name!);
                         arrayName = objectArrayProjection.Name!;
                     }
+
+                    // A missing or explicitly-BSON-null stored array must normalize to an EMPTY collection, not
+                    // null: coalesce to a fresh empty BsonArray so the shaper below enumerates zero elements and
+                    // PopulateCollection (via the navigation's own IClrCollectionAccessor) returns a genuinely
+                    // empty collection of the correct CLR type. This must stay at its point of use rather than
+                    // folding into the Expression.Assign that produces bsonArrayVar: VisitBinary below hard-casts
+                    // that assignment's right-hand side to UnaryExpression, and Coalesce is a BinaryExpression.
+                    bsonArrayExpression = Expression.Coalesce(bsonArrayExpression, Expression.New(typeof(BsonArray)));
+
                     var jObjectParameter = Expression.Parameter(typeof(BsonDocument), arrayName + "Object");
                     var ordinalParameter = Expression.Parameter(typeof(int), arrayName + "Ordinal");
 

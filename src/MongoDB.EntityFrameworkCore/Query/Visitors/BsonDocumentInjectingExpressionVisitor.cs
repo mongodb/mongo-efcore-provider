@@ -77,6 +77,13 @@ internal sealed class BsonDocumentInjectingExpressionVisitor : ExpressionVisitor
 
                     AllVariables.Add(arrayVariable);
 
+                    // A missing or explicitly-BSON-null stored array must normalize to an EMPTY collection,
+                    // not null (EF Core's contract for a collection navigation). The Expression.Assign below
+                    // must keep a UnaryExpression right-hand side: MongoProjectionBindingRemovingExpressionVisitor's
+                    // VisitBinary hard-casts `binaryExpression.Right` to UnaryExpression for any Assign whose
+                    // left side is a BsonDocument- or BsonArray-typed ParameterExpression. The empty-collection
+                    // normalization itself happens in that visitor's CollectionShaperExpression case, which
+                    // coalesces the array at its point of use instead of here.
                     var expressions = new List<Expression>
                     {
                         Expression.Assign(
@@ -84,10 +91,7 @@ internal sealed class BsonDocumentInjectingExpressionVisitor : ExpressionVisitor
                             Expression.TypeAs(
                                 collectionShaperExpression.Projection,
                                 typeof(BsonArray))),
-                        Expression.Condition(
-                            Expression.Equal(arrayVariable, Expression.Constant(null, arrayVariable.Type)),
-                            Expression.Constant(null, collectionShaperExpression.Type),
-                            collectionShaperExpression)
+                        collectionShaperExpression
                     };
 
                     return Expression.Block(
