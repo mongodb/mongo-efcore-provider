@@ -44,7 +44,7 @@ Parse `$ARGUMENTS`:
   **External clone mode** — otherwise, if the first non-flag token resolves to an existing directory (`test -d "<token>"`), treat it as the path to another clone of this repo and review the branch checked out there:
   1. Capture an absolute path: `<clone> = $(cd "<token>" && pwd)` (or `realpath`). All subsequent git commands and file paths must use this absolute form.
   2. Confirm it's a git repo by running `git -C "<clone>" rev-parse --show-toplevel`. If that fails, stop and tell the user that `<clone>` is not a git checkout.
-  3. Capture a head label for display: `git -C "<clone>" rev-parse --abbrev-ref HEAD`. If it returns the literal `HEAD` (detached), fall back to `git -C "<clone>" rev-parse --short HEAD`.
+3. Capture a head label for display and filename use: `git -C "<clone>" rev-parse --abbrev-ref HEAD`. If it returns the literal `HEAD` (detached), fall back to `git -C "<clone>" rev-parse --short HEAD`.
   4. Collect the remaining non-flag tokens (after the path) in order:
      - First → **base ref** (default: `main`)
      - Second → **head ref** (default: `HEAD`)
