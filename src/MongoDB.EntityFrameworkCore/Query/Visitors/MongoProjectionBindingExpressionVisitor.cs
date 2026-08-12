@@ -258,6 +258,19 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// <inheritdoc />
     protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
     {
+        // A projected embedded (owned) collection-navigation Count (e.g. select b.Posts.Count / select new
+        // { ..., N = b.Posts.Count }). EF Core lowers this to Queryable.Count(Queryable.AsQueryable(source))
+        // — even though the navigation is a plain in-document List<T>, not a real IQueryable — because EF's
+        // navigation expansion always represents a collection navigation as queryable. Left unhandled, the
+        // generic fallback at the bottom of this method re-visits "source" (which resolves to the embedded
+        // navigation's already-materialized CLR list) and tries to rebuild Queryable.Count's Expression.Call
+        // with it directly, which throws ArgumentException because a List<T> doesn't satisfy the method's
+        // IQueryable<T> parameter.
+        if (TryBindEmbeddedCollectionNavigationCount(methodCallExpression, out var boundEmbeddedCount))
+        {
+            return boundEmbeddedCount;
+        }
+
         // A projected cross-collection collection navigation (e.g. select new { ..., Orders = c.Orders.ToList() }).
         // EF Core lowers this to Enumerable.ToList(Queryable.Select(Queryable.Where(DbSet<Target>(), joinPred), selector)).
         // There is no enclosing IncludeExpression to set up the $lookup, so bind it here to a CollectionShaperExpression
@@ -433,6 +446,62 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         }
 
         return updatedMethodCallExpression;
+    }
+
+    /// <summary>
+    /// Detects and binds a projected embedded (owned) collection-navigation Count/LongCount such as
+    /// <c>select b.Posts.Count</c> or <c>select new { ..., N = b.Posts.Count }</c>, where <c>Posts</c> is an
+    /// owned collection navigation stored in-document. See the call site in <see cref="VisitMethodCall"/> for
+    /// why the generic fallback cannot handle this shape.
+    /// </summary>
+    private bool TryBindEmbeddedCollectionNavigationCount(
+        MethodCallExpression methodCallExpression,
+        out Expression result)
+    {
+        result = null!;
+
+        if (methodCallExpression.Method.DeclaringType != typeof(Queryable)
+            || methodCallExpression.Arguments.Count != 1)
+        {
+            return false;
+        }
+
+        MethodInfo nullSafeCountMethod;
+        switch (methodCallExpression.Method.Name)
+        {
+            case nameof(Queryable.Count):
+                nullSafeCountMethod = NullSafeCountMethodInfo;
+                break;
+            case nameof(Queryable.LongCount):
+                nullSafeCountMethod = NullSafeLongCountMethodInfo;
+                break;
+            default:
+                return false;
+        }
+
+        // The cross-collection shape (TryBindProjectedCollectionNavigationCount) has its source as a bare
+        // Queryable.Where(...) — no AsQueryable wrapper, since a DbSet-rooted query is already IQueryable.
+        // Only an embedded navigation (a plain in-document List<T>) gets wrapped in AsQueryable by EF's
+        // navigation expansion.
+        if (methodCallExpression.Arguments[0] is not MethodCallExpression
+            {
+                Method: { Name: nameof(Queryable.AsQueryable), DeclaringType: var asQueryableDeclaring }
+            } asQueryableCall
+            || asQueryableDeclaring != typeof(Queryable))
+        {
+            return false;
+        }
+
+        if (Visit(asQueryableCall.Arguments[0]) is not CollectionShaperExpression collectionShaper)
+        {
+            return false;
+        }
+
+        // A missing or explicitly-null stored array materializes the CollectionShaperExpression to a null
+        // reference rather than an empty collection (the same gap plain `.Select(e => e.children)` has), so
+        // Count/LongCount must tolerate a null source rather than throwing ArgumentNullException.
+        result = Expression.Call(nullSafeCountMethod.MakeGenericMethod(collectionShaper.ElementType), collectionShaper);
+        return true;
     }
 
     /// <inheritdoc />
@@ -671,6 +740,27 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     private static readonly MethodInfo GetParameterValueMethodInfo
         = typeof(MongoProjectionBindingExpressionVisitor)
             .GetTypeInfo().GetDeclaredMethod(nameof(GetParameterValue));
+
+    private static readonly MethodInfo NullSafeCountMethodInfo
+        = typeof(MongoProjectionBindingExpressionVisitor)
+            .GetTypeInfo().GetDeclaredMethod(nameof(NullSafeCount));
+
+    private static readonly MethodInfo NullSafeLongCountMethodInfo
+        = typeof(MongoProjectionBindingExpressionVisitor)
+            .GetTypeInfo().GetDeclaredMethod(nameof(NullSafeLongCount));
+
+    /// <summary>
+    /// A missing or explicitly-null stored array materializes an embedded collection navigation to a null
+    /// reference rather than an empty collection, so a projected Count over it must tolerate a null source.
+    /// </summary>
+    private static int NullSafeCount<T>(IEnumerable<T> source)
+        => source?.Count() ?? 0;
+
+    /// <summary>
+    /// The <see cref="long"/>-returning sibling of <see cref="NullSafeCount{T}"/>, for a projected LongCount.
+    /// </summary>
+    private static long NullSafeLongCount<T>(IEnumerable<T> source)
+        => source?.LongCount() ?? 0;
 
 #if EF8 || EF9
     private static T GetParameterValue<T>(

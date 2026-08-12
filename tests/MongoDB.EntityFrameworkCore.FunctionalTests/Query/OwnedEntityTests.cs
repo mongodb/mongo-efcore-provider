@@ -1146,6 +1146,51 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void OwnedEntity_collection_bare_count_projection_returns_element_count()
+    {
+        var collection = database.CreateCollection<A>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.AddRange(
+                new A { _id = "1", children = [new B { name = "child1" }, new B { name = "child2" }] },
+                new A { _id = "2", children = [] },
+                new A { _id = "3", children = null! });
+            db.SaveChanges();
+        }
+
+        using var db2 = SingleEntityDbContext.Create(collection);
+
+        var counts = db2.Entities.AsNoTracking().OrderBy(e => e._id).Select(e => e.children.Count).ToList();
+        Assert.Equal([2, 0, 0], counts);
+
+        var longCounts = db2.Entities.AsNoTracking().OrderBy(e => e._id).Select(e => e.children.LongCount()).ToList();
+        Assert.Equal([2L, 0L, 0L], longCounts);
+    }
+
+    [Fact]
+    public void OwnedEntity_collection_count_projection_wrapped_in_arithmetic_returns_element_count()
+    {
+        var collection = database.CreateCollection<A>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.AddRange(
+                new A { _id = "1", children = [new B { name = "child1" }, new B { name = "child2" }] },
+                new A { _id = "2", children = null! });
+            db.SaveChanges();
+        }
+
+        using var db2 = SingleEntityDbContext.Create(collection);
+
+        var doubled = db2.Entities.AsNoTracking().OrderBy(e => e._id)
+            .Select(e => new { e._id, N = e.children.Count * 2 })
+            .ToList();
+
+        Assert.Equal([4, 0], doubled.Select(r => r.N).ToArray());
+    }
+
+    [Fact]
     public void OwnedEntity_collection_can_be_tested_for_not_null()
     {
         var collection = database.CreateCollection<A>();
