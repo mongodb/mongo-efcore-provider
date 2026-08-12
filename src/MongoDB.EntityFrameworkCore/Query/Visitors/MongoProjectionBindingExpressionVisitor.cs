@@ -127,9 +127,46 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
                 return new ProjectionBindingExpression(_queryExpression, projMember, expression.Type);
 
+            // A computed-arithmetic leaf (e.g. c.Age * c.Score) mixed into a projection alongside a whole
+            // entity reference (which forces the client-side "mixed projection" shaper — see
+            // MongoMixedProjectionBindingRemovingExpressionVisitor). Register the whole binary expression as
+            // a single projection-mapping leaf here, without visiting into its operands: the default walk
+            // (via base.Visit below) would visit Left and Right independently, each writing the SAME
+            // ProjectionMember dictionary slot (the current one hasn't changed), so the second operand would
+            // silently clobber the first (e.g. Age * Score would materialise as Score * Score).
+            // Scoped to operands that are themselves simple scalar reads / nested arithmetic over those
+            // (IsSimpleArithmeticLeaf) — NOT method calls such as a collection-navigation Sum()/Count(),
+            // which must still decompose through the normal walk so their own (more specific) translation
+            // failures / cross-collection guards continue to fire as before.
+            case BinaryExpression binaryExpression
+                when IsArithmeticNodeType(binaryExpression.NodeType) && IsSimpleArithmeticLeaf(binaryExpression):
+                var arithmeticMember = GetCurrentProjectionMember();
+                _projectionMapping[arithmeticMember] = binaryExpression;
+
+                return new ProjectionBindingExpression(_queryExpression, arithmeticMember, expression.Type);
+
             default:
                 return base.Visit(expression);
         }
+    }
+
+    private static bool IsArithmeticNodeType(ExpressionType nodeType)
+        => nodeType is ExpressionType.Add or ExpressionType.Subtract or ExpressionType.Multiply
+            or ExpressionType.Divide or ExpressionType.Modulo;
+
+    private static bool IsSimpleArithmeticLeaf(Expression expression)
+    {
+        expression = expression.RemoveConvert();
+
+        return expression switch
+        {
+            ConstantExpression => true,
+            MemberExpression => true,
+            MethodCallExpression methodCallExpression when methodCallExpression.TryGetEFPropertyArguments(out _, out _) => true,
+            BinaryExpression binaryExpression when IsArithmeticNodeType(binaryExpression.NodeType) =>
+                IsSimpleArithmeticLeaf(binaryExpression.Left) && IsSimpleArithmeticLeaf(binaryExpression.Right),
+            _ => false,
+        };
     }
 
     /// <inheritdoc />

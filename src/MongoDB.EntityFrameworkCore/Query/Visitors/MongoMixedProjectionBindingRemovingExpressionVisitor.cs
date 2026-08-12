@@ -16,6 +16,7 @@
 using System;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
@@ -74,6 +75,11 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                         // (e.g. select new { o }) — hand back the BsonDocument for the entity shaper.
                         // But a scalar root-property binding (e.g. select p.name.ToArray()) also has no
                         // alias; resolve it to a field read instead of returning the whole document.
+                        if (TryBindArithmeticLeaf(sourceExpression, projectionBindingExpression.Type, out var rootArithmeticRead))
+                        {
+                            return rootArithmeticRead;
+                        }
+
                         var rootField = TryResolveFieldAccess(sourceExpression);
                         if (rootField.Property != null)
                             return CreateGetValueExpression(
@@ -100,6 +106,16 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                 if (TryBindNavigationMemberAccess(sourceExpression, projectionBindingExpression.Type, out var navMemberRead))
                 {
                     return navMemberRead;
+                }
+
+                // A computed-arithmetic leaf (e.g. select new { c, Total = c.Age * c.Score }) mixed alongside
+                // a whole entity reference. MongoProjectionBindingExpressionVisitor registers the raw binary
+                // expression as a single projection-mapping leaf (see its arithmetic BinaryExpression case);
+                // evaluate it here by resolving each operand against the materialized document and rebuilding
+                // the arithmetic client-side, since the driver-LINQ Select was stripped in this mixed path.
+                if (TryBindArithmeticLeaf(sourceExpression, projectionBindingExpression.Type, out var arithmeticRead))
+                {
+                    return arithmeticRead;
                 }
 
                 var fieldAccess = TryResolveFieldAccess(sourceExpression);
@@ -198,5 +214,91 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         var innerDoc = CreateGetValueExpression(_docParameter, "_inner", false, typeof(BsonDocument));
         result = CreateGetValueExpression(innerDoc, property, resultType);
         return true;
+    }
+
+    /// <summary>
+    /// Binds a computed-arithmetic projection leaf (e.g. <c>select new { c, Total = c.Age * c.Score }</c>).
+    /// <see cref="MongoProjectionBindingExpressionVisitor"/> registers such a leaf as the raw
+    /// <see cref="BinaryExpression"/> (not decomposed into independent operand bindings — see its arithmetic
+    /// case), because the mapped projection is stored once per <c>ProjectionMember</c> and decomposing would
+    /// have both operands clobber that single slot. In this mixed path the driver-LINQ Select was stripped
+    /// (full <see cref="BsonDocument"/>s come back), so the arithmetic must be evaluated client-side: each
+    /// operand is resolved to a document read (recursing for nested arithmetic) and the same operator is
+    /// rebuilt over the resolved reads. Returns <see langword="false"/> for anything that is not such an
+    /// arithmetic leaf so the caller can fall back to its other resolution paths.
+    /// </summary>
+    private bool TryBindArithmeticLeaf(Expression? mappedExpression, Type resultType, out Expression result)
+    {
+        result = null!;
+
+        if (mappedExpression is not BinaryExpression { NodeType: ExpressionType.Add or ExpressionType.Subtract
+                or ExpressionType.Multiply or ExpressionType.Divide or ExpressionType.Modulo } binaryExpression)
+        {
+            return false;
+        }
+
+        var left = ResolveArithmeticOperand(binaryExpression.Left);
+        var right = ResolveArithmeticOperand(binaryExpression.Right);
+
+        result = Expression.MakeBinary(binaryExpression.NodeType, left, right);
+        if (result.Type != resultType)
+        {
+            result = Expression.Convert(result, resultType);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves one operand of a computed-arithmetic projection leaf (see <see cref="TryBindArithmeticLeaf"/>)
+    /// to an expression that reads its value from the materialized document. Constants pass through unchanged;
+    /// nested arithmetic recurses; a scalar property access (member or <c>EF.Property</c>, on the root entity
+    /// or a joined navigation target) is resolved the same way a standalone scalar leaf would be.
+    /// </summary>
+    private Expression ResolveArithmeticOperand(Expression operand)
+    {
+        if (operand is ConstantExpression)
+        {
+            return operand;
+        }
+
+        var unwrapped = operand.RemoveConvert();
+
+        if (unwrapped is BinaryExpression { NodeType: ExpressionType.Add or ExpressionType.Subtract
+                or ExpressionType.Multiply or ExpressionType.Divide or ExpressionType.Modulo } nestedBinary)
+        {
+            Expression nestedResult = Expression.MakeBinary(
+                nestedBinary.NodeType,
+                ResolveArithmeticOperand(nestedBinary.Left),
+                ResolveArithmeticOperand(nestedBinary.Right));
+
+            return nestedResult.Type == operand.Type ? nestedResult : Expression.Convert(nestedResult, operand.Type);
+        }
+
+        if (TryBindNavigationMemberAccess(unwrapped, operand.Type, out var navRead))
+        {
+            return navRead;
+        }
+
+        var fieldAccess = TryResolveFieldAccess(unwrapped);
+        if (fieldAccess.Property != null)
+        {
+            var docExpr = fieldAccess.DocumentExpression ?? _docParameter;
+            if (_queryExpression.UsesDriverJoinFields
+                && ReferenceEquals(docExpr, _docParameter))
+            {
+                docExpr = CreateGetValueExpression(_docParameter, "_outer", true, typeof(BsonDocument));
+            }
+
+            return CreateGetValueExpression(docExpr, fieldAccess.Property, operand.Type);
+        }
+
+        if (fieldAccess.FieldName != null)
+        {
+            return BsonBinding.CreateGetElementValue(
+                fieldAccess.DocumentExpression ?? _docParameter, fieldAccess.FieldName, operand.Type);
+        }
+
+        throw new InvalidOperationException(CoreStrings.TranslationFailed(operand.Print()));
     }
 }
