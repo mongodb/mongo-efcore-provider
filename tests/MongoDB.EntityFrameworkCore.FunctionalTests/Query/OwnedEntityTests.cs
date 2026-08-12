@@ -691,6 +691,56 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         Assert.Empty(actual);
     }
 
+    // EF-358: a collection shaper nested inside another owned collection's item (FirstLevel.children[i].children)
+    // never has its ObjectArrayProjectionExpression registered in _projectionBindings by
+    // BsonDocumentInjectingExpressionVisitor — that visitor doesn't recurse into a CollectionShaperExpression's
+    // InnerShaper, so only the OUTER collection gets a bound bsonArray variable. MongoProjectionBindingRemovingExpressionVisitor's
+    // CollectionShaperExpression case therefore always falls into its "else" branch for a grandchild array,
+    // reading the BsonArray straight off the parent element document via CreateGetBsonArray rather than through a
+    // pre-bound variable. This is a materially different code path from the root-level case covered above, so it
+    // needs its own missing/null coverage.
+    [Fact]
+    public void OwnedEntity_nested_collection_is_empty_when_grandchild_array_missing()
+    {
+        var collection = database.CreateCollection<FirstLevelWithMissingGrandchildren>();
+        collection.WriteTestDocs([
+            new FirstLevelWithMissingGrandchildren
+            {
+                _id = Guid.NewGuid(),
+                day = DayOfWeek.Monday,
+                reference = new() { name = "ref", day = DayOfWeek.Friday },
+                children = [new SecondLevelMissingChildren { day = DayOfWeek.Tuesday }]
+            }
+        ]);
+        using var db = SingleEntityDbContext.Create<FirstLevelWithMissingGrandchildren, FirstLevel>(collection);
+
+        var actual = db.Entities.First();
+        var secondLevel = Assert.Single(actual.children);
+        Assert.NotNull(secondLevel.children);
+        Assert.Empty(secondLevel.children);
+    }
+
+    [Fact]
+    public void OwnedEntity_nested_collection_is_empty_when_grandchild_array_null()
+    {
+        var collection = database.CreateCollection<FirstLevelWithNullGrandchildren>();
+        collection.WriteTestDocs([
+            new FirstLevelWithNullGrandchildren
+            {
+                _id = Guid.NewGuid(),
+                day = DayOfWeek.Monday,
+                reference = new() { name = "ref", day = DayOfWeek.Friday },
+                children = [new SecondLevelNullChildren { day = DayOfWeek.Tuesday, children = null! }]
+            }
+        ]);
+        using var db = SingleEntityDbContext.Create<FirstLevelWithNullGrandchildren, FirstLevel>(collection);
+
+        var actual = db.Entities.First();
+        var secondLevel = Assert.Single(actual.children);
+        Assert.NotNull(secondLevel.children);
+        Assert.Empty(secondLevel.children);
+    }
+
     [Fact]
     public void OwnedEntity_nested_two_levels_materializes_single()
     {
@@ -1548,6 +1598,38 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     private record Reference
     {
         public string name { get; set; }
+        public DayOfWeek day { get; set; }
+    }
+
+    // Write-side shapes for OwnedEntity_nested_collection_is_empty_when_grandchild_array_missing/null: mirror
+    // FirstLevel/SecondLevel but the SecondLevel-equivalent either omits its `children` element entirely
+    // (SecondLevelMissingChildren) or is written with it explicitly null (SecondLevelNullChildren), so the
+    // stored document's grandchild array is absent/null exactly as MissingNullableCollection does for the
+    // root-level case above. Read back through FirstLevel/SecondLevel/ThirdLevel, unchanged.
+    private record FirstLevelWithMissingGrandchildren
+    {
+        public Guid _id { get; set; }
+        public List<SecondLevelMissingChildren> children { get; set; }
+        public DayOfWeek day { get; set; }
+        public Reference reference { get; set; }
+    }
+
+    private record SecondLevelMissingChildren
+    {
+        public DayOfWeek day { get; set; }
+    }
+
+    private record FirstLevelWithNullGrandchildren
+    {
+        public Guid _id { get; set; }
+        public List<SecondLevelNullChildren> children { get; set; }
+        public DayOfWeek day { get; set; }
+        public Reference reference { get; set; }
+    }
+
+    private record SecondLevelNullChildren
+    {
+        public List<ThirdLevel> children { get; set; }
         public DayOfWeek day { get; set; }
     }
 
