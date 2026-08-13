@@ -1453,14 +1453,35 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         var counts = db2.Entities.OrderBy(e => e._id).Select(e => e.children.Count).ToList();
         Assert.Equal([2, 0, 0], counts);
 
-        // A missing/null stored array must report 0, not throw: the driver renders a bare Count as a
-        // server-side $size, which rejects a null array, so this needs an explicit $cond null guard.
+        // A null stored array must report 0, not throw: the driver renders a bare Count as a server-side
+        // $size, which rejects a null array, so this needs an $ifNull normalization first.
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
-        Assert.Contains("$cond", message);
+        Assert.Contains("$ifNull", message);
         Assert.Contains("$size", message);
 
         var longCounts = db2.Entities.OrderBy(e => e._id).Select(e => e.children.LongCount()).ToList();
         Assert.Equal([2L, 0L, 0L], longCounts);
+
+        var filteredLongCounts = db2.Entities.OrderBy(e => e._id)
+            .Select(e => e.children.LongCount(c => c.name == "child1"))
+            .ToList();
+        Assert.Equal([1L, 0L, 0L], filteredLongCounts);
+    }
+
+    [Fact]
+    public void OwnedEntity_collection_bare_count_projection_over_missing_element_returns_zero()
+    {
+        // A document where the array element is OMITTED entirely (not stored as BSON null) is a distinct
+        // case from an explicit null: in an aggregation expression a missing field is not equal to BSON
+        // null, so a plain null-equality guard does not catch it and $size still throws on "missing". Only
+        // $ifNull (which normalizes missing the same as null) handles both.
+        var collection = database.CreateCollection<A>();
+        database.GetCollection<BsonDocument>(collection.CollectionNamespace).InsertOne(new BsonDocument("_id", "1"));
+
+        using var db = SingleEntityDbContext.Create(collection);
+        var counts = db.Entities.Select(e => e.children.Count).ToList();
+
+        Assert.Equal([0], counts);
     }
 
     [Fact]

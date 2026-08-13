@@ -578,8 +578,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
         // A bare/unfiltered embedded (owned) collection-navigation Count, e.g. `b.Posts.Count`, lowered by
         // EF Core to Queryable.Count(Queryable.AsQueryable(EF.Property(shaper, "Posts"))). See
-        // TryRewriteEmbeddedCollectionNavigationCount for why this needs a null guard the driver's own
-        // rendering of a bare Count (a server-side $size) doesn't provide.
+        // TryRewriteEmbeddedCollectionNavigationCount for why this needs a null/missing-safe normalization
+        // the driver's own rendering of a bare Count (a server-side $size) doesn't provide.
         if (TryRewriteEmbeddedCollectionNavigationCount(node, out var embeddedCountRewrite))
         {
             return embeddedCountRewrite;
@@ -591,11 +591,14 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// <summary>
     /// Rewrites <c>Queryable.Count(Queryable.AsQueryable(EF.Property(shaper, "Nav")))</c> (and the
     /// <c>LongCount</c> variant) — the lowered form of a bare/unfiltered embedded (owned) collection
-    /// navigation count such as <c>b.Posts.Count</c> — into a null-guarded <c>Enumerable.Count</c> over the
-    /// resolved <c>Mql.Field</c> array read. A missing or explicitly-null stored array reads back as a null
-    /// reference rather than an empty collection, but the driver renders a bare (predicate-less) Count as a
-    /// server-side <c>$size</c>, which throws on a null array (unlike a predicated Count, which the driver
-    /// renders as a null-tolerant <c>$map</c>/<c>$sum</c>), so this guards with an explicit null check.
+    /// navigation count such as <c>b.Posts.Count</c> — into an <c>Enumerable.Count</c> over a null/missing
+    /// -safe read of the array field. A missing element (the key absent entirely) or an explicitly-null
+    /// stored array both read back as a null reference rather than an empty collection, but the driver
+    /// renders a bare (predicate-less) Count as a server-side <c>$size</c>, which throws on either (unlike
+    /// a predicated Count, which the driver renders as a null/missing-tolerant <c>$map</c>/<c>$sum</c>).
+    /// <c>??</c> (translated by the driver as <c>$ifNull</c>) normalizes both missing and null alike; a
+    /// plain equality test against null would not — in an aggregation expression a missing field is not
+    /// equal to BSON null, so it would fall through to <c>$size</c> on a missing array and still throw.
     /// </summary>
     private bool TryRewriteEmbeddedCollectionNavigationCount(MethodCallExpression node, out Expression result)
     {
@@ -642,10 +645,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 : EnumerableCountMethod)
             .MakeGenericMethod(elementType);
 
-        result = Expression.Condition(
-            Expression.Equal(fieldAccess!, Expression.Constant(null, fieldAccess!.Type)),
-            Expression.Default(node.Type),
-            Expression.Call(null, countMethod, fieldAccess));
+        var emptyCollection = Expression.Constant(Activator.CreateInstance(fieldAccess!.Type), fieldAccess.Type);
+        var normalizedFieldAccess = Expression.Coalesce(fieldAccess, emptyCollection);
+
+        result = Expression.Call(null, countMethod, normalizedFieldAccess);
         return true;
     }
 
