@@ -69,19 +69,6 @@ Its output is rendered at the top of the consolidated report so the reader sees 
 
 `/review-ef-core-provider <path>` reviews a branch checked out in another clone of the repo, using the current clone's reviewer briefs and `AGENTS.md` files. This exists because reviewer briefs evolve faster than upstream PRs: when the agent definitions or per-area `AGENTS.md` files have moved on but a PR branch hasn't yet picked them up, cloning twice — one clone on the up-to-date agent branch, one clone on the PR branch — lets the skill run from the up-to-date clone while the diff and source code come from the PR clone. The parent agent's working directory stays in the current clone (so guidance loads from here), file lists are passed to reviewers as absolute paths under the other clone, and git commands inside reviewer prompts use `git -C "<clone>" …`.
 
-## `--iterate` mode
-
-`/review-ef-core-provider --iterate [--max-iterations N]` repeats review → fix → review in `<diff-repo>` until two consecutive **clean** reviews or the iteration cap is reached. It's only valid in local-range and external-clone modes — external PR mode is rejected because we don't push fixes back to PR branches. Several convergence mechanisms keep the loop short:
-
-- **Two-tag findings.** Every reviewer finding carries `[fix-in-code|external-action]` (who can act) *and* `[blocking|substantive|nit]` (how important). The reviewer self-classifies severity at emit time using the rubric in the dispatch prompt — the parent does *not* re-classify. The clean check requires no `[fix-in-code][blocking]` and no `[fix-in-code][substantive]` findings; `[fix-in-code][nit]` and any `[external-action]` finding (regardless of severity) are surfaced but do not block convergence.
-- **5-finding cap per reviewer per pass.** Reviewers emit at most 5 findings, sorted blocking → substantive → nit, with extras dropped. This bounds the noise floor.
-- **Narrowed scope after iteration 1.** Iteration 1 scans the full `<base>...<head>` diff. From iteration 2 onward, the file set narrows to files the previous fixer commit touched plus files still carrying an unresolved `[blocking]`/`[substantive]` finding. Unchanged files stop regenerating stale nits.
-- **Carry-forward of `[nit]` findings.** Every `[fix-in-code][nit]` finding in iteration N is passed to iteration N+1's reviewers as a *do-not-re-emit* note, breaking the most common tail-chase pattern.
-- **`[external-action]` findings don't pin the loop.** JIRA lookups, CI matrix checks, `BREAKING-CHANGES.md` wording, "worth a multi-EF test" — these are surfaced in every iteration's report and in the closing summary, but they can't be mechanically fixed in-loop.
-- **No-op fixer ends the loop.** If the fixer decides nothing in the current report is mechanically actionable, the loop stops with outcome `no actionable findings remaining` and prints the outstanding `[external-action]` items.
-
-The fixer is dispatched as the `general-purpose` agent (Read/Write/Edit/Bash) and commits with the message `[review-iter <N>] Address review findings`. It never pushes. By default it applies `[fix-in-code][blocking]` and `[fix-in-code][substantive]` findings only; `[fix-in-code][nit]` findings are skipped (they may be picked up as a drive-by when the same file is already being edited for a substantive fix).
-
 ## Boundary decisions worth knowing
 
 - **Serializers + ChangeTracking are one area, two directories.** `ChangeTracking/CLAUDE.md` re-points at `Serializers/AGENTS.md`. The two concerns are tightly coupled in practice — a new collection type needs both a serializer choice and a value-comparer — and one reviewer keeps that pairing honest.
@@ -131,7 +118,7 @@ adjacent-areas: [<name>, <name>]
 name: <kebab-name>-reviewer
 description: Reviews changes to <area>. Use proactively when modifying <glob list>. Boundary with <adjacent>: <one line>.
 tools: Read, Grep, Glob, Bash
-model: inherit
+model: <sonnet, or haiku for narrow/mechanical areas>
 ---
 
 You are the <Area> reviewer for the MongoDB EF Core Provider.
@@ -145,14 +132,13 @@ Read `<path-to-area-AGENTS.md>` first; then root `AGENTS.md` for build/test comm
 - <breaking-change / wire-shape / spec-conformance concern>
 
 ## Pass discipline
-- Emit at most 5 findings per pass; prioritize `[blocking]` > `[substantive]` > `[nit]`. Drop the lowest-severity ones if you have more candidates.
-- Do not run tests in this pass. If a test would be useful, tag the finding `[external-action]` so the user can run it.
+See `.claude/agents/CONVENTIONS.md` for the report shape, tags, finding cap, and verification requirement. Add area-specific overrides here only if this area's verification story genuinely differs from the default (e.g. an Atlas-only or encryption-infra exception).
 
 ## Escalate to user (do not auto-approve) when
 - <public-API break, annotation-key rename, behavior change affecting stored documents, etc.>
 ```
 
-All reviewers get `Read, Grep, Glob, Bash` (read-only review). None get `Edit/Write` — reviewers report, never patch. Tests are *not* run in-pass — the `/review-ef-core-provider --iterate` loop is short and `dotnet test` is too slow to fit; tests live in `[external-action]` findings the user runs out-of-loop.
+All reviewers get `Read, Grep, Glob, Bash` (read-only review). None get `Edit/Write` — reviewers report, never patch, but they **do** run tests: `.claude/agents/CONVENTIONS.md` requires every functional finding to be reproduced with `dotnet test` or a small `dotnet run` repro before it's reported (the functional-test harness auto-starts a MongoDB testcontainer, so this always works with no manual setup). Only genuinely local-infra-blocked claims (Atlas-only, missing `CRYPT_SHARED_LIB_PATH`, multi-EF divergence needing `/test-all`) stay `[external-action]`.
 
 ## Verification
 

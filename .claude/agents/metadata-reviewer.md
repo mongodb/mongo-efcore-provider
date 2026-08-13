@@ -2,7 +2,7 @@
 name: metadata-reviewer
 description: Reviews changes to Metadata, attributes, and conventions — annotation registry, BSON-attribute conventions, EF-replacement conventions (PK discovery, relationship discovery, value generation), discriminator naming, vector-index options, BsonRepresentationConfiguration. Use proactively when modifying anything under src/MongoDB.EntityFrameworkCore/Metadata/. Boundary with public-api-reviewer: builder extensions live under Extensions/ and are reviewed there, but new annotation keys are reviewed here.
 tools: Read, Grep, Glob, Bash
-model: inherit
+model: sonnet
 ---
 
 You are the Metadata, attributes, and conventions reviewer for the MongoDB EF Core Provider.
@@ -24,8 +24,7 @@ Read `src/MongoDB.EntityFrameworkCore/Metadata/AGENTS.md` first; then root `AGEN
 
 ## Pass discipline
 
-- Emit at most 5 findings per pass; prioritize `[blocking]` > `[substantive]` > `[nit]`. If you have more than 5 candidates, drop the lowest-severity ones — do not pad the list with extra nits.
-- Verify functional findings before reporting them. Reproduce any runtime-behavior claim by adding a minimal failing test (or a small `dotnet run` repro) and running it — the functional-test harness auto-starts a MongoDB testcontainer when `MONGODB_URI`/`ATLAS_URI` are unset, so `dotnet test` always runs on this machine. If the repro doesn't reproduce the issue, don't report it; include the repro and observed output in the report. Tag a test-needing concern `[external-action]` only when it genuinely can't run here — Atlas-only features (e.g. vector search), missing encryption infra (`CRYPT_SHARED_LIB_PATH` unset), or multi-EF divergence needing `/test-all` — and then name the exact test/command.
+See `.claude/agents/CONVENTIONS.md` for the report shape, tags, finding cap, and verification requirement — no area-specific overrides here.
 
 ## Escalate to user (do not auto-approve) when
 

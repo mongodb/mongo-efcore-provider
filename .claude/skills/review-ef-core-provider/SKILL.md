@@ -1,7 +1,7 @@
 ---
 name: review-ef-core-provider
-description: Fan-out review of the current branch, an external PR, or a branch in another clone — runs each per-area reviewer over the files it owns and aggregates findings. With --iterate, alternates review/fix passes until two consecutive clean reviews or the iteration cap is reached. Requires the superpowers plugin (errors out if it is not available).
-argument-hint: "[--all] [--model opus|sonnet|haiku] [--iterate [--max-iterations N]] [<PR#> | <clone-path> [<base-ref> [<head-ref>]] | <base-ref> [<head-ref>]]"
+description: Fan-out review of the current branch, an external PR, or a branch in another clone — runs each per-area reviewer over the files it owns and aggregates findings. Requires the superpowers plugin (errors out if it is not available).
+argument-hint: "[--all] [--model opus|sonnet|haiku] [<PR#> | <clone-path> [<base-ref> [<head-ref>]] | <base-ref> [<head-ref>]]"
 allowed-tools: Bash, Read, Glob, Grep, Write, Agent, Skill
 ---
 
@@ -19,16 +19,15 @@ User args: `$ARGUMENTS`
 
 This skill depends on the **superpowers** plugin and will not run without it. Before doing anything else:
 
-1. Check the session's available-skills list (the `<system-reminder>` skill listing) for entries whose names start with `superpowers:`. At minimum, confirm all of these are present: `superpowers:requesting-code-review`, `superpowers:receiving-code-review`, `superpowers:test-driven-development`, `superpowers:systematic-debugging`, `superpowers:verification-before-completion`, and `superpowers:brainstorming`.
-2. If **any** of those are missing, **stop immediately**. Do not parse args, diff, or dispatch reviewers. Emit exactly one error message to the user naming which superpowers skills were not found and saying that `/review-ef-core-provider` requires the superpowers plugin to be installed and enabled. Then end the response.
-3. If all are present, invoke `superpowers:requesting-code-review` now to frame the entire run — this review *is* the code-review request it describes — then continue to Step 1. The superpowers skills are woven into the workflow at the points called out below (fixer pass, convergence gate); honor them there.
+1. Check the session's available-skills list (the `<system-reminder>` skill listing) for an entry named `superpowers:requesting-code-review`.
+2. If it's missing, **stop immediately**. Do not parse args, diff, or dispatch reviewers. Emit exactly one error message to the user saying `/review-ef-core-provider` requires the superpowers plugin to be installed and enabled. Then end the response.
+3. If present, invoke `superpowers:requesting-code-review` now to frame the entire run — this review *is* the code-review request it describes — then continue to Step 1.
 
 ## Step 1 — Determine scope
 
 Parse `$ARGUMENTS`:
 - If `--all` is present, queue every reviewer in the tables below regardless of diff. Skip step 2's filtering.
-- If `--model <name>` is present, capture `<name>` (must be one of `opus`, `sonnet`, `haiku`) and pass it on every `Agent` dispatch in step 3. If absent, omit the `model` parameter so each reviewer falls back to its frontmatter setting (currently `inherit` for all of them, which means the parent session's model).
-- If `--iterate` is present, enable the iteration loop described in **Step 5**. It is only valid in **local range mode** and **external clone mode**; if combined with external PR mode (a `<PR#>` token), stop immediately and tell the user that `--iterate` cannot be used with external PRs (we don't push fixes back to PR branches). If `--max-iterations <N>` is also present, capture `<N>` as the cap (must be a positive integer, ≤ 26 because file letters run `a`–`z`); default to **10** if absent. `--max-iterations` without `--iterate` is an error — tell the user and stop.
+- If `--model <name>` is present, capture `<name>` (must be one of `opus`, `sonnet`, `haiku`) and pass it on every `Agent` dispatch in step 3. If absent, omit the `model` parameter so each reviewer falls back to its own frontmatter setting (see each agent file — most default to `sonnet`, the narrowest/most mechanical ones to `haiku`, and `pr-summary-reviewer` to `inherit`).
 - Examine the remaining non-flag tokens in priority order: first try external PR mode, then external clone mode, then local range mode.
 
   **External PR mode** — if the first non-flag token looks like a PR number (a bare integer such as `297`, or a `#`-prefixed integer such as `#297`), treat this as an external PR review:
@@ -45,7 +44,7 @@ Parse `$ARGUMENTS`:
   **External clone mode** — otherwise, if the first non-flag token resolves to an existing directory (`test -d "<token>"`), treat it as the path to another clone of this repo and review the branch checked out there:
   1. Capture an absolute path: `<clone> = $(cd "<token>" && pwd)` (or `realpath`). All subsequent git commands and file paths must use this absolute form.
   2. Confirm it's a git repo by running `git -C "<clone>" rev-parse --show-toplevel`. If that fails, stop and tell the user that `<clone>` is not a git checkout.
-  3. Capture a head label for display and filename use: `git -C "<clone>" rev-parse --abbrev-ref HEAD`. If it returns the literal `HEAD` (detached), fall back to `git -C "<clone>" rev-parse --short HEAD`.
+3. Capture a head label for display and filename use: `git -C "<clone>" rev-parse --abbrev-ref HEAD`. If it returns the literal `HEAD` (detached), fall back to `git -C "<clone>" rev-parse --short HEAD`.
   4. Collect the remaining non-flag tokens (after the path) in order:
      - First → **base ref** (default: `main`)
      - Second → **head ref** (default: `HEAD`)
@@ -66,11 +65,8 @@ Use `<base>...<head>` as the diff range throughout (three-dot syntax finds the m
 - `/review-ef-core-provider ~/code/efcore-pr` → review the current branch of the clone at `~/code/efcore-pr` against its `main`
 - `/review-ef-core-provider ~/code/efcore-pr release/10.0` → review that clone's `HEAD` against its `release/10.0`
 - `/review-ef-core-provider ~/code/efcore-pr origin/main feature-x` → review `feature-x` in that clone against `origin/main`
-- `/review-ef-core-provider --iterate ~/code/efcore-pr` → review the clone's branch, then loop review → fix → review until two consecutive clean passes (or 10 iterations)
-- `/review-ef-core-provider --iterate --max-iterations 5 ~/code/efcore-pr` → same but cap at 5 iterations
-- `/review-ef-core-provider --iterate` → iterate on the current repo's branch against `main`
 
-If `--all` was not passed, run `git -C "<diff-repo>" diff --name-only <base>...<head>`. If the result is empty, stop and tell the user the range has no changes — do not dispatch reviewers. In iterate mode this end-of-range check is performed at the **start of every iteration**; a mid-loop empty range means the latest fixer commit reverted all changes (unusual — flag it to the user and stop).
+If `--all` was not passed, run `git -C "<diff-repo>" diff --name-only <base>...<head>`. If the result is empty, stop and tell the user the range has no changes — do not dispatch reviewers.
 
 ## Step 2 — Map changed files → reviewers
 
@@ -95,9 +91,9 @@ Match each changed file against the table. A file may match more than one review
 
 If new area reviewers are added under `.claude/agents/`, update this table.
 
-## Cross-cutting reviewers (always run)
+## Cross-cutting reviewers (always run, unless the diff is doc-only)
 
-These three reviewers run on every invocation of `/review-ef-core-provider`, regardless of which files changed. They look across the whole diff for one specific concern. They are *additional to* — not part of — the path-mapping table above.
+These three reviewers run on every invocation regardless of which files changed. They look across the whole diff for one specific concern. They are *additional to* — not part of — the path-mapping table above.
 
 | Reviewer | Concern |
 |---|---|
@@ -105,13 +101,15 @@ These three reviewers run on every invocation of `/review-ef-core-provider`, reg
 | `ef-conformance-reviewer` | EF Core integration correctness — multi-version (EF8/EF9/EF10) compat, service registration, annotation hygiene, build-vs-runtime model |
 | `security-reviewer` | Credential exposure, sensitive-data logging gating, KMS plumbing leaks, TLS surfaces, connection-string redaction |
 
+**Skip condition.** If `--all` was not passed and every file in the diff (`git -C "<diff-repo>" diff --name-only <base>...<head>`) matches a doc-only pattern — `*.md`, `*.txt`, `docs/**`, `LICENSE*`, `.github/**` excluding workflow files (`.github/workflows/**` still counts as code) — none of these three carry any signal: skip dispatching all three and note it in the aggregated report (`## Cross-cutting findings` → `Skipped — diff is documentation-only.`) instead of spending three agent dispatches on files none of them can say anything about. Any single non-doc file in the diff cancels the skip and all three run as normal.
+
 ## PR-summary reviewer (external PR mode only)
 
-In external PR mode, also dispatch the `pr-summary-reviewer` agent. It produces a holistic description of the PR (what it does, why) plus an opinion on whether it's a good change. It runs in parallel with everything else, and its output goes at the top of the consolidated report (before `## Summary`). Skip it in local range mode and external clone mode — there is no PR body to read.
+In external PR mode, also dispatch the `pr-summary-reviewer` agent. It produces a holistic description of the PR (what it does, why) plus an opinion on whether it's a good change. It runs in parallel with everything else, and its output goes at the top of the consolidated report (before `## Summary`). Skip it in local range mode and external clone mode — there is no PR body to read. It is not subject to the doc-only skip condition above (a doc-only PR still deserves a summary/verdict).
 
 ## Step 3 — Dispatch reviewers in parallel
 
-**Critical**: emit a single assistant message containing one `Agent` tool-use block per dispatched reviewer — the matched area + feature reviewers from step 2, all three cross-cutting reviewers, *and* (in external PR mode only) `pr-summary-reviewer`. Multiple `Agent` calls in the same message run concurrently; sequential calls do not. Use `subagent_type: <reviewer-name>` for each. If `--model <name>` was parsed in step 1, set `model: <name>` on every block; otherwise omit the field.
+**Critical**: emit a single assistant message containing one `Agent` tool-use block per dispatched reviewer — the matched area + feature reviewers from step 2, the cross-cutting reviewers (unless skipped), *and* (in external PR mode only) `pr-summary-reviewer`. Multiple `Agent` calls in the same message run concurrently; sequential calls do not. Use `subagent_type: <reviewer-name>` for each. If `--model <name>` was parsed in step 1, set `model: <name>` on every block; otherwise omit the field and let each reviewer use its own frontmatter default.
 
 In every template below, substitute:
 - `<base>`, `<head>` — the diff range refs.
@@ -130,56 +128,9 @@ Files in scope for this iteration that fall in your area (absolute paths):
 - <abs-file2>
 …
 
-[Iteration N > 1 only — omit this block on iteration 1]
-This is iteration <N> of an `--iterate` run. The file list above is narrowed to files the previous fixer commit touched plus files that still carry an unresolved [blocking]/[substantive] finding. The following findings were tagged [fix-in-code][nit] in a previous iteration and have not been fixed; do NOT re-emit them unless the surrounding code has changed materially since the previous iteration:
-- <reviewer>: <file>:<line> — <message>
-- <reviewer>: <file>:<line> — <message>
-…
-[end Iteration N > 1 block]
-
 Read those files at their current state. Run git commands with `git -C "<diff-repo>" …` (e.g. `git -C "<diff-repo>" diff <base>...<head> -- <repo-relative-path>`) — the parent agent's working directory may not be <diff-repo>. Pull in adjacent context only as needed to judge the change.
 
-**Verify every functional finding by running code before you report it (required).** A *functional* finding is any claim about runtime behavior: a thrown or uncaught exception, wrong LINQ translation or query result, wrong persisted document shape, an `#if` branch that changes behavior, lost `CancellationToken` propagation, incorrect value generation, a redaction that doesn't happen, etc. — as opposed to a naming / comment / doc / style nit or a purely source-level signature observation. Too many reported findings turn out not to reproduce, so you **must** reproduce a functional issue and confirm it is real before reporting it; if your repro does not reproduce the problem, do not report it.
-
-You can always run tests on this machine. The functional-test harness (`<diff-repo>/tests/.../FunctionalTests/Utilities/TestServer.cs`) connects to the MongoDB named by the `ATLAS_URI` / `MONGODB_URI` environment variables when they are set, and otherwise **automatically starts a local MongoDB testcontainer via Docker** — so `dotnet test` runs end-to-end here with no manual setup. You have `Read`/`Grep`/`Glob`/`Bash` but **no `Edit`/`Write` tool**, so scaffold the repro with `Bash` — e.g. write a temporary xUnit test file into the matching `<diff-repo>/tests/.../FunctionalTests/<Area>/` folder with a here-doc, or stand up a small throwaway console project in a temp directory. Run everything against `<diff-repo>` (the parent's working directory may not be `<diff-repo>` — in external-clone mode it isn't), so use absolute `<diff-repo>/...` paths. Reproduce a finding by either:
-- running the temporary test: `dotnet test "<diff-repo>/MongoDB.EFCoreProvider.sln" -c "Debug EF10" --filter "FullyQualifiedName~<YourTest>"`, or
-- running a small throwaway repro (`dotnet run`) that exercises the path.
-
-**Clean up after yourself.** Delete any file you created to reproduce, so the diff-repo working tree is left exactly as you found it (in `--iterate` mode the parent diffs the tree between iterations — a stray test file would corrupt the next pass). Verifying a finding never means committing a test; the *fixer* adds the permanent regression test later.
-
-One EF configuration is enough to confirm a behavioral bug. The only findings that stay `[external-action]` for lack of verification are those that genuinely cannot run here: Atlas-only features the local testcontainer can't provide (e.g. vector search), encryption paths needing infrastructure that isn't installed (`CRYPT_SHARED_LIB_PATH` unset), or multi-EF *divergence* that would need `/test-all`. For those, tag `[external-action]` and name the exact test/command the user should run — you still may not merely assert the bug.
-
-**Include the repro in the report** under each functional finding: the test code (or the commands you ran) plus the observed failing output (assertion message, exception, or wrong value). Repro blocks do not count against the 400-word limit.
-
-Produce a report in exactly this shape, no preamble:
-
-**Verdict**: one of `approve`, `flag`, `escalate`.
-- approve = no concerns
-- flag = non-blocking suggestions or nits
-- escalate = blocking concern that needs user attention before merge (public-API break, annotation-key rename, behavior change affecting stored documents, multi-EF break, spec-conformance regression, security regression)
-
-**Findings**: bulleted list. Each bullet: `<file>:<line> — [fix-in-code|external-action][blocking|substantive|nit] **<TL;DR>** — <one-sentence problem> — <one-sentence fix or action>`.
-
-The `<TL;DR>` is a terse headline (**≤8 words**) that names the issue at a glance, emitted in bold immediately after the tags and before the one-sentence problem. Examples: `**May throw NullReferenceException**`, `**Typo in skip message**`, `**Exception type changed**`, `**Missing #if EF10 branch**`, `**Annotation key renamed**`. Keep it noun-phrase terse — it is a label, not the explanation.
-
-Every finding carries two tags. The first tag says *who can act on it*:
-- `[fix-in-code]` — the finding can be resolved by an in-tree code change (edit a file, add a test, fix a typo, tighten a comment, change a throw type, fix an `#if` branch, etc.) that the fixer agent can make mechanically without external information.
-- `[external-action]` — the finding requires something outside this codebase: confirming a JIRA ticket exists, verifying CI matrix configuration, asking the user to confirm intent, auditing call sites in production code outside the diff, double-checking spec wording against an external source, a test that can only run against infrastructure you don't have (Atlas-only features such as vector search, or encryption needing `CRYPT_SHARED_LIB_PATH`) or that needs multi-EF `/test-all` to show divergence, updating `BREAKING-CHANGES.md` wording on behalf of the user, or any other action the fixer agent cannot perform without leaving the repo. Note: a test that *can* run against the local testcontainer is **not** an external action — you must run it yourself to verify the finding (see the verification requirement above), not defer it.
-
-When unsure between fix-in-code and external-action, prefer `[external-action]` — it surfaces the concern without claiming the fixer can address it.
-
-The second tag says *how important it is*:
-- `[blocking]` — should land an `escalate` verdict and stop the merge. Wire-format / public-API / multi-EF / spec-conformance / security breaks.
-- `[substantive]` — real concern the fixer should address: wrong behavior, missing test for a non-trivial code path, broken `#if` branch, layering violation, lost cancellation propagation, etc.
-- `[nit]` — mechanical cosmetic: unused import, comment/message typo, misnamed local, missing trailing newline, wording fix-up in a skip message. Does not affect behavior; safe to defer indefinitely.
-
-When unsure between substantive and nit, prefer `substantive` (conservative — it just means the fixer will act on it). When unsure between blocking and substantive, prefer `blocking` if the change can corrupt stored data, break the public API contract, or pass on one EF version while failing on another.
-
-Use repo-relative paths in findings (not absolute) so output is portable. Emit at most **5** findings per pass. If you have identified more than 5, sort by tag (blocking → substantive → nit) and drop the lowest-priority ones — do not pad the list with extra nits.
-
-**Tests run / repros**: list every `dotnet test --filter` or `dotnet run` repro you actually executed, with pass/fail, and — for each functional finding — the repro test code or commands plus the observed output. If you reported no functional findings and ran nothing, write `none`.
-
-Hard limit: 400 words total, **excluding** repro code/output blocks (those are uncapped — include them in full). Do not summarize the diff back; the parent agent has it.
+Follow the report shape, tags, finding cap, and verification requirement in `.claude/agents/CONVENTIONS.md` (also linked from your own agent definition). In short: verify every functional finding by running code before you report it — scaffold repros with `Bash` (you have no `Edit`/`Write`), clean up any repro file you create afterward, and include the repro and observed output in your report (uncapped, doesn't count against the word limit).
 ```
 
 ### Cross-cutter prompt template
@@ -189,21 +140,14 @@ For each cross-cutting reviewer, use this template (substitute `<base>`, `<head>
 ```
 You are running as a cross-cutting reviewer in a multi-area branch review. The diff range is <base>...<head> in the repo at <diff-repo>.
 
-Your concern is not scoped to a directory — it is a single hygiene lens applied across the diff. Files in scope for this iteration (absolute paths):
+Your concern is not scoped to a directory — it is a single hygiene lens applied across the diff. Files in scope (absolute paths):
 - <abs-file1>
 - <abs-file2>
 …
 
-[Iteration N > 1 only — omit this block on iteration 1]
-This is iteration <N> of an `--iterate` run. The file list above is narrowed to files the previous fixer commit touched plus files that still carry an unresolved [blocking]/[substantive] finding. The following findings were tagged [fix-in-code][nit] in a previous iteration and have not been fixed; do NOT re-emit them unless the surrounding code has changed materially since the previous iteration:
-- <reviewer>: <file>:<line> — <message>
-- <reviewer>: <file>:<line> — <message>
-…
-[end Iteration N > 1 block]
-
 Use `git -C "<diff-repo>" diff <base>...<head>` to see the full picture and `git -C "<diff-repo>" diff <base>...<head> -- <repo-relative-path>` to focus. Read files at their current state where context matters. Skip files that are clearly irrelevant to your concern.
 
-Produce a report in exactly the same shape as the area reviewers (Verdict / Findings / Tests run / repros; same format and 400-word cap excluding repro blocks; same verdict semantics; repo-relative paths in findings; the same bold `<TL;DR>` headline (≤8 words) before each finding's one-sentence problem; the same `[fix-in-code]` / `[external-action]` tag *and* the same `[blocking]` / `[substantive]` / `[nit]` severity tag on every finding; the same 5-finding cap; and the same carry-forward-nit rule in iteration N > 1). **The same verification requirement applies**: any functional finding (a real runtime-behavior claim — e.g. credentials reaching a log, redaction not happening, a behavior change on an unchanged signature) must be reproduced by running a test or small repro before you report it (the local test harness auto-starts a testcontainer, so `dotnet test` always runs here), with the repro included in the report; only defer to `[external-action]` when it truly can't run locally. Findings must be specific to your concern — do not duplicate what an area reviewer would catch.
+Follow the report shape, tags, finding cap, and verification requirement in `.claude/agents/CONVENTIONS.md` (also linked from your own agent definition). Findings must be specific to your concern — do not duplicate what an area reviewer would catch.
 ```
 
 ### PR-summary prompt template (external PR mode only)
@@ -243,13 +187,13 @@ For the report heading:
 (External PR mode only — paste the `pr-summary-reviewer`'s Description, Assessment, and Verdict verbatim. Omit this section in local range mode and external clone mode.)
 
 ## Summary
-N reviewers ran (M area+feature + 3 cross-cutting [+ 1 PR summary in external PR mode]). X approved, Y flagged, Z escalated. (PR-summary verdict is not counted in those totals — it's a separate lens.)
+N reviewers ran (M area+feature + up to 3 cross-cutting [+ 1 PR summary in external PR mode]). X approved, Y flagged, Z escalated. (PR-summary verdict is not counted in those totals — it's a separate lens.)
 
 ## Escalations
 For each `escalate` verdict from any reviewer — reviewer name, then its findings verbatim. Omit section if none.
 
 ## Cross-cutting findings
-Group by reviewer (`api-stability-reviewer`, `ef-conformance-reviewer`, `security-reviewer`). For each: verdict + findings as bullets. Always show this section, even if all three approved (in which case list each as `<reviewer> — clean`).
+Group by reviewer (`api-stability-reviewer`, `ef-conformance-reviewer`, `security-reviewer`). For each: verdict + findings as bullets, or `<reviewer> — clean` if it approved. If the doc-only skip condition applied, write `Skipped — diff is documentation-only.` instead of the three reviewer entries.
 
 ## Area + feature findings
 For each area or feature reviewer that ran: verdict + findings as bullets if `flag`, or `<reviewer> — clean` if `approve`. (Escalations are already covered above.)
@@ -262,131 +206,20 @@ Files from the diff that didn't match any area or feature reviewer. (Cross-cutte
 
 - **External PR mode**: stem is `review<number>` (e.g. `review297`). Always saved.
 - **External clone mode**: stem is `review-<sanitized-head-label>`, where the head label is the branch name or short SHA captured in step 1 with every character that is not `[A-Za-z0-9._-]` replaced by `-` (e.g. branch `EF-308a` → `review-EF-308a`; branch `feature/foo` → `review-feature-foo`). Always saved.
-- **Local range mode**: in single-pass mode, do not save (the report only appears inline). In **iterate mode**, save using stem `review-<sanitized-head-label>` derived the same way from `git rev-parse --abbrev-ref HEAD` of the current repo — each iteration needs a persistent artifact.
+- **Local range mode**: do not save — the report only appears inline.
 
-Then:
+When saving:
 1. List files in the current directory matching `<stem>[a-z].md`.
 2. Find the lowest letter (`a`–`z`) not already taken; use `a` if none exist yet.
 3. Write the full report to `<stem><letter>.md` in the current directory using the Write tool.
-4. In iterate mode, also prefix the report's `## Summary` section with a line `Iteration <N> of <max>.` so each file is self-identifying even if letters are non-contiguous.
-5. Tell the user the filename at the end of your response (one line, e.g. `Saved to review297a.md` or `Saved to review-EF-308a.md`).
-
-**When `--iterate` is set**, after step 5 do **not** end your response — continue to Step 5 below. Otherwise stop after the file-saved line.
-
-## Step 5 — Iterate (only when `--iterate` is set)
-
-The loop alternates review and fix passes in `<diff-repo>` until two consecutive **clean** reviews or the iteration cap is hit. Mode prerequisite: only local-range and external-clone modes — external PR mode was already rejected in step 1.
-
-**Before the first fixer dispatch**, emit a single user-visible sentence announcing the loop, the cap, and the diff-repo (so the user can interrupt if this isn't what they wanted). Example: `Iterating in /Users/foo/clone (max 10). Each non-clean iteration will commit fixes to that branch.`
-
-### Clean criteria
-
-An iteration's aggregated report is **clean** when **all** of these hold:
-
-1. **No `escalate` verdicts** from any reviewer.
-2. **No `[fix-in-code][blocking]` or `[fix-in-code][substantive]` findings.** Severity is the reviewer's call at emit time (see the rubric in Step 3) — the parent does *not* re-classify. `[fix-in-code][nit]` findings do not block convergence: they're surfaced in the report and carried forward to the next iteration's reviewers (so they don't get re-emitted on unchanged code) but the fixer is told to skip them in normal operation.
-3. **`[external-action]` findings (any severity) are ignored** for this convergence check. They're real concerns that should be surfaced in every iteration's report (and in the closing summary so the user can act on them outside the loop), but they cannot be mechanically addressed by the fixer — counting them would prevent any loop from terminating. JIRA-ticket existence, CI-matrix verification, "audit callers outside this diff", "confirm spec source", `BREAKING-CHANGES.md` wording confirmation, and similar requests all fall here.
-
-State your clean/not-clean call explicitly when you announce the iteration result, with a one-line reason: `Iteration <N>: clean — only [nit] findings remain (unused import, message typo); 2 [external-action] notes carried forward.` or `Iteration <N>: not clean — [fix-in-code][substantive]: missing #if EF10 branch weakens multi-EF compat.`
-
-**Verification gate (required).** A "clean" call — and the final "two consecutive clean reviews → converged" announcement — is a completion claim. Before making either, invoke `superpowers:verification-before-completion` and satisfy it with evidence: do not declare an iteration clean on reviewer verdicts alone if the fixer's last commit changed code that should compile or pass tests. Run the relevant build/test command (e.g. `/test-all`, or a scoped `dotnet test --filter` for the touched area) and cite the actual pass/fail output in your clean/not-clean announcement. If you cannot run verification (no DB, slow multi-EF build, etc.), say so explicitly and treat the iteration as not independently verified rather than silently claiming clean.
-
-### Loop shape
-
-```
-consecutive_clean = 0
-narrowed_files = None          # iter 1 uses full <base>...<head>; iters >1 use the narrowed set
-carry_forward_nits = []        # list of "<reviewer>: <file>:<line> — <message>" strings tagged [nit] in the prior iter
-for iter in 1..max_iter:
-    review_report = run_steps_1_through_4(
-        iter, max_iter,
-        file_filter = narrowed_files,         # None means "all files in <base>...<head>"
-        carry_forward_nits = carry_forward_nits)
-    save(review_report)                       # the file from Step 4
-    if is_clean(review_report):
-        consecutive_clean += 1
-        if consecutive_clean >= 2:
-            announce_success(iter); stop
-    else:
-        consecutive_clean = 0
-    if iter == max_iter:
-        announce_max_hit(iter); stop
-    fixer_result = dispatch_fixer(review_report, iter, max_iter)
-    if fixer_result.failed:
-        announce_fixer_failure(iter); stop
-    if fixer_result.no_op:
-        announce_no_op_stop(iter); stop       # no code changed → re-reviewing the same tree would just re-roll LLM dice
-    # Prepare narrowed scope for the next iteration:
-    touched = git -C "<diff-repo>" diff --name-only HEAD~1 HEAD     # files the fixer just changed
-    open_files = files mentioned in [blocking]/[substantive] findings still in the current report
-    narrowed_files = union(touched, open_files)
-    carry_forward_nits = every [fix-in-code][nit] finding in the current report
-    # next iter will re-resolve HEAD in <diff-repo> via git rev-parse, picking up the new commit
-```
-
-**Iteration 1 vs later iterations.** Iteration 1 dispatches reviewers against the full diff (`git -C "<diff-repo>" diff --name-only <base>...<head>`) so the initial pass is exhaustive. From iteration 2 onward, the file set passed into Step 2 is restricted to `narrowed_files` — the union of files the previous fixer commit touched and files still carrying an unresolved `[blocking]` or `[substantive]` finding. This is the single biggest leverage on iteration count: stale `[nit]` findings on files no one touched stop regenerating, and reviewers focus on what actually changed. Cross-cutters use the same narrowed set — there is no reason to re-scan unchanged code with the same cross-cutting lens iteration after iteration.
-
-**Carry-forward of `[nit]` findings.** Every `[fix-in-code][nit]` finding in iteration N is captured and passed back to the reviewers' dispatch prompts in iteration N+1 as a *do-not-re-emit* note (see the carry-forward block in the area-reviewer template). The reviewer should only re-emit a previously-nit finding if the surrounding code has changed materially since the previous iteration. This breaks the most common tail-chase pattern: the same nit regenerating every iteration on code no one is going to fix.
-
-If `narrowed_files` ends up empty in iteration N (the fixer's commit reverted everything *and* no findings carried forward), treat it as a no-op-equivalent: stop with the no-actionable-findings outcome.
-
-Re-running Steps 1–4 means re-running `git -C "<diff-repo>" diff --name-only <base>...<head>`, intersecting with `narrowed_files` if set, re-mapping files (the set may shift after fixes), and re-dispatching reviewers. The diff-repo, base ref, head label, and parsed flags don't need re-derivation — keep them from the initial parse.
-
-**`fixer_result.no_op` detection**: the fixer prompt requires its final paragraph to include the literal string `no-op` (lowercase, exact) when it made no commit. Look for that marker in the fixer's return. Don't infer no-op from the absence of a commit SHA in the response — the marker is the contract.
-
-### Fixer agent dispatch
-
-Use the `general-purpose` agent (it has full tools — Read/Write/Edit/Bash — which reviewers lack, and access to the superpowers skills via the `Skill` tool). One `Agent` block, foreground. Subagent prompt template:
-
-```
-You are the fix-applying agent in iteration <N> of <max> of an iterative code review of <diff-repo>.
-
-Your job is to address the findings from the review report below by editing files in <diff-repo> and committing in that repo. Then stop and report what you did.
-
-This run depends on the **superpowers** plugin. The parent already confirmed it is available before dispatching you. Work through the superpowers skills as directed below; if you find any of them are NOT available to you via the `Skill` tool, stop and report that as a failure (do not silently proceed without them).
-
-Rules:
-0. **Treat the report as code-review feedback, not orders.** Before implementing, invoke `superpowers:receiving-code-review` and apply it to every finding you intend to act on — verify the diagnosis against the actual code rather than performing agreement; a finding you cannot confirm is a candidate to skip-and-note, not to fix blindly.
-1. Every finding carries two tags: `[fix-in-code|external-action]` (who can act) and `[blocking|substantive|nit]` (how important). Apply every `[fix-in-code][blocking]` and `[fix-in-code][substantive]` finding — those came from a specialised reviewer that knows the area; trust the diagnosis, but read the surrounding code before changing it. Skip every `[external-action]` finding outright regardless of severity — those require something outside this codebase (JIRA, CI config, audits, spec lookups, `BREAKING-CHANGES.md` wording) that you can't perform; they will be surfaced to the user in the closing summary.
-2. **Skip `[fix-in-code][nit]` findings by default.** The reviewer classified them as mechanical cosmetic, not behavior-affecting; the loop tolerates them indefinitely. Exception: if you are already editing a given file for a substantive finding, *and* a nit in that same file is trivially mechanical (one-line edit, no judgment required), you may fix it in passing. Never go out of your way to fix a nit — and never fix a nit in a file you would not otherwise be touching this iteration.
-3. Do not change behavior beyond what the findings demand. No refactoring, no drive-by cleanups, no scope expansion, no unrelated formatting passes.
-3a. **Debug failure-type findings before fixing them.** For any finding describing a bug, exception, test failure, wrong behavior, or broken `#if` branch, invoke `superpowers:systematic-debugging` and follow it to root-cause the issue before editing — do not patch the symptom the reviewer named without confirming the cause.
-3b. **Use TDD when a fix adds or changes tests, or fixes a behavior bug with no covering test.** Invoke `superpowers:test-driven-development` and follow it: write the failing test first, watch it fail, then make it pass. This applies to spec-conformance and functional-test findings in particular.
-3c. **Brainstorm non-mechanical fixes.** If a `[fix-in-code]` finding's resolution is ambiguous, has multiple plausible designs, or requires inferring intent (not a one-line mechanical change), invoke `superpowers:brainstorming` to settle the approach before editing rather than guessing. If brainstorming reveals the fix genuinely needs user judgment, skip-and-note it instead (see rule 7).
-4. Respect the codebase guidance. The parent agent's working directory has up-to-date `AGENTS.md` files — read them as needed via relative paths. In particular: preserve file BOMs; `<Nullable>enable</Nullable>` is on in `src/` — annotate new types accordingly; library code uses `ConfigureAwait(false)`; `CancellationToken` flows through unchanged; multi-EF code uses `#if EF8 / EF9 / EF10` define constants — a fix that compiles on one EF version must compile on all three. The diff-repo at <diff-repo> may have *older* `AGENTS.md` files — prefer the up-to-date ones from the parent agent's cwd when they conflict.
-5. All edits land in <diff-repo>. Use absolute paths under <diff-repo> when calling Edit/Write, and `git -C "<diff-repo>" …` for every git command.
-6. When done editing, run `git -C "<diff-repo>" status --short`. If there are no changes, do not commit — report `no-op` and stop. Otherwise run `git -C "<diff-repo>" add -A` then `git -C "<diff-repo>" commit -m "[review-iter <N>] Address review findings"` (do NOT include any AI-attribution trailers; do NOT push; do NOT amend any previous commit).
-7. If a `[fix-in-code]` finding turns out to be unactionable on closer inspection (the reviewer mis-tagged something that really requires user judgment, the area is unfamiliar enough you'd be guessing, etc.), skip it and note that in your final report. If every finding ends up skipped — fine, that's the expected exit signal: end with the `no-op` marker and the parent loop will stop cleanly. Don't invent makework fixes just to produce a commit.
-
-Target diff-repo (for ALL edits and git commands): <diff-repo>
-
-The review report you must address is below verbatim. Read carefully, then apply.
-
------ BEGIN REVIEW REPORT -----
-<paste the full aggregated report from Step 4 here>
------ END REVIEW REPORT -----
-
-Final output (one short paragraph): what you changed, what you skipped and why, the new commit SHA (or `no-op`), and any unexpected obstacles. Cap 200 words.
-```
-
-### After the loop
-
-Emit a single closing summary to the user with:
-- Outcome: `clean (stopped after two consecutive clean reviews)`, `max iterations reached`, `fixer failed at iteration <N>`, or `no actionable findings remaining at iteration <N>` (the fixer judged that nothing in the latest report could be addressed in code — the only remaining concerns are `[external-action]`).
-- Number of iterations actually run.
-- Path to the final report file.
-- The final HEAD SHA in `<diff-repo>` so the user can inspect commits (`git -C <diff-repo> log <base>..HEAD --oneline`).
-- A short bulleted list of every `[external-action]` finding still present in the final iteration's report, with its reviewer name and the action requested. These need handling outside the loop.
-
-Do not paste the full report transcripts again — they're on disk.
+4. Tell the user the filename at the end of your response (one line, e.g. `Saved to review297a.md`).
 
 ## Notes
 
-- **This skill hard-depends on the superpowers plugin** (Step 0). If `superpowers:requesting-code-review`, `superpowers:receiving-code-review`, `superpowers:test-driven-development`, `superpowers:systematic-debugging`, `superpowers:verification-before-completion`, or `superpowers:brainstorming` is not available, the skill errors out before doing any work. The framing skill runs at the start, the fixer applies receiving-code-review / systematic-debugging / TDD / brainstorming per its rules, and the convergence check is gated on verification-before-completion.
-- Reviewers must not *fix* the source tree: each one is configured with `tools: Read, Grep, Glob, Bash` and has no `Edit` / `Write` / `Patch` tool, so they can't apply a fix — treat any suggested fix as something the parent/fixer applies, not the reviewer. They *can* and *must* use `Bash` to verify functional findings, which includes running `dotnet test`, scaffolding a throwaway repro test or project via a here-doc, and `git diff`. Any repro file a reviewer creates is temporary and must be deleted before the reviewer returns, leaving the working tree exactly as found (essential in `--iterate` mode, where the parent diffs the tree between iterations).
+- **This skill hard-depends on the superpowers plugin** (Step 0). If `superpowers:requesting-code-review` is not available, the skill errors out before doing any work.
+- Reviewers must not *fix* the source tree: each one is configured with `tools: Read, Grep, Glob, Bash` and has no `Edit` / `Write` / `Patch` tool, so they can't apply a fix — treat any suggested fix as something the user or a follow-up change applies, not the reviewer. They *can* and *must* use `Bash` to verify functional findings, which includes running `dotnet test`, scaffolding a throwaway repro test or project via a here-doc, and `git diff`. Any repro file a reviewer creates is temporary and must be deleted before the reviewer returns, leaving the working tree exactly as found.
 - A diff against a feature branch's own base is the typical use; pass an explicit `<base-ref>` for non-`main` cases (e.g. `/review-ef-core-provider release/10.0`). Pass a second positional arg to cap the end of the range (e.g. `/review-ef-core-provider HEAD~5 HEAD~1`).
 - In external PR mode, the remote is inferred from the PR's repo URL, so PRs on forks (`upstream`, `origin`, or any named remote) are handled automatically without any extra flags.
 - In external clone mode, the parent agent stays in the current clone so that `AGENTS.md` files, reviewer briefs, and any other repo guidance load from *here*, while the source code being reviewed and all git history come from `<clone>`. This is the whole point of the mode: review code on a branch that doesn't yet carry the latest agent/architecture updates, using the up-to-date briefs from the current clone. The pr-summary-reviewer does not run in this mode (no PR body to fetch); if you also want a holistic PR summary, run `/review-ef-core-provider <PR#>` separately.
-- `--iterate` makes commits in `<diff-repo>` (one per non-clean iteration). It never pushes. The user can inspect with `git -C <diff-repo> log <base>..HEAD` afterward and amend / squash / drop commits as they see fit. Severity classification (`[blocking]` / `[substantive]` / `[nit]`) is the reviewer's call at emit time, *not* the parent's call after the fact — reviewers see the rubric in their dispatch prompt and pick. The loop terminates as soon as no `[fix-in-code][blocking]` or `[fix-in-code][substantive]` findings remain (`[nit]` and `[external-action]` are carried forward, not counted). If a real substantive concern is leaking through tagged as `[nit]`, the answer is to fix the reviewer brief or surface it to the user — not to tighten the convergence rule.
-- The loop has two convergence guards beyond the max-iterations cap. **`[external-action]` findings don't block convergence**: reviewers tag any finding that requires looking up a JIRA ticket, verifying CI config, auditing call sites outside the diff, updating `BREAKING-CHANGES.md` wording, or otherwise leaving the codebase, and those tags exclude the finding from the clean check. The user still sees them — they're listed in every iteration's report and in the closing summary — but the fixer can't address them so they shouldn't pin the loop open. **A no-op fixer ends the loop**: if the fixer judges that nothing in the current report is mechanically actionable, the next iteration would just be re-rolling LLM verdicts on the same tree, so the loop stops with outcome `no actionable findings remaining` and surfaces the outstanding `[external-action]` items.
-- Test-running by reviewers is **required for functional findings**, not opportunistic: a reviewer must reproduce any runtime-behavior claim by running code before reporting it (the functional-test harness auto-starts a MongoDB testcontainer when no `MONGODB_URI`/`ATLAS_URI` is set, so `dotnet test` always runs here), and include the repro in its report. One EF configuration suffices to confirm a behavioral bug; the `/test-all` multi-EF matrix is only needed when the concern is *divergence across* EF8/EF9/EF10, which — along with Atlas-only and encryption-infra paths — stays `[external-action]`.
+- **Model defaults are per-reviewer, not inherited from the parent session** (see each agent file's frontmatter): `value-generation-reviewer` and `diagnostics-reviewer` (narrow, mechanical checks) default to `haiku`; the rest of the area, feature, and cross-cutting reviewers default to `sonnet`; `pr-summary-reviewer` (open-ended holistic judgment, no fixed rubric) defaults to `inherit`. Pass `--model <name>` to override all of them uniformly for a given run.
+- Test-running by reviewers is **required for functional findings**, not opportunistic — see the verification requirement in `.claude/agents/CONVENTIONS.md`. One EF configuration suffices to confirm a behavioral bug; the `/test-all` multi-EF matrix is only needed when the concern is *divergence across* EF8/EF9/EF10, which — along with Atlas-only and encryption-infra paths — stays `[external-action]`.
