@@ -38,16 +38,15 @@ public class MixedProjectionArithmeticTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Select_projection_entity_and_computed_arithmetic_leaf_uses_correct_operands()
     {
-        using (var db = SingleEntityDbContext.Create<Entity>(database))
-        {
-            db.Set<Entity>().AddRange(
-                new Entity { Age = 3, Score = 7 },
-                new Entity { Age = 5, Score = 2 });
-            db.SaveChanges();
-        }
+        using var db = SingleEntityDbContext.Create<Entity>(database);
 
-        using var readDb = SingleEntityDbContext.Create<Entity>(database);
-        var results = readDb.Set<Entity>()
+        db.Set<Entity>().AddRange(
+            new Entity { Age = 3, Score = 7 },
+                new Entity { Age = 5, Score = 2 });
+        db.SaveChanges();
+        db.ChangeTracker.Clear();
+
+        var results = db.Set<Entity>()
             .Select(e => new { e, Total = e.Age * e.Score })
             .ToList();
 
