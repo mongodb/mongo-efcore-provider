@@ -299,6 +299,28 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Include_multi_join_then_root_only_where_with_no_other_operator_is_reattached_correctly()
+    {
+        // A bare root-only Where (no OrderBy after it) composed after a multi-hop Include chain. EF Core's
+        // own query preprocessor hoists a predicate that doesn't reference a navigation BELOW the Include's
+        // joins before this provider ever sees the tree (confirmed via the captured efQueryExpression: the
+        // Where ends up as the join chain's source, not wrapping it) - so this never reaches the "discard
+        // the join chain" branch of StripJoinForLookup at all. Guards against a regression of that hoisting
+        // assumption: if it ever stopped happening, this predicate would go back to being silently dropped.
+        var (ordersCollection, customersCollection, regionsCollection) = SetupOrdersCustomersAndRegions();
+
+        using var db = new OrderCustomerRegionDbContext(database, ordersCollection, customersCollection, regionsCollection);
+        var orders = db.Orders
+            .Include(o => o.Customer)
+                .ThenInclude(c => c.Region)
+            .Where(o => o.OrderDescription != "Order 1")
+            .ToList();
+
+        Assert.Equal(2, orders.Count);
+        Assert.All(orders, o => Assert.NotNull(o.Customer?.Region));
+    }
+
+    [Fact]
     public void Include_multi_join_then_root_only_where_and_orderby_are_reattached_correctly()
     {
         // A Where/OrderBy composed after a multi-hop Include chain that only reads a property of the root
