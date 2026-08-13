@@ -17,6 +17,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -24,6 +25,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Driver;
+using MongoDB.Driver.Core.Configuration;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Query;
@@ -36,6 +38,11 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 /// </summary>
 public class MongoClientWrapper : IMongoClientWrapper
 {
+    // Telemetry keys on this exact string; do not change it.
+    private const string LibraryName = "efcore";
+
+    private static readonly LibraryInfo ProviderLibraryInfo = CreateLibraryInfo();
+
     private readonly MongoOptionsExtension? _options;
     private readonly IServiceProvider _serviceProvider;
     private readonly IQueryableEncryptionSchemaProvider _schemaProvider;
@@ -174,10 +181,34 @@ public class MongoClientWrapper : IMongoClientWrapper
                     "Cannot activate encryption with a pre-configured MongoClient. Either use ConnectionString or ClientSettings options instead.");
             }
 
+            preconfiguredMongoClient.AppendMetadata(ProviderLibraryInfo);
             return preconfiguredMongoClient;
         }
 
         var mongoClientSettings = MongoClientSettingsHelper.CreateSettings(options, queryableEncryptionSchema);
-        return new MongoClient(mongoClientSettings);
+
+        // Seeding reaches the first handshake, including the cluster's monitoring connections, whereas
+        // AppendMetadata only affects connections opened after the call. Appending as well covers the
+        // case where the caller declared a library of their own, which the seeding must not overwrite.
+        mongoClientSettings.LibraryInfo ??= ProviderLibraryInfo;
+        var mongoClient = new MongoClient(mongoClientSettings);
+        mongoClient.AppendMetadata(ProviderLibraryInfo);
+        return mongoClient;
+    }
+
+    private static LibraryInfo CreateLibraryInfo()
+    {
+        var assembly = typeof(MongoClientWrapper).Assembly;
+        var version = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                      ?? assembly.GetName().Version?.ToString();
+
+        // Source Link appends the commit it was built from, which is not part of the version.
+        var separatorIndex = version?.IndexOf('+') ?? -1;
+        if (separatorIndex != -1)
+        {
+            version = version![..separatorIndex];
+        }
+
+        return new LibraryInfo(LibraryName, version);
     }
 }
