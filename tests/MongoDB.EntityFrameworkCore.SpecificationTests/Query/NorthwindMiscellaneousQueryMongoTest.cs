@@ -3514,11 +3514,15 @@ OrderDetails.
 
     public override async Task Join_take_count_works(bool async)
     {
-        await base.Join_take_count_works(async);
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.Join_take_count_works(async))).Message);
 
         AssertMql(
             """
-Orders.{ "$match" : { "_id" : { "$gt" : 690, "$lt" : 710 } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "pipeline" : [{ "$match" : { "_id" : "ALFKI" } }], "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$limit" : 5 }, { "$count" : "_v" }
+Orders.
 """);
     }
 
@@ -4163,11 +4167,15 @@ Customers.
 
     public override async Task OrderBy_Join(bool async)
     {
-        await base.OrderBy_Join(async);
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.OrderBy_Join(async))).Message);
 
         AssertMql(
             """
-Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "pipeline" : [{ "$sort" : { "_id" : 1 } }], "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$project" : { "CustomerID" : "$Outer._id", "OrderID" : "$Inner._id", "_id" : 0 } }
+Customers.
 """);
     }
 

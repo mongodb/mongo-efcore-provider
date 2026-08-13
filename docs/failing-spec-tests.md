@@ -101,6 +101,7 @@ These entries appear in `// Fails:` comments without an `EF-` or `CSHARP-` refer
 | EF-X019 | Include on keyless entity not supported (no primary key for $lookup join) | 2 |
 | EF-X020 | Cross-collection Include/join/navigation not translated on EF8/EF9 (works on EF10) | 168 |
 | EF-X021 | Filtered Include / query filter on cross-collection target not translated | 0 |
+| EF-X022 | Join/GroupJoin whose inner source is a filtered or ordered sub-query is rejected | 18 |
 | EF-X016 | Bulk `ExecuteUpdate`/`ExecuteDelete` source restricted to a single collection scoped by `Where` | 47 |
 
 ### EF-X001 — Sub-query selection across DbSets is not translated
@@ -204,6 +205,54 @@ Affected: 2 tests (`NorthwindKeylessEntitiesQueryMongoTest.KeylessEntity_with_in
 Comment pattern: `// Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020`.
 Test-body pattern: the override is wrapped in `#if EF8 || EF9` / `#else`. The `#if EF8 || EF9` branch asserts the translation failure (`AssertTranslationFailed(() => base.X(...))`); the `#else` branch keeps the working EF10 baseline (the real `base` call plus its `AssertMql(...)`).
 Affected: 168 tests across `NorthwindEFPropertyIncludeQueryMongoTest`, `NorthwindStringIncludeQueryMongoTest`, `NorthwindIncludeQueryMongoTest`, `NorthwindIncludeNoTrackingQueryMongoTest`, `NorthwindNavigationsQueryMongoTest`, `NorthwindMiscellaneousQueryMongoTest`, `NorthwindJoinQueryMongoTest`, `NorthwindAggregateOperatorsQueryMongoTest`, `NorthwindAsNoTrackingQueryMongoTest`, `NorthwindKeylessEntitiesQueryMongoTest`, `NorthwindSelectQueryMongoTest`, `NorthwindSetOperationsQueryMongoTest`, `NorthwindWhereQueryMongoTest`, and `BuiltInDataTypesMongoTest`. These are the cross-collection Include/`ThenInclude`/join/navigation shapes implemented for the EF10-targeted query pipeline. On EF8/EF9 the upstream nav-expansion / query pipeline produces a different expression shape (e.g. an extra `.OrderBy(o => o.OrderID)` injected during navigation expansion) that the EF10-targeted translator does not handle, so translation fails with EF Core's `InvalidOperationException` "could not be translated" (a few also throw the provider's `ExpressionNotSupportedException`); the same query translates and runs on EF10. The provider's local `AssertTranslationFailed` helper swallows whichever exception is thrown, so both shapes are covered. Four `Include_reference_dependent_already_tracked` overrides (in the four Include suites) emit MQL from a first principal query *before* the Include sub-query fails to translate, so their `#if EF8 || EF9` branch asserts only the translation failure and omits the empty `AssertMql()`. `BuiltInDataTypesMongoTest.Can_read_back_bool_mapped_as_int_through_navigation` is split three ways (a nested `#if EF9` inside the file's `#if !EF8` branch, plus the `#else` EF8 branch) because that file uses async signatures on EF9/EF10 and sync `void` signatures on EF8.
+
+### EF-X022 — Join/GroupJoin whose inner source is a filtered or ordered sub-query is rejected
+Comment pattern: `// Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022`.
+Test-body patterns: `Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>` asserting
+`"Expression not supported"`, or `Assert.ThrowsAnyAsync<Exception>` where the EF8/EF9 failure mode differs.
+
+The provider lowers a single-key `Join`/`GroupJoin` to `$lookup`. When the **inner** source is not a bare
+collection but a sub-query — `Orders.Where(...)`, `Orders.OrderBy(...)`, or a dependent-side query filter
+that lowers to the same `Where` — the driver's LINQ provider rejects the whole expression with
+`ExpressionNotSupportedException: ... because expression must be a MongoDB IQueryable against a collection`.
+This is an **intentional rejection**: these shapes were previously folded into the correlated `$lookup`
+sub-pipeline, which is not a faithful translation — the mis-folding formerly tracked as `CSHARP-6017`.
+Failing loudly is preferred over returning wrong results, so this is a documented boundary rather than a
+regression to fix in the test suite.
+
+Affected: 18 overrides, all asserting the rejection (none are `Skip`ped).
+
+- `NorthwindJoinQueryMongoTest` — `Join_customers_orders_with_subquery`,
+  `Join_customers_orders_with_subquery_predicate`, `Join_customers_orders_with_subquery_anonymous_property_method`,
+  `GroupJoin_customers_employees_subquery_shadow`, `GroupJoin_SelectMany_subquery_with_filter`, plus
+  EF10-only `GroupJoin_DefaultIfEmpty2` and `GroupJoin_SelectMany_subquery_with_filter_and_DefaultIfEmpty`.
+- `NorthwindMiscellaneousQueryMongoTest` — `OrderBy_Join`, `Join_take_count_works`.
+- `NorthwindQueryFiltersQueryMongoTest` (EF10-only) — `Entity_Equality`, `Included_many_to_one_query`,
+  `Included_many_to_one_query2`, where the *query filter* on the `$lookup` target is what makes the inner
+  a filtered sub-query.
+- **Former `CSHARP-6017` skips**, now converted to the same assertion style rather than
+  `[ConditionalTheory(Skip = ...)]` — `Join_customers_orders_with_subquery_with_take`,
+  `Join_customers_orders_with_subquery_predicate_with_take`,
+  `Join_customers_orders_with_subquery_anonymous_property_method_with_take`, `GroupJoin_simple_subquery`,
+  `GroupJoin_Subquery_with_Take_Then_SelectMany_Where`, `GroupJoin_customers_employees_subquery_shadow_take`.
+  These were skipped while the driver silently mis-folded the `Take`/sub-query inner and returned wrong
+  results; the driver now rejects them, so they assert the rejection and no longer need a skip.
+
+Interaction with [EF-352](https://jira.mongodb.org/browse/EF-352): that fix (shadow/scalar `EF.Property`
+read on a joined entity in a projection) re-enabled
+`Join_customers_orders_with_subquery_anonymous_property_method` against driver 3.10, but the query's inner
+is an ordered sub-query, so 3.11 rejects it and the override now asserts the rejection instead. The
+underlying EF-352 fix is still covered functionally by
+`ShadowPropertyJoinProjectionTests` and `ShadowPropertyFlatJoinProjectionTests`; the first of those had the
+`orderby` dropped from its join inner (incidental to what it asserts) so it keeps exercising the non-root
+joined-entity shaper on a shape the driver still supports.
+
+The EF10-only entries carry a second ticket for their EF8/EF9 failure mode (`EF-X016`, `EF-X001`, `EF-202`,
+`EF-216`), because on those versions the query fails earlier in nav-expansion and logs no MQL at all —
+hence the `#if EF8 || EF9` split on the `AssertMql` baseline.
+
+Lifting this ticket requires translating the inner sub-query into the `$lookup` sub-pipeline correctly
+(correlated `let`/`pipeline` form), which overlaps with [EF-X021](#ef-x021--filtered-include--query-filter-on-cross-collection-target-not-translated).
 
 ### EF-216 — wrong-data on EF10 (cross-collection navigation), unsupported on EF8/EF9
 
