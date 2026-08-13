@@ -572,6 +572,15 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// <summary>
     /// For explicit Join queries, strip the Join chain and return just the base source.
     /// The $lookup stages appended by AppendLookupStages handle the actual join.
+    /// <para>
+    /// EF-369: a <c>Where</c>/<c>OrderBy</c>/etc. found between the outermost call and the join being
+    /// stripped is discarded along with the join chain (same as before this fix). When that discarded
+    /// operator's lambda reads through a <c>TransparentIdentifier.Inner</c> member - i.e. it filters/sorts
+    /// on data that only exists via the join being removed here - simply dropping it silently changes the
+    /// result set instead of raising an error. The provider does not yet rewrite such a lambda to read the
+    /// flattened <c>$lookup</c> fields the join is replaced with (TODO EF-317, tracked with the rest of this
+    /// $lookup fallback plumbing), so this shape now fails translation loudly instead.
+    /// </para>
     /// </summary>
     private static Expression? StripJoinForLookup(Expression expression)
     {
@@ -580,12 +589,17 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
         var baseSource = FindBaseSourceThroughJoin(outerCall);
         if (baseSource != null && IsJoinRelatedMethod(outerCall))
+        {
+            GuardAgainstDiscardedJoinShapeLambda(outerCall);
             return baseSource;
+        }
 
         var source = outerCall.Arguments[0];
         baseSource = FindBaseSourceThroughJoin(source);
         if (baseSource == null)
             return null;
+
+        GuardAgainstDiscardedJoinShapeLambda(source);
 
         var newArgs = outerCall.Arguments.ToArray();
         newArgs[0] = baseSource;
@@ -626,6 +640,64 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return FindBaseSourceThroughJoin(call.Arguments[0]);
 
         return null;
+    }
+
+    /// <summary>
+    /// Walks the portion of the tree that <see cref="StripJoinForLookup"/> is about to discard (everything
+    /// from <paramref name="discarded"/> down to the base source) looking for a <c>Where</c>/<c>OrderBy</c>-
+    /// family call whose own lambda reads through a <c>TransparentIdentifier.Inner</c> member. Only that
+    /// operator's OWN lambda is checked at each level (not a nested projection's, e.g. a Select's) - a
+    /// projection/materialization node reading joined data is expected and handled separately by the
+    /// shaper/projection-binding visitors; a filter/sort actually needing to run as LINQ here is not.
+    /// </summary>
+    private static void GuardAgainstDiscardedJoinShapeLambda(Expression discarded)
+    {
+        if (discarded is not MethodCallExpression call)
+        {
+            return;
+        }
+
+        if (call.Method.Name is "Where" or "OrderBy" or "OrderByDescending" or "ThenBy" or "ThenByDescending"
+            && call.Arguments.Count > 1
+            && call.Arguments[1] is UnaryExpression { NodeType: ExpressionType.Quote, Operand: LambdaExpression lambda }
+            && ReferencesTransparentIdentifierInner(lambda.Body))
+        {
+            throw new InvalidOperationException(
+                Microsoft.EntityFrameworkCore.Diagnostics.CoreStrings.TranslationFailed(call.Print()));
+        }
+
+        if (call.Arguments.Count > 0)
+        {
+            GuardAgainstDiscardedJoinShapeLambda(call.Arguments[0]);
+        }
+    }
+
+    /// <summary>
+    /// Whether the expression reads through a <c>TransparentIdentifier.Inner</c> member anywhere - i.e.
+    /// reaches data that only exists via a join being stripped by <see cref="StripJoinForLookup"/>.
+    /// </summary>
+    private static bool ReferencesTransparentIdentifierInner(Expression body)
+    {
+        var finder = new TransparentIdentifierInnerAccessFinder();
+        finder.Visit(body);
+        return finder.Found;
+    }
+
+    private sealed class TransparentIdentifierInnerAccessFinder : System.Linq.Expressions.ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        protected override Expression VisitMember(MemberExpression node)
+        {
+            if (node.Member.Name == "Inner"
+                && node.Member.DeclaringType is { IsGenericType: true } dt
+                && dt.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal))
+            {
+                Found = true;
+            }
+
+            return base.VisitMember(node);
+        }
     }
 
     /// <summary>

@@ -261,6 +261,90 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
 
 #if !EF8 && !EF9
     [Fact]
+    public void Include_multi_join_then_where_composed_after_is_not_silently_dropped()
+    {
+        // EF-369 repro: a multi-hop reference Include chain (two reference joins) flattens to forced-unwind
+        // $lookup stages (see MongoQueryableMethodTranslatingExpressionVisitor's isSecondOrLaterJoin path).
+        // A Where composed AFTER the Include chain reads through the joined-in navigation properties, which
+        // the provider does not yet rewrite to read the flattened $lookup fields (TODO EF-317). It must fail
+        // loudly (translation failure) rather than silently drop the predicate and return every order.
+        var (ordersCollection, customersCollection, regionsCollection) = SetupOrdersCustomersAndRegions();
+
+        using var db = new OrderCustomerRegionDbContext(database, ordersCollection, customersCollection, regionsCollection);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            db.Orders
+                .Include(o => o.Customer)
+                    .ThenInclude(c => c.Region)
+                .Where(o => o.Customer.Region.RegionName == "West")
+                .ToList());
+    }
+
+    [Fact]
+    public void Include_multi_join_then_orderby_composed_after_is_not_silently_dropped()
+    {
+        // Same EF-369 gap for OrderBy: a sort key selector reaching through the joined-in navigation
+        // properties composed after a multi-hop reference Include chain must also fail loudly rather than
+        // silently sort against the wrong (un-joined) source.
+        var (ordersCollection, customersCollection, regionsCollection) = SetupOrdersCustomersAndRegions();
+
+        using var db = new OrderCustomerRegionDbContext(database, ordersCollection, customersCollection, regionsCollection);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            db.Orders
+                .Include(o => o.Customer)
+                    .ThenInclude(c => c.Region)
+                .OrderBy(o => o.Customer.Region.RegionName)
+                .ToList());
+    }
+
+    [Fact]
+    public void Include_multi_join_then_root_only_where_and_orderby_are_reattached_correctly()
+    {
+        // A Where/OrderBy composed after a multi-hop Include chain that only reads a property of the root
+        // entity (never crossing into the joined-in Customer/Region data) doesn't need any $lookup field -
+        // it must be correctly reattached to the un-joined base source and actually applied, not silently
+        // dropped (which would happen to look like it "worked" if left unverified, since dropping a no-op
+        // filter/sort is indistinguishable from a correctly-applied one unless the assertions are specific
+        // enough to catch it).
+        var (ordersCollection, customersCollection, regionsCollection) = SetupOrdersCustomersAndRegions();
+
+        using var db = new OrderCustomerRegionDbContext(database, ordersCollection, customersCollection, regionsCollection);
+        var orders = db.Orders
+            .Include(o => o.Customer)
+                .ThenInclude(c => c.Region)
+            .Where(o => o.OrderDescription != "Order 1")
+            .OrderByDescending(o => o.OrderDescription)
+            .ToList();
+
+        Assert.Equal(["Order 3", "Order 2"], orders.Select(o => o.OrderDescription).ToArray());
+        Assert.All(orders, o => Assert.NotNull(o.Customer?.Region));
+    }
+
+    [Fact]
+    public void Include_multi_join_then_skip_take_composed_after_still_works()
+    {
+        // Skip/Take carry no lambda over the joined shape, so unlike Where/OrderBy above they can be
+        // (and must continue to be) safely reattached to the un-joined base source instead of being
+        // silently discarded.
+        var (ordersCollection, customersCollection, regionsCollection) = SetupOrdersCustomersAndRegions();
+
+        using var db = new OrderCustomerRegionDbContext(database, ordersCollection, customersCollection, regionsCollection);
+        var orders = db.Orders
+            .Include(o => o.Customer)
+                .ThenInclude(c => c.Region)
+            .OrderBy(o => o.OrderDescription)
+            .Skip(1)
+            .Take(2)
+            .ToList();
+
+        Assert.Equal(["Order 2", "Order 3"], orders.Select(o => o.OrderDescription).ToArray());
+        Assert.All(orders, o => Assert.NotNull(o.Customer?.Region));
+    }
+#endif
+
+#if !EF8 && !EF9
+    [Fact]
     public void Include_self_join_materializes_related_entity()
     {
         var staffName = TemporaryDatabaseFixtureBase.CreateCollectionName("Staff") + Guid.NewGuid().ToString("N")[..8];
@@ -315,6 +399,42 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
             db.Customers
                 .Include(c => c.Orders)
                 .First(c => c.FullName == "Alice"));
+    }
+
+    // BSON uses: desc, cust_id, region_id for Orders/Customers; region_name for Regions.
+    // C# uses:   OrderDescription, CustomerId, RegionId for Orders/Customers; RegionName for Regions.
+    private (string ordersCollection, string customersCollection, string regionsCollection) SetupOrdersCustomersAndRegions()
+    {
+        var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("MultiJoinCustomers") + Guid.NewGuid().ToString("N")[..8];
+        var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("MultiJoinOrders") + Guid.NewGuid().ToString("N")[..8];
+        var regionsName = TemporaryDatabaseFixtureBase.CreateCollectionName("MultiJoinRegions") + Guid.NewGuid().ToString("N")[..8];
+
+        var westRegionId = ObjectId.GenerateNewId();
+        var eastRegionId = ObjectId.GenerateNewId();
+
+        var regions = database.MongoDatabase.GetCollection<BsonDocument>(regionsName);
+        regions.InsertMany([
+            new BsonDocument { { "_id", westRegionId }, { "region_name", "West" } },
+            new BsonDocument { { "_id", eastRegionId }, { "region_name", "East" } }
+        ]);
+
+        var westCustomerId = ObjectId.GenerateNewId();
+        var eastCustomerId = ObjectId.GenerateNewId();
+
+        var customers = database.MongoDatabase.GetCollection<BsonDocument>(customersName);
+        customers.InsertMany([
+            new BsonDocument { { "_id", westCustomerId }, { "name", "Alice" }, { "region_id", westRegionId } },
+            new BsonDocument { { "_id", eastCustomerId }, { "name", "Bob" }, { "region_id", eastRegionId } }
+        ]);
+
+        var orders = database.MongoDatabase.GetCollection<BsonDocument>(ordersName);
+        orders.InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "desc", "Order 1" }, { "cust_id", westCustomerId } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "desc", "Order 2" }, { "cust_id", westCustomerId } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "desc", "Order 3" }, { "cust_id", eastCustomerId } }
+        ]);
+
+        return (ordersName, customersName, regionsName);
     }
 
     // BSON uses: desc, cust_id for Orders; name for Customers
@@ -468,6 +588,89 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
     }
 
 #if !EF8 && !EF9
+    class MultiJoinRegion
+    {
+        public ObjectId _id { get; set; }
+        public string RegionName { get; set; }
+    }
+
+    class MultiJoinCustomer
+    {
+        public ObjectId _id { get; set; }
+        public string FullName { get; set; }
+        public ObjectId? RegionId { get; set; }
+        public MultiJoinRegion Region { get; set; }
+    }
+
+    class MultiJoinOrder
+    {
+        public ObjectId _id { get; set; }
+        public string OrderDescription { get; set; }
+        public ObjectId? CustomerId { get; set; }
+        public MultiJoinCustomer Customer { get; set; }
+    }
+
+    class OrderCustomerRegionDbContext : DbContext
+    {
+        private readonly string _ordersCollection;
+        private readonly string _customersCollection;
+        private readonly string _regionsCollection;
+
+        public DbSet<MultiJoinOrder> Orders { get; set; }
+        public DbSet<MultiJoinCustomer> Customers { get; set; }
+        public DbSet<MultiJoinRegion> Regions { get; set; }
+
+        public OrderCustomerRegionDbContext(
+            TemporaryDatabaseFixture database,
+            string ordersCollection,
+            string customersCollection,
+            string regionsCollection)
+            : base(new DbContextOptionsBuilder<OrderCustomerRegionDbContext>()
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
+                .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+                .Options)
+        {
+            _ordersCollection = ordersCollection;
+            _customersCollection = customersCollection;
+            _regionsCollection = regionsCollection;
+        }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<MultiJoinRegion>(b =>
+            {
+                b.ToCollection(_regionsCollection);
+                b.Property(r => r.RegionName).HasElementName("region_name");
+            });
+
+            modelBuilder.Entity<MultiJoinCustomer>(b =>
+            {
+                b.ToCollection(_customersCollection);
+                b.Property(c => c.FullName).HasElementName("name");
+                b.Property(c => c.RegionId).HasElementName("region_id");
+                b.HasOne(c => c.Region).WithMany().HasForeignKey(c => c.RegionId);
+            });
+
+            modelBuilder.Entity<MultiJoinOrder>(b =>
+            {
+                b.ToCollection(_ordersCollection);
+                b.Property(o => o.OrderDescription).HasElementName("desc");
+                b.Property(o => o.CustomerId).HasElementName("cust_id");
+                b.HasOne(o => o.Customer).WithMany().HasForeignKey(o => o.CustomerId);
+            });
+        }
+
+        sealed class IgnoreCacheKeyFactory : IModelCacheKeyFactory
+        {
+            private static int _count;
+            public object Create(DbContext context, bool designTime)
+                => Interlocked.Increment(ref _count);
+        }
+    }
+
     class StaffMember
     {
         public ObjectId _id { get; set; }
