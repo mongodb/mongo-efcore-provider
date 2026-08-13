@@ -576,7 +576,77 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return sizeRewrite;
         }
 
+        // A bare/unfiltered embedded (owned) collection-navigation Count, e.g. `b.Posts.Count`, lowered by
+        // EF Core to Queryable.Count(Queryable.AsQueryable(EF.Property(shaper, "Posts"))). See
+        // TryRewriteEmbeddedCollectionNavigationCount for why this needs a null guard the driver's own
+        // rendering of a bare Count (a server-side $size) doesn't provide.
+        if (TryRewriteEmbeddedCollectionNavigationCount(node, out var embeddedCountRewrite))
+        {
+            return embeddedCountRewrite;
+        }
+
         return base.VisitMethodCall(node);
+    }
+
+    /// <summary>
+    /// Rewrites <c>Queryable.Count(Queryable.AsQueryable(EF.Property(shaper, "Nav")))</c> (and the
+    /// <c>LongCount</c> variant) — the lowered form of a bare/unfiltered embedded (owned) collection
+    /// navigation count such as <c>b.Posts.Count</c> — into a null-guarded <c>Enumerable.Count</c> over the
+    /// resolved <c>Mql.Field</c> array read. A missing or explicitly-null stored array reads back as a null
+    /// reference rather than an empty collection, but the driver renders a bare (predicate-less) Count as a
+    /// server-side <c>$size</c>, which throws on a null array (unlike a predicated Count, which the driver
+    /// renders as a null-tolerant <c>$map</c>/<c>$sum</c>), so this guards with an explicit null check.
+    /// </summary>
+    private bool TryRewriteEmbeddedCollectionNavigationCount(MethodCallExpression node, out Expression result)
+    {
+        result = null!;
+
+        if (node.Method.DeclaringType != typeof(Queryable)
+            || node.Arguments.Count != 1
+            || node.Method.Name is not (nameof(Queryable.Count) or nameof(Queryable.LongCount)))
+        {
+            return false;
+        }
+
+        if (node.Arguments[0] is not MethodCallExpression
+            {
+                Method: { Name: nameof(Queryable.AsQueryable), DeclaringType: var asQueryableDeclaring }
+            } asQueryableCall
+            || asQueryableDeclaring != typeof(Queryable))
+        {
+            return false;
+        }
+
+        // Narrow to genuinely embedded (owned) collection navigations only: AsQueryable(...) also shows
+        // up wrapping other enumerable sources (e.g. an IGrouping in a GroupBy/Union pipeline) that are
+        // not a document field read at all, so rewriting unconditionally miscompiles those shapes.
+        if (asQueryableCall.Arguments[0] is not MethodCallExpression efPropertyCall
+            || !efPropertyCall.Method.IsEFPropertyMethod()
+            || efPropertyCall.Arguments[1] is not ConstantExpression { Value: string propertyName }
+            || _queryContext.Context.Model.FindEntityType(efPropertyCall.Arguments[0].Type) is not { } sourceEntityType
+            || sourceEntityType.FindNavigation(propertyName) is not { } navigation
+            || !navigation.IsEmbedded())
+        {
+            return false;
+        }
+
+        var fieldAccess = Visit(asQueryableCall.Arguments[0]);
+        var elementType = fieldAccess?.Type.TryGetItemType();
+        if (elementType == null)
+        {
+            return false;
+        }
+
+        var countMethod = (node.Method.Name == nameof(Queryable.LongCount)
+                ? EnumerableLongCountMethod
+                : EnumerableCountMethod)
+            .MakeGenericMethod(elementType);
+
+        result = Expression.Condition(
+            Expression.Equal(fieldAccess!, Expression.Constant(null, fieldAccess!.Type)),
+            Expression.Default(node.Type),
+            Expression.Call(null, countMethod, fieldAccess));
+        return true;
     }
 
     /// <summary>

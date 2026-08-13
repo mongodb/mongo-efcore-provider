@@ -451,6 +451,45 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                         EnumerableMethods.Select.MakeGenericMethod(method.GetGenericArguments()),
                         shaper,
                         lambda);
+
+                // A Count/LongCount (with or without a predicate) over an embedded/owned collection
+                // navigation reached inside a projection, e.g. `b.Posts.Count(p => p.Rank > 0)`. The
+                // source resolves to a CollectionShaperExpression (see the EF.Property handling above),
+                // which confirms the shape, but the count is left bound to the ORIGINAL method-call
+                // subtree (not the materializing shaper) so it stays push-down-able: the EF-to-driver
+                // bridge hands it to the driver's own LINQ v3 provider, which translates Count/predicate
+                // over an embedded array member natively (server-side $size / $filter+$size). Routing it
+                // through the shaper instead would materialize owned Post entities, which EF Core's
+                // tracking-materializer rejects ("owned entity without a corresponding owner").
+                case nameof(Queryable.Count) when genericMethod == QueryableMethods.CountWithoutPredicate:
+                case nameof(Queryable.LongCount) when genericMethod == QueryableMethods.LongCountWithoutPredicate:
+                case nameof(Queryable.Count) when genericMethod == QueryableMethods.CountWithPredicate:
+                case nameof(Queryable.LongCount) when genericMethod == QueryableMethods.LongCountWithPredicate:
+                    if (visitedSource is not CollectionShaperExpression
+                        || methodCallExpression.Arguments[0] is not MethodCallExpression
+                            {
+                                Method: { Name: nameof(Queryable.AsQueryable), DeclaringType: var asQueryableDeclaring }
+                            } asQueryableCall
+                        || asQueryableDeclaring != typeof(Queryable))
+                    {
+                        return null;
+                    }
+
+                    // A missing or explicitly-null stored array materializes the navigation to a null
+                    // reference rather than an empty collection (the same gap plain `.Select(e => e.Foo)`
+                    // has), so Count/LongCount must tolerate a null source and report 0 instead of failing
+                    // server-side ($size / $filter both reject a null array). Guard with a null check on
+                    // the raw (unwrapped) field access rather than on the AsQueryable-wrapped source.
+                    var countSource = asQueryableCall.Arguments[0];
+                    Expression nullSafeCount = Expression.Condition(
+                        Expression.Equal(countSource, Expression.Constant(null, countSource.Type)),
+                        Expression.Default(methodCallExpression.Type),
+                        methodCallExpression);
+
+                    var countProjectionMember = GetCurrentProjectionMember();
+                    _projectionMapping[countProjectionMember] = nullSafeCount;
+
+                    return new ProjectionBindingExpression(_queryExpression, countProjectionMember, methodCallExpression.Type);
             }
         }
 
