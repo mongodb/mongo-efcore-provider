@@ -1145,6 +1145,62 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         }
     }
 
+    public class Blog
+    {
+        public string Id { get; set; }
+        public string Title { get; set; }
+        public List<Post> Posts { get; set; }
+    }
+
+    public class Post
+    {
+        public string Content { get; set; }
+        public List<Comment> Comments { get; set; }
+    }
+
+    public class Comment
+    {
+        public string Text { get; set; }
+    }
+
+    [Fact]
+    public void OwnedEntity_collection_leaf_projection_with_nested_collection_element()
+    {
+        // The Comments navigation on Post (the Posts element type) is the trigger: EF's nav-expansion
+        // wraps the Posts collection access in a Queryable.Select carrying the auto-included Comments,
+        // which the projection binding visitor rebuilds as an IEnumerable<Post>-typed Enumerable.Select
+        // rather than the List<Post> the anonymous-type member requires. Regression test for the
+        // ArgumentException this used to throw from Expression.New's member-type validation.
+        var collection = database.CreateCollection<Blog>();
+        var expected = new Blog
+        {
+            Id = "1",
+            Title = "t",
+            Posts =
+            [
+                new Post { Content = "c1", Comments = [new Comment { Text = "x" }] },
+                new Post { Content = "c2", Comments = [] }
+            ]
+        };
+
+        using var db = SingleEntityDbContext.Create(collection, mb =>
+        {
+            mb.Entity<Blog>().OwnsMany(b => b.Posts, p => p.OwnsMany(x => x.Comments));
+        });
+        db.Entities.Add(expected);
+        db.SaveChanges();
+
+        var result = db.Entities.AsNoTracking().Select(b => new { b.Title, b.Posts }).ToList();
+        var single = Assert.Single(result);
+        Assert.Equal("t", single.Title);
+        Assert.Equal(2, single.Posts.Count);
+        Assert.Equal("c1", single.Posts[0].Content);
+        Assert.Single(single.Posts[0].Comments);
+        Assert.Equal("x", single.Posts[0].Comments[0].Text);
+        Assert.Equal("c2", single.Posts[1].Content);
+        Assert.Empty(single.Posts[1].Comments);
+    }
+
     [Fact]
     public void OwnedEntity_collection_can_be_tested_for_not_null()
     {

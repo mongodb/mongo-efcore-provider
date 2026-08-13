@@ -198,10 +198,28 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 }
 
             case MaterializeCollectionNavigationExpression materializeCollectionNavigationExpression:
-                return materializeCollectionNavigationExpression.Navigation is INavigation embeddableNavigation
-                       && embeddableNavigation.IsEmbedded()
-                    ? base.Visit(materializeCollectionNavigationExpression.Subquery)
-                    : base.VisitExtension(materializeCollectionNavigationExpression);
+                if (materializeCollectionNavigationExpression.Navigation is INavigation embeddableNavigation
+                    && embeddableNavigation.IsEmbedded())
+                {
+                    var visited = base.Visit(materializeCollectionNavigationExpression.Subquery);
+
+                    // When an element of the collection has an embedded navigation of its own (e.g. a nested
+                    // OwnsMany/OwnsOne), EF's nav-expansion wraps the collection access in a Queryable.Select
+                    // carrying the auto-included IncludeExpression. The Select arm above rebuilds that against
+                    // EnumerableMethods.Select, which is IEnumerable<T>-typed, not the navigation's declared
+                    // List<T>-typed collection. MatchTypes deliberately leaves collection-typed targets alone
+                    // (see its TryGetItemType() guard), so left uncorrected this fails Expression.New's
+                    // member-type validation wherever this leaf feeds an anonymous type / MemberInit member.
+                    // MongoProjectionBindingRemovingExpressionVisitor.VisitMethodCall already discards this
+                    // exact Select-over-IncludeExpression shape and hands back the properly List<T>-typed
+                    // CollectionShaperExpression, so wrapping it here in a Convert is a no-op by the time it's
+                    // actually consumed - it only exists to satisfy the static-type check at this stage.
+                    return visited != null && visited.Type != materializeCollectionNavigationExpression.Type
+                        ? Expression.Convert(visited, materializeCollectionNavigationExpression.Type)
+                        : visited;
+                }
+
+                return base.VisitExtension(materializeCollectionNavigationExpression);
 
             case IncludeExpression includeExpression:
                 {
