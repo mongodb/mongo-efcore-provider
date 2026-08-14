@@ -624,6 +624,19 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         outerQueryExpression.AddInnerCollection(innerQueryExpression.CollectionExpression.EntityType, isLeftOuter);
 
+        // EF-373: decide "is this the second-or-later join" from a dedicated counter, not from
+        // InnerCollections.Count - InnerCollections is keyed by IEntityType and dedups two navigations
+        // that join to the SAME target collection (e.g. a self-join), which would otherwise let this
+        // guard - and the interleaving flag it depends on - go unchecked for that shape.
+        if (outerQueryExpression.RegisterJoinAndReportSecondOrLater()
+            && outerQueryExpression.HasInterleavingOperatorSinceLastJoin)
+        {
+            throw new NotSupportedException(
+                "A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection "
+                + "joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. "
+                + "Move the operator so that it is not interleaved between the joins.");
+        }
+
         // Rebind the inner entity's projection to the outer MongoQueryExpression.
         // The inner shaper has a StructuralTypeShaperExpression bound to the inner MongoQueryExpression.
         // We need to migrate that projection to the outer query expression so the entity path
@@ -725,20 +738,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var isSecondOrLaterJoin = outerQueryExpression.InnerCollections.Count > 1;
         if (isSecondOrLaterJoin)
         {
-            // EF-373: a Skip/Take/Distinct sitting between two joins has no single correct position in a
-            // scheme that emits all forced-unwind $lookup stages as one contiguous group (see
-            // MongoQueryExpression.GetPendingLookups): the group must stay together and in dependency order,
-            // but a paging/dedup operator interleaved between the joins would then run on the wrong side of
-            // one of them, producing correct-looking but wrong rows. Decline the flatten for this shape
-            // rather than silently mis-position it - that's strictly better than reordered wrong data.
-            if (outerQueryExpression.HasInterleavingOperatorSinceLastJoin)
-            {
-                throw new NotSupportedException(
-                    "A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection "
-                    + "joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. "
-                    + "Move the operator so that it is not interleaved between the joins.");
-            }
-
             // Flatten: register a forced-unwind $lookup for THIS join...
             if (navigation != null)
             {

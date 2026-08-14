@@ -32,6 +32,7 @@ internal sealed partial class MongoQueryExpression
     private readonly Dictionary<IEntityType, MongoCollectionExpression> _innerCollections = new();
     private readonly Dictionary<IEntityType, bool> _innerCollectionIsLeftOuter = new();
     private bool _hasInterleavingOperatorSinceLastJoin;
+    private int _joinRegistrationCount;
 
     /// <summary>
     /// Pending $lookup stages for cross-collection collection Include operations, ordered so that a
@@ -110,6 +111,15 @@ internal sealed partial class MongoQueryExpression
     /// <see cref="MarkPotentialJoinInterleavingOperator"/>.
     /// </summary>
     public bool HasInterleavingOperatorSinceLastJoin => _hasInterleavingOperatorSinceLastJoin;
+
+    /// <summary>
+    /// Register that a join was processed and report whether this is the second (or later) one.
+    /// Deliberately counts every join call, NOT distinct target entity types: <see cref="InnerCollections"/>
+    /// is keyed by <see cref="IEntityType"/> and dedups two navigations that target the same collection
+    /// (e.g. a self-join), so it under-counts joins for that shape - see EF-373.
+    /// </summary>
+    public bool RegisterJoinAndReportSecondOrLater()
+        => ++_joinRegistrationCount > 1;
 
     /// <summary>
     /// Inner collections involved in join operations.

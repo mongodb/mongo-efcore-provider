@@ -556,6 +556,25 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
                 .Include(l => l.Product)
                 .ToList());
     }
+
+    // EF-373 (review follow-up): InnerCollections is keyed by IEntityType, so two navigations that join
+    // to the SAME target entity type (e.g. a self-join) collapse to one entry there - the guard above
+    // must not rely on that count, or it would stay silent for this shape too.
+    [Fact]
+    public void Take_between_two_joins_to_same_target_entity_type_declines_rather_than_returning_wrong_rows()
+    {
+        var (linesName, ordersName) = SetupSameTypeJoinLinesAndOrders();
+
+        using var db = new SameTypeJoinDbContext(database, linesName, ordersName);
+
+        Assert.Throws<NotSupportedException>(() =>
+            db.Lines
+                .OrderBy(l => l.LineName)
+                .Where(l => l.PrimaryOrder.OrderName != "O2")
+                .Take(3)
+                .Include(l => l.SecondaryOrder)
+                .ToList());
+    }
 #endif
 
     // ---------------------------------------------------------------------------------------------
@@ -594,6 +613,28 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         ]);
 
         return (linesName, ordersName, productsName);
+    }
+
+    private (string linesName, string ordersName) SetupSameTypeJoinLinesAndOrders()
+    {
+        var linesName = TemporaryDatabaseFixtureBase.CreateCollectionName("SameTypeJoinLines") + Guid.NewGuid().ToString("N")[..8];
+        var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("SameTypeJoinOrders") + Guid.NewGuid().ToString("N")[..8];
+
+        var order1Id = ObjectId.GenerateNewId();
+        var order2Id = ObjectId.GenerateNewId();
+
+        database.MongoDatabase.GetCollection<BsonDocument>(ordersName).InsertMany([
+            new BsonDocument { { "_id", order1Id }, { "name", "O1" } },
+            new BsonDocument { { "_id", order2Id }, { "name", "O2" } }
+        ]);
+        database.MongoDatabase.GetCollection<BsonDocument>(linesName).InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "name", "L1" }, { "primary_ord_id", order1Id }, { "secondary_ord_id", order1Id } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "name", "L2" }, { "primary_ord_id", order2Id }, { "secondary_ord_id", order1Id } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "name", "L3" }, { "primary_ord_id", order1Id }, { "secondary_ord_id", order1Id } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "name", "L4" }, { "primary_ord_id", order1Id }, { "secondary_ord_id", order1Id } }
+        ]);
+
+        return (linesName, ordersName);
     }
 
     private (string ordersName, string customersName) SetupThreeOrdersTwoCustomers()
@@ -1208,6 +1249,52 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
             {
                 b.ToCollection(productsCollection);
                 b.Property(p => p.ProductName).HasElementName("name");
+            });
+        }
+    }
+
+    // Two navigations from the same root that join to the SAME target entity type (self-join shape) -
+    // as opposed to TwoJoinLine's two navigations to two DIFFERENT target types.
+    class SameTypeJoinLine
+    {
+        public ObjectId _id { get; set; }
+        public string LineName { get; set; }
+        public ObjectId? PrimaryOrderId { get; set; }
+        public SameTypeJoinOrder PrimaryOrder { get; set; }
+        public ObjectId? SecondaryOrderId { get; set; }
+        public SameTypeJoinOrder SecondaryOrder { get; set; }
+    }
+
+    class SameTypeJoinOrder
+    {
+        public ObjectId _id { get; set; }
+        public string OrderName { get; set; }
+    }
+
+    class SameTypeJoinDbContext(TemporaryDatabaseFixture database, string linesCollection, string ordersCollection)
+        : CrossCollectionDbContextBase<SameTypeJoinDbContext>(database)
+    {
+        public DbSet<SameTypeJoinLine> Lines { get; set; }
+        public DbSet<SameTypeJoinOrder> Orders { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<SameTypeJoinLine>(b =>
+            {
+                b.ToCollection(linesCollection);
+                b.Property(l => l.LineName).HasElementName("name");
+                b.Property(l => l.PrimaryOrderId).HasElementName("primary_ord_id");
+                b.Property(l => l.SecondaryOrderId).HasElementName("secondary_ord_id");
+                b.HasOne(l => l.PrimaryOrder).WithMany().HasForeignKey(l => l.PrimaryOrderId);
+                b.HasOne(l => l.SecondaryOrder).WithMany().HasForeignKey(l => l.SecondaryOrderId);
+            });
+
+            modelBuilder.Entity<SameTypeJoinOrder>(b =>
+            {
+                b.ToCollection(ordersCollection);
+                b.Property(o => o.OrderName).HasElementName("name");
             });
         }
     }
