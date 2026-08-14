@@ -31,6 +31,7 @@ internal sealed partial class MongoQueryExpression
     private readonly List<LookupExpression> _pendingLookups = [];
     private readonly Dictionary<IEntityType, MongoCollectionExpression> _innerCollections = new();
     private readonly Dictionary<IEntityType, bool> _innerCollectionIsLeftOuter = new();
+    private bool _hasInterleavingOperatorSinceLastJoin;
 
     /// <summary>
     /// Pending $lookup stages for cross-collection collection Include operations, ordered so that a
@@ -89,6 +90,26 @@ internal sealed partial class MongoQueryExpression
             _pendingLookups.Add(lookup);
         }
     }
+
+    /// <summary>
+    /// Records that a <c>Skip</c>/<c>Take</c>/<c>Distinct</c> was visited while at least one join was
+    /// already registered (see <see cref="Visitors.MongoQueryableMethodTranslatingExpressionVisitor"/>).
+    /// Operators visited before the first join don't count - they precede every join, not sit between two of
+    /// them.
+    /// </summary>
+    public void MarkPotentialJoinInterleavingOperator()
+    {
+        if (_innerCollections.Count > 0)
+        {
+            _hasInterleavingOperatorSinceLastJoin = true;
+        }
+    }
+
+    /// <summary>
+    /// Whether a <c>Skip</c>/<c>Take</c>/<c>Distinct</c> has been visited between two joins - see
+    /// <see cref="MarkPotentialJoinInterleavingOperator"/>.
+    /// </summary>
+    public bool HasInterleavingOperatorSinceLastJoin => _hasInterleavingOperatorSinceLastJoin;
 
     /// <summary>
     /// Inner collections involved in join operations.

@@ -94,6 +94,15 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var source = Visit(methodCallExpression.Arguments[0]);
         if (source is ShapedQueryExpression shapedQueryExpression)
         {
+            // EF-373: Skip/Take/Distinct composed BETWEEN two cross-collection joins has no single correct
+            // position once a second join forces the $lookup-flattening fallback (see TranslateJoinCore) -
+            // record that one of these occurred while at least one join is already registered so the next
+            // join registration can decline rather than silently mis-position the $lookup stages.
+            if (method.Name is nameof(Queryable.Skip) or nameof(Queryable.Take) or nameof(Queryable.Distinct))
+            {
+                ((MongoQueryExpression)shapedQueryExpression.QueryExpression).MarkPotentialJoinInterleavingOperator();
+            }
+
             var methodDefinition = method.IsGenericMethod ? method.GetGenericMethodDefinition() : method;
             switch (method.Name)
             {
@@ -716,6 +725,20 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var isSecondOrLaterJoin = outerQueryExpression.InnerCollections.Count > 1;
         if (isSecondOrLaterJoin)
         {
+            // EF-373: a Skip/Take/Distinct sitting between two joins has no single correct position in a
+            // scheme that emits all forced-unwind $lookup stages as one contiguous group (see
+            // MongoQueryExpression.GetPendingLookups): the group must stay together and in dependency order,
+            // but a paging/dedup operator interleaved between the joins would then run on the wrong side of
+            // one of them, producing correct-looking but wrong rows. Decline the flatten for this shape
+            // rather than silently mis-position it - that's strictly better than reordered wrong data.
+            if (outerQueryExpression.HasInterleavingOperatorSinceLastJoin)
+            {
+                throw new NotSupportedException(
+                    "A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection "
+                    + "joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. "
+                    + "Move the operator so that it is not interleaved between the joins.");
+            }
+
             // Flatten: register a forced-unwind $lookup for THIS join...
             if (navigation != null)
             {

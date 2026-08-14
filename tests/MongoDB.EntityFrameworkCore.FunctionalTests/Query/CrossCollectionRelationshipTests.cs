@@ -504,6 +504,58 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         Assert.Single(order.PriorityItems);
         Assert.All(order.PriorityItems, i => Assert.IsType<PriorityChainItem>(i));
     }
+
+    // EF-373: a Skip/Take/Distinct composed BETWEEN two sibling cross-collection joins (one join
+    // triggered by a filter on a navigation, the other by an Include) has no single correct position
+    // once the second join forces the $lookup-flattening fallback - the whole group of forced-unwind
+    // $lookup stages must stay together, so the interleaved operator would end up running on the wrong
+    // side of one of them and silently return the wrong rows. Decline with a clear exception instead.
+    [Fact]
+    public void Take_between_two_joins_declines_rather_than_returning_wrong_rows()
+    {
+        var (linesName, ordersName, productsName) = SetupLinesOrdersProducts();
+
+        using var db = new TwoJoinDbContext(database, linesName, ordersName, productsName);
+
+        Assert.Throws<NotSupportedException>(() =>
+            db.Lines
+                .OrderBy(l => l.LineName)
+                .Where(l => l.Order.OrderName != "O2")
+                .Take(3)
+                .Include(l => l.Product)
+                .ToList());
+    }
+
+    [Fact]
+    public void Skip_between_two_joins_declines_rather_than_returning_wrong_rows()
+    {
+        var (linesName, ordersName, productsName) = SetupLinesOrdersProducts();
+
+        using var db = new TwoJoinDbContext(database, linesName, ordersName, productsName);
+
+        Assert.Throws<NotSupportedException>(() =>
+            db.Lines
+                .OrderBy(l => l.LineName)
+                .Where(l => l.Order.OrderName != "O2")
+                .Skip(1)
+                .Include(l => l.Product)
+                .ToList());
+    }
+
+    [Fact]
+    public void Distinct_between_two_joins_declines_rather_than_returning_wrong_rows()
+    {
+        var (linesName, ordersName, productsName) = SetupLinesOrdersProducts();
+
+        using var db = new TwoJoinDbContext(database, linesName, ordersName, productsName);
+
+        Assert.Throws<NotSupportedException>(() =>
+            db.Lines
+                .Where(l => l.Order.OrderName != "O2")
+                .Distinct()
+                .Include(l => l.Product)
+                .ToList());
+    }
 #endif
 
     // ---------------------------------------------------------------------------------------------
@@ -516,6 +568,32 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("RelCustomers") + Guid.NewGuid().ToString("N")[..8];
         var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("RelOrders") + Guid.NewGuid().ToString("N")[..8];
         return (ordersName, customersName);
+    }
+
+    private (string linesName, string ordersName, string productsName) SetupLinesOrdersProducts()
+    {
+        var linesName = TemporaryDatabaseFixtureBase.CreateCollectionName("TwoJoinLines") + Guid.NewGuid().ToString("N")[..8];
+        var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("TwoJoinOrders") + Guid.NewGuid().ToString("N")[..8];
+        var productsName = TemporaryDatabaseFixtureBase.CreateCollectionName("TwoJoinProducts") + Guid.NewGuid().ToString("N")[..8];
+
+        var order1Id = ObjectId.GenerateNewId();
+        var order2Id = ObjectId.GenerateNewId();
+        var productId = ObjectId.GenerateNewId();
+
+        database.MongoDatabase.GetCollection<BsonDocument>(ordersName).InsertMany([
+            new BsonDocument { { "_id", order1Id }, { "name", "O1" } },
+            new BsonDocument { { "_id", order2Id }, { "name", "O2" } }
+        ]);
+        database.MongoDatabase.GetCollection<BsonDocument>(productsName).InsertOne(
+            new BsonDocument { { "_id", productId }, { "name", "Widget" } });
+        database.MongoDatabase.GetCollection<BsonDocument>(linesName).InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "name", "L1" }, { "ord_id", order1Id }, { "prod_id", productId } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "name", "L2" }, { "ord_id", order2Id }, { "prod_id", productId } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "name", "L3" }, { "ord_id", order1Id }, { "prod_id", productId } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "name", "L4" }, { "ord_id", order1Id }, { "prod_id", productId } }
+        ]);
+
+        return (linesName, ordersName, productsName);
     }
 
     private (string ordersName, string customersName) SetupThreeOrdersTwoCustomers()
@@ -1071,6 +1149,66 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
                     .HasValue<PriorityChainItem>("Priority");
             });
             modelBuilder.Entity<PriorityChainItem>().Property(i => i.PriorityLevel).HasElementName("priority");
+        }
+    }
+
+    // Two SIBLING cross-collection joins off a common root (as opposed to ChainCustomer/Order/Item's
+    // transitive chain): a Line references both an Order (used in a Where filter) and a Product (via
+    // Include) - the shape EF-373 covers.
+    class TwoJoinLine
+    {
+        public ObjectId _id { get; set; }
+        public string LineName { get; set; }
+        public ObjectId? OrderId { get; set; }
+        public TwoJoinOrder Order { get; set; }
+        public ObjectId? ProductId { get; set; }
+        public TwoJoinProduct Product { get; set; }
+    }
+
+    class TwoJoinOrder
+    {
+        public ObjectId _id { get; set; }
+        public string OrderName { get; set; }
+    }
+
+    class TwoJoinProduct
+    {
+        public ObjectId _id { get; set; }
+        public string ProductName { get; set; }
+    }
+
+    class TwoJoinDbContext(TemporaryDatabaseFixture database, string linesCollection, string ordersCollection, string productsCollection)
+        : CrossCollectionDbContextBase<TwoJoinDbContext>(database)
+    {
+        public DbSet<TwoJoinLine> Lines { get; set; }
+        public DbSet<TwoJoinOrder> Orders { get; set; }
+        public DbSet<TwoJoinProduct> Products { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<TwoJoinLine>(b =>
+            {
+                b.ToCollection(linesCollection);
+                b.Property(l => l.LineName).HasElementName("name");
+                b.Property(l => l.OrderId).HasElementName("ord_id");
+                b.Property(l => l.ProductId).HasElementName("prod_id");
+                b.HasOne(l => l.Order).WithMany().HasForeignKey(l => l.OrderId);
+                b.HasOne(l => l.Product).WithMany().HasForeignKey(l => l.ProductId);
+            });
+
+            modelBuilder.Entity<TwoJoinOrder>(b =>
+            {
+                b.ToCollection(ordersCollection);
+                b.Property(o => o.OrderName).HasElementName("name");
+            });
+
+            modelBuilder.Entity<TwoJoinProduct>(b =>
+            {
+                b.ToCollection(productsCollection);
+                b.Property(p => p.ProductName).HasElementName("name");
+            });
         }
     }
 #endif
