@@ -14,6 +14,7 @@
  */
 
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
@@ -55,6 +56,22 @@ internal sealed class LookupExpression
         }
 
         As = GetLookupAlias(navigation);
+
+        // TPH: when the navigation targets a derived entity type rather than the root of its hierarchy,
+        // the target collection also holds sibling-type documents that share the same FK value space
+        // (e.g. a shared principal key matched by every subtype's rows). FK equality alone would admit
+        // those sibling-type documents into the $lookup result; narrow by discriminator so only documents
+        // of the target type (or its own derived types) are matched. See EF-374.
+        if (targetEntityType.FindDiscriminatorProperty() is { } discriminatorProperty
+            && targetEntityType != targetEntityType.GetRootType())
+        {
+            var discriminatorValues = new BsonArray(
+                targetEntityType.GetDerivedTypes().Prepend(targetEntityType)
+                    .Select(d => BsonValue.Create(d.GetDiscriminatorValue())));
+
+            PipelineStages.Add(new BsonDocument("$match",
+                new BsonDocument(discriminatorProperty.GetElementName(), new BsonDocument("$in", discriminatorValues))));
+        }
     }
 
     /// <summary>
