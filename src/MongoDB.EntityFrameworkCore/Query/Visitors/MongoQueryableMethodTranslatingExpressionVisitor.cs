@@ -670,11 +670,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             .FirstOrDefault(n => n.TargetEntityType == innerEntityType);
 
         // Transitive join: the inner entity is reached not directly from the root but THROUGH a
-        // previously-joined intermediate (e.g. OrderDetail.Order.Customer — the join's outer key
-        // selector is "o.Inner.CustomerID"). When no direct navigation exists, resolve the navigation
-        // on a prior inner collection and remember the intermediate so the $lookup's localField can be
-        // prefixed with that intermediate's "_lookup_<Intermediate>" path.
-        INavigation? throughNavigation = null;
+        // previously-joined intermediate (e.g. OrderDetail.Order.Customer). When no direct navigation
+        // exists, resolve the navigation metadata via a prior inner collection, but resolve WHICH prior
+        // join this passed through positionally (via the ".Outer"/".Inner" chain), not by entity type —
+        // entity-type matching is ambiguous when sibling navigations share a target type (EF-376: both
+        // Root.PrimaryMid.Leaf and Root.SecondaryMid.Leaf target "Mid"/"Leaf"), silently collapsing them.
+        string? throughAlias = null;
         if (navigation == null && fkPropertyName != null)
         {
             foreach (var priorInnerEntityType in outerQueryExpression.InnerCollections.Keys)
@@ -690,10 +691,14 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 if (candidate != null)
                 {
                     navigation = candidate;
-                    throughNavigation = outerEntityType.GetNavigations()
-                        .FirstOrDefault(n => n.TargetEntityType == priorInnerEntityType);
                     break;
                 }
+            }
+
+            var joinHops = GetJoinHopsToPriorJoin(outerKeySelector);
+            if (joinHops.HasValue)
+            {
+                throughAlias = outerQueryExpression.GetJoinAliasFromEnd(joinHops.Value);
             }
         }
 
@@ -705,48 +710,47 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // lookups; MongoQueryExpression.UsesDriverJoinFields is then computed from that state and
         // never contradicts the emitted pipeline.
         //
-        // Each cross-collection projection carries its OWNING navigation and a stable
-        // "_lookup_<Navigation>" alias. The shaper derives the field it reads from that navigation
-        // plus the computed UsesDriverJoinFields flag (driver-native => "_inner"; flat => the
-        // "_lookup_<Navigation>" alias), so the projection is never retroactively rewritten.
-        var isSecondOrLaterJoin = outerQueryExpression.InnerCollections.Count > 1;
-        if (isSecondOrLaterJoin)
+        // Each cross-collection projection carries its OWNING navigation and a stable, FLAT, root-level
+        // "_lookup_<Navigation>" alias — a transitive join's alias is never nested under its
+        // intermediate's alias via dots, or the shaper's flat root-level read would miss it.
+        Expressions.LookupExpression? currentLookup = null;
+        if (navigation != null)
         {
-            // Flatten: register a forced-unwind $lookup for THIS join...
-            if (navigation != null)
+            currentLookup = new Expressions.LookupExpression(navigation, forceUnwind: true);
+            if (throughAlias != null)
             {
-                var lookup = new Expressions.LookupExpression(navigation, forceUnwind: true);
-                if (throughNavigation != null)
-                {
-                    // Transitive join: match against the already-unwound intermediate document.
-                    lookup.LocalField = $"{Expressions.LookupExpression.GetLookupAlias(throughNavigation)}.{lookup.LocalField}";
-                }
+                // Match against the specific intermediate this join actually passed through (resolved
+                // positionally above, not by type); the intermediate's alias is itself a flat field, so
+                // ".<FK>" is a single-level nested-field read, not output nesting.
+                currentLookup.LocalField = $"{throughAlias}.{currentLookup.LocalField}";
 
-                outerQueryExpression.AddLookup(lookup);
-            }
-
-            // ...and retroactively for every PRIOR inner collection so the whole document is flat.
-            foreach (var priorInnerEntityType in outerQueryExpression.InnerCollections.Keys)
-            {
-                if (priorInnerEntityType == innerEntityType)
+                // Keep the plain "_lookup_<Navigation>" alias unless a DIFFERENT intermediate already
+                // claimed it (EF-376: sibling navigations sharing a target type/navigation name) — only
+                // then fold the through-path in to stay unique.
+                if (!outerQueryExpression.TryClaimTransitiveAlias(currentLookup.As, throughAlias))
                 {
-                    continue;
-                }
-
-                var priorNavigation = outerEntityType.GetNavigations()
-                    .FirstOrDefault(n => n.TargetEntityType == priorInnerEntityType);
-                if (priorNavigation != null)
-                {
-                    outerQueryExpression.AddLookup(new Expressions.LookupExpression(priorNavigation, forceUnwind: true));
+                    currentLookup.As = $"{throughAlias}_{navigation.Name}";
                 }
             }
         }
 
-        // Stable, navigation-derived alias. For the lone driver-native reference the shaper maps this
-        // to "_inner"; in flat mode it reads this "_lookup_<Navigation>" field directly.
-        var lookupAlias = navigation != null
-            ? Expressions.LookupExpression.GetLookupAlias(navigation)
-            : $"_lookup_{innerEntityType.ShortName()}";
+        // Stable, path-scoped alias. For the lone driver-native reference the shaper maps this to
+        // "_inner"; in flat mode it reads this flat "_lookup_<Navigation>" (or path-scoped
+        // "_lookup_<Through>_<Navigation>") field directly.
+        var lookupAlias = currentLookup?.As
+            ?? (navigation != null
+                ? Expressions.LookupExpression.GetLookupAlias(navigation)
+                : $"_lookup_{innerEntityType.ShortName()}");
+
+        outerQueryExpression.RecordJoin(currentLookup, lookupAlias);
+
+        var isSecondOrLaterJoin = outerQueryExpression.InnerCollections.Count > 1;
+        if (isSecondOrLaterJoin)
+        {
+            // Flatten every join recorded so far — including any still-driver-native prior join (e.g. the
+            // very first join) — into root-level $lookup+$unwind stages so the whole document is flat.
+            outerQueryExpression.FlattenRecordedJoins(currentLookup);
+        }
 
         Expression parentAccess = new RootReferenceExpression(outerEntityType);
         ObjectAccessExpression lookupAccessExpression = navigation != null
@@ -760,6 +764,60 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         return structuralShaper.Update(
             new ProjectionBindingExpression(outerQueryExpression, projectionIndex, typeof(ValueBuffer)));
     }
+
+    /// <summary>
+    /// For a transitive join's outer key selector (e.g. <c>s => s.Inner.LeafId</c> or
+    /// <c>s => s.Outer.Inner.LeafId</c>), determine how many joins back the referenced intermediate is
+    /// (0 = immediately preceding join, 1 = the one before, etc.), by counting <c>.Outer</c> hops peeled
+    /// before reaching a top-level <c>.Inner</c> (EF composes each join's result as
+    /// <c>TransparentIdentifier(Outer, Inner)</c>). Returns <see langword="null"/> for unrecognized shapes,
+    /// conservatively assuming no "through" join.
+    /// </summary>
+    private static int? GetJoinHopsToPriorJoin(LambdaExpression outerKeySelector)
+    {
+        var keySelectorObject = GetKeySelectorObject(outerKeySelector.Body);
+        if (keySelectorObject == null)
+        {
+            return null;
+        }
+
+        var parameter = outerKeySelector.Parameters[0];
+        if (keySelectorObject == parameter)
+        {
+            // e.g. "s.SecondaryMidId" for the very first join — off the root, no prior join.
+            return null;
+        }
+
+        if (keySelectorObject is not MemberExpression { Member.Name: "Inner" } topInner)
+        {
+            return null;
+        }
+
+        var hops = 0;
+        var current = topInner.Expression;
+        while (current is MemberExpression { Member.Name: "Outer" } outerMember)
+        {
+            hops++;
+            current = outerMember.Expression;
+        }
+
+        return current == parameter ? hops : null;
+    }
+
+    /// <summary>
+    /// Extract the object expression a key-selector-style property access reads from — the <c>o</c> in
+    /// <c>o.CustomerId</c> or the first argument of <c>EF.Property(o, "CustomerId")</c> — mirroring
+    /// <see cref="ExpressionExtensionMethods.TryGetSimplePropertyName"/> but returning the object instead
+    /// of the property name.
+    /// </summary>
+    private static Expression? GetKeySelectorObject(Expression expression)
+        => expression.RemoveConvert() switch
+        {
+            MemberExpression member => member.Expression,
+            MethodCallExpression methodCall
+                when methodCall.Method.IsEFPropertyMethod() && methodCall.Arguments.Count == 2 => methodCall.Arguments[0],
+            _ => null
+        };
 
     protected override ShapedQueryExpression? TranslateLastOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,
         Type returnType, bool returnDefault)

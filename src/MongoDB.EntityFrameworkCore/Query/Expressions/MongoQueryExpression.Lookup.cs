@@ -30,6 +30,8 @@ internal sealed partial class MongoQueryExpression
 {
     private readonly List<LookupExpression> _pendingLookups = [];
     private readonly Dictionary<IEntityType, MongoCollectionExpression> _innerCollections = new();
+    private readonly List<(LookupExpression? Lookup, string Alias)> _joinHistory = [];
+    private readonly Dictionary<string, string> _claimedTransitiveAliases = new();
 
     /// <summary>
     /// Pending $lookup stages for cross-collection collection Include operations, ordered so that a
@@ -86,6 +88,68 @@ internal sealed partial class MongoQueryExpression
         if (!_pendingLookups.Any(l => l.As == lookup.As))
         {
             _pendingLookups.Add(lookup);
+        }
+    }
+
+    /// <summary>
+    /// Record the (possibly not-yet-flattened) $lookup built for a <c>Join</c>/<c>LeftJoin</c> call, in
+    /// call order, with the alias its result is read back under. Resolving the "through" join
+    /// positionally (via <see cref="GetJoinAliasFromEnd"/>) rather than by target entity type is required
+    /// because two sibling navigations can share a target type and navigation name (EF-376). A
+    /// <see langword="null"/> <paramref name="lookup"/> means the navigation couldn't be resolved, so it
+    /// can never be a later transitive join's "through" leg.
+    /// </summary>
+    public void RecordJoin(LookupExpression? lookup, string alias) => _joinHistory.Add((lookup, alias));
+
+    /// <summary>
+    /// Resolve the alias of the join recorded <paramref name="hopsFromEnd"/> calls before the one
+    /// currently being processed (0 = the immediately preceding join). Returns <see langword="null"/>
+    /// when there is no such prior join.
+    /// </summary>
+    public string? GetJoinAliasFromEnd(int hopsFromEnd)
+    {
+        var index = _joinHistory.Count - 1 - hopsFromEnd;
+        return index >= 0 && index < _joinHistory.Count ? _joinHistory[index].Alias : null;
+    }
+
+    /// <summary>
+    /// Claim the plain <c>_lookup_&lt;Navigation&gt;</c> alias for a transitive join reached through
+    /// <paramref name="throughAlias"/>. Returns <see langword="false"/> only when a DIFFERENT intermediate
+    /// already claimed the same alias (EF-376: sibling navigations sharing a target type/name) — the
+    /// caller then falls back to a path-qualified alias instead.
+    /// </summary>
+    public bool TryClaimTransitiveAlias(string flatAlias, string throughAlias)
+    {
+        if (!_claimedTransitiveAliases.TryGetValue(flatAlias, out var claimedThroughAlias))
+        {
+            _claimedTransitiveAliases[flatAlias] = throughAlias;
+            return true;
+        }
+
+        return claimedThroughAlias == throughAlias;
+    }
+
+    /// <summary>
+    /// Flatten every join recorded so far (including ones still driver-native, e.g. the very first join)
+    /// into root-level $lookup+$unwind stages, once a second cross-collection join makes the driver-native
+    /// <c>_outer</c>/<c>_inner</c> shape unusable. <paramref name="currentLookup"/> — the join that
+    /// triggered flattening — is added first (a pre-existing, baseline-locked ordering contract); the rest
+    /// follow in recording order. <see cref="AddLookup"/> dedups by alias, so re-flattening an
+    /// already-flattened join is a no-op.
+    /// </summary>
+    public void FlattenRecordedJoins(LookupExpression? currentLookup)
+    {
+        if (currentLookup != null)
+        {
+            AddLookup(currentLookup);
+        }
+
+        foreach (var (lookup, _) in _joinHistory)
+        {
+            if (lookup != null && !ReferenceEquals(lookup, currentLookup))
+            {
+                AddLookup(lookup);
+            }
         }
     }
 
