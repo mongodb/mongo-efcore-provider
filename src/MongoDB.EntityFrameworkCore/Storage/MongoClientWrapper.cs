@@ -153,18 +153,7 @@ public class MongoClientWrapper : IMongoClientWrapper
 
     private IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, IServiceProvider serviceProvider)
     {
-        _databaseName = _options?.DatabaseName;
-        if (_databaseName == null && options?.ConnectionString != null)
-        {
-            try
-            {
-                var connectionString = new MongoUrl(options.ConnectionString);
-                _databaseName = connectionString.DatabaseName;
-            }
-            catch (FormatException)
-            {
-            }
-        }
+        _databaseName = MongoClientSettingsHelper.ResolveDatabaseName(options);
 
         var queryableEncryptionSchema = _schemaProvider.GetQueryableEncryptionSchema();
         var applyQueryableEncryptionSchema = queryableEncryptionSchema.Count > 0 &&
