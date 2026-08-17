@@ -108,7 +108,7 @@ public static class MongoDbContextOptionsExtensionsTest
     }
 
     [Fact]
-    public static void LogFragment_does_not_contain_password()
+    public static void LogFragment_does_not_contain_the_connection_string()
     {
         var optionsBuilder = new DbContextOptionsBuilder()
             .UseMongoDB(
@@ -120,7 +120,10 @@ public static class MongoDbContextOptionsExtensionsTest
         var logFragment = extension?.Info.LogFragment;
 
         Assert.DoesNotContain("NotActuallyA", logFragment);
-        Assert.Contains("myDbUsr:redacted@", logFragment);
-        Assert.Contains("?authSource=admin", logFragment);
+        Assert.DoesNotContain("myDbUsr", logFragment);
+        Assert.DoesNotContain("m0.example.com", logFragment);
+        Assert.DoesNotContain("authSource", logFragment);
+        Assert.DoesNotContain("ConnectionString", logFragment);
+        Assert.Contains("DatabaseName=db", logFragment);
     }
 }

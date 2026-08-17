@@ -17,7 +17,7 @@ Read `src/MongoDB.EntityFrameworkCore/Extensions/AGENTS.md` first; then root `AG
 - **Connection-source mutual exclusion in `MongoOptionsExtension`.** `ConnectionString`, `MongoClient`, and `ClientSettings` are mutually exclusive. `EnsureConnectionNotAlreadyConfigured` enforces it. New connection sources must extend the check.
 - **`MongoOptionsExtension` is immutable.** Every `With*` returns a clone. Don't reach inside.
 - **Service-provider hashing.** `Info.GetServiceProviderHashCode()` decides which contexts reuse the same internal service provider. Hash changes are an internal-perf concern but shouldn't be casual.
-- **Connection-string log sanitization.** `LogFragment` masks passwords via `SanitizeConnectionStringForLogging()`. This is a security guardrail; `security-reviewer` will flag regressions independently.
+- **Connection strings are never logged.** `LogFragment` omits `ConnectionString` altogether. This is a security guardrail; `security-reviewer` will flag any attempt to log it — redacted or otherwise — independently.
 - **`AddEntityFrameworkMongoDB()`** is the single registration entry point. New services go here; new public configuration goes via `MongoOptionsExtension`.
 - **`MongoDesignTimeServices` must call `AddEntityFrameworkMongoDB()`.** Splitting design-time services is fine; dropping that call breaks `dotnet ef`.
 - **VectorSearch + DatabaseFacade vector helpers.** Atlas-only; only valid at the root of a queryable. Adding query-time overloads here without matching Query-area visitor support produces "not translated" runtime failures.
@@ -36,5 +36,5 @@ See `.claude/agents/CONVENTIONS.md` for the report shape, tags, finding cap, and
 - New required parameter on an existing overload.
 - Removal of an `UseMongoDB` / `AddMongoDB` overload.
 - Default-value change in `MongoOptionsExtension` (e.g. `QueryableEncryptionSchemaMode` default).
-- Change to connection-string redaction or `LogFragment` shape (security-adjacent; needs security-reviewer too).
+- Change to `LogFragment` shape, especially anything that puts the connection string back into it (security-adjacent; needs security-reviewer too).
 - Change to `IMongoClientWrapper` shape (`BREAKING-CHANGES.md` flags this as a recurring break point).
