@@ -1,4 +1,4 @@
-/* Copyright 2023-present MongoDB Inc.
+﻿/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -31,6 +31,23 @@ internal static class MongoClientSettingsHelper
         options?.KeyVaultNamespace != null ||
         options?.KmsProviders != null;
 
+    /// <summary>
+    /// Resolves the database name the context will actually use, which may come from either the
+    /// <see cref="MongoOptionsExtension.DatabaseName"/> option or the path of the connection string.
+    /// </summary>
+    internal static string? ResolveDatabaseName(MongoOptionsExtension? options)
+    {
+        if (options?.DatabaseName != null)
+        {
+            return options.DatabaseName;
+        }
+
+        // MongoUrl.Create caches the parsed instance, so if the connection string was already parsed elsewhere
+        // (e.g. by MongoClientSettings.FromConnectionString in CreateSettings) this call is free. A malformed
+        // connection string throws here, wherever it is first parsed.
+        return options?.ConnectionString == null ? null : MongoUrl.Create(options.ConnectionString).DatabaseName;
+    }
+
     internal static MongoClientSettings CreateSettings(MongoOptionsExtension? options, Dictionary<string, BsonDocument>? queryableEncryptionSchema)
     {
         var clientSettings = options?.ConnectionString != null
@@ -56,6 +73,17 @@ internal static class MongoClientSettingsHelper
 
         var usesEncryption = queryableEncryptionSchema?.Count > 0 || options?.CryptProvider != null;
 
+        // EncryptedFieldsMap is keyed by full namespace, so the database name must be the one the context will
+        // actually use - it may only be present in the connection string. Keying against a null database name
+        // produces namespaces that match no collection, silently storing declared-encrypted fields as plaintext.
+        var databaseName = ResolveDatabaseName(options);
+        if (databaseName == null && queryableEncryptionSchema?.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "No database name could be determined for the Queryable Encryption schema. Either specify a database name " +
+                "via DbContextOptions or include one in the connection string.");
+        }
+
         var keyVaultNamespace = clientSettings.AutoEncryptionOptions?.KeyVaultNamespace ?? options?.KeyVaultNamespace;
         if (keyVaultNamespace == null && usesEncryption)
         {
@@ -74,7 +102,7 @@ internal static class MongoClientSettingsHelper
         {
             var existingAutoEncryptionOptions = clientSettings.AutoEncryptionOptions;
             var encryptedFieldsMap = MergeEncryptedFieldsMap(
-                existingAutoEncryptionOptions?.EncryptedFieldsMap, queryableEncryptionSchema, options?.DatabaseName);
+                existingAutoEncryptionOptions?.EncryptedFieldsMap, queryableEncryptionSchema, databaseName);
 
             clientSettings.AutoEncryptionOptions = existingAutoEncryptionOptions != null
                 ? existingAutoEncryptionOptions.With(
