@@ -72,14 +72,46 @@ internal static class MongoClientSettingsHelper
 
         if (usesEncryption)
         {
-            clientSettings.AutoEncryptionOptions = new AutoEncryptionOptions(
-                keyVaultNamespace,
-                kmsProviders,
-                encryptedFieldsMap: queryableEncryptionSchema?.ToDictionary(d => options?.DatabaseName + "." + d.Key, d => d.Value),
-                extraOptions: autoEncryptionExtraOptions);
+            var existingAutoEncryptionOptions = clientSettings.AutoEncryptionOptions;
+            var encryptedFieldsMap = MergeEncryptedFieldsMap(
+                existingAutoEncryptionOptions?.EncryptedFieldsMap, queryableEncryptionSchema, options?.DatabaseName);
+
+            clientSettings.AutoEncryptionOptions = existingAutoEncryptionOptions != null
+                ? existingAutoEncryptionOptions.With(
+                    keyVaultNamespace: new Optional<CollectionNamespace>(keyVaultNamespace!),
+                    kmsProviders: new Optional<IReadOnlyDictionary<string, IReadOnlyDictionary<string, object>>>(kmsProviders!),
+                    extraOptions: new Optional<IReadOnlyDictionary<string, object>>(autoEncryptionExtraOptions),
+                    encryptedFieldsMap: new Optional<IReadOnlyDictionary<string, BsonDocument>>(encryptedFieldsMap!))
+                : new AutoEncryptionOptions(
+                    keyVaultNamespace!,
+                    kmsProviders!,
+                    encryptedFieldsMap: new Optional<IReadOnlyDictionary<string, BsonDocument>>(encryptedFieldsMap!),
+                    extraOptions: new Optional<IReadOnlyDictionary<string, object>>(autoEncryptionExtraOptions));
         }
 
         return clientSettings;
+    }
+
+    private static IReadOnlyDictionary<string, BsonDocument>? MergeEncryptedFieldsMap(
+        IReadOnlyDictionary<string, BsonDocument>? existingEncryptedFieldsMap,
+        Dictionary<string, BsonDocument>? queryableEncryptionSchema,
+        string? databaseName)
+    {
+        if (queryableEncryptionSchema is not { Count: > 0 })
+        {
+            return existingEncryptedFieldsMap;
+        }
+
+        var mergedEncryptedFieldsMap = existingEncryptedFieldsMap != null
+            ? new Dictionary<string, BsonDocument>(existingEncryptedFieldsMap)
+            : new Dictionary<string, BsonDocument>();
+
+        foreach (var (collectionName, schema) in queryableEncryptionSchema)
+        {
+            mergedEncryptedFieldsMap[databaseName + "." + collectionName] = schema;
+        }
+
+        return mergedEncryptedFieldsMap;
     }
 
     private static void ApplyOptions(
