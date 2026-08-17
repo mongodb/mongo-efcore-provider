@@ -30,7 +30,6 @@ namespace Microsoft.EntityFrameworkCore;
 /// </summary>
 public class MongoOptionsExtension : IDbContextOptionsExtension
 {
-    private string? _loggableConnectionString;
     private DbContextOptionsExtensionInfo? _info;
 
     /// <summary>
@@ -55,7 +54,6 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
         KeyVaultNamespace = copyFrom.KeyVaultNamespace;
         KmsProviders = copyFrom.KmsProviders;
         QueryableEncryptionSchemaMode = copyFrom.QueryableEncryptionSchemaMode;
-        _loggableConnectionString = SanitizeConnectionStringForLogging(ConnectionString);
     }
 
     /// <summary>
@@ -80,7 +78,6 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
 
         var clone = Clone();
         clone.ConnectionString = connectionString;
-        clone._loggableConnectionString = SanitizeConnectionStringForLogging(connectionString);
         return clone;
     }
 
@@ -263,15 +260,6 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
         }
     }
 
-    private static string? SanitizeConnectionStringForLogging(string? connectionString)
-    {
-        if (connectionString == null) return null;
-
-        var builder = new MongoUrlBuilder(connectionString);
-        builder.Password = string.IsNullOrWhiteSpace(builder.Password) ? builder.Password : "redacted";
-        return builder.ToString();
-    }
-
     private sealed class ExtensionInfo(IDbContextOptionsExtension extension)
         : DbContextOptionsExtensionInfo(extension)
     {
@@ -320,12 +308,9 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
 
         private string CreateLogFragment()
         {
+            // The connection string is deliberately never logged - it carries credentials, and redacting
+            // only the password still leaks the username, hosts and query options.
             var builder = new StringBuilder();
-            if (Extension._loggableConnectionString != null)
-            {
-                builder.Append("ConnectionString=").Append(Extension._loggableConnectionString).Append(' ');
-            }
-
             if (Extension.MongoClient != null)
             {
                 builder.Append("MongoClient=").Append(Extension.MongoClient).Append(' ');

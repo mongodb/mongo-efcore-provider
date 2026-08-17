@@ -59,7 +59,7 @@ Invariants worth knowing:
 - **Immutable.** Every `With*` returns a clone. Don't reach in and mutate fields.
 - **Connection-source exclusivity.** Exactly one of `ConnectionString` / `MongoClient` / `ClientSettings` may be set; the `With*` methods enforce this. Loosening this is a breaking change.
 - **`Info.GetServiceProviderHashCode()` is based on `ConnectionString` + `DatabaseName`.** Contexts sharing those reuse the same internal service provider. Adding more state to the hash is fine but be deliberate.
-- **`LogFragment` sanitizes passwords** — `SanitizeConnectionStringForLogging()`. This is a security-relevant guardrail; the `security-reviewer` will flag any regression.
+- **`LogFragment` never includes the connection string** — it carries credentials, and redacting only the password still leaks the username, hosts and options. This is a security-relevant guardrail; the `security-reviewer` will flag any regression.
 - **`MongoDbContextOptionsBuilder` is intentionally thin** — it currently delegates everything to the underlying `DbContextOptionsBuilder`. The class exists as a namespace for future MongoDB-specific options without polluting the global EF options builder.
 
 ## Boundaries with adjacent areas
