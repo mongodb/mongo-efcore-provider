@@ -51,6 +51,12 @@ internal sealed partial class MongoQueryExpression : Expression
     /// </summary>
     public Expression? CapturedExpression { get; set; }
 
+    /// <summary>
+    /// Set when <see cref="CapturedExpression"/> was widened to a wider numeric overload to dodge the
+    /// driver's strict narrowing check (EF-228). Holds the original public result type to narrow back to.
+    /// </summary>
+    public Type? AggregateNarrowingResultType { get; set; }
+
     /// <inheritdoc />
     public override Type Type
         => typeof(object);

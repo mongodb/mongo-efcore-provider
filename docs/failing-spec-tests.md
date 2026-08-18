@@ -46,7 +46,7 @@ that currently lack a ticket. Counts are sourced from `tests/MongoDB.EntityFrame
 | [EF-221](https://jira.mongodb.org/browse/EF-221) | `Equals with different types issue EF-221` | `==` / `Equals` with operands of mismatched CLR types (e.g. `int == long`) is not translated correctly. | 4 |
 | [EF-222](https://jira.mongodb.org/browse/EF-222) | `translation of Like issue EF-222` | `EF.Functions.Like(...)` is not translated. | 9 |
 | [EF-227](https://jira.mongodb.org/browse/EF-227) | `Max over empty nullables issue EF-227` | `Min` / `Max` over an empty nullable sequence does not produce the EF-expected `null`. | 4 |
-| [EF-228](https://jira.mongodb.org/browse/EF-228) | `Truncation data loss issue EF-228` | `Sum`/`Average` over `float` columns suffers precision/truncation loss when accumulated server-side. | 2 |
+| [EF-228](https://jira.mongodb.org/browse/EF-228) | _(no remaining `// Fails:` tags)_ | Fixed: `Sum`/`Average` over a `float` selector now widens the captured aggregate to `double` before handing it to the driver (avoiding the driver's strict `SingleSerializer` truncation check) and narrows back to `float` client-side. The `Type_casting_inside_sum` test formerly cross-referenced here was re-investigated and re-tagged **EF-X023**: it fails via an unrelated mechanism (an explicit `(decimal)` cast in the selector, not a `float` Average/Sum result). | 0 |
 | [EF-232](https://jira.mongodb.org/browse/EF-232) | `Sum of empty set cast to nullable issue EF-232` | `Sum_with_no_data_cast_to_nullable` does not produce the EF-expected `null`. (The `Compiled_query_when_does_not_end_in_query_operator` failure that previously also cited EF-232 has been re-tagged as `EF-X011`.) | 1 |
 | [EF-234](https://jira.mongodb.org/browse/EF-234) | `translation of Random issue EF-234` | `EF.Functions.Random()` is not translated. | 2 |
 | [EF-235](https://jira.mongodb.org/browse/EF-235) | `Translate Convert methods issue EF-235` | `Convert.ToBoolean/Byte/Int*/Decimal/Double/String/...` calls are not translated. | 8 |
@@ -93,7 +93,7 @@ These entries appear in `// Fails:` comments without an `EF-` or `CSHARP-` refer
 | EF-X001 | Sub-query selection across DbSets is not translated | 144 |
 | EF-X002 | Provider throws a different exception than the EF translation-failure message | 46 |
 | EF-X003 | Driver-level feature gaps surfaced as test failures | 19 |
-| EF-X004 | Float `Sum`/`Average` truncation (likely duplicate of EF-228) | 1 |
+| EF-X004 | Int-division precision loss in a projected field | 1 |
 | EF-X005 | BSON document missing nested required reference (AdHoc JSON) | 2 |
 | EF-X006 | MongoDB `DateTimeKind` round-trip handling | 1 |
 | EF-X007 | Views / `HasDefiningQuery` semantics for MongoDB collections | 2 |
@@ -114,6 +114,7 @@ These entries appear in `// Fails:` comments without an `EF-` or `CSHARP-` refer
 | EF-X022 | Join/GroupJoin whose inner source is a filtered or ordered sub-query is rejected | 18 |
 | EF-X024 | `Where`/entity materialization over a flattened multi-join chain onto ambiguous same-navigation or navigation-less siblings is not translated | 2 |
 | EF-X016 | Bulk `ExecuteUpdate`/`ExecuteDelete` source restricted to a single collection scoped by `Where` | 47 |
+| EF-X023 | Explicit `(decimal)` cast inside `Sum`/`Average` loses precision server-side | 1 |
 
 ### EF-X001 — Sub-query selection across DbSets is not translated
 Comment patterns: `// Fails: Subquery selection EF-X001`, `// Fails: Subqueries not supported EF-X001`, `// Fails: No subquery support EF-X001`.
@@ -128,9 +129,9 @@ Affected: ~36 tests. EF's base tests expect `InvalidOperationException` with EF'
 Comment patterns: `// Fails: Unsupported by driver EF-X003`, `// Fails: Reverse not supported by driver EF-X003`, `// Fails: Limited support on client evaluation EF-X003`.
 Affected: ~17 tests. These are MongoDB C# Driver gaps (the driver does not implement a particular LINQ-to-MQL translation). Many likely fold into existing `CSHARP-*` tickets; a single umbrella issue would let the provider track its dependency on driver work.
 
-### EF-X004 — Float `Sum`/`Average` truncation (likely duplicate of EF-228)
+### EF-X004 — Int-division precision loss in a projected field
 Comment pattern: `// Fails: Truncation resulted in data loss EF-X004`.
-Affected: 1 test (`NorthwindAggregateOperatorsQueryMongoTest.cs`). Almost certainly the same failure mode as [EF-228](https://jira.mongodb.org/browse/EF-228); recommend re-tagging with `EF-228` and dropping this ticket once confirmed.
+Affected: 1 test (`NorthwindSelectQueryMongoTest.Projection_when_arithmetic_expression_precedence`). Confirmed **not** a duplicate of [EF-228](https://jira.mongodb.org/browse/EF-228) (now fixed) — this test still fails the same way afterward. An integer-division result (`$_id / $_id`) fails to deserialize back into an `int`-typed projected field (`FormatException: "An error occurred while deserializing the B property"`), unrelated to `Average`/`Sum`.
 
 ### EF-X005 — BSON document missing nested required reference (AdHoc JSON)
 Comment patterns: `// Fails: NestedRequiredReference is null in BsonDocument for entity id=6 EF-X005`, `// Fails: Entity id=5 has no RequiredReference field EF-X005`.
@@ -351,6 +352,15 @@ condition and is not yet translated into the `$lookup` sub-pipeline `$match`. Pr
 this ticket tracks. Functional coverage:
 `CrossCollectionIncludeTests.Filtered_collection_include_predicate_is_not_silently_dropped` and
 `CrossCollectionIncludeTests.Query_filter_on_collection_include_target_is_not_silently_dropped`.
+
+### EF-X023 — Explicit `(decimal)` cast inside `Sum`/`Average` loses precision server-side
+Comment pattern: `// Fails: Explicit float-to-decimal cast inside Sum loses precision EF-X023`.
+Affected: 1 test (`NorthwindAggregateOperatorsQueryMongoTest.Type_casting_inside_sum`, `.Sum(od => (decimal)od.Discount)`).
+Distinct from [EF-228](https://jira.mongodb.org/browse/EF-228) (fixed): here the selector already casts to `decimal`
+before the sum, translating to `{ "$sum": { "$toDecimal": "$Discount" } }`; the server-side `$toDecimal` conversion
+of the underlying `float` values itself introduces binary-floating-point noise (returns `121.04000180587159838`
+instead of `121.040`), so widening the aggregate (EF-228's fix) does not apply — the precision loss happens before
+the `$sum`, not in deserializing its result.
 
 ### EF-X024 — `Where`/entity materialization over a flattened multi-join chain onto ambiguous same-navigation or navigation-less siblings is not translated
 Comment pattern: `// Fails: Where over a flattened multi-join chain is not translated EF-X024`, or

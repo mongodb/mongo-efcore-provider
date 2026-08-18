@@ -161,10 +161,34 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         if (ProjectionAnalyzer.CanPushDown(shapedQueryExpression.ShaperExpression))
         {
+            var publicResultType = shapedQueryExpression.ShaperExpression.Type;
+
+            if (mongoQueryExpression.AggregateNarrowingResultType == publicResultType
+                && mongoQueryExpression.CapturedExpression is { Type: var driverResultType }
+                && driverResultType != publicResultType)
+            {
+                // EF-228: the captured expression was widened (e.g. float Average/Sum -> double) so the
+                // driver deserializes leniently; narrow the driver's result back to the public type here,
+                // client-side, via a plain numeric conversion rather than a strict BSON round-trip.
+                var narrowParameter = Expression.Parameter(driverResultType, "v");
+                var narrowLambda = Expression.Lambda(Expression.Convert(narrowParameter, publicResultType), narrowParameter);
+
+                return Expression.Call(null,
+                    ExecuteNarrowedProjectedQueryMethodInfo.MakeGenericMethod(
+                        rootEntityType.ClrType, driverResultType, publicResultType),
+                    QueryCompilationContext.QueryContextParameter,
+                    Expression.Constant(rootEntityType),
+                    Expression.Constant(_bsonSerializerFactory),
+                    Expression.Constant(mongoQueryExpression),
+                    Expression.Constant(_contextType),
+                    Expression.Constant(_threadSafetyChecksEnabled),
+                    Expression.Constant(shapedQueryExpression.ResultCardinality),
+                    Expression.Constant(narrowLambda.Compile(), narrowLambda.Type));
+            }
+
             // Push-down path: scalar/anonymous projections handled entirely by LINQ V3
             return Expression.Call(null,
-                ExecuteProjectedQueryMethodInfo.MakeGenericMethod(rootEntityType.ClrType,
-                    shapedQueryExpression.ShaperExpression.Type),
+                ExecuteProjectedQueryMethodInfo.MakeGenericMethod(rootEntityType.ClrType, publicResultType),
                 QueryCompilationContext.QueryContextParameter,
                 Expression.Constant(rootEntityType),
                 Expression.Constant(_bsonSerializerFactory),
@@ -350,6 +374,34 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             mongoQueryContext,
             executableQuery,
             (_, e) => e,
+            contextType,
+            standAloneStateManager: false,
+            threadSafetyChecksEnabled,
+            GetOnZeroResultsAction(queryExpression));
+    }
+
+    // EF-228: sibling of ExecuteProjectedQuery for the case where MongoQueryableMethodTranslatingExpressionVisitor
+    // widened the captured expression (e.g. float Average/Sum -> double) so the driver deserializes the
+    // aggregate result leniently. TDriverResult is what the driver actually returns; narrow converts it
+    // to the TResult the public LINQ signature promised.
+    private static QueryingEnumerable<TDriverResult, TResult> ExecuteNarrowedProjectedQuery<TSource, TDriverResult, TResult>(
+        QueryContext queryContext,
+        IReadOnlyEntityType entityType,
+        BsonSerializerFactory bsonSerializerFactory,
+        MongoQueryExpression queryExpression,
+        Type contextType,
+        bool threadSafetyChecksEnabled,
+        ResultCardinality resultCardinality,
+        Func<TDriverResult, TResult> narrow)
+    {
+        var (mongoQueryContext, executableQuery) = TranslateQuery<TSource>(
+            queryContext, entityType, bsonSerializerFactory, queryExpression, resultCardinality,
+            (translator, expression) => translator.TranslateProjected(expression));
+
+        return new QueryingEnumerable<TDriverResult, TResult>(
+            mongoQueryContext,
+            executableQuery,
+            (_, e) => narrow(e),
             contextType,
             standAloneStateManager: false,
             threadSafetyChecksEnabled,
@@ -688,6 +740,12 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             .GetTypeInfo()
             .DeclaredMethods
             .Single(m => m.Name == nameof(ExecuteProjectedQuery));
+
+    private static readonly MethodInfo ExecuteNarrowedProjectedQueryMethodInfo =
+        typeof(MongoShapedQueryCompilingExpressionVisitor)
+            .GetTypeInfo()
+            .DeclaredMethods
+            .Single(m => m.Name == nameof(ExecuteNarrowedProjectedQuery));
 
     private static readonly MethodInfo CreateInnerSourceMethodInfo =
         typeof(MongoShapedQueryCompilingExpressionVisitor)
