@@ -53,7 +53,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     public override Expression? Visit(Expression? expression)
     {
-        _finalExpression ??= expression;
         var result = base.Visit(expression);
 
         if (result == QueryCompilationContext.NotTranslatedExpression)
@@ -80,6 +79,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// otherwise <see cref="QueryCompilationContext.NotTranslatedExpression"/>.</returns>
     protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
     {
+        _finalExpression ??= methodCallExpression;
+
         var method = methodCallExpression.Method;
 #if !EF8
         // ExecuteDelete / ExecuteUpdate marker methods are declared on EntityFrameworkQueryableExtensions.

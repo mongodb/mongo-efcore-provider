@@ -90,7 +90,7 @@ These entries appear in `// Fails:` comments without an `EF-` or `CSHARP-` refer
 | EF-X008 | No support for nested JSON in AdHoc JSON tests | 2 |
 | EF-X009 | Single uncategorized failure — needs triage | 1 |
 | EF-X010 | Provider-specific Include error message differs from EF baseline | 4 |
-| EF-X011 | Compiled query with non-query operator — wrong exception | 1 |
+| EF-X011 | ~~Compiled query with non-query operator — wrong exception~~ — fixed by EF-233 | 0 |
 | EF-X012 | `OfType` translation unsupported | 2 |
 | EF-X013 | MongoDB has no `$xor` operator (`Where_bitwise_xor`) | 1 |
 | EF-X014 | Server-side projection conflict with cast-to-nullable | 1 |
@@ -144,9 +144,11 @@ Affected: 1 test. Author was unsure of root cause when adding the override.
 Pattern: tests for `Include_collection_with_client_filter` across all four Include variants use `Assert.ThrowsAsync<ContainsException>` and assert that `Assert.Contains` fails because the provider's error message differs from the generic EF message. The override carries an explanatory comment ("Throws with Mongo-specific message rather than the generic EF message.") but no `// Fails:` tag in the current codebase.
 Affected: 4 tests (`NorthwindEFPropertyIncludeQueryMongoTest.cs`, `NorthwindIncludeNoTrackingQueryMongoTest.cs`, `NorthwindIncludeQueryMongoTest.cs`, `NorthwindStringIncludeQueryMongoTest.cs`).
 
-### EF-X011 — Compiled query with non-query operator — wrong exception
-Comment pattern: `// Fails: Compiled query with non-query operator issue EF-X011`.
-Affected: 1 test (`NorthwindCompiledQueryMongoTest.Compiled_query_when_does_not_end_in_query_operator`). Previously cited the same `EF-232` as `Sum_with_no_data_cast_to_nullable`, but the two are clearly distinct bugs — split out into this temp ticket. The provider throws `ArgumentException("No ultimate source found")` instead of the EF-expected error.
+### EF-X011 — Compiled query with non-query operator — wrong exception — **fixed by [EF-233](https://jira.mongodb.org/browse/EF-233)**
+Comment pattern (historical): `// Fails: Compiled query with non-query operator issue EF-X011`.
+Root cause: `MongoQueryableMethodTranslatingExpressionVisitor` captured the "final" query-chain expression in its generic `Visit` override (`_finalExpression ??= expression`), which fires on whatever node is visited first. For a compiled query ending in a non-query operator (e.g. `.Count() == 1`), the wrapping `BinaryExpression` was visited before the actual `Count()` call, so the captured expression included the trailing comparison and downstream translation broke (`ArgumentException("No ultimate source found")`, or the reported `InvalidCastException` for other shapes). Fixed by moving the capture into `VisitMethodCall` (`_finalExpression ??= methodCallExpression`), which only ever fires on the true queryable-chain nodes. `NorthwindCompiledQueryMongoTest.Compiled_query_when_does_not_end_in_query_operator` now calls `base.*` directly and asserts the correct MQL baseline.
+
+One incidental side effect: `NorthwindCompiledQueryMongoTest.Multiple_queries` (two separately-compiled queries against different `DbSet`s reusing translation state — a pre-existing [EF-216](https://jira.mongodb.org/browse/EF-216) cross-DbSet limitation) now surfaces as an `ArgumentException` from the driver-LINQ rebuild instead of the provider's own "Unsupported cross-DbSet query" guard. The test was updated to assert the new exception type; per this repo's versioning conventions, the exception type for an already-unsupported shape is not part of the public contract.
 
 ### EF-X012 — `OfType` translation unsupported
 Comment pattern: `// Fails: OfType translation EF-X012`.

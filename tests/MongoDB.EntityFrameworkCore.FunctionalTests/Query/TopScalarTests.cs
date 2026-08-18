@@ -329,6 +329,17 @@ public class TopScalarTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
+    public void Compiled_query_ending_in_comparison_after_Count()
+    {
+        var query = EF.CompileQuery((GuidesDbContext context, bool hasRings) =>
+            context.Planets.Where(p => p.hasRings == hasRings).Count() == 4);
+
+        var result = query(_db, true);
+
+        Assert.True(result);
+    }
+
+    [Fact]
     public void Contains_can_match_entities()
     {
         var earth = _db.Planets.Single(p => p.name == "Earth");
