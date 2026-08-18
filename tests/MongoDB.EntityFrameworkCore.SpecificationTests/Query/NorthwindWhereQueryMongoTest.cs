@@ -504,10 +504,15 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
             """);
     }
 
-    [ConditionalTheory(Skip = "CSHARP-6126: driver 3.10 translates mismatched-type equality to a value match, returning rows where .NET object-equality returns none")]
-    [MemberData(nameof(IsAsyncData))]
     public override async Task Where_equals_using_object_overload_on_mismatched_types(bool async)
-        => await base.Where_equals_using_object_overload_on_mismatched_types(async);
+    {
+        await base.Where_equals_using_object_overload_on_mismatched_types(async);
+
+        AssertMql(
+            """
+            Employees.{ "$match" : { "_id" : { "$type" : -1 } } }
+            """);
+    }
 
     public override async Task Where_equals_using_int_overload_on_mismatched_types(bool async)
     {
@@ -519,22 +524,31 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
             """);
     }
 
-    [ConditionalTheory(Skip = "CSHARP-6126: driver 3.10 translates mismatched-type equality to a value match, returning rows where .NET object-equality returns none")]
-    [MemberData(nameof(IsAsyncData))]
     public override async Task Where_equals_on_mismatched_types_nullable_int_long(bool async)
-        => await base.Where_equals_on_mismatched_types_nullable_int_long(async);
-
-    public override async Task Where_equals_on_mismatched_types_nullable_long_nullable_int(bool async)
     {
-        // Fails: Equals with different types issue EF-221
-        Assert.Contains(
-            "Unable to cast object of type 'System.UInt64' to type 'System.Nullable`1[System.UInt32]'.",
-            (await Assert.ThrowsAsync<InvalidCastException>(() =>
-                base.Where_equals_on_mismatched_types_nullable_long_nullable_int(async))).Message);
+        await base.Where_equals_on_mismatched_types_nullable_int_long(async);
 
         AssertMql(
             """
-            Employees.
+            Employees.{ "$match" : { "_id" : { "$type" : -1 } } }
+            """,
+            //
+            """
+            Employees.{ "$match" : { "_id" : { "$type" : -1 } } }
+            """);
+    }
+
+    public override async Task Where_equals_on_mismatched_types_nullable_long_nullable_int(bool async)
+    {
+        await base.Where_equals_on_mismatched_types_nullable_long_nullable_int(async);
+
+        AssertMql(
+            """
+            Employees.{ "$match" : { "_id" : { "$type" : -1 } } }
+            """,
+            //
+            """
+            Employees.{ "$match" : { "_id" : { "$type" : -1 } } }
             """);
     }
 

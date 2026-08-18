@@ -2238,15 +2238,11 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
     public override async Task Static_equals_int_compared_to_long(bool async)
     {
-        // Fails: Equals with different types issue EF-221
-        Assert.Contains(
-            "Unable to cast object of type 'System.Int",
-            (await Assert.ThrowsAsync<InvalidCastException>(() => base.Static_equals_int_compared_to_long(async)))
-            .Message);
+        await base.Static_equals_int_compared_to_long(async);
 
         AssertMql(
             """
-            Orders.
+            Orders.{ "$match" : { "_id" : { "$type" : -1 } } }
             """);
     }
 
