@@ -191,11 +191,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
     public override async Task Sum_with_no_data_cast_to_nullable(bool async)
     {
-        // Fails: Sum of empty set cast to nullable issue EF-232
-        Assert.Contains(
-            "Expected: 0",
-            (await Assert.ThrowsAsync<EqualException>(() =>
-                base.Sum_with_no_data_cast_to_nullable(async))).Message);
+        await base.Sum_with_no_data_cast_to_nullable(async);
 
         AssertMql(
             """

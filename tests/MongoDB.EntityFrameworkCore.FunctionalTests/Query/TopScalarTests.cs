@@ -265,6 +265,22 @@ public class TopScalarTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
+    public void Sum_with_nullable_selector_over_empty_set_is_zero()
+    {
+        var sum = _db.Planets.Where(p => p.orderFromSun > 100).Select(p => (int?)p.orderFromSun).Sum();
+
+        Assert.Equal(0, sum);
+    }
+
+    [Fact]
+    public async Task SumAsync_with_nullable_selector_over_empty_set_is_zero()
+    {
+        var sum = await _db.Planets.Where(p => p.orderFromSun > 100).Select(p => (int?)p.orderFromSun).SumAsync();
+
+        Assert.Equal(0, sum);
+    }
+
+    [Fact]
     public void Max_with_selector()
     {
         var sum = _db.Planets.Max(p => p.orderFromSun);
