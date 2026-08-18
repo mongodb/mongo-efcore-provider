@@ -61,6 +61,145 @@ public class ThenIncludeThroughOwnedNavigationTests(TemporaryDatabaseFixture dat
         Assert.Contains(logs, l => l.Contains("\"localField\" : \"_lookup_Buyer.Address.RegionId\""));
     }
 
+    /// <summary>
+    /// Sibling owned navigations sharing the same CLR type (<c>ShippingAddress</c> / <c>BillingAddress</c>,
+    /// both typed <c>JAddress2</c>) must resolve the owned-navigation owner via the real navigation graph,
+    /// not by a CLR-type guess — a CLR-type-only lookup can't tell the two owned instances apart and may
+    /// silently resolve to the sibling that has no <c>Region</c> relationship configured at all, dropping
+    /// the $lookup entirely and leaving <c>Region</c> null even though the correct sibling (ShippingAddress)
+    /// does have a matching Region.
+    /// </summary>
+    [Fact]
+    public void ThenInclude_through_one_of_two_sibling_owned_navigations_sharing_a_clr_type_resolves_the_correct_one()
+    {
+        var (ordersName, buyersName, regionsName) = Seed2();
+        var logs = new List<string>();
+
+        using var db = new SiblingOwnedNavigationJoinDbContext(database, ordersName, buyersName, regionsName, logs.Add);
+
+        var order = db.J2Orders
+            .Include(o => o.Buyer)
+            .ThenInclude(b => b.ShippingAddress)
+            .ThenInclude(a => a.Region)
+            .Single();
+
+        Assert.NotNull(order.Buyer);
+        Assert.NotNull(order.Buyer.ShippingAddress);
+        Assert.Equal("London", order.Buyer.ShippingAddress.City);
+        Assert.NotNull(order.Buyer.ShippingAddress.Region);
+        Assert.Equal("Europe", order.Buyer.ShippingAddress.Region.Name);
+
+        Assert.Contains(logs, l => l.Contains("\"localField\" : \"_lookup_Buyer.ShippingAddress.RegionId\""));
+    }
+
+    private (string ordersName, string buyersName, string regionsName) Seed2()
+    {
+        var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("J2Orders") + Guid.NewGuid().ToString("N")[..8];
+        var buyersName = TemporaryDatabaseFixtureBase.CreateCollectionName("J2Buyers") + Guid.NewGuid().ToString("N")[..8];
+        var regionsName = TemporaryDatabaseFixtureBase.CreateCollectionName("J2Regions") + Guid.NewGuid().ToString("N")[..8];
+
+        var buyerId = ObjectId.GenerateNewId();
+        var regionId = ObjectId.GenerateNewId();
+
+        database.MongoDatabase.GetCollection<BsonDocument>(regionsName).InsertOne(
+            new BsonDocument { { "_id", regionId }, { "Name", "Europe" } });
+        database.MongoDatabase.GetCollection<BsonDocument>(buyersName).InsertOne(
+            new BsonDocument
+            {
+                { "_id", buyerId },
+                { "Name", "Alice" },
+                { "ShippingAddress", new BsonDocument { { "City", "London" }, { "RegionId", regionId } } },
+                { "BillingAddress", new BsonDocument { { "City", "Paris" } } }
+            });
+        database.MongoDatabase.GetCollection<BsonDocument>(ordersName).InsertOne(
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Desc", "Order 1" }, { "BuyerId", buyerId } });
+
+        return (ordersName, buyersName, regionsName);
+    }
+
+    class J2Order
+    {
+        public ObjectId _id { get; set; }
+        public string Desc { get; set; }
+        public ObjectId? BuyerId { get; set; }
+        public J2Buyer Buyer { get; set; }
+    }
+
+    class J2Buyer
+    {
+        public ObjectId _id { get; set; }
+        public string Name { get; set; }
+        public J2Address ShippingAddress { get; set; }
+        public J2Address BillingAddress { get; set; }
+    }
+
+    class J2Address
+    {
+        public string City { get; set; }
+        public ObjectId? RegionId { get; set; }
+        public J2Region Region { get; set; }
+    }
+
+    class J2Region
+    {
+        public ObjectId _id { get; set; }
+        public string Name { get; set; }
+    }
+
+    class SiblingOwnedNavigationJoinDbContext(
+        TemporaryDatabaseFixture database, string ordersCollection, string buyersCollection, string regionsCollection,
+        Action<string>? logAction = null)
+        : DbContext(new DbContextOptionsBuilder<SiblingOwnedNavigationJoinDbContext>()
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
+            .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+            .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+            .LogTo(l => logAction?.Invoke(l))
+            .EnableSensitiveDataLogging()
+            .Options)
+    {
+        public DbSet<J2Order> J2Orders { get; set; }
+        public DbSet<J2Buyer> J2Buyers { get; set; }
+        public DbSet<J2Region> J2Regions { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<J2Order>(b =>
+            {
+                b.ToCollection(ordersCollection);
+                b.HasOne(o => o.Buyer).WithMany().HasForeignKey(o => o.BuyerId);
+            });
+
+            modelBuilder.Entity<J2Buyer>(b =>
+            {
+                b.ToCollection(buyersCollection);
+                b.OwnsOne(c => c.ShippingAddress, a =>
+                {
+                    a.HasOne(x => x.Region).WithMany().HasForeignKey(x => x.RegionId);
+                });
+                // Sibling owned navigation sharing the same CLR type (J2Address) but WITHOUT the Region
+                // relationship — if owner resolution ever picked this sibling by CLR type alone instead
+                // of by the real navigation graph, the Region $lookup would silently vanish.
+                b.OwnsOne(c => c.BillingAddress, a =>
+                {
+                    a.Ignore(x => x.Region);
+                });
+            });
+
+            modelBuilder.Entity<J2Region>(b =>
+            {
+                b.ToCollection(regionsCollection);
+            });
+        }
+
+        private sealed class IgnoreCacheKeyFactory : IModelCacheKeyFactory
+        {
+            private static int _count;
+            public object Create(DbContext context, bool designTime) => Interlocked.Increment(ref _count);
+        }
+    }
+
     private (string ordersName, string buyersName, string regionsName) Seed()
     {
         var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("JOrders") + Guid.NewGuid().ToString("N")[..8];

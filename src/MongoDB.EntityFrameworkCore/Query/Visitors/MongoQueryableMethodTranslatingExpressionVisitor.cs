@@ -682,7 +682,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         string? throughEmbeddedPath = null;
         if (navigation == null && fkPropertyName != null)
         {
-            var keySelectorOwner = ResolveKeySelectorOwner(outerKeySelector.Body, outerEntityType.Model);
+            var keySelectorOwner = ResolveKeySelectorOwner(
+                outerKeySelector.Body, outerEntityType,
+                outerQueryExpression.InnerCollections.Keys.Where(k => k != innerEntityType));
 
             foreach (var priorInnerEntityType in outerQueryExpression.InnerCollections.Keys)
             {
@@ -802,7 +804,23 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// (the entity that actually declares it) while still scoping the resulting alias/localField against
     /// the entity that is actually joined, plus the embedded path to the property within its document.
     /// </summary>
-    private static KeySelectorOwner? ResolveKeySelectorOwner(Expression keySelectorBody, IModel model)
+    /// <param name="keySelectorBody">The outer key selector's body.</param>
+    /// <param name="rootEntityType">The query root's entity type — always a valid anchor.</param>
+    /// <param name="priorInnerEntityTypes">Entity types already joined earlier in the chain — also
+    /// valid anchors.</param>
+    /// <remarks>
+    /// Anchors are matched by CLR type against only this small, finite, already-established set —
+    /// never by scanning the whole model. Multiple distinct <em>owned</em> entity types can share a CLR
+    /// type (e.g. sibling <c>Buyer.ShippingAddress</c> / <c>Buyer.BillingAddress</c> both typed
+    /// <c>Address</c>); a model-wide CLR-type search can't tell them apart and may silently pick the
+    /// wrong one. Anchors here are always non-owned join participants, so that ambiguity can't arise at
+    /// this step. Once a specific anchor <see cref="IEntityType"/> is identified, the embedded path is
+    /// resolved by walking the REAL navigation graph forward (<see cref="IReadOnlyEntityType.FindNavigation(string)"/>
+    /// hop by hop) rather than guessing again by CLR type, so sibling owned navigations resolve to the
+    /// exact one this key selector actually references.
+    /// </remarks>
+    private static KeySelectorOwner? ResolveKeySelectorOwner(
+        Expression keySelectorBody, IEntityType rootEntityType, IEnumerable<IEntityType> priorInnerEntityTypes)
     {
         var current = keySelectorBody.RemoveConvert() switch
         {
@@ -817,17 +835,34 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return null;
         }
 
-        var declaringEntityType = model.GetEntityTypes().FirstOrDefault(e => e.ClrType == current.Type);
-        if (declaringEntityType == null)
-        {
-            return null;
-        }
+        var anchors = new List<IEntityType> { rootEntityType };
+        anchors.AddRange(priorInnerEntityTypes);
 
-        var anchorEntityType = declaringEntityType;
         var embeddedSegments = new List<string>();
 
-        while (anchorEntityType.IsOwned())
+        while (true)
         {
+            var anchorEntityType = anchors.FirstOrDefault(e => e.ClrType == current.Type);
+            if (anchorEntityType != null)
+            {
+                var declaringEntityType = anchorEntityType;
+                foreach (var segment in embeddedSegments)
+                {
+                    if (declaringEntityType.FindNavigation(segment) is not { } segmentNavigation)
+                    {
+                        // The collected path doesn't actually exist on the real navigation graph —
+                        // shouldn't happen since the segments came from the same expression tree, but
+                        // bail out rather than report a bogus owner.
+                        return null;
+                    }
+
+                    declaringEntityType = segmentNavigation.TargetEntityType;
+                }
+
+                return new KeySelectorOwner(
+                    declaringEntityType, anchorEntityType, embeddedSegments.Count > 0 ? string.Join(".", embeddedSegments) : null);
+            }
+
             var (name, next) = current.RemoveConvert() switch
             {
                 MemberExpression member => (member.Member.Name, member.Expression),
@@ -839,24 +874,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
             if (name == null || next == null)
             {
-                // An owned type with no further ancestor to resolve — leave the caller to treat the
-                // owned type itself as the anchor rather than fail outright.
-                break;
-            }
-
-            var nextEntityType = model.GetEntityTypes().FirstOrDefault(e => e.ClrType == next.Type);
-            if (nextEntityType == null)
-            {
-                break;
+                // Ran out of decomposable hops without ever reaching a known anchor — can't resolve.
+                return null;
             }
 
             embeddedSegments.Insert(0, name);
-            anchorEntityType = nextEntityType;
             current = next;
         }
-
-        return new KeySelectorOwner(
-            declaringEntityType, anchorEntityType, embeddedSegments.Count > 0 ? string.Join(".", embeddedSegments) : null);
     }
 
     protected override ShapedQueryExpression? TranslateLastOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,
