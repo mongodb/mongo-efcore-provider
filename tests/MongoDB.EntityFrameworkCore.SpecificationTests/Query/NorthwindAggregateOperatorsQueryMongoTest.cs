@@ -1630,14 +1630,11 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
     public override async Task Contains_top_level(bool async)
     {
-        // Fails: Incorrect results issue EF-229
-        Assert.Contains(
-            "Expected: True",
-            (await Assert.ThrowsAsync<EqualException>(() => base.Contains_top_level(async))).Message);
+        await base.Contains_top_level(async);
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$match" : { "_v" : { "_v" : "ALFKI" } } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
             """);
     }
 

@@ -802,8 +802,44 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return null;
         }
 
-        var rewrite = TryRewriteEntityContains(collectionExpr, itemExpr);
+        var rewrite = TryRewriteEntityContains(collectionExpr, itemExpr)
+                      ?? TryRewriteScalarProjectedContains(collectionExpr, itemExpr);
         return rewrite != null ? Visit(rewrite)! : null;
+    }
+
+    /// <summary>
+    /// Rewrites <c>source.Select(selector).Contains(item)</c> (scalar, not entity, projection) into
+    /// <c>source.Any(x => selector(x) == item)</c>. The two are equivalent regardless of what precedes the
+    /// <c>Select</c>, and routing through <c>Any</c> avoids handing the driver's LINQ provider a
+    /// <c>Contains</c>-of-a-projection shape it mistranslates (CSHARP-5678 / EF-229).
+    /// </summary>
+    private Expression? TryRewriteScalarProjectedContains(Expression collection, Expression item)
+    {
+        if (collection is not MethodCallExpression { Method.Name: nameof(Queryable.Select) } selectCall
+            || selectCall.Arguments.Count != 2)
+            return null;
+
+        var selectMethodDefinition = selectCall.Method.GetGenericMethodDefinition();
+        var isQueryable = selectMethodDefinition == QueryableMethods.Select;
+        if (!isQueryable && selectMethodDefinition != EnumerableMethods.Select)
+            return null;
+
+        var selector = selectCall.Arguments[1].UnwrapLambdaFromQuote();
+        if (selector.Parameters.Count != 1)
+            return null;
+
+        var elementType = selector.Parameters[0].Type;
+        var predicate = Expression.Lambda(
+            Expression.Equal(selector.Body, item, liftToNull: false, method: null),
+            selector.Parameters[0]);
+
+        var anySource = isQueryable ? typeof(Queryable) : typeof(Enumerable);
+        var anyMethod = anySource.GetMethods()
+            .First(m => m.Name == nameof(Enumerable.Any) && m.GetParameters().Length == 2)
+            .MakeGenericMethod(elementType);
+
+        return Expression.Call(null, anyMethod, selectCall.Arguments[0],
+            isQueryable ? Expression.Quote(predicate) : predicate);
     }
 
     protected override Expression VisitBinary(BinaryExpression node)
