@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
@@ -294,12 +295,23 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         // still return a non-null (wrong) Leaf, and change-tracker fix-up can mask a null too.
         var (rootsCollection, midsCollection, leavesCollection) = SetupRootMidLeafWithDecoy();
 
-        using var db = new RootMidLeafDbContext(database, rootsCollection, midsCollection, leavesCollection);
+        var mqlMessages = new List<string>();
+        using var db = new RootMidLeafDbContext(
+            database, rootsCollection, midsCollection, leavesCollection, mqlMessages.Add);
         var root = db.Roots.Include(r => r.Mid).ThenInclude(m => m.Leaf).First();
 
         Assert.NotNull(root.Mid);
         Assert.NotNull(root.Mid.Leaf);
         Assert.Equal("RIGHT", root.Mid.Leaf.Name);
+
+        // Pipeline-level guard: the Leaf $lookup must match against the already-joined Mid document
+        // ("_lookup_Mid.leaf_id"), never against Root's own decoy "leaf_id" field. Assert on BOTH the
+        // localField AND its "as" alias together so a lookup that merely mentions "_lookup_Mid" for an
+        // unrelated reason can't satisfy the check.
+        var mql = Assert.Single(mqlMessages, m => m.Contains("ExecutedMqlQuery") || m.Contains("aggregate"));
+        Assert.Contains("\"localField\" : \"_lookup_Mid.leaf_id\"", mql);
+        Assert.Contains("\"as\" : \"_lookup_Leaf\"", mql);
+        Assert.DoesNotContain("\"localField\" : \"leaf_id\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Leaf\"", mql);
     }
 #endif
 
@@ -599,11 +611,14 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
             TemporaryDatabaseFixture database,
             string rootsCollection,
             string midsCollection,
-            string leavesCollection)
+            string leavesCollection,
+            Action<string>? logAction = null)
             : base(new DbContextOptionsBuilder<RootMidLeafDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+                .LogTo(l => logAction?.Invoke(l), [MongoEventId.ExecutedMqlQuery])
+                .EnableSensitiveDataLogging()
                 .Options)
         {
             _rootsCollection = rootsCollection;
