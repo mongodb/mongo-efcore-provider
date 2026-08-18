@@ -673,10 +673,17 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // previously-joined intermediate (e.g. OrderDetail.Order.Customer — the join's outer key
         // selector is "o.Inner.CustomerID"). When no direct navigation exists, resolve the navigation
         // on a prior inner collection and remember the intermediate so the $lookup's localField can be
-        // prefixed with that intermediate's "_lookup_<Intermediate>" path.
+        // prefixed with that intermediate's "_lookup_<Intermediate>" path. The navigation may instead be
+        // declared on an OWNED/embedded type nested inside that intermediate (e.g.
+        // "x.Buyer.Address.RegionId" — Region is a navigation on the embedded Address, not on Buyer
+        // itself, EF-380); resolve the key selector's actual owner so that case is found too, and fold
+        // the embedded path into the alias prefix.
         INavigation? throughNavigation = null;
+        string? throughEmbeddedPath = null;
         if (navigation == null && fkPropertyName != null)
         {
+            var keySelectorOwner = ResolveKeySelectorOwner(outerKeySelector.Body, outerEntityType.Model);
+
             foreach (var priorInnerEntityType in outerQueryExpression.InnerCollections.Keys)
             {
                 if (priorInnerEntityType == innerEntityType)
@@ -684,7 +691,11 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     continue;
                 }
 
-                var candidate = priorInnerEntityType.GetNavigations()
+                var searchEntityType = keySelectorOwner?.AnchorEntityType == priorInnerEntityType
+                    ? keySelectorOwner.Value.DeclaringEntityType
+                    : priorInnerEntityType;
+
+                var candidate = searchEntityType.GetNavigations()
                     .FirstOrDefault(n => n.TargetEntityType == innerEntityType
                                          && n.ForeignKey.Properties.Any(p => p.Name == fkPropertyName));
                 if (candidate != null)
@@ -692,6 +703,11 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     navigation = candidate;
                     throughNavigation = outerEntityType.GetNavigations()
                         .FirstOrDefault(n => n.TargetEntityType == priorInnerEntityType);
+                    if (searchEntityType != priorInnerEntityType)
+                    {
+                        throughEmbeddedPath = keySelectorOwner!.Value.EmbeddedPath;
+                    }
+
                     break;
                 }
             }
@@ -718,8 +734,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 var lookup = new Expressions.LookupExpression(navigation, forceUnwind: true);
                 if (throughNavigation != null)
                 {
-                    // Transitive join: match against the already-unwound intermediate document.
-                    lookup.LocalField = $"{Expressions.LookupExpression.GetLookupAlias(throughNavigation)}.{lookup.LocalField}";
+                    // Transitive join: match against the already-unwound intermediate document. When
+                    // the navigation is declared on an owned type embedded in that intermediate
+                    // (EF-380), the embedded path sits between the intermediate's alias and the field.
+                    var throughAlias = throughEmbeddedPath != null
+                        ? $"{Expressions.LookupExpression.GetLookupAlias(throughNavigation)}.{throughEmbeddedPath}"
+                        : Expressions.LookupExpression.GetLookupAlias(throughNavigation);
+                    lookup.LocalField = $"{throughAlias}.{lookup.LocalField}";
                 }
 
                 outerQueryExpression.AddLookup(lookup);
@@ -759,6 +780,83 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         return structuralShaper.Update(
             new ProjectionBindingExpression(outerQueryExpression, projectionIndex, typeof(ValueBuffer)));
+    }
+
+    /// <summary>
+    /// The entity type that declares the property accessed by a Join key-selector body (<see cref="DeclaringEntityType"/>),
+    /// the nearest non-owned, joinable entity type reached by walking back through any owned/embedded
+    /// navigations along the way (<see cref="AnchorEntityType"/>), and the dotted path of owned-navigation
+    /// names between them (<see cref="EmbeddedPath"/>, <see langword="null"/> when the two are the same type).
+    /// </summary>
+    private readonly record struct KeySelectorOwner(IEntityType DeclaringEntityType, IEntityType AnchorEntityType, string? EmbeddedPath);
+
+    /// <summary>
+    /// Resolve the owner of the property accessed by a Join key-selector body — the root for a direct
+    /// key selector (e.g. <c>r =&gt; r.MidKey</c>), an already-joined intermediate for a transitive one
+    /// reached through a composed <c>TransparentIdentifier</c> (e.g. <c>x =&gt; x.m.LeafId</c> declares
+    /// <c>LeafId</c> on Mid, not on the root), or, when the key property is declared on an owned/embedded
+    /// type nested under an already-joined entity (e.g. <c>x =&gt; x.Buyer.Address.RegionId</c>), the
+    /// owned type as <see cref="KeySelectorOwner.DeclaringEntityType"/> together with the nearest
+    /// non-owned ancestor as <see cref="KeySelectorOwner.AnchorEntityType"/> and the owned-nav path
+    /// between them (EF-380). Used so a transitive hop's navigation search looks in the right place
+    /// (the entity that actually declares it) while still scoping the resulting alias/localField against
+    /// the entity that is actually joined, plus the embedded path to the property within its document.
+    /// </summary>
+    private static KeySelectorOwner? ResolveKeySelectorOwner(Expression keySelectorBody, IModel model)
+    {
+        var current = keySelectorBody.RemoveConvert() switch
+        {
+            MemberExpression member => member.Expression,
+            MethodCallExpression methodCall when methodCall.Method.IsEFPropertyMethod() && methodCall.Arguments.Count == 2
+                => methodCall.Arguments[0],
+            _ => null
+        };
+
+        if (current == null)
+        {
+            return null;
+        }
+
+        var declaringEntityType = model.GetEntityTypes().FirstOrDefault(e => e.ClrType == current.Type);
+        if (declaringEntityType == null)
+        {
+            return null;
+        }
+
+        var anchorEntityType = declaringEntityType;
+        var embeddedSegments = new List<string>();
+
+        while (anchorEntityType.IsOwned())
+        {
+            var (name, next) = current.RemoveConvert() switch
+            {
+                MemberExpression member => (member.Member.Name, member.Expression),
+                MethodCallExpression methodCall when methodCall.Method.IsEFPropertyMethod()
+                    && methodCall.Arguments.Count == 2
+                    && methodCall.Arguments[1] is ConstantExpression { Value: string propertyName } => (propertyName, methodCall.Arguments[0]),
+                _ => (null, null)
+            };
+
+            if (name == null || next == null)
+            {
+                // An owned type with no further ancestor to resolve — leave the caller to treat the
+                // owned type itself as the anchor rather than fail outright.
+                break;
+            }
+
+            var nextEntityType = model.GetEntityTypes().FirstOrDefault(e => e.ClrType == next.Type);
+            if (nextEntityType == null)
+            {
+                break;
+            }
+
+            embeddedSegments.Insert(0, name);
+            anchorEntityType = nextEntityType;
+            current = next;
+        }
+
+        return new KeySelectorOwner(
+            declaringEntityType, anchorEntityType, embeddedSegments.Count > 0 ? string.Join(".", embeddedSegments) : null);
     }
 
     protected override ShapedQueryExpression? TranslateLastOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,
