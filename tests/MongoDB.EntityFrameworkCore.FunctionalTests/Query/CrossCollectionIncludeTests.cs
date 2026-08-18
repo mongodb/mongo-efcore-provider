@@ -283,6 +283,40 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
     }
 #endif
 
+#if !EF8 && !EF9
+    [Fact]
+    public void Include_self_referencing_two_hop_chain_declines_cleanly()
+    {
+        // EF-381: Staff.Manager is a self-referencing navigation (StaffMember -> StaffMember). Chaining
+        // ThenInclude(m => m.Manager) produces a SECOND join hop whose outer key selector reads through
+        // the transparent identifier from the first join, targeting the SAME entity type the first hop
+        // already joined. RebindInnerShaperToOuterQuery's transitive scan explicitly skips a prior inner
+        // collection whose entity type matches the current hop's (guarding against self-matching), so no
+        // intermediate is resolved and no $lookup is ever registered for this hop -- yet, pre-fix, the
+        // code still built a shaper reading a "_lookup_StaffMember" field nothing wrote, crashing
+        // materialization with a raw InvalidOperationException instead of a clean translation failure.
+        var staffName = TemporaryDatabaseFixtureBase.CreateCollectionName("Staff") + Guid.NewGuid().ToString("N")[..8];
+        var grandManagerId = ObjectId.GenerateNewId();
+        var managerId = ObjectId.GenerateNewId();
+        var employeeId = ObjectId.GenerateNewId();
+
+        var staff = database.MongoDatabase.GetCollection<BsonDocument>(staffName);
+        staff.InsertMany([
+            new BsonDocument { { "_id", grandManagerId }, { "emp_name", "GrandBoss" } },
+            new BsonDocument { { "_id", managerId }, { "emp_name", "Boss" }, { "mgr_id", grandManagerId } },
+            new BsonDocument { { "_id", employeeId }, { "emp_name", "Worker" }, { "mgr_id", managerId } }
+        ]);
+
+        using var db = new StaffDbContext(database, staffName);
+
+        // Must be a clean "could not be translated" failure, not a raw BSON exception from a shaper
+        // reading a field that no $lookup ever populated.
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            db.Staff.Include(s => s.Manager).ThenInclude(m => m.Manager).ToList());
+        Assert.Contains("could not be translated", ex.Message);
+    }
+#endif
+
     [Fact]
     public void Filtered_collection_include_predicate_is_not_silently_dropped()
     {

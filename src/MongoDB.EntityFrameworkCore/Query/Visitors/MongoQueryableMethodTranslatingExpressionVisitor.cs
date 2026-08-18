@@ -619,6 +619,11 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var reboundInnerShaper = RebindInnerShaperToOuterQuery(
             inner.ShaperExpression, innerQueryExpression, outerQueryExpression, outerKeySelector);
 
+        if (reboundInnerShaper == null)
+        {
+            return null;
+        }
+
         var newResultSelector = ReplacingExpressionVisitor.Replace(
             resultSelector.Parameters[0], outer.ShaperExpression,
             ReplacingExpressionVisitor.Replace(
@@ -628,7 +633,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         return outer.UpdateShaperExpression(newResultSelector);
     }
 
-    private static Expression RebindInnerShaperToOuterQuery(
+    private static Expression? RebindInnerShaperToOuterQuery(
         Expression innerShaper,
         MongoQueryExpression innerQueryExpression,
         MongoQueryExpression outerQueryExpression,
@@ -659,15 +664,28 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var fkPropertyName = outerKeySelector.Body.TryGetSimplePropertyName();
         INavigation? navigation = null;
 
-        if (fkPropertyName != null)
-        {
-            navigation = outerEntityType.GetNavigations()
-                .FirstOrDefault(n => n.TargetEntityType == innerEntityType
-                                     && n.ForeignKey.Properties.Any(p => p.Name == fkPropertyName));
-        }
+        // A root hop's key selector reads the FK directly off the join's outer parameter (e.g. "o.CustomerID").
+        // A transitive hop instead reads through a transparent identifier from a PRIOR join (e.g.
+        // "ti.Inner.CustomerID"). Only a root hop's FK conceptually belongs to the outer root entity type, so
+        // only a root hop may be resolved against the root's own navigations here — a transitive hop must be
+        // resolved via the prior-inner-collection scan below (or declined; see the check after it). Without
+        // this gate, a transitive hop whose FK property name happens to match one of the root's own
+        // navigations (e.g. a self-referencing Manager/DirectReports relationship reused two hops deep)
+        // resolves to the WRONG navigation instead of correctly finding no resolvable intermediate.
+        var isRootHop = IsRootHopKeySelector(outerKeySelector);
 
-        navigation ??= outerEntityType.GetNavigations()
-            .FirstOrDefault(n => n.TargetEntityType == innerEntityType);
+        if (isRootHop)
+        {
+            if (fkPropertyName != null)
+            {
+                navigation = outerEntityType.GetNavigations()
+                    .FirstOrDefault(n => n.TargetEntityType == innerEntityType
+                                         && n.ForeignKey.Properties.Any(p => p.Name == fkPropertyName));
+            }
+
+            navigation ??= outerEntityType.GetNavigations()
+                .FirstOrDefault(n => n.TargetEntityType == innerEntityType);
+        }
 
         // Transitive join: the inner entity is reached not directly from the root but THROUGH a
         // previously-joined intermediate (e.g. OrderDetail.Order.Customer — the join's outer key
@@ -695,6 +713,19 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     break;
                 }
             }
+        }
+
+        // A transitive hop with no resolvable intermediate has nothing to be scoped under: no $lookup
+        // will be registered for it, so a shaper built from here would read a field nothing wrote (e.g. a
+        // self-referencing two-hop chain, where the scan above deliberately skips a prior inner collection
+        // of the SAME entity type as this hop and so never finds a candidate). Decline the join outright
+        // rather than crash with a raw "missing element" exception during materialization. Scoped to the
+        // simple-FK-property shape (fkPropertyName != null) so unrelated already-undeclined gaps (e.g. a
+        // composite/complex key selector, which never resolves fkPropertyName here either) keep their
+        // existing — separately tracked — failure behavior instead of being pulled into this one.
+        if (!isRootHop && navigation == null && fkPropertyName != null)
+        {
+            return null;
         }
 
         // Document-shape decision (single source of truth): the driver's native LeftJoin
@@ -759,6 +790,35 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         return structuralShaper.Update(
             new ProjectionBindingExpression(outerQueryExpression, projectionIndex, typeof(ValueBuffer)));
+    }
+
+    /// <summary>
+    /// Whether a join's outer key selector reads the FK property directly off the join's own root entity,
+    /// as opposed to reading through a PRIOR join's inner (dependent) side. A sibling Include chain (e.g.
+    /// <c>.Include(r => r.A).Include(r => r.B)</c>) lowers its second join's key selector to
+    /// "ti.Outer.BId" — "Outer" always re-exposes the SAME root entity a prior join started from, so any
+    /// number of ".Outer" hops still counts as a root hop. Only an ".Inner" hop (e.g. "ti.Inner.CustomerID",
+    /// from a chained Join/ThenInclude) reads through a previously-joined DEPENDENT and makes this a
+    /// transitive hop.
+    /// </summary>
+    private static bool IsRootHopKeySelector(LambdaExpression outerKeySelector)
+    {
+        var body = outerKeySelector.Body.RemoveConvert();
+        var receiver = (body switch
+        {
+            ParameterExpression => body,
+            MemberExpression member => member.Expression,
+            MethodCallExpression { Arguments.Count: 2 } methodCall when methodCall.Method.IsEFPropertyMethod()
+                => methodCall.Arguments[0],
+            _ => null
+        })?.RemoveConvert();
+
+        while (receiver is MemberExpression { Member.Name: "Outer" } outerAccess)
+        {
+            receiver = outerAccess.Expression.RemoveConvert();
+        }
+
+        return receiver == outerKeySelector.Parameters[0];
     }
 
     protected override ShapedQueryExpression? TranslateLastOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,
