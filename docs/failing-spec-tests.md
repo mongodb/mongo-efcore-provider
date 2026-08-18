@@ -250,7 +250,7 @@ The following inconsistencies were observed while building this inventory and ha
 
 ### 1. `EF-232` was reused for two distinct failure modes — **fixed**
 
-`Sum_with_no_data_cast_to_nullable` keeps `EF-232`; `Compiled_query_when_does_not_end_in_query_operator` was re-tagged with the new temp ticket `EF-X011`.
+`Sum_with_no_data_cast_to_nullable` kept `EF-232` (since fixed and removed from the table above); `Compiled_query_when_does_not_end_in_query_operator` was re-tagged with the new temp ticket `EF-X011`.
 
 ### 2. Sibling `#if` branches missing the `// Fails:` tag — **fixed**
 
