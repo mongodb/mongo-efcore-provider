@@ -659,15 +659,25 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var fkPropertyName = outerKeySelector.Body.TryGetSimplePropertyName();
         INavigation? navigation = null;
 
-        if (fkPropertyName != null)
+        // Only treat this as a root-level navigation match when the FK access's receiver
+        // resolves back to the root (e.g. "o.CustomerId" or, across an EF-generated
+        // TransparentIdentifier chain, "x.Outer.CustomerId"). A transitive hop reached
+        // THROUGH a previously-joined intermediate (e.g. "x.Inner.ProductId") must never match
+        // here on FK-name or target-entity-type alone: the root entity type can coincidentally
+        // carry a same-named FK, or a navigation to the same target type, which would misroute
+        // the hop into this root-level branch instead of the transitive-resolution branch below.
+        if (IsRootLevelKeyAccess(outerKeySelector.Body))
         {
-            navigation = outerEntityType.GetNavigations()
-                .FirstOrDefault(n => n.TargetEntityType == innerEntityType
-                                     && n.ForeignKey.Properties.Any(p => p.Name == fkPropertyName));
-        }
+            if (fkPropertyName != null)
+            {
+                navigation = outerEntityType.GetNavigations()
+                    .FirstOrDefault(n => n.TargetEntityType == innerEntityType
+                                         && n.ForeignKey.Properties.Any(p => p.Name == fkPropertyName));
+            }
 
-        navigation ??= outerEntityType.GetNavigations()
-            .FirstOrDefault(n => n.TargetEntityType == innerEntityType);
+            navigation ??= outerEntityType.GetNavigations()
+                .FirstOrDefault(n => n.TargetEntityType == innerEntityType);
+        }
 
         // Transitive join: the inner entity is reached not directly from the root but THROUGH a
         // previously-joined intermediate (e.g. OrderDetail.Order.Customer — the join's outer key
@@ -759,6 +769,40 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         return structuralShaper.Update(
             new ProjectionBindingExpression(outerQueryExpression, projectionIndex, typeof(ValueBuffer)));
+    }
+
+    /// <summary>
+    /// Determines whether a join's FK key-selector body (e.g. <c>o.CustomerId</c> or, across chained
+    /// joins, <c>x.Outer.CustomerId</c>) reads the FK from the root of the join chain rather than from
+    /// an intermediate joined entity. EF composes successive <c>Join</c>/<c>LeftJoin</c>/<c>GroupJoin</c>
+    /// calls over a <c>TransparentIdentifier&lt;TOuter, TInner&gt;</c> whose <c>Outer</c>/<c>Inner</c>
+    /// fields lead back to the root and to the previously-joined entity respectively; any <c>Inner</c>
+    /// hop in the receiver chain means the FK is being read from that intermediate, not the root.
+    /// </summary>
+    private static bool IsRootLevelKeyAccess(Expression keySelectorBody)
+    {
+        var receiver = keySelectorBody.RemoveConvert() switch
+        {
+            MemberExpression member => member.Expression,
+            MethodCallExpression methodCall
+                when methodCall.Method.IsEFPropertyMethod() && methodCall.Arguments.Count == 2
+                => methodCall.Arguments[0],
+            _ => null
+        };
+
+        while (receiver is MemberExpression { Member: { Name: "Outer" or "Inner" } member } memberAccess
+               && member.DeclaringType is { IsGenericType: true } declaringType
+               && declaringType.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal))
+        {
+            if (member.Name == "Inner")
+            {
+                return false;
+            }
+
+            receiver = memberAccess.Expression;
+        }
+
+        return true;
     }
 
     protected override ShapedQueryExpression? TranslateLastOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,
