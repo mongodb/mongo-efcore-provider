@@ -107,6 +107,70 @@ public class DiscriminatorTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Returns_correct_entity_with_OfType_query_when_discriminator_has_value_converter()
+    {
+        var collection = database.CreateCollection<GuidKeyedEntity>();
+        var configuration = (ModelBuilder mb) =>
+        {
+            mb.Entity<GuidKeyedEntity>(e =>
+            {
+                e.HasDiscriminator(g => g.SubType)
+                    .HasValue<KeyedCustomer>(1)
+                    .HasValue<KeyedOrder>(2);
+                e.Property(g => g.SubType).HasConversion(v => v + 100, v => v - 100);
+            });
+        };
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, configuration);
+            db.Add(new KeyedCustomer {Name = "Customer 1"});
+            db.Add(new KeyedOrder {OrderReference = "Order 1"});
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, configuration);
+            var customer = Assert.Single(db.Entities.OfType<KeyedCustomer>());
+            Assert.Equal("Customer 1", customer.Name);
+
+            var order = Assert.Single(db.Entities.OfType<KeyedOrder>());
+            Assert.Equal("Order 1", order.OrderReference);
+        }
+    }
+
+    [Fact]
+    public void Returns_correct_entity_with_OfType_query_when_discriminator_has_bson_representation()
+    {
+        var collection = database.CreateCollection<GuidKeyedEntity>();
+        var configuration = (ModelBuilder mb) =>
+        {
+            mb.Entity<GuidKeyedEntity>(e =>
+            {
+                e.HasDiscriminator(g => g.SubType)
+                    .HasValue<KeyedCustomer>(1)
+                    .HasValue<KeyedOrder>(2);
+                e.Property(g => g.SubType).HasBsonRepresentation(BsonType.String);
+            });
+        };
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, configuration);
+            db.Add(new KeyedCustomer {Name = "Customer 1"});
+            db.Add(new KeyedOrder {OrderReference = "Order 1"});
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection, configuration);
+            var customer = Assert.Single(db.Entities.OfType<KeyedCustomer>());
+            Assert.Equal("Customer 1", customer.Name);
+
+            var order = Assert.Single(db.Entities.OfType<KeyedOrder>());
+            Assert.Equal("Order 1", order.OrderReference);
+        }
+    }
+
+    [Fact]
     public void Can_configure_type_discriminator_element_name()
     {
         var configuration = (ModelBuilder mb) =>

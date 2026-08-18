@@ -20,6 +20,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.Bson.IO;
+using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Conventions;
 
 namespace MongoDB.EntityFrameworkCore.Serializers;
@@ -32,6 +33,7 @@ internal class MongoEFDiscriminator(IReadOnlyEntityType entityType) :
     IScalarDiscriminatorConvention
 {
     private readonly IReadOnlyModel _model = entityType.Model;
+    private readonly IReadOnlyProperty? _discriminatorProperty = entityType.FindDiscriminatorProperty();
 
     public Type GetActualType(IBsonReader bsonReader, Type nominalType)
         => throw new NotImplementedException($"Attempted to resolve type discriminator for '{nominalType.ShortDisplayName()}'.");
@@ -40,15 +42,37 @@ internal class MongoEFDiscriminator(IReadOnlyEntityType entityType) :
     {
         var actualEntityType = _model.FindEntityType(actualType)
                               ?? throw new InvalidOperationException($"Entity type '{actualType.ShortDisplayName()}' not found in model.");
-        return BsonValue.Create(actualEntityType.GetDiscriminatorValue());
+        return SerializeDiscriminatorValue(actualEntityType.GetDiscriminatorValue());
     }
 
     public BsonValue[] GetDiscriminatorsForTypeAndSubTypes(Type type)
     {
         var entityType = _model.FindEntityType(type)
                          ?? throw new InvalidOperationException($"Entity type '{type.ShortDisplayName()}' not found in model.");
-        return entityType.GetDerivedTypes().Prepend(entityType).Select(d => BsonValue.Create(d.GetDiscriminatorValue())).ToArray();
+        return entityType.GetDerivedTypes().Prepend(entityType)
+            .Select(d => SerializeDiscriminatorValue(d.GetDiscriminatorValue())).ToArray();
     }
 
     public string ElementName { get; } = entityType.FindDiscriminatorProperty()?.GetElementName() ?? "_t";
+
+    // The discriminator is a normal IProperty, so its stored value has already been transformed by any
+    // Mongo:BsonRepresentation or ValueConverter configured on it. Filters built from the raw discriminator
+    // value must be transformed the same way, or they won't match what's actually stored in the discriminator element.
+    private BsonValue SerializeDiscriminatorValue(object? value)
+    {
+        if (value == null || _discriminatorProperty == null)
+        {
+            return BsonValue.Create(value);
+        }
+
+        var serializer = BsonSerializerFactory.CreateTypeSerializer(_discriminatorProperty);
+
+        var document = new BsonDocument();
+        using var writer = new BsonDocumentWriter(document);
+        writer.WriteStartDocument();
+        writer.WriteName("v");
+        serializer.Serialize(BsonSerializationContext.CreateRoot(writer), value);
+        writer.WriteEndDocument();
+        return document["v"];
+    }
 }
