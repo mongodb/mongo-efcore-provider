@@ -672,8 +672,11 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         LookupExpression lookup,
         IEntityType targetEntityType)
     {
-        // Walk from the outermost call inward, collecting stages in reverse order.
+        // Walk from the outermost call inward, collecting stages in reverse order. Consecutive
+        // OrderBy/ThenBy keys are buffered in sortKeys and flushed as one $sort stage, since a
+        // later $sort would otherwise re-sort from scratch and discard earlier keys.
         var stages = new List<BsonDocument>();
+        var sortKeys = new List<(string Field, int Direction)>();
         var current = navigationExpression;
 
         while (current is MethodCallExpression methodCall)
@@ -682,16 +685,17 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             switch (methodName)
             {
                 case "OrderBy" or "ThenBy":
-                    stages.Add(new BsonDocument("$sort", new BsonDocument(GetSortField(methodCall, targetEntityType), 1)));
+                    sortKeys.Add((GetSortField(methodCall, targetEntityType), 1));
                     current = methodCall.Arguments[0];
                     break;
 
                 case "OrderByDescending" or "ThenByDescending":
-                    stages.Add(new BsonDocument("$sort", new BsonDocument(GetSortField(methodCall, targetEntityType), -1)));
+                    sortKeys.Add((GetSortField(methodCall, targetEntityType), -1));
                     current = methodCall.Arguments[0];
                     break;
 
                 case "Skip":
+                    FlushSortKeys(sortKeys, stages);
                     if (methodCall.Arguments[1] is ConstantExpression skipConst)
                     {
                         stages.Add(new BsonDocument("$skip", (int)skipConst.Value!));
@@ -700,6 +704,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                     break;
 
                 case "Take":
+                    FlushSortKeys(sortKeys, stages);
                     if (methodCall.Arguments[1] is ConstantExpression takeConst)
                     {
                         stages.Add(new BsonDocument("$limit", (int)takeConst.Value!));
@@ -708,6 +713,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                     break;
 
                 case "Where":
+                    FlushSortKeys(sortKeys, stages);
+
                     // A collection-Include subquery contains a Where for the synthetic FK-correlation
                     // predicate (the join condition), which the $lookup localField/foreignField already
                     // handles, so that one is dropped. But a user filtered-Include predicate
@@ -730,9 +737,32 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             }
         }
 
+        FlushSortKeys(sortKeys, stages);
+
         // Stages were collected outermost-first; reverse so they execute in the right order.
         stages.Reverse();
         lookup.PipelineStages.AddRange(stages);
+    }
+
+    /// <summary>
+    /// Emits one $sort stage from the buffered sort keys, if any, and clears the buffer.
+    /// </summary>
+    /// <remarks>Keys are buffered last-first, so they're walked in reverse to restore key order.</remarks>
+    private static void FlushSortKeys(List<(string Field, int Direction)> sortKeys, List<BsonDocument> stages)
+    {
+        if (sortKeys.Count == 0)
+        {
+            return;
+        }
+
+        var sortDocument = new BsonDocument();
+        for (var i = sortKeys.Count - 1; i >= 0; i--)
+        {
+            sortDocument.Add(sortKeys[i].Field, sortKeys[i].Direction);
+        }
+
+        stages.Add(new BsonDocument("$sort", sortDocument));
+        sortKeys.Clear();
     }
 
     /// <summary>
@@ -807,7 +837,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         var name = orderByCall.Arguments[1].UnwrapLambdaFromQuote().Body.TryGetSimplePropertyName();
         if (name == null)
         {
-            return "_id";
+            // Not a simple property access — fail loudly rather than silently sorting by "_id".
+            throw new InvalidOperationException(CoreStrings.TranslationFailed(orderByCall.Print()));
         }
 
         var property = entityType.FindProperty(name);
