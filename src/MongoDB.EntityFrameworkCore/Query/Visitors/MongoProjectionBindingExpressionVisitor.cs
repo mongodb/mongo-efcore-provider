@@ -203,17 +203,11 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 {
                     var visited = base.Visit(materializeCollectionNavigationExpression.Subquery);
 
-                    // When an element of the collection has an embedded navigation of its own (e.g. a nested
-                    // OwnsMany/OwnsOne), EF's nav-expansion wraps the collection access in a Queryable.Select
-                    // carrying the auto-included IncludeExpression. The Select arm above rebuilds that against
-                    // EnumerableMethods.Select, which is IEnumerable<T>-typed, not the navigation's declared
-                    // List<T>-typed collection. MatchTypes deliberately leaves collection-typed targets alone
-                    // (see its TryGetItemType() guard), so left uncorrected this fails Expression.New's
-                    // member-type validation wherever this leaf feeds an anonymous type / MemberInit member.
-                    // MongoProjectionBindingRemovingExpressionVisitor.VisitMethodCall already discards this
-                    // exact Select-over-IncludeExpression shape and hands back the properly List<T>-typed
-                    // CollectionShaperExpression, so wrapping it here in a Convert is a no-op by the time it's
-                    // actually consumed - it only exists to satisfy the static-type check at this stage.
+                    // If the element type has its own embedded navigation, the Select arm above rebuilds this
+                    // as an IEnumerable<T>-typed Enumerable.Select rather than the navigation's declared List<T>,
+                    // which fails Expression.New's member-type check. Convert is a no-op at runtime:
+                    // MongoProjectionBindingRemovingExpressionVisitor discards this shape later for the
+                    // correctly-typed CollectionShaperExpression.
                     return visited != null && visited.Type != materializeCollectionNavigationExpression.Type
                         ? Expression.Convert(visited, materializeCollectionNavigationExpression.Type)
                         : visited;

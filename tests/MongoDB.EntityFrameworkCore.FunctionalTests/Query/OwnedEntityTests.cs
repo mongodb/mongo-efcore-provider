@@ -1166,11 +1166,8 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [Fact]
     public void OwnedEntity_collection_leaf_projection_with_nested_collection_element()
     {
-        // The Comments navigation on Post (the Posts element type) is the trigger: EF's nav-expansion
-        // wraps the Posts collection access in a Queryable.Select carrying the auto-included Comments,
-        // which the projection binding visitor rebuilds as an IEnumerable<Post>-typed Enumerable.Select
-        // rather than the List<Post> the anonymous-type member requires. Regression test for the
-        // ArgumentException this used to throw from Expression.New's member-type validation.
+        // Regression test: Post's own Comments navigation used to make this leaf mistyped as
+        // IEnumerable<Post>, throwing ArgumentException from Expression.New's member-type check.
         var collection = database.CreateCollection<Blog>();
         var expected = new Blog
         {
