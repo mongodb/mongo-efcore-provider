@@ -148,48 +148,87 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
     public override async Task Join_customers_orders_with_subquery(bool async)
     {
-        await base.Join_customers_orders_with_subquery(async);
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.Join_customers_orders_with_subquery(async))).Message);
 
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "pipeline" : [{ "$sort" : { "_id" : 1 } }], "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$match" : { "Inner.CustomerID" : "ALFKI" } }, { "$project" : { "ContactName" : "$Outer.ContactName", "OrderID" : "$Inner._id", "_id" : 0 } }
+Customers.
 """);
     }
 
-    [ConditionalTheory(Skip = "CSHARP-6017: driver 3.10 folds an uncorrelated Take/subquery join inner into the correlated $lookup sub-pipeline, returning wrong results")]
-    [MemberData(nameof(IsAsyncData))]
     public override async Task Join_customers_orders_with_subquery_with_take(bool async)
-        => await base.Join_customers_orders_with_subquery_with_take(async);
+    {
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.Join_customers_orders_with_subquery_with_take(async))).Message);
+
+        AssertMql(
+            """
+Customers.
+""");
+    }
 
     public override async Task Join_customers_orders_with_subquery_anonymous_property_method(bool async)
     {
-        await base.Join_customers_orders_with_subquery_anonymous_property_method(async);
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.Join_customers_orders_with_subquery_anonymous_property_method(async))).Message);
 
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "pipeline" : [{ "$sort" : { "_id" : 1 } }], "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner.CustomerID" : "ALFKI" } }
+Customers.
 """);
     }
 
-    [ConditionalTheory(Skip = "CSHARP-6017: driver 3.10 folds an uncorrelated Take/subquery join inner into the correlated $lookup sub-pipeline, returning wrong results")]
-    [MemberData(nameof(IsAsyncData))]
     public override async Task Join_customers_orders_with_subquery_anonymous_property_method_with_take(bool async)
-        => await base.Join_customers_orders_with_subquery_anonymous_property_method_with_take(async);
+    {
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.Join_customers_orders_with_subquery_anonymous_property_method_with_take(async))).Message);
+
+        AssertMql(
+            """
+Customers.
+""");
+    }
 
     public override async Task Join_customers_orders_with_subquery_predicate(bool async)
     {
-        await base.Join_customers_orders_with_subquery_predicate(async);
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.Join_customers_orders_with_subquery_predicate(async))).Message);
 
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "pipeline" : [{ "$match" : { "_id" : { "$gt" : 0 } } }, { "$sort" : { "_id" : 1 } }], "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$match" : { "Inner.CustomerID" : "ALFKI" } }, { "$project" : { "ContactName" : "$Outer.ContactName", "OrderID" : "$Inner._id", "_id" : 0 } }
+Customers.
 """);
     }
 
-    [ConditionalTheory(Skip = "CSHARP-6017: driver 3.10 folds an uncorrelated Take/subquery join inner into the correlated $lookup sub-pipeline, returning wrong results")]
-    [MemberData(nameof(IsAsyncData))]
     public override async Task Join_customers_orders_with_subquery_predicate_with_take(bool async)
-        => await base.Join_customers_orders_with_subquery_predicate_with_take(async);
+    {
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.Join_customers_orders_with_subquery_predicate_with_take(async))).Message);
+
+        AssertMql(
+            """
+Customers.
+""");
+    }
 
     public override async Task Join_composite_key(bool async)
     {
@@ -277,10 +316,19 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 """);
     }
 
-    [ConditionalTheory(Skip = "CSHARP-6017: driver 3.10 folds an uncorrelated Take/subquery join inner into the correlated $lookup sub-pipeline, returning wrong results")]
-    [MemberData(nameof(IsAsyncData))]
     public override async Task GroupJoin_simple_subquery(bool async)
-        => await base.GroupJoin_simple_subquery(async);
+    {
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.GroupJoin_simple_subquery(async))).Message);
+
+        AssertMql(
+            """
+Customers.
+""");
+    }
 
     public override async Task GroupJoin_as_final_operator(bool async)
     {
@@ -347,18 +395,17 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 
     public override async Task GroupJoin_DefaultIfEmpty2(bool async)
     {
-#if EF8 || EF9
-        // Fails: GroupJoin shape not translated EF-X016
-        await AssertTranslationFailed(() => base.GroupJoin_DefaultIfEmpty2(async));
+        // Fails: GroupJoin shape not translated on EF8/EF9 EF-X016; on EF10 the flattened
+        // GroupJoin's inner is a filtered sub-query, which is not supported EF-X022
+        await Assert.ThrowsAnyAsync<Exception>(() => base.GroupJoin_DefaultIfEmpty2(async));
 
+#if EF8 || EF9
         AssertMql(
         );
 #else
-        await base.GroupJoin_DefaultIfEmpty2(async);
-
         AssertMql(
             """
-Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "EmployeeID", "pipeline" : [{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }], "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+Employees.
 """);
 #endif
     }
@@ -448,11 +495,15 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
     public override async Task GroupJoin_SelectMany_subquery_with_filter(bool async)
     {
-        await base.GroupJoin_SelectMany_subquery_with_filter(async);
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.GroupJoin_SelectMany_subquery_with_filter(async))).Message);
 
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "pipeline" : [{ "$match" : { "_id" : { "$gt" : 5 } } }], "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$project" : { "ContactName" : "$Outer.ContactName", "OrderID" : "$Inner._id", "_id" : 0 } }
+Customers.
 """);
     }
 
@@ -467,18 +518,16 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
     public override async Task GroupJoin_SelectMany_subquery_with_filter_and_DefaultIfEmpty(bool async)
     {
-        // Fails: Subquery selection EF-X001
-#if EF8 || EF9
+        // Fails: Subquery selection EF-X001; on EF10 the join inner is a filtered sub-query EF-X022
         await Assert.ThrowsAnyAsync<Exception>(() => base.GroupJoin_SelectMany_subquery_with_filter_and_DefaultIfEmpty(async));
 
+#if EF8 || EF9
         AssertMql(
         );
 #else
-        await Assert.ThrowsAnyAsync<Exception>(() => base.GroupJoin_SelectMany_subquery_with_filter_and_DefaultIfEmpty(async));
-
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "pipeline" : [{ "$match" : { "_id" : { "$gt" : 5 } } }], "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+Customers.
 """);
 #endif
     }
@@ -491,10 +540,19 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
         );
     }
 
-    [ConditionalTheory(Skip = "CSHARP-6017: driver 3.10 folds an uncorrelated Take/subquery join inner into the correlated $lookup sub-pipeline, returning wrong results")]
-    [MemberData(nameof(IsAsyncData))]
     public override async Task GroupJoin_Subquery_with_Take_Then_SelectMany_Where(bool async)
-        => await base.GroupJoin_Subquery_with_Take_Then_SelectMany_Where(async);
+    {
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.GroupJoin_Subquery_with_Take_Then_SelectMany_Where(async))).Message);
+
+        AssertMql(
+            """
+Customers.
+""");
+    }
 
     public override async Task Inner_join_with_tautology_predicate_converts_to_cross_join(bool async)
     {
@@ -695,18 +753,31 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
     public override async Task GroupJoin_customers_employees_subquery_shadow(bool async)
     {
-        await base.GroupJoin_customers_employees_subquery_shadow(async);
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.GroupJoin_customers_employees_subquery_shadow(async))).Message);
 
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Employees", "localField" : "_outer.City", "foreignField" : "City", "pipeline" : [{ "$sort" : { "City" : 1 } }], "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$project" : { "Title" : "$Inner.Title", "_id" : "$Inner._id" } }
+Customers.
 """);
     }
 
-    [ConditionalTheory(Skip = "CSHARP-6017: driver 3.10 folds an uncorrelated Take/subquery join inner into the correlated $lookup sub-pipeline, returning wrong results")]
-    [MemberData(nameof(IsAsyncData))]
     public override async Task GroupJoin_customers_employees_subquery_shadow_take(bool async)
-        => await base.GroupJoin_customers_employees_subquery_shadow_take(async);
+    {
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
+        Assert.Contains(
+            "Expression not supported",
+            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
+                base.GroupJoin_customers_employees_subquery_shadow_take(async))).Message);
+
+        AssertMql(
+            """
+Customers.
+""");
+    }
 
     public override async Task GroupJoin_projection(bool async)
     {

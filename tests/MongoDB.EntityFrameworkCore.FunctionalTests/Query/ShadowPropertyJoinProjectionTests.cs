@@ -38,11 +38,13 @@ public class ShadowPropertyJoinProjectionTests(TemporaryDatabaseFixture database
 
         using var db = new JoinDbContext(database, ordersName, customersName);
 
+        // The join inner is a bare collection projection: an ordered/filtered sub-query inner is
+        // rejected by the driver (EF-X022), and the ordering is incidental to what this test covers
+        // — the non-root joined-entity shaper nested in an anonymous type.
         var query =
             from c in db.Customers
             join o1 in
                 (from o2 in db.Orders
-                 orderby o2.OrderId
                  select new { o2 }) on c.CustomerId equals o1.o2.CustomerId
             where EF.Property<string>(o1.o2, "CustomerId") == "ALFKI"
             select new
