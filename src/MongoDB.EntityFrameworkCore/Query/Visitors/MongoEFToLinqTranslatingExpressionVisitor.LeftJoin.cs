@@ -573,13 +573,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// For explicit Join queries, strip the Join chain and return just the base source.
     /// The $lookup stages appended by AppendLookupStages handle the actual join.
     /// <para>
-    /// EF-369: a <c>Where</c>/<c>OrderBy</c>/etc. found between the outermost call and the join being
-    /// stripped is discarded along with the join chain (same as before this fix). When that discarded
-    /// operator's lambda reads through a <c>TransparentIdentifier.Inner</c> member - i.e. it filters/sorts
-    /// on data that only exists via the join being removed here - simply dropping it silently changes the
-    /// result set instead of raising an error. The provider does not yet rewrite such a lambda to read the
-    /// flattened <c>$lookup</c> fields the join is replaced with (TODO EF-317, tracked with the rest of this
-    /// $lookup fallback plumbing), so this shape now fails translation loudly instead.
+    /// EF-369: a discarded <c>Where</c>/<c>OrderBy</c>/etc. whose lambda reads through the join via
+    /// <c>TransparentIdentifier.Inner</c> would otherwise be silently dropped instead of failing loudly.
+    /// No rewrite to the flattened <c>$lookup</c> fields yet exists (TODO EF-317).
     /// </para>
     /// </summary>
     private static Expression? StripJoinForLookup(Expression expression)
@@ -643,12 +639,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     /// <summary>
-    /// Walks the portion of the tree that <see cref="StripJoinForLookup"/> is about to discard (everything
-    /// from <paramref name="discarded"/> down to the base source) looking for a <c>Where</c>/<c>OrderBy</c>-
-    /// family call whose own lambda reads through a <c>TransparentIdentifier.Inner</c> member. Only that
-    /// operator's OWN lambda is checked at each level (not a nested projection's, e.g. a Select's) - a
-    /// projection/materialization node reading joined data is expected and handled separately by the
-    /// shaper/projection-binding visitors; a filter/sort actually needing to run as LINQ here is not.
+    /// Throws if the discarded subtree contains a <c>Where</c>/<c>OrderBy</c>-family call whose own lambda
+    /// (not a nested Select's) reads through a <c>TransparentIdentifier.Inner</c> member.
     /// </summary>
     private static void GuardAgainstDiscardedJoinShapeLambda(Expression discarded)
     {

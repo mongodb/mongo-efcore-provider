@@ -263,11 +263,8 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Include_multi_join_then_where_composed_after_is_not_silently_dropped()
     {
-        // EF-369 repro: a multi-hop reference Include chain (two reference joins) flattens to forced-unwind
-        // $lookup stages (see MongoQueryableMethodTranslatingExpressionVisitor's isSecondOrLaterJoin path).
-        // A Where composed AFTER the Include chain reads through the joined-in navigation properties, which
-        // the provider does not yet rewrite to read the flattened $lookup fields (TODO EF-317). It must fail
-        // loudly (translation failure) rather than silently drop the predicate and return every order.
+        // EF-369 repro: a Where reading through the joined-in navigation properties after a multi-hop
+        // Include chain must fail loudly (TODO EF-317) rather than silently drop the predicate.
         var (ordersCollection, customersCollection, regionsCollection) = SetupOrdersCustomersAndRegions();
 
         using var db = new OrderCustomerRegionDbContext(database, ordersCollection, customersCollection, regionsCollection);
@@ -301,12 +298,9 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Include_multi_join_then_root_only_where_with_no_other_operator_is_reattached_correctly()
     {
-        // A bare root-only Where (no OrderBy after it) composed after a multi-hop Include chain. EF Core's
-        // own query preprocessor hoists a predicate that doesn't reference a navigation BELOW the Include's
-        // joins before this provider ever sees the tree (confirmed via the captured efQueryExpression: the
-        // Where ends up as the join chain's source, not wrapping it) - so this never reaches the "discard
-        // the join chain" branch of StripJoinForLookup at all. Guards against a regression of that hoisting
-        // assumption: if it ever stopped happening, this predicate would go back to being silently dropped.
+        // EF Core's query preprocessor hoists this predicate below the Include's joins before we see the
+        // tree, so StripJoinForLookup's discard branch is never reached here. Guards against a regression
+        // of that hoisting assumption, which would otherwise silently drop the predicate.
         var (ordersCollection, customersCollection, regionsCollection) = SetupOrdersCustomersAndRegions();
 
         using var db = new OrderCustomerRegionDbContext(database, ordersCollection, customersCollection, regionsCollection);
@@ -323,12 +317,8 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Include_multi_join_then_root_only_where_and_orderby_are_reattached_correctly()
     {
-        // A Where/OrderBy composed after a multi-hop Include chain that only reads a property of the root
-        // entity (never crossing into the joined-in Customer/Region data) doesn't need any $lookup field -
-        // it must be correctly reattached to the un-joined base source and actually applied, not silently
-        // dropped (which would happen to look like it "worked" if left unverified, since dropping a no-op
-        // filter/sort is indistinguishable from a correctly-applied one unless the assertions are specific
-        // enough to catch it).
+        // Root-only Where/OrderBy needs no $lookup field, so it must be reattached and actually applied -
+        // assertions are specific because a dropped no-op filter/sort looks identical to a correct one.
         var (ordersCollection, customersCollection, regionsCollection) = SetupOrdersCustomersAndRegions();
 
         using var db = new OrderCustomerRegionDbContext(database, ordersCollection, customersCollection, regionsCollection);
