@@ -574,16 +574,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
     /// <summary>
     /// Strips the Join chain and returns the base source; the pending <c>$lookup</c> stages handle the
-    /// actual join.
-    /// <para>
-    /// The chain is flat: <c>root [.Where/.OrderBy/.Skip/.Take]* (.LeftJoin(...) [...]*)+ .Select(...)
-    /// [.Count()]</c>. Everything below the innermost join is the base source and survives verbatim; the
-    /// join nodes and the EF-synthesized TransparentIdentifier-unpacking <c>Select</c> are dropped. Any
-    /// OTHER operator between/above the joins is user-composed and must be reattached (dropping it
-    /// silently returns unfiltered/unordered results — EF-369): its lambdas are rewritten to read the
-    /// flattened <c>_lookup_&lt;Nav&gt;</c> fields, and the lookups they depend on are recorded in
-    /// <see cref="_injectAfterBaseSourceLookups"/> for emission immediately above the base source.
-    /// </para>
+    /// actual join. A user-composed operator above/between the joins is not plumbing and must be
+    /// reattached instead of dropped (dropping it silently returns unfiltered/unordered results — EF-369),
+    /// with its lambdas rewritten to read the flattened <c>_lookup_&lt;Nav&gt;</c> fields.
     /// Returns <see langword="null"/> when the shape can't be handled — the join survives and callers fall
     /// back to the driver rendering it natively, rather than emitting a pipeline with the wrong row set.
     /// </summary>
@@ -659,17 +652,11 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                     result = rebuilt;
                 }
 
-                // Lookups must be emitted BELOW the reattached stages (which read their output fields) but
-                // no lower than the base source the user wrote below the joins — an inner $unwind drops
-                // rows, so hoisting it above a base-source Skip/Take/Distinct would change what they see.
-                //
-                // Does NOT fix an operator INTERLEAVED BETWEEN two joins — still hoisted above both lookups.
-                // TODO(EF-373): needs splitting the lookup group along the dependency chain, or declining.
-                //
-                // Flag ALL join-replacing lookups, not just ones the reattached lambdas read directly: a
-                // transitive lookup's localField chains into an earlier lookup's unwound output, so
-                // splitting them across stages would break the chain. That prefixing chain is itself only
-                // correct to depth two — TODO(EF-372): a third hop drops every row.
+                // Emit lookups just above the base source: an inner $unwind drops rows, so hoisting it above
+                // a base-source Skip/Take/Distinct would change what they see. Flag ALL join-replacing
+                // lookups since a transitive one's localField chains into an earlier unwound output.
+                // TODO(EF-373): an operator interleaved BETWEEN two joins is still hoisted above both.
+                // TODO(EF-372): the localField prefix chain is only correct to depth two.
                 foreach (var lookup in _pendingLookups.Where(l => l.ForceUnwind))
                 {
                     _injectAfterBaseSourceLookups.Add(lookup);
@@ -776,11 +763,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         {
             return Expression.Call(null, call.Method.GetGenericMethodDefinition().MakeGenericMethod(genericArgs), newArgs);
         }
-        // Narrowly the two exception types the reconstruction above can legitimately raise for a shape this
-        // method cannot rebuild: MakeGenericMethod throws ArgumentException when a substituted type argument
-        // violates the method's constraints, and Expression.Call throws ArgumentException /
-        // InvalidOperationException when the rewritten arguments no longer match the constructed signature.
-        // Anything else is a bug here and must not be laundered into an ordinary shape rejection.
+        // Only the two exceptions this reconstruction can legitimately raise for an unrebuildable shape;
+        // anything else is a bug here and must not be laundered into an ordinary shape rejection.
         catch (ArgumentException)
         {
             return null;
@@ -806,11 +790,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
     /// <summary>
     /// Distinguishes the EF-synthesized trailing <c>Select</c> that merely unpacks the join's
-    /// TransparentIdentifier back to the root entity (join plumbing the <c>$lookup</c> replaces, so it
-    /// must be dropped) from a user-composed <c>Select</c> projection (which must be reattached).
-    /// The synthesized one is recognised structurally: its selector body is either an
-    /// <see cref="IncludeExpression"/> (the shaped Include path) or a bare chain of <c>.Outer</c> field
-    /// accesses back to the parameter — neither of which a user selector can be.
+    /// TransparentIdentifier (join plumbing to drop) from a user-composed <c>Select</c> projection (to
+    /// reattach): the synthesized one's selector body is only ever an <see cref="IncludeExpression"/> or a
+    /// bare chain of <c>.Outer</c> accesses back to the parameter.
     /// </summary>
     private static bool IsSynthesizedIdentifierSelect(MethodCallExpression call)
     {

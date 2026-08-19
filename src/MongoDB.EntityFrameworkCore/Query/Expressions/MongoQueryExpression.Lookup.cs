@@ -118,11 +118,10 @@ internal sealed partial class MongoQueryExpression
         => _innerCollections.Count > 0 && !_pendingLookups.Any(l => l.ForceUnwind);
 
     /// <summary>
-    /// Register an inner collection for a join operation, recording the LINQ join operator's own
-    /// left-outer/inner semantics (<paramref name="isLeftOuter"/>) the first time this entity type is
-    /// joined. Retrieved later via <see cref="TryGetJoinIsLeftOuter"/> when a subsequent join forces this
-    /// one to be retroactively flattened, so that decision is never re-derived from model metadata (e.g.
-    /// <c>ForeignKey.IsRequired</c>), which does not always agree with the operator actually used.
+    /// Register an inner collection for a join, recording the LINQ operator's own left-outer/inner
+    /// semantics the first time this entity type is joined (see <see cref="TryGetJoinIsLeftOuter"/>) so a
+    /// later retroactive flattening never has to re-derive it from model metadata, which can disagree
+    /// with the operator actually used.
     /// </summary>
     /// <param name="entityType">The <see cref="IEntityType"/> of the inner collection.</param>
     /// <param name="isLeftOuter">Whether the join that introduced this entity type is left-outer.</param>

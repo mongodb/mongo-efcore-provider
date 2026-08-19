@@ -744,14 +744,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     .FirstOrDefault(n => n.TargetEntityType == priorInnerEntityType);
                 if (priorNavigation != null)
                 {
-                    // AddLookup de-duplicates on As, so a lookup already registered by its own join keeps
-                    // that join's flag; this call only supplies one for a prior driver-native join now
-                    // being flattened. Use the left-outer/inner-ness recorded for THAT join when it was
-                    // translated (AddInnerCollection) — not ForeignKey.IsRequired, which can disagree with
-                    // the LINQ operator actually used (an inner Join over a nullable FK is still inner).
-                    // Recording is unconditional on every join, so a miss here is an internal error, not a
-                    // shape to guess at — see RequiredNavigationUnwindTests for both required/optional and
-                    // reference/collection navigations pinning this.
+                    // Use the left-outer/inner-ness recorded when THAT join was translated
+                    // (AddInnerCollection), not ForeignKey.IsRequired, which can disagree with the LINQ
+                    // operator actually used. Recording is unconditional, so a miss is an internal error.
                     if (!outerQueryExpression.TryGetJoinIsLeftOuter(priorInnerEntityType, out var priorIsLeftOuter))
                     {
                         throw new InvalidOperationException(

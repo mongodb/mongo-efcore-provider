@@ -22,35 +22,23 @@ using MongoDB.EntityFrameworkCore.Extensions;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-370: the <c>$unwind</c> following a cross-collection <c>$lookup</c> must follow the join semantics the
-/// query actually asked for. EF navigation expansion lowers a REQUIRED reference navigation to an inner
-/// <see cref="Queryable.Join{TOuter,TInner,TKey,TResult}"/> and an OPTIONAL one to a <c>LeftJoin</c>; a
-/// left-outer <c>$unwind</c> for the former returns rows that should have been excluded.
-/// <para>
-/// MongoDB enforces no referential integrity, so a <b>dangling foreign key</b> — a value matching no document
-/// in the target collection — is an ordinary data state. This fixture is the only one in the suite that seeds
-/// one, and that absence is a large part of why the defect survived: with every FK resolvable, an inner and a
-/// left-outer join return identical rows.
-/// </para>
-/// <para>
-/// Assertions here are on <b>row counts and identities, never MQL</b>. Wrong MQL for this defect is
-/// indistinguishable from the MQL of a legitimately different query, so an MQL baseline cannot catch it.
-/// </para>
+/// EF-370: the <c>$unwind</c> after a cross-collection <c>$lookup</c> must follow the join semantics the
+/// query actually asked for — EF lowers a REQUIRED reference navigation to an inner
+/// <see cref="Queryable.Join{TOuter,TInner,TKey,TResult}"/> and an OPTIONAL one to <c>LeftJoin</c>. This is
+/// the only fixture in the suite that seeds a <b>dangling foreign key</b> (a value matching no document,
+/// which MongoDB's lack of referential integrity permits); without one, inner and left-outer joins return
+/// identical rows. Assertions are on row counts/identities, never MQL, since wrong MQL here is
+/// indistinguishable from a legitimately different query.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     // ---------------------------------------------------------------------------------------------------
-    // Required navigations: INNER join semantics. These run on ALL THREE EF majors.
-    //
-    // The version asymmetry is deliberate and asserted rather than merely accommodated (see
-    // Optional_reference_Include_is_not_translated_on_EF8_EF9 below): only the LeftJoin *dispatch case* in
-    // MongoQueryableMethodTranslatingExpressionVisitor is `#if !EF8 && !EF9`, not cross-collection Include as
-    // a whole. A required navigation lowers to Queryable.Join, which dispatches on every version, so the
-    // defect reproduced — with silently wrong rows — on EF8 and EF9 too. Reading the EF-X020 limitation as
-    // "cross-collection reference Include does not work before EF10" is what made EF-369 initially look
-    // EF10-only, and it is wrong.
+    // Required navigations: INNER join semantics. Run on ALL THREE EF majors, deliberately: a required
+    // navigation lowers to Queryable.Join, which dispatches on every version (unlike LeftJoin, gated
+    // `#if !EF8 && !EF9`), so the defect reproduced there too — reading EF-X020 as "cross-collection
+    // reference Include doesn't work before EF10" is wrong.
     // ---------------------------------------------------------------------------------------------------
 
     [Fact]
@@ -155,12 +143,9 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
     }
 
     // ---------------------------------------------------------------------------------------------------
-    // Optional navigations: LEFT-OUTER semantics, EF10 only.
-    //
-    // EF lowers an optional reference navigation to Queryable.LeftJoin, whose dispatch case in
-    // MongoQueryableMethodTranslatingExpressionVisitor.VisitMethodCall is `#if !EF8 && !EF9`. On EF8/EF9 the
-    // shape therefore never reaches the provider's translator and EF Core itself throws "could not be
-    // translated" (EF-X020) — asserted below rather than left implicit.
+    // Optional navigations: LEFT-OUTER semantics, EF10 only — EF lowers these to Queryable.LeftJoin, whose
+    // dispatch case is `#if !EF8 && !EF9`, so on EF8/EF9 EF Core itself throws "could not be translated"
+    // (EF-X020), asserted below rather than left implicit.
     // ---------------------------------------------------------------------------------------------------
 
 #if !EF8 && !EF9
@@ -308,12 +293,8 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
     }
 
     // ---------------------------------------------------------------------------------------------------
-    // EF-369, on REQUIRED navigations so it runs on all three majors.
-    //
-    // Ef369MultiJoinComposedTests covers the same defect, but its model gives every navigation a nullable
-    // foreign key, so EF lowers it to LeftJoin and the whole file is `#if !EF8 && !EF9`. The
-    // StripJoinForLookup fix is un-gated, so it needs un-gated coverage: a required navigation lowers to
-    // Queryable.Join, which dispatches on every major, and the discarded-operator defect reproduced there.
+    // EF-369, on REQUIRED navigations so it runs on all three majors (Ef369MultiJoinComposedTests uses
+    // nullable FKs throughout, so it's gated `#if !EF8 && !EF9`; the StripJoinForLookup fix itself is not).
     // ---------------------------------------------------------------------------------------------------
 
     [Fact]
@@ -348,13 +329,9 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
     }
 
     // ---------------------------------------------------------------------------------------------------
-    // Base-source paging must not be reordered relative to a row-dropping $unwind.
-    //
-    // The two shapes below differ only in whether anything is composed ABOVE the Includes. The composed
-    // one takes the reattach path in StripJoinForLookup, which emits the join $lookup/$unwind stages right
-    // after the root source - i.e. potentially BEFORE operators that were written below the joins. An
-    // inner $unwind drops rows, so running it ahead of the base source's Take changes which rows the Take
-    // sees. Both are asserted so the two shapes can never silently disagree again.
+    // Base-source paging must not be reordered relative to a row-dropping $unwind: composing something
+    // above the Includes takes the reattach path in StripJoinForLookup, which emits the $lookup/$unwind
+    // stages right after the root source - i.e. potentially before a Take written below the joins.
     // ---------------------------------------------------------------------------------------------------
 
     [Fact]
