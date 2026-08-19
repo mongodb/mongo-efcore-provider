@@ -780,31 +780,21 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     }
 
     /// <summary>
-    /// A Join key selector's declaring entity type (<see cref="DeclaringEntityType"/>), the nearest
-    /// non-owned ancestor reachable through owned/embedded navigations (<see cref="AnchorEntityType"/>),
-    /// and the mapped element-name path between them (<see cref="EmbeddedPath"/>, <see langword="null"/>
-    /// if they're the same type).
+    /// A Join key selector's declaring entity type, its nearest non-owned anchor, and the mapped
+    /// element-name path between them (<see langword="null"/> if they're the same type).
     /// </summary>
     private readonly record struct KeySelectorOwner(IEntityType DeclaringEntityType, IEntityType AnchorEntityType, string? EmbeddedPath);
 
     /// <summary>
-    /// Resolve the owner of the property accessed by a Join key-selector body: the root for a direct
-    /// selector, an already-joined intermediate for a transitive one (e.g. <c>x.m.LeafId</c>), or, when
-    /// the property is declared on an owned/embedded type nested under an already-joined entity (e.g.
-    /// <c>x.Buyer.Address.RegionId</c>, EF-380), the owned type plus its nearest non-owned ancestor and
-    /// the owned-nav path between them.
+    /// Resolves a Join key selector's owner: the root, an already-joined intermediate, or — when the
+    /// property lives on an owned/embedded type nested under one of those (e.g.
+    /// <c>x.Buyer.Address.RegionId</c>, EF-380) — that owned type plus its anchor and the path between them.
     /// </summary>
-    /// <param name="keySelectorBody">The outer key selector's body.</param>
-    /// <param name="rootEntityType">The query root's entity type — always a valid anchor.</param>
-    /// <param name="priorInnerEntityTypes">Entity types already joined earlier in the chain — also
-    /// valid anchors.</param>
     /// <remarks>
-    /// Anchors are matched by CLR type against this small, finite, already-established set. If a CLR
-    /// type matches more than one anchor (e.g. shared-type entities), resolution bails out rather than
-    /// guessing. Once a single anchor is found, the embedded path is walked forward via the real
-    /// navigation graph (not CLR type) so sibling owned navigations sharing a CLR type (e.g.
-    /// <c>ShippingAddress</c> / <c>BillingAddress</c>) resolve correctly, and each segment is the owned
-    /// entity's mapped containing-element name rather than its CLR name.
+    /// Anchors are matched by CLR type; an ambiguous match (e.g. shared-type entities) bails out rather
+    /// than guessing. The embedded path is then walked via the navigation graph, not CLR type, so sibling
+    /// owned navigations sharing a CLR type (e.g. ShippingAddress/BillingAddress) resolve correctly, and
+    /// each segment uses the mapped element name.
     /// </remarks>
     private static KeySelectorOwner? ResolveKeySelectorOwner(
         Expression keySelectorBody, IEntityType rootEntityType, IEnumerable<IEntityType> priorInnerEntityTypes)
