@@ -576,22 +576,11 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     }
 
     // RENAMED (EF-358) from "..._is_null_when_null" / "..._is_null_when_missing". The old names asserted a
-    // provider CONTRACT that never existed. Verified by measurement (EF-358 task-2-report.md addendum) and
-    // in source: pre-EF-358, the provider computed `null` for a missing or explicitly-null stored array on
-    // EVERY code path and never created a collection for that row at all — not just here. What actually
-    // produced the OLD "null" observed by these four tests was a SEPARATE mechanism, one layer up, in
-    // `MongoProjectionBindingRemovingExpressionVisitor.IncludeCollection` — the fixup EF Core's own
-    // auto-included `IncludeExpression` runs for every owned collection navigation (with or without an
-    // explicit `.Include()`). That method only calls `navigation.GetCollectionAccessor()!.GetOrCreate(entity,
-    // forMaterialization: true)` inside "if (relatedEntities != null)". Pre-fix, `relatedEntities` (the
-    // provider's computed value) was that same `null`, so the fixup was skipped ENTIRELY and the property was
-    // left exactly as the CLASS'S OWN field initializer set it — `null` for `SimpleNonNullableCollection` and
-    // `SimpleNullableCollection`, since neither declares `children { get; set; } = [];`. Had either class
-    // been written with that initializer, these tests would have observed "empty" even on the OLD code, for
-    // the IDENTICAL underlying null computation — i.e. the old assertions were pinning their own POCO's
-    // authoring style, not provider semantics. EF-358 removes that dependency: the provider now always
-    // materializes a real (possibly empty) collection, so the `IncludeCollection` fixup always runs and every
-    // class gets the same, uniform answer regardless of whether it wrote a defensive initializer.
+    // provider contract that never existed: the old "null" was produced by EF Core's IncludeExpression fixup
+    // (in MongoProjectionBindingRemovingExpressionVisitor.IncludeCollection) being skipped because the
+    // provider's computed value was null, leaving `children` at the POCO's own default — not by any provider
+    // guarantee. EF-358 always materializes a real (possibly empty) collection, so the fixup always runs and
+    // every class reads back the same regardless of its field initializer.
     [Theory]
     [InlineData(QueryTrackingBehavior.TrackAll)]
     [InlineData(QueryTrackingBehavior.NoTracking)]
@@ -692,13 +681,10 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     }
 
     // EF-358: a collection shaper nested inside another owned collection's item (FirstLevel.children[i].children)
-    // never has its ObjectArrayProjectionExpression registered in _projectionBindings by
-    // BsonDocumentInjectingExpressionVisitor — that visitor doesn't recurse into a CollectionShaperExpression's
-    // InnerShaper, so only the OUTER collection gets a bound bsonArray variable. MongoProjectionBindingRemovingExpressionVisitor's
-    // CollectionShaperExpression case therefore always falls into its "else" branch for a grandchild array,
-    // reading the BsonArray straight off the parent element document via CreateGetBsonArray rather than through a
-    // pre-bound variable. This is a materially different code path from the root-level case covered above, so it
-    // needs its own missing/null coverage.
+    // never gets a bound bsonArray variable — BsonDocumentInjectingExpressionVisitor doesn't recurse into a
+    // CollectionShaperExpression's InnerShaper — so it always takes the "else" branch that reads the BsonArray
+    // straight off the parent element via CreateGetBsonArray. That's a different code path from the root-level
+    // case above, so it needs its own missing/null coverage.
     [Fact]
     public void OwnedEntity_nested_collection_is_empty_when_grandchild_array_missing()
     {
@@ -1337,16 +1323,10 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [Fact]
     public void OwnedEntity_collection_can_be_tested_for_null()
     {
-        // The PREDICATE here is unaffected by EF-358: `e.children == null` still translates against the
-        // stored document's own field (missing, for row "1") and still correctly matches it — that part of
-        // this test's name remains true. What changed is the MATERIALIZED value of the matched row's
-        // `children`, from `null` to `[]` (EF-358 — see the comment block above the four renamed
-        // "..._is_empty_when_null/missing" theories for the mechanism). `inserted` is what actually gets
-        // written (children left unset, so the stored document's field stays MISSING, same bytes as before
-        // EF-358); `expected` is the separate comparison value, with `children = []` to match the new
-        // materialized result. They must stay two different objects — setting `children = []` on the
-        // INSERTED object would write an empty array to the document instead of omitting the field, which
-        // would silently change what this test seeds, not just what it asserts.
+        // The predicate `e.children == null` is unaffected by EF-358 — only the materialized value of the
+        // matched row flips from `null` to `[]`. `inserted` and `expected` must stay separate objects: setting
+        // `children = []` on `inserted` would write an empty array to the document instead of leaving the
+        // field unset, changing what gets seeded rather than just what gets asserted.
         var collection = database.CreateCollection<A>();
         var inserted = new A { _id = "1" };
         var expected = new A { _id = "1", children = [] };
