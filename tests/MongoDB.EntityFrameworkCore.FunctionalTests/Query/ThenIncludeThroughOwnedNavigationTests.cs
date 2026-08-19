@@ -63,7 +63,7 @@ public class ThenIncludeThroughOwnedNavigationTests(TemporaryDatabaseFixture dat
 
     /// <summary>
     /// Sibling owned navigations sharing the same CLR type (<c>ShippingAddress</c> / <c>BillingAddress</c>,
-    /// both typed <c>JAddress2</c>) must resolve the owned-navigation owner via the real navigation graph,
+    /// both typed <c>J2Address</c>) must resolve the owned-navigation owner via the real navigation graph,
     /// not by a CLR-type guess — a CLR-type-only lookup can't tell the two owned instances apart and may
     /// silently resolve to the sibling that has no <c>Region</c> relationship configured at all, dropping
     /// the $lookup entirely and leaving <c>Region</c> null even though the correct sibling (ShippingAddress)

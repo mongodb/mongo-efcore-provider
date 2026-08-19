@@ -25,6 +25,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
+using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -787,8 +788,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// <summary>
     /// The entity type that declares the property accessed by a Join key-selector body (<see cref="DeclaringEntityType"/>),
     /// the nearest non-owned, joinable entity type reached by walking back through any owned/embedded
-    /// navigations along the way (<see cref="AnchorEntityType"/>), and the dotted path of owned-navigation
-    /// names between them (<see cref="EmbeddedPath"/>, <see langword="null"/> when the two are the same type).
+    /// navigations along the way (<see cref="AnchorEntityType"/>), and the dotted path of the owned
+    /// entities' mapped containing-element names between them (<see cref="EmbeddedPath"/>, <see
+    /// langword="null"/> when the two are the same type).
     /// </summary>
     private readonly record struct KeySelectorOwner(IEntityType DeclaringEntityType, IEntityType AnchorEntityType, string? EmbeddedPath);
 
@@ -810,14 +812,17 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// valid anchors.</param>
     /// <remarks>
     /// Anchors are matched by CLR type against only this small, finite, already-established set —
-    /// never by scanning the whole model. Multiple distinct <em>owned</em> entity types can share a CLR
-    /// type (e.g. sibling <c>Buyer.ShippingAddress</c> / <c>Buyer.BillingAddress</c> both typed
-    /// <c>Address</c>); a model-wide CLR-type search can't tell them apart and may silently pick the
-    /// wrong one. Anchors here are always non-owned join participants, so that ambiguity can't arise at
-    /// this step. Once a specific anchor <see cref="IEntityType"/> is identified, the embedded path is
+    /// never by scanning the whole model. That set can itself contain more than one entity type sharing
+    /// a CLR type (e.g. shared-type entities); when a CLR type matches more than one anchor, which one
+    /// the key selector actually means is ambiguous, so resolution bails out (returns <see
+    /// langword="null"/>) rather than guessing. Once a single anchor is identified, the embedded path is
     /// resolved by walking the REAL navigation graph forward (<see cref="IReadOnlyEntityType.FindNavigation(string)"/>
-    /// hop by hop) rather than guessing again by CLR type, so sibling owned navigations resolve to the
-    /// exact one this key selector actually references.
+    /// hop by hop) rather than guessing again by CLR type, so sibling owned navigations sharing a CLR type
+    /// (e.g. <c>Buyer.ShippingAddress</c> / <c>Buyer.BillingAddress</c> both typed <c>Address</c>) resolve
+    /// to the exact one this key selector actually references, and each segment is emitted as the owned
+    /// entity's mapped containing-element name (<see cref="MongoEntityTypeExtensions.GetContainingElementName"/>)
+    /// rather than its CLR navigation/member name, so a renamed element (e.g. via a naming convention) is
+    /// still matched correctly in the rendered <c>$lookup</c> localField.
     /// </remarks>
     private static KeySelectorOwner? ResolveKeySelectorOwner(
         Expression keySelectorBody, IEntityType rootEntityType, IEnumerable<IEntityType> priorInnerEntityTypes)
@@ -842,10 +847,19 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         while (true)
         {
-            var anchorEntityType = anchors.FirstOrDefault(e => e.ClrType == current.Type);
-            if (anchorEntityType != null)
+            var matchingAnchors = anchors.Where(e => e.ClrType == current.Type).ToList();
+            if (matchingAnchors.Count > 1)
             {
+                // Multiple anchors share this CLR type (e.g. shared-type entities) — can't tell them
+                // apart by CLR type alone, so bail out rather than guessing.
+                return null;
+            }
+
+            if (matchingAnchors.Count == 1)
+            {
+                var anchorEntityType = matchingAnchors[0];
                 var declaringEntityType = anchorEntityType;
+                var elementSegments = new List<string>();
                 foreach (var segment in embeddedSegments)
                 {
                     if (declaringEntityType.FindNavigation(segment) is not { } segmentNavigation)
@@ -857,10 +871,11 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     }
 
                     declaringEntityType = segmentNavigation.TargetEntityType;
+                    elementSegments.Add(declaringEntityType.GetContainingElementName() ?? segment);
                 }
 
                 return new KeySelectorOwner(
-                    declaringEntityType, anchorEntityType, embeddedSegments.Count > 0 ? string.Join(".", embeddedSegments) : null);
+                    declaringEntityType, anchorEntityType, elementSegments.Count > 0 ? string.Join(".", elementSegments) : null);
             }
 
             var (name, next) = current.RemoveConvert() switch
