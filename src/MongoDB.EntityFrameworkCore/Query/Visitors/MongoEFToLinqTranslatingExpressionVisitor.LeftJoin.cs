@@ -334,10 +334,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             { "foreignField", innerField },
             { "as", "_inner" }
         });
-        // preserveNullAndEmptyArrays is unconditionally true here, and that is correct rather than an
-        // oversight: this builder is only ever reached from the LeftJoin handling, which is left-outer by
-        // definition. The flag that follows the LINQ operator lives on LookupExpression and is read by
-        // EmitLookupStages, the flat-lookup path; nothing routes an inner Join through here.
+        // Unconditionally true: this builder is only reached from LeftJoin handling, which is left-outer by
+        // definition. The flag that follows the LINQ operator (LookupExpression.PreserveNullAndEmptyArrays)
+        // is only consulted on the flat-lookup path (EmitLookupStages); no inner Join routes through here.
         var unwind = new BsonDocument("$unwind",
             new BsonDocument { { "path", "$_inner" }, { "preserveNullAndEmptyArrays", true } });
         var projectResult = new BsonDocument("$project",
@@ -574,27 +573,19 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     /// <summary>
-    /// For explicit Join queries, strip the Join chain and return just the base source.
-    /// The $lookup stages appended by AppendLookupStages handle the actual join.
+    /// Strips the Join chain and returns the base source; the pending <c>$lookup</c> stages handle the
+    /// actual join.
     /// <para>
-    /// The chain reaching here is flat:
-    /// <c>root [.Where/.OrderBy/.Skip/.Take]* (.LeftJoin(...) [.Where/.OrderBy/...]*)+ .Select(...) [.Count()]</c>.
-    /// Everything below the innermost join is the base source and survives verbatim. The join nodes
-    /// themselves are replaced by the pending <c>$lookup</c> stages, and the EF-synthesized trailing
-    /// <c>Select</c> that unpacks the TransparentIdentifier is dropped (the shaper runs client-side).
-    /// Any OTHER operator sitting between or above the joins is <b>user-composed</b> and must be
-    /// reattached — dropping it silently returns unfiltered/unordered results (EF-369). Because such an
-    /// operator was written against the TransparentIdentifier element type produced by the joins, its
-    /// lambdas are rewritten to read the flattened <c>_lookup_&lt;Nav&gt;</c> fields the $lookup stages
-    /// produce, and those lookups are recorded in <see cref="_injectAfterBaseSourceLookups"/> so they are
-    /// emitted immediately above the base source — below the reattached stages, but still above nothing
-    /// the user wrote below the joins.
+    /// The chain is flat: <c>root [.Where/.OrderBy/.Skip/.Take]* (.LeftJoin(...) [...]*)+ .Select(...)
+    /// [.Count()]</c>. Everything below the innermost join is the base source and survives verbatim; the
+    /// join nodes and the EF-synthesized TransparentIdentifier-unpacking <c>Select</c> are dropped. Any
+    /// OTHER operator between/above the joins is user-composed and must be reattached (dropping it
+    /// silently returns unfiltered/unordered results — EF-369): its lambdas are rewritten to read the
+    /// flattened <c>_lookup_&lt;Nav&gt;</c> fields, and the lookups they depend on are recorded in
+    /// <see cref="_injectAfterBaseSourceLookups"/> for emission immediately above the base source.
     /// </para>
-    /// Returns <see langword="null"/> when the shape cannot be handled. The join then survives in the
-    /// returned tree and the callers (<c>TranslateProjected</c> / <c>Translate</c>) fall back to letting
-    /// the driver render it natively, suppressing the forced-unwind <c>$lookup</c> stages that would
-    /// otherwise duplicate it; if the driver cannot render it either, translation fails there. Falling
-    /// back is deliberately preferred over emitting a pipeline whose row set does not match the query.
+    /// Returns <see langword="null"/> when the shape can't be handled — the join survives and callers fall
+    /// back to the driver rendering it natively, rather than emitting a pipeline with the wrong row set.
     /// </summary>
     private Expression? StripJoinForLookup(Expression expression)
     {
@@ -614,13 +605,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
         var innermostJoin = chain.FindLastIndex(IsJoinMethod);
 
-        // This path applies to EVERY join chain, not only all-LeftJoin ones. It could not, until each
-        // pending lookup carried its own PreserveNullAndEmptyArrays taken from the LINQ join operator EF
-        // produced (see LookupExpression): before that, the $lookup stages were always left-outer and so
-        // could not reproduce an explicit Join's inner semantics, which is why an earlier version of this
-        // code was gated to all-LeftJoin chains. With the flag in place, whether EF synthesized a join
-        // from a required navigation or the user wrote one stops mattering - both are inner - so the
-        // otherwise undecidable synthesized-vs-user question does not have to be answered here.
+        // Applies to EVERY join chain, not only all-LeftJoin ones — safe now that each pending lookup
+        // carries its own PreserveNullAndEmptyArrays from the actual LINQ join operator (LookupExpression),
+        // so an inner Join's semantics are preserved whether EF synthesized it or the user wrote it.
         if (innermostJoin >= 0)
         {
             var baseSource = chain[innermostJoin].Arguments[0];
@@ -672,25 +659,17 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                     result = rebuilt;
                 }
 
-                // The reattached stages read the $lookup output fields, so the lookups have to be emitted
-                // BELOW them rather than tail-appended after them — but no lower than the base source,
-                // which the user wrote below the joins. That distinction is load-bearing: an inner
-                // $unwind DROPS rows, so hoisting it above a base-source Skip/Take/Distinct would change
-                // which rows those operators see. Emitting immediately after the base source therefore
-                // preserves the ordering for every operator the user wrote BELOW the joins.
+                // Lookups must be emitted BELOW the reattached stages (which read their output fields) but
+                // no lower than the base source the user wrote below the joins — an inner $unwind drops
+                // rows, so hoisting it above a base-source Skip/Take/Distinct would change what they see.
                 //
-                // It does NOT fix an operator INTERLEAVED BETWEEN two joins: that one is still hoisted
-                // above both lookups and can still see the wrong rows. See TODO(EF-373) — a shape with no
-                // correct position in a scheme that emits the lookups as one contiguous group, so fixing
-                // it means either splitting the group along the dependency chain or declining the strip.
+                // Does NOT fix an operator INTERLEAVED BETWEEN two joins — still hoisted above both lookups.
+                // TODO(EF-373): needs splitting the lookup group along the dependency chain, or declining.
                 //
-                // Flag ALL of the join-replacing lookups, not just the ones the reattached lambdas read:
-                // a transitive lookup's localField points into an earlier lookup's unwound output (e.g.
-                // "_lookup_Customer.region_id"), so splitting them across the reattached stages would
-                // break that chain — and any tail-appended remainder would also be appended after a
-                // scalar terminal such as Count. NB that prefixing chain is itself only correct to depth
-                // two today: a third hop emits an unprefixed localField and drops every row —
-                // TODO(EF-372).
+                // Flag ALL join-replacing lookups, not just ones the reattached lambdas read directly: a
+                // transitive lookup's localField chains into an earlier lookup's unwound output, so
+                // splitting them across stages would break the chain. That prefixing chain is itself only
+                // correct to depth two — TODO(EF-372): a third hop drops every row.
                 foreach (var lookup in _pendingLookups.Where(l => l.ForceUnwind))
                 {
                     _injectAfterBaseSourceLookups.Add(lookup);
@@ -1068,14 +1047,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         => EmitLookupStages(query, _pendingLookups.Where(l => l.InjectAfterRoot));
 
     /// <summary>
-    /// Whether a lookup is emitted somewhere below the tail of the pipeline, and so must not also be
-    /// tail-appended: either because the projection binder marked it for injection right after the root
-    /// source at model/compile time (<see cref="LookupExpression.InjectAfterRoot"/>), or because THIS
-    /// execution's <see cref="StripJoinForLookup"/> reattached user-composed operators that read its
-    /// output field and so scheduled it above the join chain's base source
-    /// (<see cref="_injectAfterBaseSourceLookups"/>). The latter is kept as per-execution visitor state
-    /// rather than written back onto the shared <see cref="LookupExpression"/>, which is compile-time
-    /// state owned by <see cref="Expressions.MongoQueryExpression"/> and reused across executions.
+    /// Whether a lookup is already emitted below the pipeline tail and so must not be tail-appended too:
+    /// either compile-time <see cref="LookupExpression.InjectAfterRoot"/>, or this execution's
+    /// <see cref="StripJoinForLookup"/> scheduling it via <see cref="_injectAfterBaseSourceLookups"/> (kept
+    /// as per-execution state, not written back onto the shared, compile-time <see cref="LookupExpression"/>).
     /// </summary>
     private bool IsInjectedEarly(LookupExpression lookup)
         => lookup.InjectAfterRoot || _injectAfterBaseSourceLookups.Contains(lookup);

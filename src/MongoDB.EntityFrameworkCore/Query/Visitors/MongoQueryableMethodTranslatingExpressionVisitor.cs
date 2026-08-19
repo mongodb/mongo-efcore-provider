@@ -603,10 +603,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
         => TranslateJoinCore(outer, inner, outerKeySelector, resultSelector, isLeftOuter: false);
 
-    // isLeftOuter carries the LINQ operator's own join semantics down to the $lookup/$unwind emitted for it:
-    // Join is inner, LeftJoin/GroupJoin are left-outer. EF navigation expansion lowers a REQUIRED reference
-    // navigation to Queryable.Join and an OPTIONAL one to Queryable.LeftJoin, so this is also what makes a
-    // required navigation drop principals with a dangling foreign key, as relational EF Core does.
+    // isLeftOuter carries the LINQ operator's join semantics to the emitted $lookup/$unwind: Join is inner,
+    // LeftJoin/GroupJoin are left-outer. EF lowers a REQUIRED reference navigation to Queryable.Join, which
+    // is what makes it drop principals with a dangling foreign key, matching relational EF Core.
     private static ShapedQueryExpression? TranslateJoinCore(
         ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression resultSelector, bool isLeftOuter)
@@ -745,29 +744,17 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     .FirstOrDefault(n => n.TargetEntityType == priorInnerEntityType);
                 if (priorNavigation != null)
                 {
-                    // A prior join's own left/inner-ness was decided when IT was translated, and AddLookup
-                    // de-duplicates on As, so a lookup already registered by its own join keeps that join's
-                    // flag. This call only ever supplies one for a prior join that was rendered
-                    // driver-natively (a single reference) and is now being flattened, by which point the
-                    // LINQ operator is no longer in hand. Fall back to the model: a REQUIRED foreign key can
-                    // never be unmatched in the model's intent, which is exactly the inner-join case; an
-                    // optional one must preserve the principal.
+                    // AddLookup de-duplicates on As, so a lookup already registered by its own join keeps
+                    // that join's flag; this call only supplies one for a prior driver-native reference join
+                    // now being flattened, where the LINQ operator is no longer in hand — fall back to the
+                    // model's ForeignKey.IsRequired.
                     //
-                    // priorNavigation may be a COLLECTION navigation - GetNavigations picks whichever
-                    // navigation targets the prior inner entity type, and for a join written over a
-                    // one-to-many that is the collection side. It is tempting to exclude those, on the
-                    // grounds that ForeignKey.IsRequired then describes the dependent's foreign key rather
-                    // than whether a principal must have children, so an inner $unwind would drop childless
-                    // principals. Measured, that reasoning does not survive contact with the two shapes that
-                    // actually arrive here:
-                    //   * A collection INCLUDE never reaches this site at all - its $lookup is registered by
-                    //     MongoProjectionBindingExpressionVisitor, which does not consult this fallback - so
-                    //     there are no Include principals to protect.
-                    //   * The one shape that does arrive with a collection navigation is a user-authored
-                    //     inner Join over a one-to-many, where dropping a principal with no children is the
-                    //     CORRECT answer, and preserving it emits a spurious row.
-                    // So the rule stays keyed on the foreign key for collection and reference navigations
-                    // alike. Both cases are pinned by tests in RequiredNavigationUnwindTests.
+                    // priorNavigation can be a COLLECTION navigation (a join over a one-to-many). Excluding
+                    // those was considered, but a collection Include never reaches this fallback (it's
+                    // registered elsewhere), and the one shape that does arrive here — a user-authored inner
+                    // Join over a one-to-many — correctly drops a childless principal rather than preserving
+                    // it. So the rule stays keyed on the foreign key either way; both cases are pinned by
+                    // RequiredNavigationUnwindTests.
                     outerQueryExpression.AddLookup(
                         new Expressions.LookupExpression(priorNavigation, forceUnwind: true)
                         {

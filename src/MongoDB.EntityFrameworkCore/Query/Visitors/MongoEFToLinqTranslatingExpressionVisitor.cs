@@ -67,16 +67,12 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     private Expression? _injectAfterBaseSource;
 
     /// <summary>
-    /// Verifies that <see cref="_injectAfterBaseSource"/> was actually reached during the translation walk.
+    /// Verifies <see cref="_injectAfterBaseSource"/> was reached during the translation walk. Should be
+    /// unreachable — the node comes from the tree this visitor is about to walk — but if it isn't, the
+    /// lookups in <see cref="_injectAfterBaseSourceLookups"/> would silently never be emitted, since
+    /// <c>IsInjectedEarly</c> also excludes them from <c>AppendLookupStages</c>. Fails loudly instead of
+    /// letting that surface as silent wrong data.
     /// </summary>
-    /// <remarks>
-    /// If it was not, the lookups recorded in <see cref="_injectAfterBaseSourceLookups"/> were never emitted
-    /// — and because <c>IsInjectedEarly</c> also excludes them from <c>AppendLookupStages</c>, the join's
-    /// <c>$lookup</c>/<c>$unwind</c> pair would vanish from the pipeline entirely and the query would
-    /// silently return unjoined rows. That should be unreachable: the node is captured from the tree this
-    /// same visitor is about to walk. This is cheap insurance that the failure is loud if it ever is
-    /// reachable, since the symptom would otherwise be wrong data rather than an error.
-    /// </remarks>
     private void AssertBaseSourceInjectionFired()
     {
         if (_injectAfterBaseSource != null)
@@ -211,10 +207,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
     public override Expression? Visit(Expression? expression)
     {
-        // The join-replacing $lookup/$unwind stages go here: directly above the base source the innermost
-        // join was applied to. Anything the user composed BELOW the joins (notably Skip/Take/Distinct,
-        // whose result depends on how many rows reach them) therefore still runs first, while the
-        // operators StripJoinForLookup reattached ABOVE the joins see the flattened lookup fields.
+        // Join-replacing $lookup/$unwind stages go directly above the innermost join's base source, so
+        // anything composed BELOW the joins (Skip/Take/Distinct) still runs first.
         if (_injectAfterBaseSource != null && ReferenceEquals(expression, _injectAfterBaseSource))
         {
             _injectAfterBaseSource = null; // One-shot: stops the recursive Visit below re-entering here.
