@@ -104,12 +104,16 @@ internal sealed partial class MongoQueryExpression
     /// <summary>
     /// Resolve the alias of the join recorded <paramref name="hopsFromEnd"/> calls before the one
     /// currently being processed (0 = the immediately preceding join). Returns <see langword="null"/>
-    /// when there is no such prior join.
+    /// when there is no such prior join, or when that join's <see cref="LookupExpression"/> is
+    /// <see langword="null"/> (per <see cref="RecordJoin"/>, an unresolved navigation whose alias is
+    /// never emitted into the document, so it can never validly be a later join's "through" leg).
     /// </summary>
     public string? GetJoinAliasFromEnd(int hopsFromEnd)
     {
         var index = _joinHistory.Count - 1 - hopsFromEnd;
-        return index >= 0 && index < _joinHistory.Count ? _joinHistory[index].Alias : null;
+        return index >= 0 && index < _joinHistory.Count && _joinHistory[index].Lookup != null
+            ? _joinHistory[index].Alias
+            : null;
     }
 
     /// <summary>
