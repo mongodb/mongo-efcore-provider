@@ -17,6 +17,7 @@ using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
@@ -1277,6 +1278,26 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
 
         Assert.NotNull(result);
         Assert.Equal("Mercury", result);
+    }
+
+    [Fact]
+    public void Select_scalar_projection_contains_matching_value()
+        => Assert.True(_db.Planets.Select(p => p.name).Contains("Saturn"));
+
+    [Fact]
+    public void Select_scalar_projection_contains_non_matching_value()
+        => Assert.False(_db.Planets.Select(p => p.name).Contains("Vulcan"));
+
+    [Fact]
+    public void Select_scalar_projection_contains_translates_to_any_equal()
+    {
+        var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
+        using var db = GuidesDbContext.Create(database.MongoDatabase, loggerFactory: loggerFactory);
+
+        Assert.True(db.Planets.Select(p => p.name).Contains("Saturn"));
+
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("\"$match\" : { \"name\" : \"Saturn\" }", message);
     }
 
     public void Dispose()
