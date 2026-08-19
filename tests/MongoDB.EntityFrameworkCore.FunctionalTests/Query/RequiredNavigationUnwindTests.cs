@@ -286,6 +286,27 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
             rows.Select(r => r.OrderName + "/" + r.LineName).OrderBy(x => x).ToArray());
     }
 
+    [Fact]
+    public void User_authored_Join_over_a_nullable_foreign_key_stays_inner_after_flattening()
+    {
+        using var db = Setup();
+
+        var rows = db.Lines
+            .Join(db.Carriers, l => l.CarrierId, c => (ObjectId?)c._id, (l, c) => new { l, c })
+            .Join(db.Products, x => x.l.ProductId, p => p._id, (x, p) => new { x.l.LineName, x.c.CarrierName, p.ProductName })
+            .ToList();
+
+        // The first Join is over Line.CarrierId, the model's only navigation with a NULLABLE FK and no
+        // IsRequired() — yet a user Join is unambiguously inner regardless of FK optionality. L2 (no
+        // carrier) and L6 (dangling carrier) are excluded by the first join alone. The second join then
+        // forces the first to be retroactively flattened; if that flattening fell back to inferring
+        // left/inner from ForeignKey.IsRequired (false here), it would wrongly preserve L2/L6 with a null
+        // Carrier, and both go on to match a real product in the second join, producing spurious rows.
+        Assert.Equal(
+            ["L1/C1/P1", "L3/C1/P1", "L4/C1/P1"],
+            rows.Select(r => r.LineName + "/" + r.CarrierName + "/" + r.ProductName).OrderBy(x => x).ToArray());
+    }
+
     // ---------------------------------------------------------------------------------------------------
     // EF-369, on REQUIRED navigations so it runs on all three majors.
     //

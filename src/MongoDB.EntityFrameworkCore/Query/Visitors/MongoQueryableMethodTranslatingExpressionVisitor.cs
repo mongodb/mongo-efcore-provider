@@ -613,7 +613,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var outerQueryExpression = (MongoQueryExpression)outer.QueryExpression;
         var innerQueryExpression = (MongoQueryExpression)inner.QueryExpression;
 
-        outerQueryExpression.AddInnerCollection(innerQueryExpression.CollectionExpression.EntityType);
+        outerQueryExpression.AddInnerCollection(innerQueryExpression.CollectionExpression.EntityType, isLeftOuter);
 
         // Rebind the inner entity's projection to the outer MongoQueryExpression.
         // The inner shaper has a StructuralTypeShaperExpression bound to the inner MongoQueryExpression.
@@ -745,20 +745,25 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 if (priorNavigation != null)
                 {
                     // AddLookup de-duplicates on As, so a lookup already registered by its own join keeps
-                    // that join's flag; this call only supplies one for a prior driver-native reference join
-                    // now being flattened, where the LINQ operator is no longer in hand — fall back to the
-                    // model's ForeignKey.IsRequired.
-                    //
-                    // priorNavigation can be a COLLECTION navigation (a join over a one-to-many). Excluding
-                    // those was considered, but a collection Include never reaches this fallback (it's
-                    // registered elsewhere), and the one shape that does arrive here — a user-authored inner
-                    // Join over a one-to-many — correctly drops a childless principal rather than preserving
-                    // it. So the rule stays keyed on the foreign key either way; both cases are pinned by
-                    // RequiredNavigationUnwindTests.
+                    // that join's flag; this call only supplies one for a prior driver-native join now
+                    // being flattened. Use the left-outer/inner-ness recorded for THAT join when it was
+                    // translated (AddInnerCollection) — not ForeignKey.IsRequired, which can disagree with
+                    // the LINQ operator actually used (an inner Join over a nullable FK is still inner).
+                    // Recording is unconditional on every join, so a miss here is an internal error, not a
+                    // shape to guess at — see RequiredNavigationUnwindTests for both required/optional and
+                    // reference/collection navigations pinning this.
+                    if (!outerQueryExpression.TryGetJoinIsLeftOuter(priorInnerEntityType, out var priorIsLeftOuter))
+                    {
+                        throw new InvalidOperationException(
+                            "No recorded join kind for a previously joined entity type during $lookup "
+                            + "flattening. This is an internal error in the MongoDB EF Core provider; "
+                            + "please report it with the query that produced it.");
+                    }
+
                     outerQueryExpression.AddLookup(
                         new Expressions.LookupExpression(priorNavigation, forceUnwind: true)
                         {
-                            PreserveNullAndEmptyArrays = !priorNavigation.ForeignKey.IsRequired
+                            PreserveNullAndEmptyArrays = priorIsLeftOuter
                         });
                 }
             }

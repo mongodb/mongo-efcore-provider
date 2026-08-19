@@ -30,6 +30,7 @@ internal sealed partial class MongoQueryExpression
 {
     private readonly List<LookupExpression> _pendingLookups = [];
     private readonly Dictionary<IEntityType, MongoCollectionExpression> _innerCollections = new();
+    private readonly Dictionary<IEntityType, bool> _innerCollectionIsLeftOuter = new();
 
     /// <summary>
     /// Pending $lookup stages for cross-collection collection Include operations, ordered so that a
@@ -117,18 +118,32 @@ internal sealed partial class MongoQueryExpression
         => _innerCollections.Count > 0 && !_pendingLookups.Any(l => l.ForceUnwind);
 
     /// <summary>
-    /// Register an inner collection for a join operation.
+    /// Register an inner collection for a join operation, recording the LINQ join operator's own
+    /// left-outer/inner semantics (<paramref name="isLeftOuter"/>) the first time this entity type is
+    /// joined. Retrieved later via <see cref="TryGetJoinIsLeftOuter"/> when a subsequent join forces this
+    /// one to be retroactively flattened, so that decision is never re-derived from model metadata (e.g.
+    /// <c>ForeignKey.IsRequired</c>), which does not always agree with the operator actually used.
     /// </summary>
     /// <param name="entityType">The <see cref="IEntityType"/> of the inner collection.</param>
+    /// <param name="isLeftOuter">Whether the join that introduced this entity type is left-outer.</param>
     /// <returns>The <see cref="MongoCollectionExpression"/> for the inner collection.</returns>
-    public MongoCollectionExpression AddInnerCollection(IEntityType entityType)
+    public MongoCollectionExpression AddInnerCollection(IEntityType entityType, bool isLeftOuter)
     {
         if (!_innerCollections.TryGetValue(entityType, out var collection))
         {
             collection = new MongoCollectionExpression(entityType);
             _innerCollections[entityType] = collection;
+            _innerCollectionIsLeftOuter[entityType] = isLeftOuter;
         }
 
         return collection;
     }
+
+    /// <summary>
+    /// The left-outer/inner semantics recorded by <see cref="AddInnerCollection"/> when <paramref name="entityType"/>
+    /// was first joined. Returns <see langword="false"/> for a <paramref name="isLeftOuter"/> lookup miss —
+    /// callers must treat a missed lookup as "unknown", not as "inner".
+    /// </summary>
+    public bool TryGetJoinIsLeftOuter(IEntityType entityType, out bool isLeftOuter)
+        => _innerCollectionIsLeftOuter.TryGetValue(entityType, out isLeftOuter);
 }
