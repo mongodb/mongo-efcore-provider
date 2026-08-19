@@ -505,11 +505,8 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         Assert.All(order.PriorityItems, i => Assert.IsType<PriorityChainItem>(i));
     }
 
-    // EF-373: a Skip/Take/Distinct composed BETWEEN two sibling cross-collection joins (one join
-    // triggered by a filter on a navigation, the other by an Include) has no single correct position
-    // once the second join forces the $lookup-flattening fallback - the whole group of forced-unwind
-    // $lookup stages must stay together, so the interleaved operator would end up running on the wrong
-    // side of one of them and silently return the wrong rows. Decline with a clear exception instead.
+    // EF-373: once a second join forces the $lookup-flattening fallback, an interleaved Skip/Take/Distinct
+    // has no correct position and would silently return wrong rows - decline instead.
     [Fact]
     public void Take_between_two_joins_declines_rather_than_returning_wrong_rows()
     {
