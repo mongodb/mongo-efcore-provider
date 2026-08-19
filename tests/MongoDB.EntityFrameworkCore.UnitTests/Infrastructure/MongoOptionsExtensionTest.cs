@@ -88,4 +88,18 @@ public static class MongoOptionsExtensionTest
         Assert.Contains("ClientSettings", ex.Message);
         Assert.Contains(nameof(MongoClient), ex.Message);
     }
+
+    [Fact]
+    public static void Clone_preserves_crypt_extra_options_and_schema_mode_set_by_earlier_With_call()
+    {
+        var extraOptions = new Dictionary<string, object> {{"cryptSharedLibPath", "/some/path"}};
+
+        var options = new MongoOptionsExtension()
+            .WithCryptProvider(CryptProvider.AutoEncryptSharedLibrary, "/some/path", extraOptions)
+            .WithQueryableEncryptionSchemaMode(QueryableEncryptionSchemaMode.Ignore)
+            .WithDatabaseName("MyDatabase");
+
+        Assert.Same(extraOptions, options.CryptExtraOptions);
+        Assert.Equal(QueryableEncryptionSchemaMode.Ignore, options.QueryableEncryptionSchemaMode);
+    }
 }
