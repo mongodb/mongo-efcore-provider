@@ -287,14 +287,10 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Include_self_referencing_two_hop_chain_declines_cleanly()
     {
-        // EF-381: Staff.Manager is a self-referencing navigation (StaffMember -> StaffMember). Chaining
-        // ThenInclude(m => m.Manager) produces a SECOND join hop whose outer key selector reads through
-        // the transparent identifier from the first join, targeting the SAME entity type the first hop
-        // already joined. RebindInnerShaperToOuterQuery's transitive scan explicitly skips a prior inner
-        // collection whose entity type matches the current hop's (guarding against self-matching), so no
-        // intermediate is resolved and no $lookup is ever registered for this hop -- yet, pre-fix, the
-        // code still built a shaper reading a "_lookup_StaffMember" field nothing wrote, crashing
-        // materialization with a raw InvalidOperationException instead of a clean translation failure.
+        // EF-381: ThenInclude(m => m.Manager) is a second join hop on the same self-referencing entity
+        // type, so no intermediate resolves for it and no $lookup gets registered. Pre-fix, the shaper
+        // still read a "_lookup_StaffMember" field nothing wrote, crashing with a raw exception instead
+        // of a clean translation failure.
         var staffName = TemporaryDatabaseFixtureBase.CreateCollectionName("Staff") + Guid.NewGuid().ToString("N")[..8];
         var grandManagerId = ObjectId.GenerateNewId();
         var managerId = ObjectId.GenerateNewId();
