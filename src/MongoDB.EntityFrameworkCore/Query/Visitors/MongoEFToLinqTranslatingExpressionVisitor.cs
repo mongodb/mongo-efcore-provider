@@ -589,16 +589,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     /// <summary>
-    /// Rewrites <c>Queryable.Count(Queryable.AsQueryable(EF.Property(shaper, "Nav")))</c> (and the
-    /// <c>LongCount</c> variant) — the lowered form of a bare/unfiltered embedded (owned) collection
-    /// navigation count such as <c>b.Posts.Count</c> — into an <c>Enumerable.Count</c> over a null/missing
-    /// -safe read of the array field. A missing element (the key absent entirely) or an explicitly-null
-    /// stored array both read back as a null reference rather than an empty collection, but the driver
-    /// renders a bare (predicate-less) Count as a server-side <c>$size</c>, which throws on either (unlike
-    /// a predicated Count, which the driver renders as a null/missing-tolerant <c>$map</c>/<c>$sum</c>).
-    /// <c>??</c> (translated by the driver as <c>$ifNull</c>) normalizes both missing and null alike; a
-    /// plain equality test against null would not — in an aggregation expression a missing field is not
-    /// equal to BSON null, so it would fall through to <c>$size</c> on a missing array and still throw.
+    /// Rewrites a bare embedded (owned) collection-navigation <c>Count</c>/<c>LongCount</c> (e.g.
+    /// <c>b.Posts.Count</c>) into <c>Enumerable.Count</c> over a <c>??</c>-normalized array read — needed
+    /// because the driver's bare-Count translation is a server-side <c>$size</c>, which throws on a
+    /// missing or null array (unlike a predicated Count, translated as null-tolerant <c>$map</c>/<c>$sum</c>).
     /// </summary>
     private bool TryRewriteEmbeddedCollectionNavigationCount(MethodCallExpression node, out Expression result)
     {

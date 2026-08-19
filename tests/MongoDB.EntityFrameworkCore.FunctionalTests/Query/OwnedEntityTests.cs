@@ -1373,22 +1373,22 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [Fact]
     public void OwnedEntity_filtered_count_in_projection_translates()
     {
-        var collection = database.CreateCollection<Blog>();
+        var collection = database.CreateCollection<CountBlog>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new Blog
+            db.Entities.Add(new CountBlog
             {
                 _id = "1",
                 Title = "Blog1",
-                Posts = [new Post { Rank = 1 }, new Post { Rank = 0 }, new Post { Rank = 2 }]
+                Posts = [new CountPost { Rank = 1 }, new CountPost { Rank = 0 }, new CountPost { Rank = 2 }]
             });
             db.SaveChanges();
         }
 
         {
             // Assert the count is evaluated server-side (a $map/$sum over the array, equivalent to
-            // filter+size) rather than by materializing the owned Post entities and counting client-side.
+            // filter+size) rather than by materializing the owned CountPost entities and counting client-side.
             var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
             using var db = SingleEntityDbContext.Create(collection, loggerFactory,
                 optionsBuilderAction: o => o.EnableSensitiveDataLogging());
@@ -1406,15 +1406,15 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [Fact]
     public void OwnedEntity_unfiltered_count_in_projection_translates()
     {
-        var collection = database.CreateCollection<Blog>();
+        var collection = database.CreateCollection<CountBlog>();
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.Add(new Blog
+            db.Entities.Add(new CountBlog
             {
                 _id = "1",
                 Title = "Blog1",
-                Posts = [new Post { Rank = 1 }, new Post { Rank = 0 }]
+                Posts = [new CountPost { Rank = 1 }, new CountPost { Rank = 0 }]
             });
             db.SaveChanges();
         }
@@ -1526,14 +1526,14 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         Assert.Equal([1, 0], counts);
     }
 
-    record Blog
+    record CountBlog
     {
         public string _id { get; set; }
         public string Title { get; set; }
-        public List<Post> Posts { get; set; }
+        public List<CountPost> Posts { get; set; }
     }
 
-    record Post
+    record CountPost
     {
         public int Rank { get; set; }
     }
