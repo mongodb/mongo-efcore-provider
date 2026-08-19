@@ -171,14 +171,11 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override void Compiled_query_when_does_not_end_in_query_operator()
     {
-         // Fails: Compiled query with non-query operator issue EF-X011
-         Assert.Contains(
-             "No ultimate source found",
-             Assert.Throws<ArgumentException>(() => base.Compiled_query_when_does_not_end_in_query_operator()).Message);
+        base.Compiled_query_when_does_not_end_in_query_operator();
 
-         AssertMql(
-             """
-Customers.
+        AssertMql(
+            """
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$count" : "_v" }
 """);
     }
 
@@ -245,7 +242,11 @@ Customers.{ "$match" : { "_id" : "ANATR" } }
 
     public override void Multiple_queries()
     {
-        AssertNoMultiCollectionQuerySupport(() => base.Multiple_queries());
+        // Fails: two separately-compiled queries against different DbSets on the same context leak
+        // translation state between them (a pre-existing EF-216 cross-DbSet limitation); after the
+        // EF-233 fix this now surfaces as an ArgumentException from the driver-LINQ rebuild rather
+        // than the provider's own "Unsupported cross-DbSet query" guard.
+        Assert.Throws<ArgumentException>(() => base.Multiple_queries());
     }
 
     public override void Compiled_query_when_using_member_on_context()
