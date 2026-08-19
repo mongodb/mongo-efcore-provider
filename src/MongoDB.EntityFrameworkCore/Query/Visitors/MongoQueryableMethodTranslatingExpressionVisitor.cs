@@ -693,7 +693,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // on a prior inner collection and remember the intermediate so the $lookup's localField can be
         // prefixed with that intermediate's "_lookup_<Intermediate>" path.
         INavigation? throughNavigation = null;
-        if (navigation == null && fkPropertyName != null)
+        if (!isRootHop && navigation == null && fkPropertyName != null)
         {
             foreach (var priorInnerEntityType in outerQueryExpression.InnerCollections.Keys)
             {
