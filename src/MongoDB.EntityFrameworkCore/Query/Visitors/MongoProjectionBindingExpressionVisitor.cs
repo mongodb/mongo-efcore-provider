@@ -198,10 +198,22 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 }
 
             case MaterializeCollectionNavigationExpression materializeCollectionNavigationExpression:
-                return materializeCollectionNavigationExpression.Navigation is INavigation embeddableNavigation
-                       && embeddableNavigation.IsEmbedded()
-                    ? base.Visit(materializeCollectionNavigationExpression.Subquery)
-                    : base.VisitExtension(materializeCollectionNavigationExpression);
+                if (materializeCollectionNavigationExpression.Navigation is INavigation embeddableNavigation
+                    && embeddableNavigation.IsEmbedded())
+                {
+                    var visited = base.Visit(materializeCollectionNavigationExpression.Subquery);
+
+                    // If the element type has its own embedded navigation, the Select arm above rebuilds this
+                    // as an IEnumerable<T>-typed Enumerable.Select rather than the navigation's declared List<T>,
+                    // which fails Expression.New's member-type check. Convert is a no-op at runtime:
+                    // MongoProjectionBindingRemovingExpressionVisitor discards this shape later for the
+                    // correctly-typed CollectionShaperExpression.
+                    return visited != null && visited.Type != materializeCollectionNavigationExpression.Type
+                        ? Expression.Convert(visited, materializeCollectionNavigationExpression.Type)
+                        : visited;
+                }
+
+                return base.VisitExtension(materializeCollectionNavigationExpression);
 
             case IncludeExpression includeExpression:
                 {

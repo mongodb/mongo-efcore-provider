@@ -51,12 +51,15 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
     {
         // Fails: No support for nested JSON EF-X008
         Assert.Contains(
-            "Argument type 'System.Collections.Generic.IEnumerable`1[Microsoft.EntityFrameworkCore.Query.AdHocJsonQueryTestBase+Context21006+JsonEntity]' does not match",
-            (await Assert.ThrowsAsync<ArgumentException>(
+            "Document element is missing for required",
+            (await Assert.ThrowsAsync<InvalidOperationException>(
                 () => base.Project_top_level_json_entity_with_missing_scalars(async)))
             .Message);
 
-        AssertMql();
+        AssertMql(
+            """
+            Entities.{ "$match" : { "_id" : { "$lt" : 4 } } }
+            """);
     }
 
     public override async Task Project_nested_json_entity_with_missing_scalars(bool async)
