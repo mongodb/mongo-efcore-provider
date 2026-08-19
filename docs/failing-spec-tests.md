@@ -38,7 +38,6 @@ that currently lack a ticket. Counts are sourced from `tests/MongoDB.EntityFrame
 | [EF-227](https://jira.mongodb.org/browse/EF-227) | `Max over empty nullables issue EF-227` | `Min` / `Max` over an empty nullable sequence does not produce the EF-expected `null`. | 4 |
 | [EF-228](https://jira.mongodb.org/browse/EF-228) | `Truncation data loss issue EF-228` | `Sum`/`Average` over `float` columns suffers precision/truncation loss when accumulated server-side. | 2 |
 | [EF-229](https://jira.mongodb.org/browse/EF-229) | `Incorrect results issue EF-229` | `Contains` at the top of the query tree returns wrong results in at least one shape. | 1 |
-| [EF-232](https://jira.mongodb.org/browse/EF-232) | `Sum of empty set cast to nullable issue EF-232` | `Sum_with_no_data_cast_to_nullable` does not produce the EF-expected `null`. (The `Compiled_query_when_does_not_end_in_query_operator` failure that previously also cited EF-232 has been re-tagged as `EF-X011`.) | 1 |
 | [EF-234](https://jira.mongodb.org/browse/EF-234) | `translation of Random issue EF-234` | `EF.Functions.Random()` is not translated. | 2 |
 | [EF-235](https://jira.mongodb.org/browse/EF-235) | `Translate Convert methods issue EF-235` | `Convert.ToBoolean/Byte/Int*/Decimal/Double/String/...` calls are not translated. | 8 |
 | [EF-237](https://jira.mongodb.org/browse/EF-237) | `MathF mapping issue EF-237` | `MathF.*` overloads (the `float` Math API) are not translated. | 25 |
@@ -302,7 +301,7 @@ The following inconsistencies were observed while building this inventory and ha
 
 ### 1. `EF-232` was reused for two distinct failure modes — **fixed**
 
-`Sum_with_no_data_cast_to_nullable` keeps `EF-232`; `Compiled_query_when_does_not_end_in_query_operator` was re-tagged with the new temp ticket `EF-X011`.
+`Sum_with_no_data_cast_to_nullable` kept `EF-232` (since fixed and removed from the table above); `Compiled_query_when_does_not_end_in_query_operator` was re-tagged with the new temp ticket `EF-X011`.
 
 ### 2. Sibling `#if` branches missing the `// Fails:` tag — **fixed**
 

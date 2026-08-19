@@ -15,6 +15,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Linq.Expressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -121,8 +123,26 @@ public class MongoClientWrapper : IMongoClientWrapper
         }
 
         _commandLogger.ExecutedMqlQuery(executableQuery);
+
+        if (result is null)
+        {
+            var underlyingType = Nullable.GetUnderlyingType(typeof(T));
+            if (underlyingType != null && IsSumQuery(executableQuery.Query))
+            {
+                // The driver's $group over zero input documents yields zero output documents, so a
+                // nullable Sum() comes back as default(T) (null). LINQ defines Sum() over an empty set
+                // as 0 even for nullable projections (unlike Average(), which stays undefined), so
+                // that empty-cursor result is coerced to the numeric zero here.
+                result = (T)Convert.ChangeType(0, underlyingType);
+            }
+        }
+
         return [result];
     }
+
+    private static bool IsSumQuery(Expression query)
+        => query is MethodCallExpression { Method.Name: "Sum", Method.DeclaringType: var declaringType }
+           && declaringType == typeof(Queryable);
 
     private IMongoClient GetOrCreateMongoClient(MongoOptionsExtension? options, IServiceProvider serviceProvider)
     {
