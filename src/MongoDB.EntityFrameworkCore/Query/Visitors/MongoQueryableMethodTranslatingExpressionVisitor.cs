@@ -659,13 +659,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var fkPropertyName = outerKeySelector.Body.TryGetSimplePropertyName();
         INavigation? navigation = null;
 
-        // Only treat this as a root-level navigation match when the FK access's receiver
-        // resolves back to the root (e.g. "o.CustomerId" or, across an EF-generated
-        // TransparentIdentifier chain, "x.Outer.CustomerId"). A transitive hop reached
-        // THROUGH a previously-joined intermediate (e.g. "x.Inner.ProductId") must never match
-        // here on FK-name or target-entity-type alone: the root entity type can coincidentally
-        // carry a same-named FK, or a navigation to the same target type, which would misroute
-        // the hop into this root-level branch instead of the transitive-resolution branch below.
+        // Guard against misrouting: a transitive hop (e.g. "x.Inner.ProductId") must not match here
+        // just because the root entity type coincidentally has a same-named FK or navigation.
         if (IsRootLevelKeyAccess(outerKeySelector.Body))
         {
             if (fkPropertyName != null)
@@ -772,12 +767,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     }
 
     /// <summary>
-    /// Determines whether a join's FK key-selector body (e.g. <c>o.CustomerId</c> or, across chained
-    /// joins, <c>x.Outer.CustomerId</c>) reads the FK from the root of the join chain rather than from
-    /// an intermediate joined entity. EF composes successive <c>Join</c>/<c>LeftJoin</c>/<c>GroupJoin</c>
-    /// calls over a <c>TransparentIdentifier&lt;TOuter, TInner&gt;</c> whose <c>Outer</c>/<c>Inner</c>
-    /// fields lead back to the root and to the previously-joined entity respectively; any <c>Inner</c>
-    /// hop in the receiver chain means the FK is being read from that intermediate, not the root.
+    /// True if the FK key-selector reads from the root of the join chain rather than an intermediate:
+    /// any <c>Inner</c> hop in a <c>TransparentIdentifier</c>'s <c>Outer</c>/<c>Inner</c> chain means the
+    /// FK is being read from that intermediate instead.
     /// </summary>
     private static bool IsRootLevelKeyAccess(Expression keySelectorBody)
     {
