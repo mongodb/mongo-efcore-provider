@@ -664,14 +664,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var fkPropertyName = outerKeySelector.Body.TryGetSimplePropertyName();
         INavigation? navigation = null;
 
-        // A root hop's key selector reads the FK directly off the join's outer parameter (e.g. "o.CustomerID").
-        // A transitive hop instead reads through a transparent identifier from a PRIOR join (e.g.
-        // "ti.Inner.CustomerID"). Only a root hop's FK conceptually belongs to the outer root entity type, so
-        // only a root hop may be resolved against the root's own navigations here — a transitive hop must be
-        // resolved via the prior-inner-collection scan below (or declined; see the check after it). Without
-        // this gate, a transitive hop whose FK property name happens to match one of the root's own
-        // navigations (e.g. a self-referencing Manager/DirectReports relationship reused two hops deep)
-        // resolves to the WRONG navigation instead of correctly finding no resolvable intermediate.
+        // Only a root hop's FK belongs to the outer root entity type, so only a root hop is resolved
+        // against the root's own navigations here. A transitive hop must go through the prior-inner-
+        // collection scan below (or be declined) — otherwise a self-referencing FK name (e.g. Manager/
+        // DirectReports reused two hops deep) can resolve to the wrong navigation.
         var isRootHop = IsRootHopKeySelector(outerKeySelector);
 
         if (isRootHop)
@@ -715,14 +711,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             }
         }
 
-        // A transitive hop with no resolvable intermediate has nothing to be scoped under: no $lookup
-        // will be registered for it, so a shaper built from here would read a field nothing wrote (e.g. a
-        // self-referencing two-hop chain, where the scan above deliberately skips a prior inner collection
-        // of the SAME entity type as this hop and so never finds a candidate). Decline the join outright
-        // rather than crash with a raw "missing element" exception during materialization. Scoped to the
-        // simple-FK-property shape (fkPropertyName != null) so unrelated already-undeclined gaps (e.g. a
-        // composite/complex key selector, which never resolves fkPropertyName here either) keep their
-        // existing — separately tracked — failure behavior instead of being pulled into this one.
+        // An unresolved transitive hop has no intermediate to scope a $lookup under (e.g. a self-
+        // referencing two-hop chain, where the scan above skips the same-entity-type prior collection).
+        // Decline rather than let the shaper read a field nothing wrote. Scoped to fkPropertyName != null
+        // so other already-declined gaps (e.g. composite keys) keep their existing failure behavior.
         if (!isRootHop && navigation == null && fkPropertyName != null)
         {
             return null;
@@ -793,13 +785,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     }
 
     /// <summary>
-    /// Whether a join's outer key selector reads the FK property directly off the join's own root entity,
-    /// as opposed to reading through a PRIOR join's inner (dependent) side. A sibling Include chain (e.g.
-    /// <c>.Include(r => r.A).Include(r => r.B)</c>) lowers its second join's key selector to
-    /// "ti.Outer.BId" — "Outer" always re-exposes the SAME root entity a prior join started from, so any
-    /// number of ".Outer" hops still counts as a root hop. Only an ".Inner" hop (e.g. "ti.Inner.CustomerID",
-    /// from a chained Join/ThenInclude) reads through a previously-joined DEPENDENT and makes this a
-    /// transitive hop.
+    /// Whether a join's outer key selector reads the FK directly off the join's own root entity, rather
+    /// than through a prior join's inner (dependent) side. Any depth of ".Outer" (sibling Include chains
+    /// re-exposing the same root) still counts as a root hop; an ".Inner" hop (chained Join/ThenInclude)
+    /// does not.
     /// </summary>
     private static bool IsRootHopKeySelector(LambdaExpression outerKeySelector)
     {
