@@ -626,11 +626,9 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     }
 
     /// <summary>
-    /// Build the <c>$lookup</c> stage document for a nested (ThenInclude) lookup, using the pipeline
-    /// form (carrying <see cref="LookupExpression.PipelineStages"/> — e.g. a TPH discriminator narrowing
-    /// $match, or deeper nested ThenInclude/filtered-Include stages) whenever the lookup has any, and the
-    /// flat localField/foreignField form otherwise. Every nested-lookup construction site must go through
-    /// this so a lookup carrying pipeline stages never gets silently flattened and loses them (EF-374).
+    /// Builds the <c>$lookup</c> stage for a nested lookup. Every nested-lookup construction site must
+    /// go through this, or a lookup carrying <see cref="LookupExpression.PipelineStages"/> gets silently
+    /// flattened and loses them (EF-374).
     /// </summary>
     private static BsonDocument BuildLookupDocument(LookupExpression lookup)
     {

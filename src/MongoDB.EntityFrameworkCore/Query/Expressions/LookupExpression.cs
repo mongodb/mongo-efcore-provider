@@ -57,11 +57,8 @@ internal sealed class LookupExpression
 
         As = GetLookupAlias(navigation);
 
-        // TPH: when the navigation targets a derived entity type rather than the root of its hierarchy,
-        // the target collection also holds sibling-type documents that share the same FK value space
-        // (e.g. a shared principal key matched by every subtype's rows). FK equality alone would admit
-        // those sibling-type documents into the $lookup result; narrow by discriminator so only documents
-        // of the target type (or its own derived types) are matched. See EF-374.
+        // TPH: sibling subtypes can share the same FK value space, so FK equality alone would also
+        // match sibling-type documents; narrow by discriminator to just this type and its derived types.
         if (targetEntityType.FindDiscriminatorProperty() is { } discriminatorProperty
             && targetEntityType != targetEntityType.GetRootType())
         {
