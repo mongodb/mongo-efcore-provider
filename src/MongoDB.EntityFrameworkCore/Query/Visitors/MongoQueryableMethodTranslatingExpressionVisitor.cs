@@ -670,15 +670,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         navigation ??= outerEntityType.GetNavigations()
             .FirstOrDefault(n => n.TargetEntityType == innerEntityType);
 
-        // Transitive join: the inner entity is reached not directly from the root but THROUGH a
-        // previously-joined intermediate (e.g. OrderDetail.Order.Customer — the join's outer key
-        // selector is "o.Inner.CustomerID"). When no direct navigation exists, resolve the navigation
-        // on a prior inner collection and remember the intermediate so the $lookup's localField can be
-        // prefixed with that intermediate's "_lookup_<Intermediate>" path. The navigation may instead be
-        // declared on an OWNED/embedded type nested inside that intermediate (e.g.
-        // "x.Buyer.Address.RegionId" — Region is a navigation on the embedded Address, not on Buyer
-        // itself, EF-380); resolve the key selector's actual owner so that case is found too, and fold
-        // the embedded path into the alias prefix.
+        // Transitive join: the inner entity is reached THROUGH a previously-joined intermediate (e.g.
+        // OrderDetail.Order.Customer), or through an owned/embedded navigation nested inside that
+        // intermediate (e.g. Buyer.Address.RegionId, EF-380). Resolve the key selector's real owner so
+        // the navigation search looks in the right place, and fold any embedded path into the alias prefix.
         INavigation? throughNavigation = null;
         string? throughEmbeddedPath = null;
         if (navigation == null && fkPropertyName != null)
@@ -737,9 +732,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 var lookup = new Expressions.LookupExpression(navigation, forceUnwind: true);
                 if (throughNavigation != null)
                 {
-                    // Transitive join: match against the already-unwound intermediate document. When
-                    // the navigation is declared on an owned type embedded in that intermediate
-                    // (EF-380), the embedded path sits between the intermediate's alias and the field.
+                    // Match against the already-unwound intermediate document; an owned/embedded
+                    // navigation (EF-380) inserts its path between the intermediate's alias and the field.
                     var throughAlias = throughEmbeddedPath != null
                         ? $"{Expressions.LookupExpression.GetLookupAlias(throughNavigation)}.{throughEmbeddedPath}"
                         : Expressions.LookupExpression.GetLookupAlias(throughNavigation);
@@ -786,43 +780,31 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     }
 
     /// <summary>
-    /// The entity type that declares the property accessed by a Join key-selector body (<see cref="DeclaringEntityType"/>),
-    /// the nearest non-owned, joinable entity type reached by walking back through any owned/embedded
-    /// navigations along the way (<see cref="AnchorEntityType"/>), and the dotted path of the owned
-    /// entities' mapped containing-element names between them (<see cref="EmbeddedPath"/>, <see
-    /// langword="null"/> when the two are the same type).
+    /// A Join key selector's declaring entity type (<see cref="DeclaringEntityType"/>), the nearest
+    /// non-owned ancestor reachable through owned/embedded navigations (<see cref="AnchorEntityType"/>),
+    /// and the mapped element-name path between them (<see cref="EmbeddedPath"/>, <see langword="null"/>
+    /// if they're the same type).
     /// </summary>
     private readonly record struct KeySelectorOwner(IEntityType DeclaringEntityType, IEntityType AnchorEntityType, string? EmbeddedPath);
 
     /// <summary>
-    /// Resolve the owner of the property accessed by a Join key-selector body — the root for a direct
-    /// key selector (e.g. <c>r =&gt; r.MidKey</c>), an already-joined intermediate for a transitive one
-    /// reached through a composed <c>TransparentIdentifier</c> (e.g. <c>x =&gt; x.m.LeafId</c> declares
-    /// <c>LeafId</c> on Mid, not on the root), or, when the key property is declared on an owned/embedded
-    /// type nested under an already-joined entity (e.g. <c>x =&gt; x.Buyer.Address.RegionId</c>), the
-    /// owned type as <see cref="KeySelectorOwner.DeclaringEntityType"/> together with the nearest
-    /// non-owned ancestor as <see cref="KeySelectorOwner.AnchorEntityType"/> and the owned-nav path
-    /// between them (EF-380). Used so a transitive hop's navigation search looks in the right place
-    /// (the entity that actually declares it) while still scoping the resulting alias/localField against
-    /// the entity that is actually joined, plus the embedded path to the property within its document.
+    /// Resolve the owner of the property accessed by a Join key-selector body: the root for a direct
+    /// selector, an already-joined intermediate for a transitive one (e.g. <c>x.m.LeafId</c>), or, when
+    /// the property is declared on an owned/embedded type nested under an already-joined entity (e.g.
+    /// <c>x.Buyer.Address.RegionId</c>, EF-380), the owned type plus its nearest non-owned ancestor and
+    /// the owned-nav path between them.
     /// </summary>
     /// <param name="keySelectorBody">The outer key selector's body.</param>
     /// <param name="rootEntityType">The query root's entity type — always a valid anchor.</param>
     /// <param name="priorInnerEntityTypes">Entity types already joined earlier in the chain — also
     /// valid anchors.</param>
     /// <remarks>
-    /// Anchors are matched by CLR type against only this small, finite, already-established set —
-    /// never by scanning the whole model. That set can itself contain more than one entity type sharing
-    /// a CLR type (e.g. shared-type entities); when a CLR type matches more than one anchor, which one
-    /// the key selector actually means is ambiguous, so resolution bails out (returns <see
-    /// langword="null"/>) rather than guessing. Once a single anchor is identified, the embedded path is
-    /// resolved by walking the REAL navigation graph forward (<see cref="IReadOnlyEntityType.FindNavigation(string)"/>
-    /// hop by hop) rather than guessing again by CLR type, so sibling owned navigations sharing a CLR type
-    /// (e.g. <c>Buyer.ShippingAddress</c> / <c>Buyer.BillingAddress</c> both typed <c>Address</c>) resolve
-    /// to the exact one this key selector actually references, and each segment is emitted as the owned
-    /// entity's mapped containing-element name (<see cref="MongoEntityTypeExtensions.GetContainingElementName"/>)
-    /// rather than its CLR navigation/member name, so a renamed element (e.g. via a naming convention) is
-    /// still matched correctly in the rendered <c>$lookup</c> localField.
+    /// Anchors are matched by CLR type against this small, finite, already-established set. If a CLR
+    /// type matches more than one anchor (e.g. shared-type entities), resolution bails out rather than
+    /// guessing. Once a single anchor is found, the embedded path is walked forward via the real
+    /// navigation graph (not CLR type) so sibling owned navigations sharing a CLR type (e.g.
+    /// <c>ShippingAddress</c> / <c>BillingAddress</c>) resolve correctly, and each segment is the owned
+    /// entity's mapped containing-element name rather than its CLR name.
     /// </remarks>
     private static KeySelectorOwner? ResolveKeySelectorOwner(
         Expression keySelectorBody, IEntityType rootEntityType, IEnumerable<IEntityType> priorInnerEntityTypes)
@@ -850,8 +832,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             var matchingAnchors = anchors.Where(e => e.ClrType == current.Type).ToList();
             if (matchingAnchors.Count > 1)
             {
-                // Multiple anchors share this CLR type (e.g. shared-type entities) — can't tell them
-                // apart by CLR type alone, so bail out rather than guessing.
+                // Ambiguous CLR type (e.g. shared-type entities) — bail out rather than guessing.
                 return null;
             }
 
@@ -864,9 +845,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 {
                     if (declaringEntityType.FindNavigation(segment) is not { } segmentNavigation)
                     {
-                        // The collected path doesn't actually exist on the real navigation graph —
-                        // shouldn't happen since the segments came from the same expression tree, but
-                        // bail out rather than report a bogus owner.
+                        // Shouldn't happen (segments came from the same tree), but don't report a bogus owner.
                         return null;
                     }
 

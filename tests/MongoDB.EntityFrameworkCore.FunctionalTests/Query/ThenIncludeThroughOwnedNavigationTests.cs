@@ -23,14 +23,10 @@ using MongoDB.EntityFrameworkCore.Extensions;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-380: a <c>ThenInclude</c> reached through an owned (embedded) navigation, sitting between two
-/// cross-collection joins, previously resolved its <c>$lookup</c> localField against the wrong scope.
-/// The outer key selector for the second join (<c>Order.Buyer.Address.RegionId</c>) reaches through the
-/// owned <c>Address</c> navigation on the already-joined <c>Buyer</c>; the owner-resolution logic only
-/// unwrapped one member/EF.Property hop, found the owned <c>Address</c> entity type, and then failed to
-/// find any alias for it (owned types are never registered as joined inner collections) — so the second
-/// join's localField was emitted unscoped ("RegionId" instead of "_lookup_Buyer.Address.RegionId"),
-/// silently matching nothing and leaving <c>Region</c> null despite matching data existing.
+/// EF-380: a second-join key selector reaching through an owned/embedded navigation on an
+/// already-joined intermediate (e.g. <c>Order.Buyer.Address.RegionId</c>) used to emit an unscoped
+/// <c>$lookup</c> localField ("RegionId" instead of "_lookup_Buyer.Address.RegionId"), silently
+/// matching nothing and leaving <c>Region</c> null despite matching data existing.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class ThenIncludeThroughOwnedNavigationTests(TemporaryDatabaseFixture database)
@@ -56,18 +52,14 @@ public class ThenIncludeThroughOwnedNavigationTests(TemporaryDatabaseFixture dat
         Assert.NotNull(order.Buyer.Address.Region);
         Assert.Equal("Europe", order.Buyer.Address.Region.Name);
 
-        // The Region join's $lookup must be scoped under the Buyer lookup alias AND the embedded
-        // Address path, not emitted as a bare, unscoped "RegionId".
+        // Scoped under the Buyer lookup alias AND the embedded Address path, not a bare "RegionId".
         Assert.Contains(logs, l => l.Contains("\"localField\" : \"_lookup_Buyer.Address.RegionId\""));
     }
 
     /// <summary>
-    /// Sibling owned navigations sharing the same CLR type (<c>ShippingAddress</c> / <c>BillingAddress</c>,
-    /// both typed <c>J2Address</c>) must resolve the owned-navigation owner via the real navigation graph,
-    /// not by a CLR-type guess — a CLR-type-only lookup can't tell the two owned instances apart and may
-    /// silently resolve to the sibling that has no <c>Region</c> relationship configured at all, dropping
-    /// the $lookup entirely and leaving <c>Region</c> null even though the correct sibling (ShippingAddress)
-    /// does have a matching Region.
+    /// Sibling owned navigations sharing a CLR type (<c>ShippingAddress</c> / <c>BillingAddress</c>, both
+    /// <c>J2Address</c>) must resolve via the real navigation graph, not a CLR-type guess — otherwise
+    /// owner resolution could pick the sibling with no <c>Region</c> relationship, dropping the $lookup.
     /// </summary>
     [Fact]
     public void ThenInclude_through_one_of_two_sibling_owned_navigations_sharing_a_clr_type_resolves_the_correct_one()
@@ -178,9 +170,7 @@ public class ThenIncludeThroughOwnedNavigationTests(TemporaryDatabaseFixture dat
                 {
                     a.HasOne(x => x.Region).WithMany().HasForeignKey(x => x.RegionId);
                 });
-                // Sibling owned navigation sharing the same CLR type (J2Address) but WITHOUT the Region
-                // relationship — if owner resolution ever picked this sibling by CLR type alone instead
-                // of by the real navigation graph, the Region $lookup would silently vanish.
+                // Sibling owned navigation, same CLR type (J2Address), but WITHOUT the Region relationship.
                 b.OwnsOne(c => c.BillingAddress, a =>
                 {
                     a.Ignore(x => x.Region);
