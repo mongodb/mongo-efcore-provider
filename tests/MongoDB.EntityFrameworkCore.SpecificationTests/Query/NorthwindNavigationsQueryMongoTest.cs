@@ -321,7 +321,7 @@ Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
         await base.Select_Where_Navigation_Null_Deep(async);
         AssertMql(
             """
-Employees.{ "$lookup" : { "from" : "Employees", "localField" : "ReportsTo", "foreignField" : "_id", "as" : "_lookup_Manager" } }, { "$unwind" : { "path" : "$_lookup_Manager", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Employees", "localField" : "_lookup_Manager.ReportsTo", "foreignField" : "_id", "as" : "_lookup_Manager_Manager" } }, { "$unwind" : { "path" : "$_lookup_Manager_Manager", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Manager_Manager" : null } }
+Employees.{ "$lookup" : { "from" : "Employees", "localField" : "ReportsTo", "foreignField" : "_id", "as" : "_lookup_Manager" } }, { "$unwind" : { "path" : "$_lookup_Manager", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Employees", "localField" : "_lookup_Manager.ReportsTo", "foreignField" : "_id", "as" : "_lookup_Manager_1" } }, { "$unwind" : { "path" : "$_lookup_Manager_1", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Manager_1" : null } }
 """);
 #endif
     }

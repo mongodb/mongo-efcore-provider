@@ -41,11 +41,14 @@ public class ShadowPropertyFlatJoinProjectionTests(TemporaryDatabaseFixture data
 
         using var db = new FlatJoinDbContext(database, customersName, ordersName, itemsName);
 
+        // The root predicate is applied BEFORE the joins so that it lands on the root collection and
+        // survives as a leading $match, keeping this test independent of whether a Where placed AFTER
+        // the joins can be reattached (it usually can now - see EF-X024 in docs/failing-spec-tests.md for
+        // the one remaining ambiguous-sibling-navigation shape that still gets rejected).
         var query =
-            from c in db.Customers
+            from c in db.Customers.Where(c => c.CustomerId == "ALFKI")
             join o in db.Orders on c.CustomerId equals o.CustomerId
             join i in db.Items on o.OrderId equals i.OrderId
-            where c.CustomerId == "ALFKI"
             select new
             {
                 o,

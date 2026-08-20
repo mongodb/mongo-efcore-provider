@@ -112,6 +112,7 @@ These entries appear in `// Fails:` comments without an `EF-` or `CSHARP-` refer
 | EF-X020 | Cross-collection Include/join/navigation not translated on EF8/EF9 (works on EF10) | 176 |
 | EF-X021 | Filtered Include / query filter on cross-collection target not translated | 0 |
 | EF-X022 | Join/GroupJoin whose inner source is a filtered or ordered sub-query is rejected | 18 |
+| EF-X024 | `Where`/entity materialization over a flattened multi-join chain onto ambiguous same-navigation or navigation-less siblings is not translated | 2 |
 | EF-X016 | Bulk `ExecuteUpdate`/`ExecuteDelete` source restricted to a single collection scoped by `Where` | 47 |
 
 ### EF-X001 — Sub-query selection across DbSets is not translated
@@ -332,6 +333,51 @@ condition and is not yet translated into the `$lookup` sub-pipeline `$match`. Pr
 this ticket tracks. Functional coverage:
 `CrossCollectionIncludeTests.Filtered_collection_include_predicate_is_not_silently_dropped` and
 `CrossCollectionIncludeTests.Query_filter_on_collection_include_target_is_not_silently_dropped`.
+
+### EF-X024 — `Where`/entity materialization over a flattened multi-join chain onto ambiguous same-navigation or navigation-less siblings is not translated
+Comment pattern: `// Fails: Where over a flattened multi-join chain is not translated EF-X024`, or
+`// Fails: two navigation-less same-target-type joins chained off root, ... EF-X024`.
+Affected: 2 spec overrides — `NorthwindJoinQueryMongoTest.Join_GroupJoin_DefaultIfEmpty_Where` (EF10 branch;
+the EF8/EF9 branch rejects the whole shape under EF-X020, so nothing is masked there) and
+`NorthwindJoinQueryMongoTest.Join_same_collection_multiple`.
+Once a query has two or more cross-collection joins it is emitted in **flat** mode (one root-level
+`$lookup` + `$unwind` per join, `MongoQueryExpression.UsesDriverJoinFields == false`). A composed operator
+(`Where`, a projecting `Select`, etc.) wrapped around the join chain is reattached onto the flattened
+`_lookup_<Navigation>` fields by `MongoEFToLinqTranslatingExpressionVisitor.StripJoinForLookup` /
+`ReattachComposedOperator`, retargeting `TransparentIdentifier` `.Outer`/`.Inner` member accesses via
+`TransparentIdentifierToLookupFieldRewriter`. That reattachment is now the general case — see
+`SameTargetTypeJoinTests.Filter_after_a_flattened_multi_join_chain_is_applied_not_dropped`, which asserts a
+`Where` placed after **two** joins (same-typed and different-typed chains) is genuinely applied, not
+dropped or rejected.
+The ONE shape that still fails is two INDEPENDENT (non-chained) joins that resolve the SAME navigation with
+the SAME foreign-key property — e.g. `Join_GroupJoin_DefaultIfEmpty_Where`'s two plain joins from
+`Customer` to `Order` on `CustomerID`. `TransparentIdentifierToLookupFieldRewriter.ResolveLookup`'s
+ambiguity fallback disambiguates by structural position (a self-referencing CHAIN, where a later hop's
+`$lookup.localField` is prefixed by an earlier hop's alias — see EF-372); two siblings with no
+chaining/prefix relationship between them can't be told apart that way, so `StripJoinForLookup` declines
+(returns `null`) and the join chain would otherwise survive to be rendered by the driver's native
+`LeftJoin` support — which itself only handles a single cross-collection join and would silently
+double-nest under a second `_outer`, materializing null entities. `GuardAgainstUnstrippableMultiJoin`
+(`MongoEFToLinqTranslatingExpressionVisitor`) catches exactly that combination (`stripped == null` with 2+
+forced-unwind lookups already registered) and fails translation loudly instead of falling back to that
+broken native rendering. Disambiguating true siblings — the remaining piece this ticket tracks — needs a
+way to tell two same-navigation, same-FK, non-chained joins apart (e.g. by originating LINQ join-clause
+identity) that `ResolveLookup` doesn't have today.
+
+`Join_same_collection_multiple` hits the same `GuardAgainstUnstrippableMultiJoin` decline via a different
+route: two plain (inner) `Join` calls onto `Customer` with **no corresponding model navigation** at all
+(a bare key-equality `Join`, not `Include`-driven). A navigation-less hop's `$lookup` (built directly from
+the raw outer/inner key property paths — see EF-377) still registers as a forced-unwind lookup and still
+triggers flat mode, but `StripJoinForLookup`/`ResolveLookup` key their matching on `LookupExpression.Navigation`
+and structural position, which a bare hop can't fully disambiguate either, so the strip declines here too.
+Unlike the `Where`-over-a-scalar-projection case this ticket originally tracked, this query materializes a
+raw entity (`c3`) directly — the guard's original narrowing (reject only when a declined join is
+left-outer, since a scalar/anonymous projection's baked-in field paths tolerate native-rendered inner-join
+chains) doesn't hold for an entity-shaped result: entity materialization always reads through the
+`_lookup_<Alias>`/`_inner` alias keyed by `MongoQueryExpression.UsesDriverJoinFields`, which the native
+fallback doesn't produce once 2+ lookups are registered, regardless of join kind. The guard now rejects
+every declined multi-lookup shape when the result is entity-shaped (reached via `Translate`, not
+`TranslateProjected`), not only the left-outer ones.
 
 ## Audit findings — tagging hygiene
 

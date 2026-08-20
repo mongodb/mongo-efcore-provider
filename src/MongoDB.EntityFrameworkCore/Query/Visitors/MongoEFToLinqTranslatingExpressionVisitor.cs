@@ -120,6 +120,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         if (_pendingLookups.Count > 0)
         {
             var stripped = StripJoinForLookup(efQueryExpression);
+            GuardAgainstUnstrippableMultiJoin(stripped, efQueryExpression, isEntityShaped: false);
             expressionToTranslate = stripped ?? efQueryExpression;
             // forceUnwind lookups stand in for an explicit Join chain that StripJoinForLookup removed.
             // When the strip did not fire (e.g. the join is buried under OrderBy/terminal operators the
@@ -158,6 +159,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         if (_pendingLookups.Any(l => l.ForceUnwind))
         {
             var stripped = StripJoinForLookup(efQueryExpression);
+            GuardAgainstUnstrippableMultiJoin(stripped, efQueryExpression, isEntityShaped: true);
             expressionToTranslate = stripped ?? efQueryExpression;
             // See TranslateProjected: only emit the forceUnwind lookups when they actually replaced a
             // stripped Join chain. If the strip did not fire the Join survives and the driver renders it.
@@ -657,6 +659,44 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             // rather than letting a broken pipeline reach the server.
             throw new InvalidOperationException(
                 Microsoft.EntityFrameworkCore.Diagnostics.CoreStrings.TranslationFailed(efQueryExpression.Print()));
+        }
+    }
+
+    /// <summary>
+    /// When <see cref="StripJoinForLookup"/> declines a shape (returns <see langword="null"/>), the Join
+    /// chain survives in the translated tree and the driver renders it natively as nested
+    /// <c>_outer</c>/<c>_inner</c> documents - see the call sites' comments.
+    /// <para>
+    /// An ENTITY-shaped result (<paramref name="isEntityShaped"/>, i.e. reached via <see cref="Translate"/>
+    /// rather than <see cref="TranslateProjected"/>) materializes via an alias keyed off
+    /// <see cref="Expressions.MongoQueryExpression.UsesDriverJoinFields"/> — a flat <c>_lookup_&lt;Alias&gt;</c>
+    /// field when 2+ forced-unwind lookups are registered, or the driver-native <c>_inner</c> field for a
+    /// single reference join. The native fallback here produces neither: it's the UNMODIFIED nested
+    /// <c>_outer</c>/<c>_inner</c> shape, valid for only ONE level of driver-native nesting. With 2+
+    /// registered lookups declined, that mismatch is unconditionally wrong regardless of join kind - reject
+    /// it always, not only when a join happens to be left-outer.
+    /// </para>
+    /// <para>
+    /// A scalar/anonymous projection (<c>!isEntityShaped</c>) never reads through that alias — its leaf
+    /// fields are baked in as literal structural paths (e.g. <c>Outer.Outer._id</c>) that match whatever
+    /// shape the driver's native rendering actually produces, so chaining native rendering two levels deep
+    /// is fine there as long as every join involved is a plain inner <c>Join</c> (see
+    /// <c>NorthwindMiscellaneousQueryMongoTest.Join_Customers_Orders_Orders_Skip_Take_Same_Properties</c>).
+    /// It still breaks when one of the un-reattached joins is left-outer (<c>LeftJoin</c>/<c>GroupJoin</c> +
+    /// <c>DefaultIfEmpty</c>) - the second level's null-preserving <c>$unwind</c> re-nests under another
+    /// <c>_outer</c> that those baked-in paths never expected, materializing null entities instead of
+    /// failing loudly (see EF-X024).
+    /// </para>
+    /// </summary>
+    private void GuardAgainstUnstrippableMultiJoin(Expression? stripped, Expression fullQuery, bool isEntityShaped)
+    {
+        var forceUnwindLookups = _pendingLookups.Where(l => l.ForceUnwind).ToList();
+        if (stripped == null
+            && forceUnwindLookups.Count > 1
+            && (isEntityShaped || forceUnwindLookups.Any(l => l.PreserveNullAndEmptyArrays)))
+        {
+            throw new InvalidOperationException(
+                Microsoft.EntityFrameworkCore.Diagnostics.CoreStrings.TranslationFailed(fullQuery.Print()));
         }
     }
 
