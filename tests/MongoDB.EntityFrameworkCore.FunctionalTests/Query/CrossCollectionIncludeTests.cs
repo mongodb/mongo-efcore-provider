@@ -342,6 +342,41 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
 #endif
 
     [Fact]
+    public void Filtered_include_multi_key_order_by_then_by_applies_full_sort()
+    {
+        // EF-433: OrderBy(...).ThenBy(...) inside a filtered Include must produce a single $sort stage
+        // with both keys, not two sequential $sort stages (the second of which would silently discard
+        // the first key's ordering). Alice's orders share Priority for two of the three orders, so the
+        // secondary key (Amount) only takes effect within that group if both keys are honored together.
+        var (ordersCollection, customersCollection) = SetupOrdersAndCustomersForMultiKeySort();
+
+        using var db = new OrderCustomerDbContext(database, ordersCollection, customersCollection);
+
+        var customer = db.Customers
+            .Include(c => c.Orders.OrderBy(o => o.Priority).ThenBy(o => o.Amount))
+            .First(c => c.FullName == "Alice");
+
+        Assert.Equal([1, 1, 2], customer.Orders.Select(o => o.Priority));
+        Assert.Equal([10, 20, 5], customer.Orders.Select(o => o.Amount));
+    }
+
+    [Fact]
+    public void Filtered_include_order_by_unsupported_key_selector_is_not_silently_dropped()
+    {
+        // EF-433: a key selector that isn't a simple property access must fail loudly (translation
+        // failure) rather than silently fall back to sorting by "_id", which would return a plausible
+        // but wrong order with no error raised.
+        var (ordersCollection, customersCollection) = SetupOrdersAndCustomers();
+
+        using var db = new OrderCustomerDbContext(database, ordersCollection, customersCollection);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            db.Customers
+                .Include(c => c.Orders.OrderBy(o => o.OrderDescription.ToUpper()))
+                .First(c => c.FullName == "Alice"));
+    }
+
+    [Fact]
     public void Filtered_collection_include_predicate_is_not_silently_dropped()
     {
         // A user filtered-Include predicate (.Include(c => c.Orders.Where(...))) lowers to a Where inside
@@ -442,11 +477,36 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         return (linesName, ordersName, buyersName, regionsName);
     }
 
+    // Alice's orders: two share Priority 1 (Amounts 20 then 10, inserted out of Amount order) and one has
+    // Priority 2. Sorting by Priority then Amount must yield Amount order [10, 20, 5]; sorting by Amount
+    // alone (the ThenBy-collapse bug) would yield [5, 10, 20] instead.
+    private (string ordersCollection, string customersCollection) SetupOrdersAndCustomersForMultiKeySort()
+    {
+        var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("IncludeCustomers") + Guid.NewGuid().ToString("N")[..8];
+        var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("IncludeOrders") + Guid.NewGuid().ToString("N")[..8];
+
+        var customerId = ObjectId.GenerateNewId();
+
+        var customers = database.MongoDatabase.GetCollection<BsonDocument>(customersName);
+        customers.InsertOne(new BsonDocument { { "_id", customerId }, { "name", "Alice" } });
+
+        var orders = database.MongoDatabase.GetCollection<BsonDocument>(ordersName);
+        orders.InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "desc", "Order A" }, { "cust_id", customerId }, { "priority", 1 }, { "amount", 20 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "desc", "Order B" }, { "cust_id", customerId }, { "priority", 2 }, { "amount", 5 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "desc", "Order C" }, { "cust_id", customerId }, { "priority", 1 }, { "amount", 10 } }
+        ]);
+
+        return (ordersName, customersName);
+    }
+
     class Order
     {
         public ObjectId _id { get; set; }
         public string OrderDescription { get; set; }
         public ObjectId? CustomerId { get; set; }
+        public int? Priority { get; set; }
+        public int? Amount { get; set; }
         public Customer Customer { get; set; }
     }
 
@@ -499,6 +559,8 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
                 b.ToCollection(_ordersCollection);
                 b.Property(o => o.OrderDescription).HasElementName("desc");
                 b.Property(o => o.CustomerId).HasElementName("cust_id");
+                b.Property(o => o.Priority).HasElementName("priority");
+                b.Property(o => o.Amount).HasElementName("amount");
             });
         }
 
