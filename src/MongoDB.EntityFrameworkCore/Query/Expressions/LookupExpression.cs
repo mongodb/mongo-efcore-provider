@@ -56,6 +56,7 @@ internal sealed class LookupExpression
         }
 
         As = GetLookupAlias(navigation);
+        TargetEntityType = navigation.TargetEntityType;
 
         // TPH: sibling subtypes can share the same FK value space, so FK equality alone would also
         // match sibling-type documents; narrow by discriminator to just this type and its derived types.
@@ -72,19 +73,39 @@ internal sealed class LookupExpression
     }
 
     /// <summary>
-    /// The synthetic field name that a cross-collection <c>$lookup</c> writes its joined documents to
-    /// (the lookup's <see cref="As"/>) and that the shaper reads them back from. Centralized so every
-    /// write site (the lookup stage) and read site (projection binding) derive the identical alias from
-    /// the navigation, rather than re-spelling the <c>_lookup_</c> format independently and risking a
-    /// write/read mismatch.
+    /// Create a <see cref="LookupExpression"/> for a Join hop with no corresponding model navigation,
+    /// built directly from resolved join-key field paths instead of an <see cref="INavigation"/>.
+    /// </summary>
+    public LookupExpression(
+        IEntityType targetEntityType, string collectionName, string localField, string foreignField, string alias,
+        bool forceUnwind)
+    {
+        Navigation = null;
+        TargetEntityType = targetEntityType;
+        ForceUnwind = forceUnwind;
+        From = collectionName;
+        LocalField = localField;
+        ForeignField = foreignField;
+        As = alias;
+    }
+
+    /// <summary>
+    /// The field a <c>$lookup</c> writes its results to and the shaper reads back from. Centralized so
+    /// write and read sites can't drift on the <c>_lookup_</c> format.
     /// </summary>
     /// <param name="navigation">The navigation the lookup supports.</param>
     /// <returns>The <c>_lookup_&lt;NavigationName&gt;</c> field name.</returns>
     public static string GetLookupAlias(IReadOnlyNavigationBase navigation)
         => $"_lookup_{navigation.Name}";
 
-    /// <summary>The navigation this lookup supports.</summary>
-    public INavigation Navigation { get; }
+    /// <summary>The navigation this lookup supports, or <see langword="null"/> for a bare key-equality
+    /// Join hop with no corresponding model navigation (see EF-377).</summary>
+    public INavigation? Navigation { get; }
+
+    /// <summary>The entity type this lookup's <c>$lookup</c> stage produces documents for. Always
+    /// available, unlike <see cref="Navigation"/>, so consumers can match a lookup back to an entity
+    /// type without assuming a navigation exists.</summary>
+    public IEntityType TargetEntityType { get; }
 
     /// <summary>The target collection name to look up from.</summary>
     public string From { get; }
@@ -129,8 +150,9 @@ internal sealed class LookupExpression
     /// <summary>Whether this lookup uses a pipeline (filtered Include).</summary>
     public bool HasPipeline => PipelineStages.Count > 0;
 
-    /// <summary>Whether this lookup is for a single reference (not a collection).</summary>
-    public bool IsReference => !Navigation.IsCollection;
+    /// <summary>Whether this lookup is for a single reference (not a collection). A navigation-less
+    /// lookup (<see cref="Navigation"/> is <see langword="null"/>) is always treated as a reference.</summary>
+    public bool IsReference => Navigation is not { IsCollection: true };
 
     /// <summary>Whether $unwind should be applied after $lookup.</summary>
     public bool ShouldUnwind => IsReference || ForceUnwind;
