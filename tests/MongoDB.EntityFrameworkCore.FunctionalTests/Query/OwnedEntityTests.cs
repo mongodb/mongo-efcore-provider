@@ -459,6 +459,117 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void OwnedEntity_dotted_scalar_leaf_projects_alongside_array_leaf()
+    {
+        var collection = database.CreateCollection<BlogWithHome>();
+
+        var id = ObjectId.GenerateNewId();
+
+        var modelBuilder = (ModelBuilder mb) =>
+        {
+            mb.Entity<BlogWithHome>().OwnsOne(b => b.Home, h => h.OwnsMany(x => x.Notes, n => n.HasKey(x => x.NoteId)));
+        };
+
+        {
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            dbContext.Entities.Add(new BlogWithHome
+            {
+                _id = id,
+                Home = new Home { City = "Springfield", Notes = [new Note { NoteId = 1, Text = "a" }, new Note { NoteId = 2, Text = "b" }] }
+            });
+            dbContext.SaveChanges();
+        }
+
+        {
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            var found = dbContext.Entities.AsNoTracking()
+                .Where(e => e._id == id)
+                .Select(e => new { e.Home.City, e.Home.Notes })
+                .Single();
+
+            Assert.Equal(["a", "b"], found.Notes.Select(n => n.Text));
+            Assert.Equal("Springfield", found.City);
+        }
+    }
+
+    private record BlogWithHome
+    {
+        public ObjectId _id { get; set; }
+        public Home Home { get; set; }
+    }
+
+    private record Home
+    {
+        public string City { get; set; }
+        public List<Note> Notes { get; set; }
+    }
+
+    private record Note
+    {
+        public int NoteId { get; set; }
+        public string Text { get; set; }
+    }
+
+    [Fact]
+    public void OwnedEntity_two_level_dotted_scalar_leaf_projects_alongside_array_leaf()
+    {
+        var collection = database.CreateCollection<BlogWithNestedHome>();
+
+        var id = ObjectId.GenerateNewId();
+
+        var modelBuilder = (ModelBuilder mb) =>
+        {
+            mb.Entity<BlogWithNestedHome>().OwnsOne(b => b.Home, h =>
+            {
+                h.OwnsMany(x => x.Notes, n => n.HasKey(x => x.NoteId));
+                h.OwnsOne(x => x.Inner);
+            });
+        };
+
+        {
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            dbContext.Entities.Add(new BlogWithNestedHome
+            {
+                _id = id,
+                Home = new NestedHome
+                {
+                    Inner = new InnerHome { City = "Springfield" },
+                    Notes = [new Note { NoteId = 1, Text = "a" }, new Note { NoteId = 2, Text = "b" }]
+                }
+            });
+            dbContext.SaveChanges();
+        }
+
+        {
+            using var dbContext = SingleEntityDbContext.Create(collection, modelBuilder);
+            var found = dbContext.Entities.AsNoTracking()
+                .Where(e => e._id == id)
+                .Select(e => new { e.Home.Inner.City, e.Home.Notes })
+                .Single();
+
+            Assert.Equal(["a", "b"], found.Notes.Select(n => n.Text));
+            Assert.Equal("Springfield", found.City);
+        }
+    }
+
+    private record BlogWithNestedHome
+    {
+        public ObjectId _id { get; set; }
+        public NestedHome Home { get; set; }
+    }
+
+    private record NestedHome
+    {
+        public InnerHome Inner { get; set; }
+        public List<Note> Notes { get; set; }
+    }
+
+    private record InnerHome
+    {
+        public string City { get; set; }
+    }
+
+    [Fact]
     public void OwnedEntity_collection_projection_alias_with_bson_representation_uses_owned_property_serializer()
     {
         var collection = database.CreateCollection<PersonWithMultipleLocations>();
