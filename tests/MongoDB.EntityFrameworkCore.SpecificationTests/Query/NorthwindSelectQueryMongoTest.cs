@@ -1433,22 +1433,20 @@ Customers.
 
         AssertMql();
 #else
-        // The join's inner is Orders.OrderByDescending(OrderID).Skip(2).Reverse() — a self-paging inner, which
-        // makes the CSHARP-6017 paged-join-inner guard hard-decline before the query ever reaches the driver.
-        // Unlike the wrong-data shapes this guard exists for, THIS query never returned wrong rows: before the
-        // guard existed it already threw driver ExpressionNotSupportedException, because the driver's LINQ
-        // provider separately rejects Reverse inside a join (CSHARP-5836, the same reason the EF8/EF9 arm
-        // above throws). Only the exception source/type changes here — driver-side Reverse rejection becomes
-        // a provider-side translation decline — not a throw-where-it-used-to-succeed change.
-        // TODO(EF-406): on driver fix, revert to the ExpressionNotSupportedException assertion with a
-        // real MQL baseline. "On driver fix" means the tripwire
-        // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
-        // goes RED — NOT that CSHARP-6017 closes: it is already Closed/Done at fixVersion 3.10.0, the driver
-        // version this branch pins, and the fold is MEASURED still live against it.
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022. The join's inner is
+        // Orders.OrderByDescending(OrderID).Skip(2).Reverse() — a sorted+paged sub-query, which driver 3.11
+        // rejects with ExpressionNotSupportedException ("expression must be a MongoDB IQueryable against a
+        // collection"); see docs/failing-spec-tests.md § EF-X022. This query never returned wrong rows on any
+        // driver version: the driver's LINQ provider ALSO separately rejects Reverse inside a join
+        // (CSHARP-5836, the same reason the EF8/EF9 arm above throws), so this has always been a clean throw.
+        // The rejection happens after the outer collection is logged, so a partial pipeline is captured.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.Reverse_in_join_inner_with_skip(async));
 
-        AssertMql();
+        AssertMql(
+            """
+            Customers.
+            """);
 #endif
     }
 

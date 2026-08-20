@@ -65,19 +65,6 @@ internal static class NativeSlotPopulator
         if (mongoQ.Select.HasTerminalOperator && !mongoQ.Select.IsSetOpTerminalOnly
             && IsPostGroupSlotOperator(methodDefinition))
         {
-            // TODO: delete this MarkSawUnrecordedPaging call, and the rest of the paging guard, once
-            // the driver stops folding a paged join-inner subquery into the correlated $lookup sub-pipeline
-            // (CSHARP-6017). Until then: a Skip/Take declined here is never recorded as a native op, but it
-            // stays in the captured method chain the driver-LINQ fallback executes, so the driver can still
-            // fold it into the $lookup's own sub-pipeline when this sequence is used as a join inner — e.g.
-            // Orders.Join(Regions.Select(r => new {r.Country}).Distinct().Take(1), ...) silently returns all
-            // rows instead of respecting the Take. Recording the fact here ("a Skip/Take was seen and not
-            // lowered") is what the tripwire test for that fold keys on.
-            if (methodDefinition == QueryableMethods.Skip || methodDefinition == QueryableMethods.Take)
-            {
-                mongoQ.Select.MarkSawUnrecordedPaging();
-            }
-
             mongoQ.Select.MarkNotNativelyRepresentable();
             return;
         }
@@ -121,12 +108,7 @@ internal static class NativeSlotPopulator
             // at its arrival position, and the lowerer emits ops verbatim.
             var count = TranslateCountExpression(call.Arguments[1]);
             if (count is null)
-            {
-                // TODO: same rationale as the post-group guard above — declined here rather than
-                // recorded, but still reachable via the fallback's captured chain for the CSHARP-6017 fold.
-                mongoQ.Select.MarkSawUnrecordedPaging();
                 mongoQ.Select.MarkNotNativelyRepresentable();
-            }
             else
                 mongoQ.Select.AppendSkip(count);
         }
@@ -134,10 +116,7 @@ internal static class NativeSlotPopulator
         {
             var count = TranslateCountExpression(call.Arguments[1]);
             if (count is null)
-            {
-                mongoQ.Select.MarkSawUnrecordedPaging();
                 mongoQ.Select.MarkNotNativelyRepresentable();
-            }
             else
                 mongoQ.Select.AppendLimit(count);
         }

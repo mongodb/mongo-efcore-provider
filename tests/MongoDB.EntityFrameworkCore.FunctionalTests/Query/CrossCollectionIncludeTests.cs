@@ -414,12 +414,11 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Filtered_include_with_paging_still_runs_and_is_correct()
     {
-        // CONTROL for an over-broad paged-join-inner guard (EF-406, for the CSHARP-6017 fold; see
-        // NativeJoinPagedInnerDeclineTests). A FILTERED Include
-        // puts $sort/$skip/$limit inside a native "_lookup_<Nav>" sub-pipeline too, but there the per-outer-row
+        // CONTROL against an over-broad decline on "there is paging inside a $lookup sub-pipeline" (see
+        // NativeJoinInnerDeclineTests for the Queryable.Join inner boundary). A FILTERED Include puts
+        // $sort/$skip/$limit inside a native "_lookup_<Nav>" sub-pipeline too, but there the per-outer-row
         // semantics are exactly what Include means, so the result is CORRECT and must not be declined. The
-        // paging here lives on a NAVIGATION, not on a Queryable.Join inner, so the guard's site
-        // (TranslateJoinCore) never sees it — this test is what keeps that true.
+        // paging here lives on a NAVIGATION, not on a Queryable.Join inner — this test is what keeps that true.
         var (ordersCollection, customersCollection) = SetupOrdersAndCustomers();
         using var db = new OrderCustomerDbContext(database, ordersCollection, customersCollection);
 

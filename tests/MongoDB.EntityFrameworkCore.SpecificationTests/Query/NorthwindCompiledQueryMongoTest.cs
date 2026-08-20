@@ -175,7 +175,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$count" : "_v" }
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$count" : "v" }
 """);
     }
 
@@ -265,11 +265,15 @@ Customers.{ "$match" : { "_id" : "ANATR" } }
     // so it cannot be quietly satisfied by some third unrelated InvalidOperationException.
     public override void Multiple_queries()
     {
-        // Fails: two separately-compiled queries against different DbSets on the same context leak
-        // translation state between them (a pre-existing EF-216 cross-DbSet limitation); after the
-        // EF-233 fix this now surfaces as an ArgumentException from the driver-LINQ rebuild rather
-        // than the provider's own "Unsupported cross-DbSet query" guard.
-        Assert.Throws<ArgumentException>(() => base.Multiple_queries());
+        var exception = Assert.Throws<InvalidOperationException>(() => base.Multiple_queries());
+
+        // The frame, not the message: the parameterless InvalidOperationException carries no text of its own
+        // ("Operation is not valid due to the current state of the object"), so naming the throw site is the
+        // only way to distinguish this from an unrelated InvalidOperationException — in particular from the
+        // driver-LINQ bridge's own "Unsupported cross-DbSet query between ..." guard, which is what this
+        // query used to reach and what it would reach again if the projection stopped being pushed down.
+        Assert.Contains("GetConstantValue", exception.StackTrace);
+        Assert.DoesNotContain("Unsupported cross-DbSet query", exception.Message);
     }
 
     public override void Compiled_query_when_using_member_on_context()

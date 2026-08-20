@@ -961,17 +961,18 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
     public override async Task Join_complex_GroupBy_Aggregate(bool async)
     {
-        // Declines: the join's inner is `Customers.Where(…).OrderBy(City).Skip(10).Take(50)` — a self-paging
-        // inner, which driver 3.10 mistranslates (CSHARP-6017) into a $lookup sub-pipeline that returns 0 rows
-        // instead of 29. The provider hard-declines the shape rather than route to that fallback, so no MQL is
-        // emitted. TODO(EF-406): on driver fix this goes back to `await base.…` with a real MQL baseline. "On
-        // driver fix" means the tripwire
-        // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
-        // goes RED — NOT that CSHARP-6017 closes: it is already Closed/Done at fixVersion 3.10.0, the driver
-        // version this branch pins, and the fold is MEASURED still live against it.
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022. The join's inner is
+        // `Customers.Where(…).OrderBy(City).Skip(10).Take(50)` — a filtered+sorted+paged sub-query. Driver 3.11
+        // rejects it outright ("expression must be a MongoDB IQueryable against a collection") rather than
+        // folding it into the correlated $lookup sub-pipeline the way 3.10 silently did (3.10 returned 0 rows
+        // instead of 29). Failing loudly is the documented boundary; see docs/failing-spec-tests.md § EF-X022.
+        // The rejection happens after the outer collection is logged, so a partial pipeline is captured.
         await AssertTranslationFailed(() => base.Join_complex_GroupBy_Aggregate(async));
 
-        AssertMql();
+        AssertMql(
+            """
+            Orders.
+            """);
     }
 
     public override async Task GroupJoin_GroupBy_Aggregate(bool async)
@@ -1030,17 +1031,18 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
     public override async Task GroupJoin_complex_GroupBy_Aggregate(bool async)
     {
-        // Declines: the join's inner is `Orders.Where(< 10400).OrderBy(OrderDate).Take(100)` — a self-paging
-        // inner, which driver 3.10 mistranslates (CSHARP-6017) into a $lookup sub-pipeline that returns 27 rows
-        // instead of 20. The provider hard-declines the shape rather than route to that fallback, so no MQL is
-        // emitted. TODO(EF-406): on driver fix this goes back to `await base.…` with a real MQL baseline. "On
-        // driver fix" means the tripwire
-        // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
-        // goes RED — NOT that CSHARP-6017 closes: it is already Closed/Done at fixVersion 3.10.0, the driver
-        // version this branch pins, and the fold is MEASURED still live against it.
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022. The join's inner is
+        // `Orders.Where(< 10400).OrderBy(OrderDate).Take(100)` — a filtered+sorted+paged sub-query. Driver 3.11
+        // rejects it outright ("expression must be a MongoDB IQueryable against a collection") rather than
+        // folding it into the correlated $lookup sub-pipeline the way 3.10 silently did (3.10 returned 27 rows
+        // instead of 20). Failing loudly is the documented boundary; see docs/failing-spec-tests.md § EF-X022.
+        // The rejection happens after the outer collection is logged, so a partial pipeline is captured.
         await AssertTranslationFailed(() => base.GroupJoin_complex_GroupBy_Aggregate(async));
 
-        AssertMql();
+        AssertMql(
+            """
+            Customers.
+            """);
     }
 
     public override async Task Self_join_GroupBy_Aggregate(bool async)
@@ -1329,8 +1331,8 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         // Declines: the join's inner is a SUBQUERY that itself joins a grouped source, so the wrong-data verdict
         // is reached on the intermediate query expression and propagated to the outer one
         // (MongoSelectDefinition.PropagateFallbackWrongDataFrom). Without that propagation the driver-LINQ
-        // fallback executed and returned 0 rows instead of 133. No paging is involved, so this is NOT the
-        // CSHARP-6017 guard and it stays after the driver is fixed.
+        // fallback executed and returned 0 rows instead of 133. This is the provider's own permanent,
+        // driver-independent GroupBy+Join wrong-data hard-decline (EF-344), not a driver-rejection boundary.
         await AssertTranslationFailed(() => base.Join_GroupBy_Aggregate_in_subquery(async));
 
         AssertMql();
@@ -1906,24 +1908,14 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
     public override async Task GroupBy_with_group_key_access_thru_nested_navigation(bool async)
     {
-#if EF8 || EF9
-        // On EF8/EF9 this shape still fails to translate at all (an EF InvalidOperationException before any
-        // pipeline runs), so the previous translation-failure expectation still holds there.
-        // Fails: GroupBy issue EF-149
+        // Fails: GroupBy issue EF-149. This override briefly carried an `#if EF8 || EF9` split whose EF10 arm
+        // asserted SUCCESS plus a driver-LINQ pipeline baseline, on the strength of driver 3.10 translating
+        // the two-hop join. That is no longer true and the split is gone: the chain now declines at
+        // GuardAgainstUnstrippableMultiJoin, before any pipeline runs, uniformly on all three EF majors -
+        // which is also what the main-bound line asserts. Hence one un-`#if`'d arm and an empty AssertMql().
         await AssertTranslationFailed(() => base.GroupBy_with_group_key_access_thru_nested_navigation(async));
 
         AssertMql();
-#else
-        // Driver 3.10 translates this correctly on EF10 (it did not at 3.9), so the query now returns correct
-        // data and the previous translation-failure expectation is false there. The baseline below is the
-        // driver-LINQ fallback's real pipeline, captured from the run.
-        await base.GroupBy_with_group_key_access_thru_nested_navigation(async);
-
-        AssertMql(
-            """
-            OrderDetails.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id.OrderID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.Inner.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$group" : { "_id" : "$Inner.Country", "__agg0" : { "$sum" : "$Outer.Outer._id.OrderID" } } }, { "$project" : { "Key" : "$_id", "Aggregate" : "$__agg0", "_id" : 0 } }
-            """);
-#endif
     }
 
     public override async Task GroupBy_with_group_key_being_navigation(bool async)
@@ -1939,22 +1931,15 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
     public override async Task GroupBy_with_group_key_being_nested_navigation(bool async)
     {
-        // Fails: GroupBy issue EF-149. Still fails, but now only after a real pipeline executes: the
-        // driver-LINQ fallback's $group key is the whole nested Customer entity, and the driver deserializes
-        // that key with BsonClassMapSerializer<Customer> rather than the registered entity serializer, so the
-        // shaped result doesn't round-trip and throws FormatException. The recorded MQL below drifted with
-        // driver 3.10 (its lookup/unwind shape changed); the underlying driver behaviour above is recommended
-        // follow-up (ii) in docs/superpowers/specs/2026-07-31-groupby-join-uncorrelated-inner-decline-design.md.
+        // Fails: GroupBy issue EF-149. The EF10 arm used to record a real driver-LINQ pipeline here, because
+        // under driver 3.10 this shape got as far as EXECUTING one and only then failed to deserialize the
+        // $group key (the key is the whole nested Customer entity, which the driver decodes with
+        // BsonClassMapSerializer<Customer> rather than the registered entity serializer). It no longer reaches
+        // execution: the two-hop join chain declines during translation, so nothing is logged and the baseline
+        // is empty on every EF major - matching the main-bound line. Hence no `#if` here either.
         await AssertTranslationFailed(() => base.GroupBy_with_group_key_being_nested_navigation(async));
 
-#if EF8 || EF9
         AssertMql();
-#else
-        AssertMql(
-            """
-            OrderDetails.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id.OrderID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.Inner.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$group" : { "_id" : "$Inner", "__agg0" : { "$sum" : "$Outer.Outer._id.OrderID" } } }, { "$project" : { "Key" : "$_id", "Aggregate" : "$__agg0", "_id" : 0 } }
-            """);
-#endif
     }
 
     public override async Task GroupBy_with_group_key_being_navigation_with_entity_key_projection(bool async)
@@ -2345,26 +2330,21 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
     //AssertMql(" ");
     public override async Task Complex_query_with_group_by_in_subquery5(bool async)
     {
-        // Fails: GroupBy issue EF-149. Driver 3.10 changed the failure TYPE for this unsupported shape:
-        // ConstantExpressionToAggregationExpressionTranslator now tries to BSON-serialize the un-inlined
-        // MongoQuery<Customer,Customer> subquery constant and dies in BsonClassMap.Freeze() with a duplicate
-        // element name, where 3.9 threw ExpressionNotSupportedException. Per AGENTS.md an exception-type change
-        // on an UNSUPPORTED operation is not a breaking change, so the accepted-type list is widened here — at
-        // this call site only, so the file-wide shadow stays strict for every other case. The driver-side
-        // ugliness (a translation error surfacing as a serialization error) is recommended follow-up (i) in
-        // docs/superpowers/specs/2026-07-31-groupby-join-uncorrelated-inner-decline-design.md §5.
+        // Fails: GroupBy issue EF-149. The accepted-type list stays widened at THIS call site (the file-wide
+        // shadow remains strict elsewhere): for this unsupported shape the driver's
+        // ConstantExpressionToAggregationExpressionTranslator tries to BSON-serialize the un-inlined
+        // MongoQuery<Customer,Customer> subquery constant and dies inside BsonClassMap.Freeze(), so a
+        // TRANSLATION error surfaces as a SERIALIZATION one. Per AGENTS.md the exception type of an
+        // unsupported operation is not part of the contract, so this is accepted rather than chased.
+        //
+        // What DID change: the EF10 arm used to record one logged statement ("OrderDetails.") because the
+        // outer collection was reached before the failure. It no longer is, so the baseline is empty on every
+        // EF major and the `#if` is gone - matching the main-bound line.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.Complex_query_with_group_by_in_subquery5(async),
             typeof(ArgumentException), typeof(FormatException), typeof(BsonSerializationException));
 
-#if EF8 || EF9
         AssertMql();
-#else
-        AssertMql(
-            """
-            OrderDetails.
-            """);
-#endif
     }
 
     public override async Task Complex_query_with_groupBy_in_subquery4(bool async)

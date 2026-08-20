@@ -343,7 +343,7 @@ internal sealed class MongoSelectLowerer
                 // IncludeCollection fixup, exactly as on the driver-LINQ path.
                 stages.Add(new MongoLookupStage(lookup));
             }
-            else if (lookup.Navigation.IsCollection && lookup.ForceUnwind)
+            else if (lookup.Navigation is { IsCollection: true } && lookup.ForceUnwind)
             {
                 // A cross-collection reference SelectMany flatten: $lookup the referenced collection, then
                 // $unwind to one row per child with inner-join semantics (preserve:false) — a principal with
@@ -354,9 +354,14 @@ internal sealed class MongoSelectLowerer
             }
             else
             {
+                // Navigation is null for an EF-377 Join hop with no model navigation; name the target
+                // entity type instead so the message stays useful rather than throwing a NullReference.
                 throw new NativeTranslationNotSupportedException(
-                    $"Native pipeline does not support lookup for navigation '{lookup.Navigation.Name}' " +
-                    "(only single-level reference and single-level collection includes).");
+                    "Native pipeline does not support lookup for "
+                    + (lookup.Navigation is { } nav
+                        ? $"navigation '{nav.Name}' "
+                        : $"navigation-less join onto '{lookup.TargetEntityType.DisplayName()}' ")
+                    + "(only single-level reference and single-level collection includes).");
             }
         }
     }

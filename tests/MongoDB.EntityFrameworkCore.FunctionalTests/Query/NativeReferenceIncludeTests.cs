@@ -27,6 +27,7 @@ using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
+using MongoDB.Driver.Linq;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
@@ -389,28 +390,28 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
                 () => nativeOnly.Orders.Include(o => o.Buyer).ToList());
         }
 
-        using var native = CreateContext(MongoQueryMode.Native,
-            nameof(Query_filter_on_the_included_target_still_declines) + "_Native", buyerQueryFilter: true);
-        using var driverLinq = CreateContext(MongoQueryMode.DriverLinq,
-            nameof(Query_filter_on_the_included_target_still_declines) + "_DriverLinq", buyerQueryFilter: true);
+        // THE ROW-COUNT PROOF THIS TEST USED TO CARRY IS NO LONGER AVAILABLE, and that is a driver change
+        // rather than a provider one. It used to decline native and then execute on driver-LINQ, so it could
+        // assert the FILTERED row count and catch the guard's removal as "830 rows where 80 is correct".
+        // Driver 3.11 rejects a join whose inner is a filtered sub-query outright (EF-X022), so the shape now
+        // hard-fails in BOTH fallback-capable modes and there is no row set left to count.
+        //
+        // What still holds, and is what matters: the filter is never SILENTLY IGNORED. Every route either
+        // declines or throws - none returns unfiltered rows.
+        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        {
+            using var db = CreateContext(mode,
+                nameof(Query_filter_on_the_included_target_still_declines) + "_" + mode, buyerQueryFilter: true);
 
-        var nativeResults = native.Orders.Include(o => o.Buyer).ToList();
-        var driverResults = driverLinq.Orders.Include(o => o.Buyer).ToList();
+            Assert.Throws<ExpressionNotSupportedException>(() => db.Orders.Include(o => o.Buyer).ToList());
+        }
 
-        Assert.Equal(driverResults.Count, nativeResults.Count);
-        Assert.Equal(
-            driverResults.Select(o => o.Total).OrderBy(x => x),
-            nativeResults.Select(o => o.Total).OrderBy(x => x));
-
-        // The filter must actually be doing something observable, else this test would pass vacuously
-        // even with the decline guard deleted (the guard only matters if the filter changes the answer).
-        // Confirm against an UNFILTERED baseline (same seed, no query filter) that the filtered native
-        // result really differs from what an unfiltered reference Include returns.
-        using var unfiltered = CreateContext(MongoQueryMode.Native,
+        // Non-vacuity control: the same Include over the same seed WITHOUT the query filter still runs
+        // natively and returns rows. So the failure above is specific to the filter, not a blanket
+        // inability to translate this Include - which is what a reader would otherwise have to assume.
+        using var unfiltered = CreateContext(MongoQueryMode.NativeOnly,
             nameof(Query_filter_on_the_included_target_still_declines) + "_Unfiltered", buyerQueryFilter: false);
-        var unfilteredResults = unfiltered.Orders.Include(o => o.Buyer).ToList();
-        Assert.NotEqual(unfilteredResults.Count, nativeResults.Count);
-        Assert.All(nativeResults, o => Assert.True(o.Buyer == null || o.Buyer.Name == "Alice"));
+        Assert.NotEmpty(unfiltered.Orders.Include(o => o.Buyer).ToList());
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -444,21 +445,16 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
             nameof(Query_filter_inherited_from_a_TPH_root_on_the_included_target_declines));
         SeedTphFilterModel(tickets, parties);
 
-        using var native = new TphFilterDbContext(database, tickets, parties, MongoQueryMode.Native);
-        using var driverLinq = new TphFilterDbContext(database, tickets, parties, MongoQueryMode.DriverLinq);
-
-        var nativeRows = native.Tickets.Include(t => t.Owner).ToList();
-        var driverRows = driverLinq.Tickets.Include(t => t.Owner).ToList();
-
-        // Rows are asserted BEFORE the NativeOnly decline deliberately: it makes the mutation proof read the
-        // wrong ROW COUNT (2 where 1 is correct) rather than only "no exception was thrown".
-        // Two tickets seeded, one owner soft-deleted by the TPH ROOT's filter, required FK ⇒ exactly one row.
-        Assert.Single(nativeRows);
-        Assert.Equal("live", nativeRows[0].Code);
-        Assert.Equal(
-            driverRows.Select(t => t.Code).OrderBy(x => x),
-            nativeRows.Select(t => t.Code).OrderBy(x => x));
-        Assert.All(nativeRows, t => Assert.False(t.Owner.IsDeleted));
+        // The row-count mutation proof this test used to carry ("2 where 1 is correct") is no longer
+        // available: driver 3.11 rejects a join over a filtered inner sub-query outright (EF-X022), so the
+        // shape hard-fails in both fallback-capable modes instead of executing. See the sibling
+        // Query_filter_on_the_included_target_still_declines for the full note. What is still pinned is that
+        // a TPH-ROOT-INHERITED filter is never silently dropped - the route the old metadata guard missed.
+        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        {
+            using var db = new TphFilterDbContext(database, tickets, parties, mode);
+            Assert.Throws<ExpressionNotSupportedException>(() => db.Tickets.Include(t => t.Owner).ToList());
+        }
 
         using var nativeOnly = new TphFilterDbContext(database, tickets, parties, MongoQueryMode.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
@@ -472,20 +468,15 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         var (cards, members) = FilteredTargetCollections(nameof(Named_query_filter_on_the_included_target_declines));
         SeedNamedFilterModel(cards, members);
 
-        using var native = new NamedFilterDbContext(database, cards, members, MongoQueryMode.Native);
-        using var driverLinq = new NamedFilterDbContext(database, cards, members, MongoQueryMode.DriverLinq);
-
-        var nativeRows = native.Cards.Include(c => c.Member).ToList();
-        var driverRows = driverLinq.Cards.Include(c => c.Member).ToList();
-
-        // Rows before the decline, same reason as the TPH test above.
-        // 2 cards, 1 soft-deleted member, required FK ⇒ exactly one row (2 with the guard reverted).
-        Assert.Single(nativeRows);
-        Assert.Equal("live", nativeRows[0].Code);
-        Assert.Equal(
-            driverRows.Select(c => c.Code).OrderBy(x => x),
-            nativeRows.Select(c => c.Code).OrderBy(x => x));
-        Assert.All(nativeRows, c => Assert.False(c.Member.IsDeleted));
+        // Row-count proof no longer available under driver 3.11, same as the TPH test above (EF-X022). What
+        // is still pinned is that an EF10 NAMED filter - the second route the old metadata guard missed,
+        // since it lives in GetDeclaredQueryFilters() rather than GetQueryFilter() - is never silently
+        // dropped.
+        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        {
+            using var db = new NamedFilterDbContext(database, cards, members, mode);
+            Assert.Throws<ExpressionNotSupportedException>(() => db.Cards.Include(c => c.Member).ToList());
+        }
 
         using var nativeOnly = new NamedFilterDbContext(database, cards, members, MongoQueryMode.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(

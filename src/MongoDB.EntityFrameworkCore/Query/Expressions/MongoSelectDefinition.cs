@@ -130,37 +130,6 @@ internal sealed class MongoSelectDefinition
     /// <summary><see langword="true"/> when any $limit op is present.</summary>
     internal bool HasLimit => _pipelineOps.Exists(o => o is MongoLimitOp);
 
-    private bool _sawUnrecordedPaging;
-
-    /// <summary>
-    /// Records that a <c>Skip</c>/<c>Take</c> was SEEN on this sequence but NOT recorded as a
-    /// <see cref="MongoSkipOp"/>/<see cref="MongoLimitOp"/> — the operator was declined (the query falls back to
-    /// driver-LINQ) rather than lowered. The paging is still in the captured method chain the fallback executes,
-    /// so <see cref="HasPagingAnywhere"/> must still see it. Deliberately does NOT mark the query non-native —
-    /// every caller already does that for its own reason.
-    /// Delete together with <see cref="HasPagingAnywhere"/> and <see cref="MarkPagedJoinInnerFallbackUnsafe"/>
-    /// once the driver fixes CSHARP-6017 (see that flag's remarks) — the tripwire is
-    /// <c>NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017</c>
-    /// going red.
-    /// </summary>
-    internal void MarkSawUnrecordedPaging() => _sawUnrecordedPaging = true;
-
-    /// <summary>
-    /// <see langword="true"/> when a <c>$skip</c> or <c>$limit</c> op is present in EITHER op list, OR a
-    /// <c>Skip</c>/<c>Take</c> was seen but declined rather than recorded (see
-    /// <see cref="MarkSawUnrecordedPaging"/>). Unlike <see cref="HasPaging"/> — which deliberately scans
-    /// <c>_pipelineOps</c> only, because its consumer gates a PRE-terminal GroupBy that is unreachable after a
-    /// set op — this must see paging wherever it appeared: a <c>Take</c> composed AFTER a set operation (which
-    /// lands in <see cref="TrailingOps"/>), or one composed after a non-set-op terminal (which lands in neither
-    /// list). Read by the QMTEV's <c>TranslateJoinCore</c> paged-join-inner guard: the question it answers is
-    /// "was a <c>Skip</c>/<c>Take</c> RECORDED ANYWHERE on this sequence?", because the guard's real subject is
-    /// the captured method chain the driver-LINQ fallback executes, not the native op lists — a declined
-    /// <c>Skip</c>/<c>Take</c> is still in that chain and still folded. See <see cref="MarkSawUnrecordedPaging"/>
-    /// for the removal condition.
-    /// </summary>
-    internal bool HasPagingAnywhere
-        => HasPaging || _trailingOps.Exists(o => o is MongoSkipOp or MongoLimitOp) || _sawUnrecordedPaging;
-
     // ── Projection ───────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -517,44 +486,13 @@ internal sealed class MongoSelectDefinition
         _hasUnsupportedOperator = true;
     }
 
-    private bool _isPagedJoinInnerFallbackUnsafe;
-
     /// <summary>
-    /// <see langword="true"/> when this query contains a <c>Join</c>/<c>GroupJoin</c>/<c>LeftJoin</c> whose
-    /// INNER sequence pages itself (<c>Skip</c>/<c>Take</c>). The driver mistranslates that shape (CSHARP-6017)
-    /// by folding the uncorrelated inner's <c>$sort</c>/<c>$skip</c>/<c>$limit</c> into the CORRELATED
-    /// <c>$lookup</c> sub-pipeline, where it runs per-outer-row over a key-matched subset of at most one
-    /// document instead of once over the whole inner sequence — so the driver-LINQ fallback executes and
-    /// returns <em>silently wrong</em> rows. Like <see cref="IsGroupByFallbackUnsafe"/> this must HARD-decline
-    /// under <c>Native</c>/<c>NativeOnly</c> rather than fall back; explicit <c>DriverLinq</c> stays the user's
-    /// opt-in. A separate flag from <see cref="IsGroupByFallbackUnsafe"/> so the decline message can name the
-    /// real cause.
-    /// Delete this flag, its setter, and <see cref="HasPagingAnywhere"/> once the driver fixes CSHARP-6017 —
-    /// signalled by the tripwire test
-    /// <c>NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017</c>
-    /// going red (the driver ticket being marked closed on an earlier fixVersion is not sufficient; the fold
-    /// must actually stop happening).
-    /// </summary>
-    internal bool IsPagedJoinInnerFallbackUnsafe => _isPagedJoinInnerFallbackUnsafe;
-
-    /// <summary>
-    /// Records that this query joins against an inner sequence that pages itself, whose driver-LINQ fallback
-    /// returns wrong rows (see <see cref="IsPagedJoinInnerFallbackUnsafe"/>). Also marks the query non-native.
-    /// </summary>
-    internal void MarkPagedJoinInnerFallbackUnsafe()
-    {
-        _isPagedJoinInnerFallbackUnsafe = true;
-        _hasUnsupportedOperator = true;
-    }
-
-    /// <summary>
-    /// <see langword="true"/> when ANY wrong-data-on-fallback provenance has been recorded — a GroupBy combined
-    /// with a join (<see cref="IsGroupByFallbackUnsafe"/>) or a self-paging join inner
-    /// (<see cref="IsPagedJoinInnerFallbackUnsafe"/>). This is the single signal the gate reads: both mean "the
-    /// driver-LINQ fallback executes and returns wrong rows", so both hard-decline identically. See
+    /// <see langword="true"/> when ANY wrong-data-on-fallback provenance has been recorded — today exactly a
+    /// GroupBy combined with a join (<see cref="IsGroupByFallbackUnsafe"/>). This is the single signal the gate
+    /// reads: it means "the driver-LINQ fallback executes and returns wrong rows", so it hard-declines. See
     /// <c>MongoShapedQueryCompilingExpressionVisitor.ClassifyNativeDisposition</c>.
     /// </summary>
-    internal bool IsFallbackWrongData => _isGroupByFallbackUnsafe || _isPagedJoinInnerFallbackUnsafe;
+    internal bool IsFallbackWrongData => _isGroupByFallbackUnsafe;
 
     /// <summary>
     /// Copies any wrong-data provenance from <paramref name="inner"/> onto this select. A join whose inner is
@@ -563,20 +501,14 @@ internal sealed class MongoSelectDefinition
     /// nested offending shape would silently execute and return wrong rows where the same shape promoted to
     /// top level correctly declines. Propagation makes the verdict nesting-insensitive <em>along join-inner
     /// chains</em> only — this has exactly one call site, <c>TranslateJoinCore</c>, so a verdict recorded on a
-    /// subquery used in any position OTHER than a join's inner still never reaches the gate.
-    /// This is independent of the paged-join-inner guard (CSHARP-6017) and must SURVIVE a driver fix for that
-    /// — do not delete it alongside <see cref="IsPagedJoinInnerFallbackUnsafe"/>.
+    /// subquery used in any position OTHER than a join's inner still never reaches the gate. This closes an
+    /// independent nesting hole (EF-344) and is permanent.
     /// </summary>
     internal void PropagateFallbackWrongDataFrom(MongoSelectDefinition inner)
     {
         if (inner._isGroupByFallbackUnsafe)
         {
             MarkGroupByFallbackUnsafe();
-        }
-
-        if (inner._isPagedJoinInnerFallbackUnsafe)
-        {
-            MarkPagedJoinInnerFallbackUnsafe();
         }
     }
 

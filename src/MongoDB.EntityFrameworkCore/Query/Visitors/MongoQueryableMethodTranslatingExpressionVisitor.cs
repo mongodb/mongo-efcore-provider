@@ -1464,29 +1464,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             outerQueryExpression.Select.MarkNotNativelyRepresentable();
         }
 
-        // CSHARP-6017 (driver 3.10). The driver's LINQ provider folds an UNCORRELATED join inner's
-        // $sort/$skip/$limit into the CORRELATED $lookup sub-pipeline, where they run per-outer-row over the
-        // key-matched subset for that one outer row instead of once over the whole inner sequence — silently
-        // wrong data (measured: 0 rows where 453 is correct). So decline rather than route to that fallback.
-        // The predicate is, precisely, "a Skip/Take was RECORDED on the inner select" — HasPagingAnywhere,
-        // which reads three channels (PipelineOps, TrailingOps, and the declined-but-seen flag
-        // NativeSlotPopulator sets when it swallows a Skip/Take instead of lowering it).
-        // TODO(EF-406) — READ THIS BEFORE DELETING ANYTHING HERE ON THE STRENGTH OF THE DRIVER TICKET.
-        // CSHARP-6017 is ALREADY Closed/Done at fixVersion 3.10.0 — the driver version this branch pins —
-        // and the fold is STILL LIVE against it. THE REMOVAL TRIGGER IS THE TRIPWIRE TEST
-        // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
-        // GOING RED, NOT A TICKET CLOSING. Do NOT delete the PropagateFallbackWrongDataFrom call below —
-        // it closes an independent EF-344 nesting hole and must survive that guard's removal.
-        if (innerQueryExpression.Select.HasPagingAnywhere)
-        {
-            outerQueryExpression.Select.MarkPagedJoinInnerFallbackUnsafe();
-        }
-
         // A wrong-data verdict reached on the INNER select must reach the gate, which only ever reads the
         // OUTERMOST MongoQueryExpression. When the offending shape lives in a SUBQUERY used as this join's
-        // inner, MarkGroupByFallbackUnsafe/MarkPagedJoinInnerFallbackUnsafe wrote to that intermediate select
-        // and the verdict would otherwise be lost. Independent of CSHARP-6017 and of the EF-406 guard above;
-        // keep it when that guard goes.
+        // inner, MarkGroupByFallbackUnsafe wrote to that intermediate select and the verdict would otherwise
+        // be lost (EF-344).
         outerQueryExpression.Select.PropagateFallbackWrongDataFrom(innerQueryExpression.Select);
 
         // EF-368 finding 1. The reference-Include path emits a flat $lookup with NO sub-pipeline, so it can

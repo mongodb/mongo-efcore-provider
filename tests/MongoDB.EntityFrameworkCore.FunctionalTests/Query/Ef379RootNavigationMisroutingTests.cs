@@ -306,20 +306,30 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]
-    public void Self_referencing_two_hop_chain_fails_loudly_as_at_base(MongoQueryMode mode)
+    public void Self_referencing_two_hop_chain_now_returns_the_correct_chain(MongoQueryMode mode)
     {
-        using var db = CreateSelfRefContext(nameof(Self_referencing_two_hop_chain_fails_loudly_as_at_base), mode);
+        using var db = CreateSelfRefContext(nameof(Self_referencing_two_hop_chain_now_returns_the_correct_chain), mode);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => db.FNodes
+        var nodes = db.FNodes
             .Include(n => n.Parent)
             .ThenInclude(p => p.Parent)
-            .ToList());
+            .OrderBy(n => n.Label)
+            .ToList();
 
-        // Pin the MESSAGE, not the bare type: InvalidOperationException is what BOTH a translation decline
-        // and a materialization failure throw, so the type alone cannot tell them apart — and which one this
-        // is has already changed once. This is the materialization failure.
-        Assert.Contains("Document element is missing for required non-nullable property 'Id'", ex.Message);
-        Assert.DoesNotContain("could not be translated", ex.Message);
+        // This shape used to fail LOUDLY at materialization ("Document element is missing for required
+        // non-nullable property 'Id'") because both hops of a self-referencing chain collapsed onto one join:
+        // every hop resolves the same navigation against the same target entity type, so the second hop's
+        // $lookup could not be told apart from the first's. That was EF-371, fixed on the main-bound line by
+        // recording one JoinInfo per join and giving each its own uniquified _lookup_ alias.
+        //
+        // Assert the two-hop VALUES, never `!= null`: EF's change-tracker identity fix-up can repair the
+        // object graph from rows already in the change tracker even when the $lookup matched the wrong
+        // field, so a null-check passes on wrong data. The seed is a cycle, F1 -> F2 -> F3 -> F1, chosen so
+        // that a collapsed chain (Parent.Parent == Parent) is distinguishable from the correct answer at
+        // every row.
+        Assert.Equal(["F1", "F2", "F3"], nodes.Select(n => n.Label).ToArray());
+        Assert.Equal(["F2", "F3", "F1"], nodes.Select(n => n.Parent.Label).ToArray());
+        Assert.Equal(["F3", "F1", "F2"], nodes.Select(n => n.Parent.Parent.Label).ToArray());
     }
 
     [Fact]

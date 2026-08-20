@@ -162,28 +162,17 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         }
 
         // The is-native disposition is centralized in ClassifyNativeDisposition. Here we act only on
-        // HardDecline: a GroupBy+Join or paged-join-inner whose driver-LINQ fallback returns silently wrong
-        // data must throw under Native/NativeOnly rather than route to that fallback (explicit DriverLinq stays
+        // HardDecline: a GroupBy+Join whose driver-LINQ fallback returns silently wrong data must throw under
+        // Native/NativeOnly rather than route to that fallback (explicit DriverLinq stays
         // the user's opt-in). (The classification also evaluates ContainsVectorSearch, which the HardDecline
         // outcome never depends on — a deliberate, negligible compile-time extra walk kept so the disposition
         // has one source of truth.)
         var mode = ((MongoQueryCompilationContext)QueryCompilationContext).QueryMode;
         if (ClassifyNativeDisposition(mongoQueryExpression, mode) == NativeDisposition.HardDecline)
         {
-            // Drop the paged-inner cause (and its list entry below) once the driver stops folding an
-            // uncorrelated join inner's $sort/$skip/$limit into the correlated $lookup sub-pipeline. The
-            // trigger is the tripwire test
-            // NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017
-            // going red, not the underlying driver ticket closing (it is already closed, and the fold is
-            // still live against the pinned driver version). At that point
-            // NativeJoinPagedInnerDeclineTests.Join_with_grouped_outer_and_paged_inner_reports_both_causes
-            // degenerates to a single-cause message and should be updated (or removed) alongside it.
-            // The two causes are independent provenances that can BOTH be set on the SAME query — e.g.
-            // db.Orders.GroupBy(o => o.Country).Select(g => new { g.Key, Max = g.Max(o => o.Amount) })
-            //     .Join(db.Regions.OrderBy(r => r.Country).Take(2), a => a.Key, r => r.Country, (a, r) => new { r })
-            // sets IsGroupByFallbackUnsafe (outer is grouped) AND IsPagedJoinInnerFallbackUnsafe (inner pages
-            // itself) on the SAME outer MongoSelectDefinition. List every cause that applies rather than
-            // picking one, so a query with both never silently loses one from the message.
+            // A list rather than a single string: wrong-data provenances are independent and more than one can
+            // be set on the SAME query, so list every cause that applies rather than picking one. Today there
+            // is exactly one provenance (GroupBy+Join); a future one gets its own arm here.
             var causes = new List<string>();
             if (mongoQueryExpression.Select.IsGroupByFallbackUnsafe)
             {
@@ -191,15 +180,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                     "Query combines GroupBy with a Join, which the native translator does not support and whose "
                     + "driver-LINQ fallback returns incorrect results");
             }
-            if (mongoQueryExpression.Select.IsPagedJoinInnerFallbackUnsafe)
-            {
-                causes.Add(
-                    "Query joins against an inner sequence that applies Skip/Take to itself, which the native "
-                    + "translator does not support and which the MongoDB driver's LINQ provider mistranslates "
-                    + "(CSHARP-6017), returning incorrect results");
-            }
             // Unreachable today: HardDecline is classified exactly when IsFallbackWrongData is true, which is
-            // exactly the disjunction of the two flags checked above, so at least one cause always fired. The
+            // exactly the flag checked above, so at least one cause always fired. The
             // old ternary was total by construction (always produced a message); this list is not, structurally
             // — guard against a silently empty ("; use MongoQueryMode.DriverLinq...") message if a future cause
             // is added to IsFallbackWrongData without a matching arm here.
@@ -891,7 +873,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     /// </summary>
     /// <param name="route">The slot/projection representability route (<see cref="MongoSelectDefinition.Route"/>).</param>
     /// <param name="isFallbackWrongData">Whether this query's driver-LINQ fallback returns silently wrong rows —
-    /// a GroupBy combined with a join, or a join whose inner sequence pages itself (CSHARP-6017). See
+    /// today exactly a GroupBy combined with a join. See
     /// <see cref="MongoSelectDefinition.IsFallbackWrongData"/>.</param>
     /// <param name="hasUnboundVectorSearch">
     /// Whether the captured chain contains a lifted-out <c>VectorSearch</c> that the native slot populator did
@@ -980,9 +962,12 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             return false;
         }
 
+        // TargetEntityType, not Navigation.TargetEntityType: IsStreamableReference is satisfied by a
+        // navigation-LESS Join hop too (EF-377 — IsReference is `Navigation is not { IsCollection: true }`,
+        // which a null Navigation passes), so dereferencing Navigation here would throw for that shape.
         return referenceLookups.All(lookup =>
             lookup.IsStreamableReference
-            && !lookup.Navigation.TargetEntityType.GetNavigations().Any(n => n.IsEagerLoaded));
+            && !lookup.TargetEntityType.GetNavigations().Any(n => n.IsEagerLoaded));
     }
 
     private static (MongoQueryContext, MongoExecutableQuery) TranslateQuery<TEntity>(

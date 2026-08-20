@@ -65,7 +65,7 @@ that currently lack a ticket. Counts are sourced from `tests/MongoDB.EntityFrame
 | [EF-252](https://jira.mongodb.org/browse/EF-252) | `Concurrency detector tests broken EF-252` | `Throws_on_concurrent_query_first/list` — the concurrency detector does not fire as the EF base test expects. | 2 |
 | [EF-253](https://jira.mongodb.org/browse/EF-253) | `Multiple ordering issue EF-253` | `OrderBy(x).ThenBy(x)` on the same column with different directions does not emit the expected MQL. | 1 |
 | [EF-254](https://jira.mongodb.org/browse/EF-254) | `Take zero EF-254` | `.Skip(0).Take(0)` with a parameter does not produce the expected empty result. | 1 |
-| [EF-371](https://jira.mongodb.org/browse/EF-371) | `returns wrong data (0 rows instead of 6) EF-371` | A self-referencing two-hop reference navigation (`e.Manager.Manager`) collapses to a single join and hop 2 degrades to an inner `$unwind`, so the query returns 0 rows instead of 6. Baselined green on EF10 by asserting the wrong-data failure; the EF8/EF9 arm is a translation failure tagged EF-X020. | 1 |
+| [EF-371](https://jira.mongodb.org/browse/EF-371) | ~~`returns wrong data (0 rows instead of 6) EF-371`~~ — fixed | A self-referencing two-hop reference navigation (`e.Manager.Manager`) collapsed to a single join, so hop 2 degraded to an inner `$unwind` and the query returned 0 rows instead of 6. Fixed by recording one `JoinInfo` per join and giving each its own uniquified `_lookup_` alias, so two hops resolving the SAME navigation against the same target type stay distinguishable. No spec test carries this marker any more. Functional coverage: `Ef379RootNavigationMisroutingTests.Self_referencing_two_hop_chain_now_returns_the_correct_chain`. | 0 |
 
 ## MongoDB C# Driver tickets — `CSHARP-NNNN`
 
@@ -290,8 +290,7 @@ Lifting this ticket requires translating the inner sub-query into the `$lookup` 
 `Select_Where_Navigation_Null_Deep`. They were believed to share one root cause — "compound multi-hop
 navigation lowering". They did not.
 
-**All five are now fixed.** Four via EF-369 / EF-370 (see
-`docs/superpowers/specs/2026-08-03-required-nav-unwind-semantics-design.md`): the composed predicate /
+**All five are now fixed.** Four via EF-369 / EF-370: the composed predicate /
 `Contains` filter was being *discarded* when a multi-join Include chain was flattened to root-level
 `_lookup_<Nav>` fields, so the query returned every row (2155 against 112 / 112 / 352 / 40 expected).
 Those four are un-skipped, run on EF10 with real `AssertMql` baselines, and take the standard

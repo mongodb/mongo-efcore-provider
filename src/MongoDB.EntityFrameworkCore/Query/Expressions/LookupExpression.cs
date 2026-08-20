@@ -178,11 +178,22 @@ internal sealed class LookupExpression
     /// force-unwound, and <see cref="As"/> equal to the plain alias (excludes the driver-LeftJoin and
     /// flat-nested shapes, which remain fallback-only).
     /// </summary>
+    /// <remarks>
+    /// A navigation-LESS lookup (an EF-377 <c>Join</c> hop with no model navigation) is never a collection
+    /// Include, so it is excluded here rather than dereferenced — <see cref="Navigation"/> is nullable.
+    /// </remarks>
     public bool IsNativeCollectionLookup
-        => Navigation.IsCollection
-           && !HasPipeline
-           && !ForceUnwind
-           && As == GetLookupAlias(Navigation);
+    {
+        get
+        {
+            if (Navigation is not { IsCollection: true } navigation)
+            {
+                return false;
+            }
+
+            return !HasPipeline && !ForceUnwind && As == GetLookupAlias(navigation);
+        }
+    }
 
     /// <summary>
     /// Whether the <c>$unwind</c> following this <c>$lookup</c> uses <c>preserveNullAndEmptyArrays: true</c>

@@ -360,9 +360,9 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
     // exact, reproducible, wrong value so any future change to this area shows up as a test diff; it is NOT
     // asserting correct behavior. Tracked as a follow-up ticket (see task-4-report.md).
     [Fact]
-    public void Mixed_whole_entity_and_computed_leaf_is_a_known_preexisting_limitation()
+    public void Mixed_whole_entity_and_computed_leaf_returns_the_correct_computed_value()
     {
-        var (collection, _) = SeedCustomers(nameof(Mixed_whole_entity_and_computed_leaf_is_a_known_preexisting_limitation));
+        var (collection, _) = SeedCustomers(nameof(Mixed_whole_entity_and_computed_leaf_returns_the_correct_computed_value));
         using var db = CreateContext(collection, [], MongoQueryMode.Native);
 
         var results = db.Entities.Select(c => new { c, Total = c.Age * c.Score }).OrderBy(r => r.c.Name).ToList();
@@ -372,9 +372,11 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
         Assert.Equal([7, 20, -7], results.Select(r => r.c.Age).ToArray());
         Assert.Equal([2, 20, 2], results.Select(r => r.c.Score).ToArray());
 
-        // ...but "Total" is silently WRONG: it comes out as Score*Score, not Age*Score. Correct values would be
-        // [14, 400, -14]; Bob's happens to match by coincidence because Age == Score for that row.
-        Assert.Equal([4, 400, 4], results.Select(r => r.Total).ToArray());
-        Assert.NotEqual(14, results.Single(r => r.c.Name == "Alice").Total); // documents the divergence explicitly
+        // ...and so does the computed leaf beside them. This shape USED to come out as Score*Score rather
+        // than Age*Score - a silent wrong-data bug (EF-356), fixed on the main-bound line: the whole-entity
+        // leaf no longer clobbers the computed one's projection-member slot. Alice and Carol are what
+        // discriminate the fix; Bob's row cannot, because Age == Score there makes both answers 400.
+        Assert.Equal([14, 400, -14], results.Select(r => r.Total).ToArray());
+        Assert.Equal(14, results.Single(r => r.c.Name == "Alice").Total);
     }
 }

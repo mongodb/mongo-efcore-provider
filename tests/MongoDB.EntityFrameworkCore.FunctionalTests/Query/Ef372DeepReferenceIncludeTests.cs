@@ -220,9 +220,10 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     // ---- T6: two same-typed navigations (Order.Buyer / Order.Approver, both Person) is an ORDINARY
     // model. The prefix resolution must not treat the model's mere shape as ambiguous: it reads the
     // navigation a PRIOR JOIN actually recorded, so the branch this query really uses is unambiguous and
-    // WORKS. Only a query that genuinely uses both branches at once declines. The fixture's two mids point
-    // at DIFFERENT leaves ("A" and "B") so a wrong prefix shows up as wrong data rather than as a
-    // coincidentally-equal value. ----
+    // WORKS. All three variants — first branch alone, second branch alone, and both at once — now return
+    // correct data; the latter two were pinned here as declines until EF-375/EF-376 landed on main, and each
+    // test below records what specifically changed. The fixture's two mids point at DIFFERENT leaves ("A" and
+    // "B") so a wrong prefix shows up as wrong data rather than as a coincidentally-equal value. ----
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -252,58 +253,79 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]
-    public void Two_same_typed_navigations_sibling_ThenIncludes_decline_cleanly(MongoQueryMode mode)
+    public void Two_same_typed_navigations_sibling_ThenIncludes_return_both_branches(MongoQueryMode mode)
     {
         using var db = CreateAmbiguousContext(
-            nameof(Two_same_typed_navigations_sibling_ThenIncludes_decline_cleanly), mode);
+            nameof(Two_same_typed_navigations_sibling_ThenIncludes_return_both_branches), mode, out var spyLogger);
 
-        // BOTH branches at once. Now the transitive hop genuinely cannot be attributed to one intermediate,
-        // and — the deeper reason this shape can never be made to work by resolving a better prefix — both
-        // hops' lookups derive the SAME alias from the same navigation ("_lookup_Leaf", from
-        // LookupExpression.GetLookupAlias) and AddLookup de-duplicates on it, so only one of the two would
-        // ever be emitted. MEASURED at this branch's base: it returned a row with p="A" and s=NULL —
-        // silently wrong, in Native and explicit DriverLinq alike. A clean translation failure is the
-        // correct outcome until a path-scoped alias scheme exists.
-        var ex = Assert.Throws<InvalidOperationException>(() => db.AmbRoots
+        // BOTH branches at once. This shape used to be pinned here as a clean DECLINE, for two reasons that
+        // EF-375/EF-376 on main have since removed: the transitive hop could not be attributed to one
+        // intermediate (it was resolved by TARGET ENTITY TYPE, which cannot tell PrimaryMid from
+        // SecondaryMid), and both hops derived the SAME alias "_lookup_Leaf" from the same navigation, so
+        // AddLookup's alias de-duplication silently dropped one of the two. EF-376 resolves the "through"
+        // join POSITIONALLY by walking the key selector's Outer/Inner chain, and EF-375 gives each join its
+        // own $lookup alias — the first to claim a name keeps it unsuffixed, later ones are suffixed. So both
+        // branches are now emitted and BOTH return correct data.
+        var results = db.AmbRoots
             .Include(r => r.PrimaryMid).ThenInclude(m => m.Leaf)
             .Include(r => r.SecondaryMid).ThenInclude(m => m.Leaf)
-            .ToList());
+            .ToList();
 
-        // Pin the MESSAGE, not just the type: InvalidOperationException alone is also what a materialization
-        // failure and an unrelated nav-expansion decline throw, so the bare type cannot tell a decline from a
-        // crash. This is EF Core's own translation-failure text over the printed query.
-        Assert.Contains("could not be translated", ex.Message);
-        Assert.Contains("ThenInclude", ex.Message);
+        Assert.Single(results);
+        Assert.Equal("AM1", results[0].PrimaryMid.Label);
+        Assert.Equal("AM2", results[0].SecondaryMid.Label);
 
-        // ...and the provider's own AddTranslationErrorDetails, which EF appends via
-        // TranslationFailedWithDetails. Without it the user is told only that the whole query could not be
-        // translated, with nothing naming the hop the provider could not scope.
-        Assert.Contains("reaches it THROUGH a previously-joined entity type", ex.Message);
-        Assert.Contains("AmbLeaf", ex.Message);
-        Assert.Contains("LeafId", ex.Message);
+        // The teeth. The fixture's two mids reach DIFFERENT leaves, so a hop scoped under the wrong
+        // intermediate shows up as the wrong label rather than as an indistinguishable one. Never assert
+        // merely != null here: identity fix-up can repair the graph over a wrong-field $lookup.
+        Assert.Equal("A", results[0].PrimaryMid.Leaf.Label);
+        Assert.Equal("B", results[0].SecondaryMid.Leaf.Label);
+
+        // ...and because fix-up CAN repair even a crossed pair of lookups once both leaves are tracked, pin
+        // the MQL too: two distinct transitive $lookups, each scoped under its OWN intermediate's alias, with
+        // the second's "as" suffixed rather than colliding on "_lookup_Leaf" and being de-duplicated away.
+        var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("\"localField\" : \"_lookup_PrimaryMid.LeafId\"", mql);
+        Assert.Contains("\"localField\" : \"_lookup_SecondaryMid.LeafId\"", mql);
+        Assert.Contains("\"as\" : \"_lookup_Leaf\"", mql);
+        Assert.Contains("\"as\" : \"_lookup_Leaf_1\"", mql);
     }
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]
-    public void Two_same_typed_navigations_second_branch_only_declines_cleanly(MongoQueryMode mode)
+    public void Two_same_typed_navigations_second_branch_only_returns_the_second_branch(MongoQueryMode mode)
     {
         using var db = CreateAmbiguousContext(
-            nameof(Two_same_typed_navigations_second_branch_only_declines_cleanly), mode);
+            nameof(Two_same_typed_navigations_second_branch_only_returns_the_second_branch), mode, out var spyLogger);
 
-        // The SECOND same-typed navigation, on its own. This one declines rather than working, and the
-        // reason is NOT the prefix resolution: the retroactive lookup registration that flattens the prior
-        // single-reference join picks its navigation by TARGET ENTITY TYPE alone, so for this model it emits
-        // "_lookup_PrimaryMid" whatever branch the query asked for. The prefix resolution refuses to name a
-        // path it cannot prove is written, so the query declines instead of reading the wrong branch.
-        // MEASURED at this branch's base: it returned a row with SecondaryMid NULL — silently wrong.
-        // A pre-existing imprecision, tracked as EF-375; this test pins that it fails LOUDLY meanwhile.
-        var ex = Assert.Throws<InvalidOperationException>(() => db.AmbRoots
+        // The SECOND same-typed navigation, on its own — the twin of the single-branch test above, which
+        // covers the FIRST. This used to be pinned as a decline: the retroactive lookup registration that
+        // flattens the prior single-reference join picked its navigation by TARGET ENTITY TYPE alone, so for
+        // this model it named "_lookup_PrimaryMid" whatever branch the query asked for, and the prefix
+        // resolution — which refuses to name a path it cannot prove is written — declined rather than read
+        // the wrong branch. EF-375 on main fixed the root cause: each join now carries the navigation it
+        // actually resolved plus its own $lookup, so the flattening pass no longer re-derives a prior join's
+        // lookup by target type. The query works, and reads the branch it asked for.
+        var results = db.AmbRoots
             .Include(r => r.SecondaryMid).ThenInclude(m => m.Leaf)
-            .ToList());
+            .ToList();
 
-        Assert.Contains("could not be translated", ex.Message);
-        Assert.Contains("SecondaryMid", ex.Message);
+        Assert.Single(results);
+
+        // The teeth: PrimaryMid reaches leaf "A" and SecondaryMid reaches leaf "B", so reading the wrong
+        // branch yields "AM1"/"A" (or a null navigation) instead of "AM2"/"B".
+        Assert.Equal("AM2", results[0].SecondaryMid.Label);
+        Assert.Equal("B", results[0].SecondaryMid.Leaf.Label);
+
+        // The un-Included sibling branch stays unloaded — nothing pulled PrimaryMid into the graph.
+        Assert.Null(results[0].PrimaryMid);
+
+        // Pin the MQL as well: the $lookup chain must be rooted on SecondaryMidId, not on PrimaryMidId.
+        var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("\"localField\" : \"SecondaryMidId\"", mql);
+        Assert.Contains("\"localField\" : \"_lookup_SecondaryMid.LeafId\"", mql);
+        Assert.DoesNotContain("_lookup_PrimaryMid", mql);
     }
 
     // ---- T8: the alias in the emitted localField must come from the NAVIGATION NAME, not the target type
@@ -330,59 +352,95 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.DoesNotContain("_lookup_AltLeaf", mql);
     }
 
-    // ---- T9: an unresolvable transitive hop DECLINES. This chain's first hop has no model navigation at
-    // all, so no intermediate can be identified. Pre-existing and unrelated to the depth defect EF-372
-    // fixed (it is broken at one hop as well as three), but it used to take the same silent route: 0 rows
-    // where 1 is correct. The point of this test is that it no longer returns data at all. ----
+    // ---- T9: a transitive hop reached through a NAVIGATION-LESS first hop. This chain's first hop is a bare
+    // key-equality Join with no model navigation at all, so the intermediate cannot be identified from an
+    // INavigation. Pre-existing and unrelated to the depth defect EF-372 fixed (it was broken at one hop as
+    // well as three) and it originally took the same silent route: 0 rows where 1 is correct. This test was
+    // then pinned as a clean DECLINE, and EF-377 on main has since made the shape WORK — LookupExpression
+    // gained a navigation-independent TargetEntityType plus a constructor that builds a $lookup straight from
+    // raw join-key field paths, and MongoQueryExpression records that raw key info per navigation-less hop so
+    // later hops (and the retroactive flattening pass) can still resolve it. What this test now guards is
+    // that the second hop is scoped under the FIRST hop's lookup alias, which is what the original 0-row
+    // silent failure got wrong. ----
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]
-    public void Join_chain_with_no_model_navigation_declines_rather_than_dropping_every_row(MongoQueryMode mode)
+    public void Join_chain_with_no_model_navigation_returns_every_row(MongoQueryMode mode)
     {
         using var db = CreateNavlessContext(
-            nameof(Join_chain_with_no_model_navigation_declines_rather_than_dropping_every_row), mode);
+            nameof(Join_chain_with_no_model_navigation_returns_every_row), mode, out var spyLogger);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => db.NoNavRoots
+        var results = db.NoNavRoots
             .Join(db.NoNavMids, r => r.MidKey, m => m.Id, (r, m) => new { r, m })
             .Join(db.NoNavLeaves, x => x.m.LeafId, l => l.Id, (x, l) => x.r.Name + "|" + l.Label)
-            .ToList());
+            .ToList();
 
-        Assert.Contains("could not be translated", ex.Message);
+        // A projection of scalars, so there is no change tracker in play and no identity fix-up to mask a
+        // wrong-field $lookup: the value itself is the evidence.
+        Assert.Equal(["ZR1|ZL1"], results);
+
+        // The second hop's key "x.m.LeafId" declares LeafId on the MID, not on the root, so its localField
+        // must be scoped under the first (navigation-less) hop's alias. Unprefixed "LeafId" is the original
+        // defect and matches nothing.
+        var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("\"localField\" : \"MidKey\"", mql);
+        Assert.Contains("\"localField\" : \"_lookup_NoNavMid.LeafId\"", mql);
+        Assert.DoesNotContain("\"localField\" : \"LeafId\"", mql);
     }
 
 #if !EF8 && !EF9
-    // ---- T10: the decline on the LEFT-OUTER route. The three decline tests above all reach
-    // TranslateJoinCore through Queryable.Join (required navigations, or a user-authored join); a null returned
-    // from TranslateLeftJoin was unexercised. Same shape as T6's sibling-ThenInclude decline, but over
-    // OPTIONAL navigations, which nav-expansion lowers to LeftJoin.
+    // ---- T10: the LEFT-OUTER route through the same-typed sibling shape. The sibling and navigation-less
+    // tests above all reach TranslateJoinCore through Queryable.Join (required navigations, or a user-authored
+    // join); TranslateLeftJoin was unexercised. Same shape as T6's sibling ThenIncludes, but over OPTIONAL
+    // navigations, which nav-expansion lowers to LeftJoin. This was originally pinned as a decline on the
+    // left-outer route; EF-375/EF-376 on main made it work there too, so it now asserts the data, and the
+    // point of keeping it is that the positional "through"-join resolution and the per-join alias suffixing
+    // reach the LeftJoin path and not only the Join path.
     //
     // EF10-only, for the PRE-EXISTING gap the T7 comment above measures: Queryable.LeftJoin has no dispatch
     // case at all before EF10, so on EF8/EF9 an optional reference Include never reaches TranslateJoinCore to
     // begin with — that gap is blanket and depth-independent, so there is no EF8/EF9 disposition of THIS
-    // decline to pin. ----
+    // shape to pin. ----
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]
-    public void Optional_two_same_typed_navigations_sibling_ThenIncludes_decline_cleanly(MongoQueryMode mode)
+    public void Optional_two_same_typed_navigations_sibling_ThenIncludes_return_both_branches(MongoQueryMode mode)
     {
         using var db = CreateOptionalAmbiguousContext(
-            nameof(Optional_two_same_typed_navigations_sibling_ThenIncludes_decline_cleanly), mode);
+            nameof(Optional_two_same_typed_navigations_sibling_ThenIncludes_return_both_branches), mode,
+            out var spyLogger);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => db.OptAmbRoots
+        var results = db.OptAmbRoots
             .Include(r => r.PrimaryMid).ThenInclude(m => m!.Leaf)
             .Include(r => r.SecondaryMid).ThenInclude(m => m!.Leaf)
-            .ToList());
+            .ToList();
 
-        Assert.Contains("could not be translated", ex.Message);
-        Assert.Contains("reaches it THROUGH a previously-joined entity type", ex.Message);
-        Assert.Contains("OptAmbLeaf", ex.Message);
-        Assert.Contains("LeafId", ex.Message);
+        Assert.Single(results);
+        Assert.Equal("OAM1", results[0].PrimaryMid!.Label);
+        Assert.Equal("OAM2", results[0].SecondaryMid!.Label);
+
+        // The teeth, as in the required-navigation twin: the two mids reach DIFFERENT leaves, so a hop scoped
+        // under the wrong intermediate reads "OB" where "OA" is correct (or leaves the navigation null).
+        // A row COUNT cannot discriminate on the left-outer route — a preserving $unwind keeps the row and
+        // just leaves the navigation null — so the values are the only signal.
+        Assert.Equal("OA", results[0].PrimaryMid!.Leaf!.Label);
+        Assert.Equal("OB", results[0].SecondaryMid!.Leaf!.Label);
+
+        // ...plus the MQL, both to guard against fix-up repairing a crossed pair and to keep
+        // preserveNullAndEmptyArrays pinned, which is what proves this really is the left-outer path.
+        var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("\"localField\" : \"_lookup_PrimaryMid.LeafId\"", mql);
+        Assert.Contains("\"localField\" : \"_lookup_SecondaryMid.LeafId\"", mql);
+        Assert.Contains("\"as\" : \"_lookup_Leaf\"", mql);
+        Assert.Contains("\"as\" : \"_lookup_Leaf_1\"", mql);
+        Assert.Contains("\"preserveNullAndEmptyArrays\" : true", mql);
+        Assert.DoesNotContain("\"preserveNullAndEmptyArrays\" : false", mql);
     }
 
-    // The control for the test above: the SAME optional model, ONE branch, must still return correct rows on
-    // the left-outer route. Without this, "declines" could be satisfied by declining every optional chain.
+    // The companion to the test above: the SAME optional model, ONE branch, must also return correct rows on
+    // the left-outer route. It covers the FIRST of the two same-typed navigations in isolation.
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]
@@ -542,7 +600,15 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         return new AltChainDbContext(database, roots, mids, leaves, tips, loggerFactory);
     }
 
-    private NavlessChainDbContext CreateNavlessContext(string name, MongoQueryMode mode)
+    private NavlessChainDbContext CreateNavlessContext(string name, MongoQueryMode mode, out SpyLoggerProvider spyLogger)
+    {
+        var (loggerFactory, provider) = SpyLoggerProvider.Create();
+        spyLogger = provider;
+        return CreateNavlessContext(name, mode, loggerFactory);
+    }
+
+    private NavlessChainDbContext CreateNavlessContext(
+        string name, MongoQueryMode mode, ILoggerFactory? loggerFactory = null)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var roots = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "ZR" + suffix;
@@ -559,7 +625,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         database.MongoDatabase.GetCollection<NoNavRoot>(roots).InsertMany(
             [new() { Id = ObjectId.GenerateNewId(), Name = "ZR1", MidKey = midId }]);
 
-        return new NavlessChainDbContext(database, roots, mids, leaves, mode);
+        return new NavlessChainDbContext(database, roots, mids, leaves, mode, loggerFactory);
     }
 
     private OptionalChainDbContext CreateOptionalContext(string name, out SpyLoggerProvider spyLogger)
@@ -608,7 +674,16 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
 #if !EF8 && !EF9
     // T10's model: T6's two-same-typed-navigations shape with OPTIONAL (nullable-FK) navigations, which
     // nav-expansion lowers to Queryable.LeftJoin instead of Queryable.Join.
-    private OptionalAmbiguousChainDbContext CreateOptionalAmbiguousContext(string name, MongoQueryMode mode)
+    private OptionalAmbiguousChainDbContext CreateOptionalAmbiguousContext(
+        string name, MongoQueryMode mode, out SpyLoggerProvider spyLogger)
+    {
+        var (loggerFactory, provider) = SpyLoggerProvider.Create();
+        spyLogger = provider;
+        return CreateOptionalAmbiguousContext(name, mode, loggerFactory);
+    }
+
+    private OptionalAmbiguousChainDbContext CreateOptionalAmbiguousContext(
+        string name, MongoQueryMode mode, ILoggerFactory? loggerFactory = null)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var roots = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + "OAR" + suffix;
@@ -635,7 +710,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
             new() { Id = ObjectId.GenerateNewId(), Name = "OAR1", PrimaryMidId = mid1, SecondaryMidId = mid2 },
         ]);
 
-        return new OptionalAmbiguousChainDbContext(database, roots, mids, leaves, mode);
+        return new OptionalAmbiguousChainDbContext(database, roots, mids, leaves, mode, loggerFactory);
     }
 #endif
 
@@ -936,17 +1011,30 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         private readonly string _leaves;
 
         public OptionalAmbiguousChainDbContext(
-            TemporaryDatabaseFixture database, string roots, string mids, string leaves, MongoQueryMode mode)
-            : base(new DbContextOptionsBuilder<OptionalAmbiguousChainDbContext>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
-                .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
-                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
-                .Options)
+            TemporaryDatabaseFixture database, string roots, string mids, string leaves, MongoQueryMode mode,
+            ILoggerFactory? loggerFactory)
+            : base(Configure(database, mode, loggerFactory))
         {
             _roots = roots;
             _mids = mids;
             _leaves = leaves;
+        }
+
+        private static DbContextOptions<OptionalAmbiguousChainDbContext> Configure(
+            TemporaryDatabaseFixture database, MongoQueryMode mode, ILoggerFactory? loggerFactory)
+        {
+            var builder = new DbContextOptionsBuilder<OptionalAmbiguousChainDbContext>()
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
+                    b => b.UseQueryMode(mode))
+                .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+
+            if (loggerFactory != null)
+            {
+                builder = builder.UseLoggerFactory(loggerFactory).EnableSensitiveDataLogging();
+            }
+
+            return builder.Options;
         }
 
         public DbSet<OptAmbRoot> OptAmbRoots { get; set; } = null!;
@@ -1085,17 +1173,30 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         private readonly string _leaves;
 
         public NavlessChainDbContext(
-            TemporaryDatabaseFixture database, string roots, string mids, string leaves, MongoQueryMode mode)
-            : base(new DbContextOptionsBuilder<NavlessChainDbContext>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    b => b.UseQueryMode(mode))
-                .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
-                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
-                .Options)
+            TemporaryDatabaseFixture database, string roots, string mids, string leaves, MongoQueryMode mode,
+            ILoggerFactory? loggerFactory)
+            : base(Configure(database, mode, loggerFactory))
         {
             _roots = roots;
             _mids = mids;
             _leaves = leaves;
+        }
+
+        private static DbContextOptions<NavlessChainDbContext> Configure(
+            TemporaryDatabaseFixture database, MongoQueryMode mode, ILoggerFactory? loggerFactory)
+        {
+            var builder = new DbContextOptionsBuilder<NavlessChainDbContext>()
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
+                    b => b.UseQueryMode(mode))
+                .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+
+            if (loggerFactory != null)
+            {
+                builder = builder.UseLoggerFactory(loggerFactory).EnableSensitiveDataLogging();
+            }
+
+            return builder.Options;
         }
 
         public DbSet<NoNavRoot> NoNavRoots { get; set; } = null!;

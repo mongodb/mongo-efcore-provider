@@ -793,6 +793,11 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         var currentGroup = new List<LookupExpression>();
         var assigned = new HashSet<LookupExpression>();
 
+        // The lookup resolved for the previous (one level inner) join. The loop walks the chain
+        // innermost-first, so this is exactly the "previous" DisambiguateJoinLookupByChain needs to break a
+        // type/key tie — a self-referencing chain is ambiguous at every hop without it.
+        LookupExpression? previousLookup = null;
+
         var result = baseSource;
         for (var i = innermostJoin; i >= 0; i--)
         {
@@ -800,13 +805,14 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
             if (IsJoinMethod(call))
             {
-                var lookup = ResolveLookupForJoin(call, forceUnwindLookups);
+                var lookup = ResolveLookupForJoin(call, forceUnwindLookups, previousLookup);
                 if (lookup == null || !assigned.Add(lookup))
                 {
                     // Unresolvable or double-assigned: no defensible position for this join's lookup.
                     return null;
                 }
 
+                previousLookup = lookup;
                 currentGroup.Add(lookup);
                 continue;
             }
@@ -882,8 +888,18 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// changes.
     /// </param>
     /// <param name="candidates">The lookups to match against.</param>
+    /// <param name="previous">
+    /// The lookup resolved for the join one level INNER of this one, or <see langword="null"/> when this is
+    /// the innermost join. Only consulted when type+key matching leaves more than one candidate — see
+    /// <see cref="DisambiguateJoinLookupByChain"/>. Threading it is what keeps a SELF-REFERENCING chain
+    /// (<c>Employee.Manager.Manager</c>, where every hop has the same target type AND the same foreign key)
+    /// resolvable; without it such a chain is ambiguous at every hop and the whole strip declines.
+    /// </param>
     private static LookupExpression? ResolveJoinLookup(
-        MethodCallExpression joinCall, Type innerType, IReadOnlyList<LookupExpression> candidates)
+        MethodCallExpression joinCall,
+        Type innerType,
+        IReadOnlyList<LookupExpression> candidates,
+        LookupExpression? previous)
     {
         if (joinCall.Arguments.Count < 3)
         {
@@ -892,16 +908,48 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
         var keyName = joinCall.Arguments[2].UnwrapLambdaFromQuote().Body.TryGetSimplePropertyName();
 
+        // TargetEntityType, not Navigation.TargetEntityType: a Join hop with no model navigation (EF-377)
+        // carries a null Navigation, and TargetEntityType is set by BOTH LookupExpression constructors. Such
+        // a hop also has no ForeignKey to narrow by, so it matches on inner CLR type alone; any residual
+        // ambiguity is settled structurally below, exactly as for a self-referencing navigation chain.
         var matches = candidates
             .Where(l => l.ForceUnwind
-                        && l.Navigation.TargetEntityType.ClrType == innerType
+                        && l.TargetEntityType.ClrType == innerType
                         && (keyName == null
+                            || l.Navigation is null
                             || l.Navigation.ForeignKey.Properties.Any(p => p.Name == keyName)
                             || l.Navigation.ForeignKey.PrincipalKey.Properties.Any(p => p.Name == keyName)))
             .ToList();
 
-        return matches.Count == 1 ? matches[0] : null;
+        return DisambiguateJoinLookupByChain(matches, previous);
     }
+
+    /// <summary>
+    /// Settles a type/key-ambiguous lookup match structurally, using the <c>localField</c> dependency
+    /// relation <c>OrderLookupsByDependency</c> already relies on.
+    /// </summary>
+    /// <remarks>
+    /// Ambiguity is not exotic: a self-referencing chain (<c>Employee.Manager.Manager</c>) registers one hop
+    /// per level against the SAME navigation and the SAME target entity type, so type+key narrowing cannot
+    /// separate them, and a navigation-less hop (EF-377) has no foreign key to narrow by at all. The
+    /// structure does separate them: the innermost hop's <c>$lookup</c> reads straight off the root document,
+    /// so its <c>localField</c> is not prefixed by any sibling candidate's alias, while every deeper hop's
+    /// <c>localField</c> is chained onto the alias of the hop immediately before it. Returning
+    /// <see langword="null"/> rather than guessing keeps the caller's decline fail-closed.
+    /// </remarks>
+    private static LookupExpression? DisambiguateJoinLookupByChain(
+        List<LookupExpression> matches, LookupExpression? previous)
+        => matches.Count switch
+        {
+            1 => matches[0],
+            0 => null,
+            _ => previous == null
+                ? matches.FirstOrDefault(candidate => matches.All(other =>
+                    ReferenceEquals(other, candidate)
+                    || !candidate.LocalField.StartsWith(other.As + ".", StringComparison.Ordinal)))
+                : matches.FirstOrDefault(candidate =>
+                    candidate.LocalField.StartsWith(previous.As + ".", StringComparison.Ordinal))
+        };
 
     /// <summary>
     /// Resolves the <c>$lookup</c> for one join in the chain being split, deriving the inner entity CLR type
@@ -909,11 +957,11 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// the call site rather than in the shared resolver).
     /// </summary>
     private static LookupExpression? ResolveLookupForJoin(
-        MethodCallExpression joinCall, IReadOnlyList<LookupExpression> candidates)
+        MethodCallExpression joinCall, IReadOnlyList<LookupExpression> candidates, LookupExpression? previous)
     {
         var innerType = joinCall.Arguments.Count > 1 ? joinCall.Arguments[1].Type.TryGetItemType() : null;
 
-        return innerType == null ? null : ResolveJoinLookup(joinCall, innerType, candidates);
+        return innerType == null ? null : ResolveJoinLookup(joinCall, innerType, candidates, previous);
     }
 
     /// <summary>
@@ -1177,7 +1225,13 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         private LookupExpression? ResolveLookup(int depth, Type innerType)
             => depth < 0 || depth >= _joinsInnermostFirst.Count
                 ? null
-                : ResolveJoinLookup(_joinsInnermostFirst[depth], innerType, _pendingLookups);
+                : ResolveJoinLookup(
+                    _joinsInnermostFirst[depth],
+                    innerType,
+                    _pendingLookups,
+                    // The hop one level inner of this one, needed only to break a type/key tie — see
+                    // DisambiguateJoinLookupByChain. Recursion terminates at depth 0, which passes null.
+                    depth == 0 ? null : ResolveLookup(depth - 1, innerType));
 
         private sealed class Rewriter(TransparentIdentifierToLookupFieldRewriter owner, ParameterExpression oldParam)
             : System.Linq.Expressions.ExpressionVisitor
@@ -1202,7 +1256,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                         return node;
                     }
 
-                    var serializer = owner._bsonSerializerFactory.GetEntitySerializer(lookup.Navigation.TargetEntityType);
+                    // TargetEntityType, not Navigation.TargetEntityType: a navigation-less Join hop (EF-377)
+                    // has a null Navigation, and both LookupExpression constructors set TargetEntityType.
+                    var serializer = owner._bsonSerializerFactory.GetEntitySerializer(lookup.TargetEntityType);
                     var mqlField = owner._mqlFieldMethod.MakeGenericMethod(owner._rootType, node.Type);
                     return Expression.Call(null, mqlField, owner._rootParam,
                         Expression.Constant(lookup.As),

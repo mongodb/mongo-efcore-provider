@@ -563,55 +563,59 @@ Customers.
 
     public override async Task Inner_join_with_tautology_predicate_converts_to_cross_join(bool async)
     {
-        // Fails: Multiple query roots issue EF-220. Upstream's body is
+        // Fails: Multiple query roots issue EF-220, and Join/GroupJoin inner sub-query (filtered/ordered) not
+        // supported EF-X022. Upstream's body is
         // `from c in Customers.OrderBy(c => c.CustomerID).Take(10) join o in Orders.OrderBy(o => o.OrderID).Take(10) ...`
-        // — BOTH sides are self-paging. The provider's guard deliberately examines only the INNER
-        // (`Orders.OrderBy(OrderID).Take(10)`): the outer's own paging is emitted at pipeline top level and is
-        // correct, so it is not a cause here even though it is present. The inner is what driver 3.10 mistranslates
-        // under CSHARP-6017 (it folds the uncorrelated Take into the correlated $lookup sub-pipeline).
-        // The provider's paged-inner guard fires before the multiple-query-roots issue would otherwise be hit, so
-        // the exception type is now NativeTranslationNotSupportedException rather than the driver's
-        // ExpressionNotSupportedException. This spelling reaches TranslateJoin on ALL THREE EF versions (an
-        // ordinary inner join needs no DefaultIfEmpty normalization, unlike the Left_join_... sibling below).
-        // TODO(EF-406): on driver fix, re-verify which of the two unsupported shapes surfaces first. "On driver
-        // fix" means the NativeJoinPagedInnerDeclineTests tripwire goes RED — NOT that CSHARP-6017 closes
-        // (already Closed/Done at fixVersion 3.10.0, the pinned version, with the fold still live).
+        // — BOTH sides are self-paging. Only the INNER (`Orders.OrderBy(OrderID).Take(10)`) matters: the outer's
+        // own paging is emitted at pipeline top level and is correct. The inner is a sorted+paged sub-query, so
+        // driver 3.11 rejects the whole expression with ExpressionNotSupportedException ("expression must be a
+        // MongoDB IQueryable against a collection") rather than folding it into the correlated $lookup
+        // sub-pipeline the way 3.10 silently did. See docs/failing-spec-tests.md § EF-X022.
+        // This spelling reaches TranslateJoin on ALL THREE EF versions (an ordinary inner join needs no
+        // DefaultIfEmpty normalization, unlike the Left_join_... sibling below).
+        // The driver rejects the expression at translation time, but only AFTER the outer collection is logged,
+        // so a partial ("Customers.") pipeline is captured on all three EF versions.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.Inner_join_with_tautology_predicate_converts_to_cross_join(async));
 
-        AssertMql();
+        AssertMql(
+            """
+            Customers.
+            """);
     }
 
     public override async Task Left_join_with_tautology_predicate_doesnt_convert_to_cross_join(bool async)
     {
-        // Fails: Multiple query roots issue EF-220. Upstream's body is
+        // Fails: Multiple query roots issue EF-220, and Join/GroupJoin inner sub-query (filtered/ordered) not
+        // supported EF-X022. Upstream's body is
         // `from c in Customers.OrderBy(c => c.CustomerID).Take(10) join o in Orders.OrderBy(o => o.OrderID).Take(10)
-        //  on ... into grouping from o in grouping.DefaultIfEmpty() ...` — BOTH sides are self-paging. The
-        // provider's guard deliberately examines only the INNER (`Orders.OrderBy(OrderID).Take(10)`); the outer's
-        // own paging is emitted at pipeline top level and is correct, so it is not a cause here even though it is
-        // present. The inner is what driver 3.10 mistranslates under CSHARP-6017 (it folds the uncorrelated Take
-        // into the correlated $lookup sub-pipeline).
+        //  on ... into grouping from o in grouping.DefaultIfEmpty() ...` — BOTH sides are self-paging. Only the
+        // INNER (`Orders.OrderBy(OrderID).Take(10)`) matters; the outer's own paging is emitted at pipeline top
+        // level and is correct. The inner is a sorted+paged sub-query, which driver 3.11 rejects outright
+        // (see docs/failing-spec-tests.md § EF-X022).
         //
-        // WHICH MECHANISM ACTUALLY MAKES THIS TEST GREEN DIFFERS BY EF VERSION — measured in this branch's Task 4,
-        // not assumed, and the test is green either way only because AssertNativeTranslationFailedAsync also
-        // accepts InvalidOperationException:
-        //   EF10: the DefaultIfEmpty spelling reaches TranslateLeftJoin, so the provider's paged-inner guard IS
-        //         what fires, and the exception is NativeTranslationNotSupportedException.
+        // WHICH MECHANISM ACTUALLY MAKES THIS TEST GREEN DIFFERS BY EF VERSION — measured, not assumed, and the
+        // test is green either way only because AssertNativeTranslationFailedAsync accepts both
+        // ExpressionNotSupportedException and InvalidOperationException:
+        //   EF10: the DefaultIfEmpty spelling reaches TranslateLeftJoin, the query routes to driver-LINQ, and the
+        //         driver rejects the ordered/paged inner with ExpressionNotSupportedException.
         //   EF8/EF9: the same spelling normalizes to GroupJoin(...).SelectMany(DefaultIfEmpty), TranslateSelectMany
         //         returns null, and EF throws CoreStrings.TranslationFailed (InvalidOperationException) from
-        //         INSIDE the QMTEV — so VisitShapedQuery, and therefore the HardDecline throw, never run. The
-        //         paged-inner guard cannot fire on those versions; this is the same pre-existing
-        //         SelectMany-over-a-GroupJoin-grouping gap documented at
-        //         NativeJoinPagedInnerDeclineTests.GroupJoin_with_paged_inner_declines_under_native.
-        // TODO(EF-406): on driver fix — the NativeJoinPagedInnerDeclineTests tripwire going RED, NOT CSHARP-6017
-        // closing (already Closed/Done at fixVersion 3.10.0, the pinned version, with the fold still live) —
-        // re-verify which of the two unsupported shapes surfaces first, and
-        // note the per-version split has to come back for EF10 ONLY: on EF10 removing the guard changes what
-        // throws here, while on EF8/EF9 the InvalidOperationException is unaffected by the guard entirely.
+        //         INSIDE the QMTEV — the query never reaches the driver at all. This is a pre-existing,
+        //         unrelated SelectMany-over-a-GroupJoin-grouping gap on those versions.
+        // That split is why the MQL baseline is version-conditional: reaching the driver logs the outer
+        // collection before the rejection; failing inside the QMTEV logs nothing.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.Left_join_with_tautology_predicate_doesnt_convert_to_cross_join(async));
 
+#if EF8 || EF9
         AssertMql();
+#else
+        AssertMql(
+            """
+            Customers.
+            """);
+#endif
     }
 
     public override async Task SelectMany_with_client_eval(bool async)

@@ -208,35 +208,26 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
     }
 
     [Fact]
-    public void Owned_hop_SCALAR_leaf_alongside_the_array_leaf_declines_and_the_fallback_returns_the_scalar_as_wrong_data_null_EF390()
+    public void Owned_hop_SCALAR_leaf_alongside_the_array_leaf_declines_and_the_fallback_returns_the_scalar_correctly()
     {
         // The sibling-readability rule is unchanged by EF-362, and this pins that: a DOTTED SCALAR
         // (`b.Home.City`) resolves to a MongoFieldExpression whose ElementName is "Home.City" while its alias
         // is the member name "City", so IsWholeDocumentReadableLeaf declines it — and, because an array leaf is
         // present, declines the WHOLE projection. The NativeOnly leg below is that decline.
         //
-        // READ THIS BEFORE TREATING A GREEN RUN HERE AS COVERAGE: THE `measured` ARRAY BELOW IS WRONG DATA, NOT
-        // THE CORRECT ANSWER. Every `<null>` in it is a value the provider should have returned as NYC/LA/SF/DC.
-        // This test PINS a pre-existing silent-wrong-data shape so that it cannot change unnoticed; it does not
-        // assert that the shape behaves correctly, and it must be flipped (not merely re-baselined) when the
-        // shape is fixed. The fallback's own shaper derives the element name for a dotted owned scalar from the
-        // projection MEMBER ("City") and reads it at the top level of a whole document, where nothing is stored
-        // — so `City` comes back NULL under the DEFAULT Native mode and under explicit DriverLinq alike, while
-        // the array leaf beside it is correct.
+        // THIS TEST WAS FLIPPED, NOT RE-BASELINED. It used to pin a silent-wrong-data shape: the fallback's
+        // shaper derived the element name for a dotted owned scalar from the projection MEMBER ("City") and
+        // read it at the top level of a whole document, where nothing is stored, so `City` came back NULL
+        // under the default Native mode and under explicit DriverLinq alike, while the array leaf beside it
+        // was correct. That was tracked as EF-390 and is now FIXED on the main-bound line - the read half of
+        // BsonBinding.GetPropertyValueAtElement walks a dotted owned scalar's path instead of treating it as
+        // a literal key - so the assertion below is the SEEDED TRUTH rather than a measured wrong answer.
         //
-        // TICKET: EF-390 — the read half of BsonBinding.GetPropertyValueAtElement for a dotted owned SCALAR.
-        // EF-362 (this file's subject) is the SHIPPED array-leaf slice, NOT a tracker for this residual; do not
-        // read the EF-362 name on the class as covering the wrong data pinned here.
-        //
-        // MEASURED BYTE-IDENTICAL AT THIS BRANCH'S BASE (f8464860, in a worktree, same fixture, same
-        // assertions): EF-362 neither introduced nor fixed it. It is a decline landing on a broken path, which
-        // is the same family as this file's own late-fallback defect but on the OTHER fallback route (the mixed
-        // shaper, not the native-factory-failure one), so widening the alias carrier does not reach it.
-        //
-        // Fixing it means the second half of EF-362's read side: BsonBinding.GetPropertyValueAtElement builds a
-        // BsonSerializationInfo with a single-segment ElementName and a NULL ElementPath, so a dotted SCALAR
-        // name is a literal-key lookup. Only the ARRAY read (CreateGetBsonArray) got the segment walk here.
-        var collection = Seed(nameof(Owned_hop_SCALAR_leaf_alongside_the_array_leaf_declines_and_the_fallback_returns_the_scalar_as_wrong_data_null_EF390));
+        // What this test still pins is the DECLINE, which is unchanged: the dotted scalar's alias ("City")
+        // differs from its element name ("Home.City"), so IsWholeDocumentReadableLeaf rejects it and - because
+        // an array leaf is present - declines the WHOLE projection. The NativeOnly leg at the end is that
+        // decline; the two fallback-capable modes now return correct values through it.
+        var collection = Seed(nameof(Owned_hop_SCALAR_leaf_alongside_the_array_leaf_declines_and_the_fallback_returns_the_scalar_correctly));
 
         static List<string> Run(SingleEntityDbContext<NestedOwnerBlog> db)
             => db.Entities.AsNoTracking().OrderBy(b => b.Title)
@@ -245,13 +236,13 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
                 .Select(r => $"{r.City ?? "<null>"}=[{string.Join("|", r.Notes.Select(n => n.Text))}]")
                 .ToList();
 
-        // The seeded truth is NYC / LA / SF / DC. What both fallback-capable modes return is <null>.
-        var measured = new[] {"<null>=[n1|n2]", "<null>=[]", "<null>=[]", "<null>=[]"};
+        // The seeded truth, which both fallback-capable modes now return.
+        var expected = new[] {"NYC=[n1|n2]", "LA=[]", "SF=[]", "DC=[]"};
 
         foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
-            Assert.Equal(measured, Run(db));
+            Assert.Equal(expected, Run(db));
         }
 
         using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);

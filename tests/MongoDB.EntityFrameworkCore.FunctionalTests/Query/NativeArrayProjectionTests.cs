@@ -410,28 +410,28 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.DoesNotContain("\"_id\" : 0", mql);
     }
 
-    // EF-360, NOT this slice's to fix. An element type carrying an EAGER-LOADED navigation of its own — a nested
-    // owned collection or a nested owned single reference, failing identically — makes EF's nav-expansion emit the
-    // auto-include as an inner Queryable.Select, which MongoProjectionBindingExpressionVisitor rebuilds as an
-    // enumerable and Expression.New's member-type validation then rejects inside
-    // MongoProjectionBindingExpressionVisitor.VisitNew — at its newExpression.Update(newArguments) call, after
-    // MatchTypes returns the List<T>-typed shaper untouched for an IQueryable<T> target. Cited by METHOD, not by
-    // line: this comment used to say "MongoProjectionBindingExpressionVisitor.cs:661", which this slice's own
-    // additions to that file made stale (:661 is now `return null!;`). That is an ArgumentException in EVERY
-    // mode, before MongoQueryMode is read. This slice's array-leaf branch declines such an element structurally, so the
-    // shape stays BYTE-IDENTICAL rather than being perturbed into a different failure.
+    // An element type carrying an EAGER-LOADED navigation of its own — a nested owned collection, or a nested
+    // owned single reference, behaving identically — is still DECLINED by the native array-leaf branch, but the
+    // fallback it declines into now WORKS. It used to throw ArgumentException in every mode, before
+    // MongoQueryMode was even read: EF's nav-expansion emits the element's auto-include as an inner
+    // Queryable.Select, MongoProjectionBindingExpressionVisitor rebuilt that as an IEnumerable<T> rather than
+    // the navigation's declared List<T>, and Expression.New's member-type validation rejected the mismatch
+    // (MatchTypes deliberately skips collection-typed targets, so nothing coerced it first). That was EF-360,
+    // fixed on the main-bound line by converting the visited subquery to the navigation's declared type — a
+    // runtime no-op, since MongoProjectionBindingRemovingExpressionVisitor discards this exact
+    // Select-over-IncludeExpression shape later for the correctly-typed CollectionShaperExpression.
     //
-    // CORRECTED (final residuals pass, EF-322 slice 8): this comment used to say "carrying ANY navigation of its
-    // own" — true only before the final-review narrowing of the admissibility conjunct from
-    // `!GetNavigations().Any()` to `!GetNavigations().Any(n => n.IsEagerLoaded)`. It is no longer accurate: a
-    // LAZY navigation (e.g. the inverse owner back-reference — see
-    // Array_leaf_whose_element_has_only_a_lazy_inverse_owner_navigation_goes_native below) is now admitted and
-    // does NOT decline. Only an EAGER-LOADED navigation still does, since that is what triggers EF's
-    // auto-include and hence the crash mechanism described above.
+    // So the routing claim is unchanged and the DATA claim is new: Native and DriverLinq return correct rows,
+    // NativeOnly still declines — cleanly now, rather than crashing.
+    //
+    // Note the admissibility conjunct is `!GetNavigations().Any(n => n.IsEagerLoaded)`, not mere presence: a
+    // LAZY navigation (the inverse owner back-reference — see
+    // Array_leaf_whose_element_has_only_a_lazy_inverse_owner_navigation_goes_native below) IS admitted and does
+    // not decline. Only an eager-loaded one declines, because that is what triggers EF's auto-include.
     [Fact]
-    public void Element_with_its_own_navigation_is_declined_and_still_fails_identically_in_every_mode()
+    public void Element_with_its_own_navigation_is_declined_but_the_fallback_returns_correct_rows()
     {
-        var collection = SeedNested(nameof(Element_with_its_own_navigation_is_declined_and_still_fails_identically_in_every_mode));
+        var collection = SeedNested(nameof(Element_with_its_own_navigation_is_declined_but_the_fallback_returns_correct_rows));
 
         foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly})
         {
@@ -439,7 +439,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
 
             // The premise the admissibility conjunct rests on, asserted rather than assumed: a NESTED OWNED
             // navigation IS eager-loaded (EF Core convention), which is what keeps this shape declined now that
-            // the conjunct tests IsEagerLoaded rather than mere presence (final-review finding 1). Contrast
+            // the conjunct tests IsEagerLoaded rather than mere presence. Contrast
             // Array_leaf_whose_element_has_only_a_lazy_inverse_owner_navigation_goes_native, whose element's only
             // navigation is NOT eager-loaded and is therefore admitted.
             var elementNavigations = db.Model.FindEntityType(typeof(NestedBlog))!
@@ -447,10 +447,24 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             Assert.Equal([nameof(NestedPost.Comments)], elementNavigations.Select(n => n.Name));
             Assert.All(elementNavigations, n => Assert.True(n.IsEagerLoaded));
 
-            var ex = Assert.Throws<ArgumentException>(
-                () => db.Set<NestedBlog>().AsNoTracking().Select(b => new {b.Title, b.Posts}).ToList());
+            var query = () => db.Set<NestedBlog>().AsNoTracking()
+                .OrderBy(b => b.Title)
+                .Select(b => new {b.Title, b.Posts})
+                .ToList();
 
-            Assert.Contains("does not match the corresponding member type", ex.Message);
+            if (mode == MongoQueryMode.NativeOnly)
+            {
+                // The array leaf is not in the admitted set, so the whole projection declines - and NativeOnly
+                // has no fallback to land on.
+                Assert.Throws<NativeTranslationNotSupportedException>(() => query());
+                continue;
+            }
+
+            var rows = query();
+
+            Assert.Equal(["a_empty", "b_two"], rows.Select(r => r.Title).ToArray());
+            Assert.Empty(rows[0].Posts);
+            Assert.Equal(["h1", "h2"], rows[1].Posts.Select(p => p.Heading).ToArray());
         }
     }
 
