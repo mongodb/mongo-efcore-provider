@@ -584,14 +584,14 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     protected override ShapedQueryExpression? TranslateGroupJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
-        => TranslateJoinCore(outer, inner, outerKeySelector, resultSelector);
+        => TranslateJoinCore(outer, inner, outerKeySelector, resultSelector, isLeftOuter: true);
 
     protected override ShapedQueryExpression? TranslateIntersect(ShapedQueryExpression source1, ShapedQueryExpression source2)
         => null;
 
     protected override ShapedQueryExpression? TranslateLeftJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
-        => TranslateJoinCore(outer, inner, outerKeySelector, resultSelector);
+        => TranslateJoinCore(outer, inner, outerKeySelector, resultSelector, isLeftOuter: true);
 
 #if !EF8 && !EF9
     protected override ShapedQueryExpression? TranslateRightJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
@@ -601,23 +601,26 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     protected override ShapedQueryExpression? TranslateJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
-        => TranslateJoinCore(outer, inner, outerKeySelector, resultSelector);
+        => TranslateJoinCore(outer, inner, outerKeySelector, resultSelector, isLeftOuter: false);
 
+    // isLeftOuter carries the LINQ operator's join semantics to the emitted $lookup/$unwind: Join is inner,
+    // LeftJoin/GroupJoin are left-outer. EF lowers a REQUIRED reference navigation to Queryable.Join, which
+    // is what makes it drop principals with a dangling foreign key, matching relational EF Core.
     private static ShapedQueryExpression? TranslateJoinCore(
         ShapedQueryExpression outer, ShapedQueryExpression inner,
-        LambdaExpression outerKeySelector, LambdaExpression resultSelector)
+        LambdaExpression outerKeySelector, LambdaExpression resultSelector, bool isLeftOuter)
     {
         var outerQueryExpression = (MongoQueryExpression)outer.QueryExpression;
         var innerQueryExpression = (MongoQueryExpression)inner.QueryExpression;
 
-        outerQueryExpression.AddInnerCollection(innerQueryExpression.CollectionExpression.EntityType);
+        outerQueryExpression.AddInnerCollection(innerQueryExpression.CollectionExpression.EntityType, isLeftOuter);
 
         // Rebind the inner entity's projection to the outer MongoQueryExpression.
         // The inner shaper has a StructuralTypeShaperExpression bound to the inner MongoQueryExpression.
         // We need to migrate that projection to the outer query expression so the entity path
         // shaper can read inner entity properties from the $lookup result field.
         var reboundInnerShaper = RebindInnerShaperToOuterQuery(
-            inner.ShaperExpression, innerQueryExpression, outerQueryExpression, outerKeySelector);
+            inner.ShaperExpression, innerQueryExpression, outerQueryExpression, outerKeySelector, isLeftOuter);
 
         var newResultSelector = ReplacingExpressionVisitor.Replace(
             resultSelector.Parameters[0], outer.ShaperExpression,
@@ -632,7 +635,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         Expression innerShaper,
         MongoQueryExpression innerQueryExpression,
         MongoQueryExpression outerQueryExpression,
-        LambdaExpression outerKeySelector)
+        LambdaExpression outerKeySelector,
+        bool isLeftOuter)
     {
         if (innerShaper is not StructuralTypeShaperExpression structuralShaper
             || structuralShaper.ValueBufferExpression is not ProjectionBindingExpression innerBinding)
@@ -715,7 +719,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // Flatten: register a forced-unwind $lookup for THIS join...
             if (navigation != null)
             {
-                var lookup = new Expressions.LookupExpression(navigation, forceUnwind: true);
+                var lookup = new Expressions.LookupExpression(navigation, forceUnwind: true)
+                {
+                    PreserveNullAndEmptyArrays = isLeftOuter
+                };
                 if (throughNavigation != null)
                 {
                     // Transitive join: match against the already-unwound intermediate document.
@@ -737,7 +744,22 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     .FirstOrDefault(n => n.TargetEntityType == priorInnerEntityType);
                 if (priorNavigation != null)
                 {
-                    outerQueryExpression.AddLookup(new Expressions.LookupExpression(priorNavigation, forceUnwind: true));
+                    // Use the left-outer/inner-ness recorded when THAT join was translated
+                    // (AddInnerCollection), not ForeignKey.IsRequired, which can disagree with the LINQ
+                    // operator actually used. Recording is unconditional, so a miss is an internal error.
+                    if (!outerQueryExpression.TryGetJoinIsLeftOuter(priorInnerEntityType, out var priorIsLeftOuter))
+                    {
+                        throw new InvalidOperationException(
+                            "No recorded join kind for a previously joined entity type during $lookup "
+                            + "flattening. This is an internal error in the MongoDB EF Core provider; "
+                            + "please report it with the query that produced it.");
+                    }
+
+                    outerQueryExpression.AddLookup(
+                        new Expressions.LookupExpression(priorNavigation, forceUnwind: true)
+                        {
+                            PreserveNullAndEmptyArrays = priorIsLeftOuter
+                        });
                 }
             }
         }

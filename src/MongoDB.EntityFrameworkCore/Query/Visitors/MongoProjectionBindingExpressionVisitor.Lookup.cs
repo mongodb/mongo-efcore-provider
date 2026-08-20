@@ -655,6 +655,10 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             { "foreignField", refLookup.ForeignField },
             { "as", refLookup.As }
         }));
+        // Deliberately always true, unlike the flat-lookup path (EmitLookupStages / PreserveNullAndEmptyArrays):
+        // this $unwind runs INSIDE the parent collection lookup's sub-pipeline, so a non-preserving one would
+        // drop collection ELEMENTS, not principals - and an Include must never change the query's result set.
+        // See docs/superpowers/specs/2026-08-03-required-nav-unwind-semantics-design.md section 7.1.
         parentLookup.PipelineStages.Add(new BsonDocument("$unwind", new BsonDocument
         {
             { "path", $"${refLookup.As}" },

@@ -125,6 +125,22 @@ internal sealed class LookupExpression
     public bool ForceUnwind { get; }
 
     /// <summary>
+    /// Whether the <c>$unwind</c> following this <c>$lookup</c> uses <c>preserveNullAndEmptyArrays: true</c>
+    /// — LEFT-OUTER (principal survives an unmatched join) vs INNER (it is dropped).
+    /// <para>
+    /// Defaults to <see langword="true"/> so non-join registration sites (Include) get the conservative,
+    /// principal-preserving behaviour. The join-translation path overrides it from the actual LINQ operator:
+    /// <c>LeftJoin</c>/<c>GroupJoin</c> are left-outer, plain <c>Join</c> is inner — which also covers EF's
+    /// lowering of a REQUIRED reference navigation to <c>Queryable.Join</c>.
+    /// </para>
+    /// </summary>
+    /// <remarks>
+    /// <see langword="init"/>-only: compile-time state on an object reused across executions, so it must be
+    /// written exactly once, at registration.
+    /// </remarks>
+    public bool PreserveNullAndEmptyArrays { get; init; } = true;
+
+    /// <summary>
     /// Whether this $lookup must be injected right after the root collection source (before the user's
     /// downstream pipeline stages) rather than tail-appended. Used for projected collection-navigation
     /// counts (<c>select new { ..., c.Orders.Count }</c>) where a later <c>$match</c>/<c>$project</c>
