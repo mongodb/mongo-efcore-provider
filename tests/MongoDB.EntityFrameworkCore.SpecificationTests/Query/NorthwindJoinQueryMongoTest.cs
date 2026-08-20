@@ -260,11 +260,14 @@ Customers.
 
     public override async Task Join_same_collection_multiple(bool async)
     {
-        await base.Join_same_collection_multiple(async);
+        // Fails: two navigation-less same-target-type joins chained off root, both plain inner Join;
+        // StripJoinForLookup declines the shape (bare key-equality hop has no navigation for the strip
+        // to key on) and the entity-shaped result can't fall back to driver-native rendering the way a
+        // scalar projection can (see GuardAgainstUnstrippableMultiJoin) - EF-X024
+        await AssertTranslationFailed(() => base.Join_same_collection_multiple(async));
+
         AssertMql(
-            """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer._id", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer._outer._id", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
-""");
+        );
     }
 
     public override async Task Join_same_collection_force_alias_uniquefication(bool async)
@@ -381,14 +384,13 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
         AssertMql(
         );
 #else
-        Assert.Contains(
-            "Document element is missing for required",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.GroupJoin_DefaultIfEmpty_multiple(async))).Message);
+        // EF-375: two joins onto the same target type now flatten to one $lookup per join instead of
+        // leaving the driver to nest the document twice (which threw at shaper time).
+        await base.GroupJoin_DefaultIfEmpty_multiple(async);
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders_1" } }, { "$unwind" : { "path" : "$_lookup_Orders_1", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }
 """);
 #endif
     }
@@ -469,11 +471,16 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
         await AssertTranslationFailed(() => base.Join_GroupJoin_DefaultIfEmpty_Where(async));
         AssertMql();
 #else
-        await base.Join_GroupJoin_DefaultIfEmpty_Where(async);
-        AssertMql(
-            """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner" : { "$ne" : null }, "_inner.CustomerID" : "ALFKI" } }
-""");
+        // Fails: Where over a flattened multi-join chain is not translated EF-X024.
+        // This shape has two INDEPENDENT joins onto the same target type (Orders), each with its own
+        // forced-unwind $lookup (EF-375). The composed Where can't be reattached to one of them
+        // unambiguously - both lookups resolve the same navigation with no chaining/prefix relationship
+        // to disambiguate by (see EF-369's TransparentIdentifierToLookupFieldRewriter.ResolveLookup,
+        // designed for self-referencing CHAINS, not independent siblings) - so the strip declines and,
+        // since native rendering can't represent two forced-unwind lookups either, translation is
+        // rejected rather than risk falling back to a native pipeline that would silently double-nest.
+        await AssertTranslationFailed(() => base.Join_GroupJoin_DefaultIfEmpty_Where(async));
+        AssertMql();
 #endif
     }
 

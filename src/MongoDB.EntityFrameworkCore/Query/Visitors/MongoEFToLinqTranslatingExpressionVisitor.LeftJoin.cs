@@ -673,11 +673,17 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         // Pre-existing behaviour for explicit-Join chains.
         var explicitBase = FindBaseSourceThroughJoin(outerCall);
         if (explicitBase != null && IsJoinRelatedMethod(outerCall))
+        {
+            GuardAgainstDiscardedFilter(outerCall, explicitBase, expression);
             return explicitBase;
+        }
 
-        explicitBase = FindBaseSourceThroughJoin(outerCall.Arguments[0]);
+        var explicitSource = outerCall.Arguments[0];
+        explicitBase = FindBaseSourceThroughJoin(explicitSource);
         if (explicitBase == null)
             return null;
+
+        GuardAgainstDiscardedFilter(explicitSource, explicitBase, expression);
 
         var newArgs = outerCall.Arguments.ToArray();
         newArgs[0] = explicitBase;
@@ -695,6 +701,34 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         }
 
         return Expression.Call(null, method, newArgs);
+    }
+
+    /// <summary>
+    /// Prevents <see cref="StripJoinForLookup"/> from silently discarding a <c>Where</c> while peeling a
+    /// join chain to its base source — that would return the unfiltered cross product with no error, so
+    /// this fails translation instead (mirrors EF-X021's filtered-Include guard). A <c>Where</c> at or
+    /// below <paramref name="baseSource"/> becomes a leading <c>$match</c> and is unaffected. Translating
+    /// rather than rejecting the discarded filter is tracked as EF-X024.
+    /// </summary>
+    private static void GuardAgainstDiscardedFilter(
+        Expression discardedFrom, Expression baseSource, Expression fullQuery)
+    {
+        var node = discardedFrom;
+        while (!ReferenceEquals(node, baseSource) && node is MethodCallExpression call)
+        {
+            if (call.Method.Name == "Where" && call.Arguments.Count >= 2)
+            {
+                throw new InvalidOperationException(
+                    Microsoft.EntityFrameworkCore.Diagnostics.CoreStrings.TranslationFailed(fullQuery.Print()));
+            }
+
+            if (call.Arguments.Count == 0)
+            {
+                break;
+            }
+
+            node = call.Arguments[0];
+        }
     }
 
     private static bool IsJoinRelatedMethod(MethodCallExpression call)
@@ -892,8 +926,13 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
             var candidates = _pendingLookups
                 .Where(l => l.ForceUnwind
-                            && l.Navigation.TargetEntityType.ClrType == innerType
+                            && l.TargetEntityType.ClrType == innerType
                             && (keyName == null
+                                // A navigation-less lookup (EF-377) has no ForeignKey to filter by;
+                                // its TargetEntityType match above is all we can go on here — any
+                                // remaining ambiguity is resolved by the structural depth/prefix logic
+                                // below, same as a self-referencing navigation chain.
+                                || l.Navigation == null
                                 || l.Navigation.ForeignKey.Properties.Any(p => p.Name == keyName)
                                 || l.Navigation.ForeignKey.PrincipalKey.Properties.Any(p => p.Name == keyName)))
                 .ToList();
@@ -951,7 +990,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                         return node;
                     }
 
-                    var serializer = owner._bsonSerializerFactory.GetEntitySerializer(lookup.Navigation.TargetEntityType);
+                    var serializer = owner._bsonSerializerFactory.GetEntitySerializer(lookup.TargetEntityType);
                     var mqlField = owner._mqlFieldMethod.MakeGenericMethod(owner._rootType, node.Type);
                     return Expression.Call(null, mqlField, owner._rootParam,
                         Expression.Constant(lookup.As),

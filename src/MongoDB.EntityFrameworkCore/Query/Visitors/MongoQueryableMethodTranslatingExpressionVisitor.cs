@@ -623,14 +623,20 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var outerQueryExpression = (MongoQueryExpression)outer.QueryExpression;
         var innerQueryExpression = (MongoQueryExpression)inner.QueryExpression;
 
-        outerQueryExpression.AddInnerCollection(innerQueryExpression.CollectionExpression.EntityType, isLeftOuter);
+        var innerEntityType = innerQueryExpression.CollectionExpression.EntityType;
+        outerQueryExpression.AddInnerCollection(innerEntityType);
 
-        // EF-373: decide "is this the second-or-later join" from a dedicated counter, not from
+        // Record THIS join up front. One entry per join rather than per target entity type, so a second
+        // join onto an already-joined entity type still triggers the flattening below (EF-375), and so a
+        // later hop can find this one by position - see AnalyzeKeySelectorTarget (EF-372).
+        var joinInfo = outerQueryExpression.AddJoin(innerEntityType, isLeftOuter);
+
+        // EF-373: decide "is this the second-or-later join" from the join list itself, not from
         // InnerCollections.Count - InnerCollections is keyed by IEntityType and dedups two navigations
-        // that join to the SAME target collection (e.g. a self-join), which would otherwise let this
-        // guard - and the interleaving flag it depends on - go unchecked for that shape.
-        if (outerQueryExpression.RegisterJoinAndReportSecondOrLater()
-            && outerQueryExpression.HasInterleavingOperatorSinceLastJoin)
+        // that join to the SAME target collection (e.g. a self-join or two sibling joins - EF-375), which
+        // would otherwise let this guard - and the interleaving flag it depends on - go unchecked for that
+        // shape.
+        if (outerQueryExpression.Joins.Count > 1 && outerQueryExpression.HasInterleavingOperatorSinceLastJoin)
         {
             throw new NotSupportedException(
                 "A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection "
@@ -643,7 +649,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // We need to migrate that projection to the outer query expression so the entity path
         // shaper can read inner entity properties from the $lookup result field.
         var reboundInnerShaper = RebindInnerShaperToOuterQuery(
-            inner.ShaperExpression, innerQueryExpression, outerQueryExpression, outerKeySelector, innerKeySelector, isLeftOuter);
+            inner.ShaperExpression, innerQueryExpression, outerQueryExpression, outerKeySelector, innerKeySelector, joinInfo);
 
         var newResultSelector = ReplacingExpressionVisitor.Replace(
             resultSelector.Parameters[0], outer.ShaperExpression,
@@ -660,7 +666,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         MongoQueryExpression outerQueryExpression,
         LambdaExpression outerKeySelector,
         LambdaExpression innerKeySelector,
-        bool isLeftOuter)
+        JoinInfo joinInfo)
     {
         if (innerShaper is not StructuralTypeShaperExpression structuralShaper
             || structuralShaper.ValueBufferExpression is not ProjectionBindingExpression innerBinding)
@@ -685,17 +691,20 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var outerEntityType = outerQueryExpression.CollectionExpression.EntityType;
         var fkPropertyName = outerKeySelector.Body.TryGetSimplePropertyName();
 
+        // joinInfo was already appended to Joins (by AddJoin, in TranslateJoinCore), so exclude it to get
+        // the count of PRIOR joins only.
+        var priorJoinCount = outerQueryExpression.Joins.Count - 1;
+
         // The outer key selector's FK-access target tells us whether this join reads directly off the
         // root entity or off a previously-joined intermediate (e.g. the second ".Manager" in
         // Employee.Manager.Manager): a pure ".Outer"* chain reaches the root, one ending in ".Inner"
         // reaches a prior hop. Checking this structurally (not by comparing entity types) is required for
         // self-referencing chains, where the target and through entity types are the same.
         var (isDirectFromRoot, throughLevel) = AnalyzeKeySelectorTarget(
-            GetKeySelectorTargetObject(outerKeySelector.Body), outerKeySelector.Parameters[0],
-            outerQueryExpression.JoinRegistrations.Count);
+            GetKeySelectorTargetObject(outerKeySelector.Body), outerKeySelector.Parameters[0], priorJoinCount);
 
         INavigation? navigation = null;
-        JoinRegistration? throughRegistration = null;
+        JoinInfo? throughJoin = null;
 
         if (isDirectFromRoot)
         {
@@ -715,13 +724,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             navigation ??= outerEntityType.GetNavigations()
                 .FirstOrDefault(n => n.TargetEntityType == innerEntityType);
         }
-        else if (throughLevel is { } level && level >= 1 && level <= outerQueryExpression.JoinRegistrations.Count)
+        else if (throughLevel is { } level && level >= 1 && level <= priorJoinCount)
         {
             // Transitive join: resolve the navigation on the join hop the key selector actually reaches
             // through (found by position, not by IEntityType — see above) and remember it so the
             // $lookup's localField can be prefixed with that intermediate's alias.
-            throughRegistration = outerQueryExpression.JoinRegistrations[level - 1];
-            var throughEntityType = throughRegistration.Value.TargetEntityType;
+            throughJoin = outerQueryExpression.Joins[level - 1];
+            var throughEntityType = throughJoin.InnerEntityType;
 
             if (fkPropertyName != null)
             {
@@ -749,123 +758,84 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // "_lookup_<Navigation>" alias. The shaper derives the field it reads from that navigation
         // plus the computed UsesDriverJoinFields flag (driver-native => "_inner"; flat => the
         // "_lookup_<Navigation>" alias), so the projection is never retroactively rewritten.
-        //
-        // InnerCollections dedupes by IEntityType, which is harmless for independent direct joins that
-        // happen to target the same entity type (see NorthwindJoinQueryMongoTest.Join_GroupJoin_DefaultIfEmpty_Where)
-        // — they don't need separate fields. A CHAINED hop (!isDirectFromRoot) always forces the flatten
-        // decision regardless, because a self-referencing chain (e.g. Employee.Manager.Manager) reaches
-        // the same entity type through a prior hop and genuinely needs its own field.
-        var isSecondOrLaterJoin = outerQueryExpression.InnerCollections.Count > 1 || !isDirectFromRoot;
+        joinInfo.Navigation = navigation;
+        joinInfo.Alias = UniquifyLookupAlias(
+            navigation != null
+                ? Expressions.LookupExpression.GetLookupAlias(navigation)
+                : $"_lookup_{innerEntityType.ShortName()}",
+            outerQueryExpression,
+            joinInfo);
 
-        // Stable, navigation-derived alias (shaper maps it to "_inner" for the lone driver-native
-        // reference, or reads it directly in flat mode). A self-referencing chain re-resolves the SAME
-        // navigation for more than one hop (e.g. "Manager" used twice), so the plain alias would collide
-        // between hops; disambiguate by prefixing with the through-hop's alias. Collision is detected by
-        // the ALIAS a plain lookup would produce, not navigation identity, since two distinct navigations
-        // that happen to share a name would also collide. A bare key-equality hop with no model navigation
-        // (EF-377) falls back to "_lookup_<ShortName>", same as a navigation-bearing hop with no alias
-        // collision to worry about.
-        var plainAlias = navigation != null
-            ? Expressions.LookupExpression.GetLookupAlias(navigation)
-            : $"_lookup_{innerEntityType.ShortName()}";
-        var aliasAlreadyUsed = outerQueryExpression.JoinRegistrations.Any(r => r.Alias == plainAlias);
-        var lookupAlias = navigation != null && aliasAlreadyUsed && throughRegistration != null
-            ? $"{throughRegistration.Value.Alias}_{navigation.Name}"
-            : plainAlias;
-
-        // Bare key-equality Join hop with nothing in the model to key on (EF-377): remember the raw
-        // join-key field paths so a later dependent hop can scope its $lookup, and so this hop's own
-        // $lookup can be synthesized below if flat mode is forced. The owning entity type and through
-        // alias are the same ones already resolved above — the root when isDirectFromRoot, or the
-        // through-hop's target/alias otherwise.
-        MongoQueryExpression.NavigationlessJoinKey? navigationlessKey = null;
-        if (navigation == null && fkPropertyName != null)
+        if (navigation != null)
         {
-            var fkOwnerEntityType = throughRegistration?.TargetEntityType ?? outerEntityType;
-            var throughAlias = throughRegistration?.Alias;
+            var lookup = new Expressions.LookupExpression(navigation, forceUnwind: true)
+            {
+                As = joinInfo.Alias,
+                PreserveNullAndEmptyArrays = joinInfo.IsLeftOuter
+            };
+            if (throughJoin != null)
+            {
+                // Transitive join: match against the already-unwound intermediate document.
+                lookup.LocalField = $"{throughJoin.Alias}.{lookup.LocalField}";
+            }
+
+            joinInfo.Lookup = lookup;
+        }
+        else if (fkPropertyName != null)
+        {
+            // Bare key-equality Join hop with no model navigation (EF-377): there's no navigation to
+            // build a $lookup from, so build one directly from the raw outer/inner key property paths.
+            // The FK-owning entity type is the root when isDirectFromRoot, or the through-hop's target
+            // otherwise; the localField is scoped by the through-hop's alias the same way a
+            // navigation-bearing transitive hop is above.
+            var fkOwnerEntityType = throughJoin?.InnerEntityType ?? outerEntityType;
             var innerKeyPropertyName = innerKeySelector.Body.TryGetSimplePropertyName();
             var outerProperty = fkOwnerEntityType.FindProperty(fkPropertyName);
             var innerProperty = innerKeyPropertyName != null ? innerEntityType.FindProperty(innerKeyPropertyName) : null;
             if (outerProperty != null && innerProperty != null)
             {
-                var localField = throughAlias != null
-                    ? $"{throughAlias}.{outerProperty.GetElementName()}"
+                var localField = throughJoin != null
+                    ? $"{throughJoin.Alias}.{outerProperty.GetElementName()}"
                     : outerProperty.GetElementName();
 
-                navigationlessKey = new MongoQueryExpression.NavigationlessJoinKey(
-                    innerEntityType.GetCollectionName(), localField, innerProperty.GetElementName(), lookupAlias);
-                outerQueryExpression.RegisterNavigationlessJoinKey(innerEntityType, navigationlessKey.Value);
+                joinInfo.Lookup = new Expressions.LookupExpression(
+                    innerEntityType, innerEntityType.GetCollectionName(), localField, innerProperty.GetElementName(),
+                    joinInfo.Alias, forceUnwind: true)
+                {
+                    PreserveNullAndEmptyArrays = joinInfo.IsLeftOuter
+                };
             }
         }
 
+        // The trigger counts JOINS, not distinct target entity types: two joins onto the same type must
+        // flatten just like two joins onto different ones (EF-375), and a chained hop through a prior
+        // join (!isDirectFromRoot) always needs its own field too.
+        var isSecondOrLaterJoin = outerQueryExpression.Joins.Count > 1;
         if (isSecondOrLaterJoin)
         {
-            // Flatten: register a forced-unwind $lookup for THIS join...
-            if (navigation != null)
+            // Register this join's $lookup, then every prior join's — each carries its own lookup built
+            // (with its own left-outer/inner-ness, navigation-or-raw-key info, and any transitive
+            // localField prefix) from what it actually resolved at the time IT was processed, so
+            // same-typed sibling joins, self-referencing chains, and navigation-less hops (EF-377) are
+            // never confused. AddLookup dedupes by alias, so re-adding an already-registered prior
+            // lookup here is a no-op.
+            if (joinInfo.Lookup != null)
             {
-                var lookup = new Expressions.LookupExpression(navigation, forceUnwind: true)
-                {
-                    As = lookupAlias,
-                    PreserveNullAndEmptyArrays = isLeftOuter
-                };
-                if (throughRegistration != null)
-                {
-                    // Transitive join: match against the already-unwound intermediate document.
-                    lookup.LocalField = $"{throughRegistration.Value.Alias}.{lookup.LocalField}";
-                }
-
-                outerQueryExpression.AddLookup(lookup);
-            }
-            else if (navigationlessKey is { } key)
-            {
-                // This hop is itself a bare key-equality Join with no model navigation (EF-377); the
-                // localField captured in navigationlessKey is already scoped by the through-hop's alias.
-                outerQueryExpression.AddLookup(new Expressions.LookupExpression(
-                    innerEntityType, key.CollectionName, key.LocalField, key.ForeignField, key.Alias, forceUnwind: true)
-                {
-                    PreserveNullAndEmptyArrays = isLeftOuter
-                });
+                outerQueryExpression.AddLookup(joinInfo.Lookup);
             }
 
-            // ...and retroactively for every PRIOR join so the whole document is flat (a no-op for any
-            // prior join already registered directly, since AddLookup dedupes by alias). Use the
-            // left-outer/inner-ness recorded when THAT join was translated (AddInnerCollection), not
-            // ForeignKey.IsRequired, which can disagree with the LINQ operator actually used. Recording
-            // is unconditional, so a miss is an internal error.
-            foreach (var priorRegistration in outerQueryExpression.JoinRegistrations)
+            foreach (var priorJoin in outerQueryExpression.Joins)
             {
-                if (!outerQueryExpression.TryGetJoinIsLeftOuter(priorRegistration.TargetEntityType, out var priorIsLeftOuter))
+                if (priorJoin.Lookup != null && !ReferenceEquals(priorJoin, joinInfo))
                 {
-                    throw new InvalidOperationException(
-                        "No recorded join kind for a previously joined entity type during $lookup "
-                        + "flattening. This is an internal error in the MongoDB EF Core provider; "
-                        + "please report it with the query that produced it.");
-                }
-
-                if (priorRegistration.Navigation != null)
-                {
-                    outerQueryExpression.AddLookup(
-                        new Expressions.LookupExpression(priorRegistration.Navigation, forceUnwind: true)
-                        {
-                            As = priorRegistration.Alias,
-                            PreserveNullAndEmptyArrays = priorIsLeftOuter
-                        });
-                }
-                else if (outerQueryExpression.TryGetNavigationlessJoinKey(priorRegistration.TargetEntityType, out var priorKey))
-                {
-                    // Bare key-equality Join hop with no model navigation (EF-377): synthesize its
-                    // $lookup from the raw key info captured when that hop was translated.
-                    outerQueryExpression.AddLookup(new Expressions.LookupExpression(
-                        priorRegistration.TargetEntityType, priorKey.CollectionName, priorKey.LocalField,
-                        priorKey.ForeignField, priorKey.Alias, forceUnwind: true)
-                    {
-                        PreserveNullAndEmptyArrays = priorIsLeftOuter
-                    });
+                    outerQueryExpression.AddLookup(priorJoin.Lookup);
                 }
             }
         }
 
-        outerQueryExpression.RegisterJoin(innerEntityType, lookupAlias, navigation);
+        // For the lone driver-native reference the shaper maps this alias to "_inner"; in flat mode it
+        // reads this "_lookup_<Navigation>" field directly.
+        var lookupAlias = joinInfo.Alias;
 
         Expression parentAccess = new RootReferenceExpression(outerEntityType);
         ObjectAccessExpression lookupAccessExpression = navigation != null
@@ -939,6 +909,24 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         }
 
         return (true, null);
+    }
+
+    /// <summary>
+    /// Disambiguates a join's <c>_lookup_&lt;Navigation&gt;</c> alias against joins already registered.
+    /// Two joins can resolve the same navigation (a LINQ cross product), so each needs its own
+    /// <c>$lookup</c> output field; the first claimant keeps the unsuffixed name.
+    /// </summary>
+    private static string UniquifyLookupAlias(
+        string baseAlias, MongoQueryExpression queryExpression, JoinInfo joinInfo)
+    {
+        var alias = baseAlias;
+        var suffix = 0;
+        while (queryExpression.Joins.Any(j => !ReferenceEquals(j, joinInfo) && j.Alias == alias))
+        {
+            alias = $"{baseAlias}_{++suffix}";
+        }
+
+        return alias;
     }
 
     protected override ShapedQueryExpression? TranslateLastOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,

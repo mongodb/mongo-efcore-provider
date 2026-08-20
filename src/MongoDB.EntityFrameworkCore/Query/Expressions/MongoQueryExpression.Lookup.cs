@@ -1,4 +1,4 @@
-﻿/* Copyright 2023-present MongoDB Inc.
+/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -30,42 +30,15 @@ internal sealed partial class MongoQueryExpression
 {
     private readonly List<LookupExpression> _pendingLookups = [];
     private readonly Dictionary<IEntityType, MongoCollectionExpression> _innerCollections = new();
-    private readonly Dictionary<IEntityType, bool> _innerCollectionIsLeftOuter = new();
     private bool _hasInterleavingOperatorSinceLastJoin;
-    private int _joinRegistrationCount;
 
-    // Every join registered so far, in registration order. Unlike _innerCollections (keyed by
-    // IEntityType, so a self-referencing navigation chain like Employee.Manager.Manager collapses both
-    // hops into a single dictionary entry), this records one entry per join, letting a later hop find
-    // the immediately-preceding hop even when it targets the same entity type.
-    private readonly List<JoinRegistration> _joinRegistrations = [];
-    private readonly Dictionary<IEntityType, NavigationlessJoinKey> _navigationlessJoinKeys = new();
-
-    /// <summary>
-    /// The resolved <c>$lookup</c> key info for a Join hop with no corresponding model navigation —
-    /// captured so a later dependent hop can scope its <see cref="LookupExpression.LocalField"/>, and
-    /// so this hop's own <c>$lookup</c> can be emitted retroactively if flat mode is forced.
-    /// </summary>
-    /// <param name="CollectionName">The target collection to look up from.</param>
-    /// <param name="LocalField">The local (outer) field path used for the equality match.</param>
-    /// <param name="ForeignField">The foreign (inner) field path used for the equality match.</param>
-    /// <param name="Alias">The stable <c>_lookup_&lt;ShortName&gt;</c> alias this hop's projection was
-    /// registered under.</param>
-    internal readonly record struct NavigationlessJoinKey(
-        string CollectionName, string LocalField, string ForeignField, string Alias);
-
-    /// <summary>
-    /// Register the raw join-key info for a Join hop that has no corresponding model navigation.
-    /// </summary>
-    public void RegisterNavigationlessJoinKey(IEntityType entityType, NavigationlessJoinKey key)
-        => _navigationlessJoinKeys[entityType] = key;
-
-    /// <summary>
-    /// Attempt to retrieve the raw join-key info previously registered for a navigation-less Join hop
-    /// whose inner entity is <paramref name="entityType"/>.
-    /// </summary>
-    public bool TryGetNavigationlessJoinKey(IEntityType entityType, out NavigationlessJoinKey key)
-        => _navigationlessJoinKeys.TryGetValue(entityType, out key);
+    // IEntityType, so a self-referencing navigation chain like Employee.Manager.Manager, or two sibling
+    // joins onto the same target type, collapse into a single dictionary entry), this records one entry
+    // per join, letting a later hop find the immediately-preceding hop even when it targets the same
+    // entity type, and letting the flatten decision trigger on join COUNT rather than distinct target
+    // entity types. A navigation-less Join hop (EF-377) has no INavigation to key a lookup dictionary
+    // by anyway, so its raw join-key info lives on its own JoinInfo.Lookup instead of a side table.
+    private readonly List<JoinInfo> _joins = [];
 
     /// <summary>
     /// Pending $lookup stages for cross-collection collection Include operations, ordered so that a
@@ -146,19 +119,32 @@ internal sealed partial class MongoQueryExpression
     public bool HasInterleavingOperatorSinceLastJoin => _hasInterleavingOperatorSinceLastJoin;
 
     /// <summary>
-    /// Register that a join was processed and report whether this is the second (or later) one.
-    /// Deliberately counts every join call, NOT distinct target entity types: <see cref="InnerCollections"/>
-    /// is keyed by <see cref="IEntityType"/> and dedups two navigations that target the same collection
-    /// (e.g. a self-join), so it under-counts joins for that shape - see EF-373.
-    /// </summary>
-    public bool RegisterJoinAndReportSecondOrLater()
-        => ++_joinRegistrationCount > 1;
-
-    /// <summary>
-    /// Inner collections involved in join operations.
+    /// Inner collections involved in join operations, deduplicated by entity type — one entry per
+    /// joined collection, which is what serializer registration needs. Use <see cref="Joins"/> for
+    /// anything that has to reason about the number of joins, positional ordering, or which navigation
+    /// each one came from, since two joins can share a target entity type.
     /// </summary>
     public IReadOnlyDictionary<IEntityType, MongoCollectionExpression> InnerCollections
         => _innerCollections;
+
+    /// <summary>
+    /// The cross-collection joins on this query, in registration order, one entry per join.
+    /// </summary>
+    public IReadOnlyList<JoinInfo> Joins => _joins;
+
+    /// <summary>
+    /// Register a cross-collection join. The returned <see cref="JoinInfo"/> is filled in with the
+    /// join's navigation and <c>$lookup</c> once they have been resolved from the join's key selector.
+    /// </summary>
+    /// <param name="innerEntityType">The <see cref="IEntityType"/> of the joined (inner) collection.</param>
+    /// <param name="isLeftOuter">Whether the LINQ operator that introduced this join is left-outer.</param>
+    /// <returns>The <see cref="JoinInfo"/> recording this join.</returns>
+    public JoinInfo AddJoin(IEntityType innerEntityType, bool isLeftOuter)
+    {
+        var join = new JoinInfo(innerEntityType, isLeftOuter);
+        _joins.Add(join);
+        return join;
+    }
 
     /// <summary>
     /// Whether this query involves join operations across multiple collections.
@@ -182,51 +168,18 @@ internal sealed partial class MongoQueryExpression
         => _innerCollections.Count > 0 && !_pendingLookups.Any(l => l.ForceUnwind);
 
     /// <summary>
-    /// Every join registered so far, in registration order. See <see cref="RegisterJoin"/>.
-    /// </summary>
-    public IReadOnlyList<JoinRegistration> JoinRegistrations => _joinRegistrations;
-
-    /// <summary>
-    /// Records that a join against <paramref name="targetEntityType"/> was resolved to
-    /// <paramref name="navigation"/> and surfaced under <paramref name="alias"/>, so a subsequent chained
-    /// hop can find the immediately-preceding hop by position rather than by <see cref="IEntityType"/>,
-    /// which can't distinguish repeat hops against the same entity type.
-    /// </summary>
-    public void RegisterJoin(IEntityType targetEntityType, string alias, INavigation? navigation)
-        => _joinRegistrations.Add(new JoinRegistration(targetEntityType, alias, navigation));
-
-    /// <summary>
-    /// Register an inner collection for a join, recording the LINQ operator's own left-outer/inner
-    /// semantics the first time this entity type is joined (see <see cref="TryGetJoinIsLeftOuter"/>) so a
-    /// later retroactive flattening never has to re-derive it from model metadata, which can disagree
-    /// with the operator actually used.
+    /// Register an inner collection for a join operation.
     /// </summary>
     /// <param name="entityType">The <see cref="IEntityType"/> of the inner collection.</param>
-    /// <param name="isLeftOuter">Whether the join that introduced this entity type is left-outer.</param>
     /// <returns>The <see cref="MongoCollectionExpression"/> for the inner collection.</returns>
-    public MongoCollectionExpression AddInnerCollection(IEntityType entityType, bool isLeftOuter)
+    public MongoCollectionExpression AddInnerCollection(IEntityType entityType)
     {
         if (!_innerCollections.TryGetValue(entityType, out var collection))
         {
             collection = new MongoCollectionExpression(entityType);
             _innerCollections[entityType] = collection;
-            _innerCollectionIsLeftOuter[entityType] = isLeftOuter;
         }
 
         return collection;
     }
-
-    /// <summary>
-    /// The left-outer/inner semantics recorded by <see cref="AddInnerCollection"/> when <paramref name="entityType"/>
-    /// was first joined. Returns <see langword="false"/> for a <paramref name="isLeftOuter"/> lookup miss —
-    /// callers must treat a missed lookup as "unknown", not as "inner".
-    /// </summary>
-    public bool TryGetJoinIsLeftOuter(IEntityType entityType, out bool isLeftOuter)
-        => _innerCollectionIsLeftOuter.TryGetValue(entityType, out isLeftOuter);
 }
-
-/// <summary>
-/// One entry in <see cref="MongoQueryExpression.JoinRegistrations"/> — see
-/// <see cref="MongoQueryExpression.RegisterJoin"/>.
-/// </summary>
-internal readonly record struct JoinRegistration(IEntityType TargetEntityType, string Alias, INavigation? Navigation);
