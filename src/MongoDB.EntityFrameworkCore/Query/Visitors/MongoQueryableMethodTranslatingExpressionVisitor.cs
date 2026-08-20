@@ -25,6 +25,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
+using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -695,14 +696,18 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         navigation ??= outerEntityType.GetNavigations()
             .FirstOrDefault(n => n.TargetEntityType == innerEntityType);
 
-        // Transitive join: the inner entity is reached not directly from the root but THROUGH a
-        // previously-joined intermediate (e.g. OrderDetail.Order.Customer — the join's outer key
-        // selector is "o.Inner.CustomerID"). When no direct navigation exists, resolve the navigation
-        // on a prior inner collection and remember the intermediate so the $lookup's localField can be
-        // prefixed with that intermediate's "_lookup_<Intermediate>" path.
+        // Transitive join: the inner entity is reached THROUGH a previously-joined intermediate (e.g.
+        // OrderDetail.Order.Customer), or through an owned/embedded navigation nested inside that
+        // intermediate (e.g. Buyer.Address.RegionId, EF-380). Resolve the key selector's real owner so
+        // the navigation search looks in the right place, and fold any embedded path into the alias prefix.
         INavigation? throughNavigation = null;
+        string? throughEmbeddedPath = null;
         if (navigation == null && fkPropertyName != null)
         {
+            var keySelectorOwner = ResolveKeySelectorOwner(
+                outerKeySelector.Body, outerEntityType,
+                outerQueryExpression.InnerCollections.Keys.Where(k => k != innerEntityType));
+
             foreach (var priorInnerEntityType in outerQueryExpression.InnerCollections.Keys)
             {
                 if (priorInnerEntityType == innerEntityType)
@@ -710,7 +715,11 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     continue;
                 }
 
-                var candidate = priorInnerEntityType.GetNavigations()
+                var searchEntityType = keySelectorOwner?.AnchorEntityType == priorInnerEntityType
+                    ? keySelectorOwner.Value.DeclaringEntityType
+                    : priorInnerEntityType;
+
+                var candidate = searchEntityType.GetNavigations()
                     .FirstOrDefault(n => n.TargetEntityType == innerEntityType
                                          && n.ForeignKey.Properties.Any(p => p.Name == fkPropertyName));
                 if (candidate != null)
@@ -718,6 +727,11 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     navigation = candidate;
                     throughNavigation = outerEntityType.GetNavigations()
                         .FirstOrDefault(n => n.TargetEntityType == priorInnerEntityType);
+                    if (searchEntityType != priorInnerEntityType)
+                    {
+                        throughEmbeddedPath = keySelectorOwner!.Value.EmbeddedPath;
+                    }
+
                     break;
                 }
             }
@@ -747,8 +761,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 };
                 if (throughNavigation != null)
                 {
-                    // Transitive join: match against the already-unwound intermediate document.
-                    lookup.LocalField = $"{Expressions.LookupExpression.GetLookupAlias(throughNavigation)}.{lookup.LocalField}";
+                    // Match against the already-unwound intermediate document; an owned/embedded
+                    // navigation (EF-380) inserts its path between the intermediate's alias and the field.
+                    var throughAlias = throughEmbeddedPath != null
+                        ? $"{Expressions.LookupExpression.GetLookupAlias(throughNavigation)}.{throughEmbeddedPath}"
+                        : Expressions.LookupExpression.GetLookupAlias(throughNavigation);
+                    lookup.LocalField = $"{throughAlias}.{lookup.LocalField}";
                 }
 
                 outerQueryExpression.AddLookup(lookup);
@@ -803,6 +821,94 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         return structuralShaper.Update(
             new ProjectionBindingExpression(outerQueryExpression, projectionIndex, typeof(ValueBuffer)));
+    }
+
+    /// <summary>
+    /// A Join key selector's declaring entity type, its nearest non-owned anchor, and the mapped
+    /// element-name path between them (<see langword="null"/> if they're the same type).
+    /// </summary>
+    private readonly record struct KeySelectorOwner(IEntityType DeclaringEntityType, IEntityType AnchorEntityType, string? EmbeddedPath);
+
+    /// <summary>
+    /// Resolves a Join key selector's owner: the root, an already-joined intermediate, or — when the
+    /// property lives on an owned/embedded type nested under one of those (e.g.
+    /// <c>x.Buyer.Address.RegionId</c>, EF-380) — that owned type plus its anchor and the path between them.
+    /// </summary>
+    /// <remarks>
+    /// Anchors are matched by CLR type; an ambiguous match (e.g. shared-type entities) bails out rather
+    /// than guessing. The embedded path is then walked via the navigation graph, not CLR type, so sibling
+    /// owned navigations sharing a CLR type (e.g. ShippingAddress/BillingAddress) resolve correctly, and
+    /// each segment uses the mapped element name.
+    /// </remarks>
+    private static KeySelectorOwner? ResolveKeySelectorOwner(
+        Expression keySelectorBody, IEntityType rootEntityType, IEnumerable<IEntityType> priorInnerEntityTypes)
+    {
+        var current = keySelectorBody.RemoveConvert() switch
+        {
+            MemberExpression member => member.Expression,
+            MethodCallExpression methodCall when methodCall.Method.IsEFPropertyMethod() && methodCall.Arguments.Count == 2
+                => methodCall.Arguments[0],
+            _ => null
+        };
+
+        if (current == null)
+        {
+            return null;
+        }
+
+        var anchors = new List<IEntityType> { rootEntityType };
+        anchors.AddRange(priorInnerEntityTypes);
+
+        var embeddedSegments = new List<string>();
+
+        while (true)
+        {
+            var matchingAnchors = anchors.Where(e => e.ClrType == current.Type).ToList();
+            if (matchingAnchors.Count > 1)
+            {
+                // Ambiguous CLR type (e.g. shared-type entities) — bail out rather than guessing.
+                return null;
+            }
+
+            if (matchingAnchors.Count == 1)
+            {
+                var anchorEntityType = matchingAnchors[0];
+                var declaringEntityType = anchorEntityType;
+                var elementSegments = new List<string>();
+                foreach (var segment in embeddedSegments)
+                {
+                    if (declaringEntityType.FindNavigation(segment) is not { } segmentNavigation)
+                    {
+                        // Shouldn't happen (segments came from the same tree), but don't report a bogus owner.
+                        return null;
+                    }
+
+                    declaringEntityType = segmentNavigation.TargetEntityType;
+                    elementSegments.Add(declaringEntityType.GetContainingElementName() ?? segment);
+                }
+
+                return new KeySelectorOwner(
+                    declaringEntityType, anchorEntityType, elementSegments.Count > 0 ? string.Join(".", elementSegments) : null);
+            }
+
+            var (name, next) = current.RemoveConvert() switch
+            {
+                MemberExpression member => (member.Member.Name, member.Expression),
+                MethodCallExpression methodCall when methodCall.Method.IsEFPropertyMethod()
+                    && methodCall.Arguments.Count == 2
+                    && methodCall.Arguments[1] is ConstantExpression { Value: string propertyName } => (propertyName, methodCall.Arguments[0]),
+                _ => (null, null)
+            };
+
+            if (name == null || next == null)
+            {
+                // Ran out of decomposable hops without ever reaching a known anchor — can't resolve.
+                return null;
+            }
+
+            embeddedSegments.Insert(0, name);
+            current = next;
+        }
     }
 
     protected override ShapedQueryExpression? TranslateLastOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,
