@@ -261,6 +261,33 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
 
 #if !EF8 && !EF9
     [Fact]
+    public void Include_three_hop_then_include_materializes_nested_entities()
+    {
+        // EF-372 regression test: a THIRD hop reference Include must prefix its $lookup localField with
+        // the second hop's alias too, not just the first. Getting this wrong doesn't throw — it silently
+        // returns zero rows — so assert row counts/identities rather than MQL.
+        var (linesCollection, ordersCollection, buyersCollection, regionsCollection) = SetupThreeHopChain();
+
+        using var db = new ThreeHopDbContext(database, linesCollection, ordersCollection, buyersCollection, regionsCollection);
+        var lines = db.HopLines
+            .Include(l => l.Order)
+                .ThenInclude(o => o.Buyer)
+                    .ThenInclude(b => b.Region)
+            .ToList();
+
+        Assert.Equal(4, lines.Count);
+        Assert.All(lines, l =>
+        {
+            Assert.NotNull(l.Order);
+            Assert.NotNull(l.Order.Buyer);
+            Assert.NotNull(l.Order.Buyer.Region);
+        });
+        Assert.Equal(2, lines.Select(l => l.Order.Buyer.Region.RegionName).Distinct().Count());
+    }
+#endif
+
+#if !EF8 && !EF9
+    [Fact]
     public void Include_self_join_materializes_related_entity()
     {
         var staffName = TemporaryDatabaseFixtureBase.CreateCollectionName("Staff") + Guid.NewGuid().ToString("N")[..8];
@@ -341,6 +368,47 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         ]);
 
         return (ordersName, customersName);
+    }
+
+    // BSON uses: ord_id for Lines; buyer_id for Orders; b_name, region_id for Buyers; r_name for Regions
+    // C# uses:   OrderId for Lines; BuyerId for Orders; BuyerName, RegionId for Buyers; RegionName for Regions
+    private (string linesCollection, string ordersCollection, string buyersCollection, string regionsCollection) SetupThreeHopChain()
+    {
+        var regionsName = TemporaryDatabaseFixtureBase.CreateCollectionName("HopRegions") + Guid.NewGuid().ToString("N")[..8];
+        var buyersName = TemporaryDatabaseFixtureBase.CreateCollectionName("HopBuyers") + Guid.NewGuid().ToString("N")[..8];
+        var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("HopOrders") + Guid.NewGuid().ToString("N")[..8];
+        var linesName = TemporaryDatabaseFixtureBase.CreateCollectionName("HopLines") + Guid.NewGuid().ToString("N")[..8];
+
+        var regionId1 = ObjectId.GenerateNewId();
+        var regionId2 = ObjectId.GenerateNewId();
+        var buyerId1 = ObjectId.GenerateNewId();
+        var buyerId2 = ObjectId.GenerateNewId();
+        var orderId1 = ObjectId.GenerateNewId();
+        var orderId2 = ObjectId.GenerateNewId();
+
+        database.MongoDatabase.GetCollection<BsonDocument>(regionsName).InsertMany([
+            new BsonDocument { { "_id", regionId1 }, { "r_name", "East" } },
+            new BsonDocument { { "_id", regionId2 }, { "r_name", "West" } }
+        ]);
+
+        database.MongoDatabase.GetCollection<BsonDocument>(buyersName).InsertMany([
+            new BsonDocument { { "_id", buyerId1 }, { "b_name", "Buyer 1" }, { "region_id", regionId1 } },
+            new BsonDocument { { "_id", buyerId2 }, { "b_name", "Buyer 2" }, { "region_id", regionId2 } }
+        ]);
+
+        database.MongoDatabase.GetCollection<BsonDocument>(ordersName).InsertMany([
+            new BsonDocument { { "_id", orderId1 }, { "buyer_id", buyerId1 } },
+            new BsonDocument { { "_id", orderId2 }, { "buyer_id", buyerId2 } }
+        ]);
+
+        database.MongoDatabase.GetCollection<BsonDocument>(linesName).InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "ord_id", orderId1 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "ord_id", orderId1 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "ord_id", orderId2 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "ord_id", orderId2 } }
+        ]);
+
+        return (linesName, ordersName, buyersName, regionsName);
     }
 
     class Order
@@ -466,6 +534,104 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
                 => Interlocked.Increment(ref _count);
         }
     }
+
+#if !EF8 && !EF9
+    class HopRegion
+    {
+        public ObjectId _id { get; set; }
+        public string RegionName { get; set; }
+    }
+
+    class HopBuyer
+    {
+        public ObjectId _id { get; set; }
+        public string BuyerName { get; set; }
+        public ObjectId? RegionId { get; set; }
+        public HopRegion Region { get; set; }
+    }
+
+    class HopOrder
+    {
+        public ObjectId _id { get; set; }
+        public ObjectId? BuyerId { get; set; }
+        public HopBuyer Buyer { get; set; }
+    }
+
+    class HopLine
+    {
+        public ObjectId _id { get; set; }
+        public ObjectId? OrderId { get; set; }
+        public HopOrder Order { get; set; }
+    }
+
+    class ThreeHopDbContext : DbContext
+    {
+        private readonly string _linesCollection;
+        private readonly string _ordersCollection;
+        private readonly string _buyersCollection;
+        private readonly string _regionsCollection;
+
+        public DbSet<HopLine> HopLines { get; set; }
+
+        public ThreeHopDbContext(
+            TemporaryDatabaseFixture database,
+            string linesCollection,
+            string ordersCollection,
+            string buyersCollection,
+            string regionsCollection)
+            : base(new DbContextOptionsBuilder<ThreeHopDbContext>()
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
+                .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+                .Options)
+        {
+            _linesCollection = linesCollection;
+            _ordersCollection = ordersCollection;
+            _buyersCollection = buyersCollection;
+            _regionsCollection = regionsCollection;
+        }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<HopRegion>(b =>
+            {
+                b.ToCollection(_regionsCollection);
+                b.Property(r => r.RegionName).HasElementName("r_name");
+            });
+
+            modelBuilder.Entity<HopBuyer>(b =>
+            {
+                b.ToCollection(_buyersCollection);
+                b.Property(x => x.BuyerName).HasElementName("b_name");
+                b.Property(x => x.RegionId).HasElementName("region_id");
+                b.HasOne(x => x.Region).WithMany().HasForeignKey(x => x.RegionId);
+            });
+
+            modelBuilder.Entity<HopOrder>(b =>
+            {
+                b.ToCollection(_ordersCollection);
+                b.Property(x => x.BuyerId).HasElementName("buyer_id");
+                b.HasOne(x => x.Buyer).WithMany().HasForeignKey(x => x.BuyerId);
+            });
+
+            modelBuilder.Entity<HopLine>(b =>
+            {
+                b.ToCollection(_linesCollection);
+                b.Property(x => x.OrderId).HasElementName("ord_id");
+                b.HasOne(x => x.Order).WithMany().HasForeignKey(x => x.OrderId);
+            });
+        }
+
+        sealed class IgnoreCacheKeyFactory : IModelCacheKeyFactory
+        {
+            private static int _count;
+            public object Create(DbContext context, bool designTime)
+                => Interlocked.Increment(ref _count);
+        }
+    }
+#endif
 
 #if !EF8 && !EF9
     class StaffMember

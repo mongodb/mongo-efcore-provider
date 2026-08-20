@@ -31,6 +31,7 @@ internal sealed partial class MongoQueryExpression
     private readonly List<LookupExpression> _pendingLookups = [];
     private readonly Dictionary<IEntityType, MongoCollectionExpression> _innerCollections = new();
     private readonly Dictionary<IEntityType, bool> _innerCollectionIsLeftOuter = new();
+    private readonly Dictionary<IEntityType, INavigation> _innerCollectionNavigations = new();
     private bool _hasInterleavingOperatorSinceLastJoin;
     private int _joinRegistrationCount;
 
@@ -176,4 +177,19 @@ internal sealed partial class MongoQueryExpression
     /// </summary>
     public bool TryGetJoinIsLeftOuter(IEntityType entityType, out bool isLeftOuter)
         => _innerCollectionIsLeftOuter.TryGetValue(entityType, out isLeftOuter);
+
+    /// <summary>
+    /// Records which navigation actually introduced an inner collection's $lookup, so its
+    /// "_lookup_&lt;Navigation&gt;" alias can be recovered later. Re-deriving this from metadata is unsafe
+    /// when more than one navigation targets the same entity type.
+    /// </summary>
+    public void RegisterInnerCollectionNavigation(IEntityType entityType, INavigation navigation)
+        => _innerCollectionNavigations[entityType] = navigation;
+
+    /// <summary>
+    /// Get the navigation that was registered (via <see cref="RegisterInnerCollectionNavigation"/>) as
+    /// having introduced the given inner collection, or <see langword="null"/> if none was recorded.
+    /// </summary>
+    public INavigation? GetInnerCollectionNavigation(IEntityType entityType)
+        => _innerCollectionNavigations.GetValueOrDefault(entityType);
 }
