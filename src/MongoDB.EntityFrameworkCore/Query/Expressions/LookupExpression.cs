@@ -14,6 +14,7 @@
  */
 
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
@@ -55,6 +56,19 @@ internal sealed class LookupExpression
         }
 
         As = GetLookupAlias(navigation);
+
+        // TPH: sibling subtypes can share the same FK value space, so FK equality alone would also
+        // match sibling-type documents; narrow by discriminator to just this type and its derived types.
+        if (targetEntityType.FindDiscriminatorProperty() is { } discriminatorProperty
+            && targetEntityType != targetEntityType.GetRootType())
+        {
+            var discriminatorValues = new BsonArray(
+                targetEntityType.GetDerivedTypes().Prepend(targetEntityType)
+                    .Select(d => BsonValue.Create(d.GetDiscriminatorValue())));
+
+            PipelineStages.Add(new BsonDocument("$match",
+                new BsonDocument(discriminatorProperty.GetElementName(), new BsonDocument("$in", discriminatorValues))));
+        }
     }
 
     /// <summary>

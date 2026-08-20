@@ -295,6 +295,29 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         Assert.Equal(42, vip.Discount);
     }
 
+    [Fact]
+    public void Include_tph_derived_target_collection_nav_excludes_sibling_type_rows()
+    {
+        var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("PriorityOrders") + Guid.NewGuid().ToString("N")[..8];
+        var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("PriorityCustomers") + Guid.NewGuid().ToString("N")[..8];
+
+        var customerId = ObjectId.GenerateNewId();
+        database.MongoDatabase.GetCollection<BsonDocument>(customersName).InsertOne(
+            new BsonDocument { { "_id", customerId }, { "name", "Alice" } });
+        database.MongoDatabase.GetCollection<BsonDocument>(ordersName).InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "desc", "Regular" }, { "cust_id", customerId }, { "_t", "Order" } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "desc", "Rush" }, { "cust_id", customerId }, { "_t", "Priority" }, { "priority", 5 } }
+        ]);
+
+        using var db = new DerivedCollectionNavDbContext(database, ordersName, customersName);
+        var customer = db.Customers.Include(c => c.PriorityOrders).First();
+
+        // The FK (cust_id) matches both sibling-type documents; only the discriminator narrows the
+        // $lookup to the derived PriorityOrder rows the navigation actually targets. See EF-374.
+        Assert.Single(customer.PriorityOrders);
+        Assert.All(customer.PriorityOrders, o => Assert.IsType<PriorityOrder>(o));
+    }
+
     [Theory]
     [InlineData("string")]
     [InlineData("int")]
@@ -450,6 +473,36 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         Assert.Equal(2, order1.Items.Count);
         Assert.Single(order2.Items);
         Assert.Equal(["A", "B"], order1.Items.Select(i => i.Sku).OrderBy(s => s).ToArray());
+    }
+
+    [Fact]
+    public void Include_then_include_tph_derived_target_excludes_sibling_type_rows()
+    {
+        // Same sibling-FK-collision shape as Include_tph_derived_target_collection_nav_excludes_sibling_type_rows,
+        // but one level deeper (ThenInclude): the nested $lookup construction sites must not silently drop
+        // the discriminator-narrowing pipeline stage when flattening a nested LookupExpression. See EF-374.
+        var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("NestedTphCustomers") + Guid.NewGuid().ToString("N")[..8];
+        var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("NestedTphOrders") + Guid.NewGuid().ToString("N")[..8];
+        var itemsName = TemporaryDatabaseFixtureBase.CreateCollectionName("NestedTphItems") + Guid.NewGuid().ToString("N")[..8];
+
+        var aliceId = ObjectId.GenerateNewId();
+        var orderId = ObjectId.GenerateNewId();
+
+        database.MongoDatabase.GetCollection<BsonDocument>(customersName).InsertOne(
+            new BsonDocument { { "_id", aliceId }, { "name", "Alice" } });
+        database.MongoDatabase.GetCollection<BsonDocument>(ordersName).InsertOne(
+            new BsonDocument { { "_id", orderId }, { "desc", "Order 1" }, { "cust_id", aliceId } });
+        database.MongoDatabase.GetCollection<BsonDocument>(itemsName).InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "sku", "Regular" }, { "ord_id", orderId }, { "_t", "Item" } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "sku", "Rush" }, { "ord_id", orderId }, { "_t", "Priority" }, { "priority", 5 } }
+        ]);
+
+        using var db = new NestedTphDbContext(database, customersName, ordersName, itemsName);
+        var customer = db.Customers.Include(c => c.Orders).ThenInclude(o => o.PriorityItems).First();
+
+        var order = Assert.Single(customer.Orders);
+        Assert.Single(order.PriorityItems);
+        Assert.All(order.PriorityItems, i => Assert.IsType<PriorityChainItem>(i));
     }
 #endif
 
@@ -809,6 +862,49 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         }
     }
 
+    class PriorityOrder : TphOrder
+    {
+        public int PriorityLevel { get; set; }
+    }
+
+    class DerivedNavCustomer
+    {
+        public ObjectId _id { get; set; }
+        public string FullName { get; set; }
+        public List<PriorityOrder> PriorityOrders { get; set; }
+    }
+
+    class DerivedCollectionNavDbContext(TemporaryDatabaseFixture database, string ordersCollection, string customersCollection)
+        : CrossCollectionDbContextBase<DerivedCollectionNavDbContext>(database)
+    {
+        public DbSet<TphOrder> Orders { get; set; }
+        public DbSet<DerivedNavCustomer> Customers { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<DerivedNavCustomer>(b =>
+            {
+                b.ToCollection(customersCollection);
+                b.Property(c => c.FullName).HasElementName("name");
+                b.HasMany(c => c.PriorityOrders).WithOne().HasForeignKey("CustomerId");
+            });
+
+            modelBuilder.Entity<TphOrder>(b =>
+            {
+                b.ToCollection(ordersCollection);
+                b.Property(o => o.OrderDescription).HasElementName("desc");
+                b.Property(o => o.CustomerId).HasElementName("cust_id");
+                b.Ignore(o => o.Customer);
+                b.HasDiscriminator<string>("_t")
+                    .HasValue<TphOrder>("Order")
+                    .HasValue<PriorityOrder>("Priority");
+            });
+            modelBuilder.Entity<PriorityOrder>().Property(o => o.PriorityLevel).HasElementName("priority");
+        }
+    }
+
     class TypedKeyCustomer<TKey>
     {
         public TKey _id { get; set; }
@@ -907,6 +1003,74 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
                 b.Property(i => i.Sku).HasElementName("sku");
                 b.Property(i => i.OrderId).HasElementName("ord_id");
             });
+        }
+    }
+
+    // Three-collection chain (Customer -> Order -> Item) where the deepest ThenInclude collection nav
+    // targets a derived TPH type, exercising the nested $lookup construction sites (not just the
+    // top-level Include site).
+    class NestedTphCustomer
+    {
+        public ObjectId _id { get; set; }
+        public string FullName { get; set; }
+        public List<NestedTphOrder> Orders { get; set; }
+    }
+
+    class NestedTphOrder
+    {
+        public ObjectId _id { get; set; }
+        public string OrderDescription { get; set; }
+        public ObjectId? CustomerId { get; set; }
+        public List<PriorityChainItem> PriorityItems { get; set; }
+    }
+
+    class TphChainItem
+    {
+        public ObjectId _id { get; set; }
+        public string Sku { get; set; }
+        public ObjectId? OrderId { get; set; }
+    }
+
+    class PriorityChainItem : TphChainItem
+    {
+        public int PriorityLevel { get; set; }
+    }
+
+    class NestedTphDbContext(TemporaryDatabaseFixture database, string customersCollection, string ordersCollection, string itemsCollection)
+        : CrossCollectionDbContextBase<NestedTphDbContext>(database)
+    {
+        public DbSet<NestedTphCustomer> Customers { get; set; }
+        public DbSet<TphChainItem> Items { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<NestedTphCustomer>(b =>
+            {
+                b.ToCollection(customersCollection);
+                b.Property(c => c.FullName).HasElementName("name");
+                b.HasMany(c => c.Orders).WithOne().HasForeignKey(o => o.CustomerId);
+            });
+
+            modelBuilder.Entity<NestedTphOrder>(b =>
+            {
+                b.ToCollection(ordersCollection);
+                b.Property(o => o.OrderDescription).HasElementName("desc");
+                b.Property(o => o.CustomerId).HasElementName("cust_id");
+                b.HasMany(o => o.PriorityItems).WithOne().HasForeignKey("OrderId");
+            });
+
+            modelBuilder.Entity<TphChainItem>(b =>
+            {
+                b.ToCollection(itemsCollection);
+                b.Property(i => i.Sku).HasElementName("sku");
+                b.Property(i => i.OrderId).HasElementName("ord_id");
+                b.HasDiscriminator<string>("_t")
+                    .HasValue<TphChainItem>("Item")
+                    .HasValue<PriorityChainItem>("Priority");
+            });
+            modelBuilder.Entity<PriorityChainItem>().Property(i => i.PriorityLevel).HasElementName("priority");
         }
     }
 #endif

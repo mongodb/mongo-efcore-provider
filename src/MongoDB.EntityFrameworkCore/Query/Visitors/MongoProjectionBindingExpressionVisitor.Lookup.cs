@@ -541,13 +541,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             // Recurse for deeper nesting
             ExtractNestedIncludePipeline(nestedInclude.NavigationExpression, nestedLookup, nestedNav.TargetEntityType);
 
-            parentLookup.PipelineStages.Add(new BsonDocument("$lookup", new BsonDocument
-            {
-                { "from", nestedLookup.From },
-                { "localField", nestedLookup.LocalField },
-                { "foreignField", nestedLookup.ForeignField },
-                { "as", nestedLookup.As }
-            }));
+            parentLookup.PipelineStages.Add(BuildLookupDocument(nestedLookup));
 
             // Continue with the entity expression (which may have more wrapping)
             navigationExpression = nestedInclude.EntityExpression;
@@ -594,36 +588,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 ExtractFilteredIncludePipeline(innerMaterialize.Subquery, nestedLookup, nav.TargetEntityType);
             }
 
-            var nestedLookupDoc = new BsonDocument("$lookup", new BsonDocument
-            {
-                { "from", nestedLookup.From },
-                { "localField", nestedLookup.LocalField },
-                { "foreignField", nestedLookup.ForeignField },
-                { "as", nestedLookup.As }
-            });
-
-            if (nestedLookup.HasPipeline)
-            {
-                // Use pipeline form for nested lookups with their own stages
-                var pipeline = new BsonArray
-                {
-                    new BsonDocument("$match",
-                        new BsonDocument("$expr",
-                            new BsonDocument("$eq", new BsonArray { $"${nestedLookup.ForeignField}", "$$localField" })))
-                };
-                foreach (var stage in nestedLookup.PipelineStages)
-                    pipeline.Add(stage);
-
-                nestedLookupDoc = new BsonDocument("$lookup", new BsonDocument
-                {
-                    { "from", nestedLookup.From },
-                    { "let", new BsonDocument("localField", $"${nestedLookup.LocalField}") },
-                    { "pipeline", pipeline },
-                    { "as", nestedLookup.As }
-                });
-            }
-
-            parentLookup.PipelineStages.Add(nestedLookupDoc);
+            parentLookup.PipelineStages.Add(BuildLookupDocument(nestedLookup));
             current = nested.EntityExpression;
         }
 
@@ -648,13 +613,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     {
         var refLookup = new LookupExpression(referenceNavigation);
 
-        parentLookup.PipelineStages.Add(new BsonDocument("$lookup", new BsonDocument
-        {
-            { "from", refLookup.From },
-            { "localField", refLookup.LocalField },
-            { "foreignField", refLookup.ForeignField },
-            { "as", refLookup.As }
-        }));
+        parentLookup.PipelineStages.Add(BuildLookupDocument(refLookup));
         // Deliberately always true, unlike the flat-lookup path (EmitLookupStages / PreserveNullAndEmptyArrays):
         // this $unwind runs INSIDE the parent collection lookup's sub-pipeline, so a non-preserving one would
         // drop collection ELEMENTS, not principals - and an Include must never change the query's result set.
@@ -664,6 +623,44 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             { "path", $"${refLookup.As}" },
             { "preserveNullAndEmptyArrays", true }
         }));
+    }
+
+    /// <summary>
+    /// Builds the <c>$lookup</c> stage for a nested lookup. Every nested-lookup construction site must
+    /// go through this, or a lookup carrying <see cref="LookupExpression.PipelineStages"/> gets silently
+    /// flattened and loses them (EF-374).
+    /// </summary>
+    private static BsonDocument BuildLookupDocument(LookupExpression lookup)
+    {
+        if (!lookup.HasPipeline)
+        {
+            return new BsonDocument("$lookup", new BsonDocument
+            {
+                { "from", lookup.From },
+                { "localField", lookup.LocalField },
+                { "foreignField", lookup.ForeignField },
+                { "as", lookup.As }
+            });
+        }
+
+        var pipeline = new BsonArray
+        {
+            new BsonDocument("$match",
+                new BsonDocument("$expr",
+                    new BsonDocument("$eq", new BsonArray { $"${lookup.ForeignField}", "$$localField" })))
+        };
+        foreach (var stage in lookup.PipelineStages)
+        {
+            pipeline.Add(stage);
+        }
+
+        return new BsonDocument("$lookup", new BsonDocument
+        {
+            { "from", lookup.From },
+            { "let", new BsonDocument("localField", $"${lookup.LocalField}") },
+            { "pipeline", pipeline },
+            { "as", lookup.As }
+        });
     }
 
     /// <summary>
