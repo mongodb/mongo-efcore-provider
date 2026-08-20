@@ -377,6 +377,23 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
+    public void Filtered_include_order_by_unmapped_member_key_selector_is_not_silently_dropped()
+    {
+        // A key selector that IS a member access, but names something that is not a mapped property of the
+        // target entity (here string.Length), has no BSON element to sort on. Emitting the member name as an
+        // element name would $sort on a field absent from every document, returning a plausible but arbitrary
+        // order with no error raised, so this must fail loudly too.
+        var (ordersCollection, customersCollection) = SetupOrdersAndCustomers();
+
+        using var db = new OrderCustomerDbContext(database, ordersCollection, customersCollection);
+
+        Assert.Throws<InvalidOperationException>(() =>
+            db.Customers
+                .Include(c => c.Orders.OrderBy(o => o.OrderDescription.Length))
+                .First(c => c.FullName == "Alice"));
+    }
+
+    [Fact]
     public void Filtered_collection_include_predicate_is_not_silently_dropped()
     {
         // A user filtered-Include predicate (.Include(c => c.Orders.Where(...))) lowers to a Where inside

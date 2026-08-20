@@ -842,7 +842,16 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         }
 
         var property = entityType.FindProperty(name);
-        return property != null ? Microsoft.EntityFrameworkCore.MongoPropertyExtensions.GetElementName(property) : name;
+        if (property == null)
+        {
+            // A member access that isn't a mapped property of the target entity (e.g. "o.Label.Length", or a
+            // member reached through an embedded document, where only the outermost member name survives).
+            // There is no element to sort on: using the raw member name would $sort on a field absent from the
+            // documents, which MongoDB treats as all-equal and returns in an arbitrary order. Fail loudly.
+            throw new InvalidOperationException(CoreStrings.TranslationFailed(orderByCall.Print()));
+        }
+
+        return Microsoft.EntityFrameworkCore.MongoPropertyExtensions.GetElementName(property);
     }
 
     /// <summary>
