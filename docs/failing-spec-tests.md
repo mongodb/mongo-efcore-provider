@@ -277,29 +277,24 @@ Lifting this ticket requires translating the inner sub-query into the `$lookup` 
 `Select_Where_Navigation_Null_Deep`. They were believed to share one root cause — "compound multi-hop
 navigation lowering". They did not.
 
-**Four of the five are fixed** (EF-369 / EF-370, see
+**All five are now fixed.** Four via EF-369 / EF-370 (see
 `docs/superpowers/specs/2026-08-03-required-nav-unwind-semantics-design.md`): the composed predicate /
 `Contains` filter was being *discarded* when a multi-join Include chain was flattened to root-level
 `_lookup_<Nav>` fields, so the query returned every row (2155 against 112 / 112 / 352 / 40 expected).
-Those four are now un-skipped, run on EF10 with real `AssertMql` baselines, and take the standard
+Those four are un-skipped, run on EF10 with real `AssertMql` baselines, and take the standard
 `#if EF8 || EF9` **EF-X020** arm (their navigations are optional, so EF lowers them to `Queryable.LeftJoin`,
-whose dispatch case does not exist before EF10).
+whose dispatch case does not exist before EF10):
 
-**The fifth is a different defect**, tracked as EF-371. It is **baselined green, not skipped** — a skip
-stops the shape being exercised at all, so neither a regression nor an accidental fix would be noticed.
-The `#else` (EF10) arm asserts the wrong data with the loose form the repo uses for a wrong-*data* failure
-(as opposed to the exact-type form reserved for a wrong exception *type*), plus the real `AssertMql`
-baseline, which pins the defective pipeline including the bare hop-2 `$unwind` diagnosed below:
+- `Include_with_multiple_optional_navigations`
+- `Multiple_include_with_multiple_optional_navigations`
+- `Navigation_from_join_clause_inside_contains`
+- `Navigation_inside_contains_nested`
 
-```csharp
-// Fails: returns wrong data (0 rows instead of 6) EF-371
-await Assert.ThrowsAnyAsync<Xunit.Sdk.XunitException>(() => base.Select_Where_Navigation_Null_Deep(async));
-```
-
-On EF8/EF9 the same shape fails at *translation* instead, so that arm is the standard **EF-X020**
-`AssertTranslationFailed` + empty `AssertMql()`. `Select_Where_Navigation_Null_Deep`
-filters on `e.Manager.Manager == null` over the self-referencing `Employee.Manager` navigation and returns
-**0 rows where 6 are correct**. Two causes, both independent of the discarded-operator bug:
+The fifth, `Select_Where_Navigation_Null_Deep` (a self-referencing two-hop navigation,
+`e.Manager.Manager == null`), was a **different defect**, tracked and fixed as EF-371. It filters on
+`e.Manager.Manager == null` over the self-referencing `Employee.Manager` navigation and was returning
+**0 rows where 6 are correct**. Two causes, both independent of the discarded-operator bug fixed by
+EF-369/EF-370:
 
 1. `MongoQueryExpression._innerCollections` is keyed by `IEntityType`, so a self-referencing two-hop
    navigation registers only **one** inner collection. `InnerCollections.Count > 1` stays false, no
@@ -310,10 +305,16 @@ filters on `e.Manager.Manager == null` over the self-referencing `Employee.Manag
    `LeftJoinResult`, so it falls through to `Queryable.Join` and the driver emits a bare `$unwind` — an
    **inner** join. Rows whose grandparent is absent are dropped, so `== null` can never match.
 
-With this one test baselined, the full spec suite is **green on all three EF versions** (0 failures) and
-carries **no skips for this work**. It is the only known-incorrect query shape remaining; when
-self-referencing multi-hop reference navigation is fixed, the EF10 arm flips red at the `ThrowsAnyAsync`
-and is replaced by a plain `await base.…` plus a refreshed baseline.
+The fix: `_innerCollections` now registers per-navigation (not just per-`IEntityType`), lookup-alias
+collisions are detected by the alias string a plain lookup would produce rather than by `INavigation`
+identity (so two distinct navigations sharing a name are disambiguated too), and the residual `Where`
+left over from stripping a join chain for `$lookup` is rewritten against the flattened
+`_lookup_<Navigation>` fields instead of being discarded (the sibling `Select` is still discarded — its
+projection is reconstructed independently by the compiled client-side shaper). It is un-skipped and
+asserts real data + MQL on EF10; EF8/EF9 still assert translation failure per EF-X020.
+
+With all five un-skipped, the full spec suite is **green on all three EF versions** (EF8/EF9/EF10:
+0 failures) and carries **no skips for this work**.
 
 ---
 

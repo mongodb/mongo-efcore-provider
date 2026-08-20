@@ -879,7 +879,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         /// Resolves the <c>$lookup</c> that supplies the <c>Inner</c> of the TransparentIdentifier at
         /// <paramref name="depth"/> (0 = innermost join). Matched on the join's inner entity CLR type
         /// AND the join's outer key (the FK property), so two navigations to the same entity type stay
-        /// distinguishable. Returns <see langword="null"/> when the match is missing or ambiguous.
+        /// distinguishable. Returns <see langword="null"/> when the match is missing.
         /// </summary>
         private LookupExpression? ResolveLookup(int depth, Type innerType)
         {
@@ -898,7 +898,34 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                                 || l.Navigation.ForeignKey.PrincipalKey.Properties.Any(p => p.Name == keyName)))
                 .ToList();
 
-            return candidates.Count == 1 ? candidates[0] : null;
+            if (candidates.Count == 1)
+            {
+                return candidates[0];
+            }
+
+            if (candidates.Count == 0)
+            {
+                return null;
+            }
+
+            // Ambiguous by type/key alone: a self-referencing chain (e.g. Employee.Manager.Manager)
+            // registers more than one hop for the same navigation against the same target entity type.
+            // Disambiguate structurally instead, mirroring the dependency relation OrderLookupsByDependency
+            // already relies on: the innermost (depth 0) hop's lookup reads straight off the root
+            // document, so its LocalField isn't prefixed by any sibling candidate's alias; every deeper
+            // hop's lookup is chained onto the alias of the hop immediately before it.
+            if (depth == 0)
+            {
+                return candidates.FirstOrDefault(candidate => candidates.All(other =>
+                    ReferenceEquals(other, candidate)
+                    || !candidate.LocalField.StartsWith(other.As + ".", StringComparison.Ordinal)));
+            }
+
+            var previous = ResolveLookup(depth - 1, innerType);
+            return previous == null
+                ? null
+                : candidates.FirstOrDefault(candidate =>
+                    candidate.LocalField.StartsWith(previous.As + ".", StringComparison.Ordinal));
         }
 
         private sealed class Rewriter(TransparentIdentifierToLookupFieldRewriter owner, ParameterExpression oldParam)
