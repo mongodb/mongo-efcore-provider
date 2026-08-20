@@ -265,7 +265,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                             var intermediateMatches = _queryExpression.GetPendingLookups().Where(
                                 l => l.IsReference
                                      && l.ForceUnwind
-                                     && l.Navigation.TargetEntityType == declaringType).ToList();
+                                     && l.TargetEntityType == declaringType).ToList();
 
                             // The intermediate is matched by its target entity type, not by its alias. When
                             // more than one reference lookup targets the same entity type — e.g. two reference

@@ -25,6 +25,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
+using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -593,14 +594,14 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     protected override ShapedQueryExpression? TranslateGroupJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
-        => TranslateJoinCore(outer, inner, outerKeySelector, resultSelector, isLeftOuter: true);
+        => TranslateJoinCore(outer, inner, outerKeySelector, innerKeySelector, resultSelector, isLeftOuter: true);
 
     protected override ShapedQueryExpression? TranslateIntersect(ShapedQueryExpression source1, ShapedQueryExpression source2)
         => null;
 
     protected override ShapedQueryExpression? TranslateLeftJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
-        => TranslateJoinCore(outer, inner, outerKeySelector, resultSelector, isLeftOuter: true);
+        => TranslateJoinCore(outer, inner, outerKeySelector, innerKeySelector, resultSelector, isLeftOuter: true);
 
 #if !EF8 && !EF9
     protected override ShapedQueryExpression? TranslateRightJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
@@ -610,14 +611,14 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     protected override ShapedQueryExpression? TranslateJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
-        => TranslateJoinCore(outer, inner, outerKeySelector, resultSelector, isLeftOuter: false);
+        => TranslateJoinCore(outer, inner, outerKeySelector, innerKeySelector, resultSelector, isLeftOuter: false);
 
     // isLeftOuter carries the LINQ operator's join semantics to the emitted $lookup/$unwind: Join is inner,
     // LeftJoin/GroupJoin are left-outer. EF lowers a REQUIRED reference navigation to Queryable.Join, which
     // is what makes it drop principals with a dangling foreign key, matching relational EF Core.
     private static ShapedQueryExpression? TranslateJoinCore(
         ShapedQueryExpression outer, ShapedQueryExpression inner,
-        LambdaExpression outerKeySelector, LambdaExpression resultSelector, bool isLeftOuter)
+        LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector, bool isLeftOuter)
     {
         var outerQueryExpression = (MongoQueryExpression)outer.QueryExpression;
         var innerQueryExpression = (MongoQueryExpression)inner.QueryExpression;
@@ -642,7 +643,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // We need to migrate that projection to the outer query expression so the entity path
         // shaper can read inner entity properties from the $lookup result field.
         var reboundInnerShaper = RebindInnerShaperToOuterQuery(
-            inner.ShaperExpression, innerQueryExpression, outerQueryExpression, outerKeySelector, isLeftOuter);
+            inner.ShaperExpression, innerQueryExpression, outerQueryExpression, outerKeySelector, innerKeySelector, isLeftOuter);
 
         var newResultSelector = ReplacingExpressionVisitor.Replace(
             resultSelector.Parameters[0], outer.ShaperExpression,
@@ -658,6 +659,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         MongoQueryExpression innerQueryExpression,
         MongoQueryExpression outerQueryExpression,
         LambdaExpression outerKeySelector,
+        LambdaExpression innerKeySelector,
         bool isLeftOuter)
     {
         if (innerShaper is not StructuralTypeShaperExpression structuralShaper
@@ -760,7 +762,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // navigation for more than one hop (e.g. "Manager" used twice), so the plain alias would collide
         // between hops; disambiguate by prefixing with the through-hop's alias. Collision is detected by
         // the ALIAS a plain lookup would produce, not navigation identity, since two distinct navigations
-        // that happen to share a name would also collide.
+        // that happen to share a name would also collide. A bare key-equality hop with no model navigation
+        // (EF-377) falls back to "_lookup_<ShortName>", same as a navigation-bearing hop with no alias
+        // collision to worry about.
         var plainAlias = navigation != null
             ? Expressions.LookupExpression.GetLookupAlias(navigation)
             : $"_lookup_{innerEntityType.ShortName()}";
@@ -768,6 +772,31 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var lookupAlias = navigation != null && aliasAlreadyUsed && throughRegistration != null
             ? $"{throughRegistration.Value.Alias}_{navigation.Name}"
             : plainAlias;
+
+        // Bare key-equality Join hop with nothing in the model to key on (EF-377): remember the raw
+        // join-key field paths so a later dependent hop can scope its $lookup, and so this hop's own
+        // $lookup can be synthesized below if flat mode is forced. The owning entity type and through
+        // alias are the same ones already resolved above — the root when isDirectFromRoot, or the
+        // through-hop's target/alias otherwise.
+        MongoQueryExpression.NavigationlessJoinKey? navigationlessKey = null;
+        if (navigation == null && fkPropertyName != null)
+        {
+            var fkOwnerEntityType = throughRegistration?.TargetEntityType ?? outerEntityType;
+            var throughAlias = throughRegistration?.Alias;
+            var innerKeyPropertyName = innerKeySelector.Body.TryGetSimplePropertyName();
+            var outerProperty = fkOwnerEntityType.FindProperty(fkPropertyName);
+            var innerProperty = innerKeyPropertyName != null ? innerEntityType.FindProperty(innerKeyPropertyName) : null;
+            if (outerProperty != null && innerProperty != null)
+            {
+                var localField = throughAlias != null
+                    ? $"{throughAlias}.{outerProperty.GetElementName()}"
+                    : outerProperty.GetElementName();
+
+                navigationlessKey = new MongoQueryExpression.NavigationlessJoinKey(
+                    innerEntityType.GetCollectionName(), localField, innerProperty.GetElementName(), lookupAlias);
+                outerQueryExpression.RegisterNavigationlessJoinKey(innerEntityType, navigationlessKey.Value);
+            }
+        }
 
         if (isSecondOrLaterJoin)
         {
@@ -787,6 +816,16 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
                 outerQueryExpression.AddLookup(lookup);
             }
+            else if (navigationlessKey is { } key)
+            {
+                // This hop is itself a bare key-equality Join with no model navigation (EF-377); the
+                // localField captured in navigationlessKey is already scoped by the through-hop's alias.
+                outerQueryExpression.AddLookup(new Expressions.LookupExpression(
+                    innerEntityType, key.CollectionName, key.LocalField, key.ForeignField, key.Alias, forceUnwind: true)
+                {
+                    PreserveNullAndEmptyArrays = isLeftOuter
+                });
+            }
 
             // ...and retroactively for every PRIOR join so the whole document is flat (a no-op for any
             // prior join already registered directly, since AddLookup dedupes by alias). Use the
@@ -795,11 +834,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // is unconditional, so a miss is an internal error.
             foreach (var priorRegistration in outerQueryExpression.JoinRegistrations)
             {
-                if (priorRegistration.Navigation == null)
-                {
-                    continue;
-                }
-
                 if (!outerQueryExpression.TryGetJoinIsLeftOuter(priorRegistration.TargetEntityType, out var priorIsLeftOuter))
                 {
                     throw new InvalidOperationException(
@@ -808,12 +842,26 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                         + "please report it with the query that produced it.");
                 }
 
-                outerQueryExpression.AddLookup(
-                    new Expressions.LookupExpression(priorRegistration.Navigation, forceUnwind: true)
+                if (priorRegistration.Navigation != null)
+                {
+                    outerQueryExpression.AddLookup(
+                        new Expressions.LookupExpression(priorRegistration.Navigation, forceUnwind: true)
+                        {
+                            As = priorRegistration.Alias,
+                            PreserveNullAndEmptyArrays = priorIsLeftOuter
+                        });
+                }
+                else if (outerQueryExpression.TryGetNavigationlessJoinKey(priorRegistration.TargetEntityType, out var priorKey))
+                {
+                    // Bare key-equality Join hop with no model navigation (EF-377): synthesize its
+                    // $lookup from the raw key info captured when that hop was translated.
+                    outerQueryExpression.AddLookup(new Expressions.LookupExpression(
+                        priorRegistration.TargetEntityType, priorKey.CollectionName, priorKey.LocalField,
+                        priorKey.ForeignField, priorKey.Alias, forceUnwind: true)
                     {
-                        As = priorRegistration.Alias,
                         PreserveNullAndEmptyArrays = priorIsLeftOuter
                     });
+                }
             }
         }
 

@@ -39,6 +39,33 @@ internal sealed partial class MongoQueryExpression
     // hops into a single dictionary entry), this records one entry per join, letting a later hop find
     // the immediately-preceding hop even when it targets the same entity type.
     private readonly List<JoinRegistration> _joinRegistrations = [];
+    private readonly Dictionary<IEntityType, NavigationlessJoinKey> _navigationlessJoinKeys = new();
+
+    /// <summary>
+    /// The resolved <c>$lookup</c> key info for a Join hop with no corresponding model navigation —
+    /// captured so a later dependent hop can scope its <see cref="LookupExpression.LocalField"/>, and
+    /// so this hop's own <c>$lookup</c> can be emitted retroactively if flat mode is forced.
+    /// </summary>
+    /// <param name="CollectionName">The target collection to look up from.</param>
+    /// <param name="LocalField">The local (outer) field path used for the equality match.</param>
+    /// <param name="ForeignField">The foreign (inner) field path used for the equality match.</param>
+    /// <param name="Alias">The stable <c>_lookup_&lt;ShortName&gt;</c> alias this hop's projection was
+    /// registered under.</param>
+    internal readonly record struct NavigationlessJoinKey(
+        string CollectionName, string LocalField, string ForeignField, string Alias);
+
+    /// <summary>
+    /// Register the raw join-key info for a Join hop that has no corresponding model navigation.
+    /// </summary>
+    public void RegisterNavigationlessJoinKey(IEntityType entityType, NavigationlessJoinKey key)
+        => _navigationlessJoinKeys[entityType] = key;
+
+    /// <summary>
+    /// Attempt to retrieve the raw join-key info previously registered for a navigation-less Join hop
+    /// whose inner entity is <paramref name="entityType"/>.
+    /// </summary>
+    public bool TryGetNavigationlessJoinKey(IEntityType entityType, out NavigationlessJoinKey key)
+        => _navigationlessJoinKeys.TryGetValue(entityType, out key);
 
     /// <summary>
     /// Pending $lookup stages for cross-collection collection Include operations, ordered so that a

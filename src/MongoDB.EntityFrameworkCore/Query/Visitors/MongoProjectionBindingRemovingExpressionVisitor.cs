@@ -676,7 +676,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                 }
 
                 var joinField = _queryExpression.GetPendingLookups()
-                    .FirstOrDefault(l => l.Navigation.TargetEntityType == shaperEntityType)?.As;
+                    .FirstOrDefault(l => l.TargetEntityType == shaperEntityType)?.As;
                 if (joinField != null)
                 {
                     var lookupDocument = CreateGetValueExpression(DocParameter, joinField, false, typeof(BsonDocument));

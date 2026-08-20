@@ -741,13 +741,15 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         // GuardAgainstMultiBranchNavigationCount, so here we only need the matching lookup to exist.
         var targetEntityType = rootExpression.EntityType;
         var lookup = _pendingLookups.FirstOrDefault(
-            l => l.InjectAfterRoot && l.Navigation.TargetEntityType == targetEntityType);
+            l => l.InjectAfterRoot && l.TargetEntityType == targetEntityType);
         if (lookup == null)
         {
             return false;
         }
 
-        var navigation = lookup.Navigation;
+        // InjectAfterRoot is only ever set for navigation-derived lookups (collection-count
+        // projections), so a matched lookup here always carries a real navigation.
+        var navigation = lookup.Navigation!;
 
         // Extract the outer document reference from the FK predicate: the parameter that is NOT the inner
         // Where lambda's parameter (e.g. the `c` in `o0 => c.CustomerID == o0.CustomerID`).
