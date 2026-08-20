@@ -685,15 +685,20 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var fkPropertyName = outerKeySelector.Body.TryGetSimplePropertyName();
         INavigation? navigation = null;
 
-        if (fkPropertyName != null)
+        // Guard against misrouting: a transitive hop (e.g. "x.Inner.ProductId") must not match here
+        // just because the root entity type coincidentally has a same-named FK or navigation.
+        if (IsRootLevelKeyAccess(outerKeySelector.Body))
         {
-            navigation = outerEntityType.GetNavigations()
-                .FirstOrDefault(n => n.TargetEntityType == innerEntityType
-                                     && n.ForeignKey.Properties.Any(p => p.Name == fkPropertyName));
-        }
+            if (fkPropertyName != null)
+            {
+                navigation = outerEntityType.GetNavigations()
+                    .FirstOrDefault(n => n.TargetEntityType == innerEntityType
+                                         && n.ForeignKey.Properties.Any(p => p.Name == fkPropertyName));
+            }
 
-        navigation ??= outerEntityType.GetNavigations()
-            .FirstOrDefault(n => n.TargetEntityType == innerEntityType);
+            navigation ??= outerEntityType.GetNavigations()
+                .FirstOrDefault(n => n.TargetEntityType == innerEntityType);
+        }
 
         // Transitive join: the inner entity is reached not directly from the root but THROUGH a
         // previously-joined intermediate (e.g. OrderDetail.Order.Customer — the join's outer key
@@ -803,6 +808,37 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         return structuralShaper.Update(
             new ProjectionBindingExpression(outerQueryExpression, projectionIndex, typeof(ValueBuffer)));
+    }
+
+    /// <summary>
+    /// True if the FK key-selector reads from the root of the join chain rather than an intermediate:
+    /// any <c>Inner</c> hop in a <c>TransparentIdentifier</c>'s <c>Outer</c>/<c>Inner</c> chain means the
+    /// FK is being read from that intermediate instead.
+    /// </summary>
+    private static bool IsRootLevelKeyAccess(Expression keySelectorBody)
+    {
+        var receiver = keySelectorBody.RemoveConvert() switch
+        {
+            MemberExpression member => member.Expression,
+            MethodCallExpression methodCall
+                when methodCall.Method.IsEFPropertyMethod() && methodCall.Arguments.Count == 2
+                => methodCall.Arguments[0],
+            _ => null
+        };
+
+        while (receiver is MemberExpression { Member: { Name: "Outer" or "Inner" } member } memberAccess
+               && member.DeclaringType is { IsGenericType: true } declaringType
+               && declaringType.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal))
+        {
+            if (member.Name == "Inner")
+            {
+                return false;
+            }
+
+            receiver = memberAccess.Expression;
+        }
+
+        return true;
     }
 
     protected override ShapedQueryExpression? TranslateLastOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,
