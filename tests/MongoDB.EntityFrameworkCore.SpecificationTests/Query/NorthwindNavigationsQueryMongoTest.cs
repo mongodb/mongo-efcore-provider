@@ -318,11 +318,10 @@ Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
         await AssertTranslationFailed(() => base.Select_Where_Navigation_Null_Deep(async));
         AssertMql();
 #else
-        // Fails: returns wrong data (0 rows instead of 6) EF-371
-        await Assert.ThrowsAnyAsync<Xunit.Sdk.XunitException>(() => base.Select_Where_Navigation_Null_Deep(async));
+        await base.Select_Where_Navigation_Null_Deep(async);
         AssertMql(
             """
-Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Employees", "localField" : "_outer.ReportsTo", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Employees", "localField" : "_outer._inner.ReportsTo", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner" : null } }
+Employees.{ "$lookup" : { "from" : "Employees", "localField" : "ReportsTo", "foreignField" : "_id", "as" : "_lookup_Manager" } }, { "$unwind" : { "path" : "$_lookup_Manager", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Employees", "localField" : "_lookup_Manager.ReportsTo", "foreignField" : "_id", "as" : "_lookup_Manager_Manager" } }, { "$unwind" : { "path" : "$_lookup_Manager_Manager", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Manager_Manager" : null } }
 """);
 #endif
     }

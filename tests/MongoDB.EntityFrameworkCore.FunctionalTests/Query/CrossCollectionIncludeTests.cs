@@ -308,6 +308,37 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         Assert.Equal("Boss", employee.Manager.EmployeeName);
         Assert.Null(allStaff.First(s => s.EmployeeName == "Boss").Manager);
     }
+
+    [Fact]
+    public void Chained_self_referencing_navigation_filter_resolves_reference_not_inverse_collection()
+    {
+        // StaffMember declares BOTH directions of the self-reference: Manager (reference, dependent
+        // side) and DirectReports (inverse collection, principal side) - they share the same
+        // IForeignKey. A chained filter through the reference nav must resolve Manager, not
+        // DirectReports, for each hop: picking the inverse collection nav flips the $lookup's join
+        // direction (LookupExpression branches on Navigation.IsOnDependent), silently walking the
+        // relationship backwards instead of throwing.
+        var staffName = TemporaryDatabaseFixtureBase.CreateCollectionName("Staff") + Guid.NewGuid().ToString("N")[..8];
+        var ceoId = ObjectId.GenerateNewId();
+        var vpId = ObjectId.GenerateNewId();
+        var managerId = ObjectId.GenerateNewId();
+
+        var staff = database.MongoDatabase.GetCollection<BsonDocument>(staffName);
+        staff.InsertMany([
+            new BsonDocument { { "_id", ceoId }, { "emp_name", "CEO" } },
+            new BsonDocument { { "_id", vpId }, { "emp_name", "VP" }, { "mgr_id", ceoId } },
+            new BsonDocument { { "_id", managerId }, { "emp_name", "Manager" }, { "mgr_id", vpId } }
+        ]);
+
+        using var db = new StaffDbContext(database, staffName);
+        var namesWhoseGreatGrandManagerIsNull = db.Staff
+            .Where(s => s.Manager.Manager.Manager == null)
+            .Select(s => s.EmployeeName)
+            .OrderBy(n => n)
+            .ToList();
+
+        Assert.Equal(["CEO", "Manager", "VP"], namesWhoseGreatGrandManagerIsNull);
+    }
 #endif
 
     [Fact]

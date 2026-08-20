@@ -31,9 +31,14 @@ internal sealed partial class MongoQueryExpression
     private readonly List<LookupExpression> _pendingLookups = [];
     private readonly Dictionary<IEntityType, MongoCollectionExpression> _innerCollections = new();
     private readonly Dictionary<IEntityType, bool> _innerCollectionIsLeftOuter = new();
-    private readonly Dictionary<IEntityType, INavigation> _innerCollectionNavigations = new();
     private bool _hasInterleavingOperatorSinceLastJoin;
     private int _joinRegistrationCount;
+
+    // Every join registered so far, in registration order. Unlike _innerCollections (keyed by
+    // IEntityType, so a self-referencing navigation chain like Employee.Manager.Manager collapses both
+    // hops into a single dictionary entry), this records one entry per join, letting a later hop find
+    // the immediately-preceding hop even when it targets the same entity type.
+    private readonly List<JoinRegistration> _joinRegistrations = [];
 
     /// <summary>
     /// Pending $lookup stages for cross-collection collection Include operations, ordered so that a
@@ -150,6 +155,20 @@ internal sealed partial class MongoQueryExpression
         => _innerCollections.Count > 0 && !_pendingLookups.Any(l => l.ForceUnwind);
 
     /// <summary>
+    /// Every join registered so far, in registration order. See <see cref="RegisterJoin"/>.
+    /// </summary>
+    public IReadOnlyList<JoinRegistration> JoinRegistrations => _joinRegistrations;
+
+    /// <summary>
+    /// Records that a join against <paramref name="targetEntityType"/> was resolved to
+    /// <paramref name="navigation"/> and surfaced under <paramref name="alias"/>, so a subsequent chained
+    /// hop can find the immediately-preceding hop by position rather than by <see cref="IEntityType"/>,
+    /// which can't distinguish repeat hops against the same entity type.
+    /// </summary>
+    public void RegisterJoin(IEntityType targetEntityType, string alias, INavigation? navigation)
+        => _joinRegistrations.Add(new JoinRegistration(targetEntityType, alias, navigation));
+
+    /// <summary>
     /// Register an inner collection for a join, recording the LINQ operator's own left-outer/inner
     /// semantics the first time this entity type is joined (see <see cref="TryGetJoinIsLeftOuter"/>) so a
     /// later retroactive flattening never has to re-derive it from model metadata, which can disagree
@@ -177,19 +196,10 @@ internal sealed partial class MongoQueryExpression
     /// </summary>
     public bool TryGetJoinIsLeftOuter(IEntityType entityType, out bool isLeftOuter)
         => _innerCollectionIsLeftOuter.TryGetValue(entityType, out isLeftOuter);
-
-    /// <summary>
-    /// Records which navigation actually introduced an inner collection's $lookup, so its
-    /// "_lookup_&lt;Navigation&gt;" alias can be recovered later. Re-deriving this from metadata is unsafe
-    /// when more than one navigation targets the same entity type.
-    /// </summary>
-    public void RegisterInnerCollectionNavigation(IEntityType entityType, INavigation navigation)
-        => _innerCollectionNavigations[entityType] = navigation;
-
-    /// <summary>
-    /// Get the navigation that was registered (via <see cref="RegisterInnerCollectionNavigation"/>) as
-    /// having introduced the given inner collection, or <see langword="null"/> if none was recorded.
-    /// </summary>
-    public INavigation? GetInnerCollectionNavigation(IEntityType entityType)
-        => _innerCollectionNavigations.GetValueOrDefault(entityType);
 }
+
+/// <summary>
+/// One entry in <see cref="MongoQueryExpression.JoinRegistrations"/> — see
+/// <see cref="MongoQueryExpression.RegisterJoin"/>.
+/// </summary>
+internal readonly record struct JoinRegistration(IEntityType TargetEntityType, string Alias, INavigation? Navigation);
