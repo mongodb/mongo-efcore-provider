@@ -699,8 +699,14 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         {
             if (fkPropertyName != null)
             {
+                // IsOnDependent disambiguates a self-referencing relationship declared with both a
+                // reference nav (e.g. Manager) and its inverse collection nav (e.g. DirectReports):
+                // both share the same IForeignKey, so matching on ForeignKey.Properties alone matches
+                // either one, and picking the collection nav flips the $lookup's join direction
+                // (LookupExpression branches on Navigation.IsOnDependent).
                 navigation = outerEntityType.GetNavigations()
                     .FirstOrDefault(n => n.TargetEntityType == innerEntityType
+                                         && n.IsOnDependent
                                          && n.ForeignKey.Properties.Any(p => p.Name == fkPropertyName));
             }
 
@@ -717,8 +723,11 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
             if (fkPropertyName != null)
             {
+                // See the IsOnDependent comment in the isDirectFromRoot branch above — same ambiguity
+                // applies here.
                 navigation = throughEntityType.GetNavigations()
                     .FirstOrDefault(n => n.TargetEntityType == innerEntityType
+                                         && n.IsOnDependent
                                          && n.ForeignKey.Properties.Any(p => p.Name == fkPropertyName));
             }
 
