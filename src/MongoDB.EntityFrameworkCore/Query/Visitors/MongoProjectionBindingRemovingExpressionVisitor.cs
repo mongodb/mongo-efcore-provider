@@ -700,7 +700,51 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             return (ownerInfo.EntityType, ownerInfo.BsonDocExpression);
         }
 
+        // Owned navigations aren't joins, so a dotted hop like `b.Home.City` has no ObjectAccessExpression
+        // wrapping "Home" — just a plain MemberExpression or an EF.Property call. Recurse to resolve it,
+        // so multi-level hops (`b.Home.Inner.City`) don't fall back to a leaf lookup on the wrong document.
+        if (expression is MemberExpression navMemberExpression)
+        {
+            var navSource = TryResolveFieldAccessSource(navMemberExpression.Expression);
+            var embeddedNavDocument = TryResolveEmbeddedNavigationDocument(navSource, navSource.EntityType?.FindNavigation(navMemberExpression.Member));
+            if (embeddedNavDocument != null)
+            {
+                return embeddedNavDocument.Value;
+            }
+        }
+
+        if (expression is MethodCallExpression navPropertyCall
+            && navPropertyCall.Method.IsEFPropertyMethod()
+            && navPropertyCall.Arguments[1] is ConstantExpression { Value: string navPropertyName })
+        {
+            var navSource = TryResolveFieldAccessSource(navPropertyCall.Arguments[0]);
+            var embeddedNavDocument = TryResolveEmbeddedNavigationDocument(navSource, navSource.EntityType?.FindNavigation(navPropertyName));
+            if (embeddedNavDocument != null)
+            {
+                return embeddedNavDocument.Value;
+            }
+        }
+
         return (null, null);
+    }
+
+    /// <summary>
+    /// Builds the nested-document read for an embedded (owned) *reference* navigation hop, or
+    /// <see langword="null"/> to let callers fall through to other resolution paths. Collection
+    /// navigations are excluded: their container is a BSON array, not a <see cref="BsonDocument"/>.
+    /// </summary>
+    private (IEntityType EntityType, Expression DocumentExpression)? TryResolveEmbeddedNavigationDocument(
+        (IEntityType? EntityType, Expression? DocumentExpression) navSource, INavigation? navigation)
+    {
+        if (navigation == null || navigation.IsCollection || !navigation.IsEmbedded() || navSource.DocumentExpression == null)
+        {
+            return null;
+        }
+
+        var elementName = navigation.TargetEntityType.GetContainingElementName() ?? navigation.Name;
+        var navDocumentExpression =
+            CreateGetValueExpression(navSource.DocumentExpression, elementName, false, typeof(BsonDocument));
+        return (navigation.TargetEntityType, navDocumentExpression);
     }
 
     private static readonly MethodInfo MqlFieldMethodInfo =
