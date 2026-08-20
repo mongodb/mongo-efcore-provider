@@ -94,6 +94,15 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var source = Visit(methodCallExpression.Arguments[0]);
         if (source is ShapedQueryExpression shapedQueryExpression)
         {
+            // EF-373: Skip/Take/Distinct composed BETWEEN two cross-collection joins has no single correct
+            // position once a second join forces the $lookup-flattening fallback (see TranslateJoinCore) -
+            // record that one of these occurred while at least one join is already registered so the next
+            // join registration can decline rather than silently mis-position the $lookup stages.
+            if (method.Name is nameof(Queryable.Skip) or nameof(Queryable.Take) or nameof(Queryable.Distinct))
+            {
+                ((MongoQueryExpression)shapedQueryExpression.QueryExpression).MarkPotentialJoinInterleavingOperator();
+            }
+
             var methodDefinition = method.IsGenericMethod ? method.GetGenericMethodDefinition() : method;
             switch (method.Name)
             {
@@ -614,6 +623,19 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var innerQueryExpression = (MongoQueryExpression)inner.QueryExpression;
 
         outerQueryExpression.AddInnerCollection(innerQueryExpression.CollectionExpression.EntityType, isLeftOuter);
+
+        // EF-373: decide "is this the second-or-later join" from a dedicated counter, not from
+        // InnerCollections.Count - InnerCollections is keyed by IEntityType and dedups two navigations
+        // that join to the SAME target collection (e.g. a self-join), which would otherwise let this
+        // guard - and the interleaving flag it depends on - go unchecked for that shape.
+        if (outerQueryExpression.RegisterJoinAndReportSecondOrLater()
+            && outerQueryExpression.HasInterleavingOperatorSinceLastJoin)
+        {
+            throw new NotSupportedException(
+                "A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection "
+                + "joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. "
+                + "Move the operator so that it is not interleaved between the joins.");
+        }
 
         // Rebind the inner entity's projection to the outer MongoQueryExpression.
         // The inner shaper has a StructuralTypeShaperExpression bound to the inner MongoQueryExpression.
