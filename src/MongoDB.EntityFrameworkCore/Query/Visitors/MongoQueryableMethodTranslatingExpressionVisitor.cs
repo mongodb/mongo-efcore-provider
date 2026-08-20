@@ -699,7 +699,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // previously-joined intermediate (e.g. OrderDetail.Order.Customer — the join's outer key
         // selector is "o.Inner.CustomerID"). When no direct navigation exists, resolve the navigation
         // on a prior inner collection and remember the intermediate so the $lookup's localField can be
-        // prefixed with that intermediate's "_lookup_<Intermediate>" path.
+        // prefixed with that intermediate's "_lookup_<Intermediate>" path (the intermediate may itself be
+        // reached transitively, so the prefix must come from the navigation actually joined through —
+        // recorded via RegisterInnerCollectionNavigation, not re-derived from metadata, which could
+        // resolve to an unrelated navigation never emitted as a $lookup).
         INavigation? throughNavigation = null;
         if (navigation == null && fkPropertyName != null)
         {
@@ -716,11 +719,15 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 if (candidate != null)
                 {
                     navigation = candidate;
-                    throughNavigation = outerEntityType.GetNavigations()
-                        .FirstOrDefault(n => n.TargetEntityType == priorInnerEntityType);
+                    throughNavigation = outerQueryExpression.GetInnerCollectionNavigation(priorInnerEntityType);
                     break;
                 }
             }
+        }
+
+        if (navigation != null)
+        {
+            outerQueryExpression.RegisterInnerCollectionNavigation(innerEntityType, navigation);
         }
 
         // Document-shape decision (single source of truth): the driver's native LeftJoin
@@ -754,7 +761,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 outerQueryExpression.AddLookup(lookup);
             }
 
-            // ...and retroactively for every PRIOR inner collection so the whole document is flat.
+            // ...and retroactively for every PRIOR inner collection so the whole document is flat. Use
+            // the navigation actually registered for each prior collection (not a metadata re-derivation)
+            // for the same reason as above: the wrong navigation would emit under the wrong alias.
             foreach (var priorInnerEntityType in outerQueryExpression.InnerCollections.Keys)
             {
                 if (priorInnerEntityType == innerEntityType)
@@ -762,8 +771,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     continue;
                 }
 
-                var priorNavigation = outerEntityType.GetNavigations()
-                    .FirstOrDefault(n => n.TargetEntityType == priorInnerEntityType);
+                var priorNavigation = outerQueryExpression.GetInnerCollectionNavigation(priorInnerEntityType);
                 if (priorNavigation != null)
                 {
                     // Use the left-outer/inner-ness recorded when THAT join was translated
