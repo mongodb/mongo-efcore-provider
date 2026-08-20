@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+      <title>Enum BuiltInSearchAnalyzer | MongoDB EF Core Provider API Reference </title>
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="title" content="Enum BuiltInSearchAnalyzer | MongoDB EF Core Provider API Reference ">
+      
+      <meta name="description" content="Built-in MongoDB Search analyzers backed by Apache Lucene.">
+      <link rel="icon" href="../favicon.ico">
+      <link rel="stylesheet" href="../public/docfx.min.css">
+      <link rel="stylesheet" href="../public/main.css">
+      <meta name="docfx:navrel" content="">
+      <meta name="docfx:tocrel" content="toc.html">
+      
+      
+      
+      
+      <meta name="docfx:docurl" content="https://github.com/mongodb/mongo-efcore-provider/new/main/apiSpec/new?filename=MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer.md&amp;value=---%0Auid%3A%20MongoDB.EntityFrameworkCore.Metadata.Search.BuiltInSearchAnalyzer%0Asummary%3A%20&#39;*You%20can%20override%20summary%20for%20the%20API%20here%20using%20*MARKDOWN*%20syntax&#39;%0A---%0A%0A*Please%20type%20below%20more%20information%20about%20this%20API%3A*%0A%0A">
+      <meta name="loc:inThisArticle" content="In this article">
+      <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
+      <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
+      <meta name="loc:tocFilter" content="Filter by title">
+      <meta name="loc:nextArticle" content="Next">
+      <meta name="loc:prevArticle" content="Previous">
+      <meta name="loc:themeLight" content="Light">
+      <meta name="loc:themeDark" content="Dark">
+      <meta name="loc:themeAuto" content="Auto">
+      <meta name="loc:changeTheme" content="Change theme">
+      <meta name="loc:copy" content="Copy">
+      <meta name="loc:downloadPdf" content="Download PDF">
+
+      <script type="module" src="./../public/docfx.min.js"></script>
+
+      <script>
+        const theme = localStorage.getItem('theme') || 'auto'
+        document.documentElement.setAttribute('data-bs-theme', theme === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme)
+      </script>
+
+  </head>
+
+  <body class="tex2jax_ignore" data-layout="" data-yaml-mime="ManagedReference">
+    <header class="bg-body border-bottom">
+      <nav id="autocollapse" class="navbar navbar-expand-md" role="navigation">
+        <div class="container-xxl flex-nowrap">
+          <a class="navbar-brand" href="../index.html">
+            <img id="logo" class="svg" src="../images/mongodb-logo.svg" alt="">
+            
+          </a>
+          <button class="btn btn-lg d-md-none border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navpanel" aria-controls="navpanel" aria-expanded="false" aria-label="Toggle navigation">
+            <i class="bi bi-three-dots"></i>
+          </button>
+          <div class="collapse navbar-collapse" id="navpanel">
+            <div id="navbar">
+            </div>
+          </div>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container-xxl">
+      <div class="toc-offcanvas">
+        <div class="offcanvas-md offcanvas-start" tabindex="-1" id="tocOffcanvas" aria-labelledby="tocOffcanvasLabel">
+          <div class="offcanvas-header">
+            <h5 class="offcanvas-title" id="tocOffcanvasLabel">Table of Contents</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas" data-bs-target="#tocOffcanvas" aria-label="Close"></button>
+          </div>
+          <div class="offcanvas-body">
+            <nav class="toc" id="toc"></nav>
+          </div>
+        </div>
+      </div>
+
+      <div class="content">
+        <div class="actionbar">
+          <button class="btn btn-lg border-0 d-md-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#tocOffcanvas" aria-controls="tocOffcanvas" aria-expanded="false" aria-label="Show table of contents">
+            <i class="bi bi-list"></i>
+          </button>
+
+          <nav id="breadcrumb"></nav>
+        </div>
+
+        <article data-uid="MongoDB.EntityFrameworkCore.Metadata.Search.BuiltInSearchAnalyzer">
+
+
+
+
+  <h1 id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer" data-uid="MongoDB.EntityFrameworkCore.Metadata.Search.BuiltInSearchAnalyzer" class="text-break">
+Enum BuiltInSearchAnalyzer  <a class="header-action link-secondary" title="View source" href="https://github.com/mongodb/mongo-efcore-provider/blob/main/src/MongoDB.EntityFrameworkCore/Metadata/Search/BuiltInSearchAnalyzer.cs/#L29"><i class="bi bi-code-slash"></i></a>
+  </h1>
+
+  <div class="facts text-secondary">
+    <dl><dt>Namespace</dt><dd><a class="xref" href="MongoDB.html">MongoDB</a>.<a class="xref" href="MongoDB.EntityFrameworkCore.html">EntityFrameworkCore</a>.<a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.html">Metadata</a>.<a class="xref" href="MongoDB.EntityFrameworkCore.Metadata.Search.html">Search</a></dd></dl>
+  <dl><dt>Assembly</dt><dd>MongoDB.EntityFrameworkCore.dll</dd></dl>
+  </div>
+
+  <div class="markdown summary"><p>Built-in MongoDB Search analyzers backed by Apache Lucene.</p>
+</div>
+  <div class="markdown conceptual"></div>
+
+  <div class="codewrapper">
+    <pre><code class="lang-csharp hljs">public enum BuiltInSearchAnalyzer</code></pre>
+  </div>
+
+
+
+
+
+
+
+
+
+  <h2 id="fields">Fields
+</h2>
+  <dl class="parameters">
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneStandard"><code>LuceneStandard = 0</code></dt>
+  
+  <dd><p>The Lucene Standard analyzer: general-purpose tokenizer with Unicode-aware tokenization,
+lowercasing, and optional stop word removal.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneSimple"><code>LuceneSimple = 1</code></dt>
+  
+  <dd><p>The Lucene Simple analyzer: lowercases text and splits on any non-letter characters; no stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneWhitespace"><code>LuceneWhitespace = 2</code></dt>
+  
+  <dd><p>The Lucene Whitespace analyzer: splits tokens only on whitespace; preserves case and punctuation.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneKeyword"><code>LuceneKeyword = 3</code></dt>
+  
+  <dd><p>The Lucene Keyword analyzer: treats the entire input as a single token (no tokenization).</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneArabic"><code>LuceneArabic = 4</code></dt>
+  
+  <dd><p>Arabic language analyzer: lowercasing, Arabic-specific normalization, stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneArmenian"><code>LuceneArmenian = 5</code></dt>
+  
+  <dd><p>Armenian language analyzer: lowercasing, Armenian stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneBasque"><code>LuceneBasque = 6</code></dt>
+  
+  <dd><p>Basque language analyzer: lowercasing, Basque stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneBengali"><code>LuceneBengali = 7</code></dt>
+  
+  <dd><p>Bengali language analyzer: lowercasing, normalization, Bengali stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneBrazilian"><code>LuceneBrazilian = 8</code></dt>
+  
+  <dd><p>Brazilian Portuguese analyzer: lowercasing, Brazilian Portuguese stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneBulgarian"><code>LuceneBulgarian = 9</code></dt>
+  
+  <dd><p>Bulgarian language analyzer: lowercasing, stop words, and stemming for Bulgarian.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneCatalan"><code>LuceneCatalan = 10</code></dt>
+  
+  <dd><p>Catalan language analyzer: lowercasing, Catalan stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneChinese"><code>LuceneChinese = 11</code></dt>
+  
+  <dd><p>Chinese analyzer (deprecated in Lucene but exposed by Atlas Search): tokenization for Chinese text.
+Prefer SmartCN where appropriate.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneCjk"><code>LuceneCjk = 12</code></dt>
+  
+  <dd><p>CJK analyzer: bigram tokenization suitable for Chinese, Japanese, and Korean text.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneCzech"><code>LuceneCzech = 13</code></dt>
+  
+  <dd><p>Czech language analyzer: lowercasing, stop words, and stemming for Czech.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneDanish"><code>LuceneDanish = 14</code></dt>
+  
+  <dd><p>Danish language analyzer: lowercasing, Danish stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneDutch"><code>LuceneDutch = 15</code></dt>
+  
+  <dd><p>Dutch language analyzer: lowercasing, Dutch stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneEnglish"><code>LuceneEnglish = 16</code></dt>
+  
+  <dd><p>English language analyzer: lowercasing, English stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneFinnish"><code>LuceneFinnish = 17</code></dt>
+  
+  <dd><p>Finnish language analyzer: lowercasing, Finnish stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneFrench"><code>LuceneFrench = 18</code></dt>
+  
+  <dd><p>French language analyzer: lowercasing, French stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneGalician"><code>LuceneGalician = 19</code></dt>
+  
+  <dd><p>Galician language analyzer: lowercasing, Galician stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneGerman"><code>LuceneGerman = 20</code></dt>
+  
+  <dd><p>German language analyzer: lowercasing, German stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneGreek"><code>LuceneGreek = 21</code></dt>
+  
+  <dd><p>Greek language analyzer: lowercasing, Greek stop words, and stemming with Greek-specific normalization.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneHindi"><code>LuceneHindi = 22</code></dt>
+  
+  <dd><p>Hindi language analyzer: lowercasing, Devanagari normalization, Hindi stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneHungarian"><code>LuceneHungarian = 23</code></dt>
+  
+  <dd><p>Hungarian language analyzer: lowercasing, Hungarian stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneIndonesian"><code>LuceneIndonesian = 24</code></dt>
+  
+  <dd><p>Indonesian language analyzer: lowercasing, Indonesian stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneIrish"><code>LuceneIrish = 25</code></dt>
+  
+  <dd><p>Irish language analyzer: lowercasing with Irish-specific normalization, stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneItalian"><code>LuceneItalian = 26</code></dt>
+  
+  <dd><p>Italian language analyzer: lowercasing, Italian stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneJapanese"><code>LuceneJapanese = 27</code></dt>
+  
+  <dd><p>Japanese analyzer using morphological analysis (Kuromoji): tokenization, reading forms, stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneKorean"><code>LuceneKorean = 28</code></dt>
+  
+  <dd><p>Korean language analyzer with morphological analysis (old): tokenization and normalization for Korean.
+Prefer Nori where appropriate.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneKuromoji"><code>LuceneKuromoji = 29</code></dt>
+  
+  <dd><p>Kuromoji Japanese analyzer: morphological tokenization for Japanese with normalization and stop words.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneLatvian"><code>LuceneLatvian = 30</code></dt>
+  
+  <dd><p>Latvian language analyzer: lowercasing, Latvian stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneLithuanian"><code>LuceneLithuanian = 31</code></dt>
+  
+  <dd><p>Lithuanian language analyzer: lowercasing, Lithuanian stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneMorfologik"><code>LuceneMorfologik = 32</code></dt>
+  
+  <dd><p>Morfologik analyzer for Polish: dictionary-based lemmatization/stemming with Polish stop words.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneNori"><code>LuceneNori = 33</code></dt>
+  
+  <dd><p>Nori Korean analyzer: modern Korean morphological analyzer with normalization and stop words.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneNorwegian"><code>LuceneNorwegian = 34</code></dt>
+  
+  <dd><p>Norwegian language analyzer: lowercasing, Norwegian stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LucenePersian"><code>LucenePersian = 35</code></dt>
+  
+  <dd><p>Persian language analyzer: Persian-specific normalization, stop words, and tokenization.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LucenePolish"><code>LucenePolish = 36</code></dt>
+  
+  <dd><p>Polish language analyzer: lowercasing, Polish stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LucenePortuguese"><code>LucenePortuguese = 37</code></dt>
+  
+  <dd><p>Portuguese language analyzer: lowercasing, Portuguese stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneRomanian"><code>LuceneRomanian = 38</code></dt>
+  
+  <dd><p>Romanian language analyzer: lowercasing, Romanian stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneRussian"><code>LuceneRussian = 39</code></dt>
+  
+  <dd><p>Russian language analyzer: lowercasing, Russian stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneSmartcn"><code>LuceneSmartcn = 40</code></dt>
+  
+  <dd><p>SmartCN Chinese analyzer: sentence segmentation and tokenization for Simplified Chinese.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneSorani"><code>LuceneSorani = 41</code></dt>
+  
+  <dd><p>Sorani (Kurdish) analyzer: Sorani-specific normalization, stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneSpanish"><code>LuceneSpanish = 42</code></dt>
+  
+  <dd><p>Spanish language analyzer: lowercasing, Spanish stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneSwedish"><code>LuceneSwedish = 43</code></dt>
+  
+  <dd><p>Swedish language analyzer: lowercasing, Swedish stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneThai"><code>LuceneThai = 44</code></dt>
+  
+  <dd><p>Thai language analyzer: tokenization using Thai dictionary segmentation with normalization and stop words.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneTurkish"><code>LuceneTurkish = 45</code></dt>
+  
+  <dd><p>Turkish language analyzer: lowercasing with Turkish-specific casing rules, stop words, and stemming.</p>
+</dd>
+    <dt id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_LuceneUkrainian"><code>LuceneUkrainian = 46</code></dt>
+  
+  <dd><p>Ukrainian language analyzer: lowercasing, Ukrainian stop words, and stemming.</p>
+</dd>
+  </dl>
+
+
+  <h2 id="MongoDB_EntityFrameworkCore_Metadata_Search_BuiltInSearchAnalyzer_remarks">Remarks</h2>
+  <div class="markdown level0 remarks"><p>These values correspond to MongoDB Atlas Search built-in analyzers as documented by MongoDB.
+Each analyzer controls how text is normalized and tokenized for indexing and queries
+(e.g., lowercasing, stop-word removal, stemming, language-specific rules).
+Choose the analyzer that matches the language and tokenization behavior you need.
+For more information about search index analyzers, see
+<a href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/">https://www.mongodb.com/docs/atlas/atlas-search/analyzers/</a>.</p>
+</div>
+
+</article>
+
+
+
+      </div>
+
+      <div class="affix">
+        <nav id="affix"></nav>
+      </div>
+    </main>
+
+
+    <footer class="border-top text-secondary">
+      <div class="container-xxl">
+        <div class="flex-fill">
+          &copy; 2023 MongoDB, Inc.
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
