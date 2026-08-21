@@ -89,7 +89,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// role - as a candidate for elision, or as prior state a later ordering could match) since a custom
     /// comparer can make an otherwise-identical key selector not actually redundant.
     /// </summary>
-    private static Expression ElideRedundantOrderings(Expression expression)
+    internal static Expression ElideRedundantOrderings(Expression expression)
     {
         if (expression is not MethodCallExpression { Arguments.Count: > 0 } methodCall
             || !AllowedQueryableExtensions.Contains(methodCall.Method.DeclaringType))
@@ -176,7 +176,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// method call (<c>Math.Truncate(x.Amount)</c>), etc. - instead gets materialized by EF into its own
     /// uniquely-named projected field even when repeated, so it never collides and must not be elided here.
     /// </summary>
-    private static bool KeySelectorsMatch(LambdaExpression a, LambdaExpression b)
+    internal static bool KeySelectorsMatch(LambdaExpression a, LambdaExpression b)
     {
         if (a.Parameters.Count != 1 || b.Parameters.Count != 1)
         {
