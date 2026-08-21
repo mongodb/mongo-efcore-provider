@@ -616,7 +616,42 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return sizeRewrite;
         }
 
+        var zeroTakeRewrite = TryRewriteZeroTake(node);
+        if (zeroTakeRewrite != null)
+        {
+            return zeroTakeRewrite;
+        }
+
         return base.VisitMethodCall(node);
+    }
+
+    /// <summary>
+    /// Rewrites <c>source.Take(0)</c> (constant or parameterized) into <c>source.Where(_ => false)</c>.
+    /// The driver's <c>AstLimitStage</c> rejects a limit of 0 (EF-254) — a MongoDB <c>$limit</c> stage of 0
+    /// is meaningless server-side, so the driver's guard is correct and shouldn't be relaxed. The provider
+    /// already knows the concrete count by translation time (EF query parameters are resolved to constants
+    /// upstream of this visitor), so it can short-circuit to the equivalent empty-result shape itself
+    /// without ever emitting <c>$limit</c>.
+    /// </summary>
+    private Expression? TryRewriteZeroTake(MethodCallExpression node)
+    {
+        if (node.Method.Name != nameof(Queryable.Take)
+            || node.Method.DeclaringType != typeof(Queryable)
+            || node.Arguments.Count != 2
+            || TryEvaluateToConstant(node.Arguments[1]) is not 0)
+        {
+            return null;
+        }
+
+        var elementType = node.Method.GetGenericArguments()[0];
+        var parameter = Expression.Parameter(elementType, "_");
+        var falsePredicate = Expression.Lambda(Expression.Constant(false), parameter);
+
+        return Visit(Expression.Call(
+            null,
+            QueryableMethods.Where.MakeGenericMethod(elementType),
+            node.Arguments[0],
+            Expression.Quote(falsePredicate)));
     }
 
     /// <summary>
