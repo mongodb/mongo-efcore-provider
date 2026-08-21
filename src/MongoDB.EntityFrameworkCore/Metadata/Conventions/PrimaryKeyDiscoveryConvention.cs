@@ -85,9 +85,11 @@ public class PrimaryKeyDiscoveryConvention : KeyDiscoveryConvention
         // Try the standard provider to look for "Id", "EntityId" etc.
         base.TryConfigurePrimaryKey(entityTypeBuilder);
 
-        // Set what we decided to use for the primary key as "_id" in the document
+        // Set what we decided to use for the primary key as "_id" in the document. Composite keys are
+        // instead nested as a subdocument under "_id" with each property keeping its own element name
+        // (see BsonSerializerFactory.GetPropertySerializationInfo), so only rename a single-property key.
         var keys = entityType.GetKeys().Where(k => k.IsPrimaryKey()).ToArray();
-        if (keys.Length == 1)
+        if (keys.Length == 1 && keys[0].Properties.Count == 1)
         {
             keys[0].Properties[0].SetElementName("_id");
         }
