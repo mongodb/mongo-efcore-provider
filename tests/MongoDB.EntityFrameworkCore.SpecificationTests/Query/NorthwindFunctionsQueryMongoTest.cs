@@ -19,6 +19,7 @@ using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestModels.Northwind;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Driver.Linq;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 using Xunit.Abstractions;
 using Xunit.Sdk;
 
@@ -449,7 +450,9 @@ Customers.{ "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName",
         await AssertTranslationFailed(() => base.String_Join_over_non_nullable_column(async));
 
         AssertMql(
-        );
+            """
+            Customers.
+            """);
     }
 
     public override async Task String_Join_over_nullable_column(bool async)
@@ -458,7 +461,9 @@ Customers.{ "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName",
         await AssertTranslationFailed(() => base.String_Join_over_nullable_column(async));
 
         AssertMql(
-        );
+            """
+            Customers.
+            """);
     }
 
     public override async Task String_Join_with_predicate(bool async)
@@ -467,7 +472,9 @@ Customers.{ "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName",
         await AssertTranslationFailed(() => base.String_Join_with_predicate(async));
 
         AssertMql(
-        );
+            """
+            Customers.
+            """);
     }
 
     public override async Task String_Join_with_ordering(bool async)
@@ -476,7 +483,9 @@ Customers.{ "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName",
         await AssertTranslationFailed(() => base.String_Join_with_ordering(async));
 
         AssertMql(
-        );
+            """
+            Customers.
+            """);
     }
 
 #if EF9
@@ -502,7 +511,9 @@ Customers.
         await AssertTranslationFailed(() => base.String_Concat(async));
 
         AssertMql(
-        );
+            """
+            Customers.
+            """);
     }
 
     public override async Task String_Compare_simple_zero(bool async)
@@ -2453,6 +2464,18 @@ Customers.
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
+
+    // Shadows the base helper: a shape the native translator does not support must fail as a
+    // *translation* failure, but the exact exception depends on the query mode and how far the driver-LINQ
+    // fallback gets. Under MongoQueryMode.NativeOnly the provider throws NativeTranslationNotSupportedException;
+    // under the default Native mode it falls back to driver-LINQ, which surfaces an EF InvalidOperationException
+    // (CoreStrings.TranslationFailed or an internal "VisitChildren" guard) or a driver translation exception
+    // (ExpressionNotSupportedException). All of these are accepted here.
+    // Data-assertion failures (Xunit assertion exceptions) are deliberately NOT accepted, so a future
+    // wrong-data regression in the fallback path still turns the test red rather than being masked.
+    // These three are the only exception types actually observed across the flipped GroupBy spec suites.
+    protected new static Task AssertTranslationFailed(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 }
 
 #endif

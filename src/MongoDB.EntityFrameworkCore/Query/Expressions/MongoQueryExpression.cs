@@ -47,6 +47,13 @@ internal sealed partial class MongoQueryExpression : Expression
     public MongoCollectionExpression CollectionExpression { get; private set; }
 
     /// <summary>
+    /// The native-translation logical query IR (filter / sort / paging / projection) for this collection.
+    /// <c>NativeSlotPopulator</c> / <c>NativeProjectionBinder</c> populate its slots; the gate and lowerer
+    /// read them. Get-only — callers mutate the <see cref="MongoSelectDefinition"/>'s members, never reassign it.
+    /// </summary>
+    public MongoSelectDefinition Select { get; } = new();
+
+    /// <summary>
     /// The <see cref="Expression"/> captured from the original EF-bound LINQ query.
     /// </summary>
     public Expression? CapturedExpression { get; set; }
@@ -97,7 +104,17 @@ internal sealed partial class MongoQueryExpression : Expression
         Dictionary<ProjectionMember, Expression> result = new();
         foreach (var (projectionMember, expression) in _projectionMapping)
         {
-            result[projectionMember] = Constant(AddToProjection(expression, projectionMember.Last?.Name));
+            // The alias is normally the projection member's own name, but the emit side may have registered
+            // an override (see MongoSelectDefinition.AddProjectionAliasOverride) — notably for a bare
+            // selector body, whose ProjectionMember has no last member and would otherwise get a null alias.
+            // Reading the override keeps the emitted $project key and the name the DOM shaper reads in sync.
+            var memberName = projectionMember.Last?.Name;
+            var alias = Select.Route == NativeRoute.Projection
+                        && Select.TryGetProjectionAlias(memberName, out var overriddenAlias)
+                ? overriddenAlias
+                : memberName;
+
+            result[projectionMember] = Constant(AddToProjection(expression, alias));
         }
 
         _projectionMapping = result;

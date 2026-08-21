@@ -35,7 +35,7 @@ that currently lack a ticket. Counts are sourced from `tests/MongoDB.EntityFrame
 | Ticket | Comment subject | Description | Count |
 | --- | --- | --- | --- |
 | [EF-117](https://jira.mongodb.org/browse/EF-117) | _(no remaining `// Fails:` tags)_ | Cross-collection **Include**/`ThenInclude` is now implemented for the tested shapes. The five tests formerly tagged here were re-investigated: `Outer_identifier_correctly_determined_when_doing_include_on_right_side_of_left_join` (tracking + no-tracking) now **passes**; `Collection_include_over_result_of_single_non_scalar` and `Do_not_erase_projection_mapping_when_adding_single_projection` actually fail on cross-`DbSet` subquery translation (re-tagged **EF-X001**); `Included_one_to_many_query_with_client_eval` fails on driver client-evaluation (re-tagged **EF-X003**); and Include on a keyless entity (incl. multi-level) is a genuine PK-less `$lookup` gap (re-tagged **EF-X019**). EF-117 no longer has any active `// Fails:` tags. (Join/GroupJoin/SelectMany/RightJoin/subquery failures formerly tagged here were re-categorized — see EF-X001/EF-216/EF-220/EF-X016/EF-X017/EF-X018.) | 0 |
-| [EF-149](https://jira.mongodb.org/browse/EF-149) | `GroupBy issue EF-149` | `GroupBy` translation is severely limited; most non-trivial group-by shapes fail to translate. | 246 |
+| [EF-149](https://jira.mongodb.org/browse/EF-149) | `GroupBy issue EF-149` | Native `GroupBy(key).Select(aggregate)` is now translated to a `$group` stage (key/composite-key/DTO projections with `Count`/`LongCount`/`Sum`/`Min`/`Max`/`Average`), so those shapes pass and are no longer tagged. The remaining tagged shapes still fall back to driver-LINQ and fail to translate: bare-aggregate projections with no key, grouping-element list/array projections, `GroupBy` composed with `Join`/`GroupJoin`/`Union`, `GroupBy` over a correlated subquery or cross-collection navigation key, and group filters (`Where`/`Having`) after grouping. Measured 2026-08-03 (EF-367): within the four Northwind Include suites, 24 of these tagged call sites — the 6 `*GroupBy_Select` method names (`Include_collection_GroupBy_Select`, `Include_collection_Join_GroupBy_Select`, `Include_reference_GroupBy_Select`, `Include_reference_Join_GroupBy_Select`, `Join_Include_collection_GroupBy_Select`, `Join_Include_reference_GroupBy_Select`), each overridden in all four suites — do not fail with EF's normal "could not be translated" message but with a leaked internal EF guard, `InvalidOperationException: Calling 'ShapedQueryExpression.VisitChildren' is not allowed`. Still a genuine translation failure, not wrong data, so it stays tagged EF-149; recorded here because the message is scruffy and user-visible. | 191 |
 | [EF-153](https://jira.mongodb.org/browse/EF-153) | `TagWith EF-153` | `TagWith(...)` content is silently dropped — does not appear in the emitted MQL. | 9 |
 | [EF-164](https://jira.mongodb.org/browse/EF-164) | `Missing property values issue EF-164` / `Projections issue EF-164` | BSON documents that omit a required scalar (or required navigation) throw on materialization — `Project_root_with_missing_scalars`, `Project_root_entity_with_missing_required_navigation`, etc. | 3 |
 | [EF-202](https://jira.mongodb.org/browse/EF-202) | `Entity equality issue EF-202` | Comparing two entities (`entity1 == entity2` / `Contains(entity)`) is not lowered to a key-equality comparison. | 4 |
@@ -45,7 +45,7 @@ that currently lack a ticket. Counts are sourced from `tests/MongoDB.EntityFrame
 | [EF-220](https://jira.mongodb.org/browse/EF-220) | `Multiple query roots issue EF-220` | Queries that reference more than one `DbSet<>` (Cartesian product / cross-join) are not translatable. Includes `SelectMany` across DbSets and tautology-predicate cross-joins. | 10 |
 | [EF-221](https://jira.mongodb.org/browse/EF-221) | `Equals with different types issue EF-221` | `==` / `Equals` with operands of mismatched CLR types (e.g. `int == long`) is not translated correctly. | 4 |
 | [EF-222](https://jira.mongodb.org/browse/EF-222) | `translation of Like issue EF-222` | `EF.Functions.Like(...)` is not translated. | 9 |
-| [EF-227](https://jira.mongodb.org/browse/EF-227) | `Max over empty nullables issue EF-227` | `Min` / `Max` over an empty nullable sequence does not produce the EF-expected `null`. | 4 |
+| [EF-227](https://jira.mongodb.org/browse/EF-227) | `Max over empty nullables issue EF-227` | `Min` / `Max` over an empty nullable sequence does not produce the EF-expected `null`. The plain nullable-property shapes (`Min_no_data_nullable`, `Max_no_data_nullable`) are now fixed by the native scalar-aggregate path (SP4) and no longer carry this tag; the `_cast_to_nullable` shapes (an explicit `(int?)` cast selector) still fall back to driver-LINQ and still throw. | 2 |
 | [EF-228](https://jira.mongodb.org/browse/EF-228) | `Truncation data loss issue EF-228` | `Sum`/`Average` over `float` columns suffers precision/truncation loss when accumulated server-side. | 2 |
 | [EF-232](https://jira.mongodb.org/browse/EF-232) | `Sum of empty set cast to nullable issue EF-232` | `Sum_with_no_data_cast_to_nullable` does not produce the EF-expected `null`. (The `Compiled_query_when_does_not_end_in_query_operator` failure that previously also cited EF-232 has been re-tagged as `EF-X011`.) | 1 |
 | [EF-234](https://jira.mongodb.org/browse/EF-234) | `translation of Random issue EF-234` | `EF.Functions.Random()` is not translated. | 2 |
@@ -65,7 +65,7 @@ that currently lack a ticket. Counts are sourced from `tests/MongoDB.EntityFrame
 | [EF-252](https://jira.mongodb.org/browse/EF-252) | `Concurrency detector tests broken EF-252` | `Throws_on_concurrent_query_first/list` — the concurrency detector does not fire as the EF base test expects. | 2 |
 | [EF-253](https://jira.mongodb.org/browse/EF-253) | `Multiple ordering issue EF-253` | `OrderBy(x).ThenBy(x)` on the same column with different directions does not emit the expected MQL. | 1 |
 | [EF-254](https://jira.mongodb.org/browse/EF-254) | `Take zero EF-254` | `.Skip(0).Take(0)` with a parameter does not produce the expected empty result. | 1 |
-| [EF-371](https://jira.mongodb.org/browse/EF-371) | `returns wrong data (0 rows instead of 6) EF-371` | A self-referencing two-hop reference navigation (`e.Manager.Manager`) collapses to a single join and hop 2 degrades to an inner `$unwind`, so the query returns 0 rows instead of 6. Baselined green on EF10 by asserting the wrong-data failure; the EF8/EF9 arm is a translation failure tagged EF-X020. | 1 |
+| [EF-371](https://jira.mongodb.org/browse/EF-371) | ~~`returns wrong data (0 rows instead of 6) EF-371`~~ — fixed | A self-referencing two-hop reference navigation (`e.Manager.Manager`) collapsed to a single join, so hop 2 degraded to an inner `$unwind` and the query returned 0 rows instead of 6. Fixed by recording one `JoinInfo` per join and giving each its own uniquified `_lookup_` alias, so two hops resolving the SAME navigation against the same target type stay distinguishable. No spec test carries this marker any more. Functional coverage: `Ef379RootNavigationMisroutingTests.Self_referencing_two_hop_chain_now_returns_the_correct_chain`. | 0 |
 
 ## MongoDB C# Driver tickets — `CSHARP-NNNN`
 
@@ -88,12 +88,14 @@ Two further GitHub references appear in the codebase but are not `// Fails:`-tag
 
 These entries appear in `// Fails:` comments without an `EF-` or `CSHARP-` reference, or in test bodies as un-commented failure assertions. Each entry is assigned a **temporary** ticket id of the form `EF-X###` to be replaced with a real Jira number once filed; the `X` makes it obvious in `grep` results that the id is a placeholder.
 
+> **[EF-430](https://jira.mongodb.org/browse/EF-430) owns filing the real issues and replacing every `EF-X` key** — in this section and in the `// Fails:` tags across the spec-tests project; it carries the per-key tag counts, notes that `EF-X016` is used for two different subjects in the table below, and states explicitly that the `Count` column is **not** to be re-derived as part of that work (see the counting-basis note at the top of this file).
+
 | Temp ticket | Subject | Count |
 | --- | --- | --- |
 | EF-X001 | Sub-query selection across DbSets is not translated | 144 |
 | EF-X002 | Provider throws a different exception than the EF translation-failure message | 46 |
 | EF-X003 | Driver-level feature gaps surfaced as test failures | 19 |
-| EF-X004 | Float `Sum`/`Average` truncation (likely duplicate of EF-228) | 1 |
+| EF-X004 | Integer division truncation / data loss — MongoDB has no integer division, so `$divide` on integer operands yields a `double`. `Projection_when_arithmetic_expression_precedence` projects `_id / (…)` into an `int` property; the double result then fails to deserialize (`FormatException`, "An error occurred while deserializing the B property"). Same root cause underlies native predicate arithmetic added in EF-329 (`a / b > n` compares as a double, so integer division diverges from C#'s truncating semantics) — that path currently matches the driver-LINQ fallback, so no separate test fails, but the divergence-vs-LINQ is the same and should be resolved together (e.g. wrapping integer `$divide` in `$trunc`). | 1 |
 | EF-X005 | BSON document missing nested required reference (AdHoc JSON) | 2 |
 | EF-X006 | MongoDB `DateTimeKind` round-trip handling | 1 |
 | EF-X007 | Views / `HasDefiningQuery` semantics for MongoDB collections | 2 |
@@ -153,8 +155,18 @@ Comment pattern: `// Fails: Unknown reasons EF-X009`.
 Affected: 1 test. Author was unsure of root cause when adding the override.
 
 ### EF-X010 — Provider-specific Include error message differs from EF baseline
-Pattern: tests for `Include_collection_with_client_filter` across all four Include variants use `Assert.ThrowsAsync<ContainsException>` and assert that `Assert.Contains` fails because the provider's error message differs from the generic EF message. The override carries an explanatory comment ("Throws with Mongo-specific message rather than the generic EF message.") but no `// Fails:` tag in the current codebase.
-Affected: 4 tests (`NorthwindEFPropertyIncludeQueryMongoTest.cs`, `NorthwindIncludeNoTrackingQueryMongoTest.cs`, `NorthwindIncludeQueryMongoTest.cs`, `NorthwindStringIncludeQueryMongoTest.cs`).
+Pattern: `Include_collection_with_client_filter` across all four Include variants. The upstream base test asserts
+`Assert.Contains(<EF message>, (await Assert.ThrowsAsync<InvalidOperationException>(...)).Message)`; the provider
+instead throws the driver's `ExpressionNotSupportedException`, so an `Xunit.Sdk.ThrowsException` escapes the base
+method. This is a wrong exception *type*, not a translation failure, so the strict
+`MongoSpecTestHelpers.AssertNativeTranslationFailedAsync` correctly rejects it. As of EF-367 each override carries
+the `// Fails: … EF-X010` tag and baselines the current behaviour with the same shape used for EF-X002 elsewhere
+in the suite: `Assert.Contains("ExpressionNotSupportedException", (await Assert.ThrowsAsync<ThrowsException>(...))
+.Message)`, pinning both the escaping wrapper type and the driver exception actually thrown. This flips if the
+provider's behaviour changes in either direction — starts throwing EF's exception type, or starts returning wrong
+data instead of throwing. Each also keeps a real non-empty `AssertMql("Customers.")` baseline, because the query
+does emit a `$match` on `Customers` before failing.
+Affected: 4 tests / 8 cases (`NorthwindEFPropertyIncludeQueryMongoTest.cs`, `NorthwindIncludeNoTrackingQueryMongoTest.cs`, `NorthwindIncludeQueryMongoTest.cs`, `NorthwindStringIncludeQueryMongoTest.cs`).
 
 ### EF-X011 — Compiled query with non-query operator — wrong exception — **fixed by [EF-233](https://jira.mongodb.org/browse/EF-233)**
 Comment pattern (historical): `// Fails: Compiled query with non-query operator issue EF-X011`.
@@ -278,8 +290,7 @@ Lifting this ticket requires translating the inner sub-query into the `$lookup` 
 `Select_Where_Navigation_Null_Deep`. They were believed to share one root cause — "compound multi-hop
 navigation lowering". They did not.
 
-**All five are now fixed.** Four via EF-369 / EF-370 (see
-`docs/superpowers/specs/2026-08-03-required-nav-unwind-semantics-design.md`): the composed predicate /
+**All five are now fixed.** Four via EF-369 / EF-370: the composed predicate /
 `Contains` filter was being *discarded* when a multi-join Include chain was flattened to root-level
 `_lookup_<Nav>` fields, so the query returned every row (2155 against 112 / 112 / 352 / 40 expected).
 Those four are un-skipped, run on EF10 with real `AssertMql` baselines, and take the standard

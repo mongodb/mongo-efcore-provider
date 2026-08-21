@@ -23,15 +23,16 @@ using MongoDB.EntityFrameworkCore.Extensions;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// Represents a pending $lookup aggregation stage needed to include
-/// a cross-collection navigation property.
+/// Represents the pending data needed to build a <c>$lookup</c> aggregation stage for including
+/// a cross-collection navigation property. This is a data holder, not a pipeline stage itself —
+/// the lowerer/pipeline factory render it into the actual <c>$lookup</c>/<c>$unwind</c> stage documents.
 /// </summary>
 internal sealed class LookupExpression
 {
     /// <summary>
     /// Create a <see cref="LookupExpression"/> for the given navigation.
     /// </summary>
-    /// <param name="navigation">The <see cref="INavigation"/> that requires a $lookup.</param>
+    /// <param name="navigation">The <see cref="INavigation"/> that requires a <c>$lookup</c>.</param>
     /// <param name="forceUnwind">Force $unwind even for collection navigations (used for explicit Join).</param>
     public LookupExpression(INavigation navigation, bool forceUnwind = false)
     {
@@ -96,7 +97,10 @@ internal sealed class LookupExpression
     /// <param name="navigation">The navigation the lookup supports.</param>
     /// <returns>The <c>_lookup_&lt;NavigationName&gt;</c> field name.</returns>
     public static string GetLookupAlias(IReadOnlyNavigationBase navigation)
-        => $"_lookup_{navigation.Name}";
+        => $"{LookupAliasPrefix}{navigation.Name}";
+
+    /// <summary>The prefix of the synthetic <c>$lookup</c> alias field (see <see cref="GetLookupAlias"/>).</summary>
+    public const string LookupAliasPrefix = "_lookup_";
 
     /// <summary>The navigation this lookup supports, or <see langword="null"/> for a bare key-equality
     /// Join hop with no corresponding model navigation (see EF-377).</summary>
@@ -141,9 +145,9 @@ internal sealed class LookupExpression
     }
 
     /// <summary>
-    /// Pipeline stages to apply inside the $lookup for filtered Includes
+    /// Pipeline stages to apply inside the <c>$lookup</c> for filtered Includes
     /// (e.g., OrderBy, Skip, Take on the included collection).
-    /// When non-empty, the pipeline form of $lookup is used instead of localField/foreignField.
+    /// When non-empty, the pipeline form of <c>$lookup</c> is used instead of localField/foreignField.
     /// </summary>
     public List<BsonDocument> PipelineStages { get; } = [];
 
@@ -154,11 +158,42 @@ internal sealed class LookupExpression
     /// lookup (<see cref="Navigation"/> is <see langword="null"/>) is always treated as a reference.</summary>
     public bool IsReference => Navigation is not { IsCollection: true };
 
-    /// <summary>Whether $unwind should be applied after $lookup.</summary>
+    /// <summary>
+    /// A single-level reference Include the native pipeline can emit and the streaming reader can read back:
+    /// a reference nav, no filtered-Include pipeline stages, not a transitive <c>_lookup_</c> local field.
+    /// </summary>
+    public bool IsStreamableReference
+        => IsReference && !HasPipeline && !LocalField.StartsWith(LookupAliasPrefix, System.StringComparison.Ordinal);
+
+    /// <summary>Whether <c>$unwind</c> should be applied after <c>$lookup</c>.</summary>
     public bool ShouldUnwind => IsReference || ForceUnwind;
 
     /// <summary>Whether $unwind is forced regardless of navigation type.</summary>
     public bool ForceUnwind { get; }
+
+    /// <summary>
+    /// A single-level collection Include the native pipeline can emit as a <c>$lookup</c> array (no
+    /// <c>$unwind</c>), readable by the DOM collection materializer from a root-level
+    /// <c>_lookup_&lt;Nav&gt;</c> field: a collection nav, no filtered-Include pipeline stages, not
+    /// force-unwound, and <see cref="As"/> equal to the plain alias (excludes the driver-LeftJoin and
+    /// flat-nested shapes, which remain fallback-only).
+    /// </summary>
+    /// <remarks>
+    /// A navigation-LESS lookup (an EF-377 <c>Join</c> hop with no model navigation) is never a collection
+    /// Include, so it is excluded here rather than dereferenced — <see cref="Navigation"/> is nullable.
+    /// </remarks>
+    public bool IsNativeCollectionLookup
+    {
+        get
+        {
+            if (Navigation is not { IsCollection: true } navigation)
+            {
+                return false;
+            }
+
+            return !HasPipeline && !ForceUnwind && As == GetLookupAlias(navigation);
+        }
+    }
 
     /// <summary>
     /// Whether the <c>$unwind</c> following this <c>$lookup</c> uses <c>preserveNullAndEmptyArrays: true</c>

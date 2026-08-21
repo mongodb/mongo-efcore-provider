@@ -20,17 +20,13 @@ using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
-// TODO(EF-317): Cross-collection $lookup workaround state. The C# driver's LINQ provider has no native
-// LeftJoin translator and cannot express collection / multi-hop joins, so the provider registers manual
-// $lookup + $unwind stages and tracks the inner collections itself. When the driver ships native LeftJoin
-// support, the $lookup-emission members here (the pending-lookup list and its dependency ordering) are
-// expected to be removed; the inner-collection tracking and UsesDriverJoinFields decision are the
-// driver-native seam and will likely shrink rather than disappear.
+// Cross-collection $lookup workaround state. The C# driver's LINQ provider has no native LeftJoin translator
+// and cannot express collection / multi-hop joins, so the provider registers manual $lookup + $unwind stages
+// and tracks the inner collections itself.
 internal sealed partial class MongoQueryExpression
 {
     private readonly List<LookupExpression> _pendingLookups = [];
     private readonly Dictionary<IEntityType, MongoCollectionExpression> _innerCollections = new();
-    private bool _hasInterleavingOperatorSinceLastJoin;
 
     // IEntityType, so a self-referencing navigation chain like Employee.Manager.Manager, or two sibling
     // joins onto the same target type, collapse into a single dictionary entry), this records one entry
@@ -88,6 +84,66 @@ internal sealed partial class MongoQueryExpression
     }
 
     /// <summary>
+    /// The single-level reference <c>$lookup</c>s the native streaming path must emit as
+    /// <c>$lookup</c> + <c>$unwind</c> stages (to a root-level <c>_lookup_&lt;Nav&gt;</c> field) and read back
+    /// in the forward-only materializer.
+    /// <para>
+    /// A lone reference Include is translated by the driver-LINQ path as a driver-native LeftJoin
+    /// (<c>_outer</c>/<c>_inner</c>) and registers NO pending <see cref="LookupExpression"/> — see
+    /// <see cref="UsesDriverJoinFields"/>. The native pipeline cannot produce the driver's LeftJoin shape, so
+    /// for that case the reference lookups are synthesized here from <see cref="InnerCollections"/> (each
+    /// inner collection reached by a direct single-reference navigation off the root). This keeps the
+    /// DOM/driver-LINQ join-shape decision untouched (no pending lookup is registered, so the DOM fallback
+    /// still uses the driver-native LeftJoin) while giving the native streaming path the flat
+    /// <c>_lookup_&lt;Nav&gt;</c> shape its materializer reads.
+    /// </para>
+    /// <para>
+    /// When pending reference lookups ARE registered (multi-join flat mode), those are returned directly.
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<LookupExpression> GetStreamingReferenceLookups()
+    {
+        var pending = GetPendingLookups();
+        if (pending.Count > 0)
+        {
+            return pending;
+        }
+
+        if (!UsesDriverJoinFields)
+        {
+            return pending;
+        }
+
+        // Driver-native LeftJoin case: synthesize a reference lookup per inner collection that is the target
+        // of a direct single-reference navigation off the root entity.
+        var rootEntityType = CollectionExpression.EntityType;
+        var synthesized = new List<LookupExpression>();
+        foreach (var innerEntityType in _innerCollections.Keys)
+        {
+            var matches = rootEntityType.GetNavigations()
+                .Where(n => !n.IsCollection
+                            && !n.TargetEntityType.IsOwned()
+                            && n.TargetEntityType == innerEntityType)
+                .ToList();
+
+            // Synthesis matches by target type. If more than one single-reference navigation off the root
+            // targets the same inner collection (e.g. Doc.Author and Doc.Editor both -> Person), we cannot
+            // tell which one this lookup is for by type alone — bail to the driver/DOM fallback rather than
+            // risk resolving to the wrong navigation's element alias.
+            if (matches.Count != 1)
+            {
+                // Zero: not a direct single-reference navigation off the root (e.g. transitive / collection).
+                // More than one: ambiguous by target type. Either way, not streamable here -> fall back.
+                return Array.Empty<LookupExpression>();
+            }
+
+            synthesized.Add(new LookupExpression(matches[0]));
+        }
+
+        return synthesized;
+    }
+
+    /// <summary>
     /// Register a $lookup stage for a cross-collection collection Include.
     /// </summary>
     public void AddLookup(LookupExpression lookup)
@@ -97,26 +153,6 @@ internal sealed partial class MongoQueryExpression
             _pendingLookups.Add(lookup);
         }
     }
-
-    /// <summary>
-    /// Records that a <c>Skip</c>/<c>Take</c>/<c>Distinct</c> was visited while at least one join was
-    /// already registered (see <see cref="Visitors.MongoQueryableMethodTranslatingExpressionVisitor"/>).
-    /// Operators visited before the first join don't count - they precede every join, not sit between two of
-    /// them.
-    /// </summary>
-    public void MarkPotentialJoinInterleavingOperator()
-    {
-        if (_innerCollections.Count > 0)
-        {
-            _hasInterleavingOperatorSinceLastJoin = true;
-        }
-    }
-
-    /// <summary>
-    /// Whether a <c>Skip</c>/<c>Take</c>/<c>Distinct</c> has been visited between two joins - see
-    /// <see cref="MarkPotentialJoinInterleavingOperator"/>.
-    /// </summary>
-    public bool HasInterleavingOperatorSinceLastJoin => _hasInterleavingOperatorSinceLastJoin;
 
     /// <summary>
     /// Inner collections involved in join operations, deduplicated by entity type — one entry per
@@ -182,4 +218,21 @@ internal sealed partial class MongoQueryExpression
 
         return collection;
     }
+
+    /// <summary>
+    /// The ordered list of <c>$lookup</c> stages the native pipeline must emit for cross-collection
+    /// Include operations. Surfaces the reference-lookup reconstruction from
+    /// <see cref="GetStreamingReferenceLookups"/>: when no pending lookups are registered (the driver's
+    /// native LeftJoin path), the single-level reference lookups are synthesized from
+    /// <see cref="InnerCollections"/>; otherwise the already-registered pending lookups are returned
+    /// directly. Consumed by the native lowerer to emit <c>$lookup</c> + <c>$unwind</c> stages.
+    /// </summary>
+    /// <remarks>
+    /// This is NOT a stored slot: each access <b>recomputes</b> <see cref="GetStreamingReferenceLookups"/>,
+    /// an O(navigations) reconstruction off <see cref="InnerCollections"/>. Callers should not treat it as a
+    /// cheap field read. It is slated for structural replacement (a populated <c>Lookups</c> slot) in the
+    /// Collection Includes sub-project. It lives here (rather than on <see cref="MongoSelectDefinition"/>)
+    /// because it recomputes from the group-3 lookup state that stays on this type.
+    /// </remarks>
+    public IReadOnlyList<LookupExpression> Lookups => GetStreamingReferenceLookups();
 }
