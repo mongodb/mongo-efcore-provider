@@ -13,6 +13,8 @@
  * limitations under the License.
  */
 
+using Xunit.Sdk;
+
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
 
 internal static class MongoAssert
@@ -26,6 +28,20 @@ internal static class MongoAssert
         var exception = await Assert.ThrowsAnyAsync<Exception>(query);
         var message = GetInnermostException(exception).Message;
         Assert.Contains("Unsupported cross-DbSet query", message);
+    }
+
+    /// <summary>
+    /// Assert that a query throws because the MongoDB provider could not translate it.
+    /// Unlike a bare try/catch, this does not treat a result-mismatch assertion thrown by the
+    /// query's own caller (e.g. from <c>AssertQuery</c> comparing wrong data) as a translation
+    /// failure: only a non-xUnit exception escaping the query counts as "failed to translate".
+    /// </summary>
+    public static async Task AssertTranslationFailed(Func<Task> query)
+    {
+        var exception = await Assert.ThrowsAnyAsync<Exception>(query);
+        Assert.False(
+            exception is XunitException,
+            $"Expected the query to fail to translate, but it instead failed this assertion: {exception}");
     }
 
     private static Exception GetInnermostException(Exception exception)

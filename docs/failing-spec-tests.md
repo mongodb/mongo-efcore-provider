@@ -153,8 +153,26 @@ Comment pattern: `// Fails: Unknown reasons EF-X009`.
 Affected: 1 test. Author was unsure of root cause when adding the override.
 
 ### EF-X010 — Provider-specific Include error message differs from EF baseline
-Pattern: tests for `Include_collection_with_client_filter` across all four Include variants use `Assert.ThrowsAsync<ContainsException>` and assert that `Assert.Contains` fails because the provider's error message differs from the generic EF message. The override carries an explanatory comment ("Throws with Mongo-specific message rather than the generic EF message.") but no `// Fails:` tag in the current codebase.
+Pattern: `Include_collection_with_client_filter` across all four Include variants asserts
+`Assert.Contains("ExpressionNotSupportedException", (await Assert.ThrowsAsync<ThrowsException>(...)).Message)`
+— the same shape as the 28 existing `EF-X002` sites. The base test expects EF's own
+`InvalidOperationException` translation-failed message for a client-evaluated member on an
+Include-d query; the provider instead throws the driver's `ExpressionNotSupportedException`,
+so `Assert.ThrowsAsync<InvalidOperationException>` inside the base method itself fails with a
+`ThrowsException` reporting the actual type. The mechanism is identical to `EF-X002` — see that
+entry for the general case; this one's trigger is specifically a client-evaluated member on an
+`Include`, not a plain unsupported operator.
 Affected: 4 tests (`NorthwindEFPropertyIncludeQueryMongoTest.cs`, `NorthwindIncludeNoTrackingQueryMongoTest.cs`, `NorthwindIncludeQueryMongoTest.cs`, `NorthwindStringIncludeQueryMongoTest.cs`).
+
+Until this was fixed, each of these four suites shadowed the upstream `AssertTranslationFailed`
+helper with a bare `try { await query(); } catch { return; }`, which — unlike the
+`Assert.ThrowsAsync<ThrowsException>` pattern above — swallowed *any* exception, including an
+assertion failure from wrong data returned by a query that didn't fail to translate at all. A
+full audit of all 234 call sites of the shadowed helper (across the four suites) found this one
+test as the only case actually masking a real failure; the other 230 call sites already threw a
+genuine non-assertion exception and are unaffected. The shadowed helpers now delegate to a
+corrected `MongoAssert.AssertTranslationFailed` (rejects any `XunitException`, so wrong data
+still fails the test) instead of duplicating the swallow-everything logic in each file.
 
 ### EF-X011 — Compiled query with non-query operator — wrong exception — **fixed by [EF-233](https://jira.mongodb.org/browse/EF-233)**
 Comment pattern (historical): `// Fails: Compiled query with non-query operator issue EF-X011`.

@@ -1313,7 +1313,10 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
     public override async Task Include_collection_with_client_filter(bool async)
     {
         // Fails: Throws with Mongo-specific message rather than the generic EF message. EF-X010
-        await AssertTranslationFailed(() => base.Include_collection_with_client_filter(async));
+        Assert.Contains(
+            "ExpressionNotSupportedException",
+            (await Assert.ThrowsAsync<ThrowsException>(() => base.Include_collection_with_client_filter(async)))
+            .Message);
         AssertMql(
             """
 Customers.
@@ -1321,18 +1324,7 @@ Customers.
     }
 
     protected new static async Task AssertTranslationFailed(Func<Task> query)
-    {
-        try
-        {
-            await query();
-        }
-        catch
-        {
-            return;
-        }
-
-        throw new Xunit.Sdk.XunitException("Expected query to fail but it succeeded.");
-    }
+        => await MongoAssert.AssertTranslationFailed(query);
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);
