@@ -722,14 +722,11 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
     public override async Task Sum_on_float_column(bool async)
     {
-        // Fails: Truncation data loss issue EF-228
-        Assert.Contains(
-            "Truncation resulted in data loss.",
-            (await Assert.ThrowsAsync<TruncationException>(() => base.Sum_on_float_column(async))).Message);
+        await base.Sum_on_float_column(async);
 
         AssertMql(
             """
-            OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null, "_v" : { "$sum" : "$Discount" } } }, { "$project" : { "_id" : 0 } }
+            OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null, "_v" : { "$sum" : { "$toDouble" : "$Discount" } } } }, { "$project" : { "_id" : 0 } }
             """);
     }
 
@@ -849,14 +846,11 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
     public override async Task Average_on_float_column(bool async)
     {
-        // Fails: Truncation data loss issue EF-228
-        Assert.Contains(
-            "Truncation resulted in data loss.",
-            (await Assert.ThrowsAsync<TruncationException>(() => base.Average_on_float_column(async))).Message);
+        await base.Average_on_float_column(async);
 
         AssertMql(
             """
-            OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null, "_v" : { "$avg" : "$Discount" } } }, { "$project" : { "_id" : 0 } }
+            OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null, "_v" : { "$avg" : { "$toDouble" : "$Discount" } } } }, { "$project" : { "_id" : 0 } }
             """);
     }
 
@@ -2291,8 +2285,10 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
     public override async Task Type_casting_inside_sum(bool async)
     {
-        // Fails: Truncation data loss issue EF-228
+        // Fails: Explicit float-to-decimal cast inside Sum loses precision EF-X023
         // Returns 121.04000180587159838 instead of 121.040 because of conversion errors.
+        // Distinct from EF-228 (fixed): this is an explicit (decimal) cast in the selector, not a
+        // float Average/Sum result, and the server-side $toDecimal conversion itself is lossy here.
         Assert.Contains(
             "Actual:   121.04000180587159838",
             (await Assert.ThrowsAsync<EqualException>(() =>

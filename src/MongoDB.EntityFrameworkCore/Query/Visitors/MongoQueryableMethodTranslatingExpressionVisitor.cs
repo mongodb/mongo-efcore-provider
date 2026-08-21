@@ -160,12 +160,86 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             if (newCardinality != shapedQueryExpression.ResultCardinality)
                 shapedQueryExpression = shapedQueryExpression.UpdateResultCardinality(newCardinality);
 
-            ((MongoQueryExpression)shapedQueryExpression.QueryExpression).CapturedExpression = _finalExpression;
+            var mongoQueryExpression = (MongoQueryExpression)shapedQueryExpression.QueryExpression;
+            var widened = WidenFloatAverageOrSum(_finalExpression);
+            mongoQueryExpression.CapturedExpression = widened;
+            mongoQueryExpression.AggregateNarrowingResultType = widened != _finalExpression ? _finalExpression?.Type : null;
             return shapedQueryExpression;
         }
 
         return QueryCompilationContext.NotTranslatedExpression;
     }
+
+    /// <summary>
+    /// MongoDB computes <c>$avg</c>/<c>$sum</c> in double precision; the driver's <c>float</c> serializer
+    /// throws <see cref="MongoDB.Bson.TruncationException"/> rather than narrow a lossy result (EF-228).
+    /// Rewrite to the <c>double</c> overload here; narrowing back happens client-side in
+    /// <see cref="MongoShapedQueryCompilingExpressionVisitor"/>.
+    /// </summary>
+    private static Expression? WidenFloatAverageOrSum(Expression? expression)
+    {
+        if (expression is not MethodCallExpression { Method.DeclaringType: var declaringType } call
+            || declaringType != typeof(Queryable)
+            || call.Method.Name is not (nameof(Queryable.Average) or nameof(Queryable.Sum)))
+        {
+            return expression;
+        }
+
+        var isAverage = call.Method.Name == nameof(Queryable.Average);
+
+        if (call.Arguments.Count == 2
+            && (isAverage ? QueryableMethods.IsAverageWithSelector(call.Method) : QueryableMethods.IsSumWithSelector(call.Method)))
+        {
+            var selector = call.Arguments[1] is UnaryExpression { NodeType: ExpressionType.Quote } quote
+                ? (LambdaExpression)quote.Operand
+                : (LambdaExpression)call.Arguments[1];
+
+            var widenedType = WidenedFloatResultType(selector.ReturnType);
+            if (widenedType == null)
+            {
+                return expression;
+            }
+
+            var sourceType = call.Method.GetGenericArguments()[0];
+            var newSelector = Expression.Lambda(Expression.Convert(selector.Body, widenedType), selector.Parameters);
+            var openMethod = isAverage
+                ? QueryableMethods.GetAverageWithSelector(widenedType)
+                : QueryableMethods.GetSumWithSelector(widenedType);
+
+            return Expression.Call(openMethod.MakeGenericMethod(sourceType), call.Arguments[0], newSelector);
+        }
+
+        if (call.Arguments.Count == 1
+            && (isAverage ? QueryableMethods.IsAverageWithoutSelector(call.Method) : QueryableMethods.IsSumWithoutSelector(call.Method)))
+        {
+            var elementType = call.Arguments[0].Type.GetGenericArguments()[0];
+            var widenedType = WidenedFloatResultType(elementType);
+            if (widenedType == null)
+            {
+                return expression;
+            }
+
+            var parameter = Expression.Parameter(elementType, "x");
+            var selectCall = Expression.Call(
+                null,
+                QueryableMethods.Select.MakeGenericMethod(elementType, widenedType),
+                call.Arguments[0],
+                Expression.Lambda(Expression.Convert(parameter, widenedType), parameter));
+
+            var openMethod = isAverage
+                ? QueryableMethods.GetAverageWithoutSelector(widenedType)
+                : QueryableMethods.GetSumWithoutSelector(widenedType);
+
+            return Expression.Call(openMethod, selectCall);
+        }
+
+        return expression;
+    }
+
+    private static Type? WidenedFloatResultType(Type type)
+        => type == typeof(float) ? typeof(double)
+            : type == typeof(float?) ? typeof(double?)
+            : null;
 
     protected override ShapedQueryExpression TranslateSelect(ShapedQueryExpression source, LambdaExpression selector)
     {
