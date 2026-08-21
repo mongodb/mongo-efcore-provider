@@ -341,6 +341,44 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
     }
 #endif
 
+#if !EF8 && !EF9
+    [Fact]
+    public void Include_two_sibling_reference_navigations_to_same_target_type()
+    {
+        // EF-378: Root.A and Root.B both target Mid via distinct navigations. The provider used to track
+        // prior joins keyed by target entity type, so the second join's type collapsed onto the first's
+        // entry and was never detected as "second or later," breaking materialization.
+        var midCollection = TemporaryDatabaseFixtureBase.CreateCollectionName("SibMid") + Guid.NewGuid().ToString("N")[..8];
+        var rootCollection = TemporaryDatabaseFixtureBase.CreateCollectionName("SibRoot") + Guid.NewGuid().ToString("N")[..8];
+
+        var midAId = ObjectId.GenerateNewId();
+        var midBId = ObjectId.GenerateNewId();
+
+        var mids = database.MongoDatabase.GetCollection<BsonDocument>(midCollection);
+        mids.InsertMany([
+            new BsonDocument { { "_id", midAId }, { "name", "MidA" } },
+            new BsonDocument { { "_id", midBId }, { "name", "MidB" } }
+        ]);
+
+        var roots = database.MongoDatabase.GetCollection<BsonDocument>(rootCollection);
+        roots.InsertOne(new BsonDocument
+        {
+            { "_id", ObjectId.GenerateNewId() },
+            { "a_id", midAId },
+            { "b_id", midBId }
+        });
+
+        using var db = new SibDbContext(database, rootCollection, midCollection);
+        var root = db.SibRoots.Include(r => r.A).Include(r => r.B).First();
+
+        Assert.NotNull(root.A);
+        Assert.NotNull(root.B);
+        // Guards against each sibling reading the wrong (or the other's) joined document.
+        Assert.Equal("MidA", root.A.Name);
+        Assert.Equal("MidB", root.B.Name);
+    }
+#endif
+
     [Fact]
     public void Filtered_include_multi_key_order_by_then_by_applies_full_sort()
     {
@@ -780,6 +818,70 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
                 b.HasOne(s => s.Manager)
                     .WithMany(s => s.DirectReports)
                     .HasForeignKey(s => s.ManagerId);
+            });
+        }
+
+        sealed class IgnoreCacheKeyFactory : IModelCacheKeyFactory
+        {
+            private static int _count;
+            public object Create(DbContext context, bool designTime)
+                => Interlocked.Increment(ref _count);
+        }
+    }
+#endif
+
+#if !EF8 && !EF9
+    class SibMid
+    {
+        public ObjectId _id { get; set; }
+        public string Name { get; set; }
+    }
+
+    class SibRoot
+    {
+        public ObjectId _id { get; set; }
+        public ObjectId AId { get; set; }
+        public ObjectId BId { get; set; }
+        public SibMid A { get; set; }
+        public SibMid B { get; set; }
+    }
+
+    class SibDbContext : DbContext
+    {
+        private readonly string _rootCollection;
+        private readonly string _midCollection;
+
+        public DbSet<SibRoot> SibRoots { get; set; }
+        public DbSet<SibMid> SibMids { get; set; }
+
+        public SibDbContext(TemporaryDatabaseFixture database, string rootCollection, string midCollection)
+            : base(new DbContextOptionsBuilder<SibDbContext>()
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
+                .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+                .Options)
+        {
+            _rootCollection = rootCollection;
+            _midCollection = midCollection;
+        }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<SibMid>(b =>
+            {
+                b.ToCollection(_midCollection);
+                b.Property(m => m.Name).HasElementName("name");
+            });
+
+            modelBuilder.Entity<SibRoot>(b =>
+            {
+                b.ToCollection(_rootCollection);
+                b.Property(r => r.AId).HasElementName("a_id");
+                b.Property(r => r.BId).HasElementName("b_id");
+                b.HasOne(r => r.A).WithMany().HasForeignKey(r => r.AId);
+                b.HasOne(r => r.B).WithMany().HasForeignKey(r => r.BId);
             });
         }
 

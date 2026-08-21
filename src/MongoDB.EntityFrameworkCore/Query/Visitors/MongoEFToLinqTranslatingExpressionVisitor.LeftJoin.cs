@@ -787,9 +787,14 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             }
         }
 
-        if (genericArgs.Contains(oldSourceItemType) || genericArgs.Any(a => ContainsType(a, oldSourceItemType)))
+        if (IsTransparentIdentifier(oldSourceItemType)
+            && (genericArgs.Contains(oldSourceItemType) || genericArgs.Any(a => ContainsType(a, oldSourceItemType))))
         {
-            // A generic argument still mentions the (now non-existent) TransparentIdentifier type.
+            // A generic argument still mentions the (now non-existent) TransparentIdentifier type. When
+            // oldSourceItemType isn't a TransparentIdentifier to begin with (e.g. a terminal First()/
+            // Single() sitting above an Include-shaping Select that already collapsed the join's
+            // TransparentIdentifier to the entity type), old and new legitimately coincide and this must
+            // not reject the reattachment.
             return null;
         }
 
