@@ -15,6 +15,7 @@
 
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
@@ -39,6 +40,29 @@ public class WhereTests(ReadOnlySampleGuidesFixture database)
     {
         var results = _db.Planets.Where(p => p.name != "Saturn").ToArray();
         Assert.All(results, p => Assert.NotEqual("Saturn", p.name));
+    }
+
+    [Fact]
+    public void Where_string_indexof_not_equal_minus_one()
+    {
+        var results = _db.Planets.Where(p => p.name.IndexOf("a") != -1).ToArray();
+        Assert.Equal(4, results.Length);
+        Assert.All(results, p => Assert.Contains("a", p.name));
+    }
+
+    [Fact]
+    public void Where_string_indexof_not_equal_minus_one_uses_indexOfCP_ne()
+    {
+        var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
+        using var db = GuidesDbContext.Create(_mongoDatabase, loggerFactory: loggerFactory);
+
+        var results = db.Planets.Where(p => p.name.IndexOf("a") != -1).ToArray();
+        Assert.Equal(4, results.Length);
+
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains(
+            "{ \"$match\" : { \"$expr\" : { \"$ne\" : [{ \"$indexOfCP\" : [\"$name\", \"a\"] }, -1] } } }",
+            message);
     }
 
     [Fact]
