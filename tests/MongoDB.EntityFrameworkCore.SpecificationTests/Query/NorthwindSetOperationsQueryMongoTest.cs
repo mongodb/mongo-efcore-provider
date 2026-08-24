@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestModels.Northwind;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Driver.Linq;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 using Xunit.Abstractions;
 using Xunit.Sdk;
 
@@ -59,10 +60,15 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Intersect(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Intersect(async));
-    }
+        // EF-347: a whole-entity, terminal Intersect over the same entity type now goes native (source-
+        // tagging $unionWith pipeline) instead of hard-failing translation.
+        await base.Intersect(async);
 
+        AssertMql(
+            """
+            Customers.{ "$match" : { "City" : "London" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "Thomas", "options" : "s" } } } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : true } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            """);
+    }
 
     public override async Task Union(bool async)
     {
@@ -86,11 +92,15 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Except(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Except(async));
+        // EF-347: a whole-entity, terminal Except over the same entity type now goes native (source-tagging
+        // $unionWith pipeline) instead of hard-failing translation. Was previously tagged "Cross-document
+        // navigation access issue EF-216" (Except hard-failed unconditionally pre-EF-347).
+        await base.Except(async);
 
         AssertMql(
-        );
+            """
+            Customers.{ "$match" : { "City" : "London" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "Thomas", "options" : "s" } } } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : false } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            """);
     }
 
     public override async Task Union_OrderBy_Skip_Take(bool async)
@@ -182,8 +192,8 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$match" : { "Address" : { "$regularExpression" : { "pattern" : "Hanover", "options" : "s" } } } }, { "$project" : { "_v" : "$Address", "_id" : 0 } }
-            """);
+Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$match" : { "Address" : { "$regularExpression" : { "pattern" : "Hanover", "options" : "s" } } } }, { "$project" : { "Address" : "$Address", "_id" : 0 } }
+""");
     }
 
     public override async Task Union_Select_scalar(bool async)
@@ -202,7 +212,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$project" : { "_id" : "$_id" } }
+            Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$project" : { "Id" : "$_id", "_id" : 0 } }
             """);
     }
 
@@ -255,11 +265,12 @@ Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Cus
 
     public override async Task GroupBy_Select_Union(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.GroupBy_Select_Union(async));
+        await base.GroupBy_Select_Union(async);
 
         AssertMql(
-        );
+            """
+            Customers.{ "$match" : { "City" : "Berlin" } }, { "$group" : { "_id" : "$_id", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "CustomerID" : "$_id", "Count" : "$__agg0", "_id" : 0 } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }, { "$group" : { "_id" : "$_id", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "CustomerID" : "$_id", "Count" : { "$size" : "$_elements" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            """);
     }
 
     public override async Task Union_over_columns_with_different_nullability(bool async)
@@ -707,11 +718,19 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
     public override async Task Except_simple_followed_by_projecting_constant(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
+        // Fails: EF-347 -- Select(constant) after a whole-entity terminal Except composes past the IsSetOp
+        // terminal gate, so translation falls back to driver-LINQ (a graceful MarkNotNativelyRepresentable(),
+        // not a translation-time hard fail); the driver's own LINQ v3 provider has no Except translation at
+        // all, so it throws ExpressionNotSupportedException mid-enumeration -- after QueryingEnumerable's
+        // logging try/finally has already fired with whatever partial LoggedStages existed (none, here), so
+        // a single empty-pipeline "Customers." entry is logged despite the failure. Was previously tagged
+        // "Cross-document navigation access issue EF-216" (Except hard-failed unconditionally pre-EF-347).
         await AssertTranslationFailed(() => base.Except_simple_followed_by_projecting_constant(async));
 
         AssertMql(
-        );
+            """
+            Customers.
+            """);
     }
 
     public override async Task Except_nested(bool async)
@@ -835,8 +854,8 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }] } }, { "$project" : { "_v" : "$City", "_id" : 0 } }
-            """);
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }] } }, { "$project" : { "City" : "$City", "_id" : 0 } }
+""");
     }
 
     public override async Task Concat_with_distinct_on_one_source_and_pruning(bool async)
@@ -903,4 +922,14 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
     private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
         => Assert.Contains("Unsupported cross-DbSet query between",
             (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+
+    // A GroupBy/aggregate shape the native translator does not support must fail as a *translation*
+    // failure, but the exact exception depends on the query mode and how far the driver-LINQ fallback
+    // gets: NativeTranslationNotSupportedException under MongoQueryMode.NativeOnly; an EF
+    // InvalidOperationException (CoreStrings.TranslationFailed or an internal guard) or a driver
+    // translation exception under the default Native mode. Data-assertion failures are NOT accepted so a
+    // future wrong-data regression still turns the test red.
+    // These three are the only exception types actually observed across the flipped GroupBy spec suites.
+    protected new static Task AssertTranslationFailed(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 }

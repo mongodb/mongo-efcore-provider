@@ -27,6 +27,8 @@ using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.Storage;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
@@ -213,21 +215,15 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var source = Visit(methodCallExpression.Arguments[0]);
         if (source is ShapedQueryExpression shapedQueryExpression)
         {
-            // EF-373: Skip/Take/Distinct composed BETWEEN two cross-collection joins has no single correct
-            // position once a second join forces the $lookup-flattening fallback (see TranslateJoinCore) -
-            // record that one of these occurred while at least one join is already registered so the next
-            // join registration can decline rather than silently mis-position the $lookup stages.
-            if (method.Name is nameof(Queryable.Skip) or nameof(Queryable.Take) or nameof(Queryable.Distinct))
-            {
-                ((MongoQueryExpression)shapedQueryExpression.QueryExpression).MarkPotentialJoinInterleavingOperator();
-            }
-
             var methodDefinition = method.IsGenericMethod ? method.GetGenericMethodDefinition() : method;
             switch (method.Name)
             {
                 // Operations that need tweaks
                 case nameof(Queryable.Select) when methodDefinition == QueryableMethods.Select:
                 case nameof(Queryable.OfType) when methodDefinition == QueryableMethods.OfType:
+                case nameof(Queryable.Distinct) when methodDefinition == QueryableMethods.Distinct:
+                case nameof(Queryable.Union) when methodDefinition == QueryableMethods.Union:
+                case nameof(Queryable.Concat) when methodDefinition == QueryableMethods.Concat:
 
                 // Operations that only require reshaping
                 case nameof(Queryable.Any) when methodDefinition == QueryableMethods.AnyWithoutPredicate:
@@ -274,11 +270,31 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     }
             }
 
+            // Native-slot population: delegate to NativeSlotPopulator on the already-visited source so we
+            // always operate on the correct MongoQueryExpression instance — never re-traverse.
+            NativeSlotPopulator.PopulateNativeSlots(shapedQueryExpression, methodDefinition, methodCallExpression);
+
             var newCardinality = GetResultCardinality(method);
             if (newCardinality != shapedQueryExpression.ResultCardinality)
                 shapedQueryExpression = shapedQueryExpression.UpdateResultCardinality(newCardinality);
 
-            ((MongoQueryExpression)shapedQueryExpression.QueryExpression).CapturedExpression = _finalExpression;
+            // The pushed-down bare collection-navigation `Count` body is null-coalesced here, one statement
+            // after the capture, for a projection committed under ProjectionAliasTier.Synthetic. This can't
+            // live in the projection binder's own commit block: the assignment on the line above overwrites
+            // anything written there, because _finalExpression is the whole captured chain and is
+            // re-assigned after EVERY translated Queryable call, including the Select whose translation runs
+            // the binder. Applying it here keeps it at TRANSLATION time and unconditional, covering the
+            // explicit-DriverLinq leg as well as the late-decline one.
+            //
+            // It is inert on the native route but not because "only the driver-LINQ bridge reads
+            // CapturedExpression" (several native-routing sites also read it — ContainsVectorSearch,
+            // GetOnZeroResultsAction, the bulk ExecuteUpdate/ExecuteDelete path, and exception-message
+            // Print() sites); rather the rewrite's own reach is narrow — see
+            // NullCoalesceSyntheticBareCountBody's remarks.
+            var capturingQueryExpression = (MongoQueryExpression)shapedQueryExpression.QueryExpression;
+            capturingQueryExpression.CapturedExpression =
+                NativeProjectionBinder.NullCoalesceSyntheticBareCountBody(
+                    _finalExpression, capturingQueryExpression.Select);
             return shapedQueryExpression;
         }
 
@@ -293,14 +309,665 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return source;
         }
 
-        // TransparentIdentifier types are used by Join/LeftJoin/GroupJoin - allow them through
-
+        // TransparentIdentifier types are used by Join/LeftJoin/GroupJoin - allow them through.
+        // Any other (projecting) Select that this method can't lower into a native $project marks the
+        // query as no longer natively representable.
         var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
+        if (source.ShaperExpression is GroupByShaperExpression)
+        {
+            // GroupBy(key).Select(aggregate): bind the accumulators (and finalize MongoSelectDefinition.Grouping)
+            // when the projection is a supported shape (g.Key parts + Count/Sum/Min/Max/Average accumulators);
+            // otherwise mark non-native so the query falls back to driver-LINQ. Either way translation must
+            // complete without hard-throwing.
+            //
+            // Build the grouped-row result shaper: rewrite the projection's members onto ProjectionBinding
+            // reads of top-level result aliases. When the grouping bound natively (Grouping finalized +
+            // flatten projection populated) the gate emits the $group + flattening $project and this shaper
+            // reads each alias from the grouped output document. When it did not bind (computed key/operand),
+            // the query is marked non-native and this same anonymous-shaper (no GroupByShaperExpression left)
+            // lets the driver-LINQ push-down path run the GroupBy server-side and pass its objects straight
+            // through — CanPushDown succeeds because there is no entity reference in the shaper.
+            if (!NativeGroupByBinder.TryBindGroupProjection(mongoQueryExpression, selector))
+            {
+                mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+            }
+
+            var groupShaper = TryBuildGroupResultShaper(mongoQueryExpression, selector);
+
+            // A projection shape we cannot rewrite (not an anonymous/DTO construction) keeps the placeholder
+            // GroupByShaperExpression; the gate rejects it under NativeOnly and the driver reports it under
+            // Native — matching a bare IGrouping.
+            return groupShaper == null ? source : source.UpdateShaperExpression(groupShaper);
+        }
+
+        // The trailing projection of an explicit-result-selector / query-syntax owned SelectMany.
+        // UnwindSource is set (by TranslateSelectMany's bare-nav bind) with no Projection yet;
+        // bind ti.Outer/ti.Inner two-scope, build the projected shaper (by-alias, like the inner-Select form /
+        // GroupBy), and skip the generic fold below (this Select's shaper is source.ShaperExpression's own
+        // TransparentIdentifier(Outer, Inner) unfolded — the fold would just re-derive the same leaves we
+        // already bound natively here). A projection this binder rejects (computed leaf, non-ti.Outer/Inner
+        // shape) falls through unchanged to the existing guards below.
+        if (mongoQueryExpression.Select.UnwindSource != null
+            && mongoQueryExpression.Select.Projection.Count == 0
+            && NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQueryExpression, selector))
+        {
+            var selectManyShaper = BuildSelectManyResultShaper(mongoQueryExpression, selector.Body);
+            return source.UpdateShaperExpression(selectManyShaper);
+        }
+
+        if (IsSingleLevelReferenceIncludeSelector(selector))
+        {
+            if (!TryConfirmReferenceInclude(mongoQueryExpression, selector))
+            {
+                // Recognized the SHAPE but declined the case (second reference Include, composite key,
+                // post-terminal, transitive hop, …). The candidate join stays unconfirmed, so Route
+                // computes Fallback (MongoSelectDefinition.HasUnconfirmedCandidateJoin).
+                mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+            }
+        }
+        else if (IsSingleLevelCollectionIncludeSelector(selector) && mongoQueryExpression.Select.HasTerminalOperator)
+        {
+            // Post-terminal guard for a collection Include: EF Core's own
+            // NavigationExpandingExpressionVisitor requires the SAME Include on both operands of a set
+            // operation and, when that holds, HOISTS it to apply AFTER the combinator — i.e.
+            // "A.Include(x).Union(B.Include(x))" reaches this Select as "Union(A, B).Select(x =>
+            // Include(x))", with mongoQueryExpression.Select.IsSetOp (or IsGroupBy/IsDistinct for the
+            // analogous GroupBy/Distinct cases) already set by the preceding TranslateUnion/Concat/
+            // GroupBy/Distinct. Registering the $lookup here via the fall-through below would combine it
+            // with a $unionWith/$group the lowerer does not know how to reconcile — empirically, rows
+            // contributed by the $unionWith operand come back with an EMPTY Include collection (a silent
+            // wrong-data bug, not a translation failure). Fall back to driver-LINQ instead.
+            mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+        }
+        else if (!IsTransparentIdentifierSelector(selector) && !IsSingleLevelCollectionIncludeSelector(selector)
+                 && !IsTransparentIdentifierMemberAccessSelector(selector)
+                 && !IsOwnedEmbeddedIncludeSelector(selector))
+        {
+            // Post-terminal guard: a projected Select applied AFTER a native terminal grouping/distinct — a
+            // projected Distinct (IsDistinct, key-only Grouping), a prior GroupBy (IsGroupBy), or any finalized
+            // Grouping — must NOT push down a native $project. This Select reaches the NON-grouped branch (it is
+            // NOT a GroupByShaperExpression — the preceding native terminal already replaced the shaper with its
+            // projection shaper), so it bypasses the IsGroupBy||IsDistinct guards in NativeSlotPopulator/
+            // NativeCardinalityBinder. Without this guard TryPopulateNativeProjection would APPEND this Select's
+            // entity field-refs onto the already-populated Projection while Grouping is still set; Route stays
+            // GroupBy; the lowerer group branch then renders $group + a flatten $project referencing fields that
+            // no longer exist after the $group — yielding silent NULL data (e.g.
+            // Select(new{Country,City}).Distinct().Select(x => new{Nation = x.Country}) emits Nation:"$country"
+            // after $group{_id:{Country,City}} → null). Mark non-native so it falls back to driver-LINQ under
+            // Native (throws under NativeOnly), matching the correct driver-LINQ result. Mirrors the
+            // TranslateGroupBy guard. The legit GroupBy(key).Select(aggregate) reaches the grouped branch above
+            // (via GroupByShaperExpression) and is unaffected.
+            // A set-op-ONLY terminal is EXEMPT — a trailing anonymous/DTO member-access Select
+            // after a whole-entity set op pushes down a $project (emitted after the set-op stage by the lowerer's
+            // Projection block, via the slice-B fall-through). IsSetOpTerminalOnly requires Projection.Count == 0,
+            // so once this projection is populated a SECOND projection (or any post-projection operator) is no
+            // longer set-op-terminal-only and correctly falls back here. A GroupBy/Distinct/SelectMany terminal
+            // (IsSetOpTerminalOnly false) still marks non-native, exactly as before.
+            if (mongoQueryExpression.Select.HasTerminalOperator && !mongoQueryExpression.Select.IsSetOpTerminalOnly)
+            {
+                mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+            }
+            // Native projection pushdown: a terminal anonymous-type / DTO projection whose leaves are
+            // all top-level member accesses only is lowered to a $project stage. Anything else (bare scalar, computed
+            // leaves, entity references, non-member bindings) is not natively representable and falls back.
+            else if (!NativeProjectionBinder.TryPopulateNativeProjection(mongoQueryExpression, selector))
+            {
+                mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+            }
+        }
+
+        // A bare-nav owned/reference SelectMany (UnwindSource set by NativeSelectManyBinder.TryBindBareNavUnwind)
+        // whose trailing selector is a whole-inner-entity `ti => ti.Inner` access — e.g. `from o in q from i in
+        // o.Items select i`, `SelectMany(o => o.Items, (o, i) => i)`, or the bare 1-arg `SelectMany(o => o.Items)`
+        // — bypasses both the pending-SelectMany projection branch above (which only binds an anonymous/DTO
+        // construction) and the post-terminal guard above (skipped for a transparent-identifier member-access
+        // selector). When representable (IsWholeElementRepresentable), it sets UnwindSource.WholeElement, which
+        // drives the lowerer to emit $unwind(includeArrayIndex) + $replaceRoot — a $mergeObjects sentinel form
+        // for Owned (carrying the owner key + array ordinal, see MongoReplaceRootStage) or a plain $replaceRoot
+        // for Reference (the $lookup's unwound element is already a whole, independently-keyed document).
+        // Control then falls through to the generic shaper fold below, which resolves
+        // TransparentIdentifier(outer, item).Inner to the element shaper BuildBareNavWrappedShaper already built
+        // — materialized by MongoShapedQueryCompilingExpressionVisitor's WholeElement branch, rooting the
+        // standard DOM shaper at the element type instead of the collection root. Leaving Select.Projection
+        // empty and Route falling through to WholeEntity without setting WholeElement would let the gate go
+        // native for a bare owned/reference entity that was never actually materialized, crashing the DOM
+        // shaper with an internal KeyNotFoundException instead of cleanly declining.
+        //
+        // TryGetWholeEntityMemberAccess(selector) distinguishes all whole-entity shapes (inner or outer) from a
+        // computed-leaf selector (e.g. `ti => new { X = ti.Inner.Price * 2 }`, a NewExpression rather than a
+        // bare member access), which must keep falling back gracefully via MarkNotNativelyRepresentable() in
+        // the else branch below — its driver-LINQ fallback genuinely succeeds with correct results. The
+        // whole-OUTER (`select o`) case and an unrepresentable element (an eager-loaded navigation for
+        // Reference; a nav/sentinel-collision/shadow-key issue for Owned — see IsWholeElementRepresentable)
+        // throw a plain NotSupportedException here at TRANSLATION time rather than
+        // NativeTranslationNotSupportedException: this call site runs before the compile-time gate
+        // (MongoShapedQueryCompilingExpressionVisitor) that would otherwise catch the latter and fall back, so
+        // nothing downstream would ever catch it in any MongoQueryMode.
+        if (mongoQueryExpression.Select.UnwindSource is { } wholeElementCandidateUnwind
+            && mongoQueryExpression.Select.Projection.Count == 0)
+        {
+            var wholeEntityMember = TryGetWholeEntityMemberAccess(selector);
+
+            if (wholeEntityMember is { Member.Name: "Inner" }
+                && wholeElementCandidateUnwind.Kind is MongoUnwindSourceKind.Owned or MongoUnwindSourceKind.Reference
+                && IsWholeElementRepresentable(wholeElementCandidateUnwind.InnerEntityType, wholeElementCandidateUnwind.Kind))
+            {
+                // Bare whole-inner-element SelectMany — owned (embedded) OR reference (cross-collection). The
+                // lowerer emits $unwind → $replaceRoot (owned: $mergeObjects sentinel form; reference: plain,
+                // after the $lookup+$unwind) and materializes the element from the re-rooted document; fall
+                // through to the generic shaper fold below, which resolves TransparentIdentifier(outer, item).Inner
+                // to the element shaper BuildBareNavWrappedShaper already built.
+                wholeElementCandidateUnwind.WholeElement = true;
+            }
+            else if (wholeEntityMember != null)
+            {
+                throw new NotSupportedException(
+                    "Projecting a whole entity other than an owned or reference collection element from a "
+                    + "SelectMany (e.g. 'from o in q from i in o.Items select o', 'SelectMany(o => o.Items, "
+                    + "(o, i) => o)', a reference collection element with an eager-loaded navigation, or an "
+                    + "owned collection element with a nested navigation or a real element name that collides "
+                    + "with the provider's internal owned-key sentinel fields) is not supported. Project "
+                    + "members instead, e.g. 'from o in q from i in o.Items select new { o.Name, "
+                    + "i.SomeProperty }', or project the owned element itself with 'select i'.");
+            }
+            else
+            {
+                mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+            }
+        }
+
         var newSelectorBody =
             ReplacingExpressionVisitor.Replace(selector.Parameters.Single(), source.ShaperExpression, selector.Body);
         var newShaper = _projectionBindingExpressionVisitor.Translate(mongoQueryExpression, newSelectorBody);
 
         return source.UpdateShaperExpression(newShaper);
+    }
+
+    /// <summary>
+    /// Builds the result shaper for a <c>GroupBy(key).Select(aggregate)</c> projection by rewriting each
+    /// anonymous-type / DTO member onto a <see cref="ProjectionBindingExpression"/> that reads the member's
+    /// top-level result alias from the grouped output document. The alias is the member name — matching the
+    /// flattening <c>$project</c> the lowerer emits after <c>$group</c> — so the standard DOM binding-removing
+    /// shaper reads each value by name. Returns <see langword="null"/> for a shape that is not an
+    /// anonymous/DTO construction (kept as the placeholder <see cref="Microsoft.EntityFrameworkCore.Query.GroupByShaperExpression"/>).
+    /// </summary>
+    private static Expression? TryBuildGroupResultShaper(MongoQueryExpression mongoQueryExpression, LambdaExpression selector)
+    {
+        switch (selector.Body)
+        {
+            case NewExpression newExpression
+                when newExpression.Members != null
+                     && newExpression.Members.Count == newExpression.Arguments.Count
+                     && newExpression.Arguments.Count > 0:
+                var arguments = new Expression[newExpression.Arguments.Count];
+                for (var i = 0; i < arguments.Length; i++)
+                    arguments[i] = BindGroupMember(mongoQueryExpression, newExpression.Members[i].Name, newExpression.Arguments[i]);
+                return newExpression.Update(arguments);
+
+            case MemberInitExpression memberInit
+                when memberInit.NewExpression.Arguments.Count == 0
+                     && memberInit.Bindings.Count > 0:
+                var bindings = new MemberBinding[memberInit.Bindings.Count];
+                for (var i = 0; i < bindings.Length; i++)
+                {
+                    if (memberInit.Bindings[i] is not MemberAssignment assignment)
+                        return null;
+                    bindings[i] = assignment.Update(
+                        BindGroupMember(mongoQueryExpression, assignment.Member.Name, assignment.Expression));
+                }
+
+                return memberInit.Update((NewExpression)memberInit.NewExpression, bindings);
+
+            default:
+                return null;
+        }
+    }
+
+    // Registers a projection for one grouped-result member and returns a ProjectionBindingExpression reading
+    // it by index. The stored source expression (the original g.Key / g.Count() / g.Sum(...) argument) is kept
+    // only for its distinctness (AddToProjection dedups by expression) and CLR type; the DOM shaper reads the
+    // value raw by the alias (the member name) since these sources resolve to no IProperty.
+    private static Expression BindGroupMember(MongoQueryExpression mongoQueryExpression, string alias, Expression valueExpression)
+    {
+        var index = mongoQueryExpression.AddToProjection(valueExpression, alias);
+        return new ProjectionBindingExpression(mongoQueryExpression, index, valueExpression.Type);
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="selector"/> is a transparent-identifier
+    /// selector produced by a Join/GroupJoin/LeftJoin rewrite — i.e. the body constructs an anonymous
+    /// object whose fields are the outer and inner parameters without further transformation.
+    /// Projecting selects (e.g. <c>Select(c =&gt; c.Name)</c>) return <see langword="false"/>.
+    /// </summary>
+    private static bool IsTransparentIdentifierSelector(LambdaExpression selector)
+    {
+        // EF generates transparent-identifier selectors as NewExpression nodes constructing an
+        // anonymous "TransparentIdentifier" type.  All other selectors project or transform.
+        if (selector.Body is not NewExpression newExpr)
+            return false;
+
+        var typeName = newExpr.Type.Name;
+        if (!typeName.StartsWith("TransparentIdentifier", StringComparison.Ordinal)
+            && !typeName.StartsWith("<>f__AnonymousType", StringComparison.Ordinal))
+            return false;
+
+        // The compiler-generated type-name prefix alone is ambiguous: EF's Join/GroupJoin/LeftJoin rewrite
+        // and a user's own two-member anonymous-type projection (e.g. Select(c => new { c.Name, c.Age }))
+        // both produce a "<>f__AnonymousType..." NewExpression. A genuine transparent identifier has exactly
+        // two members, literally named "Outer"/"Inner", each bound directly to one of the lambda's own
+        // parameters with no further transformation — that shape is what actually distinguishes it.
+        return newExpr.Members is { Count: 2 } members
+               && members[0].Name == "Outer" && members[1].Name == "Inner"
+               && newExpr.Arguments[0] is ParameterExpression
+               && newExpr.Arguments[1] is ParameterExpression;
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="selector"/> is the synthetic
+    /// <c>Select(ti =&gt; ti.Outer)</c> / <c>Select(ti =&gt; ti.Inner)</c> unwrap EF's nav-expansion ALWAYS
+    /// inserts immediately after a Join/GroupJoin/LeftJoin/SelectMany rewrite to peel a
+    /// <c>TransparentIdentifier(Outer, Inner)</c> back down to the operator's real result type — the native
+    /// inner-<c>Select</c> owned-collection SelectMany's mandatory unwrap Select is exactly this shape. This
+    /// selector carries no projection of its own to push down — it is a pure field-of-a-
+    /// freshly-built-object read that <see cref="ReplacingExpressionVisitor"/>'s own <c>NewExpression</c>-
+    /// member fold resolves directly to whatever the wrapping Select/SelectMany already built for that slot —
+    /// so it must bypass BOTH the post-terminal guard and <see cref="NativeProjectionBinder"/> here (mirroring
+    /// <see cref="IsTransparentIdentifierSelector"/>/<see cref="IsSingleLevelCollectionIncludeSelector"/>).
+    /// Without this, a SelectMany whose own binder set <see cref="MongoSelectDefinition.UnwindSource"/> (which
+    /// makes <see cref="MongoSelectDefinition.HasTerminalOperator"/> true) would have this MANDATORY,
+    /// EF-synthesized unwrap Select immediately trip the post-terminal guard and mark the query non-native —
+    /// even though it is not a user-authored operator chained after a terminal, just EF's own internal
+    /// TransparentIdentifier bookkeeping. Safe for Join/GroupJoin/LeftJoin too, though not for the reason
+    /// once claimed here: <c>TranslateJoinCore</c> does NOT unconditionally mark the outer side non-native —
+    /// it only does so for the GroupBy/Distinct hard-decline cases. A join is kept off the native pipeline by
+    /// <see cref="NativeSlotPopulator"/>'s catch-all instead (<c>Join</c>/<c>GroupJoin</c>/<c>LeftJoin</c> are
+    /// not listed in <c>IsNativeRepresentableSlotOperator</c>), so skipping this guard for their own
+    /// <c>ti.Inner</c>/<c>ti.Outer</c> unwrap changes nothing for them either way.
+    /// </summary>
+    private static bool IsTransparentIdentifierMemberAccessSelector(LambdaExpression selector)
+        => selector.Parameters.Count == 1
+           && selector.Parameters[0].Type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal)
+           && selector.Body is MemberExpression { Member.Name: "Outer" or "Inner" } member
+           && member.Expression == selector.Parameters[0];
+
+    /// <summary>
+    /// Returns the underlying <c>ti.Outer</c>/<c>ti.Inner</c> <see cref="MemberExpression"/> of a bare-nav
+    /// SelectMany's whole-entity trailing selector — the shape produced by all three equivalent user
+    /// spellings <c>SelectMany(o =&gt; o.Items, (o, i) =&gt; i)</c>, <c>from o in q from i in o.Items select i</c>,
+    /// and the bare 1-arg <c>SelectMany(o =&gt; o.Items)</c> (all whole-INNER, <c>Member.Name == "Inner"</c>), or
+    /// <c>select o</c>/<c>(o, i) =&gt; o</c> (whole-OUTER, <c>Member.Name == "Outer"</c>) — or <see langword="null"/>
+    /// if <paramref name="selector"/> is not this shape. EF auto-Includes any owned navigation reachable from
+    /// the projected result: when the referenced side (owner or owned element) itself owns further
+    /// navigations, the selector body is Include-wrapped (<c>IncludeExpression(ti.Inner, nav)</c> — possibly
+    /// chained for multiple navs) rather than a bare member access, so this unwraps through any
+    /// <see cref="IncludeExpression"/> layers first (empirically confirmed necessary — a nested owned member
+    /// under the element reaches exactly this shape; see <see cref="IsWholeElementRepresentable"/>'s
+    /// nested-navigation guard note). A narrower, single-purpose predicate than
+    /// <see cref="IsTransparentIdentifierMemberAccessSelector"/> — it does not check the parameter's own type
+    /// name, since the caller already knows (from <c>UnwindSource != null</c>) that this Select is a SelectMany
+    /// trailing selector.
+    /// </summary>
+    private static MemberExpression? TryGetWholeEntityMemberAccess(LambdaExpression selector)
+    {
+        if (selector.Parameters.Count != 1)
+        {
+            return null;
+        }
+
+        var body = selector.Body;
+        while (body is IncludeExpression include)
+        {
+            body = include.EntityExpression;
+        }
+
+        return body is MemberExpression { Member.Name: "Outer" or "Inner" } member
+               && member.Expression == selector.Parameters[0]
+            ? member
+            : null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="innerEntityType"/> (the collection's element type) is within the shape the
+    /// whole-element re-rooting mechanism (<c>$unwind</c> + <c>$replaceRoot</c>, see
+    /// <see cref="Expressions.MongoUnwindSource.WholeElement"/>) actually supports.
+    /// For <see cref="MongoUnwindSourceKind.Reference"/> the check narrows to a single guard — reject only an
+    /// EAGER-LOADED navigation (<see cref="Microsoft.EntityFrameworkCore.Metadata.IReadOnlyNavigationBase.IsEagerLoaded"/>).
+    /// A plain LAZY inverse back-reference (e.g. a reference element's own FK-owner navigation) is never
+    /// auto-included and materializes fine as null, so it does not block this shape — only a navigation EF
+    /// would try to auto-include (reaching EF's <c>IncludeExpression</c> machinery, which binds against the
+    /// re-rooted shaper's wrong <see cref="Microsoft.EntityFrameworkCore.Query.ProjectionMember"/>) is rejected.
+    /// For <see cref="MongoUnwindSourceKind.Owned"/> the full set of guards below applies — every owned
+    /// navigation is eager-loaded by EF Core convention, so the blanket "no navigations" check is equivalent
+    /// there; the remaining sentinel-collision / complex-property / owned-key-serialization guards exist ONLY
+    /// to protect the owned <c>$mergeObjects</c> sentinel merge and the synthesized owner-key/ordinal shadow
+    /// keys — a reference element merges no sentinels and has no owned-type shadow keys, so those checks apply
+    /// for <see cref="MongoUnwindSourceKind.Owned"/> only:
+    /// <list type="bullet">
+    /// <item>No navigations of its own. A nested owned reference/collection under the element does not
+    /// materialize correctly via this mechanism: <c>BuildBareNavWrappedShaper</c>'s element shaper still binds
+    /// through the query's ROOT <see cref="Microsoft.EntityFrameworkCore.Query.ProjectionMember"/>, which
+    /// resolves to the OUTER (owner) entity's own <c>EntityProjectionExpression</c>, not the re-rooted
+    /// element's. A nested navigation reaches EF's own auto-<c>IncludeExpression</c> machinery, which tries to
+    /// bind against that (wrong) projection and throws <see cref="InvalidOperationException"/>. This guard
+    /// converts that confusing runtime crash into the same clean, translation-time
+    /// <see cref="NotSupportedException"/> every other unsupported whole-entity shape gets. (Scalar/value-typed
+    /// members read fine regardless, via
+    /// <c>MongoProjectionBindingRemovingExpressionVisitor.CreateGetValueExpression</c>'s direct element-name
+    /// read — only NAVIGATED members are affected.)</item>
+    /// <item>No property whose configured element name collides with either $replaceRoot sentinel field
+    /// (<see cref="MongoReplaceRootStage.OwnerKeyField"/>/<see cref="MongoReplaceRootStage.OrdinalField"/>).
+    /// The lowerer's <c>$mergeObjects</c> merges the sentinel object AFTER the unwound element, so a same-named
+    /// real stored field would be SILENTLY OVERWRITTEN by the synthesized owner key/ordinal (unlike the
+    /// Intersect/Except source-tagging precedent, whose <c>_a</c>/<c>_b</c> tags live as siblings of a
+    /// wrapping <c>_doc</c> field and never collide with real element names, this mechanism merges the
+    /// sentinel fields directly into the element's own top-level namespace). Declining cleanly here avoids
+    /// that silent corruption; see
+    /// NativeSelectManyTests.Bare_owned_whole_inner_element_with_sentinel_collision_declines_cleanly.</item>
+    /// <item>No <em>complex-type</em> property whose configured element name collides with either sentinel
+    /// field either — the scalar-property scan above (<see cref="IEntityType.GetProperties"/>) does not see a
+    /// complex property's own top-level document slot, so a <c>ComplexProperty</c> named/renamed
+    /// <c>__ord</c>/<c>__ownerKey</c> would otherwise slip past it and be silently overwritten the same way.
+    /// There is no dedicated Mongo builder API for a complex property's own element name, so
+    /// <see cref="GetComplexPropertyElementName"/> reads the same <c>Mongo:ElementName</c> annotation
+    /// <see cref="MongoPropertyExtensions.GetElementName(IReadOnlyProperty)"/> reads for a plain property.</item>
+    /// <item>Every owned-key property (<see cref="MongoPropertyExtensions.IsOwnedTypeKey"/> — the owner-FK
+    /// shadow property and the array-ordinal shadow property) must have DEFAULT serialization
+    /// (<see cref="NativeGroupByBinder.HasDefaultKeySerialization"/>). The <c>__ownerKey</c> sentinel is
+    /// populated straight from the owner document's raw <c>$_id</c> through the DEFAULT type serializer,
+    /// bypassing whatever value converter or non-default <c>BsonRepresentation</c> the owned key property
+    /// itself is configured with; if the owned key (or the ordinal key) carries either, the raw sentinel read
+    /// diverges from what the property's own serializer expects at materialization.</item>
+    /// </list>
+    /// Both the navigation/sentinel-collision guards and the complex-property/owned-key guards are narrow
+    /// edge cases (a real element literally named <c>__ord</c>/<c>__ownerKey</c>, or a nested owned member);
+    /// declining cleanly rather than fixing the underlying re-rooted-projection-mapping/merge-order limitation
+    /// keeps this feature scoped to recognition + materialization wiring — fixing either properly is future
+    /// work.
+    /// </summary>
+    private static bool IsWholeElementRepresentable(IEntityType innerEntityType, MongoUnwindSourceKind kind)
+    {
+        // Reference: a plain lazy inverse back-reference (e.g. RefItem.Owner) is never auto-included and
+        // shapes fine as null — reject only an EAGER-LOADED navigation (which reaches EF's IncludeExpression
+        // machinery and binds against the re-rooted shaper's wrong ProjectionMember, the owned-slice crash).
+        // Owned: every owned nav is eager-loaded, so the blanket check is equivalent — keep it as the minimal,
+        // lowest-risk form. The sentinel-collision / shadow-key-serialization checks below exist ONLY to protect
+        // the owned $mergeObjects sentinel merge + synthesized owner/ordinal shadow keys; reference merges no
+        // sentinels and has no owned-type shadow keys, so they apply for Owned only.
+        if (kind == MongoUnwindSourceKind.Reference)
+            return !innerEntityType.GetNavigations().Any(n => n.IsEagerLoaded);
+
+        return !innerEntityType.GetNavigations().Any()
+               && innerEntityType.GetProperties().All(p =>
+                   p.GetElementName() is not (MongoReplaceRootStage.OwnerKeyField or MongoReplaceRootStage.OrdinalField))
+               && innerEntityType.GetComplexProperties().All(c =>
+                   GetComplexPropertyElementName(c) is not (MongoReplaceRootStage.OwnerKeyField or MongoReplaceRootStage.OrdinalField))
+               && innerEntityType.GetProperties().Where(p => p.IsOwnedTypeKey())
+                   .All(NativeGroupByBinder.HasDefaultKeySerialization);
+    }
+
+    /// <summary>
+    /// The document element name a <see cref="IReadOnlyComplexProperty"/> occupies at its own declaring type's
+    /// top level — the same <c>Mongo:ElementName</c> annotation
+    /// <see cref="MongoPropertyExtensions.GetElementName(IReadOnlyProperty)"/> reads for a plain
+    /// <see cref="IReadOnlyProperty"/>, with the identical CLR-member-name fallback. There is no
+    /// <c>IReadOnlyComplexProperty</c> overload of <c>GetElementName</c> in this provider (no builder surfaces
+    /// a way to rename a complex property's own document slot), so this reads the shared annotation directly
+    /// rather than duplicating a second, divergent default-name algorithm.
+    /// </summary>
+    private static string GetComplexPropertyElementName(IReadOnlyComplexProperty complexProperty)
+        => (string?)complexProperty[MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames.ElementName]
+           ?? complexProperty.Name;
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="selector"/> is the synthetic
+    /// <c>Select(x =&gt; IncludeExpression)</c> EF's nav-expansion generates for a single-level, root-level
+    /// collection <c>Include</c> (e.g. <c>Customers.Include(c =&gt; c.Orders)</c>) — the body is an
+    /// <see cref="IncludeExpression"/> directly over the lambda's own parameter (no further projection),
+    /// for a non-embedded collection navigation. This shape carries no native-unrepresentable projection of
+    /// its own: the actual <c>$lookup</c> registration happens later, during projection binding
+    /// (<see cref="MongoProjectionBindingExpressionVisitor"/>), so this Select must not be marked
+    /// non-natively-representable. Anything more complex — nested/ThenInclude chains, a reference
+    /// navigation, or an Include composed with an actual projection — falls through to the existing
+    /// catch-all and stays on the driver-LINQ path.
+    /// </summary>
+    private static bool IsSingleLevelCollectionIncludeSelector(LambdaExpression selector)
+        => selector.Body is IncludeExpression { Navigation: INavigation navigation } includeExpression
+           && includeExpression.EntityExpression == selector.Parameters[0]
+           && navigation.IsCollection
+           && !navigation.IsEmbedded();
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="selector"/> is the synthetic
+    /// <c>Select(ti =&gt; Include(ti.Outer, Nav, ti.Inner))</c> EF's nav-expansion generates for a
+    /// single-level, root-level REFERENCE <c>Include</c> (e.g. <c>Orders.Include(o =&gt; o.Customer)</c>).
+    /// <para>
+    /// The single-hop requirement — the <c>IncludeExpression</c>'s <see cref="IncludeExpression.EntityExpression"/>
+    /// must be a member access whose own <c>Expression</c> IS the lambda parameter — is LOAD-BEARING, not
+    /// defence-in-depth. A user-authored join with a downstream Include, e.g.
+    /// <c>Orders.Join(Customers, o =&gt; o.CustomerId, c =&gt; c.Id, (o, c) =&gt; o).Include(o =&gt; o.Customer)</c>,
+    /// DOES produce a trailing <c>IncludeExpression</c>; it differs from the nav-expansion shape only by a
+    /// DOUBLE hop (<c>ti.Outer.Outer</c>) and by having two inner collections. Matching merely
+    /// <c>Member.Name == "Outer"</c> would admit it, because the outermost hop of <c>ti.Outer.Outer</c> is also
+    /// named <c>Outer</c> — and admitting it would change a user query's row semantics.
+    /// </para>
+    /// </summary>
+    internal static bool IsSingleLevelReferenceIncludeSelector(LambdaExpression selector)
+        => selector.Parameters.Count == 1
+           && selector.Body is IncludeExpression { Navigation: INavigation navigation } include
+           && !navigation.IsCollection
+           && !navigation.IsEmbedded()
+           && include.EntityExpression is MemberExpression { Member.Name: "Outer" } outerAccess
+           && outerAccess.Expression == selector.Parameters[0]
+           && selector.Parameters[0].Type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Registers the forced-unwind reference <c>$lookup</c> for a recognized single-level reference
+    /// <c>Include</c> and confirms the candidate join, or returns <see langword="false"/> to decline.
+    /// <para>
+    /// Registering the lookup makes <see cref="MongoQueryExpression.UsesDriverJoinFields"/> compute
+    /// <see langword="false"/>, so the native lowerer, the DOM shaper and the driver-LINQ
+    /// <c>StripJoinForLookup</c> fallback all agree on the <c>_lookup_&lt;Nav&gt;</c> field — which is why
+    /// the shaper is correct whichever way the gate later decides.
+    /// </para>
+    /// <para>
+    /// That safety property is about the SHAPER only, and the distinction is load-bearing for anyone widening
+    /// admissibility here: registering the lookup ALSO changes the FALLBACK's emitted pipeline (the driver
+    /// <c>LeftJoin</c> form becomes the flat <c>StripJoinForLookup</c> shape), and it happens at TRANSLATION
+    /// time, before <c>MongoQueryMode</c> is read. So a wrong admission is wrong in EVERY mode — explicit
+    /// <c>DriverLinq</c> is neither an escape hatch nor an independent oracle for a confirmed reference
+    /// Include. Every conjunct below must therefore hold on its own merits, not "because the fallback would
+    /// catch it".
+    /// </para>
+    /// <para>
+    /// <see cref="IsSingleLevelReferenceIncludeSelector"/> only inspects <see cref="IncludeExpression.EntityExpression"/>
+    /// (the single-hop-back guard) — it says nothing about <see cref="IncludeExpression.NavigationExpression"/>, so a
+    /// <c>ThenInclude</c> riding forward off the SAME <c>IncludeExpression</c> (e.g.
+    /// <c>Orders.Include(o =&gt; o.Customer).ThenInclude(c =&gt; c.Orders)</c> — EF nests the <c>ThenInclude</c>
+    /// inside <c>NavigationExpression</c>, not as a further <c>EntityExpression</c> wrapper) still reaches the
+    /// recognizer. Confirming it anyway registers only the OUTER reference's lookup while the collection
+    /// <c>ThenInclude</c>'s own machinery (<c>MongoProjectionBindingExpressionVisitor</c>'s flat-multi-lookup
+    /// branch) tries to nest under it — reachable, but not a shape this single-level slice is built for, and
+    /// found to break end to end (a shaper-time missing-<c>_id</c> exception) rather than gracefully declining.
+    /// So this is a decline, not merely an unhandled shape — but it is narrowed to a <b>non-embedded</b>
+    /// <c>ThenInclude</c> only: EF also auto-includes the target's OWN owned/embedded navigations the same
+    /// way (e.g. <c>Buyer</c> owning an <c>Address</c> via <c>OwnsOne</c>), producing the identical
+    /// <c>NavigationExpression is IncludeExpression</c> shape for data that lives INSIDE the very document
+    /// the <c>$lookup</c> already reads — a blanket decline here would narrow the whole feature to targets
+    /// with no owned data at all. Only a further hop whose OWN navigation is non-embedded — a real
+    /// <c>ThenInclude</c>, reference or collection, reaching past the looked-up document — still declines and
+    /// falls back exactly like the transitive-hop (<c>EntityExpression</c>-side) case just below.
+    /// </para>
+    /// </summary>
+    private static bool TryConfirmReferenceInclude(
+        MongoQueryExpression mongoQueryExpression,
+        LambdaExpression selector)
+    {
+        var include = (IncludeExpression)selector.Body;
+        var navigation = (INavigation)include.Navigation;
+
+        // Declines, each with a tripwire test.
+        if (mongoQueryExpression.Select.HasTerminalOperator                       // composed after a terminal
+            || mongoQueryExpression.InnerCollections.Count != 1                   // sibling Include / user double-join
+            || mongoQueryExpression.GetPendingLookups().Any(l => l.ForceUnwind)   // second reference Include, incl. same-target
+            || navigation.ForeignKey.Properties.Count != 1                        // composite FK
+            || navigation.ForeignKey.PrincipalKey.Properties.Count != 1           // composite PK
+            || HasNonEmbeddedThenInclude(include.NavigationExpression)           // a real ThenInclude riding along
+            // A metadata navigation.TargetEntityType.GetQueryFilter() != null test would consult only the
+            // target's OWN anonymous filter and miss two reachable routes — a filter declared on the ROOT of
+            // a TPH hierarchy (GetQueryFilter() returns null on a DERIVED target) and an EF10 NAMED filter
+            // (which lives in GetDeclaredQueryFilters()) — each of which would admit a shape the flat
+            // $lookup cannot filter, returning silently wrong rows in EVERY mode, DriverLinq included. EF
+            // applies the filter as a Where on the JOIN'S INNER SEQUENCE regardless of spelling, so "the
+            // inner select was not a bare collection scan" (SawNonBareJoinInner) catches all of them
+            // structurally, plus any other sub-pipeline-requiring inner (a filtered Include) for free. This
+            // does NOT close TPH discriminator narrowing — a TPH derived-type Include target is currently
+            // admitted natively because EF does not record a discriminator predicate on the join's inner
+            // select for this shape. Not a data bug: the one shape where the missing discriminator could
+            // matter (a required nav typed to the derived type whose FK points at a base-type document)
+            // throws InvalidOperationException identically in every mode.
+            || mongoQueryExpression.Select.SawNonBareJoinInner
+            // TranslateJoinCore resolves the navigation it keys the shaper's projection on independently (by
+            // FK-property name, with a FirstOrDefault(n => n.TargetEntityType == inner) fallback), while
+            // this site emits as: "_lookup_<navFromInclude>". If the two ever disagreed the shaper would
+            // read a field nothing wrote. Not demonstrated reachable — a divergence needs the Include's
+            // navigation to be declared off-root or to target something other than the join's single inner
+            // collection — but cheap, and a decline is always correct (it falls back and returns the right
+            // rows).
+            || navigation.DeclaringEntityType != mongoQueryExpression.CollectionExpression.EntityType
+            || !mongoQueryExpression.InnerCollections.ContainsKey(navigation.TargetEntityType))
+        {
+            return false;
+        }
+
+        var lookup = new LookupExpression(navigation, forceUnwind: true)
+        {
+            // Inner $unwind for a required navigation, left-outer for an optional one.
+            //
+            // Elsewhere the LINQ OPERATOR is the discriminator (isLeftOuter: Join => inner, LeftJoin/GroupJoin
+            // => left-outer) because ForeignKey.IsRequired alone is insufficient in general — a user-authored
+            // LeftJoin over a required FK must still preserve principals, and IsRequired cannot see that. No
+            // operator is in hand at THIS site (the confirm runs on the trailing Select, not the join), so
+            // IsRequired is read directly, and that is sound HERE SPECIFICALLY: the recognizer admits only
+            // EF's own nav-expansion shape for a single-level reference Include, and nav-expansion emits
+            // Queryable.Join for a required navigation and LeftJoin for an optional one — so for this one
+            // admitted shape the operator and IsRequired coincide by construction. It is not a general
+            // substitute for the operator; TranslateJoinCore keeps using isLeftOuter for every other join.
+            PreserveNullAndEmptyArrays = !navigation.ForeignKey.IsRequired
+        };
+
+        // Brief-mandated defence-in-depth, kept even though it is not known reachable at this call site:
+        // LookupExpression's own constructor never prefixes LocalField. Five OTHER sites do prefix it
+        // (TranslateJoinCore's retroactive multi-join flattening just below; three sites in
+        // MongoProjectionBindingExpressionVisitor.cs; NativeSelectManyBinder.cs's nested-reference-
+        // SelectMany scoping) but every one of them runs AFTER a lookup is already registered on
+        // MongoQueryExpression, mutating the SAME LookupExpression instance in place — none of them can
+        // affect the freshly-constructed `lookup` local this check reads, above `AddLookup`, so this check
+        // is structurally a no-op at THIS call site today. The single-hop conjunct in
+        // IsSingleLevelReferenceIncludeSelector plus the ThenInclude guard just above are what actually rule
+        // out a transitive/ThenInclude hop reaching this point. If a future change to either of those ever
+        // lets a transitive shape through, this is the last line of defence against emitting a $lookup keyed
+        // on a field that does not exist on the root document — matching what
+        // LookupExpression.IsStreamableReference independently rejects for the same shape.
+        if (lookup.LocalField.StartsWith(LookupExpression.LookupAliasPrefix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        mongoQueryExpression.AddLookup(lookup);
+        mongoQueryExpression.Select.MarkReferenceIncludeConfirmed();
+        return true;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="navigationExpression"/> is (or contains, through a chain of further embedded
+    /// hops) an <see cref="IncludeExpression"/> whose OWN navigation is non-embedded — a real
+    /// <c>ThenInclude</c> reaching past the looked-up document, as opposed to an auto-included OWNED
+    /// navigation on the reference-Include's target (which lives inside the same document the <c>$lookup</c>
+    /// already reads, so admitting it is correct).
+    /// <para>
+    /// Recurses into both <see cref="IncludeExpression.EntityExpression"/> and
+    /// <see cref="IncludeExpression.NavigationExpression"/> (where a further, deeper hop nests). A shape like
+    /// <c>Include(o =&gt; o.Buyer).ThenInclude(b =&gt; b.Address).ThenInclude(a =&gt; a.Region)</c> (<c>Address</c>
+    /// owned, <c>Region</c> a real cross-collection navigation) is actually filtered out earlier — adding a
+    /// real cross-collection nav requires EF's nav-expansion to inject an additional join, which restructures
+    /// the OUTER (<c>Buyer</c>) <c>IncludeExpression</c>'s own <c>EntityExpression</c> into a double hop
+    /// (<c>ti.Outer.Outer</c>), which <see cref="IsSingleLevelReferenceIncludeSelector"/>'s single-hop
+    /// conjunct already rejects before this method is ever reached.
+    /// </para>
+    /// <para>
+    /// The recursion here is kept as defence-in-depth: if a future change to the single-hop conjunct, or to
+    /// how EF nav-expands a nested real navigation, ever lets such a shape through to
+    /// <see cref="TryConfirmReferenceInclude"/>, this recursive walk is what stops it being silently admitted
+    /// rather than declined.
+    /// </para>
+    /// </summary>
+    private static bool HasNonEmbeddedThenInclude(Expression navigationExpression)
+    {
+        if (navigationExpression is not IncludeExpression nested)
+        {
+            return false;
+        }
+
+        if (nested.Navigation is not INavigation nestedNavigation || !nestedNavigation.IsEmbedded())
+        {
+            return true;
+        }
+
+        return HasNonEmbeddedThenInclude(nested.EntityExpression) || HasNonEmbeddedThenInclude(nested.NavigationExpression);
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="selector"/> is the synthetic
+    /// <c>Select(x =&gt; IncludeExpression(...))</c> EF's nav-expansion generates for one or more OWNED
+    /// (embedded) navigations — a single reference OR a collection — auto-included eagerly by EF Core
+    /// convention — e.g. <c>Blog { Address }</c> with <c>OwnsOne(b =&gt; b.Address)</c>, a nested chain
+    /// <c>IncludeExpression(IncludeExpression(x, Address), Address.Geo)</c> for a further owned single-ref
+    /// under the first, or <c>Blog { Tags }</c> with <c>OwnsMany(b =&gt; b.Tags)</c>.
+    /// <para>
+    /// Because owned data is embedded in the very same document as its owner, this auto-include carries NO
+    /// projection of its own to push down to a native <c>$project</c> — the whole document (owner fields
+    /// plus embedded sub-document or sub-array) is read back as-is by the ordinary whole-entity DOM/streaming
+    /// shaper, which already recurses into owned single-refs and owned collections. So this <c>Select</c>
+    /// must not be marked non-natively-representable (mirrors <see cref="IsSingleLevelCollectionIncludeSelector"/>
+    /// for the NON-owned collection-Include case, and <see cref="IsTransparentIdentifierSelector"/>/
+    /// <see cref="IsTransparentIdentifierMemberAccessSelector"/> more generally: all four predicates identify
+    /// a synthetic Select that carries no projection of its own).
+    /// </para>
+    /// <para>
+    /// Deliberately narrow: the ONLY navigations excluded are non-embedded ones — a non-owned/reference
+    /// navigation (<c>!navigation.IsEmbedded()</c> — single-level reference <c>Include</c> has no native
+    /// representation yet) — which keeps falling back to driver-LINQ exactly as before this predicate
+    /// existed. An owned collection is admitted here on equal footing with an owned single reference; a
+    /// collection whose ELEMENT itself carries further navigations is separately excluded from the
+    /// *streaming* shaper (not this gate) by <see cref="StreamingEligibility"/>, routing it to the native
+    /// DOM shaper instead.
+    /// </para>
+    /// </summary>
+    private static bool IsOwnedEmbeddedIncludeSelector(LambdaExpression selector)
+    {
+        if (selector.Parameters.Count != 1)
+        {
+            return false;
+        }
+
+        var body = selector.Body;
+        var sawInclude = false;
+
+        while (body is IncludeExpression { Navigation: INavigation navigation } include)
+        {
+            // Admit any EMBEDDED (owned) navigation — a single reference OR a collection. An owned
+            // collection embeds as a BSON array in the same document, so the whole-entity DOM/streaming
+            // shaper reads it back with no extra pipeline stage, exactly like an owned single reference.
+            if (!navigation.IsEmbedded())
+            {
+                return false;
+            }
+
+            sawInclude = true;
+            body = include.EntityExpression;
+        }
+
+        return sawInclude && body == selector.Parameters[0];
     }
 
     protected override ShapedQueryExpression CreateShapedQueryExpression(IEntityType entityType)
@@ -633,6 +1300,30 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             var resultEntityType = entityType.Model.FindEntityType(resultType);
             if (resultEntityType != null)
             {
+                // OfType<TDerived>() narrows a TPH hierarchy by a discriminator predicate. The native DOM
+                // shaper already materializes TPH derived types polymorphically (via EF's own discriminator-
+                // based MaterializationCondition), so all that is missing to keep this query natively
+                // representable is the discriminator $eq/$in conjunct itself.
+                var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
+                if (mongoQueryExpression.Select.HasTerminalOperator)
+                {
+                    // Post-terminal guard: OfType after a native terminal (Union/Concat, or GroupBy/
+                    // Distinct) is an own-Translate-override operator whose discriminator conjunct would be added to the
+                    // OUTER select's Predicate — emitted as a pre-$unionWith/$group $match that filters only the outer
+                    // rows, leaving the operand/grouped rows unfiltered (silent wrong data). Fall back to driver-LINQ.
+                    mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+                    return source.UpdateShaperExpression(entityShaperExpression.WithType(resultEntityType));
+                }
+
+                if (TryBuildDiscriminatorPredicate(resultEntityType, out var predicate))
+                {
+                    mongoQueryExpression.Select.AddPredicateConjunct(predicate);
+                }
+                else
+                {
+                    mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+                }
+
                 return source.UpdateShaperExpression(entityShaperExpression.WithType(resultEntityType));
             }
         }
@@ -640,17 +1331,80 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         return null;
     }
 
+    /// <summary>
+    /// Attempts to build a discriminator predicate (<c>$eq</c> for a single value, <c>$in</c> for the
+    /// subtree of a non-leaf type) that narrows a TPH hierarchy to <paramref name="targetType"/> and its
+    /// derived types, for use as the native <c>OfType&lt;TDerived&gt;()</c> conjunct.
+    /// </summary>
+    /// <param name="targetType">The entity type <c>OfType</c> narrows to.</param>
+    /// <param name="predicate">The built predicate, or a placeholder value when this method returns <see langword="false"/>.</param>
+    /// <returns>
+    /// <see langword="true"/> when a predicate was built; <see langword="false"/> when <paramref name="targetType"/>
+    /// has no discriminator property (non-TPH) or there are no discriminator values, in which case the caller
+    /// should fall back to driver-LINQ.
+    /// </returns>
+    private static bool TryBuildDiscriminatorPredicate(IEntityType targetType, out MongoExpression predicate)
+    {
+        predicate = null!;
+        var discriminatorProperty = targetType.FindDiscriminatorProperty();
+        if (discriminatorProperty is null)
+        {
+            // Non-TPH / no discriminator → fall back. A non-TPH OfType has no native form at all.
+            return false;
+        }
+
+        // This predicate serializes the discriminator value THROUGH the property serializer (via
+        // MongoConstantExpression.ForSerialization → BsonSerializerFactory), which applies any value converter /
+        // non-default BsonRepresentation configured on the discriminator property — the same transform
+        // MongoEFDiscriminator now applies to the driver-LINQ filter (EF-349), and the same transform the write
+        // path applies when the discriminator is persisted. So, unlike a grouping/distinct key (see
+        // NativeGroupByBinder.HasDefaultKeySerialization), a represented discriminator does not need to be
+        // rejected here: there is no generic flattened-_id readback involved — EF's own discriminator-based
+        // MaterializationCondition reads the stored field back through the property's normal serializer — so
+        // native and driver-LINQ agree for represented discriminators too.
+        var elementName = discriminatorProperty.GetElementName();
+        var values = targetType.GetDerivedTypes().Prepend(targetType)
+            .Select(t => t.GetDiscriminatorValue())
+            .ToArray();
+        if (values.Length == 0)
+            return false;
+
+        var field = new MongoFieldExpression(discriminatorProperty, elementName);
+        predicate = values.Length == 1
+            ? new MongoBinaryExpression(MongoBinaryOperator.Equal, field,
+                new MongoConstantExpression(values[0], forSerialization: discriminatorProperty))
+            : new MongoInExpression(field,
+                new MongoConstantExpression(values, forSerialization: discriminatorProperty), negated: false);
+        return true;
+    }
+
+    /// <summary>
+    /// <c>Distinct()</c> over a terminal anonymous/DTO projection (<c>Select(new {...}).Distinct()</c>)
+    /// translates to a degenerate <c>$group</c> — group by the projected value(s), zero accumulators — via
+    /// <see cref="NativeGroupByBinder.TryBindDistinctFromProjection"/>. The shaper is unchanged: it was
+    /// already built by the preceding <c>Select</c> to read the top-level result aliases, and those same
+    /// aliases survive as the flattening <c>$project</c> that follows the <c>$group</c>. A bare-scalar
+    /// projection (no native <c>Projection</c> populated) or a whole-entity source falls back to driver-LINQ.
+    /// </summary>
+    protected override ShapedQueryExpression? TranslateDistinct(ShapedQueryExpression source)
+    {
+        var mongoQ = (MongoQueryExpression)source.QueryExpression;
+        if (!NativeGroupByBinder.TryBindDistinctFromProjection(mongoQ))
+            mongoQ.Select.MarkNotNativelyRepresentable();
+        return source; // shaper unchanged: the Select's projection shaper reads the flatten aliases
+    }
+
     #region Methods that just require shaper reshaping
 
-    protected override ShapedQueryExpression TranslateAll(ShapedQueryExpression source, LambdaExpression predicate) =>
-        ReshapeShaperExpression(source, typeof(bool));
+    protected override ShapedQueryExpression TranslateAll(ShapedQueryExpression source, LambdaExpression predicate)
+        => BindAggregateOrFallback(source, MongoAggregateOperator.All, null, predicate, typeof(bool));
 
     protected override ShapedQueryExpression TranslateAny(ShapedQueryExpression source, LambdaExpression? predicate)
-        => ReshapeShaperExpression(source, typeof(bool));
+        => BindAggregateOrFallback(source, MongoAggregateOperator.Any, null, predicate, typeof(bool));
 
     protected override ShapedQueryExpression TranslateAverage(ShapedQueryExpression source, LambdaExpression? selector,
         Type resultType)
-        => ReshapeShaperExpression(source, resultType);
+        => BindAggregateOrFallback(source, MongoAggregateOperator.Average, selector, null, resultType);
 
     protected override ShapedQueryExpression TranslateCast(ShapedQueryExpression source, Type castType)
         => ReshapeShaperExpression(source, castType);
@@ -659,19 +1413,36 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         => ReshapeShaperExpression(source, typeof(bool)); // We don't support but a later step has a better error message
 
     protected override ShapedQueryExpression TranslateCount(ShapedQueryExpression source, LambdaExpression? predicate)
-        => ReshapeShaperExpression(source, typeof(int));
+        => BindAggregateOrFallback(source, MongoAggregateOperator.Count, null, predicate, typeof(int));
 
     protected override ShapedQueryExpression TranslateLongCount(ShapedQueryExpression source, LambdaExpression? predicate)
-        => ReshapeShaperExpression(source, typeof(long));
+        => BindAggregateOrFallback(source, MongoAggregateOperator.LongCount, null, predicate, typeof(long));
 
     protected override ShapedQueryExpression TranslateMax(ShapedQueryExpression source, LambdaExpression? selector,
-        Type resultType) => ReshapeShaperExpression(source, resultType);
+        Type resultType)
+        => BindAggregateOrFallback(source, MongoAggregateOperator.Max, selector, null, resultType);
 
     protected override ShapedQueryExpression TranslateMin(ShapedQueryExpression source, LambdaExpression? selector,
-        Type resultType) => ReshapeShaperExpression(source, resultType);
+        Type resultType)
+        => BindAggregateOrFallback(source, MongoAggregateOperator.Min, selector, null, resultType);
 
     protected override ShapedQueryExpression TranslateSum(ShapedQueryExpression source, LambdaExpression? selector,
-        Type resultType) => ReshapeShaperExpression(source, resultType);
+        Type resultType)
+        => BindAggregateOrFallback(source, MongoAggregateOperator.Sum, selector, null, resultType);
+
+    /// <summary>
+    /// Attempts to bind a scalar aggregate terminal operator to <see cref="MongoSelectDefinition.Cardinality"/>
+    /// via <see cref="NativeCardinalityBinder.TryBindAggregate"/>, marking the query non-native on failure, and
+    /// reshapes the result to <paramref name="resultType"/> either way.
+    /// </summary>
+    private static ShapedQueryExpression BindAggregateOrFallback(ShapedQueryExpression source, MongoAggregateOperator op,
+        LambdaExpression? selector, LambdaExpression? predicate, Type resultType)
+    {
+        var mongoQ = (MongoQueryExpression)source.QueryExpression;
+        if (!NativeCardinalityBinder.TryBindAggregate(mongoQ, op, selector, predicate, resultType))
+            mongoQ.Select.MarkNotNativelyRepresentable();
+        return ReshapeShaperExpression(source, resultType);
+    }
 
     private static ShapedQueryExpression ReshapeShaperExpression(ShapedQueryExpression source, Type returnType)
         => source.UpdateShaperExpression(
@@ -681,18 +1452,19 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     #endregion
 
+    // The Translate* overrides below remain dead code (never called via base) but are kept as
+    // clean implementations for potential future use. Native-slot population lives in NativeSlotPopulator;
+    // native projection binding lives in NativeProjectionBinder.
+
     #region Never called by visit as translation is handled by C# Driver LINQ (with some minor tweaks)
 
     protected override QueryableMethodTranslatingExpressionVisitor CreateSubqueryVisitor()
         => throw new NotSupportedException("Subqueries are not supported by MongoDB.");
 
     protected override ShapedQueryExpression? TranslateConcat(ShapedQueryExpression source1, ShapedQueryExpression source2)
-        => null;
+        => TryTranslateSetOperation(source1, source2, MongoSetOperationKind.Concat);
 
     protected override ShapedQueryExpression? TranslateDefaultIfEmpty(ShapedQueryExpression source, Expression? defaultValue)
-        => null;
-
-    protected override ShapedQueryExpression? TranslateDistinct(ShapedQueryExpression source)
         => null;
 
     protected override ShapedQueryExpression? TranslateElementAtOrDefault(ShapedQueryExpression source,
@@ -700,7 +1472,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         => null;
 
     protected override ShapedQueryExpression? TranslateExcept(ShapedQueryExpression source1, ShapedQueryExpression source2)
-        => null;
+        => TryTranslateSetOperation(source1, source2, MongoSetOperationKind.Except);
 
     protected override ShapedQueryExpression? TranslateFirstOrDefault(ShapedQueryExpression source, LambdaExpression? predicate,
         Type returnType, bool returnDefault)
@@ -708,14 +1480,63 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     protected override ShapedQueryExpression? TranslateGroupBy(ShapedQueryExpression source, LambdaExpression keySelector,
         LambdaExpression? elementSelector, LambdaExpression? resultSelector)
-        => null;
+    {
+        // The base QueryableMethodTranslatingExpressionVisitor.TranslateGroupBy is abstract, so there is no base
+        // implementation to delegate to — the grouped shaped query is constructed here directly. The native $group
+        // path supports only GroupBy(key).Select(aggregate): no element selector shaping and no fused result
+        // selector (EF normalizes GroupBy-with-result-selector into GroupBy followed by Select, so a non-null
+        // resultSelector here is a shape we do not natively bind). When the key binds via TryBindGroupKey, the query
+        // routes native (Route becomes GroupBy once the Select finalizes the grouping); otherwise it is marked
+        // non-native so it falls back to driver-LINQ rather than hard-throwing.
+        var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
+
+        // Guard: a GroupBy applied on top of a query that ALREADY terminates in a native grouping/distinct —
+        // a projected Distinct (IsDistinct, which set a key-only Grouping), a prior GroupBy (IsGroupBy), or any
+        // finalized Grouping — must NOT rebind. TryBindGroupKey would OVERWRITE the existing Grouping with this
+        // GroupBy's own key, silently DROPPING the Distinct/prior-grouping (e.g.
+        // Select(new{a,b}).Distinct().GroupBy(x=>x.k) would emit $group{_id:$k, $sum:1} counting ALL rows, not
+        // distinct rows). GroupBy has its own Translate override, so it bypasses the IsGroupBy||IsDistinct
+        // post-group guards in NativeSlotPopulator/NativeCardinalityBinder — hence this dedicated guard. Mark
+        // the query non-native (so it falls back to driver-LINQ under Native, throws under NativeOnly, matching
+        // the correct driver-LINQ result) and return a valid grouped shaped query WITHOUT rebinding.
+        // The guard must read state as it stood BEFORE this GroupBy call — captured here, before the
+        // unconditional IsGroupBy assignment below (both the guard branch and the normal-binding branch set
+        // IsGroupBy, so it is hoisted above the if/else; reading Select.HasTerminalOperator AFTER that
+        // assignment would always be true and defeat the guard).
+        var hadTerminalGrouping = mongoQueryExpression.Select.HasTerminalOperator;
+
+        // Record GroupBy provenance unconditionally (both the guard branch below and the normal-binding branch
+        // need it — see TranslateJoinCore) so a later Join/GroupJoin/LeftJoin over this grouped source can be
+        // recognized as the wrong-data-on-fallback shape.
+        mongoQueryExpression.Select.IsGroupBy = true;
+
+        if (hadTerminalGrouping)
+        {
+            mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+        }
+        else
+        {
+            if (elementSelector != null || resultSelector != null
+                || !NativeGroupByBinder.TryBindGroupKey(mongoQueryExpression, keySelector))
+            {
+                mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+            }
+        }
+
+        // Carry a GroupByShaperExpression so a subsequent Select over the IGrouping is recognized (grouped branch
+        // in TranslateSelect). The definitive grouped-row shaper is compiled in the gate; the key shaper
+        // here is a lightweight placeholder (the ungrouped source represents each group's elements).
+        var keyShaper = ReplacingExpressionVisitor.Replace(keySelector.Parameters[0], source.ShaperExpression, keySelector.Body);
+        var groupByShaper = new GroupByShaperExpression(keyShaper, source);
+        return source.UpdateShaperExpression(groupByShaper);
+    }
 
     protected override ShapedQueryExpression? TranslateGroupJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
         => TranslateJoinCore(outer, inner, outerKeySelector, innerKeySelector, resultSelector, isLeftOuter: true);
 
     protected override ShapedQueryExpression? TranslateIntersect(ShapedQueryExpression source1, ShapedQueryExpression source2)
-        => null;
+        => TryTranslateSetOperation(source1, source2, MongoSetOperationKind.Intersect);
 
     protected override ShapedQueryExpression? TranslateLeftJoin(ShapedQueryExpression outer, ShapedQueryExpression inner,
         LambdaExpression outerKeySelector, LambdaExpression innerKeySelector, LambdaExpression resultSelector)
@@ -741,6 +1562,43 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var outerQueryExpression = (MongoQueryExpression)outer.QueryExpression;
         var innerQueryExpression = (MongoQueryExpression)inner.QueryExpression;
 
+        // A Join/GroupJoin/LeftJoin whose outer (or inner) is a grouped source is a shape the native path
+        // cannot represent AND whose driver-LINQ fallback silently returns wrong data (the joined entity is
+        // empty for every grouped row). Mark it fallback-unsafe so the gate fails cleanly instead of routing
+        // to the wrong-data fallback. Non-grouped joins fall back to driver-LINQ as before (correct results).
+        if (outerQueryExpression.Select.IsGroupBy || innerQueryExpression.Select.IsGroupBy)
+        {
+            outerQueryExpression.Select.MarkGroupByFallbackUnsafe();
+        }
+        // A join over a projected-Distinct source is ALSO not natively representable — the lowerer's group
+        // branch returns early after the $group + flatten $project, so allowing it native would silently DROP
+        // the join. But unlike the GroupBy case its driver-LINQ fallback is CORRECT (Distinct produces a flat
+        // set of rows the driver joins normally, no empty-join wrong-data hazard), so it must fall back
+        // GRACEFULLY rather than hard-decline: mark it merely non-native (throws only under NativeOnly, runs
+        // under Native/DriverLinq). Guarded on IsDistinct-and-not-IsGroupBy so a source that is somehow both
+        // keeps the stricter GroupBy hard-decline above. See MongoSelectDefinition.IsDistinct.
+        else if (outerQueryExpression.Select.IsDistinct || innerQueryExpression.Select.IsDistinct)
+        {
+            outerQueryExpression.Select.MarkNotNativelyRepresentable();
+        }
+
+        // A wrong-data verdict reached on the INNER select must reach the gate, which only ever reads the
+        // OUTERMOST MongoQueryExpression. When the offending shape lives in a SUBQUERY used as this join's
+        // inner, MarkGroupByFallbackUnsafe wrote to that intermediate select and the verdict would otherwise
+        // be lost (EF-344).
+        outerQueryExpression.Select.PropagateFallbackWrongDataFrom(innerQueryExpression.Select);
+
+        // EF-368 finding 1. The reference-Include path emits a flat $lookup with NO sub-pipeline, so it can
+        // only stand in for a join whose INNER side is the whole target collection and nothing else. Record
+        // the inner's shape here — the only point at which the inner's translated MongoSelectDefinition is in
+        // hand — and let TryConfirmReferenceInclude decline on it. See
+        // MongoSelectDefinition.IsBareCollectionScan / MarkSawNonBareJoinInner for why this replaced the
+        // metadata GetQueryFilter() test that used to live at the confirm site.
+        if (!innerQueryExpression.Select.IsBareCollectionScan)
+        {
+            outerQueryExpression.Select.MarkSawNonBareJoinInner();
+        }
+
         var innerEntityType = innerQueryExpression.CollectionExpression.EntityType;
         outerQueryExpression.AddInnerCollection(innerEntityType);
 
@@ -749,18 +1607,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // later hop can find this one by position - see AnalyzeKeySelectorTarget (EF-372).
         var joinInfo = outerQueryExpression.AddJoin(innerEntityType, isLeftOuter);
 
-        // EF-373: decide "is this the second-or-later join" from the join list itself, not from
-        // InnerCollections.Count - InnerCollections is keyed by IEntityType and dedups two navigations
-        // that join to the SAME target collection (e.g. a self-join or two sibling joins - EF-375), which
-        // would otherwise let this guard - and the interleaving flag it depends on - go unchecked for that
-        // shape.
-        if (outerQueryExpression.Joins.Count > 1 && outerQueryExpression.HasInterleavingOperatorSinceLastJoin)
-        {
-            throw new NotSupportedException(
-                "A 'Skip', 'Take', or 'Distinct' operator composed between two cross-collection "
-                + "joins (e.g. from 'Include'/'ThenInclude' or an explicit 'Join') is not supported. "
-                + "Move the operator so that it is not interleaved between the joins.");
-        }
+        // EF-373: an operator composed BETWEEN two cross-collection joins is NOT declined here. The
+        // driver-LINQ bridge's StripInterleavedJoinChain splits the join-replacing $lookup stages along the
+        // join order and emits each at its own reattachment boundary, so the interleaved operator lands
+        // between the two $lookup stages rather than above both - see
+        // MongoEFToLinqTranslatingExpressionVisitor.LeftJoin.cs and Query/AGENTS.md. Every join query routes
+        // through that bridge (joins are not natively representable), so declining here would preempt it.
+        // Shapes that bridge cannot split decline there instead, fail-closed.
 
         // Rebind the inner entity's projection to the outer MongoQueryExpression.
         // The inner shaper has a StructuralTypeShaperExpression bound to the inner MongoQueryExpression.
@@ -778,7 +1631,30 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         return outer.UpdateShaperExpression(newResultSelector);
     }
 
-    private static Expression RebindInnerShaperToOuterQuery(
+    /// <summary>
+    /// Migrates the inner entity's projection onto the outer <see cref="MongoQueryExpression"/> and registers
+    /// the <c>$lookup</c>(s) that stand in for the join.
+    /// </summary>
+    /// <param name="innerShaper">The inner side's shaper, bound to <paramref name="innerQueryExpression"/>.</param>
+    /// <param name="innerQueryExpression">The join's inner query expression.</param>
+    /// <param name="outerQueryExpression">The join's outer query expression, which the projection moves onto.</param>
+    /// <param name="outerKeySelector">The join's outer key selector, used to identify the navigation.</param>
+    /// <param name="innerKeySelector">The join's inner key selector, used to identify the joined-to key.</param>
+    /// <param name="joinInfo">
+    /// The <see cref="JoinInfo"/> recorded for THIS join by <c>TranslateJoinCore</c>. Carries the join's own
+    /// left-outer/inner-ness, its resolved navigation, and its uniquified <c>$lookup</c> alias, so a later hop
+    /// can find this join by position rather than by target entity type — see
+    /// <see cref="AnalyzeKeySelectorTarget"/>.
+    /// </param>
+    /// <returns>
+    /// The rebound shaper, or <see langword="null"/> when this join CANNOT be represented: a TRANSITIVE hop
+    /// whose intermediate sub-document could not be identified, so the <c>$lookup</c>'s <c>localField</c>
+    /// cannot be scoped under it. Nothing has been registered on <paramref name="outerQueryExpression"/> by
+    /// this method in that case. A decline is signalled by the return value rather than an <c>out bool</c>
+    /// beside a non-null-but-unusable shaper, so that a caller CANNOT go on to use an un-rebound shaper by
+    /// simply not reading the flag.
+    /// </returns>
+    private static Expression? RebindInnerShaperToOuterQuery(
         Expression innerShaper,
         MongoQueryExpression innerQueryExpression,
         MongoQueryExpression outerQueryExpression,
@@ -1127,6 +2003,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         Type returnType, bool returnDefault)
         => null;
 
+    // These QMTEV overrides are intentionally inert: native slot population is delegated to
+    // NativeSlotPopulator.PopulateNativeSlots (see VisitMethodCall), because routing Where/OrderBy/ThenBy/
+    // Skip/Take through base.VisitMethodCall rebuilds a fresh MongoQueryExpression per operator (slots don't
+    // accumulate). Do NOT add these operators to the VisitMethodCall switch without first removing
+    // their NativeSlotPopulator.PopulateNativeSlots handling, or slots will be double-populated.
+
     protected override ShapedQueryExpression? TranslateOrderBy(ShapedQueryExpression source, LambdaExpression keySelector,
         bool ascending)
         => null;
@@ -1136,7 +2018,195 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     protected override ShapedQueryExpression? TranslateSelectMany(ShapedQueryExpression source, LambdaExpression collectionSelector,
         LambdaExpression resultSelector)
-        => null;
+    {
+        // Only the INNER-Select owned-collection form (projection nested in the collection selector, e.g.
+        // o => o.Items.Select(i => new {o.X, i.Y})) is handled here. EF's nav-expansion normalizes EVERY
+        // SelectMany shape to this overload with resultSelector always the trivial
+        // TransparentIdentifier(Outer=o, Inner=c) constructor. A subsequent .Select(ti => ti.Inner) always
+        // immediately follows and reaches TranslateSelect, unwrapping the transparent identifier back down
+        // to the SelectMany's real TResult (the nested Select's own projection, c) — this is how EF
+        // materializes a 2-arg SelectMany's result type via nav-expansion's internal 3-arg rewrite. So the
+        // shaper returned here must still be a TransparentIdentifier(Outer, Inner) shape (see
+        // BuildSelectManyWrappedShaper) even though the underlying native pipeline has no "Outer" data of its
+        // own — EF's own ReplacingExpressionVisitor.VisitMember NewExpression-member fold resolves ti.Inner
+        // directly back to our projected shaper with no bespoke unwrap logic needed here.
+        var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
+
+        // A narrow carve-out BEFORE the terminal guard below. Fires only when the sole terminal so far is a
+        // single REFERENCE unwind source (IsSingleReferenceUnwindTerminalOnly) — i.e. this IS the second,
+        // chained SelectMany of a nested reference shape, not some unrelated post-terminal operator (a 2nd
+        // SelectMany after GroupBy/Distinct/a set-op/an owned unwind, or a query already 2+ levels deep,
+        // still falls through unchanged to the guard below). On a structural match
+        // (TryBindNestedReferenceNavUnwind), reuse the SAME wrapped-shaper builder the single-level bare-nav
+        // bind uses — BuildBareNavWrappedShaper already reads Select.UnwindSource, which now resolves to
+        // this SECOND source, so no new shaper code is needed: the result is the doubly-nested
+        // TransparentIdentifier(Outer=<level-1 result>, Inner=<level-2 element>) shape EF's nav-expansion
+        // expects.
+        if (mongoQueryExpression.Select.IsSingleReferenceUnwindTerminalOnly
+            && NativeSelectManyBinder.TryBindNestedReferenceNavUnwind(mongoQueryExpression, collectionSelector))
+        {
+            return BuildBareNavWrappedShaper(source, mongoQueryExpression, resultSelector);
+        }
+
+        // Post-terminal guard (composition-seam audit): a SelectMany composed AFTER a native terminal — a
+        // Union/Concat (IsSetOp), GroupBy (IsGroupBy), projected Distinct (IsDistinct), or a prior SelectMany
+        // (UnwindSource) — must NOT let its own UnwindSource coexist with the earlier terminal on the same
+        // select. The lowerer (MongoSelectLowerer.Lower) selects exactly ONE terminal by fixed precedence
+        // (SetOperation > UnwindSource > Grouping > Projection > Cardinality) and returns early, so a second
+        // terminal is SILENTLY DROPPED: e.g. `Union(a,b).SelectMany(o => o.Items.Select(...))` emits only the
+        // $unionWith and never the SelectMany's $unwind/$project — returning whole outer rows (wrong row count,
+        // or a shaper crash when a projected alias is absent at top level) under BOTH Native and NativeOnly
+        // (Route stays non-Fallback, so NativeOnly does not even throw). Every other own-Translate-override
+        // operator (TranslateSelect/OfType/GroupBy) already gates on HasTerminalOperator; SelectMany's binders
+        // set UnwindSource with no such gate and SelectManyWithCollectionSelector is whitelisted in
+        // NativeSlotPopulator, so the catch-all does not back it up either — hence this dedicated guard.
+        //
+        // Decline by returning null (before any binder mutates the query), reaching EF Core's own
+        // translation-failure path directly — the established SelectMany contract for an unsupported shape:
+        // a clean hard-fail in EVERY MongoQueryMode, never silent wrong data. A GRACEFUL
+        // MarkNotNativelyRepresentable() fallback is NOT viable here: the native SelectMany builds a by-index
+        // ProjectionBindingExpression shaper that the driver-LINQ fallback cannot re-read ("'ProjectionBinding
+        // Expression: 0' could not be translated") — the same shaper-rebuild limitation that makes operators
+        // composed AFTER a SelectMany hard-fail in every mode (see NativeSelectManyTests). (DriverLinq MODE
+        // succeeds on this chain only because it skips native slot population entirely and re-translates the raw
+        // captured chain; that path is unavailable once the native binders have run under Native.)
+        if (mongoQueryExpression.Select.HasTerminalOperator)
+            return null;
+
+        // The explicit-result-selector / query-syntax form arrives as a BARE owned nav
+        // collection selector (o => o.Items.AsQueryable(), no nested Select) + a trivial
+        // TransparentIdentifier(Outer,Inner) resultSelector; the real projection is the SEPARATE trailing
+        // Select (see NativeSelectManyBinder.TryBindTransparentIdentifierProjection, bound from TranslateSelect).
+        // Set UnwindSource here and hand EF the TransparentIdentifier(Outer, Inner) shape it expects — the item
+        // (Inner) shaper is never itself read when the trailing Select binds natively (that path builds the
+        // result shaper straight from Select.Projection by alias, bypassing this wrapper's Inner slot entirely);
+        // it exists only so this method's return type-checks as resultSelector's own TransparentIdentifier<TOuter,
+        // TInner> and so an unsupported trailing projection still folds through EF's ReplacingExpressionVisitor
+        // NewExpression-member mechanism during driver-LINQ-fallback shaper construction.
+        if (NativeSelectManyBinder.TryBindBareNavUnwind(mongoQueryExpression, collectionSelector))
+            return BuildBareNavWrappedShaper(source, mongoQueryExpression, resultSelector);
+
+        // Cross-collection REFERENCE bare-nav — the collectionSelector is a correlated
+        // Queryable.Where(EntityQueryRoot, o => c.pk==o.fk); same wrapped-shaper shape as owned bare-nav (the
+        // item shaper here is likewise never itself read once the trailing Select binds natively).
+        if (NativeSelectManyBinder.TryBindReferenceNavUnwind(mongoQueryExpression, collectionSelector))
+            return BuildBareNavWrappedShaper(source, mongoQueryExpression, resultSelector);
+
+        if (!NativeSelectManyBinder.TryBind(mongoQueryExpression, collectionSelector))
+            return null;
+
+        return BuildSelectManyWrappedShaper(source, mongoQueryExpression, collectionSelector, resultSelector);
+    }
+
+    /// <summary>
+    /// Builds the <see cref="ShapedQueryExpression"/> EF expects immediately after a bare-nav terminal
+    /// SelectMany bind (<see cref="NativeSelectManyBinder.TryBindBareNavUnwind"/> — owned — or
+    /// <see cref="NativeSelectManyBinder.TryBindReferenceNavUnwind"/> — reference), both of which set only
+    /// <see cref="Expressions.MongoSelectDefinition.UnwindSource"/> and leave <see cref="Expressions.MongoSelectDefinition.Projection"/>
+    /// empty. The item (Inner) shaper is never itself read when the trailing Select binds natively — see the
+    /// <see cref="BuildSelectManyWrappedShaper"/> / <see cref="TranslateSelectMany(ShapedQueryExpression, LambdaExpression, LambdaExpression)"/>
+    /// comments. It exists only so this return type-checks as resultSelector's own <c>TransparentIdentifier(Outer, Inner)</c>.
+    /// </summary>
+    private static ShapedQueryExpression BuildBareNavWrappedShaper(
+        ShapedQueryExpression source, MongoQueryExpression mongoQueryExpression, LambdaExpression resultSelector)
+    {
+        var itemShaper = new StructuralTypeShaperExpression(
+            mongoQueryExpression.Select.UnwindSource!.InnerEntityType,
+            new ProjectionBindingExpression(mongoQueryExpression, new ProjectionMember(), typeof(ValueBuffer)),
+            false);
+
+        var wrapped = ReplacingExpressionVisitor.Replace(
+            resultSelector.Parameters[0], source.ShaperExpression,
+            ReplacingExpressionVisitor.Replace(resultSelector.Parameters[1], itemShaper, resultSelector.Body));
+
+        return source.UpdateShaperExpression(wrapped);
+    }
+
+    /// <summary>
+    /// Builds the <see cref="ShapedQueryExpression"/> for a native inner-<c>Select</c> owned-collection
+    /// <c>SelectMany</c> once <see cref="NativeSelectManyBinder.TryBind"/> has populated
+    /// <see cref="MongoSelectDefinition.UnwindSource"/> and <see cref="MongoSelectDefinition.Projection"/>.
+    /// The projected element (the nested <c>Select</c>'s own anonymous/DTO projection, <c>c</c> in
+    /// <c>o.Items.Select(i => new {...})</c>) is built exactly like <see cref="TryBuildGroupResultShaper"/>/
+    /// <see cref="BindGroupMember"/> (GroupBy's analogous projected shaper): each member is rewritten onto a
+    /// <see cref="ProjectionBindingExpression"/> reading the member's top-level result alias — the SAME alias
+    /// <see cref="NativeSelectManyBinder.TryBind"/> already registered on <c>Select.Projection</c> — from the
+    /// flattened <c>$project</c> output document, so the existing DOM projection shaper
+    /// (<see cref="MongoProjectionBindingRemovingExpressionVisitor"/>) reads it back by name with no bespoke
+    /// shaper needed. That projected shaper is then wrapped into <paramref name="resultSelector"/>'s own
+    /// <c>TransparentIdentifier(Outer=o, Inner=c)</c> shape (substituting <paramref name="source"/>'s
+    /// EXISTING (unchanged) outer shaper for <c>o</c> and the projected shaper for <c>c</c>), because a
+    /// subsequent <c>.Select(ti =&gt; ti.Inner)</c> always reaches <see cref="TranslateSelect"/> immediately
+    /// after and expects that shape.
+    /// </summary>
+    private static ShapedQueryExpression BuildSelectManyWrappedShaper(
+        ShapedQueryExpression source, MongoQueryExpression mongoQueryExpression, LambdaExpression collectionSelector,
+        LambdaExpression resultSelector)
+    {
+        // TryBind already validated that collectionSelector.Body is Queryable.Select(<source>, innerLambda)
+        // with a new{...}/MemberInit body — re-extract that same nested lambda body here rather than thread
+        // the parsed member list through TryBind's bool-returning signature.
+        var innerLambda = ((MethodCallExpression)collectionSelector.Body).Arguments[1].UnwrapLambdaFromQuote();
+        var innerShaper = BuildSelectManyResultShaper(mongoQueryExpression, innerLambda.Body);
+
+        // Replace both transparent-identifier parameters via two nested single-argument Replace calls. The
+        // multi-argument ReplacingExpressionVisitor.Replace(IReadOnlyList<Expression>, IReadOnlyList<Expression>,
+        // Expression) overload does not exist in EF8's EF Core, so a collection-expression argument there binds
+        // to the single-Expression overload and fails to compile (CS9174). The params are distinct, so the
+        // nesting order is immaterial.
+        var wrappedShaper = ReplacingExpressionVisitor.Replace(
+            resultSelector.Parameters[0], source.ShaperExpression,
+            ReplacingExpressionVisitor.Replace(
+                resultSelector.Parameters[1], innerShaper, resultSelector.Body));
+
+        return source.UpdateShaperExpression(wrappedShaper);
+    }
+
+    private static Expression BuildSelectManyResultShaper(MongoQueryExpression mongoQueryExpression, Expression projectionBody)
+    {
+        switch (projectionBody)
+        {
+            case NewExpression newExpression
+                when newExpression.Members != null
+                     && newExpression.Members.Count == newExpression.Arguments.Count
+                     && newExpression.Arguments.Count > 0:
+                var arguments = new Expression[newExpression.Arguments.Count];
+                for (var i = 0; i < arguments.Length; i++)
+                    arguments[i] = BindSelectManyMember(mongoQueryExpression, newExpression.Members[i].Name, newExpression.Arguments[i]);
+                return newExpression.Update(arguments);
+
+            case MemberInitExpression memberInit
+                when memberInit.NewExpression.Arguments.Count == 0
+                     && memberInit.Bindings.Count > 0:
+                var bindings = new MemberBinding[memberInit.Bindings.Count];
+                for (var i = 0; i < bindings.Length; i++)
+                {
+                    var assignment = (MemberAssignment)memberInit.Bindings[i];
+                    bindings[i] = assignment.Update(
+                        BindSelectManyMember(mongoQueryExpression, assignment.Member.Name, assignment.Expression));
+                }
+
+                return memberInit.Update((NewExpression)memberInit.NewExpression, bindings);
+
+            default:
+                // NativeSelectManyBinder.TryBind already validated this shape (TryReadProjection accepts only
+                // these two forms), so this is unreachable in practice — defensive rather than silently
+                // mis-shaping the result.
+                throw new InvalidOperationException(
+                    $"Unexpected SelectMany projection shape '{projectionBody.GetType().Name}' after successful native binding.");
+        }
+    }
+
+    // Registers a projection for one SelectMany-result member and returns a ProjectionBindingExpression
+    // reading it by index — mirrors BindGroupMember (GroupBy's analogous helper). The stored source
+    // expression (the original o.X / i.Y argument) is kept only for its distinctness (AddToProjection dedups
+    // by expression) and CLR type; the DOM shaper reads the value raw by the alias (the member name), which
+    // NativeSelectManyBinder.TryBind already used as the matching Select.Projection alias.
+    private static Expression BindSelectManyMember(MongoQueryExpression mongoQueryExpression, string alias, Expression valueExpression)
+    {
+        var index = mongoQueryExpression.AddToProjection(valueExpression, alias);
+        return new ProjectionBindingExpression(mongoQueryExpression, index, valueExpression.Type);
+    }
 
     protected override ShapedQueryExpression? TranslateSelectMany(ShapedQueryExpression source, LambdaExpression selector)
         => null;
@@ -1158,10 +2228,184 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         => null;
 
     protected override ShapedQueryExpression? TranslateThenBy(ShapedQueryExpression source, LambdaExpression keySelector,
-        bool ascending) => null;
+        bool ascending)
+        => null;
 
     protected override ShapedQueryExpression? TranslateUnion(ShapedQueryExpression source1, ShapedQueryExpression source2)
-        => null;
+        => TryTranslateSetOperation(source1, source2, MongoSetOperationKind.Union);
+
+    // Native whole-entity, terminal Union/Concat/Intersect/Except -> a $unionWith (or source-tagging
+    // $unionWith pipeline, for Intersect/Except) on source1's select. Union/Concat ALWAYS return a
+    // non-null shaped query (source1): native when both operands are plain natively-lowerable whole-entity
+    // selects of the same type, otherwise source1 marked non-native so the query falls back GRACEFULLY to
+    // driver-LINQ (throws only under NativeOnly) -- mirrors TranslateGroupBy's always-non-null contract.
+    // Intersect/Except differ on the guard-decline path -- see the comment below.
+    private ShapedQueryExpression? TryTranslateSetOperation(
+        ShapedQueryExpression source1, ShapedQueryExpression source2, MongoSetOperationKind kind)
+    {
+        var mongo1 = (MongoQueryExpression)source1.QueryExpression;
+        var mongo2 = (MongoQueryExpression)source2.QueryExpression;
+
+        if (IsPlainWholeEntitySelect(mongo1) && IsPlainWholeEntitySelect(mongo2)
+            && mongo1.CollectionExpression.EntityType == mongo2.CollectionExpression.EntityType)
+        {
+            mongo1.Select.SetOperation = new MongoSetOperation(kind, mongo2.Select, mongo2.CollectionExpression.CollectionName);
+            mongo1.Select.IsSetOp = true;
+            return source1;
+        }
+
+        // Projected operands. Both operands are plain projected selects (a Select-projection is the SOLE
+        // terminal on each). The EntityType-equality gate above does NOT apply — projected operands may be
+        // different collections that project to the same shape; ProjectionShapesMatch guards the shape
+        // compatibility instead (a correctness guard, not just an optimization: the dedup / source-tagging
+        // compare whole projected documents by value, so mismatched alias sets would mis-compare). EF Core
+        // rejects incompatible operand shapes upstream, so a mismatch is defense-in-depth.
+        if (IsPlainProjectedSelect(mongo1) && IsPlainProjectedSelect(mongo2)
+            && ProjectionShapesMatch(mongo1.Select.Projection, mongo2.Select.Projection))
+        {
+            mongo1.Select.SetOperation = new MongoSetOperation(
+                kind, mongo2.Select, mongo2.CollectionExpression.CollectionName, operandsProjected: true);
+            mongo1.Select.IsSetOp = true;
+            return source1;
+        }
+
+        // Out of scope. Union/Concat have a working driver-LINQ fallback, so mark non-native and return
+        // source1 -> graceful fallback (throws only under NativeOnly). Intersect/Except have NO driver-LINQ
+        // fallback (the driver's LINQ v3 provider does not translate a cross-view Intersect/Except), so
+        // returning source1 would route to a fallback that then fails at execution; instead return null so
+        // the shape reaches EF's NotTranslatedExpression path and hard-fails cleanly in every mode (mirroring
+        // how reference SelectMany declines its no-baseline shapes).
+        if (kind is MongoSetOperationKind.Intersect or MongoSetOperationKind.Except)
+        {
+            return null;
+        }
+
+        mongo1.Select.MarkNotNativelyRepresentable();
+        return source1;
+    }
+
+    // A plain whole-entity select: filter/sort/paging slots only — no projection, grouping, scalar
+    // cardinality, its own set op, cross-collection lookups (Include), or a lifted-out VectorSearch.
+    private static bool IsPlainWholeEntitySelect(MongoQueryExpression mongo)
+        => mongo.Select.Route == NativeRoute.WholeEntity
+           && mongo.Select.SetOperation == null
+           && !mongo.Select.IsSetOp
+           && mongo.Select.Grouping == null
+           && mongo.Select.Cardinality == null
+           && mongo.Select.Projection.Count == 0
+           && !mongo.IsJoinQuery
+           && mongo.Lookups.Count == 0
+           && !ContainsVectorSearch(mongo.CapturedExpression);
+
+    // A plain projected select: a terminal anonymous/DTO member-access Select is the SOLE thing done
+    // (Projection populated, Route == Projection) — no grouping, scalar cardinality, its own set op,
+    // SelectMany ($unwind), cross-collection lookups (Include), join, or a lifted-out VectorSearch. The
+    // projected analogue of IsPlainWholeEntitySelect. Note this checks UnwindSource == null, which the
+    // whole-entity sibling currently omits (a documented latent gap) — this predicate is deliberately
+    // stricter.
+    //
+    // HasArrayProjectionLeaf: an owned entity-COLLECTION array leaf (Select(b => new { b.Title, b.Posts }))
+    // is DECLINED as a set-op OPERAND. This is a CORRECTNESS guard on the set operation's own semantics, and
+    // it is about the owner key the array leaf drags along, not about arrays as such. An array leaf forces
+    // NativeProjectionBinder to emit the root key into the projected document (a shadow-key element
+    // materializes its owner's key out of the row it is handed — see
+    // NativeProjectionBinder.TryPopulateNativeProjection's owner-key block), and a PROJECTED-OPERAND set op
+    // is exactly the shape whose dedup ($group{_id:"$$ROOT"}) / source-tagging ($group{_id:"$_doc"}) compares
+    // that WHOLE projected document by value. So the leaked _id joins the comparison key and turns the
+    // intended contract — dedup over the PROJECTED VALUES, pinned by
+    // NativeSetOpsTests.Projected_operand_union_dedups_over_projected_values_not_whole_entities — into dedup
+    // by document IDENTITY (a false Union duplicate; a false-negative Intersect; a false-positive Except).
+    // Intersect/Except have NO driver-LINQ oracle at all (the driver's LINQ v3 provider throws for a
+    // cross-view Intersect/Except), so a flipped answer there would be the ONLY answer available in any
+    // mode. Declining here means Union/Concat fall back gracefully to driver-LINQ (which dedups over the
+    // projected values, the documented semantics), and Intersect/Except hard-fail in every mode via
+    // TryTranslateSetOperation's null return.
+    //
+    // This does NOT touch a TRAILING projection after a whole-entity set op (Union(A,B).Select(b => new {
+    // b.Title, b.Posts })), which stays native: that path never consults this predicate, and its dedup runs
+    // over whole entities BEFORE the trailing $project, so neither the array nor the owner key reaches the
+    // comparison.
+    //
+    // !IsBareProjection is a CORRECTNESS guard on the same semantics, on the same reasoning as the array-leaf
+    // conjunct above: a projected-OPERAND set op dedups/source-tags over the WHOLE PROJECTED document
+    // ($group{_id:"$$ROOT"} / $group{_id:"$_doc"}), so admitting a BARE projected operand would change what
+    // $$ROOT is for that comparison — the same class of hazard the array conjunct exists for, arriving
+    // through a different door (in particular, Intersect_non_entity/Except_non_entity would flip from
+    // throwing to silently answering, on the two operators with no driver-LINQ oracle at all).
+    //
+    // Declining means Union/Concat fall back gracefully (correct results under Native/DriverLinq,
+    // NativeTranslationNotSupportedException only under NativeOnly), and Intersect/Except hard-fail in every
+    // mode via TryTranslateSetOperation's null return. A bare projected OPERAND is a composition relaxation,
+    // and belongs with the rest of them rather than being carved out separately. Note this does NOT touch a
+    // TRAILING bare projection after a whole-entity set op (Union(A,B).Select(b => b.Title)), which never
+    // consults this predicate and is admitted: its dedup runs over whole entities BEFORE the trailing
+    // $project, so it cannot change set semantics. Pinned by NativeBareProjectionTests.
+    private static bool IsPlainProjectedSelect(MongoQueryExpression mongo)
+        => mongo.Select.Route == NativeRoute.Projection
+           && mongo.Select.Projection.Count > 0
+           && !mongo.Select.HasArrayProjectionLeaf
+           && !mongo.Select.IsBareProjection
+           && mongo.Select.SetOperation == null
+           && !mongo.Select.IsSetOp
+           && mongo.Select.Grouping == null
+           && mongo.Select.Cardinality == null
+           && mongo.Select.UnwindSource == null
+           && !mongo.IsJoinQuery
+           && mongo.Lookups.Count == 0
+           && !ContainsVectorSearch(mongo.CapturedExpression);
+
+    // The two operands' projected shapes must have identical top-level alias SETS (same count, same alias names).
+    // The output documents' fields are exactly these aliases, and Union dedup / Intersect-Except source-tagging
+    // compare whole projected documents by value — mismatched alias sets would compare structurally-different
+    // documents and silently mis-dedup / mis-tag. Compares alias sets only, NOT the underlying field-refs, so
+    // e.g. new {N = a.Name} and new {N = b.Title} correctly match (both produce {N: ...}); each operand's own
+    // $project maps its own source field to the shared alias. EF Core rejects incompatible operand shapes
+    // upstream (a shared common anonymous type is required for the set op to compile), so a mismatch here is
+    // defense-in-depth against that guarantee ever weakening.
+    private static bool ProjectionShapesMatch(
+        IReadOnlyList<MongoProjection> p1, IReadOnlyList<MongoProjection> p2)
+    {
+        if (p1.Count != p2.Count)
+        {
+            return false;
+        }
+
+        var aliases = new HashSet<string>(p1.Count);
+        foreach (var projection in p1)
+        {
+            aliases.Add(projection.Alias);
+        }
+
+        foreach (var projection in p2)
+        {
+            if (!aliases.Contains(projection.Alias))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Local, minimal duplicate of MongoShapedQueryCompilingExpressionVisitor.ContainsVectorSearch (that
+    // gate method is private and deliberately not made public — see the Query area AGENTS.md for the
+    // rationale on why VectorSearch must be checked via the captured chain rather than a select-tree flag).
+    // Walks the captured Queryable method chain looking for a VectorSearch call, descending through the
+    // source argument of each call (VectorSearch sits at the root, optionally under a single pre-Where).
+    private static bool ContainsVectorSearch(Expression? captured)
+    {
+        while (captured is MethodCallExpression call)
+        {
+            if (call.IsVectorSearch())
+            {
+                return true;
+            }
+
+            captured = call.Arguments.Count > 0 ? call.Arguments[0] : null;
+        }
+
+        return false;
+    }
 
     protected override ShapedQueryExpression? TranslateWhere(ShapedQueryExpression source, LambdaExpression predicate)
         => null;

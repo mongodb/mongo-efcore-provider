@@ -114,6 +114,22 @@ internal static class ExpressionExtensionMethods
             : expression;
 
     /// <summary>
+    /// Whether <paramref name="type"/> is one of EF Core's compiler-generated
+    /// <c>TransparentIdentifier&lt;TOuter, TInner&gt;</c> constructions — the anonymous result type a join's
+    /// result selector wraps its outer/inner pair in.
+    /// </summary>
+    /// <remarks>
+    /// Callers should check an <c>"Outer"</c>/<c>"Inner"</c> member's DECLARING TYPE with this helper rather
+    /// than matching the member name alone — otherwise any user type exposing a member called <c>Outer</c> or
+    /// <c>Inner</c> would be mistaken for join plumbing. Shared by
+    /// <c>MongoEFToLinqTranslatingExpressionVisitor.LeftJoin.cs</c> and
+    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.ClassifyJoinHop</c>, which must stay in agreement.
+    /// </remarks>
+    internal static bool IsTransparentIdentifierType(this Type? type)
+        => type is { IsGenericType: true }
+           && type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal);
+
+    /// <summary>
     /// Extracts the simple member/property name from a key-selector-style expression — a member access
     /// (<c>o.CustomerId</c>) or an <c>EF.Property(o, "CustomerId")</c> call — after stripping any
     /// <see cref="ExpressionType.Convert"/> / <see cref="ExpressionType.ConvertChecked"/> wrappers. Returns

@@ -374,8 +374,8 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
 
         AssertMql(
             """
-            Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { "_v" : "$Title", "_id" : 0 } }
-            """);
+Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { "Title" : "$Title", "_id" : 0 } }
+""");
     }
 
     public override async Task Where_simple_shadow_subquery(bool async)
@@ -748,8 +748,8 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
 
         AssertMql(
             """
-            Employees.{ "$limit" : 9 }, { "$match" : { "_id" : 5 } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
-            """);
+Employees.{ "$limit" : 9 }, { "$match" : { "_id" : 5 } }, { "$project" : { "_id" : "$_id" } }
+""");
     }
 
     public override async Task Where_bool_member(bool async)
@@ -801,8 +801,8 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : "$Discontinued" } }
-            """);
+Products.{ "$match" : { "Discontinued" : true } }
+""");
     }
 
     public override async Task Where_bool_member_false_shadow(bool async)
@@ -810,8 +810,8 @@ Employees.{ "$match" : { "ReportsTo" : 2 } }
         await base.Where_bool_member_false_shadow(async);
         AssertMql(
             """
-            Products.{ "$match" : { "$nor" : [{ "$expr" : "$Discontinued" }] } }
-            """);
+Products.{ "$match" : { "Discontinued" : { "$ne" : true } } }
+""");
     }
 
     public override async Task Where_bool_member_equals_constant(bool async)
@@ -1232,7 +1232,7 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "QUICK" } }, { "$match" : { "OrderDate" : { "$gt" : { "$date" : "1998-01-01T00:00:00Z" } } } }
+            Orders.{ "$match" : { "CustomerID" : "QUICK", "OrderDate" : { "$gt" : { "$date" : "1998-01-01T00:00:00Z" } } } }
             """);
     }
 
@@ -1241,7 +1241,7 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
         await base.Where_navigation_contains(async);
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$limit" : 2 }
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
 """,
             //
             """
@@ -1697,8 +1697,8 @@ Products.{ "$match" : { "UnitPrice" : { "$gt" : 100.0 } } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "London" } }, { "$project" : { "_v" : "$CompanyName", "_id" : 0 } }
-            """);
+Customers.{ "$match" : { "City" : "London" } }, { "$project" : { "CompanyName" : "$CompanyName", "_id" : 0 } }
+""");
     }
 
     public override async Task Enclosing_class_settable_member_generates_parameter(bool async)
@@ -2087,19 +2087,19 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "_id" : "$_id" } }
+            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "Id" : "$_id", "_id" : 0 } }
             """,
             //
             """
-            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "_id" : "$_id" } }
+            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "Id" : "$_id", "_id" : 0 } }
             """,
             //
             """
-            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "_id" : "$_id" } }
+            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "Id" : "$_id", "_id" : 0 } }
             """,
             //
             """
-            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "_id" : "$_id" } }
+            Orders.{ "$match" : { "_id" : 10252 } }, { "$project" : { "Id" : "$_id", "_id" : 0 } }
             """);
     }
 
@@ -2119,7 +2119,7 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_
 
         AssertMql(
             """
-            Employees.{ "$sort" : { "_id" : 1 } }, { "$limit" : 3 }, { "$match" : { "_id" : { "$mod" : [2, 0] } } }
+            Employees.{ "$sort" : { "_id" : 1 } }, { "$limit" : 3 }, { "$match" : { "$expr" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] } } }
             """);
     }
 
@@ -2129,7 +2129,7 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_
 
         AssertMql(
             """
-            Employees.{ "$sort" : { "_id" : 1 } }, { "$skip" : 3 }, { "$match" : { "_id" : { "$mod" : [2, 0] } } }
+            Employees.{ "$sort" : { "_id" : 1 } }, { "$skip" : 3 }, { "$match" : { "$expr" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] } } }
             """);
     }
 

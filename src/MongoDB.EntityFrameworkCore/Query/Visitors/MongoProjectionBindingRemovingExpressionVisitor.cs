@@ -29,6 +29,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -83,14 +84,44 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         return DocParameter;
                     }
 
+                    // A native numeric-cast projection leaf
+                    // (`new { X = (int)x.D }`) is registered on the WRITE side as the whole
+                    // UnaryExpression{Convert} node (see MongoProjectionBindingExpressionVisitor.Visit), and the
+                    // $project alias holds the CONVERTED value ($toInt/$toLong/$toDouble/$toDecimal), never the
+                    // underlying member's own raw stored representation. The comment immediately below this
+                    // block — "aliased projections that introduce a Convert... go through the LINQ V3 push-down
+                    // path and never reach this visitor" — predates this feature and is no longer true for a
+                    // NATIVELY-representable cast leaf specifically: TryResolveFieldAccess unconditionally calls
+                    // RemoveConvert(), which would strip this Convert, resolve the PRE-CAST member's own
+                    // property, and either mis-deserialise the converted value through that property's own
+                    // (pre-cast) serializer or trip the type-mismatch guard below and crash at shaper-compile
+                    // time in EVERY query mode (not merely under NativeOnly) — turning a legitimate, correct
+                    // native shape into a hard regression. Route it through the raw alias read instead, exactly
+                    // like an arithmetic/count computed leaf (the branch below this one, reached when
+                    // fieldAccess.Property is null).
+                    //
+                    // This branch is reachable ONLY for a leaf the EMIT side already admitted, and the emit
+                    // side (NativeProjectionBinder.TryTranslateLeaf) can never admit one backed by a
+                    // value-converted or non-default-BsonRepresentation field — TryTranslateValue's Guard B
+                    // (AllFieldsDefaultSerialized) recurses through the Convert into the field and declines it
+                    // at TRANSLATE time, so a converted property's cast never reaches this raw read with the
+                    // WRONG (converted) value in hand. See that gate's own comment for the full dependency;
+                    // it is recorded here too because this branch's own correctness rests on it.
+                    if (projection.Expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked })
+                    {
+                        return BsonBinding.CreateGetElementValue(DocParameter, projection.Alias, projectionBindingExpression.Type);
+                    }
+
                     // Resolve the source IProperty so we apply its serializer / nullability —
                     // not whatever EF property happens to share the alias name on the root entity.
                     // TryResolveFieldAccess unwraps Convert nodes, so in principle the binding's
                     // outer type could differ from the property's CLR type. In practice it never
                     // does at this call site: aliased projections that introduce a Convert (e.g.
                     // `new { X = (long)p.intProp }`) go through the LINQ V3 push-down path and
-                    // never reach this visitor — see ProjectionAnalyzer.CanPushDown. The assert
-                    // below pins the invariant so a future change that violates it fails loudly
+                    // never reach this visitor — see ProjectionAnalyzer.CanPushDown. (That claim now
+                    // holds only for a NON-natively-representable Convert leaf; the native cast case
+                    // is intercepted above, before this comment's invariant is ever consulted.) The
+                    // assert below pins the invariant so a future change that violates it fails loudly
                     // rather than mis-deserialising via the wrong property's serializer.
                     var fieldAccess = TryResolveFieldAccess(projection.Expression);
                     if (fieldAccess.Property != null)
@@ -132,15 +163,24 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
             case CollectionShaperExpression collectionShaperExpression:
                 {
-                    ObjectArrayProjectionExpression objectArrayProjection;
+                    IArrayProjectionExpression arrayProjection;
                     switch (collectionShaperExpression.Projection)
                     {
                         case ProjectionBindingExpression projectionBindingExpression:
                             var projection = GetProjection(projectionBindingExpression);
-                            objectArrayProjection = (ObjectArrayProjectionExpression)projection.Expression;
+                            // Both array-projection node kinds are admissible: a navigation-driven
+                            // ObjectArrayProjectionExpression (a projected reference collection) and an
+                            // ArrayAliasProjectionExpression (a native $project alias). Anything that is not
+                            // an array projection is a translation failure, not an unchecked-cast crash.
+                            if (projection.Expression is not IArrayProjectionExpression fromProjection)
+                            {
+                                throw new InvalidOperationException(CoreStrings.TranslationFailed(extensionExpression.Print()));
+                            }
+
+                            arrayProjection = fromProjection;
                             break;
-                        case ObjectArrayProjectionExpression objectArrayProjectionExpression:
-                            objectArrayProjection = objectArrayProjectionExpression;
+                        case IArrayProjectionExpression inlineArrayProjection:
+                            arrayProjection = inlineArrayProjection;
                             break;
                         default:
                             throw new InvalidOperationException(CoreStrings.TranslationFailed(extensionExpression.Print()));
@@ -148,7 +188,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
                     Expression bsonArrayExpression;
                     string arrayName;
-                    if (_projectionBindings.TryGetValue(objectArrayProjection, out var bsonArrayVar))
+                    if (_projectionBindings.TryGetValue((Expression)arrayProjection, out var bsonArrayVar))
                     {
                         bsonArrayExpression = bsonArrayVar;
                         arrayName = bsonArrayVar.Name!;
@@ -156,25 +196,57 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     else
                     {
                         // Nested collection inside a parent collection item (ThenInclude on
-                        // collection-then-collection). Read the BsonArray from the parent document.
-                        var parentAccess = objectArrayProjection.AccessExpression;
+                        // collection-then-collection). Read the BsonArray from the parent document by its
+                        // DOCUMENT-PATH field name.
+                        //
+                        // An ALIAS-addressed array (ArrayAliasProjectionExpression) has no document-path field
+                        // name at all — its ArrayFieldName is always null — so it must never reach here. It
+                        // cannot: this branch is reached only when VisitBinary did NOT register a bsonArrayN
+                        // variable for the node, i.e. when BsonDocumentInjectingExpressionVisitor never emitted
+                        // an assignment for this collection shaper, which happens only for a shaper NESTED
+                        // inside another collection shaper's InnerShaper (that visitor's
+                        // CollectionShaperExpression case returns without visiting children). An alias-addressed
+                        // array is created only for a TOP-LEVEL leaf of a terminal native projection, never
+                        // nested. The `?? throw` makes a future violation LOUD rather than a silent null field
+                        // name, which would read the wrong array with no exception at all.
+                        //
+                        // It resolves BEFORE the _projectionBindings lookup below, deliberately: on the native
+                        // projection route the root RootReferenceExpression is NOT registered there, so an
+                        // alias-addressed array reaching this branch would otherwise die in that indexer with a
+                        // bare KeyNotFoundException — losing this diagnostic entirely.
+                        var arrayFieldName = arrayProjection.ArrayFieldName
+                                             ?? throw new InvalidOperationException(
+                                                 CoreStrings.TranslationFailed(extensionExpression.Print()));
+                        var parentAccess = arrayProjection.AccessExpression;
                         var parentDoc = _projectionBindings[parentAccess];
-                        bsonArrayExpression = BsonBinding.CreateGetBsonArray(parentDoc, objectArrayProjection.Name!);
-                        arrayName = objectArrayProjection.Name!;
+                        bsonArrayExpression = BsonBinding.CreateGetBsonArray(parentDoc, arrayFieldName);
+                        arrayName = arrayFieldName;
                     }
 
-                    // Coalesce a missing/null array to empty so the shaper enumerates zero elements instead
-                    // of returning null. Kept here rather than folded into the Assign below: VisitBinary
-                    // hard-casts that Assign's right-hand side to UnaryExpression, and Coalesce isn't one.
+                    // Normalize a MISSING or explicitly-BSON-null stored array to an EMPTY BsonArray, so the
+                    // shaper below enumerates nothing and PopulateCollection returns an EMPTY collection rather than
+                    // null. Empty-not-null is EF Core's contract for a collection navigation, and without this the
+                    // result depends on the POCO's field initializer (IncludeCollection skips GetOrCreate when the
+                    // related-entity sequence is null). The empty collection is built by PopulateCollection through the
+                    // navigation's OWN IClrCollectionAccessor, so a non-List navigation (HashSet<T>, a custom
+                    // collection) gets the right CLR type for free.
+                    //
+                    // The coalesce MUST stay here, at the point of use, and NOT be folded into either assignment site:
+                    // VisitBinary below hard-casts a BsonDocument/BsonArray assignment's right-hand side to
+                    // UnaryExpression (the Expression.TypeAs that BsonDocumentInjectingExpressionVisitor emits), so a
+                    // Coalesce there throws InvalidCastException for every shaper in every query mode.
+                    //
+                    // Note TypeAs yields null both for an ABSENT element and for a present-but-not-an-array element, so
+                    // this treats the two alike; both produced null before, so that is not a regression.
                     bsonArrayExpression = Expression.Coalesce(bsonArrayExpression, Expression.New(typeof(BsonArray)));
 
                     var jObjectParameter = Expression.Parameter(typeof(BsonDocument), arrayName + "Object");
                     var ordinalParameter = Expression.Parameter(typeof(int), arrayName + "Ordinal");
 
-                    var accessExpression = objectArrayProjection.InnerProjection.ParentAccessExpression;
+                    var accessExpression = arrayProjection.InnerProjection.ParentAccessExpression;
                     _projectionBindings[accessExpression] = jObjectParameter;
-                    _ownerMappings[accessExpression] = (objectArrayProjection.Navigation.DeclaringEntityType, objectArrayProjection.AccessExpression);
-                    _ownerMappings[jObjectParameter] = (objectArrayProjection.Navigation.DeclaringEntityType, objectArrayProjection.AccessExpression);
+                    _ownerMappings[accessExpression] = (arrayProjection.Navigation.DeclaringEntityType, arrayProjection.AccessExpression);
+                    _ownerMappings[jObjectParameter] = (arrayProjection.Navigation.DeclaringEntityType, arrayProjection.AccessExpression);
                     _ordinalMappings[accessExpression] = Expression.Add(ordinalParameter, Expression.Constant(1, typeof(int)));
                     var innerShaper = (BlockExpression)Visit(collectionShaperExpression.InnerShaper);
 
@@ -258,6 +330,12 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     string? fieldName = null;
                     var fieldRequired = true;
 
+                    // CONTRACT with BsonDocumentInjectingExpressionVisitor: the right-hand side of a
+                    // BsonDocument/BsonArray variable assignment is always an Expression.TypeAs — a
+                    // UnaryExpression — so this cast is safe. If that visitor ever needs a different node
+                    // shape there (a Coalesce, a New), this cast must be widened in the SAME change, or every
+                    // entity and collection shaper throws InvalidCastException in every query mode — which is
+                    // why the missing/null-array normalization above lives at its point of use instead.
                     var projectionExpression = ((UnaryExpression)binaryExpression.Right).Operand;
                     if (projectionExpression is ProjectionBindingExpression projectionBindingExpression)
                     {
@@ -272,11 +350,28 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     }
 
                     Expression innerAccessExpression;
-                    if (projectionExpression is ObjectArrayProjectionExpression objectArrayProjectionExpression)
+                    if (projectionExpression is IArrayProjectionExpression arrayProjectionExpression)
                     {
-                        innerAccessExpression = objectArrayProjectionExpression.AccessExpression;
-                        _projectionBindings[objectArrayProjectionExpression] = parameterExpression;
-                        fieldName ??= objectArrayProjectionExpression.Name;
+                        innerAccessExpression = arrayProjectionExpression.AccessExpression;
+                        _projectionBindings[projectionExpression] = parameterExpression;
+
+                        // ArrayFieldName is null for an alias-addressed array, in which case fieldName was
+                        // already set from projection.Alias above (the ProjectionBindingExpression branch) —
+                        // that IS the alias, and it is the same name the emit side derived from the same
+                        // ProjectionMember.
+                        //
+                        // NEITHER implementation of IArrayProjectionExpression can currently reach this throw,
+                        // and that is worth stating so nobody reads it as a live failure mode:
+                        // ObjectArrayProjectionExpression's constructor already `?? throw`s when Name would be
+                        // null, so its ArrayFieldName is non-null by construction; and ArrayAliasProjectionExpression
+                        // (whose ArrayFieldName is ALWAYS null) is only ever reached through the
+                        // ProjectionBindingExpression branch above, which has already set fieldName from
+                        // projection.Alias. The guard is kept anyway because it is free and fails LOUD: a future
+                        // node kind, or a future route to this one that skips the alias resolution, would
+                        // otherwise silently read the wrong array rather than say so.
+                        fieldName ??= arrayProjectionExpression.ArrayFieldName
+                                      ?? throw new InvalidOperationException(
+                                          CoreStrings.TranslationFailed(binaryExpression.Print()));
                     }
                     else
                     {
@@ -440,6 +535,32 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         if (property.IsOwnedTypeKey())
         {
             var entityType = (IReadOnlyEntityType)property.DeclaringType;
+
+            // Bare-owned whole-element SelectMany: the shaper is re-rooted at THIS owned
+            // element (via $replaceRoot — see MongoShapedQueryCompilingExpressionVisitor's WholeElement branch),
+            // which merged the owner key + array ordinal into the re-rooted document under sentinel field
+            // names, specifically so the owned key materializes NON-NULL (EF Core's own no-tracking null-key
+            // guard rejects a partially-null owned key). Read those sentinel fields directly
+            // instead of falling through to the ordinary owner/ordinal-mapping lookup below, which has no entry
+            // for a re-rooted document (the query root — CollectionExpression.EntityType — is always a
+            // document-root type, so entityType == _rootEntityType is true here ONLY in this re-rooted
+            // whole-element case, making it a safe discriminator).
+            if (entityType == _rootEntityType)
+            {
+                var sentinel = property.IsOwnedTypeOrdinalKey()
+                    ? MongoReplaceRootStage.OrdinalField
+                    : MongoReplaceRootStage.OwnerKeyField;
+                // includeArrayIndex writes the ordinal as a BSON int64; read the owner key at its own CLR type.
+                var readClrType = property.IsOwnedTypeOrdinalKey() ? typeof(long) : property.ClrType;
+                Expression read = BsonBinding.CreateGetElementValue(DocParameter, sentinel, readClrType);
+                if (readClrType != property.ClrType)
+                {
+                    read = Expression.Convert(read, property.ClrType);
+                }
+
+                return Expression.Convert(read, type);
+            }
+
             if (!entityType.IsDocumentRoot())
             {
                 var ownership = entityType.FindOwnership();
@@ -1004,7 +1125,9 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         IClrCollectionAccessor accessor,
         IEnumerable<TEntity> entities)
     {
-        // TODO: throw a better exception for non-ICollection navigations
+        // TODO: throw a diagnosable exception for a non-ICollection<T> collection navigation. As it
+        // stands, such a model surfaces as a bare InvalidCastException from the cast below, naming driver/EF
+        // internal types rather than the navigation the user got wrong.
         var collection = (ICollection<TEntity>)accessor.Create();
         foreach (var entity in entities)
         {

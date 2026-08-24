@@ -96,7 +96,7 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
 
         AssertMql(
             """
-Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }
 """);
     }
 
@@ -106,7 +106,7 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
 
         AssertMql(
             """
-Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }
 """);
     }
 
