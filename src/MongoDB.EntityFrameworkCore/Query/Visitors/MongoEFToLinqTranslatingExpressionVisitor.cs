@@ -616,7 +616,74 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return sizeRewrite;
         }
 
+        // A bare/unfiltered embedded (owned) collection-navigation Count, e.g. `b.Posts.Count`, lowered by
+        // EF Core to Queryable.Count(Queryable.AsQueryable(EF.Property(shaper, "Posts"))). See
+        // TryRewriteEmbeddedCollectionNavigationCount for why this needs a null/missing-safe normalization
+        // the driver's own rendering of a bare Count (a server-side $size) doesn't provide.
+        if (TryRewriteEmbeddedCollectionNavigationCount(node, out var embeddedCountRewrite))
+        {
+            return embeddedCountRewrite;
+        }
+
         return base.VisitMethodCall(node);
+    }
+
+    /// <summary>
+    /// Rewrites a bare embedded (owned) collection-navigation <c>Count</c>/<c>LongCount</c> (e.g.
+    /// <c>b.Posts.Count</c>) into <c>Enumerable.Count</c> over a <c>??</c>-normalized array read — needed
+    /// because the driver's bare-Count translation is a server-side <c>$size</c>, which throws on a
+    /// missing or null array (unlike a predicated Count, translated as null-tolerant <c>$map</c>/<c>$sum</c>).
+    /// </summary>
+    private bool TryRewriteEmbeddedCollectionNavigationCount(MethodCallExpression node, out Expression result)
+    {
+        result = null!;
+
+        if (node.Method.DeclaringType != typeof(Queryable)
+            || node.Arguments.Count != 1
+            || node.Method.Name is not (nameof(Queryable.Count) or nameof(Queryable.LongCount)))
+        {
+            return false;
+        }
+
+        if (node.Arguments[0] is not MethodCallExpression
+            {
+                Method: { Name: nameof(Queryable.AsQueryable), DeclaringType: var asQueryableDeclaring }
+            } asQueryableCall
+            || asQueryableDeclaring != typeof(Queryable))
+        {
+            return false;
+        }
+
+        // Narrow to genuinely embedded (owned) collection navigations only: AsQueryable(...) also shows
+        // up wrapping other enumerable sources (e.g. an IGrouping in a GroupBy/Union pipeline) that are
+        // not a document field read at all, so rewriting unconditionally miscompiles those shapes.
+        if (asQueryableCall.Arguments[0] is not MethodCallExpression efPropertyCall
+            || !efPropertyCall.Method.IsEFPropertyMethod()
+            || efPropertyCall.Arguments[1] is not ConstantExpression { Value: string propertyName }
+            || _queryContext.Context.Model.FindEntityType(efPropertyCall.Arguments[0].Type) is not { } sourceEntityType
+            || sourceEntityType.FindNavigation(propertyName) is not { } navigation
+            || !navigation.IsEmbedded())
+        {
+            return false;
+        }
+
+        var fieldAccess = Visit(asQueryableCall.Arguments[0]);
+        var elementType = fieldAccess?.Type.TryGetItemType();
+        if (elementType == null)
+        {
+            return false;
+        }
+
+        var countMethod = (node.Method.Name == nameof(Queryable.LongCount)
+                ? EnumerableLongCountMethod
+                : EnumerableCountMethod)
+            .MakeGenericMethod(elementType);
+
+        var emptyCollection = Expression.Constant(Activator.CreateInstance(fieldAccess!.Type), fieldAccess.Type);
+        var normalizedFieldAccess = Expression.Coalesce(fieldAccess, emptyCollection);
+
+        result = Expression.Call(null, countMethod, normalizedFieldAccess);
+        return true;
     }
 
     /// <summary>

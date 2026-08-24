@@ -15,7 +15,9 @@
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
@@ -1477,6 +1479,174 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             var thirdLevel = Assert.Single(secondLevel.children);
             Assert.Equal(expectedReference.name, thirdLevel.reference.name);
         }
+    }
+
+    [Fact]
+    public void OwnedEntity_filtered_count_in_projection_translates()
+    {
+        var collection = database.CreateCollection<CountBlog>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(new CountBlog
+            {
+                _id = "1",
+                Title = "Blog1",
+                Posts = [new CountPost { Rank = 1 }, new CountPost { Rank = 0 }, new CountPost { Rank = 2 }]
+            });
+            db.SaveChanges();
+        }
+
+        {
+            // Assert the count is evaluated server-side (a $map/$sum over the array, equivalent to
+            // filter+size) rather than by materializing the owned CountPost entities and counting client-side.
+            var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
+            using var db = SingleEntityDbContext.Create(collection, loggerFactory,
+                optionsBuilderAction: o => o.EnableSensitiveDataLogging());
+            var result = Assert.Single(db.Entities.Select(b => new { b.Title, N = b.Posts.Count(p => p.Rank > 0) }));
+
+            Assert.Equal("Blog1", result.Title);
+            Assert.Equal(2, result.N);
+
+            var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+            Assert.Contains("$map", message);
+            Assert.Contains("$sum", message);
+        }
+    }
+
+    [Fact]
+    public void OwnedEntity_unfiltered_count_in_projection_translates()
+    {
+        var collection = database.CreateCollection<CountBlog>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(new CountBlog
+            {
+                _id = "1",
+                Title = "Blog1",
+                Posts = [new CountPost { Rank = 1 }, new CountPost { Rank = 0 }]
+            });
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var result = Assert.Single(db.Entities.Select(b => new { b.Title, N = b.Posts.Count() }));
+
+            Assert.Equal("Blog1", result.Title);
+            Assert.Equal(2, result.N);
+        }
+    }
+
+    [Fact]
+    public void OwnedEntity_collection_bare_count_projection_returns_element_count()
+    {
+        var collection = database.CreateCollection<A>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.AddRange(
+                new A { _id = "1", children = [new B { name = "child1" }, new B { name = "child2" }] },
+                new A { _id = "2", children = [] },
+                new A { _id = "3", children = null! });
+            db.SaveChanges();
+        }
+
+        // Deliberately a default *tracking* query (unlike EF-357's own tests, which required
+        // AsNoTracking): the bare Count must stay a server-side scalar, not a materialized owned-entity
+        // shaper, or EF Core's tracking-materializer rejects it ("owned entity without a corresponding
+        // owner").
+        var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
+        using var db2 = SingleEntityDbContext.Create(collection, loggerFactory,
+            optionsBuilderAction: o => o.EnableSensitiveDataLogging());
+
+        var counts = db2.Entities.OrderBy(e => e._id).Select(e => e.children.Count).ToList();
+        Assert.Equal([2, 0, 0], counts);
+
+        // A null stored array must report 0, not throw: the driver renders a bare Count as a server-side
+        // $size, which rejects a null array, so this needs an $ifNull normalization first.
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("$ifNull", message);
+        Assert.Contains("$size", message);
+
+        var longCounts = db2.Entities.OrderBy(e => e._id).Select(e => e.children.LongCount()).ToList();
+        Assert.Equal([2L, 0L, 0L], longCounts);
+
+        var filteredLongCounts = db2.Entities.OrderBy(e => e._id)
+            .Select(e => e.children.LongCount(c => c.name == "child1"))
+            .ToList();
+        Assert.Equal([1L, 0L, 0L], filteredLongCounts);
+    }
+
+    [Fact]
+    public void OwnedEntity_collection_bare_count_projection_over_missing_element_returns_zero()
+    {
+        // A document where the array element is OMITTED entirely (not stored as BSON null) is a distinct
+        // case from an explicit null: in an aggregation expression a missing field is not equal to BSON
+        // null, so a plain null-equality guard does not catch it and $size still throws on "missing". Only
+        // $ifNull (which normalizes missing the same as null) handles both.
+        var collection = database.CreateCollection<A>();
+        database.GetCollection<BsonDocument>(collection.CollectionNamespace).InsertOne(new BsonDocument("_id", "1"));
+
+        using var db = SingleEntityDbContext.Create(collection);
+        var counts = db.Entities.Select(e => e.children.Count).ToList();
+
+        Assert.Equal([0], counts);
+    }
+
+    [Fact]
+    public void OwnedEntity_collection_count_projection_wrapped_in_arithmetic_returns_element_count()
+    {
+        var collection = database.CreateCollection<A>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.AddRange(
+                new A { _id = "1", children = [new B { name = "child1" }, new B { name = "child2" }] },
+                new A { _id = "2", children = null! });
+            db.SaveChanges();
+        }
+
+        using var db2 = SingleEntityDbContext.Create(collection);
+        var doubled = db2.Entities.OrderBy(e => e._id)
+            .Select(e => new { e._id, N = e.children.Count * 2 })
+            .ToList();
+
+        Assert.Equal([4, 0], doubled.Select(r => r.N).ToArray());
+    }
+
+    [Fact]
+    public void OwnedEntity_collection_filtered_count_projection_with_null_children_returns_zero()
+    {
+        var collection = database.CreateCollection<A>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.AddRange(
+                new A { _id = "1", children = [new B { name = "child1" }, new B { name = "child2" }] },
+                new A { _id = "2", children = null! });
+            db.SaveChanges();
+        }
+
+        using var db2 = SingleEntityDbContext.Create(collection);
+        var counts = db2.Entities.OrderBy(e => e._id)
+            .Select(e => e.children.Count(c => c.name == "child1"))
+            .ToList();
+
+        Assert.Equal([1, 0], counts);
+    }
+
+    record CountBlog
+    {
+        public string _id { get; set; }
+        public string Title { get; set; }
+        public List<CountPost> Posts { get; set; }
+    }
+
+    record CountPost
+    {
+        public int Rank { get; set; }
     }
 
     record A
