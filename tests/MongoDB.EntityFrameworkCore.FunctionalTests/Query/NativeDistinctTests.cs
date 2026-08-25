@@ -31,11 +31,13 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// EF-347 (Task 2) native <c>Select(new {...}).Distinct()</c> → a degenerate <c>$group</c> (group by the
 /// projected value(s), zero accumulators) followed by the flattening <c>$project</c>. Proves that a
 /// supported projected-Distinct shape executes as a native aggregation pipeline and dedups correctly, and
-/// that unsupported shapes (bare-scalar projection, whole-entity source, a value-converted/represented
-/// projection key, an operator applied after Distinct) fall back to driver-LINQ under
-/// <see cref="MongoQueryMode.Native"/> yet throw <see cref="NativeTranslationNotSupportedException"/> under
-/// <see cref="MongoQueryMode.NativeOnly"/> — the "went native" signal (the emitted MQL is otherwise
-/// indistinguishable from the driver-LINQ fallback for filter/sort/paging shapes).
+/// that unsupported shapes (whole-entity source, a value-converted/represented projection key, an operator
+/// applied after Distinct) fall back to driver-LINQ under <see cref="MongoQueryMode.Native"/> yet throw
+/// <see cref="NativeTranslationNotSupportedException"/> under <see cref="MongoQueryMode.NativeOnly"/> — the
+/// "went native" signal (the emitted MQL is otherwise indistinguishable from the driver-LINQ fallback for
+/// filter/sort/paging shapes). EF-395 additionally admits a BARE-scalar projection (<c>Select(o =>
+/// o.Country).Distinct()</c>) into the same native path — see
+/// <see cref="Bare_scalar_projection_Distinct_goes_native"/>.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -111,12 +113,16 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     [Fact]
-    public void Bare_scalar_Distinct_falls_back_under_native_only()
+    public void Bare_scalar_projection_Distinct_goes_native()
     {
+        // EF-395: TryBindDistinctFromProjection no longer declines on select.IsBareProjection, so this now
+        // goes native (NativeOnly succeeding is the "went native" signal). US/US/US, UK/UK, FR -> 3 distinct
+        // countries.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
-            nameof(Bare_scalar_Distinct_falls_back_under_native_only));
+            nameof(Bare_scalar_projection_Distinct_goes_native));
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() => db.Entities.Select(o => o.Country).Distinct().ToList());
+        var result = db.Entities.Select(o => o.Country).Distinct().ToList().OrderBy(c => c).ToList();
+        Assert.Equal(["FR", "UK", "US"], result);
     }
 
     [Fact]

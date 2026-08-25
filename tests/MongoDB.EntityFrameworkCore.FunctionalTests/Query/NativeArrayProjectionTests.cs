@@ -464,7 +464,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
 
             Assert.Equal(["a_empty", "b_two"], rows.Select(r => r.Title).ToArray());
             Assert.Empty(rows[0].Posts);
-            Assert.Equal(["h1", "h2"], rows[1].Posts.Select(p => p.Heading).ToArray());
+            Assert.Equal(new[] { "h1", "h2" }, rows[1].Posts.Select(p => p.Heading).ToArray());
         }
     }
 

@@ -177,18 +177,26 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
         // here would also pass on a connection error or an unrelated NullReferenceException — an absence-shaped
         // assertion over the one behaviour this slice most needed to get right (native must NOT silently return
         // 0). The two types differ by design and both were measured: the driver fails inside its own
-        // deserializer (FormatException: "Cannot deserialize a 'Int32' from BsonType 'Null'"), native fails in
-        // the DOM shaper's required-element check (InvalidOperationException: "Document element 'V' is missing
-        // but required"). Per the versioning rubric the exception type of an erroneous input is not contract,
-        // and the released 8.4.2/9.1.2/10.0.2 packages throw here too (see the break check in the AGENTS.md
-        // note), so this pins the measurement rather than promising an API.
+        // deserializer (FormatException: "Cannot deserialize a 'Int32' from BsonType 'Null'"). Per the
+        // versioning rubric the exception type of an erroneous input is not contract, and the released
+        // 8.4.2/9.1.2/10.0.2 packages throw here too (see the break check in the AGENTS.md note), so this pins
+        // the measurement rather than promising an API.
+        //
+        // Native's message changed under EF-402: TryResolveFieldAccess now peels `.Value` and resolves this
+        // leaf to its own `Score` IProperty (same as every other `.Value` leaf, not only a converted one), so
+        // the read goes through BsonBinding.CreateGetValueExpression + a narrowing Convert to the non-nullable
+        // binding type, rather than falling to the DOM shaper's required-element check. That Convert is exactly
+        // `Nullable<int>.Value`'s own getter, so the message is now .NET's own "Nullable object must have a
+        // value." — the SAME message in-memory LINQ throws for this shape (see the class remarks above) —
+        // rather than the shaper's generic "Document element 'V' is missing but required". Still
+        // InvalidOperationException; still an erroneous-input disposition, not a silently wrong answer.
         foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.NativeOnly})
         {
             using var db = CreateContext(collection, mode);
             var ex = Assert.Throws<InvalidOperationException>(() =>
                 db.Entities.AsNoTracking().OrderBy(x => x.Title)
                     .Select(x => new {x.Title, V = x.Score!.Value}).ToList());
-            Assert.Contains("missing but required", ex.Message);
+            Assert.Contains("Nullable object must have a value", ex.Message);
         }
 
         using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
@@ -341,23 +349,25 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
     // ── 7. Tripwires: the two sub-shapes this slice deliberately leaves on fallback ─
 
     [Fact]
-    public void Convert_wrapped_nullable_target_projection_leaf_still_declines_and_still_returns_correct_values()
+    public void Convert_wrapped_nullable_target_projection_leaf_now_goes_native_too()
     {
-        var collection = SeedRagged(nameof(Convert_wrapped_nullable_target_projection_leaf_still_declines_and_still_returns_correct_values));
+        var collection = SeedRagged(nameof(Convert_wrapped_nullable_target_projection_leaf_now_goes_native_too));
 
-        // `(int?)x.Score.Value` arrives as a Convert around the member access, and NativeProjectionBinder's
-        // plain-field gate admits a MemberExpression (or an EF.Property call), not a UnaryExpression — so the
-        // projection declines as a WHOLE and falls back. Deliberately not widened here: the fallback returns the
-        // correct values, and widening the gate to unwrap a Convert would change which leaf kinds reach the
-        // shaper for every projection, not just this one.
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly))
-        {
-            Assert.Throws<NativeTranslationNotSupportedException>(() =>
-                db.Entities.AsNoTracking().OrderBy(x => x.Title)
-                    .Select(x => new {x.Title, V = (int?)x.Score!.Value}).ToList());
-        }
-
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        // `(int?)x.Score.Value` arrives as a Convert around the member access. Through EF-410 this declined as a
+        // WHOLE: NativeProjectionBinder's plain-field gate admits a MemberExpression (or an EF.Property call),
+        // not a UnaryExpression, and the tier-2 cast/count gate admitted only MongoSizeExpression /
+        // MongoFilteredSizeExpression / MongoConvertExpression — a bare MongoFieldExpression (what
+        // TranslateOperand's Convert branch unwraps this to, since int and int? share the same underlying type,
+        // so it takes the benign-convert unwrap path) was none of those.
+        //
+        // EF-410 widened that gate to also admit a bare MongoFieldExpression when the ORIGINAL leafExpression was
+        // syntactically a Convert. That arm does not distinguish "widening numeric" from "benign nullable-wrap"
+        // Converts — both translate the same way (TranslateOperand's benign/widening unwrap branches both just
+        // recurse into the operand) — so this shape is now admitted too. It is exactly the same field access as
+        // the un-cast `x.Score!.Value` leaf, which was ALREADY native and correct (see
+        // Value_in_a_projection_goes_native above) — Score has default serialization, so there is no read-side
+        // hazard, just an extra no-op cast wrapping an already-native leaf.
+        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContext(collection, mode);
             Assert.Equal(
@@ -399,108 +409,40 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
             .ToList().Select(a => $"{a.Title}={a.H}").ToList());
     }
 
-    // ── 8. EF-400 fix wave: a VALUE-CONVERTED `.Value` projection leaf must not read the RAW stored value ──
+    // ── 8. EF-402: a VALUE-CONVERTED `.Value` projection leaf now goes native and reads through the converter ──
 
     /// <summary>
-    /// The defect this slice's final fix wave closed, and the tripwire for the follow-up that will reopen the
-    /// shape properly (**EF-402**).
+    /// EF-402 — the follow-up to the EF-400 tripwire this test replaces. The READ side
+    /// (<c>MongoProjectionBindingRemovingExpressionVisitor.TryResolveFieldAccess</c>) now peels
+    /// <c>Nullable&lt;T&gt;.Value</c> the same way the EMIT side (<c>MongoExpressionTranslator.TryResolveMember</c>)
+    /// already did, so <c>x.Converted.Value</c> resolves to the SAME <see cref="IProperty"/> as <c>x.Converted</c>
+    /// on both sides, and the projection reads through the property's own converter instead of a default type
+    /// serializer. <c>NativeProjectionBinder.TryTranslateLeaf</c>'s <c>.Value</c> decline disjunct (added by
+    /// EF-400 specifically because the two sides disagreed) is now unnecessary and has been removed.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// <b>Mechanism.</b> The EMIT side peels <c>.Value</c> (this slice's own change to
-    /// <c>MongoExpressionTranslator.TryResolveMember</c>), so <c>x.Converted.Value</c> addresses the same field
-    /// as <c>x.Converted</c>. The READ side does not:
-    /// <c>MongoProjectionBindingRemovingExpressionVisitor.TryResolveFieldAccessSource</c> recognises a
-    /// <c>StructuralTypeShaperExpression</c> but not a <c>MemberExpression</c> wrapping one, so <c>Property</c>
-    /// comes back null and the read falls to <c>BsonBinding.GetElementValue&lt;T&gt;</c>, which builds a DEFAULT
-    /// type serializer and discards the converter. <c>NativeProjectionBinder</c>'s pre-existing converter guard
-    /// keyed on a DOTTED element path, and a top-level <c>.Value</c> leaf has no dot, so it did not fire.
-    /// </para>
-    /// <para>
-    /// <b>Measured before the fix</b> (stored 14, correct CLR 7): <c>new { V = x.Converted.Value }</c> and the
-    /// bare <c>x.Converted.Value</c> both returned <b>14</b> under <c>Native</c> AND <c>NativeOnly</c> —
-    /// silently, under the default mode — while <c>new { V = x.Converted }</c> and a whole-entity read both
-    /// returned the correct 7.
-    /// </para>
-    /// <para>
-    /// <b>The fix is a DECLINE, not a repair</b> — the projection falls back to driver-LINQ, which for this
-    /// mapping throws, exactly as it does under explicit <c>DriverLinq</c> and exactly as the released packages
-    /// do. Teaching the read side to peel <c>.Value</c> so emit and read agree by construction is <b>EF-402</b>;
-    /// when it lands, the guard's <c>.Value</c> disjunct goes away and this test is replaced by one asserting
-    /// the shape goes native and returns 7.
-    /// </para>
-    /// <para>
-    /// Assertions are written as an outcome STRING rather than <c>Assert.Throws</c> so a regression's failure
-    /// message shows the values that came back ("returned 14,4") instead of only naming a missing exception.
-    /// The scope is a value-TRANSFORMING converter: <c>HasBsonRepresentation</c> and re-encoding converters
-    /// survive the raw read because the driver's default scalar deserializers are lenient about encoding, which
-    /// is luck rather than design — so the guard is deliberately keyed on
-    /// <c>HasDefaultKeySerialization</c>, not on a narrower "transforming converter" test.
-    /// </para>
+    /// Measured before this fix (stored 14, correct CLR 7): <c>new { V = x.Converted.Value }</c> and the bare
+    /// <c>x.Converted.Value</c> both returned <b>14</b> under <c>Native</c> and <c>NativeOnly</c> — silently,
+    /// under the default mode. This test pins the corrected outcome: both spellings go native under
+    /// <c>NativeOnly</c> and return the converted value, 7.
     /// </remarks>
     [Fact]
-    public void Value_converted_nullable_Value_projection_leaf_declines_instead_of_reading_the_raw_stored_value()
+    public void Value_converted_nullable_Value_projection_leaf_goes_native_and_reads_through_the_converter()
     {
         var collection = SeedConverted(
-            nameof(Value_converted_nullable_Value_projection_leaf_declines_instead_of_reading_the_raw_stored_value));
+            nameof(Value_converted_nullable_Value_projection_leaf_goes_native_and_reads_through_the_converter));
 
-        // CONTROLS FIRST, and they are load-bearing: they prove the converter is actually live on this fixture,
-        // so the two decline assertions below cannot pass vacuously against a model where nothing is converted.
-        // Stored 14/4 → CLR 7/2 on both the plain-member projection leaf and a whole-entity read.
-        using (var db = CreateConvertedContext(collection, MongoQueryMode.Native))
-        {
-            Assert.Equal("returned 7,2", Outcome(() => db.Entities.AsNoTracking().OrderBy(x => x.Title)
-                .Select(x => new {x.Title, V = x.Converted}).ToList().Select(a => a.V).ToList()));
+        using var db = CreateConvertedContext(collection, MongoQueryMode.NativeOnly);
 
-            Assert.Equal("returned 7,2", Outcome(() => db.Entities.AsNoTracking().OrderBy(x => x.Title)
-                .ToList().Select(x => x.Converted).ToList()));
-        }
+        Assert.Equal(
+            [7, 2],
+            db.Entities.AsNoTracking().OrderBy(x => x.Title)
+                .Select(x => new {x.Title, V = x.Converted!.Value}).ToList().Select(a => a.V).ToList());
 
-        // NativeOnly: the guard DECLINES the projection, so the gate refuses the driver-LINQ fallback and
-        // throws. Pre-fix this returned 14,4.
-        using (var db = CreateConvertedContext(collection, MongoQueryMode.NativeOnly))
-        {
-            Assert.Equal("threw NativeTranslationNotSupportedException",
-                Outcome(() => db.Entities.AsNoTracking().OrderBy(x => x.Title)
-                    .Select(x => new {x.Title, V = x.Converted!.Value}).ToList().Select(a => a.V).ToList()));
-
-            Assert.Equal("threw NativeTranslationNotSupportedException",
-                Outcome(() => db.Entities.AsNoTracking().OrderBy(x => x.Title)
-                    .Select(x => x.Converted!.Value).ToList()));
-        }
-
-        // Native and DriverLinq must now AGREE, which is this slice's declared oracle. Both throw
-        // NullReferenceException: the decline falls back to driver-LINQ, whose own LINQ v3 translation of
-        // `.Value` over a value-converted nullable serializer fails. The exception TYPE is not the point and is
-        // not contract (the rubric excludes the exception type of an unsupported shape) — the point is that
-        // Native no longer answers 14 where DriverLinq refuses to answer at all. Pre-fix, Native returned 14,4
-        // here while DriverLinq threw exactly as it does now.
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
-        {
-            using var db = CreateConvertedContext(collection, mode);
-
-            Assert.Equal("threw NullReferenceException",
-                Outcome(() => db.Entities.AsNoTracking().OrderBy(x => x.Title)
-                    .Select(x => new {x.Title, V = x.Converted!.Value}).ToList().Select(a => a.V).ToList()));
-
-            Assert.Equal("threw NullReferenceException",
-                Outcome(() => db.Entities.AsNoTracking().OrderBy(x => x.Title)
-                    .Select(x => x.Converted!.Value).ToList()));
-        }
-    }
-
-    // Describes an outcome as a string so a regression reports the VALUES it returned rather than only the
-    // absence of an expected throw — the difference between "Assert.Throws failed" and "returned 14,4".
-    private static string Outcome<T>(Func<List<T>> query)
-    {
-        try
-        {
-            return "returned " + string.Join(",", query());
-        }
-        catch (Exception ex)
-        {
-            return "threw " + ex.GetType().Name;
-        }
+        Assert.Equal(
+            [7, 2],
+            db.Entities.AsNoTracking().OrderBy(x => x.Title)
+                .Select(x => x.Converted!.Value).ToList());
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────────

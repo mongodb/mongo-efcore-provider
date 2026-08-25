@@ -358,11 +358,20 @@ internal static class NativeSelectManyBinder
     /// The folded branch is defensive-only: EF's nav-expansion emits the nested shape
     /// (<c>Where(Where(root, fkPred), userPred)</c>), whose user predicates the caller peels off as separate
     /// <c>Where</c> layers before this method ever sees a folded predicate — so no real query reaches the
-    /// folded branch today. It is best-effort, with a known limitation: a user conjunct shaped <c>x != null</c>
-    /// folded with the FK equality can be swallowed by the matcher's null-guard handling (it doesn't verify the
-    /// guarded key matches the FK key), silently dropping that user filter. Harmless while the branch is
-    /// unreachable; fixing it requires distinguishing an outer-key null-guard from an inner-element user
-    /// <c>!= null</c> without regressing a legitimately null-guarded nested FK correlation.
+    /// folded branch today.
+    /// <para>
+    /// EF-355. A conjunctive predicate is NEVER handed to <see cref="NativeCorrelationMatcher"/> whole: the
+    /// matcher accepts <c>(x != null) AndAlso equality</c> as a null-guarded correlation without checking that
+    /// the guarded member is the equality's own key, so a folded USER conjunct shaped <c>innerField != null</c>
+    /// would be absorbed into the match and the bind would succeed with <paramref name="userBody"/>
+    /// <see langword="null"/> — silently returning every child instead of only the non-null ones. Instead every
+    /// top-level conjunct is classified here: exactly one must be the FK equality on its own; a conjunct that
+    /// is a null-guard on that SAME key (the shape EF emits when the outer key's CLR type is nullable) is the
+    /// correlation's own guard and is dropped, exactly as the matcher would have done; every OTHER conjunct is
+    /// a user filter and is returned in <paramref name="userBody"/> for translation (a translation failure
+    /// there declines the whole bind, so a user conjunct is never dropped). The distinguishing signal is key
+    /// identity, not shape — the two are otherwise structurally identical.
+    /// </para>
     /// </remarks>
     private static bool TrySplitCorrelation(
         Expression predicateBody, IEntityType outerEntityType, ParameterExpression outerParam,
@@ -370,17 +379,16 @@ internal static class NativeSelectManyBinder
     {
         userBody = null;
 
-        // Nested / pure FK correlation: the whole innermost predicate IS the FK correlation.
-        if (NativeCorrelationMatcher.TryMatchCorrelatedCollection(
-                predicateBody, outerEntityType, outerParam, targetEntityType, requireEmbedded: false, out navigation))
-            return true;
+        // Non-conjunctive: the whole innermost predicate IS the FK correlation (or nothing recognizable).
+        if (predicateBody.RemoveConvert() is not BinaryExpression { NodeType: ExpressionType.AndAlso })
+            return NativeCorrelationMatcher.TryMatchCorrelatedCollection(
+                predicateBody, outerEntityType, outerParam, targetEntityType, requireEmbedded: false, out navigation);
 
-        // Folded: fkPred && userPred. Flatten top-level AndAlso conjuncts, find the ONE that is the FK
-        // correlation, recombine the rest as the user filter.
+        // Conjunctive: flatten top-level AndAlso conjuncts, find the ONE that is the FK correlation on its own,
+        // then classify the rest (see the remarks above — this is where EF-355's silent drop was).
+        navigation = null!;
         var conjuncts = new List<Expression>();
-        FlattenAndAlso(predicateBody, conjuncts);
-        if (conjuncts.Count < 2)
-            return false;
+        FlattenAndAlso(predicateBody.RemoveConvert()!, conjuncts);
 
         Expression? fkConjunct = null;
         var rest = new List<Expression>();
@@ -394,12 +402,88 @@ internal static class NativeSelectManyBinder
                 rest.Add(conjunct);
         }
 
-        if (fkConjunct == null || rest.Count == 0)
+        if (fkConjunct == null)
             return false;
 
-        userBody = rest.Aggregate(Expression.AndAlso);
+        var userConjuncts = rest.Where(c => !IsCorrelationNullGuard(c, fkConjunct, outerParam)).ToList();
+        if (userConjuncts.Count > 0)
+            userBody = userConjuncts.Aggregate(Expression.AndAlso);
         return true;
     }
+
+    /// <summary>
+    /// Decides whether <paramref name="conjunct"/> is the FK correlation's OWN null-guard — <c>k != null</c>
+    /// where <c>k</c> is the very same outer-key member <paramref name="fkConjunct"/> compares — as opposed to
+    /// a user <c>!= null</c> filter on some other (inner-element) member. Only the former may be dropped; see
+    /// <see cref="TrySplitCorrelation"/>'s remarks (EF-355).
+    /// </summary>
+    private static bool IsCorrelationNullGuard(Expression conjunct, Expression fkConjunct, ParameterExpression outerParam)
+    {
+        if (conjunct.RemoveConvert() is not BinaryExpression { NodeType: ExpressionType.NotEqual } notEqual)
+            return false;
+
+        Expression guarded;
+        if (IsNullConstant(notEqual.Right)) guarded = notEqual.Left;
+        else if (IsNullConstant(notEqual.Left)) guarded = notEqual.Right;
+        else return false;
+
+        // A guard on anything not rooted at the OUTER parameter is by definition an inner-element user filter.
+        if (!ReferencesParameter(guarded, outerParam))
+            return false;
+
+        // ...and even an outer-rooted guard only counts when it guards the key the FK equality itself uses.
+        return TryGetEqualitySides(fkConjunct, out var left, out var right)
+               && (IsSameMemberAccess(guarded, left) || IsSameMemberAccess(guarded, right));
+    }
+
+    private static bool IsNullConstant(Expression node)
+        => node.RemoveConvert() is ConstantExpression { Value: null };
+
+    /// <summary>
+    /// Extracts the two compared sides of the FK-equality conjunct, in the same three spellings
+    /// <see cref="NativeCorrelationMatcher"/> accepts (<c>==</c>, <c>object.Equals(x, y)</c>, <c>x.Equals(y)</c>).
+    /// Deliberately a local copy: the shared matcher's own contract is not widened for this caller.
+    /// </summary>
+    private static bool TryGetEqualitySides(Expression conjunct, out Expression left, out Expression right)
+    {
+        switch (conjunct.RemoveConvert())
+        {
+            case BinaryExpression { NodeType: ExpressionType.Equal } equal:
+                left = equal.Left;
+                right = equal.Right;
+                return true;
+
+            case MethodCallExpression
+            {
+                Method: { Name: nameof(Equals), IsStatic: true, DeclaringType: var declaringType },
+                Arguments: [var arg0, var arg1]
+            } when declaringType == typeof(object):
+                left = arg0;
+                right = arg1;
+                return true;
+
+            case MethodCallExpression { Method.Name: nameof(Equals), Object: { } instance, Arguments: [var arg] }:
+                left = instance;
+                right = arg;
+                return true;
+
+            default:
+                left = right = null!;
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Structural identity of two (possibly <c>EF.Property</c>-spelled, possibly <c>Convert</c>-wrapped) member
+    /// accesses: same member name off the same root expression instance.
+    /// </summary>
+    private static bool IsSameMemberAccess(Expression a, Expression b)
+        => a.RemoveConvert() is { } strippedA
+           && b.RemoveConvert() is { } strippedB
+           && TryGetMemberAccess(strippedA, out var rootA, out var nameA)
+           && TryGetMemberAccess(strippedB, out var rootB, out var nameB)
+           && nameA == nameB
+           && ReferenceEquals(rootA.RemoveConvert(), rootB.RemoveConvert());
 
     private static void FlattenAndAlso(Expression expression, List<Expression> conjuncts)
     {
@@ -491,8 +575,11 @@ internal static class NativeSelectManyBinder
     /// (outer vs. inner) <see cref="TryBind"/> already uses, just fed a re-rooted expression.
     /// </para>
     /// </remarks>
-    internal static bool TryBindTransparentIdentifierProjection(MongoQueryExpression mongoQ, LambdaExpression selector)
+    internal static bool TryBindTransparentIdentifierProjection(
+        MongoQueryExpression mongoQ, LambdaExpression selector, out string? bareLeafAlias)
     {
+        bareLeafAlias = null;
+
         var sources = mongoQ.Select.UnwindSources;
         if (sources.Count == 0 || mongoQ.Select.Projection.Count > 0)
             return false;
@@ -500,8 +587,28 @@ internal static class NativeSelectManyBinder
             return false;
         var ti = selector.Parameters[0];
 
-        if (!TryReadProjection(selector.Body, out var members))
-            return false;
+        var isBareBody = !TryReadProjection(selector.Body, out var members);
+        if (isBareBody)
+        {
+            // Deliberately narrow: ONLY an arithmetic computed body is admitted bare. A bare member access
+            // (`ti.Inner.Name`, `ti.Outer.Name`) is a path-addressable leaf, whose alias would have to be its
+            // own document path for the late-fallback read to stay correct (NativeProjectionBinder's tier 1) —
+            // a different contract from the `_v` tier below, and outside this binder's scope; it keeps
+            // declining (and falling back) exactly as before. `ti.Inner` (the whole element) is handled by the
+            // caller's own WholeElement branch, not here.
+            if (!IsArithmeticComputedLeaf(selector.Body))
+                return false;
+
+            // A BARE (non-`new {}`/`MemberInit`) computed body — what EF's nav-expansion folds the ONE-arg
+            // `SelectMany(o => o.Items).Select(i => i.Price * 2)` shape into (`ti => ti.Inner.Price * 2`).
+            // It carries no member name, so it is projected under the reserved `_v` alias, exactly the tier-2
+            // (ProjectionAliasTier.Synthetic) convention NativeProjectionBinder uses for a bare computed body:
+            // `_v` is what the driver itself names a bare projection, so a LATE fallback (which leaves this
+            // query's captured chain un-stripped — ShouldStripBareProjectionOnFallback keys off a
+            // DocumentPath override, and this path registers none) has the driver's own push-down write the
+            // very element the alias-addressed shaper already reads by.
+            members = [(NativeProjectionBinder.SyntheticBareProjectionAlias, selector.Body)];
+        }
 
         var outerEntityType = mongoQ.CollectionExpression.EntityType;
         // One translator (+ synthetic re-rooting parameter) per scope: index 0 = the query root/owner, index
@@ -534,9 +641,8 @@ internal static class NativeSelectManyBinder
                     ? new MongoFieldExpression(field.Property, sources[scopeIndex - 1].InnerScopePath + "." + field.ElementName)
                     : field;
             }
-            else if (argExpr is BinaryExpression { NodeType: ExpressionType.Add or ExpressionType.Subtract
-                         or ExpressionType.Multiply or ExpressionType.Divide or ExpressionType.Modulo }
-                     && TryTranslateSingleScopeComputedLeaf(argExpr, ti, sources, translators, scopeParams, out var computed))
+            else if (IsArithmeticComputedLeaf(argExpr)
+                     && TryTranslateComputedLeaf(argExpr, ti, sources, translators, scopeParams, out var computed))
             {
                 projected = computed;
             }
@@ -545,14 +651,58 @@ internal static class NativeSelectManyBinder
                 return false;
             }
 
+            // A bare body's `_v` leaf mirrors NativeProjectionBinder's tier-2 arm 1b, whose boundary is a
+            // SUBTREE fact, not a top-node one: a `$size` anywhere under it renders — on the un-stripped
+            // driver fallback — as a bare `$size`, which is a hard server error (not a wrong answer) against a
+            // missing or explicitly-null array. Asked through the binder's own predicate rather than restated
+            // here, so the two can't drift. Only the bare tier is held to it: a wrapped (named-alias) leaf is
+            // read back by its own member name on either route and is unchanged by this slice.
+            if (isBareBody && !NativeProjectionBinder.IsArrayFreeComputedSubtree(projected))
+                return false;
+
             if (!seen.Add(alias)) return false;
             projections.Add(new MongoProjection(alias, projected));
         }
 
         foreach (var p in projections)
             mongoQ.Select.AddProjection(p);
+        if (isBareBody)
+            bareLeafAlias = members[0].Alias;
         return true;
     }
+
+    /// <summary>
+    /// The arithmetic node shapes a computed projection leaf may take — the gate both the wrapped
+    /// (named-alias) member loop and the bare-body arm call, so the two can never admit different shapes.
+    /// </summary>
+    private static bool IsArithmeticComputedLeaf(Expression expression)
+        => expression is BinaryExpression
+        {
+            NodeType: ExpressionType.Add or ExpressionType.Subtract or ExpressionType.Multiply
+            or ExpressionType.Divide or ExpressionType.Modulo
+        };
+
+    /// <summary>
+    /// Translates an arithmetic computed projection leaf, trying the SINGLE-scope form first
+    /// (<see cref="TryTranslateSingleScopeComputedLeaf"/> — every scope-rooted operand resolving to one scope,
+    /// which re-roots the whole subtree at once) and falling back to the CROSS-scope form
+    /// (<see cref="TryTranslateCrossScopeComputedLeaf"/>) only for a leaf the former declines.
+    /// </summary>
+    /// <remarks>
+    /// The ordering is deliberate and not merely an optimization: the single-scope path re-roots and
+    /// translates the leaf as ONE subtree, so a wholly-inner leaf is prefixed once, at the top, exactly as it
+    /// was before this fallback existed — every previously-native leaf keeps its previous translation
+    /// byte-for-byte, and the cross-scope path is reached only by leaves that used to decline.
+    /// </remarks>
+    private static bool TryTranslateComputedLeaf(
+        Expression leaf,
+        ParameterExpression ti,
+        IReadOnlyList<MongoUnwindSource> sources,
+        MongoExpressionTranslator[] translators,
+        ParameterExpression[] scopeParams,
+        [NotNullWhen(true)] out MongoExpression? result)
+        => TryTranslateSingleScopeComputedLeaf(leaf, ti, sources, translators, scopeParams, out result)
+           || TryTranslateCrossScopeComputedLeaf(leaf, ti, sources, translators, scopeParams, out result);
 
     /// <summary>
     /// Translates a SINGLE-SCOPE arithmetic computed projection leaf — every scope-rooted member operand
@@ -560,10 +710,44 @@ internal static class NativeSelectManyBinder
     /// arithmetic subtree onto that scope's synthetic parameter, reuses
     /// <see cref="MongoExpressionTranslator.TryTranslateValue"/>, then prefixes inner-scope field refs with the
     /// unwind path via <see cref="MongoFieldPrefixRewriter"/>. Declines (returns <see langword="false"/>, no
-    /// mutation) for a cross-scope leaf (e.g. <c>o.Discount * i.Price</c> — not yet supported), a leaf with no
-    /// scope-rooted operand, or anything <see cref="MongoExpressionTranslator.TryTranslateValue"/> rejects.
+    /// mutation) for a cross-scope leaf (e.g. <c>o.Discount * i.Price</c> — handled by
+    /// <see cref="TryTranslateCrossScopeComputedLeaf"/>, which callers reach via
+    /// <see cref="TryTranslateComputedLeaf"/>), a leaf with no scope-rooted operand, or anything
+    /// <see cref="MongoExpressionTranslator.TryTranslateValue"/> rejects.
     /// </summary>
     private static bool TryTranslateSingleScopeComputedLeaf(
+        Expression leaf,
+        ParameterExpression ti,
+        IReadOnlyList<MongoUnwindSource> sources,
+        MongoExpressionTranslator[] translators,
+        ParameterExpression[] scopeParams,
+        [NotNullWhen(true)] out MongoExpression? result)
+        => TryTranslateScopedSubtree(
+            leaf, ti, sources, translators, scopeParams, requireScopeRooted: true, out result);
+
+    /// <summary>
+    /// Translates an arithmetic computed projection leaf whose operands span TWO scopes — e.g.
+    /// <c>ti.Outer.Discount * ti.Inner.Price</c>, which <see cref="TryTranslateSingleScopeComputedLeaf"/>
+    /// declines because its re-rooting visitor flags <see cref="ScopeRerootingVisitor.CrossScope"/>.
+    /// </summary>
+    /// <remarks>
+    /// Instead of re-rooting the WHOLE subtree onto one synthetic parameter, each operand is translated
+    /// independently, against whichever single scope IT is rooted on, and prefixed with that scope's own
+    /// unwind path before the two are recombined under the leaf's own arithmetic operator (mapped by
+    /// <see cref="MongoExpressionTranslator.MapArithmeticOperator"/> — the same mapper the single-scope path
+    /// reaches through <see cref="MongoExpressionTranslator.TryTranslateValue"/>, so the two agree on the
+    /// EF-434 integral-division split for free). An operand that is itself cross-scope recurses
+    /// (<see cref="TryTranslateScopedOperand"/>), so <c>(o.Rank * i.Price) + 1</c> binds too.
+    /// <para>
+    /// The recombined node is a field-to-field arithmetic expression, which has NO query-dialect form. That
+    /// costs nothing here: a <c>$project</c> body renders every leaf through
+    /// <see cref="MongoAggregationExpressionRenderer"/> unconditionally
+    /// (<c>MongoPipelineFactory.RenderProject</c>) — there is no dialect choice to make, and no <c>$expr</c>
+    /// wrapper either. Only a <c>$match</c> predicate has the two-dialect split, and this method is reachable
+    /// only from the projection binder.
+    /// </para>
+    /// </remarks>
+    private static bool TryTranslateCrossScopeComputedLeaf(
         Expression leaf,
         ParameterExpression ti,
         IReadOnlyList<MongoUnwindSource> sources,
@@ -573,10 +757,89 @@ internal static class NativeSelectManyBinder
     {
         result = null;
 
-        var visitor = new ScopeRerootingVisitor(ti, sources.Count, scopeParams);
-        var rerooted = visitor.Visit(leaf);
-        if (visitor.CrossScope || visitor.ResolvedScope is not { } scope)
+        if (leaf is not BinaryExpression binary
+            || MongoExpressionTranslator.MapArithmeticOperator(binary) is not { } op)
             return false;
+
+        // Mirrors TranslateOperand's own arithmetic guard, which this method bypasses by recombining the two
+        // operands itself: ExpressionType.Add over strings is compiler-generated concatenation, NOT arithmetic
+        // — the server rejects "$add" on strings outright. Without this, `ti.Outer.Name + ti.Inner.Name` (a
+        // perfectly cross-scope Add) would be recombined into a `$add` of two string fields.
+        if (!MongoExpressionTranslator.IsNumericType(binary.Type))
+            return false;
+
+        // Reachable ONLY for a leaf the single-scope path declined FOR THE SCOPE REASON. This is the whole
+        // admission boundary of this method and it is deliberately expressed as the very signal the
+        // single-scope path declines on (ScopeRerootingVisitor.CrossScope over the same subtree), not as a
+        // restatement of "what looks cross-scope". Both regressions this guard prevents were measured: without
+        // it, a leaf with NO scope-rooted operand at all (`2m * 3m`) binds through the scope-free operand arm,
+        // and a leaf the value translator rejected for a non-scope reason (string concat, before the numeric
+        // guard above) gets a second, weaker chance at translation here.
+        var scopes = new ScopeRerootingVisitor(ti, sources.Count, scopeParams);
+        scopes.Visit(leaf);
+        if (!scopes.CrossScope)
+            return false;
+
+        if (!TryTranslateScopedOperand(binary.Left, ti, sources, translators, scopeParams, out var left)
+            || !TryTranslateScopedOperand(binary.Right, ti, sources, translators, scopeParams, out var right))
+            return false;
+
+        result = new MongoBinaryExpression(op, left, right);
+        return true;
+    }
+
+    /// <summary>
+    /// Translates ONE operand of a cross-scope arithmetic leaf: a wholly single-scope (or wholly
+    /// scope-free — a constant/query parameter) operand via the shared re-root-and-prefix path, otherwise a
+    /// nested cross-scope arithmetic operand by recursion.
+    /// </summary>
+    private static bool TryTranslateScopedOperand(
+        Expression operand,
+        ParameterExpression ti,
+        IReadOnlyList<MongoUnwindSource> sources,
+        MongoExpressionTranslator[] translators,
+        ParameterExpression[] scopeParams,
+        [NotNullWhen(true)] out MongoExpression? result)
+        => TryTranslateScopedSubtree(
+               operand, ti, sources, translators, scopeParams, requireScopeRooted: false, out result)
+           || TryTranslateCrossScopeComputedLeaf(operand, ti, sources, translators, scopeParams, out result);
+
+    /// <summary>
+    /// The shared re-root / translate / prefix core, factored out of the original single-scope computed-leaf
+    /// method so the cross-scope path reuses it per operand rather than duplicating the
+    /// <see cref="ScopeRerootingVisitor"/> construction.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="requireScopeRooted"/> is the ONLY difference between the two callers, and it preserves
+    /// the original method's behaviour exactly: a whole LEAF containing no scope-rooted member at all
+    /// (<c>2m * 3m</c>) still declines, because admitting it would push a constant-only <c>$project</c> leaf
+    /// down for a shape the binder never claimed. An OPERAND of an otherwise cross-scope leaf may legitimately
+    /// be scope-free (the <c>1</c> in <c>(o.Rank * i.Price) + 1</c>), and translating it against
+    /// <c>translators[0]</c> is immaterial — with no scope-rooted member, the translation contains no field
+    /// reference for a translator or a prefix to disagree about.
+    /// </remarks>
+    private static bool TryTranslateScopedSubtree(
+        Expression subtree,
+        ParameterExpression ti,
+        IReadOnlyList<MongoUnwindSource> sources,
+        MongoExpressionTranslator[] translators,
+        ParameterExpression[] scopeParams,
+        bool requireScopeRooted,
+        [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+
+        var visitor = new ScopeRerootingVisitor(ti, sources.Count, scopeParams);
+        var rerooted = visitor.Visit(subtree);
+        if (visitor.CrossScope)
+            return false;
+
+        if (visitor.ResolvedScope is not { } scope)
+        {
+            if (requireScopeRooted)
+                return false;
+            scope = 0;
+        }
 
         if (!translators[scope].TryTranslateValue(rerooted, out var computed))
             return false;

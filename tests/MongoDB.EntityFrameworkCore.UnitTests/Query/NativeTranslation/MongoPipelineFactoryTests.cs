@@ -562,9 +562,12 @@ public class MongoPipelineFactoryTests
         var result = factory.Build(new Dictionary<string, object?>());
 
         Assert.Single(result);
+        // The two sentinels are nested one level under the single reserved wrapper field (EF-428) so that no
+        // ordinary top-level stored property can ever be overwritten by the merge.
         Assert.Equal(
             BsonDocument.Parse(
-                "{ $replaceRoot: { newRoot: { $mergeObjects: [ \"$Items\", { __ownerKey: \"$_id\", __ord: \"$__ord\" } ] } } }"),
+                "{ $replaceRoot: { newRoot: { $mergeObjects: [ \"$Items\", "
+                + "{ __mongoef_shadow: { __ownerKey: \"$_id\", __ord: \"$__ord\" } } ] } } }"),
             result[0]);
     }
 

@@ -258,11 +258,12 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
     // ── 7. Composite-key component: the tripwire ───────────────────────────────────
 
     [Fact]
-    public void Composite_key_component_declines_and_still_returns_correct_rows()
+    public void Composite_key_component_resolves_natively()
     {
-        var collection = SeedComposite(nameof(Composite_key_component_declines_and_still_returns_correct_rows));
+        var collection = SeedComposite(nameof(Composite_key_component_resolves_natively));
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        // Composite-PK components now resolve natively, so the query succeeds in all modes.
+        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly})
         {
             using var db = CreateCompositeContext(collection, mode);
 
@@ -273,13 +274,6 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
 
             Assert.Equal(["one"], labels);
         }
-
-        using var nativeOnly = CreateCompositeContext(collection, MongoQueryMode.NativeOnly);
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => nativeOnly.Entities.AsNoTracking()
-                .Where(c => EF.Property<int>(c, "KeyA") == 1)
-                .Select(c => c.Label)
-                .ToList());
     }
 
     // ── Seeds and helpers ───────────────────────────────────────────────────────────

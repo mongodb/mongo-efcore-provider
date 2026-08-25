@@ -42,6 +42,7 @@ public class MongoExpressionNegatorTests
         public int Rank { get; set; }
         public bool Flag { get; set; }
         public bool? OptionalFlag { get; set; }
+        public List<string> Tags { get; set; } = [];
     }
 
     // A property of the owned COLLECTION ELEMENT type (Post), for building element-relative field refs.
@@ -152,6 +153,58 @@ public class MongoExpressionNegatorTests
         Assert.True(MongoExpressionNegator.TryNegate(inExpr, out var negated));
         Assert.True(Assert.IsType<MongoInExpression>(negated).Negated);
         Assert.Equal(BsonDocument.Parse("{ Rank: { $nin: [1, 2] } }"), RenderOf(negated));
+    }
+
+    // EF-382 review fix: MongoArrayContainsExpression's negator arm (MongoExpressionNegator.cs:174-178) had
+    // zero test coverage — mutation-checked by the reviewer, deleting the arm or forgetting to flip Negated
+    // left every suite green. Reached via All(p => p.ArrayField.Contains(c)), which negates the element
+    // predicate to build the negated $elemMatch (MongoExpressionTranslator's quantifier arm) — NOT via the
+    // Not-flip path at MongoExpressionTranslator.cs:360, which only sees the shape when EF's own
+    // AllAnyToContainsRewritingExpressionVisitor rewrites a top-level All/Any BEFORE translation (the two
+    // tests already covering that path never reach the negator at all).
+    [Fact]
+    public void Array_contains_flips_negated()
+    {
+        var tags = GetPostProperty(nameof(Post.Tags));
+        var containsExpr = new MongoArrayContainsExpression(
+            new MongoFieldExpression(tags, "Tags"),
+            new MongoConstantExpression(new BsonString("keep"), forSerialization: null),
+            negated: false);
+
+        Assert.True(MongoExpressionNegator.TryNegate(containsExpr, out var negated));
+        var flipped = Assert.IsType<MongoArrayContainsExpression>(negated);
+        Assert.True(flipped.Negated);
+        Assert.Equal(BsonDocument.Parse("{ Tags: { $ne: \"keep\" } }"), RenderOf(negated));
+
+        // Double negation round-trips to the exact original (Negated is an idempotent flip).
+        Assert.True(MongoExpressionNegator.TryNegate(flipped, out var doubleNegated));
+        Assert.False(Assert.IsType<MongoArrayContainsExpression>(doubleNegated).Negated);
+        Assert.Equal(BsonDocument.Parse("{ Tags: \"keep\" }"), RenderOf(doubleNegated));
+    }
+
+    // Full end-to-end shape the reviewer traced: Posts.All(p => p.Tags.Contains("keep")) →
+    // { Posts: { $not: { $elemMatch: { Tags: { $ne: "keep" } } } } }. All(pred) negates the element
+    // predicate (this is where the arm above actually fires inside the real translation pipeline, not just
+    // in isolation) and wraps in a negated $elemMatch.
+    [Fact]
+    public void All_over_array_contains_negates_via_the_new_arm_and_renders_the_expected_elem_match()
+    {
+        using var db = SingleEntityDbContext.Create<Blog>(mb => mb.Entity<Blog>().OwnsMany(b => b.Posts));
+        var entityType = db.Model.FindEntityType(typeof(Blog))!;
+        var translator = new MongoExpressionTranslator(entityType);
+
+        System.Linq.Expressions.Expression<System.Func<Blog, bool>> predicate =
+            b => b.Posts.All(p => p.Tags.Contains("keep"));
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+        var elemMatch = Assert.IsType<MongoElemMatchExpression>(result);
+        Assert.True(elemMatch.Negated);
+        var innerContains = Assert.IsType<MongoArrayContainsExpression>(elemMatch.ElementPredicate);
+        Assert.True(innerContains.Negated);
+
+        Assert.Equal(
+            BsonDocument.Parse("{ Posts: { $not: { $elemMatch: { Tags: { $ne: \"keep\" } } } } }"),
+            RenderOf(result!));
     }
 
     [Fact]
@@ -323,6 +376,11 @@ public class MongoExpressionNegatorTests
                 new MongoConstantExpression(1, null)),
             new MongoUnaryExpression(MongoUnaryOperator.Not, Comparison(MongoBinaryOperator.GreaterThan)),
             new MongoFieldExpression(flag, "Flag"),
+            // EF-382: MongoArrayContainsExpression must also stay in the output-domain invariant's coverage.
+            new MongoArrayContainsExpression(
+                new MongoFieldExpression(GetPostProperty(nameof(Post.Tags)), "Tags"),
+                new MongoConstantExpression(new BsonString("keep"), forSerialization: null),
+                negated: false),
         ];
 
         foreach (var input in inputs)
@@ -474,6 +532,11 @@ public class MongoExpressionNegatorTests
             new MongoBinaryExpression(MongoBinaryOperator.AndAlso, Comparison(MongoBinaryOperator.Equal, 1), Comparison(MongoBinaryOperator.GreaterThan, 2)),
             new MongoElemMatchExpression("Comments", Comparison(MongoBinaryOperator.Equal, 1), negated: false),
             new MongoFieldExpression(flag, "Flag"),
+            // EF-382: MongoArrayContainsExpression must also stay in the involution invariant's coverage.
+            new MongoArrayContainsExpression(
+                new MongoFieldExpression(GetPostProperty(nameof(Post.Tags)), "Tags"),
+                new MongoConstantExpression(new BsonString("keep"), forSerialization: null),
+                negated: false),
         ];
 
         foreach (var input in inputs)

@@ -870,6 +870,174 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         }
     }
 
+    [Fact]
+    public void Cross_scope_computed_leaf_in_selectmany_goes_native()
+    {
+        // EF-422 part A. A computed leaf mixing the OUTER/root scope (o.Rank) and the INNER/unwound-element
+        // scope (i.Price) used to decline: TryTranslateSingleScopeComputedLeaf re-roots the WHOLE arithmetic
+        // subtree onto one scope's synthetic parameter, so a two-scope subtree tripped its CrossScope flag.
+        // The cross-scope fallback translates each operand against its own scope instead.
+        //
+        // The seed makes the VALUES discriminating, not just the row count: every owner has a distinct Rank
+        // (3/5/7/11) and every item a distinct Price, so a leaf that mis-scoped either operand (reading
+        // "$Items.Rank" — Item has no Rank at all — or "$Price" at the root) would produce nulls/zeros rather
+        // than the products asserted here. An owned inner+outer projection HAS a driver-LINQ oracle, so all
+        // three modes must agree AND NativeOnly must succeed (the "went native" signal).
+        var seed = SeedOwners();
+        var expected = seed.SelectMany(o => o.Items, (o, i) => new { Total = o.Rank * i.Price })
+            .OrderBy(r => r.Total).ToList();
+        Assert.Equal(5, expected.Count);
+        Assert.All(expected, r => Assert.True(r.Total > 0m));
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateContext(seed, mode, nameof(Cross_scope_computed_leaf_in_selectmany_goes_native) + mode);
+            var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { Total = o.Rank * i.Price })
+                .AsEnumerable().OrderBy(r => r.Total).ToList();
+            Assert.Equal(expected, result);
+        }
+    }
+
+    [Fact]
+    public void Cross_scope_computed_leaf_emits_both_scopes_unprefixed_and_prefixed_in_mql()
+    {
+        // The MQL companion to the test above: the ONE $multiply must reference the outer operand at the
+        // document root ("$Rank") and the inner operand under the unwind path ("$Items.Price"). Asserting both
+        // sides is what makes this discriminating — a binder that resolved both operands against a single
+        // scope would still emit a $multiply of two fields.
+        var seed = SeedOwners();
+        using var db = CreateContextWithLogging(seed, MongoQueryMode.NativeOnly,
+            nameof(Cross_scope_computed_leaf_emits_both_scopes_unprefixed_and_prefixed_in_mql), out var spyLogger);
+
+        _ = db.Entities.SelectMany(o => o.Items, (o, i) => new { Total = o.Rank * i.Price }).ToList();
+
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("$multiply", message);
+        Assert.Contains("\"$Rank\"", message);
+        Assert.Contains("\"$Items.Price\"", message);
+        Assert.DoesNotContain("$Items.Rank", message);
+    }
+
+    [Fact]
+    public void Cross_scope_computed_leaf_with_a_constant_operand_goes_native()
+    {
+        // The cross-scope subtree is now an OPERAND of the top-level node ((o.Rank * i.Price) + 1), so the
+        // per-operand translation has to recurse; the constant `1` exercises the scope-free operand arm.
+        var seed = SeedOwners();
+        var expected = seed.SelectMany(o => o.Items, (o, i) => new { Total = o.Rank * i.Price + 1m })
+            .OrderBy(r => r.Total).ToList();
+
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Cross_scope_computed_leaf_with_a_constant_operand_goes_native));
+        var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { Total = o.Rank * i.Price + 1m })
+            .AsEnumerable().OrderBy(r => r.Total).ToList();
+
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void Cross_scope_string_concatenation_leaf_declines_and_answers_correctly()
+    {
+        // The cross-scope binder recombines the two translated operands itself, so it must reproduce
+        // TranslateOperand's own numeric-type guard: `o.Name + i.Name` is ExpressionType.Add, and both
+        // operands translate perfectly well as string fields, but "$add" over strings is a hard server error.
+        // Without the guard this shape would go native and blow up (or answer wrongly) instead of falling back.
+        // Owner "Match" makes the concatenation values distinguishable.
+        var seed = SeedOwners();
+        var expected = seed.SelectMany(o => o.Items, (o, i) => new { Combined = o.Name + i.Name })
+            .OrderBy(r => r.Combined).ToList();
+
+        using (var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+                   nameof(Cross_scope_string_concatenation_leaf_declines_and_answers_correctly) + "NativeOnly"))
+        {
+            Assert.ThrowsAny<Exception>(() =>
+                nativeOnly.Entities.SelectMany(o => o.Items, (o, i) => new { Combined = o.Name + i.Name }).ToList());
+        }
+
+        using var db = CreateContext(seed, MongoQueryMode.Native,
+            nameof(Cross_scope_string_concatenation_leaf_declines_and_answers_correctly));
+        var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { Combined = o.Name + i.Name })
+            .AsEnumerable().OrderBy(r => r.Combined).ToList();
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void One_arg_selectmany_bare_computed_leaf_goes_native()
+    {
+        // EF-422 part B. The ONE-arg `SelectMany(o => o.Items).Select(i => i.Price * 2)` form folds (in EF's
+        // nav-expansion) into a trailing Select over the transparent identifier whose body is a BARE
+        // arithmetic expression — no `new {}` wrapper, so no member name, so the projection binder used to
+        // decline it outright. It now binds under the reserved `_v` alias. Parity across all three modes plus
+        // NativeOnly succeeding is the "went native, with the same values" signal.
+        var seed = SeedOwners();
+        var expected = seed.SelectMany(o => o.Items).Select(i => i.Price * 2m).OrderBy(x => x).ToList();
+        Assert.Equal(5, expected.Count);
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateContext(seed, mode, nameof(One_arg_selectmany_bare_computed_leaf_goes_native) + mode);
+            var result = db.Entities.SelectMany(o => o.Items).Select(i => i.Price * 2m)
+                .AsEnumerable().OrderBy(x => x).ToList();
+            Assert.Equal(expected, result);
+        }
+    }
+
+    [Fact]
+    public void One_arg_selectmany_bare_cross_scope_computed_leaf_goes_native()
+    {
+        // Parts A and B compose: a bare (unwrapped) body that is ALSO cross-scope. Spelled with the two-arg
+        // result selector, since the one-arg form cannot reach the outer element at all.
+        var seed = SeedOwners();
+        var expected = seed.SelectMany(o => o.Items, (o, i) => o.Rank * i.Price).OrderBy(x => x).ToList();
+
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(One_arg_selectmany_bare_cross_scope_computed_leaf_goes_native));
+        var result = db.Entities.SelectMany(o => o.Items, (o, i) => o.Rank * i.Price)
+            .AsEnumerable().OrderBy(x => x).ToList();
+
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void One_arg_selectmany_bare_computed_leaf_emits_the_synthetic_alias_in_mql()
+    {
+        var seed = SeedOwners();
+        using var db = CreateContextWithLogging(seed, MongoQueryMode.NativeOnly,
+            nameof(One_arg_selectmany_bare_computed_leaf_emits_the_synthetic_alias_in_mql), out var spyLogger);
+
+        _ = db.Entities.SelectMany(o => o.Items).Select(i => i.Price * 2m).ToList();
+
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("{ \"$unwind\" : \"$Items\" }", message);
+        Assert.Contains("\"_v\"", message);
+        Assert.Contains("$multiply", message);
+        Assert.Contains("\"$Items.Price\"", message);
+    }
+
+    [Fact]
+    public void One_arg_selectmany_bare_MEMBER_leaf_still_declines_and_answers_correctly()
+    {
+        // Boundary: only an ARITHMETIC bare body is admitted. A bare member access is a path-addressable leaf
+        // whose alias would have to be its own document path for a late fallback to read it correctly
+        // (NativeProjectionBinder's tier 1) — a different contract from the `_v` tier — so it keeps declining
+        // and falling back, which still answers correctly.
+        var seed = SeedOwners();
+        var expected = seed.SelectMany(o => o.Items).Select(i => i.Name).OrderBy(x => x).ToList();
+
+        using (var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+                   nameof(One_arg_selectmany_bare_MEMBER_leaf_still_declines_and_answers_correctly) + "NativeOnly"))
+        {
+            Assert.ThrowsAny<Exception>(() =>
+                nativeOnly.Entities.SelectMany(o => o.Items).Select(i => i.Name).ToList());
+        }
+
+        using var db = CreateContext(seed, MongoQueryMode.Native,
+            nameof(One_arg_selectmany_bare_MEMBER_leaf_still_declines_and_answers_correctly));
+        var result = db.Entities.SelectMany(o => o.Items).Select(i => i.Name)
+            .AsEnumerable().OrderBy(x => x).ToList();
+        Assert.Equal(expected, result);
+    }
+
     private class NestedSubFilterOwner
     {
         public ObjectId Id { get; set; }
@@ -907,37 +1075,32 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     [Fact]
-    public void Filtered_owned_nested_subproperty_predicate_hard_fails_in_every_mode_not_double_prefixed()
+    public void Filtered_owned_nested_subproperty_predicate_now_goes_native_via_EF424()
     {
-        // CRITICAL regression fix (EF-322 whole-branch review): TryBuildOwnedInnerFilter builds a
+        // FLIPPED BY EF-424 (this test USED TO ASSERT A HARD FAIL, under the name
+        // "..._hard_fails_in_every_mode_not_double_prefixed" — the paragraph that stood here explained why).
+        //
+        // CRITICAL regression fix (EF-322 whole-branch review, pre-EF-424): TryBuildOwnedInnerFilter builds a
         // SINGLE-scope MongoExpressionTranslator on the OWNED inner element type (NestedSubFilterItem — NOT a
         // document root) and then prefixes whatever it translates with the unwind path ("Items") via
         // MongoFieldPrefixRewriter.Rewrite. When the inner filter itself reaches through a FURTHER owned
-        // single-reference sub-property (i.Sub.City), it hits MongoExpressionTranslator.TryResolveOwnedFieldPath,
-        // which resolves the field path via scopeType.GetDocumentPath() — a path ALREADY rooted from the TRUE
-        // document root, so it ALREADY contains the "Items" containing-element name. TryBuildOwnedInnerFilter's
-        // blanket MongoFieldPrefixRewriter.Rewrite(..., "Items") then prefixes "Items" a SECOND time, producing
-        // a double-prefixed, non-existent field path ("Items.Items.Sub.City") — a $match that never matches
-        // anything. BEFORE the fix this shape wrongly went NATIVE (the resolver "succeeded") and silently
-        // returned an EMPTY result set under MongoQueryMode.Native instead of the two matching rows — confirmed
-        // empirically (not assumed) by running this exact test body before the fix landed: the Native-mode
-        // result was `[]` against an expected `[{Price=5},{Price=9.99}]`.
+        // single-reference sub-property (i.Sub.City), it used to hit MongoExpressionTranslator.
+        // TryResolveOwnedFieldPath's GetDocumentPath()-based construction — a path ALREADY rooted from the
+        // TRUE document root, so it ALREADY contained the "Items" containing-element name — which
+        // TryBuildOwnedInnerFilter's blanket MongoFieldPrefixRewriter.Rewrite(..., "Items") then prefixed a
+        // SECOND time, producing a double-prefixed, non-existent field path ("Items.Items.Sub.City") that
+        // silently matched nothing under Native. The interim fix (a blanket "decline whenever _entityType is
+        // not IsDocumentRoot()" guard) closed the silent-wrong-data hole by hard-failing this shape in every
+        // mode instead — safe, but it also gave up a genuinely representable shape.
         //
-        // AFTER the fix (the one-line guard in TryResolveOwnedFieldPath: decline whenever _entityType is not
-        // IsDocumentRoot()), TryResolveOwnedFieldPath declines this shape — which propagates to
-        // TryBuildOwnedInnerFilter returning false, which (per NativeSelectManyBinder's own contract — see the
-        // "Filtered_owned_computed_operator_hard_fails_in_every_mode" sibling test and the class-level doc
-        // comment) makes the WHOLE SelectMany binder return false, so TranslateSelectMany returns null and EF
-        // Core's OWN translation-failure path is reached directly, at COMPILE time, before MongoQueryMode is
-        // even consulted. That means this shape hard-fails with the SAME exception (an EF Core
-        // InvalidOperationException) in EVERY mode — Native, DriverLinq, and NativeOnly alike — confirmed
-        // empirically by running this exact test body after the fix. This is NOT the "graceful fallback,
-        // NativeOnly-only-throws" pattern most other declines in this file follow (that pattern only applies
-        // when the FAILURE is in the trailing PROJECTION, whose own binder calls MarkNotNativelyRepresentable()
-        // — a genuinely graceful decline); a decline inside the FILTER itself, which is what this shape and
-        // "Filtered_owned_computed_operator_hard_fails_in_every_mode" both are, has no such graceful path. What
-        // matters for correctness — and what this test exists to prove — is that after the fix this shape NEVER
-        // silently returns wrong data in any mode: it throws every time instead.
+        // EF-424 replaced that guard with a SCOPE-RELATIVE construction (joining each hop's own containing
+        // element name, mirroring the sibling TryResolveOwnedCollectionPath), so TryResolveOwnedFieldPath now
+        // resolves i.Sub.City to "Sub.City" — relative to the element scope, with NO document-root prefix
+        // baked in — which composes with TryBuildOwnedInnerFilter's own single "Items" prefix EXACTLY ONCE,
+        // emitting "Items.Sub.City". Confirmed empirically (not assumed) by running this exact test body: it
+        // now returns the correct two rows, identically, in every mode — the double-prefixing risk this test
+        // was written to catch never resurfaces, because the fix makes the path relative to the SAME scope the
+        // caller's own prefix already accounts for, rather than merely skipping the guard.
         var seed = new[]
         {
             new NestedSubFilterOwner
@@ -956,23 +1119,20 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             },
         };
 
-        // Sanity: the fixture must actually have matching rows for the pre-fix silent-empty-result bug to be
-        // observable at all (a query with no matching rows would "succeed" vacuously either way).
-        Assert.NotEmpty(seed.SelectMany(o => o.Items.Where(i => i.Sub.City == "NYC"), (o, i) => new { i.Price }));
+        var expected = seed.SelectMany(o => o.Items.Where(i => i.Sub.City == "NYC"), (o, i) => new { i.Price })
+            .Select(r => r.Price).OrderBy(p => p).ToList();
+        Assert.Equal([5m, 9.99m], expected); // sanity: the fixture has the discriminating rows this test needs.
 
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
         {
             using var db = CreateNestedSubFilterContext(seed, mode,
-                nameof(Filtered_owned_nested_subproperty_predicate_hard_fails_in_every_mode_not_double_prefixed) + mode);
+                nameof(Filtered_owned_nested_subproperty_predicate_now_goes_native_via_EF424) + mode);
 
-            var ex = Assert.ThrowsAny<Exception>(() =>
-                db.Entities
-                    .SelectMany(o => o.Items.Where(i => i.Sub.City == "NYC"), (o, i) => new { i.Price })
-                    .ToList());
+            var result = db.Entities
+                .SelectMany(o => o.Items.Where(i => i.Sub.City == "NYC"), (o, i) => new { i.Price })
+                .AsEnumerable().Select(r => r.Price).OrderBy(p => p).ToList();
 
-            // The failure must be a translation-time decline, never a runtime crash reachable only after
-            // partially executing a wrong (double-prefixed) query.
-            Assert.IsNotType<KeyNotFoundException>(ex);
+            Assert.Equal(expected, result);
         }
     }
 
@@ -999,6 +1159,12 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
 
         // See RefOwner.Threshold.
         public int Score { get; set; }
+
+        // Nullable, and deliberately null on most seeded rows, so `r.Note != null` is a DISCRIMINATING inner
+        // filter (EF-355: a `!= null` user filter must never be absorbed into the FK correlation's null-guard
+        // handling and silently dropped — a dropped filter returns every child instead of only these).
+        public string? Note { get; set; }
+
         public ObjectId? OwnerId { get; set; }
         public RefOwner? Owner { get; set; }
     }
@@ -1087,9 +1253,9 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
 
         var items = new[]
         {
-            new RefItem { Id = ObjectId.GenerateNewId(), Tag = "Widget", Name = "WidgetName", OwnerId = alice.Id, Score = 5 },
+            new RefItem { Id = ObjectId.GenerateNewId(), Tag = "Widget", Name = "WidgetName", OwnerId = alice.Id, Score = 5, Note = "alice-note" },
             new RefItem { Id = ObjectId.GenerateNewId(), Tag = "Gadget", Name = "GadgetName", OwnerId = alice.Id, Score = 20 },
-            new RefItem { Id = ObjectId.GenerateNewId(), Tag = "Thing", Name = "ThingName", OwnerId = carol.Id, Score = 8 },
+            new RefItem { Id = ObjectId.GenerateNewId(), Tag = "Thing", Name = "ThingName", OwnerId = carol.Id, Score = 8, Note = "carol-note" },
             new RefItem { Id = ObjectId.GenerateNewId(), Tag = "Dave", Name = "DaveItem1", OwnerId = dave.Id, Score = 50 },
             new RefItem { Id = ObjectId.GenerateNewId(), Tag = "DaveItem2Tag", Name = "Dave", OwnerId = dave.Id, Score = 150 },
         };
@@ -1999,6 +2165,33 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     [Fact]
+    public void Reference_form_filtered_inner_not_null_predicate_goes_native_and_excludes_null_rows()
+    {
+        // EF-355. A `!= null` inner filter is the one user-predicate shape that is structurally identical to
+        // the FK correlation's own null-guard, and so the one most at risk of being silently absorbed into the
+        // correlation match (leaving Filter == null → EVERY child row returned). Only 2 of the 5 seeded
+        // children have a non-null Note, so a dropped filter shows up as extra rows, not just as different MQL.
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_filtered_inner_not_null_predicate_goes_native_and_excludes_null_rows),
+            out var owners, out var items);
+
+        var result = db.Owners
+            .SelectMany(o => o.Refs.Where(r => r.Note != null), (o, r) => new { o.Name, r.Tag })
+            .AsEnumerable()
+            .OrderBy(x => x.Name).ThenBy(x => x.Tag)
+            .ToList();
+
+        var expected = owners
+            .SelectMany(o => items.Where(r => r.OwnerId == o.Id && r.Note != null), (o, r) => new { o.Name, r.Tag })
+            .OrderBy(x => x.Name).ThenBy(x => x.Tag)
+            .ToList();
+
+        // Succeeding under NativeOnly is itself the "went native" signal.
+        Assert.Equal(expected, result);
+        Assert.Equal(2, result.Count); // the three null-Note children are excluded
+    }
+
+    [Fact]
     public void Reference_form_filtered_inner_stacked_where_ands_together_goes_native()
     {
         using var db = CreateRefContext(MongoQueryMode.NativeOnly,
@@ -2429,31 +2622,59 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         }
     }
 
+    // EF-422 RE-BASELINE. Was Cross_scope_computed_leaf_declines_and_hard_fails_in_every_mode, which pinned
+    // the single-scope-only boundary: o.Threshold * r.Score spans OUTER + INNER, the single-scope binder
+    // declined, and the reference form's lack of a driver oracle turned that decline into a hard fail in every
+    // mode. EF-422 adds the cross-scope binder, and it is scope-kind-agnostic — it prefixes an inner operand
+    // with the unwind source's own InnerScopePath, which for a REFERENCE source is the $lookup alias
+    // ("_lookup_Refs") exactly as it is the embedded array path ("Items") for an owned one. So this shape now
+    // goes native here too, and the corresponding hard-fail assertion is gone rather than weakened.
     [Fact]
-    public void Cross_scope_computed_leaf_declines_and_hard_fails_in_every_mode()
+    public void Cross_scope_computed_leaf_goes_native_for_the_reference_form_too_EF422()
     {
-        // o.Threshold * r.Score spans OUTER + INNER → single-scope check declines → whole projection declines.
-        // Reference form has no driver oracle → hard-fail in every mode (the retained single-scope boundary).
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        // Threshold x Score: Alice(10) x {5, 20}, Carol(8) x {8}, Dave(100) x {50, 150} — five distinct,
+        // non-zero products, so a mis-scoped operand (reading "$Score" at the document root, or
+        // "$_lookup_Refs.Threshold", neither of which exists) would surface as zeros/nulls, not as the values
+        // asserted. DriverLinq is excluded, as elsewhere in this file: reference-collection SelectMany has no
+        // driver-LINQ oracle at all.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
         {
             using var db = CreateRefContext(mode,
-                nameof(Cross_scope_computed_leaf_declines_and_hard_fails_in_every_mode) + mode, out _, out _);
-            Assert.ThrowsAny<Exception>(() =>
-                db.Owners.SelectMany(o => o.Refs, (o, r) => new { Combined = o.Threshold * r.Score }).ToList());
+                nameof(Cross_scope_computed_leaf_goes_native_for_the_reference_form_too_EF422) + mode,
+                out var owners, out var items);
+
+            var result = db.Owners.SelectMany(o => o.Refs, (o, r) => new { Combined = o.Threshold * r.Score })
+                .AsEnumerable().Select(x => x.Combined).OrderBy(x => x).ToList();
+
+            var expected = owners
+                .SelectMany(o => items.Where(r => r.OwnerId == o.Id), (o, r) => o.Threshold * r.Score)
+                .OrderBy(x => x).ToList();
+
+            Assert.Equal([50, 64, 200, 5000, 15000], expected); // sanity: the fixture products are discriminating.
+            Assert.Equal(expected, result);
         }
     }
 
+    // EF-434 RE-BASELINE. Was Integer_division_computed_leaf_declines_and_hard_fails_in_every_mode, which
+    // pinned TryTranslateValue's blanket integer-division decline (then "Guard A"). That guard is gone: an
+    // integral division now translates to MongoBinaryOperator.IntegerDivide and renders as $trunc-of-$divide,
+    // so this leaf goes native like any other arithmetic one.
+    //
+    // Scores are 5, 20, 8, 50, 150 → C# halves 2, 10, 4, 25, 75. Widget's 5/2 is the discriminator: raw
+    // $divide would give 2.5 (and fail to deserialize into the int member at all). DriverLinq is excluded,
+    // as elsewhere in this file, because reference-collection SelectMany has no driver-LINQ oracle.
     [Fact]
-    public void Integer_division_computed_leaf_declines_and_hard_fails_in_every_mode()
+    public void Integer_division_computed_leaf_goes_native_and_truncates_EF434()
     {
-        // r.Score / 2 is an integer-result division → Guard A in TryTranslateValue declines → projection declines.
-        // Reference form has no oracle → hard-fail in every mode.
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
         {
             using var db = CreateRefContext(mode,
-                nameof(Integer_division_computed_leaf_declines_and_hard_fails_in_every_mode) + mode, out _, out _);
-            Assert.ThrowsAny<Exception>(() =>
-                db.Owners.SelectMany(o => o.Refs, (o, r) => new { Half = r.Score / 2 }).ToList());
+                nameof(Integer_division_computed_leaf_goes_native_and_truncates_EF434) + mode, out _, out _);
+
+            var halves = db.Owners.SelectMany(o => o.Refs, (o, r) => new { Half = r.Score / 2 })
+                .AsEnumerable().Select(x => x.Half).OrderBy(x => x).ToList();
+
+            Assert.Equal([2, 4, 10, 25, 75], halves);
         }
     }
 
@@ -3110,17 +3331,14 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // shaper for a bare OUTER entity (re-rooting via $replaceRoot only ever points at the INNER/owned
         // element), so this shape remains genuinely unsupported, not just untested.
         //
-        // NOTE (EF-347 Task 3 finding, out of scope, not exercised here): the EXPLICIT method-call spelling
-        // `SelectMany(o => o.Items, (o, i) => o)` does NOT reach this guard at all — empirically, EF's
-        // nav-expansion optimizes away the intermediate TransparentIdentifier wrap/unwrap when the result
-        // selector is a trivial pass-through of the OUTER parameter alone (unlike `(o, i) => i`, which still
-        // needs the flatten machinery since TResult differs from TOuter), so BuildBareNavWrappedShaper's
-        // resultSelector.Body is literally `o` and the shaper ends up as the OUTER (Owner) entity's own shaper
-        // with UnwindSource still set — a pre-existing gap in TranslateSelectMany/BuildBareNavWrappedShaper
-        // (unaffected by this Task's TranslateSelect-only changes) that currently surfaces as a confusing
-        // runtime InvalidOperationException rather than a clean decline. TRACKED AS EF-422 (EF-347 SelectMany
-        // leftovers) — the "future ticket" this comment used to leave unnamed. NOT fixed here, since it is
-        // orthogonal to the whole-INNER owned-element recognition this Task adds.
+        // NOTE (EF-347 Task 3 claim, RETRACTED by EF-354): this comment used to say the EXPLICIT
+        // method-call spelling `SelectMany(o => o.Items, (o, i) => o)` did NOT reach this guard at all —
+        // supposedly because EF's nav-expansion optimizes away the intermediate TransparentIdentifier
+        // wrap/unwrap for a trivial pass-through of the OUTER parameter — and therefore crashed with a
+        // confusing runtime InvalidOperationException. EF-354 MEASURED that on EF8, EF9 and EF10 (both
+        // tracking modes, all three query modes) and it is not so: the wrap is emitted for that spelling
+        // too, it reaches this same guard, and it declines cleanly. That spelling is now pinned by
+        // Whole_outer_entity_explicit_method_call_form_declines_cleanly_in_every_mode below.
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
         {
             var seed = SeedOwners();
@@ -3129,6 +3347,42 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 nameof(Whole_outer_entity_form_still_declines_cleanly_in_every_mode) + mode + "QuerySyntax");
             Assert.Throws<NotSupportedException>(() =>
                 (from o in querySyntaxDb.Entities.AsNoTracking() from i in o.Items select o).ToList());
+        }
+    }
+
+    [Fact]
+    public void Whole_outer_entity_explicit_method_call_form_declines_cleanly_in_every_mode()
+    {
+        // EF-354 regression pin. The EF-347 Task-3 note on the sibling test above claimed the EXPLICIT
+        // method-call spelling `SelectMany(o => o.Items, (o, i) => o)` bypassed the whole-outer guard
+        // entirely — the theory being that EF's nav-expansion optimizes away the intermediate
+        // TransparentIdentifier wrap/unwrap for a trivial pass-through of the OUTER parameter, leaving
+        // BuildBareNavWrappedShaper's resultSelector.Body as the bare parameter `o` and the shaper as the
+        // OUTER (owner) entity's own shaper with UnwindSource still set, which then crashed at
+        // materialization with a confusing InvalidOperationException ("Document element is missing for
+        // required non-nullable property 'Id'").
+        //
+        // MEASURED (EF-354, all three of EF8/EF9/EF10, tracking and no-tracking, all three query modes):
+        // that does NOT happen. EF's nav-expansion DOES emit the TransparentIdentifier wrap plus the
+        // trailing `ti => ti.Outer` Select for this spelling too, so it reaches exactly the same
+        // TryGetWholeEntityMemberAccess whole-outer guard in TranslateSelect as the query-syntax spelling
+        // and already declines with the same clean NotSupportedException. (The REFERENCE-navigation
+        // counterpart of this spelling was likewise already covered and green — see
+        // Reference_form_whole_outer_result_still_declines_cleanly_in_every_mode.) No provider change was
+        // needed; this test exists so the clean decline stays pinned for this spelling too.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
+        {
+            var seed = SeedOwners();
+
+            using var db = CreateContext(seed, mode,
+                nameof(Whole_outer_entity_explicit_method_call_form_declines_cleanly_in_every_mode) + mode);
+
+            var ex = Assert.Throws<NotSupportedException>(() =>
+                db.Entities.AsNoTracking().SelectMany(o => o.Items, (o, i) => o).ToList());
+            Assert.Contains("Projecting a whole entity other than an owned or reference collection element", ex.Message);
+
+            // Tracking too — the guard fires at translation time, before tracking behavior is consulted.
+            Assert.Throws<NotSupportedException>(() => db.Entities.SelectMany(o => o.Items, (o, i) => o).ToList());
         }
     }
 
@@ -3142,39 +3396,57 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         public string Name { get; set; } = "";
 
-        // A real stored element literally named "__ord" — MongoReplaceRootStage.OrdinalField. The $mergeObjects
-        // in the $replaceRoot stage adds the sentinel AFTER the unwound element ("$Items" first, then the
-        // sentinel doc), so a real element of the same name would be SILENTLY OVERWRITTEN by the sentinel if
-        // the two ever collided in the wrong order. Mirrors NativeSetOpsTests'
-        // Intersect_with_real_element_named_underscore_a_is_not_corrupted_by_the_source_tag precedent.
+        // A real stored element literally named "__ord" — MongoReplaceRootStage.OrdinalField, which used to be
+        // merged in as a TOP-LEVEL key by the $replaceRoot's $mergeObjects and would therefore SILENTLY
+        // OVERWRITE this property's real stored value. The sentinels now live nested under the single reserved
+        // MongoReplaceRootStage.ShadowField wrapper (EF-428), so a top-level "__ord" element can no longer
+        // collide with anything the merge adds and this shape goes native with its real data intact.
         [MongoDB.Bson.Serialization.Attributes.BsonElement("__ord")]
         public int RealOrd { get; set; }
     }
 
-    [Fact]
-    public void Bare_owned_whole_inner_element_with_sentinel_collision_declines_cleanly()
+    private class ShadowFieldSentinelOwner
     {
-        // EF-347 Task 3 finding (spike residual risk #1): a real stored element literally named "__ord"
-        // (MongoReplaceRootStage.OrdinalField) WOULD be silently overwritten by the synthesized array-ordinal
-        // sentinel — confirmed empirically during this Task (the $mergeObjects in $replaceRoot merges the
-        // sentinel object AFTER the unwound element, so same-named real data loses) — UNLIKE the Intersect/
-        // Except source-tagging precedent (NativeSetOpsTests.Intersect_with_real_element_named_underscore_a_is_
-        // not_corrupted_by_the_source_tag), whose _a/_b tags live as siblings of a wrapping _doc field and never
-        // collide with real element names. Rather than ship that silent corruption,
-        // IsWholeElementRepresentable declines this shape at TRANSLATION time — falling through to the SAME
-        // clean NotSupportedException the whole-OUTER form gets — so a real "__ord"/"__ownerKey" element is a
-        // clean, understood decline (in every mode, regardless of tracking), never silently wrong data.
+        public ObjectId Id { get; set; }
+        public List<ShadowFieldSentinelItem> Items { get; set; } = [];
+    }
+
+    private class ShadowFieldSentinelItem
+    {
+        public string Name { get; set; } = "";
+
+        // The ONE name that can still collide after EF-428: the sentinel wrapper field itself. $mergeObjects
+        // adds it after the unwound element, so a real element of this name would still be silently
+        // overwritten — hence the remaining (now single-name) guard in IsWholeElementRepresentable.
+        [MongoDB.Bson.Serialization.Attributes.BsonElement(MongoReplaceRootStage.ShadowField)]
+        public int RealShadow { get; set; }
+    }
+
+    [Fact]
+    public void Bare_owned_whole_inner_element_with_sentinel_collision_now_goes_native()
+    {
+        // EF-428 item 1. A real stored property whose configured element name collides with a synthesized
+        // sentinel ("__ord"/"__ownerKey") previously declined cleanly, because $mergeObjects merged those two
+        // names directly into the re-rooted element's own top-level namespace and would silently overwrite a
+        // same-named real field. The sentinels now live under ONE reserved wrapper field
+        // (MongoReplaceRootStage.ShadowField), so an ordinary top-level property can never collide with them
+        // and this shape goes native — with the colliding property's REAL stored value preserved, which is the
+        // regression this test guards.
         var seed = new[]
         {
             new SentinelOwner
             {
                 Id = ObjectId.GenerateNewId(),
-                Items = [new SentinelItem { Name = "Widget", RealOrd = 42 }],
+                Items =
+                [
+                    new SentinelItem { Name = "Widget", RealOrd = 42 },
+                    new SentinelItem { Name = "Sprocket", RealOrd = 43 }
+                ],
             },
         };
 
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(
-            nameof(Bare_owned_whole_inner_element_with_sentinel_collision_declines_cleanly)) + Guid.NewGuid().ToString("N")[..8];
+            nameof(Bare_owned_whole_inner_element_with_sentinel_collision_now_goes_native)) + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<SentinelOwner>(collectionName);
         collection.InsertMany(seed);
 
@@ -3187,9 +3459,51 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
             });
 
+        // Ordered client-side: an operator composed AFTER a native SelectMany hard-fails in every mode.
+        var elements = db.Entities.AsNoTracking().SelectMany(o => o.Items).ToList()
+            .OrderBy(i => i.Name).ToList();
+
+        Assert.Equal(2, elements.Count);
+        Assert.Equal(["Sprocket", "Widget"], elements.Select(e => e.Name));
+        // The real stored "__ord" values, NOT the synthesized 0/1 array ordinals that used to overwrite them.
+        Assert.Equal([43, 42], elements.Select(e => e.RealOrd));
+    }
+
+    [Fact]
+    public void Bare_owned_whole_inner_element_colliding_with_the_shadow_wrapper_still_declines_cleanly()
+    {
+        // The narrowed EF-428 guard still has exactly one name to protect: MongoReplaceRootStage.ShadowField
+        // itself, the wrapper the $mergeObjects adds. A real element of that name would still be silently
+        // overwritten, so IsWholeElementRepresentable declines this shape at TRANSLATION time — the same clean
+        // NotSupportedException every other unrepresentable whole-element shape gets.
+        var seed = new[]
+        {
+            new ShadowFieldSentinelOwner
+            {
+                Id = ObjectId.GenerateNewId(),
+                Items = [new ShadowFieldSentinelItem { Name = "Widget", RealShadow = 42 }],
+            },
+        };
+
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(
+            nameof(Bare_owned_whole_inner_element_colliding_with_the_shadow_wrapper_still_declines_cleanly))
+            + Guid.NewGuid().ToString("N")[..8];
+        var collection = database.MongoDatabase.GetCollection<ShadowFieldSentinelOwner>(collectionName);
+        collection.InsertMany(seed);
+
+        using var db = SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: mb => mb.Entity<ShadowFieldSentinelOwner>().OwnsMany(o => o.Items),
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+            });
+
         var ex = Assert.Throws<NotSupportedException>(() =>
             db.Entities.AsNoTracking().SelectMany(o => o.Items).ToList());
         Assert.IsNotType<KeyNotFoundException>(ex);
+        Assert.Contains("Projecting a whole entity other than an owned or reference collection element", ex.Message);
     }
 
     private class NestedMemberOwner
@@ -3207,35 +3521,41 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     private class ItemDetail
     {
         public string Note { get; set; } = "";
+        public int Weight { get; set; }
     }
 
     [Fact]
-    public void Bare_owned_whole_inner_element_with_nested_owned_reference_member_declines_cleanly()
+    public void Bare_owned_whole_inner_element_with_nested_owned_reference_member_now_goes_native()
     {
-        // EF-347 Task 3 finding: a nested owned REFERENCE under the re-rooted element does NOT materialize
-        // correctly via this mechanism — confirmed empirically during this Task, not assumed. Before the
-        // IsWholeElementRepresentable guard was added, this shape reached a confusing runtime
-        // InvalidOperationException ("Unable to bind 'navigation' 'Detail' to an entity projection of
-        // 'NestedMemberOwner'") from EF's own auto-Include machinery: BuildBareNavWrappedShaper's element
-        // shaper still binds through the query's ROOT ProjectionMember(), which resolves to the OUTER (owner)
-        // entity's own EntityProjectionExpression, not the re-rooted element's — so EF's auto-generated
-        // IncludeExpression for the nested Detail navigation tries (and fails) to bind against the WRONG
-        // entity projection. IsWholeElementRepresentable now declines this shape at TRANSLATION time instead,
-        // falling through to the SAME clean NotSupportedException the whole-OUTER form gets, in every mode,
-        // regardless of tracking. (A properly re-rooted nested-navigation projection mapping is future work —
-        // out of scope for this Task, which is recognition + materialization wiring for the scalar-only shape
-        // the spike verified.)
+        // EF-353 / EF-428 item 2. The re-rooted owned element itself owns a nested single-reference Detail.
+        // This previously declined via IsWholeElementRepresentable's blanket GetNavigations().Any() guard,
+        // because BuildBareNavWrappedShaper's element shaper bound through the query's ROOT ProjectionMember,
+        // which resolves to the OUTER (owner) entity's own EntityProjectionExpression — so EF's auto-generated
+        // IncludeExpression for Detail tried (and failed) to bind against the WRONG entity projection
+        // ("Unable to bind 'navigation' 'Detail' to an entity projection of 'NestedMemberOwner'").
+        // The fix is NOT in BuildBareNavWrappedShaper (which is unchanged): that method runs from
+        // TranslateSelectMany, before it is known whether the trailing selector projects the whole element at
+        // all. It is MongoQueryExpression.ReRootProjectionAt, called from TranslateSelect at the point
+        // UnwindSource.WholeElement is set — it re-points that ROOT ProjectionMember at a fresh
+        // EntityProjectionExpression/RootReferenceExpression pair for the ELEMENT's own entity type (the same
+        // construction MongoQueryExpression's constructor uses for the query root). The shaper then binds the
+        // nested member relative to the re-rooted document — where, after $replaceRoot, "Detail" is a direct
+        // top-level field.
         var seed = new[]
         {
             new NestedMemberOwner
             {
                 Id = ObjectId.GenerateNewId(),
-                Items = [new NestedMemberItem { Name = "Widget", Detail = new ItemDetail { Note = "Fragile" } }],
+                Items =
+                [
+                    new NestedMemberItem { Name = "Widget", Detail = new ItemDetail { Note = "Fragile", Weight = 7 } },
+                    new NestedMemberItem { Name = "Sprocket", Detail = new ItemDetail { Note = "Heavy", Weight = 11 } }
+                ],
             },
         };
 
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(
-            nameof(Bare_owned_whole_inner_element_with_nested_owned_reference_member_declines_cleanly)) + Guid.NewGuid().ToString("N")[..8];
+            nameof(Bare_owned_whole_inner_element_with_nested_owned_reference_member_now_goes_native)) + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<NestedMemberOwner>(collectionName);
         collection.InsertMany(seed);
 
@@ -3249,9 +3569,17 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
             });
 
-        var ex = Assert.Throws<NotSupportedException>(() =>
-            db.Entities.AsNoTracking().SelectMany(o => o.Items).ToList());
-        Assert.IsNotType<InvalidOperationException>(ex);
+        // Ordered client-side: an operator composed AFTER a native SelectMany hard-fails in every mode.
+        var items = db.Entities.AsNoTracking().SelectMany(o => o.Items).ToList()
+            .OrderBy(i => i.Name).ToList();
+
+        Assert.Equal(2, items.Count);
+        Assert.Equal(["Sprocket", "Widget"], items.Select(i => i.Name));
+        Assert.All(items, i => Assert.NotNull(i.Detail));
+        // The nested owned member's own scalar leaves must carry the REAL seeded values, read from a direct
+        // dotted path relative to the re-rooted element document ("Detail.Note"/"Detail.Weight").
+        Assert.Equal(["Heavy", "Fragile"], items.Select(i => i.Detail.Note));
+        Assert.Equal([11, 7], items.Select(i => i.Detail.Weight));
     }
 
     private class ComplexSentinelOwner
@@ -3280,21 +3608,22 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Bare_owned_whole_inner_element_with_complex_property_sentinel_collision_declines_cleanly()
     {
-        // EF-347 final-review Minor 1 (fix wave 2): the original sentinel-collision guard
-        // (Bare_owned_whole_inner_element_with_sentinel_collision_declines_cleanly above) only scanned
-        // innerEntityType.GetProperties() — it never saw a COMPLEX property's own top-level document slot,
-        // since IReadOnlyComplexProperty is a distinct metadata type from IReadOnlyProperty. A complex property
-        // still occupies exactly one top-level field in the unwound element document (the properties nested
-        // INSIDE its ComplexType are sub-fields, e.g. "Sub.Note", and can never collide with a top-level
-        // sentinel) — so a complex property named/renamed "__ord"/"__ownerKey" would slip past the original
-        // guard and be SILENTLY OVERWRITTEN by the $mergeObjects sentinel merge exactly like the scalar-property
-        // case. There is no dedicated Mongo builder API to rename a complex property's own document slot
-        // (unlike PropertyBuilder.HasElementName for scalar properties), so this test sets the Mongo:ElementName
-        // annotation directly on the auto-discovered complex property's metadata (the same annotation
-        // GetComplexPropertyElementName reads) to construct the exact colliding shape. IsWholeElementRepresentable
-        // now declines this shape at TRANSLATION time, falling through to the SAME clean NotSupportedException
-        // every other unrepresentable whole-element shape gets — confirmed to require no live server connection
-        // (a purely translation-time decline) during this Task's spike verification.
+        // EF-347 final-review Minor 1 (fix wave 2): the sentinel-collision guard must also scan COMPLEX
+        // properties — innerEntityType.GetProperties() never sees a complex property's own top-level document
+        // slot, since IReadOnlyComplexProperty is a distinct metadata type from IReadOnlyProperty. A complex
+        // property still occupies exactly one top-level field in the unwound element document (the properties
+        // nested INSIDE its ComplexType are sub-fields, e.g. "Sub.Note", and can never collide with a top-level
+        // sentinel) — so a complex property named/renamed to the reserved wrapper field would slip past a
+        // properties-only guard and be SILENTLY OVERWRITTEN by the $mergeObjects merge exactly like the
+        // scalar-property case. There is no dedicated Mongo builder API to rename a complex property's own
+        // document slot (unlike PropertyBuilder.HasElementName for scalar properties), so this test sets the
+        // Mongo:ElementName annotation directly on the auto-discovered complex property's metadata (the same
+        // annotation GetComplexPropertyElementName reads) to construct the exact colliding shape.
+        // Since EF-428 the only name that can still collide is MongoReplaceRootStage.ShadowField (the sentinels
+        // themselves are now nested one level under it), so that is the name used here.
+        // IsWholeElementRepresentable declines this shape at TRANSLATION time, falling through to the SAME
+        // clean NotSupportedException every other unrepresentable whole-element shape gets — confirmed to
+        // require no live server connection (a purely translation-time decline).
         var seed = new[]
         {
             new ComplexSentinelOwner
@@ -3317,10 +3646,10 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
 
                 // No OwnedNavigationBuilder.ComplexProperty(...) overload exists, so reach the auto-discovered
                 // ([ComplexType]-driven) complex property via the model directly and set its element-name
-                // annotation to collide with the ordinal sentinel.
+                // annotation to collide with the sentinel wrapper field.
                 var itemEntityType = mb.Model.FindEntityType(typeof(ComplexSentinelItem))!;
                 var complexProperty = itemEntityType.FindComplexProperty(nameof(ComplexSentinelItem.Sub))!;
-                complexProperty.SetAnnotation(MongoAnnotationNames.ElementName, MongoReplaceRootStage.OrdinalField);
+                complexProperty.SetAnnotation(MongoAnnotationNames.ElementName, MongoReplaceRootStage.ShadowField);
             },
             optionsBuilderAction: b =>
             {
@@ -3967,4 +4296,132 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             nameof(Reference_form_bare_entity_followed_by_Where_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
         Assert.ThrowsAny<Exception>(() => nativeOnlyDb.Owners.SelectMany(o => o.Refs).Where(r => r.Tag != "").ToList());
     }
+
+    private class NestedCollOwner
+    {
+        public ObjectId Id { get; set; }
+        public List<NestedCollItem> Items { get; set; } = [];
+    }
+
+    private class NestedCollItem
+    {
+        public string Name { get; set; } = "";
+        public List<NestedCollTag> Tags { get; set; } = [];
+    }
+
+    private class NestedCollTag
+    {
+        public string Label { get; set; } = "";
+    }
+
+    [Fact]
+    public void Bare_owned_whole_inner_element_with_nested_owned_collection_member_now_goes_native()
+    {
+        // EF-353 / EF-428 item 2, collection half. The blanket GetNavigations().Any() guard declined a nested
+        // owned COLLECTION under the re-rooted element for the same reason as a nested single reference: the
+        // element shaper bound through the OUTER entity's projection. With the element-rooted projection it
+        // materializes correctly too — an owned collection is embedded as a BSON array in the element's own
+        // document, so after $replaceRoot it is a direct top-level array of the re-rooted document and needs no
+        // extra pipeline stage. This test pins the ARRAY CONTENTS (not merely non-empty) per element, which is
+        // what discriminates a correctly re-rooted read from one that silently reads the wrong document.
+        var seed = new[]
+        {
+            new NestedCollOwner
+            {
+                Id = ObjectId.GenerateNewId(),
+                Items =
+                [
+                    new NestedCollItem { Name = "Widget", Tags = [new NestedCollTag { Label = "red" }, new NestedCollTag { Label = "blue" }] },
+                    new NestedCollItem { Name = "Sprocket", Tags = [new NestedCollTag { Label = "green" }] }
+                ],
+            },
+        };
+
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(
+            nameof(Bare_owned_whole_inner_element_with_nested_owned_collection_member_now_goes_native))
+            + Guid.NewGuid().ToString("N")[..8];
+        var collection = database.MongoDatabase.GetCollection<NestedCollOwner>(collectionName);
+        collection.InsertMany(seed);
+
+        using var db = SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: mb => mb.Entity<NestedCollOwner>()
+                .OwnsMany(o => o.Items, ib => ib.OwnsMany(i => i.Tags)),
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+            });
+
+        // Ordered client-side: an operator composed AFTER a native SelectMany hard-fails in every mode.
+        var items = db.Entities.AsNoTracking().SelectMany(o => o.Items).ToList().OrderBy(i => i.Name).ToList();
+        Assert.Equal(2, items.Count);
+        Assert.Equal(["Sprocket", "Widget"], items.Select(i => i.Name));
+        Assert.Equal(["green"], items[0].Tags.Select(t => t.Label));
+        Assert.Equal(["red", "blue"], items[1].Tags.Select(t => t.Label));
+    }
+
+    private class XRefOwner
+    {
+        public ObjectId Id { get; set; }
+        public List<XRefItem> Items { get; set; } = [];
+    }
+
+    private class XRefItem
+    {
+        public string Name { get; set; } = "";
+        public ObjectId? TargetId { get; set; }
+        public XRefTarget? Target { get; set; }
+    }
+
+    private class XRefTarget
+    {
+        public ObjectId Id { get; set; }
+        public string Label { get; set; } = "";
+    }
+
+    private sealed class XRefDbContext(DbContextOptions options, string ownersCollection, string targetsCollection)
+        : DbContext(options)
+    {
+        public DbSet<XRefOwner> Owners { get; set; } = null!;
+        public DbSet<XRefTarget> Targets { get; set; } = null!;
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<XRefOwner>(b =>
+            {
+                b.ToCollection(ownersCollection);
+                b.OwnsMany(o => o.Items, ib => ib.HasOne(i => i.Target).WithMany().HasForeignKey(i => i.TargetId));
+            });
+            modelBuilder.Entity<XRefTarget>(b => b.ToCollection(targetsCollection));
+        }
+    }
+
+    [Fact]
+    public void Bare_owned_whole_inner_element_with_cross_collection_navigation_still_declines_cleanly()
+    {
+        // The one navigation shape IsWholeElementRepresentable still rejects for an OWNED element after
+        // EF-353: a NON-embedded (cross-collection) reference off the element. Unlike an owned nested member —
+        // which lives inside the re-rooted document and needs no extra stage — this one needs a $lookup that
+        // this shape's lowering never emits, so it declines at TRANSLATION time with the same clean
+        // NotSupportedException every other unrepresentable whole-element shape gets. Discriminates the
+        // narrowed guard from a blanket removal: if the guard were dropped entirely this shape would stop
+        // declining.
+        var ownersCollection = TemporaryDatabaseFixtureBase.CreateCollectionName(
+            nameof(Bare_owned_whole_inner_element_with_cross_collection_navigation_still_declines_cleanly))
+            + Guid.NewGuid().ToString("N")[..8];
+        var targetsCollection = ownersCollection + "_targets";
+
+        var optionsBuilder = new DbContextOptionsBuilder<XRefDbContext>()
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
+            .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+        new MongoDbContextOptionsBuilder(optionsBuilder).UseQueryMode(MongoQueryMode.NativeOnly);
+
+        using var db = new XRefDbContext(optionsBuilder.Options, ownersCollection, targetsCollection);
+
+        var ex = Assert.Throws<NotSupportedException>(() =>
+            db.Owners.AsNoTracking().SelectMany(o => o.Items).ToList());
+        Assert.Contains("Projecting a whole entity other than an owned or reference collection element", ex.Message);
+    }
+
 }

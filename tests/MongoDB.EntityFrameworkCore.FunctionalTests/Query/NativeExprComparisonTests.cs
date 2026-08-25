@@ -1,4 +1,4 @@
-/* Copyright 2023-present MongoDB Inc.
+﻿/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -178,12 +178,16 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
 
     // ── 3. Integer division/modulo: danger zone for truncation/sign divergence ────────────────────
     //
-    // Empirically (see task-7-report.md), the driver's own LINQ translator emits RAW $divide/$mod for
-    // int operands — it does NOT emulate C#'s truncating-toward-zero division or C#'s dividend-sign modulo
-    // semantics. The native translator's renderer already emits the identical raw $divide/$mod shape, so
-    // native and driver-LINQ execute byte-identical $expr documents server-side and necessarily agree,
-    // even though both diverge from what plain in-memory C# arithmetic would compute. Because native MQL
-    // is byte-identical to driver MQL here (not merely result-equivalent), no fallback is needed.
+    // MODULO: the driver's own LINQ translator emits a RAW $mod for int operands — it does NOT emulate C#'s
+    // dividend-sign modulo semantics — and so does the native renderer, so the two execute byte-identical
+    // $expr documents and necessarily agree, even though both diverge from in-memory C#.
+    //
+    // DIVISION: no longer so, as of EF-434. MongoDB has no integer-division operator ($divide over two
+    // integers always yields a double), which made the shared raw-$divide shape wrong in two distinct ways —
+    // an integral projection member failed to DESERIALIZE (FormatException, "Truncation resulted in data
+    // loss"), and an integral comparison answered against a fractional quotient. Native now renders an
+    // integral-result division as $trunc-of-$divide (MongoBinaryOperator.IntegerDivide) and therefore matches
+    // C#, deliberately diverging from driver-LINQ's MQL. Non-integral division is untouched.
 
     [Fact]
     public void NativeOnly_divide_operand_succeeds_with_expected_mql()
@@ -191,14 +195,74 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_divide_operand_succeeds_with_expected_mql));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        // Alice: 7/2 = 3.5 (non-truncating $divide) > 1 → included. C# truncating 7/2=3 would also be >1,
-        // so this alone wouldn't distinguish semantics; the MQL assertion below is the real proof.
+        // Alice: 7/2 → 3 truncated (3.5 raw); both are > 1, so the ROWS do not discriminate here — the MQL
+        // assertion below does, and Integer_division_operand_truncates_toward_zero_like_csharp_EF434 carries
+        // the row-level discriminator.
         var results = db.Entities.Where(c => c.Age / c.Score > 1).OrderBy(c => c.Name).ToList();
 
         Assert.Equal(["Alice"], results.Select(c => c.Name).ToArray());
 
         var mql = Mql(logs);
-        Assert.Contains("\"$divide\" : [\"$Age\", \"$Score\"]", mql);
+        Assert.Contains("\"$trunc\" : { \"$divide\" : [\"$Age\", \"$Score\"] }", mql);
+    }
+
+    // EF-434. The rows, not the MQL, are the discriminator here: each expected value is one that ONLY C#'s
+    // truncate-toward-zero division produces.
+    //   Alice   7/2:  C# 3   | raw $divide 3.5   | floor 3    -> "== 3" excludes raw division
+    //   Carol  -7/2:  C# -3  | raw $divide -3.5  | floor -4   -> "== -3" excludes raw division AND flooring
+    // Run under NativeOnly, so a fallback to driver-LINQ (which emits the raw $divide) cannot silently supply
+    // the answer — it would throw instead.
+    [Fact]
+    public void Integer_division_operand_truncates_toward_zero_like_csharp_EF434()
+    {
+        var (collection, logs) = SeedCustomers(nameof(Integer_division_operand_truncates_toward_zero_like_csharp_EF434));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        var three = db.Entities.Where(c => c.Age / c.Score == 3).ToList();
+        Assert.Equal(["Alice"], three.Select(c => c.Name).ToArray());
+
+        var minusThree = db.Entities.Where(c => c.Age / c.Score == -3).ToList();
+        Assert.Equal(["Carol"], minusThree.Select(c => c.Name).ToArray());
+    }
+
+    // EF-434, the negative half: a NON-integral division must still render a bare $divide. Alice's 7/2 = 3.5
+    // is strictly between the truncated 3 and 4, so `> 3.4` includes her only if no truncation happened —
+    // rows discriminate, not just MQL. The cast lives inside a projection because a widening cast is rejected
+    // on a bare comparison operand (a separate, pre-existing boundary).
+    [Fact]
+    public void Double_division_is_not_truncated_EF434()
+    {
+        var (collection, logs) = SeedCustomers(nameof(Double_division_is_not_truncated_EF434));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        var rows = db.Entities.Select(c => new { c.Name, Div = (double)c.Age / c.Score })
+            .ToList().OrderBy(r => r.Name).ToList();
+
+        Assert.Equal([("Alice", 3.5), ("Bob", 1.0), ("Carol", -3.5)],
+            rows.Select(r => (r.Name, r.Div)).ToArray());
+
+        var mql = Mql(logs);
+        Assert.Contains("$divide", mql);
+        Assert.DoesNotContain("$trunc", mql);
+    }
+
+    // EF-434's projection shape (the one the Northwind spec test
+    // NorthwindSelectQueryMongoTest.Projection_when_arithmetic_expression_precedence exercises): an integral
+    // division read back into an int member. Before the fix the double result made the driver's Int32
+    // deserializer throw FormatException / "Truncation resulted in data loss".
+    [Fact]
+    public void Integer_division_projection_into_an_int_member_truncates_EF434()
+    {
+        var (collection, logs) = SeedCustomers(nameof(Integer_division_projection_into_an_int_member_truncates_EF434));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        var rows = db.Entities.Select(c => new { c.Name, Div = c.Age / c.Score })
+            .ToList().OrderBy(r => r.Name).ToList();
+
+        Assert.Equal([("Alice", 3), ("Bob", 1), ("Carol", -3)], rows.Select(r => (r.Name, r.Div)).ToArray());
+
+        var mql = Mql(logs);
+        Assert.Contains("\"$trunc\" : { \"$divide\" : [\"$Age\", \"$Score\"] }", mql);
     }
 
     [Fact]
@@ -215,10 +279,12 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         Assert.Contains("\"$mod\" : [\"$Age\", \"$Score\"]", mql);
     }
 
-    // Result-parity test exposing the truncation/sign danger zone directly: negative dividend (Carol,
-    // Age=-7, Score=2). C# would give -7/2 = -3 (truncated) and -7%2 = -1; native/driver-LINQ MQL is
-    // identical either way, so if this ever regresses to a truncation-emulating shape, this test would
-    // catch the divergence from driver-LINQ's actual (non-truncating) results.
+    // Result-parity test with driver-LINQ over the negative dividend (Carol, Age=-7, Score=2). Scoped, since
+    // EF-434, to the two operations where native and driver-LINQ still agree: DOUBLE division (never
+    // truncated on either path) and modulo (raw $mod on both, so both give -7 % 2 == -1 rather than C#'s -1
+    // ... which happens to coincide here, hence the explicit Carol assertion below). Integral division is
+    // deliberately excluded — native truncates and driver-LINQ does not; see
+    // Integer_division_operand_truncates_toward_zero_like_csharp_EF434.
     [Fact]
     public void Divide_and_modulo_match_driver_linq_results_including_negative_dividend()
     {
@@ -396,23 +462,30 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     // resulting bare form) is recorded in task-3-report.md, not as a permanent test — reverting the guard
     // removal would defeat its own purpose.
 
+    // EF-396: a Not over a conjunction is not itself a comparison, so IsQueryDialectRenderable still refuses
+    // it at the QUERY-dialect level — that boundary (only All()'s own negator does De Morgan at the query
+    // level; a bare Where(!(a && b)) does not) is unchanged. But RenderUnary's new fallback branch now asks
+    // MongoAggregationExpressionRenderer.CanRender, which DOES admit a conjunction of renderable comparisons
+    // (IsRenderableOperator includes AndAlso/OrElse) — so this shape now goes native via
+    // { $expr: { $not: [ { $and: [...] } ] } } instead of declining. This test used to pin the decline; it
+    // now pins the (correct, intended) native widening instead.
     [Fact]
-    public void Negated_conjunction_predicate_still_falls_back()
+    public void Negated_conjunction_predicate_now_goes_native_via_expr()
     {
-        // A Not over a conjunction is not itself a comparison, so IsQueryDialectRenderable still refuses it
-        // — this is the boundary that keeps Where-level De Morgan out of scope (only All()'s own negator
-        // does De Morgan; a bare Where(!(a && b)) does not). Values: Alice (Age=7) is the only row for which
-        // (Age > 5 && Name == "Alice") is true, so negating it yields a genuine two-row/one-row split, not a
-        // vacuous all-true/all-false predicate.
-        var (collection, logs) = SeedCustomers(nameof(Negated_conjunction_predicate_still_falls_back));
+        // Values: Alice (Age=7) is the only row for which (Age > 5 && Name == "Alice") is true, so negating
+        // it yields a genuine two-row/one-row split, not a vacuous all-true/all-false predicate.
+        var (collection, logs) = SeedCustomers(nameof(Negated_conjunction_predicate_now_goes_native_via_expr));
         using var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => nativeOnly.Entities.Where(c => !(c.Age > 5 && c.Name == "Alice")).ToList());
+        var nativeNames = nativeOnly.Entities.Where(c => !(c.Age > 5 && c.Name == "Alice"))
+            .ToList().Select(c => c.Name).OrderBy(n => n).ToList(); // succeeds => went native
 
-        using var native = CreateContext(collection, [], MongoQueryMode.Native);
+        var mql = Mql(logs);
+        Assert.Contains("$expr", mql);
+        Assert.Contains("\"$not\"", mql);
+        Assert.Contains("\"$and\"", mql);
+
         using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
-        var nativeNames = native.Entities.Where(c => !(c.Age > 5 && c.Name == "Alice")).Select(c => c.Name).OrderBy(n => n).ToList();
         var driverNames = driver.Entities.Where(c => !(c.Age > 5 && c.Name == "Alice")).Select(c => c.Name).OrderBy(n => n).ToList();
         Assert.Equal(driverNames, nativeNames);
         Assert.Equal(["Bob", "Carol"], nativeNames); // Alice is the only row excluded

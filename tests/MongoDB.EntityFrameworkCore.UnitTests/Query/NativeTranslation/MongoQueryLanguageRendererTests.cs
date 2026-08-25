@@ -694,18 +694,16 @@ public class MongoQueryLanguageRendererTests
     }
 
     [Fact]
-    public void IsQueryDialectRenderable_still_rejects_Not_over_a_field_to_field_comparison()
+    public void IsQueryDialectRenderable_still_rejects_but_Render_now_falls_to_expr_for_Not_over_a_field_to_field_comparison()
     {
-        // RenderUnary's new arm is gated on IsQueryNativeComparison, so this still throws and the
-        // classifier must still reject it. Deleting that gate must make this test red.
+        // RenderUnary's query-dialect arm is still gated on IsQueryNativeComparison, so the QUERY dialect
+        // still cannot express this shape and the classifier must still reject it (unchanged — this keeps
+        // the $expr-inside-$elemMatch invariant intact, since IsQueryDialectRenderable is what a caller like
+        // an $elemMatch element predicate consults).
         //
-        // Asserting on the MESSAGE (not just the exception TYPE) is deliberate and load-bearing: without the
-        // gate, RenderUnary would still call RenderComparison, which calls MongoValueRenderer.RenderValue on
-        // the field-valued right operand — and THAT throws NativeTranslationNotSupportedException too (a
-        // different message, "Cannot render value node of type '...'"), one call deeper. A bare
-        // Assert.Throws<NativeTranslationNotSupportedException> cannot tell those two throw sites apart, so
-        // it would stay green even with the gate deleted. The message pinned here is RenderUnary's OWN throw,
-        // reached only when the gate rejects the Not-over-comparison arm outright.
+        // EF-396: at the TOP level (not inside $elemMatch), RenderUnary no longer throws for this shape —
+        // it falls to MongoAggregationExpressionRenderer via CanRender/Render and renders
+        // { $expr: { $not: [ { $gt: ["$Rank", "$Other"] } ] } } instead of declining.
         var rank = GetPostProperty(nameof(Post.Rank));
         var pred = new MongoUnaryExpression(
             MongoUnaryOperator.Not,
@@ -715,11 +713,12 @@ public class MongoQueryLanguageRendererTests
                 new MongoFieldExpression(rank, "Other")));
 
         Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(pred));
-        var ex = Assert.Throws<NativeTranslationNotSupportedException>(
-            () => new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable()));
+
+        var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
+
         Assert.Equal(
-            "MongoQueryLanguageRenderer only supports Not over a MongoFieldExpression or a query-native comparison.",
-            ex.Message);
+            BsonDocument.Parse("{ $expr: { $not: [ { $gt: [\"$Rank\", \"$Other\"] } ] } }"),
+            rendered);
     }
 
     [Fact]

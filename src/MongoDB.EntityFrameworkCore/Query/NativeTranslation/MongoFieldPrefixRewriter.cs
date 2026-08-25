@@ -35,6 +35,13 @@ internal static class MongoFieldPrefixRewriter
             MongoUnaryExpression u => new MongoUnaryExpression(u.Operator, Rewrite(u.Operand, prefix)),
             MongoInExpression i => new MongoInExpression(
                 (MongoFieldExpression)Rewrite(i.Field, prefix), Rewrite(i.Values, prefix), i.Negated),
+            // EF-382: the array-contains-value mirror of MongoInExpression above — same treatment, since
+            // Field addresses a genuine document path exactly like MongoInExpression.Field does (Value is
+            // always a MongoConstantExpression today, which passes through unchanged below, but Rewrite is
+            // still called on it for the same reason RenderIn recurses into its Values: consistency, not a
+            // currently-exercised need).
+            MongoArrayContainsExpression ac => new MongoArrayContainsExpression(
+                (MongoFieldExpression)Rewrite(ac.Field, prefix), Rewrite(ac.Value, prefix), ac.Negated),
             MongoRegexExpression r => new MongoRegexExpression(
                 (MongoFieldExpression)Rewrite(r.Field, prefix), r.Kind, Rewrite(r.Term, prefix), r.Negated),
             // Prefix the ARRAY path only. The element predicate's field paths are ELEMENT-relative (that is

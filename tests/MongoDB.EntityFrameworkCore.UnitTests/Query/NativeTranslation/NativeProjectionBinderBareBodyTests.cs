@@ -221,23 +221,29 @@ public class NativeProjectionBinderBareBodyTests
     }
 
     [Fact]
-    public void Bare_widening_cast_leaf_is_still_declined_and_never_reaches_the_alias_derivation()
+    public void Bare_widening_cast_leaf_is_admitted_as_a_document_path_leaf()
     {
         var mongoQ = TestQuery();
         Expression<Func<Order, long>> selector = o => (long)o.Amount;
 
-        // A boundary worth pinning explicitly, because it is easy to read the tier-2 gate as "every cast is now
-        // Synthetic". MEASURED, and the mechanism is NOT the one a reader would guess from the tier-2 gate:
-        // MongoExpressionTranslator.TranslateOperand UNWRAPS a widening conversion instead of wrapping it in a
-        // MongoConvertExpression, so TryTranslateLeaf's OWN node-kind gate (`value is … or MongoConvertExpression`)
-        // already refuses it and the whole bare arm returns false before either alias derivation is consulted.
-        // Nor does tier 1 rescue it by the unwrapped MongoFieldExpression — that expression never escapes
-        // TryTranslateLeaf. The shape falls back gracefully, exactly as the WRAPPED widening cast does
-        // (NativeCastTests.Widening_cast_projection_leaf_still_falls_back_gracefully); A4-1 leaves it alone.
-        Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
-        Assert.Empty(mongoQ.Select.Projection);
-        Assert.False(mongoQ.Select.IsBareProjection);
-        Assert.Null(mongoQ.Select.BareProjectionTier);
+        // EF-410: a widening cast leaf is now admitted here too. MongoExpressionTranslator.TranslateOperand
+        // UNWRAPS a widening conversion instead of wrapping it in a MongoConvertExpression, so the translated
+        // value is a bare MongoFieldExpression — indistinguishable by node kind alone from a leaf that was never
+        // cast. The tier-2 gate now re-derives "was this leaf syntactically a cast" from the ORIGINAL selector
+        // body (a `UnaryExpression { NodeType: Convert }`) rather than from the already-lossy translated value,
+        // so this now admits — but the RESULT is a plain MongoFieldExpression, exactly as an uncast field leaf
+        // produces, so the downstream alias/tier derivation treats it identically: DocumentPath tier, aliased to
+        // the field's own name ("Amount"), not the reserved "_v" a computed (arithmetic/count/MongoConvertExpression)
+        // leaf gets. The shaper reads the raw stored value back and the driver/native BSON readers widen it to the
+        // requested CLR type (long) same as any other numeric read. See
+        // NativeCastTests.Widening_cast_bare_projection_leaf_goes_native /
+        // NativeCastTests.Widening_cast_projection_leaf_now_goes_native for the end-to-end functional pin.
+        Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
+
+        var projection = Assert.Single(mongoQ.Select.Projection);
+        Assert.Equal("Amount", projection.Alias);
+        Assert.IsType<MongoFieldExpression>(projection.Expression);
+        Assert.Equal(ProjectionAliasTier.DocumentPath, mongoQ.Select.BareProjectionTier);
     }
 
     [Fact]
@@ -825,8 +831,12 @@ public class NativeProjectionBinderBareBodyTests
         Expression<Func<Order, object>> selector = o => new {o.Country, o.Amount};
 
         // The inertness control for the wrapped path: a wrapped projection's alias comes from its member name,
-        // so it must register nothing — an override here would make IsBareProjection true and wrongly trip both
-        // narrowings and the late-fallback strip.
+        // so it must register nothing — an override here would make IsBareProjection/BareProjectionTier answer
+        // for a projection that has no bare body, and wrongly trip the late-fallback strip
+        // (NativeProjectionBinder.NullCoalesceSyntheticBareCountBody, which reads BareProjectionTier). NOTE:
+        // as of EF-395 NEITHER of the two former narrowings consults IsBareProjection any more — both were
+        // removed (see MongoQueryableMethodTranslatingExpressionVisitor's and NativeGroupByBinder's own
+        // comments recording that) — so the strip is now the only consumer this control protects.
         Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
 
         Assert.Equal(2, mongoQ.Select.Projection.Count);

@@ -968,7 +968,12 @@ public class IndexTests(AtlasTemporaryDatabaseFixture database)
         var creationOptions = new MongoDatabaseCreationOptions(CreateMissingVectorIndexes: false, WaitForVectorIndexes: false);
         _ = async ? await db.Database.EnsureCreatedAsync(creationOptions) : db.Database.EnsureCreated(creationOptions);
 
-        db.AddRange(new SimpleEntity { Floats = [0.36f, -0.57f] }, new SimpleEntity { Floats = [0.31f, -0.54f] });
+        // Filter1 is a non-nullable required property; leaving it unset persists a literal BSON null,
+        // which is invalid data the streaming materializer now (correctly, EF-343) rejects the same way
+        // the DOM/driver-LINQ path always has. Set it explicitly since this test isn't exercising Filter1.
+        db.AddRange(
+            new SimpleEntity { Floats = [0.36f, -0.57f], Filter1 = "" },
+            new SimpleEntity { Floats = [0.31f, -0.54f], Filter1 = "" });
 
         if (async)
         {

@@ -294,10 +294,12 @@ internal static class NativeSlotPopulator
     /// together) — not only to the query-dialect renderer.
     /// </para>
     /// <para>
-    /// <see cref="MongoExpressionTranslator.TryTranslateValue"/> brings its own two guards: an integer-result
-    /// division is rejected (MongoDB's <c>$divide</c> is non-truncating), and so is an operand whose property
-    /// lacks default serialization, so a value-converted field cannot be sorted by its raw stored order via a
-    /// computed key. (A plain field sort key on such a property has no equivalent guard.)
+    /// <see cref="MongoExpressionTranslator.TryTranslateValue"/> brings its own guard: an operand whose
+    /// property lacks default serialization is rejected, so a value-converted field cannot be sorted by its
+    /// raw stored order via a computed key. (A plain field sort key on such a property has no equivalent
+    /// guard.) It used to reject an integer-result division too; EF-434 replaced that with a truncating
+    /// translation (<see cref="MongoBinaryOperator.IntegerDivide"/>), so <c>OrderBy(c =&gt; c.A / c.B)</c> now
+    /// sorts by the C#-correct quotient natively.
     /// </para>
     /// <para>
     /// <b>A bare top-level constant/parameter is a separate, value-level hazard <c>CanRender</c> cannot see</b>

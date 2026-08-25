@@ -34,6 +34,8 @@ public class MongoAggregationExpressionRendererTests
         public MongoDB.Bson.ObjectId Id { get; set; }
         public int Age { get; set; }
         public int Score { get; set; }
+        public string Status { get; set; } = "";
+        public bool IsActive { get; set; }
     }
 
     private static IProperty GetProperty<T>(string propertyName) where T : class
@@ -150,6 +152,112 @@ public class MongoAggregationExpressionRendererTests
     }
 
     // ------------------------------------------------------------------
+    // EF-434: integer division
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void IntegerDivide_renders_as_trunc_over_divide()
+    {
+        var age = GetProperty<Customer>("Age");
+        var score = GetProperty<Customer>("Score");
+
+        var rendered = MongoAggregationExpressionRenderer.Render(
+            new MongoBinaryExpression(
+                MongoBinaryOperator.IntegerDivide,
+                new MongoFieldExpression(age, "Age"),
+                new MongoFieldExpression(score, "Score")),
+            new PlaceholderTable());
+
+        Assert.Equal(
+            BsonDocument.Parse("""{ "$trunc": { "$divide": ["$Age", "$Score"] } }"""),
+            rendered);
+    }
+
+    [Fact]
+    public void Plain_Divide_still_renders_unwrapped()
+    {
+        // The negative half of the pair: a non-integral division must NOT be truncated. Asserted separately
+        // from the row above so that collapsing the two operators into one arm goes red rather than green.
+        var age = GetProperty<Customer>("Age");
+        var score = GetProperty<Customer>("Score");
+
+        var rendered = MongoAggregationExpressionRenderer.Render(
+            new MongoBinaryExpression(
+                MongoBinaryOperator.Divide,
+                new MongoFieldExpression(age, "Age"),
+                new MongoFieldExpression(score, "Score")),
+            new PlaceholderTable());
+
+        Assert.Equal(
+            BsonDocument.Parse("""{ "$divide": ["$Age", "$Score"] }"""),
+            rendered);
+    }
+
+    // ------------------------------------------------------------------
+    // EF-413: MongoInExpression / MongoUnaryExpression aggregation-dialect arms
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void CanRender_reports_true_for_MongoInExpression()
+    {
+        var status = GetProperty<Customer>("Status");
+        var field = new MongoFieldExpression(status, "Status");
+        var values = new MongoConstantExpression(new[] { "A", "B" }, status);
+        var node = new MongoInExpression(field, values, negated: false);
+
+        Assert.True(MongoAggregationExpressionRenderer.CanRender(node));
+
+        var placeholders = new PlaceholderTable();
+        var rendered = MongoAggregationExpressionRenderer.Render(node, placeholders);
+        Assert.Equal(new BsonDocument("$in", new BsonArray { "$Status", new BsonArray { "A", "B" } }), rendered);
+    }
+
+    [Fact]
+    public void CanRender_reports_true_for_negated_MongoInExpression()
+    {
+        var status = GetProperty<Customer>("Status");
+        var field = new MongoFieldExpression(status, "Status");
+        var values = new MongoConstantExpression(new[] { "A" }, status);
+        var node = new MongoInExpression(field, values, negated: true);
+
+        Assert.True(MongoAggregationExpressionRenderer.CanRender(node));
+
+        var placeholders = new PlaceholderTable();
+        var rendered = MongoAggregationExpressionRenderer.Render(node, placeholders);
+        Assert.Equal(
+            new BsonDocument("$not", new BsonArray { new BsonDocument("$in", new BsonArray { "$Status", new BsonArray { "A" } }) }),
+            rendered);
+    }
+
+    [Fact]
+    public void CanRender_reports_true_for_MongoUnaryExpression_Not_over_a_renderable_operand()
+    {
+        var isActive = GetProperty<Customer>("IsActive");
+        var field = new MongoFieldExpression(isActive, "IsActive");
+        var node = new MongoUnaryExpression(MongoUnaryOperator.Not, field);
+
+        Assert.True(MongoAggregationExpressionRenderer.CanRender(node));
+
+        var placeholders = new PlaceholderTable();
+        var rendered = MongoAggregationExpressionRenderer.Render(node, placeholders);
+        Assert.Equal(new BsonDocument("$not", new BsonArray { "$IsActive" }), rendered);
+    }
+
+    [Fact]
+    public void CanRender_reports_false_for_MongoInExpression_over_unrenderable_values()
+    {
+        // Neither a constant enumerable nor a parameter — CanRenderInValues must decline this shape the same
+        // way RenderInValues would throw on it, so the two never disagree.
+        var status = GetProperty<Customer>("Status");
+        var field = new MongoFieldExpression(status, "Status");
+        var node = new MongoInExpression(field, new MongoFieldExpression(status, "Other"), negated: false);
+
+        Assert.False(MongoAggregationExpressionRenderer.CanRender(node));
+        Assert.Throws<NativeTranslationNotSupportedException>(
+            () => MongoAggregationExpressionRenderer.Render(node, new PlaceholderTable()));
+    }
+
+    // ------------------------------------------------------------------
     // CanRender
     // ------------------------------------------------------------------
 
@@ -234,6 +342,7 @@ public class MongoAggregationExpressionRendererTests
                      MongoBinaryOperator.Subtract,
                      MongoBinaryOperator.Multiply,
                      MongoBinaryOperator.Divide,
+                     MongoBinaryOperator.IntegerDivide,
                      MongoBinaryOperator.Modulo
                  })
         {
@@ -255,6 +364,22 @@ public class MongoAggregationExpressionRendererTests
                     new MongoConstantExpression(0, forSerialization: null)),
                 typeof(int))
         ];
+
+        // EF-413: a MongoInExpression (client-collection Contains → $in).
+        yield return
+        [
+            new MongoInExpression(
+                new MongoFieldExpression(age, "Age"), new MongoConstantExpression(new[] { 1, 2 }, age), negated: false)
+        ];
+
+        // EF-413: a MongoUnaryExpression{Not} over a renderable operand.
+        yield return
+        [
+            new MongoUnaryExpression(
+                MongoUnaryOperator.Not,
+                new MongoBinaryExpression(MongoBinaryOperator.Equal, new MongoFieldExpression(age, "Age"),
+                    new MongoConstantExpression(5, age)))
+        ];
     }
 
     public static IEnumerable<object[]> UnrenderableNodes()
@@ -267,22 +392,6 @@ public class MongoAggregationExpressionRendererTests
             new MongoRegexExpression(
                 new MongoFieldExpression(age, "Age"), MongoRegexKind.StartsWith,
                 new MongoConstantExpression("x", forSerialization: null), negated: false)
-        ];
-
-        // A MongoInExpression.
-        yield return
-        [
-            new MongoInExpression(
-                new MongoFieldExpression(age, "Age"), new MongoConstantExpression(new[] { 1, 2 }, age), negated: false)
-        ];
-
-        // A MongoUnaryExpression{Not}.
-        yield return
-        [
-            new MongoUnaryExpression(
-                MongoUnaryOperator.Not,
-                new MongoBinaryExpression(MongoBinaryOperator.Equal, new MongoFieldExpression(age, "Age"),
-                    new MongoConstantExpression(5, age)))
         ];
 
         // A MongoElemMatchExpression.
@@ -350,11 +459,14 @@ public class MongoAggregationExpressionRendererTests
     [Fact]
     public void Convert_node_reports_unrenderable_when_its_OPERAND_is()
     {
-        // MongoUnaryExpression is one of the node kinds the aggregation dialect cannot express (CanRender admits
-        // field/element refs, constants/parameters, binaries over its listed operators, and the two size nodes —
-        // nothing else). Wrapping it in a convert must not launder it into renderability.
-        var unrenderable = new MongoUnaryExpression(
-            MongoUnaryOperator.Not, new MongoElementRefExpression("Flag", typeof(bool)));
+        // MongoRegexExpression is one of the node kinds the aggregation dialect cannot express (CanRender admits
+        // field/element refs, constants/parameters, binaries over its listed operators, the two size nodes, $in,
+        // and Not over a renderable operand — nothing else). Wrapping it in a convert must not launder it into
+        // renderability.
+        var age = GetProperty<Customer>("Age");
+        var unrenderable = new MongoRegexExpression(
+            new MongoFieldExpression(age, "Age"), MongoRegexKind.StartsWith,
+            new MongoConstantExpression("x", forSerialization: null), negated: false);
 
         Assert.False(MongoAggregationExpressionRenderer.CanRender(
             new MongoConvertExpression(unrenderable, typeof(int))));

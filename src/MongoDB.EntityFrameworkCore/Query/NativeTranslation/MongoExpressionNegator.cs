@@ -171,6 +171,12 @@ internal static class MongoExpressionNegator
                 negated = new MongoInExpression(inExpr.Field, inExpr.Values, !inExpr.Negated);
                 return true;
 
+            case MongoArrayContainsExpression arrayContains:
+                // { field: { $ne: value } } is the exact complement of { field: value } — see
+                // RenderArrayContains's remarks.
+                negated = new MongoArrayContainsExpression(arrayContains.Field, arrayContains.Value, !arrayContains.Negated);
+                return true;
+
             case MongoRegexExpression regex:
                 // The renderer negates via an enclosing $not, an exact complement.
                 negated = new MongoRegexExpression(regex.Field, regex.Kind, regex.Term, !regex.Negated);

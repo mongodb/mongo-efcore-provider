@@ -23,8 +23,8 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// Populates <see cref="MongoSelectDefinition.Cardinality"/> for an entity-reducer terminal operator
 /// (First/FirstOrDefault/Single/SingleOrDefault), mirroring <see cref="NativeProjectionBinder"/>'s role
 /// for projections. Called from <see cref="NativeSlotPopulator.PopulateNativeSlots"/>. Returns
-/// <see langword="false"/> when the operator is not natively representable (e.g. a limit is already
-/// present from a preceding Take/Skip); the caller then marks the query non-native.
+/// <see langword="false"/> when the operator is not natively representable (e.g. it is composed after a
+/// finalized GroupBy/Distinct terminal); the caller then marks the query non-native.
 /// </summary>
 internal static class NativeCardinalityBinder
 {
@@ -47,15 +47,14 @@ internal static class NativeCardinalityBinder
         if (select.HasTerminalOperator && !select.IsSetOpTerminalOnly)
             return false;
 
-        // A user Take/Skip already populated the limit slot; composing a reducer limit on top is not
-        // representable in canonical order. Fall back rather than reconcile two limits.
-        // HasLimit only scans PipelineOps, not TrailingOps: after a set-op terminal, a preceding Take's limit
-        // lives in TrailingOps and this guard doesn't see it, so the reducer appends a second $limit onto
-        // TrailingOps too. Two consecutive $limit stages compose correctly (the second only narrows the
-        // first), so this is a deliberate, safe divergence from the non-set-op path, not a bug.
-        if (select.HasLimit)
-            return false;
-
+        // EF-397: no HasLimit guard. A reducer's own $limit composes safely with a $limit a preceding Take
+        // already recorded — AppendLimit appends to the TAIL of the ordered op list, and consecutive $limit
+        // stages narrow monotonically, so Take(3).First() emits [$limit 3, $limit 1] = "the first of the
+        // first three", never "two limits fighting". This is the same fact the set-op TrailingOps path
+        // already relied on: HasLimit scans _pipelineOps only, so after a set-op terminal a Take's limit
+        // lives in TrailingOps, was invisible to the guard, and a second $limit was already being appended
+        // there deliberately. The previous unconditional decline treated the non-set-op case as
+        // unrepresentable; it is representable, it just wasn't recognized as such.
         var limit = kind is MongoReducerKind.Single or MongoReducerKind.SingleOrDefault ? 2 : 1;
         select.AppendLimit(new MongoConstantExpression(limit, forSerialization: null));
         select.Cardinality = MongoCardinality.ForReducer(kind, resultType);

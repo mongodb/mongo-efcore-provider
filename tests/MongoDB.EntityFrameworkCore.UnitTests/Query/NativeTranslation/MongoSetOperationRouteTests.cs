@@ -28,7 +28,7 @@ public class MongoSetOperationRouteTests
     {
         var select = new MongoSelectDefinition
         {
-            SetOperation = new MongoSetOperation(MongoSetOperationKind.Union, OperandSelect(), "customers"),
+            SetOperation = new MongoSetOperation(MongoSetOperationKind.Union, OperandSelect(), "customers", operandEntityType: null!),
             IsSetOp = true
         };
         Assert.Equal(NativeRoute.WholeEntity, select.Route);
@@ -49,7 +49,7 @@ public class MongoSetOperationRouteTests
     public void SetOperation_holds_kind_operand_and_collection()
     {
         var operand = OperandSelect();
-        var setOp = new MongoSetOperation(MongoSetOperationKind.Concat, operand, "orders");
+        var setOp = new MongoSetOperation(MongoSetOperationKind.Concat, operand, "orders", operandEntityType: null!);
         Assert.Equal(MongoSetOperationKind.Concat, setOp.Kind);
         Assert.Same(operand, setOp.OperandSelect);
         Assert.Equal("orders", setOp.OperandCollectionName);
@@ -68,7 +68,7 @@ public class MongoSetOperationRouteTests
     {
         var select = new MongoSelectDefinition
         {
-            SetOperation = new MongoSetOperation(MongoSetOperationKind.Intersect, OperandSelect(), "customers"),
+            SetOperation = new MongoSetOperation(MongoSetOperationKind.Intersect, OperandSelect(), "customers", operandEntityType: null!),
             IsSetOp = true
         };
         Assert.Equal(NativeRoute.WholeEntity, select.Route);
@@ -78,7 +78,7 @@ public class MongoSetOperationRouteTests
     [Fact]
     public void Except_setoperation_holds_kind()
     {
-        var setOp = new MongoSetOperation(MongoSetOperationKind.Except, OperandSelect(), "orders");
+        var setOp = new MongoSetOperation(MongoSetOperationKind.Except, OperandSelect(), "orders", operandEntityType: null!);
         Assert.Equal(MongoSetOperationKind.Except, setOp.Kind);
     }
 }

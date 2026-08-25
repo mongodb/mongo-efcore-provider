@@ -48,8 +48,15 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Intersect_non_entity(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Intersect_non_entity(async));
+        // EF-395: a bare-scalar-projection operand (Select(c => c.CustomerID)) now goes native for
+        // Intersect/Except too (IsPlainProjectedSelect no longer declines on IsBareProjection), so this no
+        // longer hard-fails translation.
+        await base.Intersect_non_entity(async);
+
+        AssertMql(
+            """
+            Customers.{ "$match" : { "City" : "México D.F." } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : true } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            """);
     }
 
     public override async Task Intersect_nested(bool async)
@@ -182,7 +189,7 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "Berlin" } }, { "$project" : { "_v" : "$Address", "_id" : 0 } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }, { "$project" : { "_v" : "$Address", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "City" : "Berlin" } }, { "$project" : { "Address" : "$Address", "_id" : 0 } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }, { "$project" : { "Address" : "$Address", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -192,8 +199,8 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$match" : { "Address" : { "$regularExpression" : { "pattern" : "Hanover", "options" : "s" } } } }, { "$project" : { "Address" : "$Address", "_id" : 0 } }
-""");
+            Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$match" : { "Address" : { "$regularExpression" : { "pattern" : "Hanover", "options" : "s" } } } }, { "$project" : { "Address" : "$Address", "_id" : 0 } }
+            """);
     }
 
     public override async Task Union_Select_scalar(bool async)
@@ -232,8 +239,8 @@ Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Cus
         await base.Union_Include(async);
         AssertMql(
             """
-Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
-""");
+            Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+            """);
     }
 
     public override async Task Include_Union(bool async)
@@ -241,8 +248,8 @@ Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Cus
         await base.Include_Union(async);
         AssertMql(
             """
-Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
-""");
+            Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+            """);
     }
 
     public override async Task Select_Except_reference_projection(bool async)
@@ -289,7 +296,7 @@ Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Cus
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : "$_id", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Orders.{ "$project" : { "_id" : "$_id" } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_id" : "$_id" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -562,8 +569,8 @@ Customers.{ "$match" : { "City" : "Berlin" } }, { "$unionWith" : { "coll" : "Cus
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "_v" : { "$size" : "$_lookup_OrderDetails" }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : "$_id", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
-""");
+            Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "_v" : { "$size" : "$_lookup_OrderDetails" }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : "$_id", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            """);
     }
 
     public override async Task Union_over_scalarsubquery_function(bool async)
@@ -572,8 +579,8 @@ Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignFi
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "_v" : { "$size" : "$_lookup_OrderDetails" }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$_id", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "_v" : { "$size" : "$_elements" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
-""");
+            Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "_v" : { "$size" : "$_lookup_OrderDetails" }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$_id", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "_v" : { "$size" : "$_elements" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            """);
     }
 
     public override async Task Union_over_scalarsubquery_constant(bool async)
@@ -582,8 +589,8 @@ Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignFi
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "_v" : { "$size" : "$_lookup_OrderDetails" }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$literal" : 8 }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
-""");
+            Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "_v" : { "$size" : "$_lookup_OrderDetails" }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$literal" : 8 }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            """);
     }
 
     public override async Task Union_over_scalarsubquery_unary(bool async)
@@ -592,8 +599,8 @@ Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignFi
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "_v" : { "$size" : "$_lookup_OrderDetails" }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$subtract" : [0, "$_id"] }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
-""");
+            Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "_v" : { "$size" : "$_lookup_OrderDetails" }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$subtract" : [0, "$_id"] }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            """);
     }
 
     public override async Task Union_over_scalarsubquery_binary(bool async)
@@ -602,8 +609,8 @@ Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignFi
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "_v" : { "$size" : "$_lookup_OrderDetails" }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$add" : ["$_id", 1] }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
-""");
+            Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "_v" : { "$size" : "$_lookup_OrderDetails" }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$add" : ["$_id", 1] }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            """);
     }
 
     public override async Task Union_over_scalarsubquery_scalarsubquery(bool async)
@@ -621,7 +628,7 @@ Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignFi
 
         AssertMql(
             """
-            Orders.{ "$sort" : { "OrderDate" : 1 } }, { "$limit" : 5 }, { "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : "$_id", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Orders.{ "$sort" : { "OrderDate" : 1 } }, { "$limit" : 5 }, { "$project" : { "_id" : "$_id" } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_id" : "$_id" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -631,7 +638,7 @@ Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignFi
 
         AssertMql(
             """
-            Orders.{ "$sort" : { "OrderDate" : 1 } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : "$_id", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Orders.{ "$sort" : { "OrderDate" : 1 } }, { "$project" : { "_id" : "$_id" } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_id" : "$_id" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -641,7 +648,7 @@ Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignFi
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$sort" : { "OrderDate" : 1 } }, { "$limit" : 5 }, { "$project" : { "_v" : "$_id", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Orders.{ "$project" : { "_id" : "$_id" } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$sort" : { "OrderDate" : 1 } }, { "$limit" : 5 }, { "$project" : { "_id" : "$_id" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -651,7 +658,7 @@ Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignFi
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$sort" : { "OrderDate" : 1 } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Orders.{ "$project" : { "_id" : "$_id" } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$sort" : { "OrderDate" : 1 } }, { "$project" : { "_id" : "$_id" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -684,8 +691,8 @@ Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignFi
         await base.Concat_with_one_side_being_GroupBy_aggregate(async);
         AssertMql(
             """
-Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$match" : { "_v._inner.City" : "Seatte" } }, { "$project" : { "OrderDate" : "$_v._outer.OrderDate", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$CustomerID", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "OrderDate" : { "$max" : "$_elements.OrderDate" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
-""");
+            Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$match" : { "_v._inner.City" : "Seatte" } }, { "$project" : { "OrderDate" : "$_v._outer.OrderDate", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$CustomerID", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "OrderDate" : { "$max" : "$_elements.OrderDate" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            """);
 #endif
     }
 
@@ -709,11 +716,16 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
     public override async Task Except_non_entity(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Except_non_entity(async));
+        // EF-395: a bare-scalar-projection operand (Select(c => c.CustomerID)) now goes native for
+        // Intersect/Except too (IsPlainProjectedSelect no longer declines on IsBareProjection), so this no
+        // longer hard-fails translation. Was previously tagged "Cross-document navigation access issue
+        // EF-216" (Except hard-failed unconditionally pre-EF-347).
+        await base.Except_non_entity(async);
 
         AssertMql(
-        );
+            """
+            Customers.{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "México D.F." } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : false } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            """);
     }
 
     public override async Task Except_simple_followed_by_projecting_constant(bool async)
@@ -776,7 +788,7 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "México D.F." } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "_id" : "$_id" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "México D.F." } }, { "$project" : { "_id" : "$_id" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -785,7 +797,7 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
         await base.Concat_non_entity(async);
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "México D.F." } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }] } }
+            Customers.{ "$match" : { "City" : "México D.F." } }, { "$project" : { "_id" : "$_id" } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "_id" : "$_id" } }] } }
             """);
     }
 
@@ -854,8 +866,8 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }] } }, { "$project" : { "City" : "$City", "_id" : 0 } }
-""");
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }] } }, { "$project" : { "City" : "$City", "_id" : 0 } }
+            """);
     }
 
     public override async Task Concat_with_distinct_on_one_source_and_pruning(bool async)

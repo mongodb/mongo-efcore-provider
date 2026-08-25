@@ -3525,8 +3525,8 @@ Orders.
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$in" : ["$_id", []] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }
-            """);
+Customers.{ "$set" : { "__sort0" : { "$in" : ["$_id", []] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }
+""");
     }
 
     public override async Task OrderBy_empty_list_does_not_contains(bool async)
@@ -3535,8 +3535,8 @@ Orders.
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$not" : { "$in" : ["$_id", []] } } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }
-            """);
+Customers.{ "$set" : { "__sort0" : { "$not" : [{ "$in" : ["$_id", []] }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }
+""");
     }
 
     public override async Task Manual_expression_tree_typed_null_equality(bool async)

@@ -543,29 +543,26 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     }
 
     [Fact]
-    public void Primitive_collection_All_is_rewritten_upstream_and_is_unaffected_by_this_slice()
+    public void Primitive_collection_All_is_rewritten_upstream_and_now_goes_native_via_EF382()
     {
         // EF Core's own AllAnyToContainsRewritingExpressionVisitor rewrites All(x => x != c) into
         // !Contains(c) BEFORE the native translator sees it, so no All node ever reaches the quantifier
         // matcher for a primitive-element collection. This is the mirror image of the sibling file's
-        // Primitive_collection_Any_still_falls_back_via_the_Contains_path: Any(x => x == c) rewrites to
-        // Contains(c); All(x => x != c) rewrites to !Contains(c). Both land on the SAME pre-existing
-        // Contains/$in path (MongoExpressionTranslator.TryMatchContainsMethod + TryResolveMember), unchanged
-        // by this slice.
+        // Primitive_collection_Any_now_goes_native_via_the_Contains_path: Any(x => x == c) rewrites to
+        // Contains(c); All(x => x != c) rewrites to !Contains(c). Both land on the SAME Contains/$in-or-
+        // array-contains path (MongoExpressionTranslator.TryMatchContainsMethod + the EF-382 mirror arm),
+        // unchanged by the owned-collection-quantifier slice this file otherwise covers.
         //
-        // EMPIRICALLY DETERMINED (not assumed — verified against a live run before writing this assertion):
-        // for `b.Tags.All(t => t != "x")`, TryMatchContainsMethod matches the rewritten !Tags.Contains("x")
-        // with collection = b.Tags (a field) and item = "x" (a constant) — the MIRROR IMAGE of the one shape
-        // TryResolveMember's "item must resolve to a bare field" restriction admits (`list.Contains(x.Field)`,
-        // where the roles are reversed). TryResolveMember therefore declines on the constant item, so this
-        // shape FALLS BACK — NativeOnly throws NativeTranslationNotSupportedException, and Native/DriverLinq
-        // both execute the underlying Contains correctly. The point of this test, per the design note above
-        // the sibling Any test, is only that the shape is UNCHANGED by this slice (still routes exactly as it
-        // did before this slice, whichever way that is, since the All-quantifier matcher never sees it at
-        // all), not that it must go native.
+        // Before EF-382: for `b.Tags.All(t => t != "x")`, TryMatchContainsMethod matched the rewritten
+        // !Tags.Contains("x") with collection = b.Tags (a field) and item = "x" (a constant) — the MIRROR
+        // IMAGE of the one shape TryResolveMember's "item must resolve to a bare field" restriction admits
+        // (`list.Contains(x.Field)`, where the roles are reversed). TryResolveMember declined on the constant
+        // item, so this fell back. EF-382 added the mirror arm (MongoArrayContainsExpression, with Not
+        // flipping its Negated flag — see MongoExpressionTranslator's Not case), so `!Tags.Contains("x")` now
+        // goes native as { Tags: { $ne: "x" } }.
         // Dedicated seed (not SeedWellFormed/SeedMatrix): every shared row builder in this file leaves Tags
         // as an empty array, which would make Tags.All(t => t != "x") vacuously true for every row and unable
-        // to discriminate a wrong Contains/$nin implementation from a correct one — only the NativeOnly-throws
+        // to discriminate a wrong Contains/$nin implementation from a correct one — only the NativeOnly
         // routing proof would carry any weight. RowWithTags gives real, discriminating Tags values instead:
         //   "hasX"      Tags = ["x", "y"] -> "x" fails t != "x" -> All false.
         //   "noX"       Tags = ["y", "z"] -> every element satisfies t != "x" -> All true.
@@ -573,7 +570,7 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         // A dedicated seed also means none of the 17 already-verified expectations elsewhere in this file
         // shift (nothing shares this seed).
         var collection = Seed(
-            nameof(Primitive_collection_All_is_rewritten_upstream_and_is_unaffected_by_this_slice),
+            nameof(Primitive_collection_All_is_rewritten_upstream_and_now_goes_native_via_EF382),
             RowWithTags("hasX", new BsonArray { "x", "y" }),
             RowWithTags("noX", new BsonArray { "y", "z" }),
             RowWithTags("emptyTags", new BsonArray()));
@@ -595,12 +592,12 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         Assert.Equal(driver, native);
         Assert.Equal(new[] { "emptyTags", "noX" }, native);
 
-        // Routing proof: falls back (see the empirical finding above) — NativeOnly throws rather than
-        // silently taking a different path than Native/DriverLinq just exercised.
+        // Routing proof: now goes native (EF-382) — NativeOnly succeeds rather than throwing.
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
-            Assert.Throws<NativeTranslationNotSupportedException>(
-                () => db.Entities.AsNoTracking().Where(b => b.Tags.All(t => t != "x")).ToList());
+            var nativeOnly = db.Entities.AsNoTracking().Where(b => b.Tags.All(t => t != "x"))
+                .ToList().Select(b => b.Title).OrderBy(t => t).ToList();
+            Assert.Equal(new[] { "emptyTags", "noX" }, nativeOnly);
         }
     }
 
@@ -798,4 +795,166 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
         // still exercised.
         Row("orRelationalGap", new BsonArray { PostWithoutRank(heading: "z"), PostDoc(rank: 9, heading: "a") }),
     ];
+
+    // ------------------------------------------------------------------
+    // EF-424 — dotted-path resolution through a nested owned single-reference hop, from INSIDE a quantifier's
+    // element-scoped predicate. Deliberately a SEPARATE fixture (NestedRef*), not an addition to Blog/Post
+    // above: adding an owned single-reference navigation to the shared Post type would need every other
+    // test's BlogModel/seed rows in this file to account for it.
+    // ------------------------------------------------------------------
+
+    public class NestedRefBlog
+    {
+        public ObjectId Id { get; set; }
+        public string Title { get; set; } = "";
+        public List<NestedRefPost> Posts { get; set; } = [];
+    }
+
+    public class NestedRefPost
+    {
+        public int? Rank { get; set; }
+        public NestedRefAuthor? Author { get; set; }
+    }
+
+    public class NestedRefAuthor
+    {
+        public string? City { get; set; }
+    }
+
+    private static readonly Action<ModelBuilder> NestedRefBlogModel = mb =>
+        mb.Entity<NestedRefBlog>().OwnsMany(b => b.Posts, p => p.OwnsOne(x => x.Author));
+
+    private SingleEntityDbContext<NestedRefBlog> CreateNestedRefContext(
+        IMongoCollection<NestedRefBlog> collection, MongoQueryMode mode)
+        => SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: NestedRefBlogModel,
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
+
+    [Fact]
+    public void Quantifier_element_predicate_through_nested_owned_reference_hop_goes_native()
+    {
+        // EF-424: p.Author.City reached from INSIDE Any's element predicate is a two-hop dotted path rooted at
+        // the owned-collection ELEMENT scope (Post), not the document root (NestedRefBlog) — TryResolveOwnedFieldPath
+        // used to decline unconditionally for any non-root _entityType, forcing a fallback. The "Springfield"
+        // vs "Shelbyville" split makes this DISCRIMINATING (not just "doesn't throw"): a wrong/empty native
+        // $match would return nothing, a mis-scoped one could return both.
+        var raw = database.MongoDatabase.GetCollection<BsonDocument>(
+            UniqueCollectionName(nameof(Quantifier_element_predicate_through_nested_owned_reference_hop_goes_native)));
+        var collection = database.MongoDatabase.GetCollection<NestedRefBlog>(raw.CollectionNamespace.CollectionName);
+
+        using (var seedDb = CreateNestedRefContext(collection, MongoQueryMode.DriverLinq))
+        {
+            seedDb.Entities.Add(new NestedRefBlog
+            {
+                Title = "match",
+                Posts = [new NestedRefPost { Rank = 1, Author = new NestedRefAuthor { City = "Springfield" } }]
+            });
+            seedDb.Entities.Add(new NestedRefBlog
+            {
+                Title = "nomatch",
+                Posts = [new NestedRefPost { Rank = 2, Author = new NestedRefAuthor { City = "Shelbyville" } }]
+            });
+            seedDb.SaveChanges();
+        }
+
+        using var db = CreateNestedRefContext(collection, MongoQueryMode.NativeOnly);
+
+        // Succeeds under NativeOnly => went native (would throw NativeTranslationNotSupportedException before
+        // the fix). The returned title proves it also matched the CORRECT row, not merely that it didn't throw.
+        var titles = db.Entities.AsNoTracking()
+            .Where(b => b.Posts.Any(p => p.Author!.City == "Springfield"))
+            .ToList().Select(b => b.Title).ToList();
+
+        Assert.Equal(new[] { "match" }, titles);
+    }
+
+    public class NestedRefKeyedBlog
+    {
+        public ObjectId Id { get; set; }
+        public string Title { get; set; } = "";
+        public List<NestedRefKeyedPost> Posts { get; set; } = [];
+    }
+
+    public class NestedRefKeyedPost
+    {
+        public int? Rank { get; set; }
+        public NestedRefKeyedAuthor? Author { get; set; }
+    }
+
+    // A composite-PK-bearing owned single-reference type, NESTED (not the document root) — the reachable
+    // combination EF-424's fix must also get right: EF's model builder accepts an explicit multi-property
+    // HasKey on an OwnsOne target (verified via a throwaway probe), and the serializer nests a LOCAL "_id"
+    // scoped to this type's own position in the document (e.g. "Author._id.City"), exactly mirroring how the
+    // document root's own composite key nests under the document's top-level "_id".
+    public class NestedRefKeyedAuthor
+    {
+        public string City { get; set; } = "";
+        public string Country { get; set; } = "";
+    }
+
+    private static readonly Action<ModelBuilder> NestedRefKeyedBlogModel = mb =>
+        mb.Entity<NestedRefKeyedBlog>().OwnsMany(b => b.Posts, p =>
+            p.OwnsOne(x => x.Author, a => a.HasKey(x => new { x.City, x.Country })));
+
+    private SingleEntityDbContext<NestedRefKeyedBlog> CreateNestedRefKeyedContext(
+        IMongoCollection<NestedRefKeyedBlog> collection, MongoQueryMode mode)
+        => SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: NestedRefKeyedBlogModel,
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
+
+    [Fact]
+    public void Quantifier_element_predicate_through_nested_owned_reference_composite_key_leaf_goes_native()
+    {
+        // The double-fix-interaction case called out in the EF-424 brief: the leaf (City) is BOTH a
+        // composite-PK component of its OWN declaring type (Author, via explicit HasKey) AND reached through a
+        // non-root scope (the Post collection element). Verified (via a throwaway probe reading the raw stored
+        // BSON) that the serializer nests a LOCAL "_id" scoped to Author itself even though Author is not the
+        // document root — { Posts: [{ Author: { _id: { City, Country }, ... } }] } — so the correct emitted
+        // path composes the scope-relative hop prefix with the LEAF's own composite-PK "_id." rewrite:
+        // "Author._id.City", not "Author.City". A fix that only added scope-relative hop-joining but dropped
+        // (or wrongly root-gated) the composite-PK "_id." rewrite for a non-root leaf would silently address
+        // the wrong field here and match nothing — asserting the correct row proves both pieces compose.
+        var raw = database.MongoDatabase.GetCollection<BsonDocument>(
+            UniqueCollectionName(nameof(Quantifier_element_predicate_through_nested_owned_reference_composite_key_leaf_goes_native)));
+        var collection = database.MongoDatabase.GetCollection<NestedRefKeyedBlog>(raw.CollectionNamespace.CollectionName);
+
+        using (var seedDb = CreateNestedRefKeyedContext(collection, MongoQueryMode.DriverLinq))
+        {
+            seedDb.Entities.Add(new NestedRefKeyedBlog
+            {
+                Title = "match",
+                Posts = [new NestedRefKeyedPost
+                {
+                    Rank = 1, Author = new NestedRefKeyedAuthor { City = "Springfield", Country = "USA" }
+                }]
+            });
+            seedDb.Entities.Add(new NestedRefKeyedBlog
+            {
+                Title = "nomatch",
+                Posts = [new NestedRefKeyedPost
+                {
+                    Rank = 2, Author = new NestedRefKeyedAuthor { City = "Shelbyville", Country = "USA" }
+                }]
+            });
+            seedDb.SaveChanges();
+        }
+
+        using var db = CreateNestedRefKeyedContext(collection, MongoQueryMode.NativeOnly);
+
+        var titles = db.Entities.AsNoTracking()
+            .Where(b => b.Posts.Any(p => p.Author!.City == "Springfield"))
+            .ToList().Select(b => b.Title).ToList();
+
+        Assert.Equal(new[] { "match" }, titles);
+    }
 }

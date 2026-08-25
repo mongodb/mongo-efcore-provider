@@ -26,7 +26,7 @@ public class MongoSelectDefinitionTrailingOpsTests
         // Record a pre-set-op op first (source1's own), then attach the set op.
         select.AddPredicateConjunct(new MongoConstantExpression(true, forSerialization: null));
         select.SetOperation = new MongoSetOperation(
-            MongoSetOperationKind.Union, new MongoSelectDefinition(), "customers");
+            MongoSetOperationKind.Union, new MongoSelectDefinition(), "customers", operandEntityType: null!);
         select.IsSetOp = true;
         return select;
     }

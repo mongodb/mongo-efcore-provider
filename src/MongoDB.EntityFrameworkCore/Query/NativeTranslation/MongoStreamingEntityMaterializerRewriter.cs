@@ -1123,12 +1123,16 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     /// position via the property's serializer and assign it to <paramref name="local"/>.
     /// </summary>
     /// <remarks>
-    /// An explicit BSON <c>null</c> at the element is consumed (<see cref="IBsonReader.ReadNull"/>) and the
-    /// local left at <c>default(T)</c> — for all property types, nullable or not — matching the driver-LINQ
-    /// entity-materialization behavior (a non-nullable property tolerates an explicit null rather than letting
-    /// the value flow into the property serializer, which would throw). The element being present is what
-    /// distinguishes this from a MISSING required field (handled by the fill-loop presence tracking, which
-    /// throws instead): a present-but-null required scalar counts as present and takes this default(T) path.
+    /// An explicit BSON <c>null</c> at the element is consumed (<see cref="IBsonReader.ReadNull"/>). For a
+    /// non-nullable VALUE-typed property (<c>int</c>, <c>DateTime</c>, ...) the local is left at
+    /// <c>default(T)</c>, matching the DOM/driver-LINQ oracle (<see cref="Storage.BsonBinding"/>'s
+    /// <c>value == null</c> check can never be true for an unconstrained value-typed <c>T</c>, so it never
+    /// throws there either — this is not a deliberate tolerance, just a property of the generic check). For a
+    /// non-nullable REFERENCE-typed property (<c>string</c>, a collection, an owned class, ...) <c>default(T)</c>
+    /// IS <c>null</c>, so silently assigning it would produce an invalid object with a null required member;
+    /// this throws the same <see cref="InvalidOperationException"/> message as the oracle instead (EF-343),
+    /// restoring streaming/DOM parity. The element being present (rather than missing) is what distinguishes
+    /// this from a MISSING required field, handled separately by the fill-loop presence tracking.
     /// </remarks>
     private Expression BuildTypedRead(IProperty property, ParameterExpression local)
     {
@@ -1171,15 +1175,26 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
         var readAssign = Expression.Assign(local, deserialize);
 
+        Expression onNull = !property.IsNullable && !local.Type.IsValueType
+            ? Expression.Throw(
+                Expression.New(
+                    RequiredPropertyNullExceptionCtor,
+                    Expression.Constant(
+                        $"Document element is null for required non-nullable property '{property.Name}'.")))
+            : Expression.Assign(local, Expression.Default(local.Type));
+
         return Expression.IfThenElse(
             Expression.Equal(
                 Expression.Call(_reader, GetCurrentBsonTypeMethod),
                 Expression.Constant(BsonType.Null, typeof(BsonType))),
             Expression.Block(
                 Expression.Call(_reader, ReadNullMethod),
-                Expression.Assign(local, Expression.Default(local.Type))),
+                onNull),
             readAssign);
     }
+
+    private static readonly ConstructorInfo RequiredPropertyNullExceptionCtor
+        = typeof(InvalidOperationException).GetConstructor([typeof(string)])!;
 
     /// <summary>
     /// Reference-include fixup, mirroring EF's binding remover <c>IncludeReference</c>: wires the materialized

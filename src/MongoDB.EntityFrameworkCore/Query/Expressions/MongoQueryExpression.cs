@@ -91,6 +91,27 @@ internal sealed partial class MongoQueryExpression : Expression
     public Expression GetMappedProjection(ProjectionMember projectionMember)
         => _projectionMapping[projectionMember];
 
+    /// <summary>
+    /// Re-points the query's ROOT <see cref="ProjectionMember"/> at a fresh
+    /// <see cref="EntityProjectionExpression"/>/<see cref="RootReferenceExpression"/> pair for
+    /// <paramref name="entityType"/> — built exactly the way the constructor builds the query root's own pair,
+    /// but for a different entity type.
+    /// </summary>
+    /// <remarks>
+    /// Used by the bare whole-inner-element <c>SelectMany</c> (<c>MongoUnwindSource.WholeElement</c>): after the
+    /// <c>$unwind</c> + <c>$replaceRoot</c> the unwound ELEMENT *is* the root document, and the element's own
+    /// shaper is the only shaper that survives (the trailing <c>ti =&gt; ti.Inner</c> selector drops the outer
+    /// one). Leaving the root member mapped to the OUTER entity's projection makes every member binding — most
+    /// visibly a nested owned navigation reached through EF's auto-<c>IncludeExpression</c> machinery — resolve
+    /// against the wrong entity type (<c>EntityProjectionExpression.BindNavigation</c> throws
+    /// "Unable to bind 'navigation' … to an entity projection of &lt;owner&gt;").
+    /// Must be called BEFORE <c>MongoProjectionBindingExpressionVisitor.Translate</c> runs for the trailing
+    /// selector, which is the only consumer of this mapping and which replaces it wholesale afterwards.
+    /// </remarks>
+    public void ReRootProjectionAt(IEntityType entityType)
+        => _projectionMapping[new ProjectionMember()] =
+            new EntityProjectionExpression(entityType, new RootReferenceExpression(entityType));
+
     public IReadOnlyList<ProjectionExpression> Projection
         => _projection;
 
@@ -108,8 +129,16 @@ internal sealed partial class MongoQueryExpression : Expression
             // an override (see MongoSelectDefinition.AddProjectionAliasOverride) — notably for a bare
             // selector body, whose ProjectionMember has no last member and would otherwise get a null alias.
             // Reading the override keeps the emitted $project key and the name the DOM shaper reads in sync.
+            //
+            // EF-395: also consult the override when Select.IsDistinct is set, even though that flips Route
+            // to NativeRoute.GroupBy (NativeGroupByBinder.TryBindDistinctFromProjection's degenerate $group
+            // over a projection). IsDistinct is set nowhere else, and only after re-adding each original
+            // projection's alias unchanged via the flatten $project — so the override this select's ORIGINAL
+            // (pre-Distinct) projection registered is still exactly what the flattened output emits, and
+            // omitting it here would revert a bare body's alias to null (memberName), crashing the shaper.
+            // An ordinary GroupBy(key).Select(aggregate) never sets IsDistinct, so it is unaffected.
             var memberName = projectionMember.Last?.Name;
-            var alias = Select.Route == NativeRoute.Projection
+            var alias = (Select.Route == NativeRoute.Projection || Select.IsDistinct)
                         && Select.TryGetProjectionAlias(memberName, out var overriddenAlias)
                 ? overriddenAlias
                 : memberName;

@@ -222,7 +222,7 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
         Assert.Equal(
             driverRows.Select(r => (r.Name, r.Nickname)),
             nativeRows.Select(r => (r.Name, r.Nickname)));
-        Assert.Equal(["Big Apple", null, null], nativeRows.Select(r => r.Nickname).ToArray());
+        Assert.Equal(new[] { "Big Apple" , null, null }, nativeRows.Select(r => r.Nickname).ToArray());
     }
 
     // The REQUIRED-leaf half of the case above, split out because Native and DriverLinq deliberately
@@ -268,7 +268,7 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
             var rows = driver.Entities.AsNoTracking()
                 .OrderBy(p => p.Name).Select(p => new { p.Name, p.Home.City }).ToList();
 
-            Assert.Equal(["NYC", "LA", null], rows.Select(r => r.City).ToArray());
+            Assert.Equal(new[] { "NYC", "LA", null }, rows.Select(r => r.City).ToArray());
         }
 
         // ...and the whole-entity read rejects this data in EVERY mode, which is what makes the native

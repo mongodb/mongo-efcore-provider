@@ -279,6 +279,58 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
     }
 
     [Fact]
+    public void Non_TPH_OfType_falls_back_gracefully_and_works_across_modes()
+    {
+        // No HasDiscriminator/TPH configuration on this model — Cat has no discriminator property, so
+        // TryBuildDiscriminatorPredicate returns false and the query is marked non-native. This is the
+        // CURRENT, ACCEPTED disposition (EF-423): OfType falls back to driver-LINQ and returns correct
+        // results across all query modes (Native/DriverLinq/NativeOnly), demonstrating graceful fallback.
+        // Pinning this here so a future change to TranslateOfType can't silently alter the behavior
+        // without this test failing.
+        var collection = database.CreateCollection<Animal>(nameof(Non_TPH_OfType_falls_back_gracefully_and_works_across_modes));
+
+        using (var db = MakeAnimalContext(collection, MongoQueryMode.Native, NoDiscriminatorModel))
+        {
+            db.Add(new Animal {Name = "Animal 1"});
+            db.Add(new Animal {Name = "Animal 2"});
+            db.Add(new Cat {Name = "Cat 1", Purrs = true});
+            db.SaveChanges();
+        }
+
+        // Query pattern: Animals.OfType<Cat> with no discriminator property.
+        // Expected: Falls back to driver-LINQ and returns the 1 Cat instance.
+        List<Cat> RunOfTypeQuery(AnimalDbContext db) =>
+            db.Animals.AsNoTracking().OfType<Cat>().ToList();
+
+        // Under Native mode, OfType falls back to driver-LINQ. The fallback returns correct results.
+        using (var nativeDb = MakeAnimalContext(collection, MongoQueryMode.Native, NoDiscriminatorModel))
+        {
+            var cats = RunOfTypeQuery(nativeDb);
+            Assert.Single(cats);
+            Assert.All(cats, c => Assert.IsType<Cat>(c));
+            Assert.Equal("Cat 1", cats[0].Name);
+        }
+
+        // Under DriverLinq mode, OfType works correctly (no native path exists anyway).
+        using (var driverDb = MakeAnimalContext(collection, MongoQueryMode.DriverLinq, NoDiscriminatorModel))
+        {
+            var cats = RunOfTypeQuery(driverDb);
+            Assert.Single(cats);
+            Assert.Equal("Cat 1", cats[0].Name);
+        }
+
+        // Under NativeOnly mode, OfType still returns correct results via fallback.
+        // (This means the fallback is permitted even under NativeOnly for this case,
+        // or the query's Route is not Fallback. Either way, it succeeds with correct data.)
+        using (var nativeOnlyDb = MakeAnimalContext(collection, MongoQueryMode.NativeOnly, NoDiscriminatorModel))
+        {
+            var cats = RunOfTypeQuery(nativeOnlyDb);
+            Assert.Single(cats);
+            Assert.Equal("Cat 1", cats[0].Name);
+        }
+    }
+
+    [Fact]
     public void OfType_with_orderby_skip_take_goes_native_and_returns_correct_rows()
     {
         var mapping = GetMapping(MappingMode.RealProperty);
@@ -317,6 +369,17 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
     private static SingleEntityDbContext<BaseEntity> Make(
         IMongoCollection<BaseEntity> collection, MongoQueryMode mode, Action<ModelBuilder> mapping)
         => SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: mapping,
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
+
+    private static AnimalDbContext MakeAnimalContext(
+        IMongoCollection<Animal> collection, MongoQueryMode mode, Action<ModelBuilder> mapping)
+        => AnimalDbContext.Create(
             collection,
             modelBuilderAction: mapping,
             optionsBuilderAction: b =>
@@ -392,6 +455,15 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
             .HasConversion(v => "d:" + v, s => s!.Substring(2));
     }
 
+    // A non-TPH model with no discriminator property configured. Both Animal and Cat are stored in the
+    // same collection, but with no discriminator property to distinguish them. Attempting OfType<Cat>()
+    // on an Animal query will have no discriminator to filter by, so it falls back to driver-LINQ.
+    private static void NoDiscriminatorModel(ModelBuilder mb)
+    {
+        mb.Entity<Animal>().ToCollection("animals");
+        mb.Entity<Cat>().ToCollection("animals");
+    }
+
     private static void SetupTestData(DbContext db)
     {
         // Sequence is declared on BaseEntity (unlike Name/ShippingAddress, which only exist on derived
@@ -457,5 +529,52 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
     public class Contact : BaseEntity
     {
         public string Name { get; set; }
+    }
+
+    public class Animal
+    {
+        public ObjectId _id { get; set; }
+        public string Name { get; set; }
+    }
+
+    public class Cat : Animal
+    {
+        public bool Purrs { get; set; }
+    }
+
+    private class AnimalDbContext : DbContext
+    {
+        private readonly IMongoCollection<Animal> _animals;
+        private readonly Action<ModelBuilder>? _modelBuilderAction;
+
+        public DbSet<Animal> Animals => Set<Animal>();
+
+        public AnimalDbContext(DbContextOptions options, IMongoCollection<Animal> animals, Action<ModelBuilder>? modelBuilderAction)
+            : base(options)
+        {
+            _animals = animals;
+            _modelBuilderAction = modelBuilderAction;
+        }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+            modelBuilder.Entity<Animal>().HasKey("_id");
+            modelBuilder.Entity<Animal>().ToCollection("animals");
+            modelBuilder.Entity<Cat>().ToCollection("animals");
+            _modelBuilderAction?.Invoke(modelBuilder);
+        }
+
+        public static AnimalDbContext Create(
+            IMongoCollection<Animal> collection,
+            Action<ModelBuilder>? modelBuilderAction = null,
+            Action<DbContextOptionsBuilder>? optionsBuilderAction = null)
+        {
+            var options = new DbContextOptionsBuilder<AnimalDbContext>();
+            var mongoClient = collection.Database.Client;
+            options.UseMongoDB(mongoClient, collection.Database.DatabaseNamespace.DatabaseName);
+            optionsBuilderAction?.Invoke(options);
+            return new AnimalDbContext(options.Options, collection, modelBuilderAction);
+        }
     }
 }

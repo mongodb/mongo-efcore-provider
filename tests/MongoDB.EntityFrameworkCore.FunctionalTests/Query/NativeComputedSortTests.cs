@@ -22,6 +22,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
+using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
@@ -47,6 +48,10 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         public int A { get; set; }
         public int B { get; set; }
         public string Label { get; set; } = "";
+
+        // EF-413's Not fixture (case 24 below). Defaults to false for every row seeded by the other cases in
+        // this class, so adding it here does not disturb any pre-existing expectation.
+        public bool Flag { get; set; }
     }
 
     // The TPH pair for case 2 (DOM shaper) — a base with a derived sibling makes StreamingEligibility.IsEligible
@@ -775,6 +780,158 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         }
     }
 
+    // ── 22-24. EF-413: MongoInExpression / MongoUnaryExpression{Not} computed sort keys go native ──
+    // Before EF-413, MongoAggregationExpressionRenderer had no arm for MongoInExpression or
+    // MongoUnaryExpression, so TryTranslateComputedSortKey's CanRender gate declined these shapes and they
+    // fell back rather than going native via the synthetic $set/$sort/$unset bracket every other computed
+    // sort key uses.
+
+    [Fact]
+    public void Computed_sort_key_using_client_collection_Contains_goes_native()
+    {
+        var collection = Seed(nameof(Computed_sort_key_using_client_collection_Contains_goes_native));
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+
+        var favored = new[] { "pA", "pD" };
+
+        // Sort ascending by list membership (false < true): non-favored labels sort first. ThenBy(Label)
+        // makes a dropped $sort observable rather than silently matching insertion order.
+        var result = db.Entities.AsNoTracking()
+            .OrderBy(x => favored.Contains(x.Label))
+            .ThenBy(x => x.Label)
+            .ToList();
+
+        // Not-favored (pB, pC) sort first (false), alphabetically; then favored (pA, pD), alphabetically.
+        Assert.Equal(["pB", "pC", "pA", "pD"], result.Select(x => x.Label));
+    }
+
+    [Fact]
+    public void Negated_computed_sort_key_using_Contains_goes_native()
+    {
+        var collection = Seed(nameof(Negated_computed_sort_key_using_Contains_goes_native));
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+
+        var favored = new[] { "pA", "pD" };
+
+        // !list.Contains(...) collapses to a NEGATED MongoInExpression at translate time (see
+        // MongoExpressionTranslator's Not case), so this exercises RenderIn's Negated=true ($not:[$in:...])
+        // branch specifically, distinct from the un-negated case above.
+        var result = db.Entities.AsNoTracking()
+            .OrderBy(x => !favored.Contains(x.Label))
+            .ThenBy(x => x.Label)
+            .ToList();
+
+        // Favored (pA, pD) sort first (false, since negated), alphabetically; then not-favored (pB, pC).
+        Assert.Equal(["pA", "pD", "pB", "pC"], result.Select(x => x.Label));
+    }
+
+    [Fact]
+    public void Computed_sort_key_using_Not_over_a_bool_field_goes_native()
+    {
+        var collection = database.MongoDatabase.GetCollection<SortItem>(
+            UniqueCollectionName(nameof(Computed_sort_key_using_Not_over_a_bool_field_goes_native)));
+        collection.InsertMany(
+        [
+            new SortItem { A = 1, B = 1, Label = "pX", Flag = true },
+            new SortItem { A = 2, B = 2, Label = "pY", Flag = false },
+            new SortItem { A = 3, B = 3, Label = "pZ", Flag = true },
+            new SortItem { A = 4, B = 4, Label = "pW", Flag = false }
+        ]);
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+
+        // !x.Flag over a non-nullable bool FIELD translates to a genuine MongoUnaryExpression{Not} (distinct
+        // from the Contains/$in collapse above) — see MongoExpressionTranslator's Not case, final fallthrough.
+        // Ascending on !Flag (false < true): Flag==true rows sort first, Flag==false rows sort last.
+        // ThenBy(Label) makes a dropped $sort observable.
+        var result = db.Entities.AsNoTracking()
+            .OrderBy(x => !x.Flag)
+            .ThenBy(x => x.Label)
+            .ToList();
+
+        Assert.Equal(["pX", "pZ", "pW", "pY"], result.Select(x => x.Label));
+    }
+
+    // ── 25. CODE-REVIEW FIX (EF-413): Not over a VALUE-CONVERTED bool must decline, never answer wrong ──────
+    // Before this fix, MongoExpressionTranslator.AllFieldsDefaultSerialized's catch-all waved a
+    // MongoUnaryExpression{Not} through unconditionally, so a value-converted bool's `!` reached
+    // MongoAggregationExpressionRenderer.RenderUnary — a raw-field `{ $not: [...] }`, which is
+    // TRUTHINESS-based (only false/null/0/undefined are falsy). Both converted values below ("Y"/"N") are
+    // non-empty strings, i.e. BOTH truthy, so the un-gated renderer would answer `!Flag == false` for EVERY
+    // row regardless of the real CLR value — silently WRONG data under Native, not merely a missed
+    // optimization, and (MEASURED, temporarily reverting the fix) genuinely ties every row on that wrong
+    // constant, degrading the sort to insertion order.
+    //
+    // With the fix, AllFieldsDefaultSerialized's new MongoUnaryExpression arm makes TryTranslateComputedSortKey
+    // (via TryTranslateValue) decline this at TRANSLATE time, before either renderer runs. MEASURED (not
+    // assumed): the fallback this lands on does NOT itself correctly re-serialize a negated converted bool
+    // either — the MongoDB driver's own LINQ v3 provider renders `!x.Flag` in a computed-key/$project context
+    // as the SAME raw-field `{ $not: "$Flag" }`, independent of this provider's translator entirely. So for
+    // THIS specific position, Native and explicit DriverLinq now AGREE with each other post-fix (both still
+    // diverge from the true CLR answer) — the same "native == driver-LINQ, an accepted divergence, not wrong
+    // data" pattern this file's own
+    // <see cref="Filtered_owned_collection_count_sort_key_goes_native"/> already established for a filtered
+    // count's comparison operand. The correctness bar this fix actually restores is: (1) NativeOnly must
+    // NEVER silently succeed with wrong data — it must decline cleanly instead (verified below); and (2)
+    // Native must never independently compute a WORSE, differently-wrong answer than the existing fallback
+    // (verified below: Native now equals DriverLinq, whereas before the fix Native disagreed with DriverLinq,
+    // which is the real defect this closes). Fully fixing the residual driver-level limitation is out of
+    // scope for EF-413 (it lives in the MongoDB C# driver's own LINQ provider, not this translator).
+
+    public class ConvertedFlagItem
+    {
+        public ObjectId Id { get; set; }
+        public string Label { get; set; } = "";
+        public bool Flag { get; set; }
+    }
+
+    // Custom (not the built-in) converter, deliberately: both stored values ("Y"/"N") are non-empty strings —
+    // i.e. BOTH truthy under MongoDB's own $not — so a raw-field $not is wrong for every Flag==false row, not
+    // just some of them (a converter that happened to map false to "" or "0" would only demonstrate the bug
+    // on some rows, which is a weaker pin).
+    private static readonly Action<ModelBuilder> ConvertedFlagModel =
+        mb => mb.Entity<ConvertedFlagItem>().Property(x => x.Flag)
+            .HasConversion(v => v ? "Y" : "N", v => v == "Y");
+
+    [Fact]
+    public void Computed_sort_key_using_Not_over_a_value_converted_bool_declines_instead_of_answering_wrong()
+    {
+        var name = UniqueCollectionName(
+            nameof(Computed_sort_key_using_Not_over_a_value_converted_bool_declines_instead_of_answering_wrong));
+        database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
+        [
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Label", "p2" }, { "Flag", "Y" } }, // true
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Label", "p1" }, { "Flag", "N" } }, // false
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Label", "p3" }, { "Flag", "Y" } }, // true
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Label", "p4" }, { "Flag", "N" } }  // false
+        ]);
+        var collection = database.MongoDatabase.GetCollection<ConvertedFlagItem>(name);
+
+        List<string> RunLabels(MongoQueryMode mode)
+        {
+            using var db = CreateContext(collection, mode, ConvertedFlagModel);
+            return db.Entities.AsNoTracking()
+                .OrderBy(x => !x.Flag).ThenBy(x => x.Label)
+                .ToList().Select(x => x.Label).ToList();
+        }
+
+        // NativeOnly: a clean decline (NativeTranslationNotSupportedException), NEVER silently-wrong data —
+        // this is the load-bearing assertion the code review flagged. Before the fix, this line failed:
+        // NativeOnly SUCCEEDED and silently returned the wrong (insertion-order-degenerate) rows.
+        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, ConvertedFlagModel))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+                nativeOnly.Entities.AsNoTracking()
+                    .OrderBy(x => !x.Flag).ThenBy(x => x.Label)
+                    .ToList());
+        }
+
+        // Native must agree with the fallback it declines TO, not silently diverge from it. Before the fix,
+        // Native computed the wrong-and-DIFFERENT-from-DriverLinq answer (every row tied and fell back to
+        // insertion order) because it rendered the Not natively instead of declining; after the fix it
+        // declines and inherits whatever DriverLinq itself answers.
+        Assert.Equal(RunLabels(MongoQueryMode.DriverLinq), RunLabels(MongoQueryMode.Native));
+    }
+
     // ── Seeds and helpers ───────────────────────────────────────────────────────────────────────
 
     private IMongoCollection<SortItem> Seed(string name)
@@ -803,6 +960,159 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             {"_t", nameof(SortDomItem)}
         }));
         return database.MongoDatabase.GetCollection<SortDomItem>(collectionName);
+    }
+
+    // ── EF-408: the synthetic $set sort field must not clobber a real mapped element ────────────────
+    //
+    // The SyntheticSortFieldAllocator reserves the root entity type's top-level element names because $set
+    // silently OVERWRITES a same-named field (and the trailing $unset then REMOVES it). Its doc comment used
+    // to record two gaps as "accepted but unverified"; EF-408 measured BOTH reachable and closed them. The
+    // two tests below are the end-to-end pins, run under NativeOnly so a driver-LINQ fallback cannot mask
+    // them; MongoSelectLowererTests has the matching allocator-level unit tests.
+
+    public class ClashItem
+    {
+        public ObjectId Id { get; set; }
+        public int A { get; set; }
+        public int B { get; set; }
+        public string Label { get; set; } = "";
+    }
+
+    // The TPH derived sibling. Special is mapped onto "__sort0" — the FIRST synthetic sort field name the
+    // allocator hands out — and is declared ONLY here, so IEntityType.GetProperties() on ClashItem never
+    // returns it.
+    public class ClashItemDerived : ClashItem
+    {
+        public int Special { get; set; }
+    }
+
+    [Fact]
+    public void Synthetic_sort_field_does_not_clobber_a_TPH_derived_types_own_element()
+    {
+        // EF-408 gap 2. Before the fix, this query emitted $set{__sort0: {$add:[A,B]}} → $sort → $unset
+        // __sort0, which OVERWROTE and then DELETED the derived row's real "__sort0" element: the query
+        // failed with InvalidOperationException("Document element is missing for required non-nullable
+        // property 'Special'") — silent data loss for a nullable property, a crash for this one — under the
+        // DEFAULT Native mode. MEASURED before/after on this exact fixture.
+        var name = UniqueCollectionName(nameof(Synthetic_sort_field_does_not_clobber_a_TPH_derived_types_own_element));
+        database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
+        [
+            new BsonDocument {{"_id", ObjectId.GenerateNewId()}, {"A", 9}, {"B", 1}, {"Label", "pC"}, {"_t", nameof(ClashItem)}},
+            new BsonDocument {{"_id", ObjectId.GenerateNewId()}, {"A", 1}, {"B", 2}, {"Label", "pD"}, {"_t", nameof(ClashItem)}},
+            new BsonDocument
+            {
+                {"_id", ObjectId.GenerateNewId()}, {"A", 2}, {"B", 23}, {"Label", "pA"},
+                {"__sort0", 42}, {"_t", nameof(ClashItemDerived)}
+            },
+        ]);
+
+        using var db = CreateContextWithLogging(
+            database.MongoDatabase.GetCollection<ClashItem>(name), MongoQueryMode.NativeOnly, out var spy,
+            mb => mb.Entity<ClashItemDerived>().Property(x => x.Special).HasElementName("__sort0"));
+
+        // NativeOnly: reaching a result at all proves the query genuinely went native (a fallback throws
+        // NativeTranslationNotSupportedException here).
+        var rows = db.Entities.AsNoTracking().OrderBy(x => x.A + x.B).ToList();
+
+        // Order is asserted, never just the count — a dropped $sort still returns every row (A+B: 3, 10, 25).
+        Assert.Equal(["pD", "pC", "pA"], rows.Select(x => x.Label));
+
+        // The derived row's own element survived intact rather than being clobbered by the sort key (25).
+        var derived = Assert.IsType<ClashItemDerived>(Assert.Single(rows.OfType<ClashItemDerived>()));
+        Assert.Equal(42, derived.Special);
+
+        // And the pipeline really did allocate a DIFFERENT synthetic name (the guard skipped "__sort0"),
+        // rather than the row surviving for some unrelated reason.
+        var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
+        Assert.Contains("__sort1", mql);
+    }
+
+    // ── Gap 1: a set-op operand of a DIFFERENT entity type ──────────────────────────────────────────
+
+    public class SetOpMain
+    {
+        public ObjectId Id { get; set; }
+        public string Name { get; set; } = "";
+    }
+
+    public class SetOpOther
+    {
+        public ObjectId Id { get; set; }
+        public int X { get; set; }
+        public int Y { get; set; }
+
+        // Mapped onto "__sort0" — the operand's own top-level namespace, invisible from the outer query's
+        // root entity type.
+        public string Clash { get; set; } = "";
+    }
+
+    [Fact]
+    public void Synthetic_sort_field_does_not_clobber_a_set_op_operands_own_element()
+    {
+        // EF-408 gap 1. A PROJECTED-operand set op does not require the operands to share an entity type
+        // (TryTranslateSetOperation's projected branch checks ProjectionShapesMatch only), and the operand's
+        // own ops lower through the SAME SyntheticSortFieldAllocator into the nested $unionWith pipeline. So
+        // a computed sort on the operand allocated "__sort0" — reserved against the ROOT type only — and
+        // $set/$unset destroyed the operand's real "__sort0" element BEFORE its own $project read it. The
+        // measured pre-fix symptom was InvalidOperationException("Document element 'N' is missing...").
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var mains = UniqueCollectionName(nameof(Synthetic_sort_field_does_not_clobber_a_set_op_operands_own_element)) + "M" + suffix;
+        var others = UniqueCollectionName(nameof(Synthetic_sort_field_does_not_clobber_a_set_op_operands_own_element)) + "O" + suffix;
+
+        database.MongoDatabase.GetCollection<BsonDocument>(mains).InsertMany(
+        [
+            new BsonDocument {{"_id", ObjectId.GenerateNewId()}, {"Name", "m1"}},
+        ]);
+        database.MongoDatabase.GetCollection<BsonDocument>(others).InsertMany(
+        [
+            new BsonDocument {{"_id", ObjectId.GenerateNewId()}, {"X", 1}, {"Y", 2}, {"__sort0", "o1"}},
+            new BsonDocument {{"_id", ObjectId.GenerateNewId()}, {"X", 5}, {"Y", 1}, {"__sort0", "o2"}},
+        ]);
+
+        using var db = new SetOpElementNameContext(database, mains, others, MongoQueryMode.NativeOnly);
+
+        // NativeOnly again: a fallback would throw rather than mask the collision.
+        var rows = db.Mains.AsNoTracking().Select(m => new {N = m.Name})
+            .Union(db.Others.AsNoTracking().OrderBy(o => o.X + o.Y).Select(o => new {N = o.Clash}))
+            .AsEnumerable()
+            .Select(x => x.N)
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Equal(["m1", "o1", "o2"], rows);
+    }
+
+    private class SetOpElementNameContext : DbContext
+    {
+        private readonly string _mains;
+        private readonly string _others;
+
+        public SetOpElementNameContext(TemporaryDatabaseFixture db, string mains, string others, MongoQueryMode mode)
+            : base(new DbContextOptionsBuilder<SetOpElementNameContext>()
+                .UseMongoDB(db.Client, db.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryMode(mode))
+                .ReplaceService<Microsoft.EntityFrameworkCore.Infrastructure.IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+                .Options)
+        {
+            _mains = mains;
+            _others = others;
+        }
+
+        public DbSet<SetOpMain> Mains { get; set; } = null!;
+        public DbSet<SetOpOther> Others { get; set; } = null!;
+
+        protected override void OnModelCreating(ModelBuilder mb)
+        {
+            mb.Entity<SetOpMain>().ToCollection(_mains);
+            mb.Entity<SetOpOther>().ToCollection(_others);
+            mb.Entity<SetOpOther>().Property(x => x.Clash).HasElementName("__sort0");
+        }
+
+        private sealed class IgnoreCacheKeyFactory : Microsoft.EntityFrameworkCore.Infrastructure.IModelCacheKeyFactory
+        {
+            private static int _count;
+            public object Create(DbContext context, bool designTime) => System.Threading.Interlocked.Increment(ref _count);
+        }
     }
 
     private string UniqueCollectionName(string name)

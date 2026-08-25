@@ -460,21 +460,25 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
                 .Select(b => b.Title));
     }
 
-    // ── 15. Bare projected set-op OPERAND: the narrowing tripwire ─────────────────
+    // ── 15. Bare projected set-op OPERAND: EF-395 relaxes this to go native ───────
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]
-    public void Bare_projected_union_and_concat_operands_still_decline_and_return_correct_values(MongoQueryMode mode)
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Bare_projected_union_and_concat_operands_go_native_and_return_correct_values(MongoQueryMode mode)
     {
         var collection = SeedSetOps(
-            nameof(Bare_projected_union_and_concat_operands_still_decline_and_return_correct_values) + mode);
+            nameof(Bare_projected_union_and_concat_operands_go_native_and_return_correct_values) + mode);
         using var db = CreateContext(collection, mode);
 
-        // The DELIBERATE §7.2 narrowing. A projected-OPERAND set op dedups/source-tags over the whole PROJECTED
-        // document, so a bare projected operand changes what $$ROOT is; admitting it was measured to flip
-        // Intersect/Except from throwing to answering, on the two operators with no oracle. Declining restores
-        // the pre-3a disposition exactly: Union/Concat fall back and answer correctly here.
+        // EF-395: a bare (non-`new{}`) projected operand — Select(b => b.Title) — is admitted by
+        // IsPlainProjectedSelect the same as a wrapped one. Safe because the hazard the wrapped-vs-bare
+        // distinction used to guard against (an array leaf's leaked owner key corrupting the $$ROOT/`$_doc`
+        // whole-document dedup key) is fully covered by the SEPARATE HasArrayProjectionLeaf conjunct, which
+        // still declines regardless of bare/wrapped. For a non-array scalar leaf the projected document IS
+        // exactly the value being compared ({Title: "..."}), so dedup-by-whole-document and dedup-by-value
+        // coincide — admitting it changes nothing about what $$ROOT means.
         //
         // Note the answers DIFFER from test 8's: dedup here is over the projected VALUES, so the two distinct
         // "p2" documents collapse to one.
@@ -489,70 +493,109 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
                 .Concat(db.Entities.AsNoTracking().Where(b => b.Rank >= 3).Select(b => b.Title))));
     }
 
-    [Fact]
-    public void Bare_projected_union_and_concat_operands_decline_under_native_only()
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Bare_projected_intersect_and_except_operands_go_native_and_return_correct_values(MongoQueryMode mode)
     {
-        var collection = SeedSetOps(nameof(Bare_projected_union_and_concat_operands_decline_under_native_only));
+        // No DriverLinq leg: the driver's own LINQ provider does not translate a cross-view Intersect/Except
+        // at all (see test 8's twin), so there is no oracle for these two in any mode.
+        var collection = SeedSetOps(
+            nameof(Bare_projected_intersect_and_except_operands_go_native_and_return_correct_values) + mode);
+        using var db = CreateContext(collection, mode);
+
+        // Same relaxation as Union/Concat, but for the two operators with NO driver-LINQ baseline at all — so
+        // this is a strict improvement (hard-fail-in-every-mode -> a correct answer in every mode), not a
+        // narrowing of an existing graceful fallback. op1 titles = {p2, q0, r_mid}; op2 titles = {p2, r_mid,
+        // s_hi} (each Where(...).Select(...) already dedups by construction of the seed). Intersect = {p2,
+        // r_mid}; Except = {q0}.
+        Assert.Equal(
+            ["p2", "r_mid"],
+            Sorted(db.Entities.AsNoTracking().Where(b => b.Rank <= 3).Select(b => b.Title)
+                .Intersect(db.Entities.AsNoTracking().Where(b => b.Rank >= 3).Select(b => b.Title))));
+
+        Assert.Equal(
+            ["q0"],
+            Sorted(db.Entities.AsNoTracking().Where(b => b.Rank <= 3).Select(b => b.Title)
+                .Except(db.Entities.AsNoTracking().Where(b => b.Rank >= 3).Select(b => b.Title))));
+    }
+
+    // Coverage gap closed post-review: the safety argument for admitting a bare projected set-op operand
+    // (test 15 above) rests entirely on HasArrayProjectionLeaf still declining an OWNED-ARRAY bare leaf
+    // regardless of the bare/wrapped conjunct removed from IsPlainProjectedSelect. The two existing array-leaf
+    // guard tests (NativeArrayProjectionTests) only exercise the WRAPPED spelling
+    // (Select(b => new { b.Title, b.Posts })), so nothing pinned the BARE spelling
+    // (Select(b => b.Posts)) still declining as a set-op operand. This test closes that gap: it is expected
+    // to ALREADY pass under the current code (this is not a bug fix) and exists so a future accidental
+    // weakening of HasArrayProjectionLeaf's bare-leaf coverage fails a test rather than going unnoticed.
+    [Fact]
+    public void Bare_owned_array_projection_operand_still_declines_under_native_only()
+    {
+        var collection = SeedSetOps(nameof(Bare_owned_array_projection_operand_still_declines_under_native_only));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
+        // Union has a driver-LINQ baseline, so a declined shape falls back gracefully under Native and only
+        // throws NativeTranslationNotSupportedException under NativeOnly.
         Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.Entities.AsNoTracking().Where(b => b.Rank <= 3).Select(b => b.Title)
-                .Union(db.Entities.AsNoTracking().Where(b => b.Rank >= 3).Select(b => b.Title)).ToList());
+            () => db.Entities.AsNoTracking().Where(b => b.Rank <= 3).Select(b => b.Posts)
+                .Union(db.Entities.AsNoTracking().Where(b => b.Rank >= 3).Select(b => b.Posts)).ToList());
 
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.Entities.AsNoTracking().Where(b => b.Rank <= 3).Select(b => b.Title)
-                .Concat(db.Entities.AsNoTracking().Where(b => b.Rank >= 3).Select(b => b.Title)).ToList());
+        // Intersect/Except have NO driver-LINQ baseline at all, so a declined shape hard-fails translation in
+        // EVERY mode via TryTranslateSetOperation's null return (EF Core's own translation-failure path,
+        // InvalidOperationException) rather than the graceful NativeTranslationNotSupportedException above.
+        Assert.Throws<InvalidOperationException>(
+            () => db.Entities.AsNoTracking().Where(b => b.Rank <= 3).Select(b => b.Posts)
+                .Intersect(db.Entities.AsNoTracking().Where(b => b.Rank >= 3).Select(b => b.Posts)).ToList());
+
+        Assert.Throws<InvalidOperationException>(
+            () => db.Entities.AsNoTracking().Where(b => b.Rank <= 3).Select(b => b.Posts)
+                .Except(db.Entities.AsNoTracking().Where(b => b.Rank >= 3).Select(b => b.Posts)).ToList());
     }
+
+    // ── 16. Bare projection then Distinct: EF-395 relaxes this to go native ───────
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]
     [InlineData(MongoQueryMode.NativeOnly)]
-    public void Bare_projected_intersect_and_except_operands_hard_fail_in_every_mode(MongoQueryMode mode)
+    public void Bare_projection_then_Distinct_goes_native_and_returns_correct_values(MongoQueryMode mode)
     {
-        var collection = SeedSetOps(nameof(Bare_projected_intersect_and_except_operands_hard_fail_in_every_mode) + mode);
+        var collection = SeedSetOps(nameof(Bare_projection_then_Distinct_goes_native_and_returns_correct_values) + mode);
         using var db = CreateContext(collection, mode);
 
-        // The pre-3a disposition for these two, preserved: Intersect/Except have NO driver-LINQ baseline, so a
-        // declined shape hard-fails rather than landing on a working fallback. Asserting the FAILURE is the
-        // point — without the narrowing they start ANSWERING, which is the dangerous direction because nothing
-        // checks the answer.
-        Assert.ThrowsAny<Exception>(
-            () => db.Entities.AsNoTracking().Where(b => b.Rank <= 3).Select(b => b.Title)
-                .Intersect(db.Entities.AsNoTracking().Where(b => b.Rank >= 3).Select(b => b.Title)).ToList());
-
-        Assert.ThrowsAny<Exception>(
-            () => db.Entities.AsNoTracking().Where(b => b.Rank <= 3).Select(b => b.Title)
-                .Except(db.Entities.AsNoTracking().Where(b => b.Rank >= 3).Select(b => b.Title)).ToList());
-    }
-
-    // ── 16. Bare projection then Distinct: the narrowing tripwire ─────────────────
-
-    [Theory]
-    [InlineData(MongoQueryMode.Native)]
-    [InlineData(MongoQueryMode.DriverLinq)]
-    public void Bare_projection_then_Distinct_still_declines_and_returns_correct_values(MongoQueryMode mode)
-    {
-        var collection = SeedSetOps(nameof(Bare_projection_then_Distinct_still_declines_and_returns_correct_values) + mode);
-        using var db = CreateContext(collection, mode);
-
-        // The DELIBERATE §7.3 narrowing, and it is a CORRECTNESS tripwire rather than a scope one: binding this
-        // natively flips Route to GroupBy AFTER the emit side committed the bare alias, ApplyProjection's own
-        // Route conjunct then reverts the alias to null, and the shaper's result type becomes BsonDocument —
-        // measured as 4 specification cases hard-failing from a base state of passing.
+        // EF-395: TryBindDistinctFromProjection no longer declines a bare-body projection. The mechanical
+        // hazard that previously made this unsafe (ApplyProjection's alias-override lookup was gated on
+        // `Route == NativeRoute.Projection`, which Distinct flips to `GroupBy`, reverting the bare alias to
+        // null and crashing the shaper) is fixed at the source by also honoring the override when
+        // Select.IsDistinct is set — IsDistinct is set ONLY by TryBindDistinctFromProjection itself, so the
+        // override is provably still valid (the flatten re-adds the exact same alias) whenever it's true.
         Assert.Equal(
             ["p2", "q0", "r_mid", "s_hi"],
             Sorted(db.Entities.AsNoTracking().Select(b => b.Title).Distinct()));
     }
 
+    // ── EF-395 task-brief probes, kept verbatim for direct traceability ───────────
+
     [Fact]
-    public void Bare_projection_then_Distinct_declines_under_native_only()
+    public void Bare_projection_as_set_operation_operand_goes_native()
     {
-        var collection = SeedSetOps(nameof(Bare_projection_then_Distinct_declines_under_native_only));
+        var collection = SeedSetOps(nameof(Bare_projection_as_set_operation_operand_goes_native));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.Entities.AsNoTracking().Select(b => b.Title).Distinct().ToList());
+        var titles = db.Entities.AsNoTracking().Select(b => b.Title)
+            .Union(db.Entities.AsNoTracking().Select(b => b.Title))
+            .ToList();
+        Assert.NotEmpty(titles);
+    }
+
+    [Fact]
+    public void Bare_projection_then_Distinct_goes_native()
+    {
+        var collection = SeedSetOps(nameof(Bare_projection_then_Distinct_goes_native));
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+
+        var titles = db.Entities.AsNoTracking().Select(b => b.Title).Distinct().ToList();
+        Assert.NotEmpty(titles);
     }
 
     // ── 17. Cardinality operator after a bare projection ──────────────────────────

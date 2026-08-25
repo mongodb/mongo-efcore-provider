@@ -54,6 +54,29 @@ internal static class EnumerableMethods
             nameof(Enumerable.LongCount), 1,
             types => [typeof(IEnumerable<>).MakeGenericType(types[0]), typeof(Func<,>).MakeGenericType(types[0], typeof(bool))]);
 
+        // EF-427 item 1: the bare (no-predicate) reducer overloads, mirroring QueryableMethods.FirstWithoutPredicate
+        // etc., so MongoProjectionBindingExpressionVisitor can rebuild a stranded Queryable.First/FirstOrDefault/
+        // Single/SingleOrDefault/Any call against its Enumerable equivalent over a materialized CollectionShaperExpression,
+        // exactly like the CountWithoutPredicate/LongCountWithoutPredicate arm above already does. Deliberately
+        // NARROW: the predicated overloads (FirstWithPredicate etc.) and Sum/Min/Max/Average (per-numeric-type
+        // overloads, not a single generic-in-TSource method) are out of scope for this task — see the rebuild
+        // arms' own comment in MongoProjectionBindingExpressionVisitor.cs.
+        FirstWithoutPredicate = GetMethod(
+            nameof(Enumerable.First), 1,
+            types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
+        FirstOrDefaultWithoutPredicate = GetMethod(
+            nameof(Enumerable.FirstOrDefault), 1,
+            types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
+        SingleWithoutPredicate = GetMethod(
+            nameof(Enumerable.Single), 1,
+            types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
+        SingleOrDefaultWithoutPredicate = GetMethod(
+            nameof(Enumerable.SingleOrDefault), 1,
+            types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
+        AnyWithoutPredicate = GetMethod(
+            nameof(Enumerable.Any), 1,
+            types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
+
         // The fully-generic (TSource, TResult) selector overloads of Min/Max — used when the selected
         // type is not one of the fixed numeric overloads below.
         MaxWithSelector = GetMethod(
@@ -118,6 +141,12 @@ internal static class EnumerableMethods
     public static MethodInfo LongCountWithPredicate { get; }
     public static MethodInfo MinWithSelector { get; }
     public static MethodInfo MaxWithSelector { get; }
+
+    public static MethodInfo FirstWithoutPredicate { get; }
+    public static MethodInfo FirstOrDefaultWithoutPredicate { get; }
+    public static MethodInfo SingleWithoutPredicate { get; }
+    public static MethodInfo SingleOrDefaultWithoutPredicate { get; }
+    public static MethodInfo AnyWithoutPredicate { get; }
 
     private static HashSet<MethodInfo> SumWithSelectorMethods { get; }
     private static HashSet<MethodInfo> AverageWithSelectorMethods { get; }

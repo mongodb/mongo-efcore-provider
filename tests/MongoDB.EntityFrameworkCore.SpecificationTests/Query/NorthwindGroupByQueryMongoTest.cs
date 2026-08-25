@@ -16,6 +16,7 @@
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Bson;
+using MongoDB.Driver;
 using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 using Xunit.Abstractions;
@@ -1647,7 +1648,19 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
     public override async Task GroupBy_select_grouping_composed_list_2(bool async)
     {
         // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_select_grouping_composed_list_2(async));
+        // The driver-LINQ fallback pipeline uses $sortArray (server 5.2+); on older servers the
+        // aggregate command itself is rejected ("Unknown expression $sortArray") rather than
+        // failing at translation time, so that failure mode needs to be accepted too.
+        if (Fixture.TestServer.SupportsSortArray)
+        {
+            await AssertTranslationFailed(() => base.GroupBy_select_grouping_composed_list_2(async));
+        }
+        else
+        {
+            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+                () => base.GroupBy_select_grouping_composed_list_2(async),
+                typeof(ArgumentException), typeof(FormatException), typeof(MongoCommandException));
+        }
 
         AssertMql(
             """

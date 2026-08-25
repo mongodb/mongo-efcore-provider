@@ -338,7 +338,7 @@ public class MongoSelectLowererTests
     {
         var operand = new MongoSelectDefinition(); // empty operand → no inner stages
         var query = TestSelect();
-        query.Select.SetOperation = new MongoSetOperation(MongoSetOperationKind.Concat, operand, "customers");
+        query.Select.SetOperation = new MongoSetOperation(MongoSetOperationKind.Concat, operand, "customers", query.CollectionExpression.EntityType);
         query.Select.IsSetOp = true;
 
         var stages = new MongoSelectLowerer().Lower(query);
@@ -361,7 +361,7 @@ public class MongoSelectLowererTests
             new MongoConstantExpression("UK", null)));
 
         var query = TestSelect();
-        query.Select.SetOperation = new MongoSetOperation(MongoSetOperationKind.Union, operand, "customers");
+        query.Select.SetOperation = new MongoSetOperation(MongoSetOperationKind.Union, operand, "customers", query.CollectionExpression.EntityType);
         query.Select.IsSetOp = true;
 
         var stages = new MongoSelectLowerer().Lower(query);
@@ -379,7 +379,7 @@ public class MongoSelectLowererTests
         var operand = new MongoSelectDefinition();
         var query = TestSelect();
         query.Select.AddPredicateConjunct(new MongoConstantExpression(true, null));
-        query.Select.SetOperation = new MongoSetOperation(MongoSetOperationKind.Concat, operand, "customers");
+        query.Select.SetOperation = new MongoSetOperation(MongoSetOperationKind.Concat, operand, "customers", query.CollectionExpression.EntityType);
         query.Select.IsSetOp = true;
 
         var stages = new MongoSelectLowerer().Lower(query);
@@ -387,6 +387,75 @@ public class MongoSelectLowererTests
         Assert.Collection(stages,
             s => Assert.IsType<MongoMatchStage>(s),
             s => Assert.IsType<MongoUnionWithStage>(s));
+    }
+
+    // ── EF-397: a collection-Include $lookup on a SET-OP query is emitted AFTER the set-op stage ──
+    //
+    // The stage-order fact the feature rests on, pinned here in isolation from the end-to-end tests in
+    // NativeSetOpsTests. Emitted at the ordinary step-2 position it would precede the $unionWith and so join
+    // only source1's rows — the operand pipeline nested inside the $unionWith lowers from
+    // OperandSelect.PipelineOps alone and never carries a lookup.
+
+    [Fact]
+    public void SetOp_defers_the_collection_lookup_until_after_the_union_stage()
+    {
+        var (query, navigation) = TestReferenceSelect();
+        var lookup = new LookupExpression(navigation); // collection nav, no ForceUnwind => IsNativeCollectionLookup
+        query.AddLookup(lookup);
+        query.Select.AddPredicateConjunct(new MongoConstantExpression(true, null));
+        query.Select.SetOperation = new MongoSetOperation(
+            MongoSetOperationKind.Union, new MongoSelectDefinition(), "others", query.CollectionExpression.EntityType);
+        query.Select.IsSetOp = true;
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.Collection(stages,
+            s => Assert.IsType<MongoMatchStage>(s),                                    // source1's own ops
+            s => Assert.True(Assert.IsType<MongoUnionWithStage>(s).Dedup),             // the combine + dedup
+            s => Assert.Same(lookup, Assert.IsType<MongoLookupStage>(s).Lookup));      // then, and only then, the join
+    }
+
+    [Fact]
+    public void SetOp_emits_the_deferred_lookup_after_trailing_ops_and_before_the_projection()
+    {
+        // The deferred block keeps the SAME relative slot the non-set-op path gives it: ops -> $lookup ->
+        // $project. A trailing Take must therefore page the combined stream BEFORE the join runs (so only
+        // surviving rows are joined), and the $project must still see the joined array.
+        var (query, navigation) = TestReferenceSelect();
+        var lookup = new LookupExpression(navigation);
+        query.AddLookup(lookup);
+        query.Select.SetOperation = new MongoSetOperation(
+            MongoSetOperationKind.Concat, new MongoSelectDefinition(), "others", query.CollectionExpression.EntityType);
+        query.Select.IsSetOp = true;
+        query.Select.AppendLimit(new MongoConstantExpression(2, null)); // lands in TrailingOps (post-set-op)
+        query.Select.AddProjection(new MongoProjection("Name", new MongoFieldExpression(property: null!, elementName: "Name")));
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.Collection(stages,
+            s => Assert.IsType<MongoUnionWithStage>(s),
+            s => Assert.IsType<MongoLimitStage>(s),
+            s => Assert.Same(lookup, Assert.IsType<MongoLookupStage>(s).Lookup),
+            s => Assert.IsType<MongoProjectStage>(s));
+    }
+
+    [Fact]
+    public void Non_set_op_lookup_position_is_unchanged()
+    {
+        // The complement of the two tests above: with no set op the lookup still lands at step 2, right
+        // after the ops and before the projection. Pins that the deferral is scoped to set-op queries only.
+        var (query, navigation) = TestReferenceSelect();
+        var lookup = new LookupExpression(navigation);
+        query.AddLookup(lookup);
+        query.Select.AppendLimit(new MongoConstantExpression(2, null));
+        query.Select.AddProjection(new MongoProjection("Name", new MongoFieldExpression(property: null!, elementName: "Name")));
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.Collection(stages,
+            s => Assert.IsType<MongoLimitStage>(s),
+            s => Assert.Same(lookup, Assert.IsType<MongoLookupStage>(s).Lookup),
+            s => Assert.IsType<MongoProjectStage>(s));
     }
 
     // ── Test 15: Owned-collection SelectMany unwind lowers to $unwind then $project (EF-347 slice 3) ──
@@ -584,7 +653,7 @@ public class MongoSelectLowererTests
         // source1's own pre-set-op predicate:
         query.Select.AddPredicateConjunct(new MongoConstantExpression(true, null));
         query.Select.SetOperation = new MongoSetOperation(
-            MongoSetOperationKind.Union, new MongoSelectDefinition(), "customers");
+            MongoSetOperationKind.Union, new MongoSelectDefinition(), "customers", query.CollectionExpression.EntityType);
         query.Select.IsSetOp = true;
         // post-set-op (trailing) sort — routes to TrailingOps because SetOperation is now attached:
         query.Select.StartOrReplaceSort(new MongoOrdering(FieldRef(query, "A"), true));
@@ -603,7 +672,7 @@ public class MongoSelectLowererTests
     {
         var query = TestSelect();
         query.Select.SetOperation = new MongoSetOperation(
-            MongoSetOperationKind.Intersect, new MongoSelectDefinition(), "customers");
+            MongoSetOperationKind.Intersect, new MongoSelectDefinition(), "customers", query.CollectionExpression.EntityType);
         query.Select.IsSetOp = true;
         query.Select.Cardinality = MongoCardinality.ForAggregate(
             MongoAggregateOperator.Count, selector: null, MongoEmptyAggregateBehavior.DefaultValue,
@@ -770,6 +839,80 @@ public class MongoSelectLowererTests
         Assert.NotEqual("__sort0", Assert.Single(Assert.IsType<MongoAddFieldsStage>(stages[0]).Fields).Alias);
     }
 
+    // ── EF-408: the two gaps the collision guard used to carry as "accepted but unverified" ──────────
+
+    private class StubEntityDerived : StubEntity
+    {
+        public int Special { get; set; }
+    }
+
+    // A query over the TPH BASE type whose DERIVED sibling maps a property onto the first synthetic sort
+    // field name. Every TPH type shares one collection and one top-level document namespace, but
+    // IEntityType.GetProperties() on the base never returns a derived type's own declared members — so the
+    // reserved set has to walk GetDerivedTypesInclusive() (EF-408 gap 2).
+    private static MongoQueryExpression TestSelectWithReservedDerivedElementName()
+    {
+        using var db = SingleEntityDbContext.Create<StubEntity>(
+            mb => mb.Entity<StubEntityDerived>().Property(x => x.Special).HasElementName("__sort0"));
+        var entityType = db.Model.FindEntityType(typeof(StubEntity))!;
+        return new MongoQueryExpression(entityType);
+    }
+
+    private class OtherStubEntity
+    {
+        public ObjectId Id { get; set; }
+        public string Other { get; set; } = "";
+    }
+
+    // An outer query whose OWN entity type reserves nothing, paired with a set-op operand entity type that
+    // maps a property onto the first synthetic sort field name (EF-408 gap 1). A projected-operand set op
+    // does not require the operands to share an entity type, and the operand's ops lower through the SAME
+    // allocator into the nested $unionWith pipeline.
+    private static (MongoQueryExpression Query, IEntityType OperandEntityType) TestSelectWithReservedOperandElementName()
+    {
+        using var db = SingleEntityDbContext.Create<StubEntity>(
+            mb => mb.Entity<OtherStubEntity>().Property(x => x.Other).HasElementName("__sort0"));
+        return (new MongoQueryExpression(db.Model.FindEntityType(typeof(StubEntity))!),
+            db.Model.FindEntityType(typeof(OtherStubEntity))!);
+    }
+
+    [Fact]
+    public void A_synthetic_name_colliding_with_a_TPH_derived_types_element_name_is_skipped()
+    {
+        // EF-408 gap 2, MEASURED reachable end-to-end (NativeComputedSortTests
+        // .Synthetic_sort_field_does_not_clobber_a_TPH_derived_types_own_element): the $set clobbered the
+        // derived type's real element and the trailing $unset then removed it from the document entirely,
+        // so the derived row failed to materialize under the default Native mode.
+        var query = TestSelectWithReservedDerivedElementName();
+
+        query.Select.StartOrReplaceSort(new MongoOrdering(Sum(), Ascending: true));
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.NotEqual("__sort0", Assert.Single(Assert.IsType<MongoAddFieldsStage>(stages[0]).Fields).Alias);
+    }
+
+    [Fact]
+    public void A_synthetic_name_colliding_with_a_set_op_operands_own_element_name_is_skipped()
+    {
+        // EF-408 gap 1, MEASURED reachable end-to-end (NativeComputedSortTests
+        // .Synthetic_sort_field_does_not_clobber_a_set_op_operands_own_element). The OUTER type reserves
+        // nothing here, so only reading the OPERAND's entity type can keep this allocation off "__sort0".
+        var (query, operandEntityType) = TestSelectWithReservedOperandElementName();
+
+        var operand = new MongoSelectDefinition();
+        operand.StartOrReplaceSort(new MongoOrdering(Sum(), Ascending: true));
+        query.Select.SetOperation = new MongoSetOperation(
+            MongoSetOperationKind.Union, operand, "others", operandEntityType);
+        query.Select.IsSetOp = true;
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        var union = Assert.IsType<MongoUnionWithStage>(Assert.Single(stages));
+        Assert.NotEqual("__sort0",
+            Assert.Single(Assert.IsType<MongoAddFieldsStage>(union.OperandStages[0]).Fields).Alias);
+    }
+
     // ── Minor 3 (fix round 1): the allocator must be SHARED across all three AppendSelectOpStages call
     // sites — a regression passing a fresh allocator at either the set-op operand's PipelineOps or the
     // post-set-op TrailingOps would produce a DUPLICATE "__sort0" that no existing test would catch (all
@@ -786,7 +929,7 @@ public class MongoSelectLowererTests
         var operand = new MongoSelectDefinition();
         operand.StartOrReplaceSort(new MongoOrdering(Product(), Ascending: true));
 
-        query.Select.SetOperation = new MongoSetOperation(MongoSetOperationKind.Union, operand, "customers");
+        query.Select.SetOperation = new MongoSetOperation(MongoSetOperationKind.Union, operand, "customers", query.CollectionExpression.EntityType);
         query.Select.IsSetOp = true;
 
         var stages = new MongoSelectLowerer().Lower(query);
@@ -815,7 +958,7 @@ public class MongoSelectLowererTests
         query.Select.StartOrReplaceSort(new MongoOrdering(Sum(), Ascending: true));
 
         query.Select.SetOperation = new MongoSetOperation(
-            MongoSetOperationKind.Union, new MongoSelectDefinition(), "customers");
+            MongoSetOperationKind.Union, new MongoSelectDefinition(), "customers", query.CollectionExpression.EntityType);
         query.Select.IsSetOp = true;
 
         // Post-set-op (trailing) sort — routes to TrailingOps because SetOperation is now attached:

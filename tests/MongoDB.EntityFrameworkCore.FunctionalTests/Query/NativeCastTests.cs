@@ -1722,34 +1722,34 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── 26. BOUNDARY (not a defect): a WIDENING cast projection leaf still falls back (fix round 1) ──
+    // ── 26. EF-410: a WIDENING cast projection leaf now goes native (fix round 2) ─────────────────
     //
-    // IMPORTANT FINDING FROM REVIEW: (long)x.I / (double)x.I are the COMMONEST numeric-cast projection shapes,
-    // and TranslateOperand's Convert branch UNWRAPS a widening conversion entirely rather than wrapping it in
-    // a MongoConvertExpression -- the resulting node kind is a bare MongoFieldExpression, which the merged
-    // cast/count gate correctly declines (it is not one of the three admitted kinds). The plain-field branch
-    // also declines the RAW leaf (it is a UnaryExpression, not a MemberExpression), so the whole WRAPPED
-    // projection falls back to driver-LINQ. This is GRACEFUL and VALUE-CORRECT -- not a defect -- but it means
-    // roughly HALF of ordinary numeric-cast projection shapes are still on the fallback path after this task.
-    // Recorded as a boundary, not fixed here: admitting an unwrapped field ref through this gate would mean
-    // projecting the raw stored field under a leaf whose declared CLR type is the CAST's target type, and the
-    // read-back type question that raises needs its own measurement. TRACKED AS EF-410 — the follow-up the task
-    // report recommended is now filed, so this comment is no longer the only record of the gap.
+    // Fix round 1 left this as a documented boundary: (long)x.I / (double)x.I are the COMMONEST numeric-cast
+    // projection shapes, and TranslateOperand's Convert branch UNWRAPS a widening conversion entirely rather
+    // than wrapping it in a MongoConvertExpression -- the resulting node kind is a bare MongoFieldExpression,
+    // indistinguishable by node kind alone from a leaf that was never cast at all. EF-410 closes this: the
+    // gate now also re-derives "was this leaf syntactically a cast" from the ORIGINAL (pre-translation)
+    // leafExpression, so this NativeOnly leg now SUCCEEDS instead of throwing. Updated in place, per the
+    // EF-335 precedent, rather than orphaned — it is still the correctness pin for this shape, just with the
+    // opposite expected disposition.
 
     [Fact]
-    public void Widening_cast_projection_leaf_still_falls_back_gracefully()
+    public void Widening_cast_projection_leaf_now_goes_native()
     {
-        var collection = Seed(nameof(Widening_cast_projection_leaf_still_falls_back_gracefully));
+        var collection = Seed(nameof(Widening_cast_projection_leaf_now_goes_native));
 
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => nativeOnly.Entities.AsNoTracking().Select(x => new { x.Label, X = (long)x.I }).ToList());
+        var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().OrderBy(x => x.Label)
+            .Select(x => new { x.Label, X = (long)x.I }).ToList();
+        Assert.Equal(
+            Rows.OrderBy(r => r.Label).Select(r => (r.Label, (long)r.I)).ToList(),
+            nativeOnlyResult.Select(r => (r.Label, r.X)).ToList());
 
         using var native = CreateContext(collection, MongoQueryMode.Native);
         var nativeResult = native.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => new { x.Label, X = (long)x.I }).ToList();
         Assert.Equal(
-            Rows.OrderBy(r => r.Label).Select(r => (r.Label, (long)r.I)).ToList(),
+            nativeOnlyResult.Select(r => (r.Label, r.X)).ToList(),
             nativeResult.Select(r => (r.Label, r.X)).ToList());
 
         using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
@@ -1757,6 +1757,32 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             .Select(x => new { x.Label, X = (long)x.I }).ToList();
         Assert.Equal(
             nativeResult.Select(r => (r.Label, r.X)).ToList(), driverLinqResult.Select(r => (r.Label, r.X)).ToList());
+    }
+
+    // ── 26a. EF-410: a widening cast as a BARE (non-`new{}`) projection leaf now goes native too ────
+    //
+    // TranslateOperand unwraps (long)x.I to a bare MongoFieldExpression (correct — see its own remarks), so the
+    // tier-2 bare-projection gate's post-translation node-kind check alone can't tell "was cast" from "was never
+    // cast". The fix re-derives that fact from the ORIGINAL leafExpression's own node kind instead.
+
+    [Fact]
+    public void Widening_cast_bare_projection_leaf_goes_native()
+    {
+        var collection = Seed(nameof(Widening_cast_bare_projection_leaf_goes_native));
+
+        var expected = "[1,2,3,-1,50000]";
+        var legs = new List<(string Leg, string Outcome)>();
+
+        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        {
+            using var db = CreateContext(collection, mode);
+            legs.Add(($"{mode}", LegOutcome(
+                () => db.Entities.AsNoTracking().OrderBy(x => x.Label).Select(x => (long)x.I).ToList())));
+        }
+
+        Assert.Equal(
+            [("NativeOnly", expected), ("Native", expected), ("DriverLinq", expected)],
+            legs);
     }
 
     // ── 27. THE OWNER RULING (Task 7): a narrowing cast vs. a CONSTANT now returns the CLR answer, and ─
@@ -2453,6 +2479,233 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
+
+    // ── 38. EF-404: a PLAIN field-to-field comparison (no cast) over a value-converted operand ──
+    //        must decline, not read the raw stored value through $expr
+    //
+    // Case 30 closed this hazard for the CAST subset (`(int)x.Weight > x.Other`); this closes the PLAIN
+    // subset (`x.Weight > x.Other`, no cast at all), which routes straight to TranslateComparison's general
+    // $expr path and previously had no default-serialization check on either operand.
+    //
+    // MEASURED, all four combinations of {value-transforming, re-encoding} x {one side converted, both sides
+    // converted}: under the RELEASED/pre-fix general $expr path, Native read the RAW stored value on the
+    // converted side(s) and disagreed with the CLR/model answer every time, while DriverLinq has NO working
+    // oracle for this shape at all -- the driver's own LINQ3 provider throws ExpressionNotSupportedException
+    // ("the two arguments are serialized differently") for a field-to-field comparison whenever the two
+    // operands' serializers differ, regardless of query mode. So this is squarely the ticket's outcome (2):
+    // "Native differs from DriverLinq" (DriverLinq's disagreement takes the form of a decline, not a
+    // different wrong answer) -- a genuine native-only defect, fixed by declining to fall back, which lands
+    // on the same throw DriverLinq already produces for this shape.
+
+    private class OneSideTransformRow
+    {
+        public ObjectId Id { get; set; }
+        public string Label { get; set; } = "";
+        public double Weight { get; set; } // converted v => v * 2
+        public double Other { get; set; } // plain
+    }
+
+    private static readonly Action<ModelBuilder> OneSideTransformRowModel =
+        mb => mb.Entity<OneSideTransformRow>().Property(e => e.Weight).HasConversion(v => v * 2, v => v / 2);
+
+    [Fact]
+    public void Field_to_field_comparison_over_a_one_side_transforming_converter_declines()
+    {
+        var name = UniqueCollectionName(nameof(Field_to_field_comparison_over_a_one_side_transforming_converter_declines));
+        // CLR Weight=3, Other=4 -> model answer 3>4 FALSE. Stored Weight=6 (converted), Other=4 (plain) ->
+        // a raw-value read would compare 6>4 TRUE -- the wrong row, and the discriminator this test pins.
+        database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
+        [
+            new BsonDocument { { "Label", "p" }, { "Weight", 6.0 }, { "Other", 4.0 } }
+        ]);
+        var collection = database.MongoDatabase.GetCollection<OneSideTransformRow>(name);
+
+        using var nativeOnly = CreateOneSideTransformContext(collection, MongoQueryMode.NativeOnly);
+        var outcome = DescribeOutcome(
+            () => nativeOnly.Entities.AsNoTracking().Where(x => x.Weight > x.Other).Select(x => x.Label).ToList(),
+            label => label);
+        Assert.Equal("threw NativeTranslationNotSupportedException", outcome);
+
+        // No driver-LINQ oracle exists for this shape either (measured): both routes decline/throw.
+        using var native = CreateOneSideTransformContext(collection, MongoQueryMode.Native);
+        Assert.NotNull(Record.Exception(() => native.Entities.AsNoTracking()
+            .Where(x => x.Weight > x.Other).Select(x => x.Label).ToList()));
+
+        using var driverLinq = CreateOneSideTransformContext(collection, MongoQueryMode.DriverLinq);
+        Assert.NotNull(Record.Exception(() => driverLinq.Entities.AsNoTracking()
+            .Where(x => x.Weight > x.Other).Select(x => x.Label).ToList()));
+    }
+
+    private static SingleEntityDbContext<OneSideTransformRow> CreateOneSideTransformContext(
+        IMongoCollection<OneSideTransformRow> collection, MongoQueryMode mode)
+        => SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: OneSideTransformRowModel,
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
+
+    private class BothSideTransformRow
+    {
+        public ObjectId Id { get; set; }
+        public string Label { get; set; } = "";
+        public double Weight { get; set; } // converted v => v * 2
+        public double Other { get; set; } // converted v => v * 3
+    }
+
+    private static readonly Action<ModelBuilder> BothSideTransformRowModel = mb =>
+    {
+        mb.Entity<BothSideTransformRow>().Property(e => e.Weight).HasConversion(v => v * 2, v => v / 2);
+        mb.Entity<BothSideTransformRow>().Property(e => e.Other).HasConversion(v => v * 3, v => v / 3);
+    };
+
+    [Fact]
+    public void Field_to_field_comparison_over_a_both_side_transforming_converter_declines()
+    {
+        var name = UniqueCollectionName(nameof(Field_to_field_comparison_over_a_both_side_transforming_converter_declines));
+        // CLR Weight=3, Other=2 -> model answer 3>2 TRUE. Stored Weight=6 (x2), Other=6 (x3) -> a raw-value
+        // read would compare 6>6 FALSE, wrongly EXCLUDING a row the model says matches.
+        database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
+        [
+            new BsonDocument { { "Label", "p" }, { "Weight", 6.0 }, { "Other", 6.0 } }
+        ]);
+        var collection = database.MongoDatabase.GetCollection<BothSideTransformRow>(name);
+
+        using var nativeOnly = CreateBothSideTransformContext(collection, MongoQueryMode.NativeOnly);
+        var outcome = DescribeOutcome(
+            () => nativeOnly.Entities.AsNoTracking().Where(x => x.Weight > x.Other).Select(x => x.Label).ToList(),
+            label => label);
+        Assert.Equal("threw NativeTranslationNotSupportedException", outcome);
+
+        using var native = CreateBothSideTransformContext(collection, MongoQueryMode.Native);
+        Assert.NotNull(Record.Exception(() => native.Entities.AsNoTracking()
+            .Where(x => x.Weight > x.Other).Select(x => x.Label).ToList()));
+
+        using var driverLinq = CreateBothSideTransformContext(collection, MongoQueryMode.DriverLinq);
+        Assert.NotNull(Record.Exception(() => driverLinq.Entities.AsNoTracking()
+            .Where(x => x.Weight > x.Other).Select(x => x.Label).ToList()));
+    }
+
+    private static SingleEntityDbContext<BothSideTransformRow> CreateBothSideTransformContext(
+        IMongoCollection<BothSideTransformRow> collection, MongoQueryMode mode)
+        => SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: BothSideTransformRowModel,
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
+
+    private class OneSideReencodeRow
+    {
+        public ObjectId Id { get; set; }
+        public string Label { get; set; } = "";
+        public int Weight { get; set; } // stored as string
+        public int Other { get; set; } // plain
+    }
+
+    private static readonly Action<ModelBuilder> OneSideReencodeRowModel =
+        mb => mb.Entity<OneSideReencodeRow>().Property(e => e.Weight).HasConversion<string>();
+
+    [Fact]
+    public void Field_to_field_comparison_over_a_one_side_reencoding_converter_declines()
+    {
+        var name = UniqueCollectionName(nameof(Field_to_field_comparison_over_a_one_side_reencoding_converter_declines));
+        // CLR Weight=9, Other=10 -> model answer 9>10 FALSE. Stored Weight="9" (string), Other=10 (int32) --
+        // BSON type-brackets a string above every numeric type by total order, so a raw comparison inside
+        // $expr answers "9" > 10 as TRUE regardless of the numeric values, wrongly admitting the row.
+        database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
+        [
+            new BsonDocument { { "Label", "p" }, { "Weight", "9" }, { "Other", 10 } }
+        ]);
+        var collection = database.MongoDatabase.GetCollection<OneSideReencodeRow>(name);
+
+        using var nativeOnly = CreateOneSideReencodeContext(collection, MongoQueryMode.NativeOnly);
+        var outcome = DescribeOutcome(
+            () => nativeOnly.Entities.AsNoTracking().Where(x => x.Weight > x.Other).Select(x => x.Label).ToList(),
+            label => label);
+        Assert.Equal("threw NativeTranslationNotSupportedException", outcome);
+
+        using var native = CreateOneSideReencodeContext(collection, MongoQueryMode.Native);
+        Assert.NotNull(Record.Exception(() => native.Entities.AsNoTracking()
+            .Where(x => x.Weight > x.Other).Select(x => x.Label).ToList()));
+
+        using var driverLinq = CreateOneSideReencodeContext(collection, MongoQueryMode.DriverLinq);
+        Assert.NotNull(Record.Exception(() => driverLinq.Entities.AsNoTracking()
+            .Where(x => x.Weight > x.Other).Select(x => x.Label).ToList()));
+    }
+
+    private static SingleEntityDbContext<OneSideReencodeRow> CreateOneSideReencodeContext(
+        IMongoCollection<OneSideReencodeRow> collection, MongoQueryMode mode)
+        => SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: OneSideReencodeRowModel,
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
+
+    private class BothSideReencodeRow
+    {
+        public ObjectId Id { get; set; }
+        public string Label { get; set; } = "";
+        public int Weight { get; set; } // stored as string
+        public int Other { get; set; } // stored as string
+    }
+
+    private static readonly Action<ModelBuilder> BothSideReencodeRowModel = mb =>
+    {
+        mb.Entity<BothSideReencodeRow>().Property(e => e.Weight).HasConversion<string>();
+        mb.Entity<BothSideReencodeRow>().Property(e => e.Other).HasConversion<string>();
+    };
+
+    [Fact]
+    public void Field_to_field_comparison_over_a_both_side_reencoding_converter_declines()
+    {
+        var name = UniqueCollectionName(nameof(Field_to_field_comparison_over_a_both_side_reencoding_converter_declines));
+        // CLR Weight=9, Other=10 -> model answer 9>10 FALSE. Stored Weight="9", Other="10", both strings --
+        // a raw comparison inside $expr would compare them LEXICOGRAPHICALLY ("9" > "10" is TRUE, since '9' >
+        // '1'), wrongly admitting the row under a numeric-looking predicate.
+        database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
+        [
+            new BsonDocument { { "Label", "p" }, { "Weight", "9" }, { "Other", "10" } }
+        ]);
+        var collection = database.MongoDatabase.GetCollection<BothSideReencodeRow>(name);
+
+        using var nativeOnly = CreateBothSideReencodeContext(collection, MongoQueryMode.NativeOnly);
+        var outcome = DescribeOutcome(
+            () => nativeOnly.Entities.AsNoTracking().Where(x => x.Weight > x.Other).Select(x => x.Label).ToList(),
+            label => label);
+        Assert.Equal("threw NativeTranslationNotSupportedException", outcome);
+
+        using var native = CreateBothSideReencodeContext(collection, MongoQueryMode.Native);
+        Assert.NotNull(Record.Exception(() => native.Entities.AsNoTracking()
+            .Where(x => x.Weight > x.Other).Select(x => x.Label).ToList()));
+
+        using var driverLinq = CreateBothSideReencodeContext(collection, MongoQueryMode.DriverLinq);
+        Assert.NotNull(Record.Exception(() => driverLinq.Entities.AsNoTracking()
+            .Where(x => x.Weight > x.Other).Select(x => x.Label).ToList()));
+    }
+
+    private static SingleEntityDbContext<BothSideReencodeRow> CreateBothSideReencodeContext(
+        IMongoCollection<BothSideReencodeRow> collection, MongoQueryMode mode)
+        => SingleEntityDbContext.Create(
+            collection,
+            modelBuilderAction: BothSideReencodeRowModel,
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
+
+    // The control that keeps case 38 from being read as "any field-to-field comparison declines": the SAME
+    // shape over DEFAULT-serialized fields still goes native and returns the CLR answer -- this is exactly
+    // case 30's control (`Field_to_field_cast_over_a_default_serialized_property_still_goes_native`), which
+    // already covers a bare (non-converted) field-to-field comparison, so it is not repeated here.
 
     // ── Seed and helpers ────────────────────────────────────────────────────────────────────────────
 

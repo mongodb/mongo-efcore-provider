@@ -497,20 +497,17 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     }
 
     // ---------------------------------------------------------------------------------------------------
-    // 16: the graceful decline.
+    // 16: EF-382 follow-up — the array-field-contains-value pre-filter now goes NATIVE.
     // ---------------------------------------------------------------------------------------------------
 
     [AtlasFact]
-    public void Untranslatable_pre_filter_falls_back_with_correct_rows()
+    public void Array_contains_pre_filter_now_goes_native_with_correct_rows()
     {
-        // `Tags.Contains("keep")` is an ARRAY-FIELD-contains-VALUE predicate. The native predicate translator
-        // declines it (its Contains arm handles the opposite shape — a collection of values containing a
-        // FIELD), so NativeVectorSearchBinder.TryBind returns false without mutating anything, the slot stays
-        // empty, hasUnboundVectorSearch is true, and the query falls back to driver-LINQ — which still has the
-        // VectorSearch in the captured chain and runs it correctly, in score order.
-        //
-        // This is the SAME shape as the specification suite's VectorSearch_with_complex_pre_filter, which is
-        // why that test remains on the fallback path after this slice.
+        // `Tags.Contains("keep")` is an ARRAY-FIELD-contains-VALUE predicate. Before EF-382 the native
+        // predicate translator declined it (its Contains arm handled only the opposite shape — a collection
+        // of values containing a FIELD), so this pre-filter fell back to driver-LINQ. EF-382 added the mirror
+        // arm (MongoArrayContainsExpression), so this now goes native too — proven by NativeOnly succeeding,
+        // never by MQL shape (the two paths render an identical $vectorSearch.filter for this predicate).
         using (var db = CreateContext(MongoQueryMode.Native))
         {
             var labels = db.Docs
@@ -525,11 +522,92 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
 
         using (var db = CreateContext(MongoQueryMode.NativeOnly))
         {
+            var labels = db.Docs
+                .VectorSearch(e => e.Embedding, e => e.Tags.Contains("keep"), QueryVector, limit: 4)
+                .ToList()
+                .Select(e => e.Label);
+
+            Assert.Equal(["A", "C", "D"], labels);
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------------
+    // 16a (EF-382 review fix): the fallback-correctness tripwire, restored on a DIFFERENT still-declining
+    // shape. A PARAMETERIZED Contains item (a captured local, not a literal constant) still declines: the
+    // new arm's dispatch guard requires `Unwrap(containsItem) is ConstantExpression`
+    // (MongoExpressionTranslator.cs), so this falls through unmatched to the $in arm, which declines it
+    // exactly as it always has (the item doesn't resolve via TryResolveMember either). Unlike the string-
+    // transform shape below, driver-LINQ's own Contains-over-array-field translator renders this as the
+    // SAME $expr-free `{ Tags: <value> }` query-dialect form Atlas Search's vectorSearch filter accepts, so
+    // "declines → driver-LINQ fallback → correct rows" is still a real, exercised disposition for vector-
+    // search pre-filters — this is the shape that proves it now that the literal-constant example (above)
+    // goes native.
+    // ---------------------------------------------------------------------------------------------------
+
+    [AtlasFact]
+    public void Parameterized_array_contains_pre_filter_still_falls_back_with_correct_rows()
+    {
+        var wanted = "keep"; // captured local -> a query PARAMETER, not a ConstantExpression, once EF
+                              // parameterizes the closure before the native translator ever sees it.
+
+        using (var db = CreateContext(MongoQueryMode.Native))
+        {
+            var labels = db.Docs
+                .VectorSearch(e => e.Embedding, e => e.Tags.Contains(wanted), QueryVector, limit: 4)
+                .ToList()
+                .Select(e => e.Label);
+
+            // Same discriminating set as the literal-constant case: A, C, D in score order.
+            Assert.Equal(["A", "C", "D"], labels);
+        }
+
+        using (var db = CreateContext(MongoQueryMode.NativeOnly))
+        {
             Assert.Throws<NativeTranslationNotSupportedException>(
                 () => db.Docs
-                    .VectorSearch(e => e.Embedding, e => e.Tags.Contains("keep"), QueryVector, limit: 4)
+                    .VectorSearch(e => e.Embedding, e => e.Tags.Contains(wanted), QueryVector, limit: 4)
                     .ToList());
         }
+    }
+
+    // ---------------------------------------------------------------------------------------------------
+    // 16b: a genuinely still-unsupported pre-filter shape — a string transform (the native predicate
+    // translator has no support for ToUpper/ToLower et al., per the Query AGENTS.md "computed long tail"
+    // note). UNLIKE the array-contains shape EF-382 just promoted, this is NOT a "declines gracefully with
+    // correct rows" example: ANY computed (non-query-dialect) pre-filter needs $expr, and Atlas Search's
+    // vectorSearch `filter`/`parentFilter` REJECTS $expr outright (a server constraint, not a driver or
+    // provider limitation) — so this throws identically in every mode, mirroring
+    // Limit_zero_throws_identically_in_every_mode's pattern. Native declines at TRANSLATE time (no server
+    // round trip); the driver-LINQ fallback (used under Native, and always under DriverLinq) builds the SAME
+    // rejected $expr and the SERVER throws.
+    // ---------------------------------------------------------------------------------------------------
+
+    [AtlasTheory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Untranslatable_pre_filter_throws_from_the_server_in_every_fallback_mode(MongoQueryMode mode)
+    {
+        using var db = CreateContext(mode);
+
+        var ex = Assert.Throws<MongoCommandException>(
+            () => db.Docs
+                .VectorSearch(e => e.Embedding, e => e.Label.ToUpper() == e.Label.ToUpper(), QueryVector, limit: 4)
+                .ToList());
+
+        Assert.Contains("$expr", ex.Message);
+    }
+
+    [AtlasFact]
+    public void Untranslatable_pre_filter_declines_at_translate_time_under_native_only()
+    {
+        using var db = CreateContext(MongoQueryMode.NativeOnly);
+
+        // NativeOnly forbids the driver-LINQ fallback, so this must throw from EF's own query compilation —
+        // before ever reaching the server — not the server-side MongoCommandException the other modes hit.
+        Assert.Throws<NativeTranslationNotSupportedException>(
+            () => db.Docs
+                .VectorSearch(e => e.Embedding, e => e.Label.ToUpper() == e.Label.ToUpper(), QueryVector, limit: 4)
+                .ToList());
     }
 
     // ---------------------------------------------------------------------------------------------------

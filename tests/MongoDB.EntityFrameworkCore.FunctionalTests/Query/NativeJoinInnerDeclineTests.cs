@@ -53,6 +53,15 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// MongoSelectDefinition.PropagateFallbackWrongDataFrom — the EF-344 nesting fix — and
 /// Join_with_grouped_outer_and_paged_inner_reports_the_GroupBy_cause pins the decline message).
 /// </para>
+/// <para>
+/// EF-366 adds the join-THEN-group counterpart of that boundary: a <c>GroupBy</c> composed OVER a join with
+/// an uncorrelated ordered/paged inner — the shape that returned silently wrong rows on driver 3.10 — is
+/// measured to fail cleanly on the pinned 3.11 driver in the DEFAULT <c>Native</c> mode
+/// (GroupBy_over_Join_with_uncorrelated_ordered_paged_inner_never_returns_wrong_data), with its bare-inner
+/// over-decline net beside it (GroupBy_over_Join_with_bare_inner_still_returns_correct_data). No
+/// provider-side guard exists for that shape: the driver rejection already closes the doorway, and a
+/// provider guard narrow enough to leave the bare-inner case green would only restate it.
+/// </para>
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeJoinInnerDeclineTests(TemporaryDatabaseFixture database)
@@ -161,6 +170,68 @@ public class NativeJoinInnerDeclineTests(TemporaryDatabaseFixture database)
                         select new { r, a.Max })
                  on o.Country equals i.r.Country
              select new { o.Year, i.r, i.r.Country }).ToArray());
+    }
+
+    [Fact]
+    public void GroupBy_over_Join_with_uncorrelated_ordered_paged_inner_never_returns_wrong_data()
+    {
+        // EF-366 repro shape: a GroupBy composed OVER a Join whose INNER carries an uncorrelated
+        // OrderBy/Skip/Take (join-THEN-group, as opposed to the group-THEN-join shape the permanent
+        // MarkGroupByFallbackUnsafe decline above covers). Under driver 3.10 this executed through the
+        // driver-LINQ fallback and returned SILENTLY WRONG data, because 3.10 mis-folded the uncorrelated
+        // inner's $sort/$skip/$limit into the CORRELATED $lookup sub-pipeline (upstream CSHARP-6017), leaving
+        // the per-outer-row lookup empty.
+        //
+        // MEASURED on the pinned driver (3.11.0, Versions.props; the package reference is a minimum, so no
+        // consumer of this provider can resolve 3.10): 3.11 REJECTS the shape outright instead of
+        // mis-translating it, exactly as the sibling Join_with_ordered_inner_is_rejected_by_the_driver pin
+        // records for the join alone. The query therefore fails cleanly under the DEFAULT Native mode — the
+        // outcome EF-366 asked for — with no provider-side guard needed. This test is the standing pin: if a
+        // future driver ever starts ACCEPTING this shape again, it must produce correct data or this test
+        // fails, rather than the wrong-data regression reappearing unnoticed.
+        using var db = CreateContext(MongoQueryMode.Native,
+            nameof(GroupBy_over_Join_with_uncorrelated_ordered_paged_inner_never_returns_wrong_data));
+
+        Assert.Throws<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() => db.Orders
+            .Join(db.Regions.OrderBy(r => r.Country).Skip(0).Take(2), o => o.Country, r => r.Country,
+                (o, r) => new { o.Country, r.Continent, o.Amount })
+            .GroupBy(x => x.Continent)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToArray());
+
+        // Same hazard reached at a DISTANCE — the join is not the GroupBy's immediate source (an interleaved
+        // Where sits between them). Also a clean failure, never wrong data.
+        Assert.Throws<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() => db.Orders
+            .Join(db.Regions.OrderBy(r => r.Country).Take(2), o => o.Country, r => r.Country,
+                (o, r) => new { o.Country, r.Continent, o.Amount })
+            .Where(x => x.Amount > 0)
+            .GroupBy(x => x.Continent)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToArray());
+    }
+
+    [Fact]
+    public void GroupBy_over_Join_with_bare_inner_still_returns_correct_data()
+    {
+        // OVER-DECLINE NET for the sibling above: a GroupBy over a Join whose inner is a plain bare collection
+        // scan (no ordering, no paging) carries none of the CSHARP-6017 hazard and must keep executing with
+        // CORRECT results under the default Native mode. Any provider-side guard for the shape above that was
+        // keyed merely on "GroupBy composed over a Join" — rather than on the inner's ordering/paging — would
+        // redden this test.
+        using var db = CreateContext(MongoQueryMode.Native,
+            nameof(GroupBy_over_Join_with_bare_inner_still_returns_correct_data));
+
+        var rows = db.Orders
+            .Join(db.Regions, o => o.Country, r => r.Country, (o, r) => new { o.Country, r.Continent, o.Amount })
+            .GroupBy(x => x.Continent)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .AsEnumerable()
+            .Select(x => x.Key + ":" + x.Count)
+            .OrderBy(s => s)
+            .ToArray();
+
+        // Seed: US x2 (NA), UK x2 + FR x1 (EU).
+        Assert.Equal(["EU:3", "NA:2"], rows);
     }
 
     private JoinDeclineDbContext CreateContext(MongoQueryMode mode, string name)

@@ -721,15 +721,14 @@ Employees.{ "$set" : { "__sort0" : { "$literal" : 42 } } }, { "$sort" : { "__sor
 
     public override async Task Sum_on_float_column(bool async)
     {
-        // Fails: Truncation data loss issue EF-228
-        Assert.Contains(
-            "Truncation resulted in data loss.",
-            (await Assert.ThrowsAsync<TruncationException>(() => base.Sum_on_float_column(async))).Message);
+        // EF-394: Composite-PK member access now resolves natively, so ProductID == 1 predicate uses native MongoDB $sum
+        // instead of fallback path that had truncation data loss issue EF-228. Result is now mathematically correct.
+        await base.Sum_on_float_column(async);
 
         AssertMql(
             """
-            OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null, "_v" : { "$sum" : "$Discount" } } }, { "$project" : { "_id" : 0 } }
-            """);
+OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null, "v" : { "$sum" : "$Discount" } } }
+""");
     }
 
     public override async Task Sum_on_float_column_in_subquery(bool async)
@@ -848,15 +847,14 @@ Employees.{ "$set" : { "__sort0" : { "$literal" : 42 } } }, { "$sort" : { "__sor
 
     public override async Task Average_on_float_column(bool async)
     {
-        // Fails: Truncation data loss issue EF-228
-        Assert.Contains(
-            "Truncation resulted in data loss.",
-            (await Assert.ThrowsAsync<TruncationException>(() => base.Average_on_float_column(async))).Message);
+        // EF-394: Composite-PK member access now resolves natively, so ProductID == 1 predicate uses native MongoDB $avg
+        // instead of fallback path that had truncation data loss issue EF-228. Result is now mathematically correct.
+        await base.Average_on_float_column(async);
 
         AssertMql(
             """
-            OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null, "_v" : { "$avg" : "$Discount" } } }, { "$project" : { "_id" : 0 } }
-            """);
+OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null, "v" : { "$avg" : "$Discount" } } }
+""");
     }
 
     public override async Task Average_on_float_column_in_subquery(bool async)
@@ -1073,7 +1071,7 @@ Employees.{ "$set" : { "__sort0" : { "$literal" : 42 } } }, { "$sort" : { "__sor
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : "$City", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$group" : { "_id" : { "City" : "$City" } } }, { "$project" : { "City" : "$_id.City", "_id" : 0 } }
             """);
     }
 
@@ -1084,7 +1082,7 @@ Employees.{ "$set" : { "__sort0" : { "$literal" : 42 } } }, { "$sort" : { "__sor
         // Ordering not preserved by distinct when ordering columns not projected.
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : "$City", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$group" : { "_id" : { "City" : "$City" } } }, { "$project" : { "City" : "$_id.City", "_id" : 0 } }
             """);
     }
 
@@ -1753,8 +1751,8 @@ Orders.{ "$match" : { "CustomerID" : "VINET" } }, { "$match" : { "_id" : 10248 }
 
         AssertMql(
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }] } }
-""");
+            Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }] } }
+            """);
     }
 
     public override async Task List_Contains_with_parameter_list(bool async)
@@ -1763,8 +1761,8 @@ Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }] } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }] } }
-""");
+            Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }] } }
+            """);
     }
 
     public override async Task Contains_with_parameter_list_value_type_id(bool async)

@@ -36,6 +36,15 @@ public class NativeSelectManyBinderTests
     {
         public string Name { get; set; } = "";
         public decimal Price { get; set; }
+
+        // EF-422: a nested OWNED collection on the unwound element, so a computed leaf can contain a
+        // MongoSizeExpression (i.Notes.Count) — the one node kind the bare `_v` tier must refuse.
+        public List<Note> Notes { get; set; } = [];
+    }
+
+    private class Note
+    {
+        public string Text { get; set; } = "";
     }
 
     private class Tag
@@ -58,7 +67,7 @@ public class NativeSelectManyBinderTests
     {
         using var db = SingleEntityDbContext.Create<Owner>(mb =>
         {
-            mb.Entity<Owner>().OwnsMany(o => o.Items);
+            mb.Entity<Owner>().OwnsMany(o => o.Items, ib => ib.OwnsMany(i => i.Notes));
             // MongoRelationshipDiscoveryConvention defaults any navigation target not already registered as
             // its own independent entity type to OWNED (embedded) — the document-DB norm. Registering Tag
             // explicitly (with its own key + FK-based relationship) is what makes Owner.Tags a genuine
@@ -366,7 +375,7 @@ public class NativeSelectManyBinderTests
         var mongoQ = TestQuery();
         mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
-        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, NameAndPriceSelector()));
+        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, NameAndPriceSelector(), out _));
 
         Assert.Collection(mongoQ.Select.Projection,
             p =>
@@ -397,7 +406,7 @@ public class NativeSelectManyBinderTests
                 Expression.Property(inner, nameof(Item.Name))));
         var selector = Expression.Lambda(body, ti);
 
-        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out _));
 
         var outerP = mongoQ.Select.Projection.Single(p => p.Alias == "OuterName");
         Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(outerP.Expression).ElementName);
@@ -442,7 +451,7 @@ public class NativeSelectManyBinderTests
                 Expression.Property(inner, nameof(Tag.Label))));
         var selector = Expression.Lambda(body, ti);
 
-        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out _));
 
         var ownerP = mongoQ.Select.Projection.Single(p => p.Alias == "OwnerName");
         Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(ownerP.Expression).ElementName);
@@ -485,7 +494,7 @@ public class NativeSelectManyBinderTests
             Expression.Bind(typeof(OtherScopeProjected).GetProperty(nameof(OtherScopeProjected.X))!, threeHops));
         var selector = Expression.Lambda(body, ti3);
 
-        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out _));
         Assert.Empty(mongoQ.Select.Projection);
     }
 
@@ -494,7 +503,7 @@ public class NativeSelectManyBinderTests
     {
         var mongoQ = TestQuery();
 
-        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, NameAndPriceSelector()));
+        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, NameAndPriceSelector(), out _));
         Assert.Empty(mongoQ.Select.Projection);
     }
 
@@ -509,7 +518,7 @@ public class NativeSelectManyBinderTests
             Expression.Bind(typeof(EntityLeafProjected).GetProperty(nameof(EntityLeafProjected.X))!, outer));
         var selector = Expression.Lambda(body, ti);
 
-        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out _));
         Assert.Empty(mongoQ.Select.Projection);
     }
 
@@ -525,7 +534,7 @@ public class NativeSelectManyBinderTests
                 Expression.Multiply(Expression.Property(inner, nameof(Item.Price)), Expression.Constant(2m))));
         var selector = Expression.Lambda(body, ti);
 
-        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out _));
 
         var projection = Assert.Single(mongoQ.Select.Projection);
         Assert.Equal("X", projection.Alias);
@@ -536,11 +545,14 @@ public class NativeSelectManyBinderTests
     }
 
     [Fact]
-    public void TryBindTransparentIdentifierProjection_cross_scope_computed_leaf_returns_false()
+    public void TryBindTransparentIdentifierProjection_cross_scope_computed_leaf_binds_each_operand_in_its_own_scope()
     {
-        // A leaf mixing an OUTER-scope numeric member (o.Rank) and an INNER-scope numeric member (i.Price) spans
-        // two distinct scopes in one arithmetic leaf. ScopeRerootingVisitor sets CrossScope in this case, and
-        // TryTranslateSingleScopeComputedLeaf must decline — a cross-scope leaf must NEVER silently mis-scope.
+        // EF-422. A leaf mixing an OUTER-scope numeric member (o.Rank) and an INNER-scope numeric member
+        // (i.Price) spans two distinct scopes in one arithmetic leaf, so the single-scope binder's
+        // ScopeRerootingVisitor sets CrossScope and declines. The cross-scope fallback then translates each
+        // operand against ITS OWN scope: the outer operand stays at the document root ("Rank"), the inner one
+        // is prefixed with the unwind path ("Items.Price"). Asserting BOTH element names is the whole point —
+        // a binder that mis-scoped either side would still produce a $multiply of two fields.
         var mongoQ = TestQuery();
         mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
@@ -550,7 +562,144 @@ public class NativeSelectManyBinderTests
                 Expression.Multiply(Expression.Property(outer, nameof(Owner.Rank)), Expression.Property(inner, nameof(Item.Price)))));
         var selector = Expression.Lambda(body, ti);
 
-        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out var bareAlias));
+        Assert.Null(bareAlias); // a WRAPPED body: no bare `_v` alias.
+
+        var projection = Assert.Single(mongoQ.Select.Projection);
+        Assert.Equal("X", projection.Alias);
+        var binary = Assert.IsType<MongoBinaryExpression>(projection.Expression);
+        Assert.Equal(MongoBinaryOperator.Multiply, binary.Operator);
+        Assert.Equal("Rank", Assert.IsType<MongoFieldExpression>(binary.Left).ElementName);
+        Assert.Equal("Items.Price", Assert.IsType<MongoFieldExpression>(binary.Right).ElementName);
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_cross_scope_leaf_with_a_constant_operand_binds()
+    {
+        // EF-422. `(o.Rank * i.Price) + 1` — the cross-scope subtree is now an OPERAND of the top-level node,
+        // so it exercises TryTranslateScopedOperand's recursion, and `1` exercises its scope-free arm (an
+        // operand with no scope-rooted member at all, which the single-scope binder still refuses as a whole
+        // LEAF — see the _constant_only_leaf_ test below).
+        var mongoQ = TestQuery();
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
+
+        var (ti, outer, inner) = TiScopes();
+        var crossScope = Expression.Multiply(
+            Expression.Property(outer, nameof(Owner.Rank)), Expression.Property(inner, nameof(Item.Price)));
+        var body = Expression.MemberInit(Expression.New(typeof(ComputedLeafProjected)),
+            Expression.Bind(typeof(ComputedLeafProjected).GetProperty(nameof(ComputedLeafProjected.X))!,
+                Expression.Add(crossScope, Expression.Constant(1m))));
+        var selector = Expression.Lambda(body, ti);
+
+        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out _));
+
+        var projection = Assert.Single(mongoQ.Select.Projection);
+        var add = Assert.IsType<MongoBinaryExpression>(projection.Expression);
+        Assert.Equal(MongoBinaryOperator.Add, add.Operator);
+        Assert.Equal(1m, Assert.IsType<MongoConstantExpression>(add.Right).Value);
+        var multiply = Assert.IsType<MongoBinaryExpression>(add.Left);
+        Assert.Equal("Rank", Assert.IsType<MongoFieldExpression>(multiply.Left).ElementName);
+        Assert.Equal("Items.Price", Assert.IsType<MongoFieldExpression>(multiply.Right).ElementName);
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_constant_only_leaf_still_returns_false()
+    {
+        // EF-422 guard. Factoring the re-rooting core out for the cross-scope path introduced a
+        // `requireScopeRooted` switch; the single-scope entry point must still pass `true`, so a leaf with NO
+        // scope-rooted member anywhere (2 * 3) keeps declining rather than pushing a constant-only $project
+        // leaf down. Flipping that flag to false is what this test discriminates.
+        var mongoQ = TestQuery();
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
+
+        var (ti, _, _) = TiScopes();
+        var body = Expression.MemberInit(Expression.New(typeof(ComputedLeafProjected)),
+            Expression.Bind(typeof(ComputedLeafProjected).GetProperty(nameof(ComputedLeafProjected.X))!,
+                Expression.Multiply(Expression.Constant(2m), Expression.Constant(3m))));
+        var selector = Expression.Lambda(body, ti);
+
+        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out _));
+        Assert.Empty(mongoQ.Select.Projection);
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_bare_computed_body_binds_under_the_synthetic_alias()
+    {
+        // EF-422 part B. The ONE-arg `SelectMany(o => o.Items).Select(i => i.Price * 2)` shape folds to a BARE
+        // (non-`new {}`) computed body, `ti => ti.Inner.Price * 2`. It has no member name, so it binds under
+        // the reserved `_v` alias and reports that alias back to the caller (which needs it to build the
+        // by-alias shaper).
+        var mongoQ = TestQuery();
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
+
+        var (ti, _, inner) = TiScopes();
+        var selector = Expression.Lambda(
+            Expression.Multiply(Expression.Property(inner, nameof(Item.Price)), Expression.Constant(2m)), ti);
+
+        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out var bareAlias));
+        Assert.Equal("_v", bareAlias);
+
+        var projection = Assert.Single(mongoQ.Select.Projection);
+        Assert.Equal("_v", projection.Alias);
+        var binary = Assert.IsType<MongoBinaryExpression>(projection.Expression);
+        Assert.Equal("Items.Price", Assert.IsType<MongoFieldExpression>(binary.Left).ElementName);
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_bare_cross_scope_computed_body_binds()
+    {
+        // EF-422. The two parts compose: a bare body that is ALSO cross-scope.
+        var mongoQ = TestQuery();
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
+
+        var (ti, outer, inner) = TiScopes();
+        var selector = Expression.Lambda(
+            Expression.Multiply(
+                Expression.Property(outer, nameof(Owner.Rank)), Expression.Property(inner, nameof(Item.Price))), ti);
+
+        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out var bareAlias));
+        Assert.Equal("_v", bareAlias);
+        var binary = Assert.IsType<MongoBinaryExpression>(Assert.Single(mongoQ.Select.Projection).Expression);
+        Assert.Equal("Rank", Assert.IsType<MongoFieldExpression>(binary.Left).ElementName);
+        Assert.Equal("Items.Price", Assert.IsType<MongoFieldExpression>(binary.Right).ElementName);
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_bare_computed_body_containing_a_count_returns_false()
+    {
+        // EF-422. The bare `_v` tier mirrors NativeProjectionBinder's tier-2 arm 1b, whose boundary is a
+        // SUBTREE fact: a `$size` ANYWHERE under the body renders — on the un-stripped driver fallback — as a
+        // bare `$size`, which is a hard server error (not a wrong answer) against a missing or explicitly-null
+        // array. `ti.Inner.Notes.Count * 2` is an arithmetic top node with a size node underneath, so the
+        // top-node gate alone admits it and only the subtree check declines it.
+        var mongoQ = TestQuery();
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
+
+        var (ti, _, inner) = TiScopes();
+        var count = Expression.Property(Expression.Property(inner, nameof(Item.Notes)), nameof(List<Note>.Count));
+        var selector = Expression.Lambda(Expression.Multiply(count, Expression.Constant(2)), ti);
+
+        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out var bareAlias));
+        Assert.Null(bareAlias);
+        Assert.Empty(mongoQ.Select.Projection);
+    }
+
+    [Fact]
+    public void TryBindTransparentIdentifierProjection_bare_member_access_body_still_returns_false()
+    {
+        // EF-422 boundary. Only an ARITHMETIC bare body is admitted. A bare member access (`ti.Inner.Name`) is
+        // a path-addressable leaf whose alias would have to be its own document path for a late fallback to
+        // read it correctly (NativeProjectionBinder's tier 1) — a different contract from the `_v` tier — so
+        // it must keep declining. Without IsArithmeticComputedLeaf's gate on the bare arm, the member loop's
+        // FIRST branch would happily bind it under `_v`.
+        var mongoQ = TestQuery();
+        mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
+
+        var (ti, _, inner) = TiScopes();
+        var selector = Expression.Lambda(Expression.Property(inner, nameof(Item.Name)), ti);
+
+        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out var bareAlias));
+        Assert.Null(bareAlias);
         Assert.Empty(mongoQ.Select.Projection);
     }
 
@@ -568,7 +717,7 @@ public class NativeSelectManyBinderTests
                 Expression.Multiply(Expression.Property(outer, nameof(Owner.Rank)), Expression.Constant(2m))));
         var selector = Expression.Lambda(body, ti);
 
-        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out _));
 
         var projection = Assert.Single(mongoQ.Select.Projection);
         Assert.Equal("X", projection.Alias);
@@ -593,7 +742,7 @@ public class NativeSelectManyBinderTests
             Expression.Bind(typeof(OtherScopeProjected).GetProperty(nameof(OtherScopeProjected.X))!, concat));
         var selector = Expression.Lambda(body, ti);
 
-        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out _));
         Assert.Empty(mongoQ.Select.Projection);
     }
 
@@ -610,7 +759,7 @@ public class NativeSelectManyBinderTests
                 Expression.Property(other, nameof(Item.Name))));
         var selector = Expression.Lambda(body, ti);
 
-        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out _));
         Assert.Empty(mongoQ.Select.Projection);
     }
 
@@ -626,7 +775,7 @@ public class NativeSelectManyBinderTests
                 Expression.Property(outer, nameof(Owner.Items))));
         var selector = Expression.Lambda(body, ti);
 
-        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+        Assert.False(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out _));
         Assert.Empty(mongoQ.Select.Projection);
     }
 
@@ -778,7 +927,135 @@ public class NativeSelectManyBinderTests
         var collectionSelector = ReferenceCollectionSelector(tagNav.TargetEntityType, outerParam, predicate);
 
         Assert.True(NativeSelectManyBinder.TryBindReferenceNavUnwind(mongoQ, collectionSelector));
-        Assert.NotNull(mongoQ.Select.UnwindSource!.Filter);
+        // The folded user conjunct must be CAPTURED, not swallowed by the correlation match: the filter is the
+        // user predicate, scope-prefixed.
+        var filter = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.UnwindSource!.Filter);
+        Assert.Equal(MongoBinaryOperator.NotEqual, filter.Operator);
+        Assert.Equal("_lookup_Tags.Label", Assert.IsType<MongoFieldExpression>(filter.Left).ElementName);
+    }
+
+    [Fact]
+    public void TryBindReferenceNavUnwind_folded_inner_not_null_user_filter_is_not_silently_dropped()
+    {
+        // EF-355. Where(root, fkPred && (t.Label != null)) is structurally identical to a legitimately
+        // null-guarded FK correlation EXCEPT for which key the null-check is on. Handing the whole predicate to
+        // NativeCorrelationMatcher would let its null-guard handling treat the USER conjunct as the FK's own
+        // guard and match on the equality alone — binding with Filter == null and silently returning ALL
+        // children. The user filter must survive (or the bind must decline), never be dropped silently.
+        var mongoQ = TestQuery();
+        var tagNav = TagsNavigation(mongoQ);
+        var outerParam = Expression.Parameter(typeof(Owner), "o");
+        var tParam = Expression.Parameter(typeof(Tag), "t");
+        var correlation = Expression.Equal(
+            Expression.Property(outerParam, nameof(Owner.Id)), Expression.Property(tParam, nameof(Tag.OwnerId)));
+        var userNotNull = Expression.NotEqual(
+            Expression.Property(tParam, nameof(Tag.Label)), Expression.Constant(null, typeof(string)));
+        var predicate = Expression.Lambda(Expression.AndAlso(correlation, userNotNull), tParam);
+        var collectionSelector = ReferenceCollectionSelector(tagNav.TargetEntityType, outerParam, predicate);
+
+        Assert.True(NativeSelectManyBinder.TryBindReferenceNavUnwind(mongoQ, collectionSelector));
+
+        var filter = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.UnwindSource!.Filter);
+        Assert.Equal(MongoBinaryOperator.NotEqual, filter.Operator);
+        Assert.Equal("_lookup_Tags.Label", Assert.IsType<MongoFieldExpression>(filter.Left).ElementName);
+    }
+
+    [Fact]
+    public void TryBindReferenceNavUnwind_folded_inner_not_null_user_filter_is_not_dropped_when_written_first()
+    {
+        // Same as above with the conjunct order reversed ((t.Label != null) && fkPred) — conjunct order must
+        // not decide whether the user filter survives.
+        var mongoQ = TestQuery();
+        var tagNav = TagsNavigation(mongoQ);
+        var outerParam = Expression.Parameter(typeof(Owner), "o");
+        var tParam = Expression.Parameter(typeof(Tag), "t");
+        var correlation = Expression.Equal(
+            Expression.Property(outerParam, nameof(Owner.Id)), Expression.Property(tParam, nameof(Tag.OwnerId)));
+        var userNotNull = Expression.NotEqual(
+            Expression.Property(tParam, nameof(Tag.Label)), Expression.Constant(null, typeof(string)));
+        var predicate = Expression.Lambda(Expression.AndAlso(userNotNull, correlation), tParam);
+        var collectionSelector = ReferenceCollectionSelector(tagNav.TargetEntityType, outerParam, predicate);
+
+        Assert.True(NativeSelectManyBinder.TryBindReferenceNavUnwind(mongoQ, collectionSelector));
+
+        var filter = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.UnwindSource!.Filter);
+        Assert.Equal(MongoBinaryOperator.NotEqual, filter.Operator);
+        Assert.Equal("_lookup_Tags.Label", Assert.IsType<MongoFieldExpression>(filter.Left).ElementName);
+    }
+
+    [Fact]
+    public void TryBindReferenceNavUnwind_null_guarded_fk_correlation_still_binds_unfiltered()
+    {
+        // EF-355 no-regression: EF emits `(int?)o.Id != null && (int?)o.Id == t.OwnerId` when the outer key's
+        // CLR type is nullable. The guard is on the SAME key as the FK equality, so it is the correlation's own
+        // null-guard — the bind must still go native with NO element filter.
+        var mongoQ = TestQuery();
+        var tagNav = TagsNavigation(mongoQ);
+        var outerParam = Expression.Parameter(typeof(Owner), "o");
+        var tParam = Expression.Parameter(typeof(Tag), "t");
+        var outerKey = Expression.Convert(Expression.Property(outerParam, nameof(Owner.Id)), typeof(int?));
+        var guard = Expression.NotEqual(outerKey, Expression.Constant(null, typeof(int?)));
+        var correlation = Expression.Equal(
+            outerKey, Expression.Convert(Expression.Property(tParam, nameof(Tag.OwnerId)), typeof(int?)));
+        var predicate = Expression.Lambda(Expression.AndAlso(guard, correlation), tParam);
+        var collectionSelector = ReferenceCollectionSelector(tagNav.TargetEntityType, outerParam, predicate);
+
+        Assert.True(NativeSelectManyBinder.TryBindReferenceNavUnwind(mongoQ, collectionSelector));
+
+        var unwind = mongoQ.Select.UnwindSource!;
+        Assert.Equal(MongoUnwindSourceKind.Reference, unwind.Kind);
+        Assert.Same(tagNav.TargetEntityType, unwind.InnerEntityType);
+        Assert.Null(unwind.Filter); // the FK's own null-guard is not a user filter
+    }
+
+    [Fact]
+    public void TryBindReferenceNavUnwind_null_guarded_fk_correlation_with_user_filter_keeps_only_user_filter()
+    {
+        // The two cases combined: the FK's own null-guard is dropped, the user's `!= null` on a DIFFERENT
+        // member is kept.
+        var mongoQ = TestQuery();
+        var tagNav = TagsNavigation(mongoQ);
+        var outerParam = Expression.Parameter(typeof(Owner), "o");
+        var tParam = Expression.Parameter(typeof(Tag), "t");
+        var outerKey = Expression.Convert(Expression.Property(outerParam, nameof(Owner.Id)), typeof(int?));
+        var guard = Expression.NotEqual(outerKey, Expression.Constant(null, typeof(int?)));
+        var correlation = Expression.Equal(
+            outerKey, Expression.Convert(Expression.Property(tParam, nameof(Tag.OwnerId)), typeof(int?)));
+        var userNotNull = Expression.NotEqual(
+            Expression.Property(tParam, nameof(Tag.Label)), Expression.Constant(null, typeof(string)));
+        var predicate = Expression.Lambda(
+            Expression.AndAlso(Expression.AndAlso(guard, correlation), userNotNull), tParam);
+        var collectionSelector = ReferenceCollectionSelector(tagNav.TargetEntityType, outerParam, predicate);
+
+        Assert.True(NativeSelectManyBinder.TryBindReferenceNavUnwind(mongoQ, collectionSelector));
+
+        var filter = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.UnwindSource!.Filter);
+        Assert.Equal(MongoBinaryOperator.NotEqual, filter.Operator);
+        Assert.Equal("_lookup_Tags.Label", Assert.IsType<MongoFieldExpression>(filter.Left).ElementName);
+    }
+
+    [Fact]
+    public void TryBindReferenceNavUnwind_folded_untranslatable_user_filter_declines_without_mutation()
+    {
+        // A folded user conjunct the translator rejects (t.Label.ToUpper() != null) must decline the whole bind
+        // — never bind while dropping the conjunct.
+        var mongoQ = TestQuery();
+        var tagNav = TagsNavigation(mongoQ);
+        var outerParam = Expression.Parameter(typeof(Owner), "o");
+        var tParam = Expression.Parameter(typeof(Tag), "t");
+        var correlation = Expression.Equal(
+            Expression.Property(outerParam, nameof(Owner.Id)), Expression.Property(tParam, nameof(Tag.OwnerId)));
+        var userNotNull = Expression.NotEqual(
+            Expression.Call(
+                Expression.Property(tParam, nameof(Tag.Label)),
+                typeof(string).GetMethod(nameof(string.ToUpper), System.Type.EmptyTypes)!),
+            Expression.Constant(null, typeof(string)));
+        var predicate = Expression.Lambda(Expression.AndAlso(correlation, userNotNull), tParam);
+        var collectionSelector = ReferenceCollectionSelector(tagNav.TargetEntityType, outerParam, predicate);
+
+        Assert.False(NativeSelectManyBinder.TryBindReferenceNavUnwind(mongoQ, collectionSelector));
+        Assert.Null(mongoQ.Select.UnwindSource);
+        Assert.Empty(mongoQ.Lookups); // no partial mutation
     }
 
     [Fact]
@@ -909,7 +1186,7 @@ public class NativeSelectManyBinderTests
                 Expression.Property(inner, nameof(Tag.Label))));
         var selector = Expression.Lambda(body, ti);
 
-        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector));
+        Assert.True(NativeSelectManyBinder.TryBindTransparentIdentifierProjection(mongoQ, selector, out _));
 
         var nameP = mongoQ.Select.Projection.Single(p => p.Alias == "Name");
         Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(nameP.Expression).ElementName);

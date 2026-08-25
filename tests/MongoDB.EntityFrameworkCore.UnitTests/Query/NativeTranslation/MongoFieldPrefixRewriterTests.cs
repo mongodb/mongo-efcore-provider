@@ -124,4 +124,22 @@ public class MongoFieldPrefixRewriterTests
         Assert.Equal("Posts.Comments", rewritten.ArrayPath);
         Assert.Same(node.ElementPredicate, rewritten.ElementPredicate);
     }
+
+    // EF-382: MongoArrayContainsExpression must be rewritable — reachable when an owned/reference SelectMany's
+    // inner filter contains an arrayField.Contains(constant) predicate; without this arm, Rewrite's exhaustive
+    // switch would hit its catch-all throw for a shape that now translates successfully upstream (a
+    // translate-time success turning into an unexpected later throw, rather than either working end-to-end or
+    // declining up front).
+    [Fact]
+    public void Prefixes_the_array_contains_field_and_leaves_the_value_alone()
+    {
+        var expr = new MongoArrayContainsExpression(
+            Field("Name"), new MongoConstantExpression("keep", forSerialization: null), negated: false);
+
+        var rewritten = (MongoArrayContainsExpression)MongoFieldPrefixRewriter.Rewrite(expr, "_lookup_Refs");
+
+        Assert.Equal("_lookup_Refs.Name", rewritten.Field.ElementName);
+        Assert.Equal("keep", Assert.IsType<MongoConstantExpression>(rewritten.Value).Value);
+        Assert.False(rewritten.Negated);
+    }
 }

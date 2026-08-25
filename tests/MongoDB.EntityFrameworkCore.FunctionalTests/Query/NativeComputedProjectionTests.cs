@@ -280,45 +280,46 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
 
     // ── Guard fallbacks: graceful — there IS a driver-LINQ oracle, and results must agree ────────────
 
+    // EF-434 RE-BASELINE. Was Integer_division_projection_falls_back_gracefully_except_under_NativeOnly, which
+    // pinned TryTranslateValue's blanket integer-division decline. That guard is gone: an integral-result
+    // division now translates to MongoBinaryOperator.IntegerDivide and renders as $trunc-of-$divide, so this
+    // projection goes NATIVE and agrees with C#.
+    //
+    // The seed is deliberately NO LONGER evenly divisible. The old one (8/2, 21/7, -9/3) was chosen to
+    // sidestep the very failure this ticket fixes — a non-integral $divide result cannot be deserialized into
+    // an int member — so keeping it would have left the fix unmeasured. Each expected value below is one only
+    // truncate-toward-zero produces: 7/2 -> 3 (raw 3.5), 20/3 -> 6 (raw 6.67), -7/2 -> -3 (raw -3.5, floor -4).
     [Fact]
-    public void Integer_division_projection_falls_back_gracefully_except_under_NativeOnly()
+    public void Integer_division_projection_goes_native_and_truncates_EF434()
     {
-        // Uses a dedicated, evenly-divisible seed (rather than the shared Age/Score of 7/2, 20/20, -7/2) so the
-        // assertion isolates the guard's fallback behavior. MongoDB's $divide is non-truncating and always
-        // yields a BSON double; the C# driver's own Int32 deserializer additionally throws TruncationException
-        // for a non-integral double (e.g. 7/2 = 3.5) when read back into an int-typed property — an unrelated,
-        // pre-existing driver-deserialization quirk that fires identically whether the raw $divide comes from
-        // native's fallback or from driver-LINQ itself. Evenly-divisible values sidestep that quirk so this test
-        // isolates just the guard/fallback behavior this slice is responsible for.
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(
-            nameof(Integer_division_projection_falls_back_gracefully_except_under_NativeOnly)) + Guid.NewGuid().ToString("N")[..8];
+            nameof(Integer_division_projection_goes_native_and_truncates_EF434)) + Guid.NewGuid().ToString("N")[..8];
         var bson = database.MongoDatabase.GetCollection<BsonDocument>(collectionName);
         bson.InsertMany([
-            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Alice" }, { "Age", 8 }, { "Score", 2 }, { "Weight", 1.0 } },
-            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Bob" }, { "Age", 21 }, { "Score", 7 }, { "Weight", 1.0 } },
-            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Carol" }, { "Age", -9 }, { "Score", 3 }, { "Weight", 1.0 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Alice" }, { "Age", 7 }, { "Score", 2 }, { "Weight", 1.0 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Bob" }, { "Age", 20 }, { "Score", 3 }, { "Weight", 1.0 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Carol" }, { "Age", -7 }, { "Score", 2 }, { "Weight", 1.0 } },
         ]);
         var collection = database.MongoDatabase.GetCollection<Customer>(collectionName);
         var logs = new List<string>();
 
+        // NativeOnly forbids the driver-LINQ fallback, so succeeding here IS the proof the shape went native.
         using (var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly))
         {
-            var query = nativeOnly.Entities.Select(c => new { c.Name, X = c.Age / c.Score });
-            Assert.Throws<NativeTranslationNotSupportedException>(() => query.ToList());
+            var results = nativeOnly.Entities.Select(c => new { c.Name, X = c.Age / c.Score })
+                .ToList().OrderBy(r => r.Name).ToList();
+
+            Assert.Equal([3, 6, -3], results.Select(r => r.X).ToArray());
+            Assert.Contains("$trunc", Mql(logs));
         }
 
+        // The default mode must agree with NativeOnly. Driver-LINQ is deliberately NOT compared against here:
+        // it still emits the raw $divide and therefore still throws on the non-integral quotients above —
+        // that is the released-behaviour bug EF-434 fixes on the native path, not a parity target.
         using var native = CreateContext(collection, [], MongoQueryMode.Native);
-        using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
-
-        var nativeResults = native.Entities.Select(c => new { c.Name, X = c.Age / c.Score })
-            .OrderBy(r => r.Name).ToList();
-        var driverResults = driver.Entities.Select(c => new { c.Name, X = c.Age / c.Score })
-            .OrderBy(r => r.Name).ToList();
-
-        Assert.Equal(driverResults, nativeResults);
-        // Evenly-divisible, so truncating-toward-zero C# division and MongoDB's non-truncating $divide agree:
-        // 8/2=4, 21/7=3, -9/3=-3.
-        Assert.Equal([4, 3, -3], nativeResults.Select(r => r.X).ToArray());
+        Assert.Equal([3, 6, -3],
+            native.Entities.Select(c => new { c.Name, X = c.Age / c.Score })
+                .ToList().OrderBy(r => r.Name).Select(r => r.X).ToArray());
     }
 
     [Fact]

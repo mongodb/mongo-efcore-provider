@@ -572,33 +572,45 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     }
 
     [Fact]
-    public void Nested_owned_scalar_leaf_in_element_declines_cleanly()
+    public void Nested_owned_scalar_leaf_in_element_now_goes_native_via_EF424()
     {
-        var collection = SeedBlogs(nameof(Nested_owned_scalar_leaf_in_element_declines_cleanly));
+        // FLIPPED BY EF-424: this test USED TO ASSERT A DECLINE (as "..._declines_cleanly"), because
+        // TryResolveOwnedFieldPath (MongoExpressionTranslator.Members.cs) declined unconditionally whenever
+        // its own _entityType was not a document root — which the element-scoped translator built for this
+        // Any's predicate always is (Post, not Blog). EF-424 replaced that GetDocumentPath()-based, root-only
+        // construction with a SCOPE-RELATIVE one (joining each hop's own containing element name, mirroring
+        // the sibling TryResolveOwnedCollectionPath), so p.Geo.Country now resolves to "Geo.Country" relative
+        // to the element scope, which composes correctly with the enclosing $elemMatch — no double-prefixing,
+        // and no root-relative path fighting a scope it was never built against. This is the SAME shape as
+        // Owned_collection_Any_through_owned_reference_goes_native above (an owned single-reference hop reached
+        // through Any), just with the hop INSIDE the collection element instead of before it.
+        var collection = SeedBlogs(nameof(Nested_owned_scalar_leaf_in_element_now_goes_native_via_EF424));
 
-        AssertDeclinesCleanlyNoFallbackOracle(collection, q => q.Where(b => b.Posts.Any(p => p.Geo.Country == "US")));
+        var titles = AssertNativeOnlyMatches(collection, q => q.Where(b => b.Posts.Any(p => p.Geo.Country == "US")));
+        Assert.Equal(["match"], titles);
 
-        // Independent-oracle leg (fix round 1) — see the comment on the sibling test above.
+        // Independent-oracle leg: well-formed seed (no missing/null Posts), so DriverLinq can actually run —
+        // NativeOnly == DriverLinq parity, not just a hand-verified expectation.
         var wellFormed = SeedWellFormedBlogs(
-            nameof(Nested_owned_scalar_leaf_in_element_declines_cleanly) + "_WellFormed");
-        var wfTitles = AssertDeclinesCleanly(wellFormed, q => q.Where(b => b.Posts.Any(p => p.Geo.Country == "US")));
+            nameof(Nested_owned_scalar_leaf_in_element_now_goes_native_via_EF424) + "_WellFormed");
+        var wfTitles = AssertNativeAndParity(wellFormed, q => q.Where(b => b.Posts.Any(p => p.Geo.Country == "US")));
         Assert.Equal(["match"], wfTitles);
     }
 
     [Fact]
-    public void Primitive_collection_Any_still_falls_back_via_the_Contains_path()
+    public void Primitive_collection_Any_now_goes_native_via_the_Contains_path()
     {
         // EF's AllAnyToContainsRewritingExpressionVisitor rewrites `Tags.Any(t => t == "x")` into
-        // `Tags.Contains("x")` before the native translator sees it, so this shape never reaches the new
-        // quantifier matcher — it is handled by the pre-existing Contains/$in path, unchanged by this slice.
+        // `Tags.Contains("x")` before the native translator sees it, so this shape never reaches the
+        // quantifier matcher at all — it is handled entirely by the Contains path in
+        // MongoExpressionTranslator, unchanged by the owned-collection-quantifier slice this file otherwise
+        // covers.
         //
-        // EMPIRICALLY DETERMINED (not assumed): this shape FALLS BACK — NativeOnly throws
-        // NativeTranslationNotSupportedException ("Query is not natively representable"). The point of this
-        // test is only that the shape is UNCHANGED by this slice (still routes exactly as it did before this
-        // slice, whichever way that is, since the Any-quantifier matcher never sees it at all — see above),
-        // not that it must go native; which way it routes is incidental to this slice and not asserted
-        // elsewhere, only recorded here.
-        var collection = SeedBlogs(nameof(Primitive_collection_Any_still_falls_back_via_the_Contains_path));
+        // Before EF-382, that Contains path only recognized `values.Contains(e.Field)` ($in) — the mirror
+        // shape here, `arrayField.Contains(constant)`, declined. EF-382 added the mirror arm
+        // (MongoArrayContainsExpression), so this now goes native too — routing proof is NativeOnly
+        // succeeding, per the Query AGENTS.md "MQL shape cannot prove a query went native" pitfall.
+        var collection = SeedBlogs(nameof(Primitive_collection_Any_now_goes_native_via_the_Contains_path));
 
         List<string> native;
         using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
@@ -617,12 +629,12 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         Assert.Equal(driver, native);
         Assert.Equal(["match"], native);
 
-        // Routing proof: falls back (see the empirical finding above) — NativeOnly throws rather than
-        // silently taking a different path than Native/DriverLinq just exercised.
+        // Routing proof: now goes native (EF-382) — NativeOnly succeeds rather than throwing.
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
-            Assert.Throws<NativeTranslationNotSupportedException>(
-                () => db.Entities.AsNoTracking().Where(b => b.Tags.Any(t => t == "x")).ToList());
+            var nativeOnly = db.Entities.AsNoTracking().Where(b => b.Tags.Any(t => t == "x"))
+                .ToList().Select(b => b.Title).OrderBy(t => t).ToList();
+            Assert.Equal(["match"], nativeOnly);
         }
     }
 

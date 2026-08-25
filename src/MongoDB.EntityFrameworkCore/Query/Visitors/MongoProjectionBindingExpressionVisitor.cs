@@ -661,6 +661,87 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                         .MakeGenericMethod(method.GetGenericArguments()),
                         countShaper);
 
+                // EF-427 item 1: the same stranded-rebuild gap as the Count/LongCount arm immediately above,
+                // for the bare (no-predicate) First/FirstOrDefault/Single/SingleOrDefault/Any reducers — see
+                // that arm's own comment for the full mechanism (why `break` not `return null`, why the
+                // fall-through's second Visit is not universally safe, why this is unreachable for a NATIVE
+                // reducer). Deliberately narrow: the PREDICATED overloads (FirstWithPredicate etc.) and
+                // Sum/Min/Max/Average (per-numeric-type overloads, not a single generic-in-TSource method) are
+                // out of scope for this task.
+                //
+                // MEASURED DIFFERENCE FROM THE Count/LongCount ARM'S SHAPE: unlike Count, EF Core does NOT
+                // fuse a preceding member-access Select into these five reducers. `Select(b =>
+                // b.Posts.First().Heading)` nav-expands to `b.Posts.Select(o => o.Heading).First()` — the
+                // trailing member access is pushed INTO the source as its own Select, so `visitedSource` here
+                // is the ALREADY-REBUILT `Enumerable.Select(shaper, lambda)` call the adjacent Select arm
+                // above just produced (type `IEnumerable<THeading>`), not a bare `CollectionShaperExpression`
+                // (type `List<Post>`). A guard that only matched `CollectionShaperExpression` (mirroring the
+                // Count arm literally) declines this shape and it keeps throwing — measured directly: the
+                // bare bodyless `Select(b => b.Posts.Any())` (no trailing member access, so no Select is
+                // pushed in) DOES reach here as a raw `CollectionShaperExpression`, but the four reducers
+                // this ticket's own repro exercises (immediately followed by `.Heading`) do not. So the
+                // source-shape check below is widened to "assignable to the Enumerable equivalent's own
+                // `IEnumerable<TSource>` parameter, but NOT already assignable to this Queryable method's own
+                // `IQueryable<TSource>` parameter" — see <see cref="TryRebuildAsEnumerableSource"/> — which
+                // admits both shapes uniformly while staying exactly as narrow as the Count arm's own
+                // discipline: it still only ever fires on a source that would otherwise crash today (a
+                // genuine untouched `IQueryable<TSource>` source stays assignable to the Queryable parameter
+                // and is correctly left to the ordinary fall-through, unchanged).
+                case nameof(Queryable.First)
+                    when genericMethod == QueryableMethods.FirstWithoutPredicate:
+                    if (!TryRebuildAsEnumerableSource(method, visitedSource, methodCallExpression.Arguments[0], out var firstSource))
+                    {
+                        break;
+                    }
+
+                    return Expression.Call(
+                        EnumerableMethods.FirstWithoutPredicate.MakeGenericMethod(method.GetGenericArguments()),
+                        firstSource);
+
+                case nameof(Queryable.FirstOrDefault)
+                    when genericMethod == QueryableMethods.FirstOrDefaultWithoutPredicate:
+                    if (!TryRebuildAsEnumerableSource(method, visitedSource, methodCallExpression.Arguments[0], out var firstOrDefaultSource))
+                    {
+                        break;
+                    }
+
+                    return Expression.Call(
+                        EnumerableMethods.FirstOrDefaultWithoutPredicate.MakeGenericMethod(method.GetGenericArguments()),
+                        firstOrDefaultSource);
+
+                case nameof(Queryable.Single)
+                    when genericMethod == QueryableMethods.SingleWithoutPredicate:
+                    if (!TryRebuildAsEnumerableSource(method, visitedSource, methodCallExpression.Arguments[0], out var singleSource))
+                    {
+                        break;
+                    }
+
+                    return Expression.Call(
+                        EnumerableMethods.SingleWithoutPredicate.MakeGenericMethod(method.GetGenericArguments()),
+                        singleSource);
+
+                case nameof(Queryable.SingleOrDefault)
+                    when genericMethod == QueryableMethods.SingleOrDefaultWithoutPredicate:
+                    if (!TryRebuildAsEnumerableSource(method, visitedSource, methodCallExpression.Arguments[0], out var singleOrDefaultSource))
+                    {
+                        break;
+                    }
+
+                    return Expression.Call(
+                        EnumerableMethods.SingleOrDefaultWithoutPredicate.MakeGenericMethod(method.GetGenericArguments()),
+                        singleOrDefaultSource);
+
+                case nameof(Queryable.Any)
+                    when genericMethod == QueryableMethods.AnyWithoutPredicate:
+                    if (!TryRebuildAsEnumerableSource(method, visitedSource, methodCallExpression.Arguments[0], out var anySource))
+                    {
+                        break;
+                    }
+
+                    return Expression.Call(
+                        EnumerableMethods.AnyWithoutPredicate.MakeGenericMethod(method.GetGenericArguments()),
+                        anySource);
+
                 // The same rebuild as the arm immediately above, for the PREDICATED Count/LongCount
                 // overloads — this delivers the BARE filtered-count projection,
                 // `Select(b => b.Posts.Count(p => ...))`, and only that shape. A NATIVE filtered-count
@@ -669,16 +750,22 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 // predicated overloads and pushes the count into $project instead — so this arm only ever
                 // sees a shape that is NOT going native.
                 //
-                // "Bare spelling" here means a bare selector BODY, not merely a bare TOP node — narrower than
-                // the arm above it. `Select(b => b.Posts.Count * 2)` folds client-side (the unfiltered arm has
-                // no `_translatedRootExpression` identity check), but the filtered analogue,
-                // `Select(b => b.Posts.Count(p => ...) * 2)`, still hard-fails in every mode: the Count call
-                // is an OPERAND of the top-level `*`, not the selector body itself, so identity fails and this
-                // arm declines. Widening to "the Count call appears anywhere reachable from the root, with no
-                // interposed shaper reference" is a follow-on. Note the asymmetry: the UNFILTERED
-                // `Select(b => b.Posts.Count * 2)` is a graceful decline with correct values in the two
-                // fallback modes, while this FILTERED spelling is a hard fail in all three, and the WRAPPED
-                // filtered form is native. The `new {...}` is the difference, not the arithmetic.
+                // "Bare spelling" here means a bare selector BODY REACHABLE THROUGH A PURE ARITHMETIC/CAST
+                // SPINE (see IsReachableThroughArithmeticSpine below — EF-427 item 2 widened this from a bare
+                // exact-identity check), not merely a bare TOP node — narrower than the arm above it.
+                // `Select(b => b.Posts.Count * 2)` folds client-side (the unfiltered arm has no
+                // `_translatedRootExpression` reachability check at all — any shaper source is enough). BEFORE
+                // EF-427, the filtered analogue, `Select(b => b.Posts.Count(p => ...) * 2)`, hard-failed in
+                // every mode: the Count call was an OPERAND of the top-level `*`, not the selector body
+                // itself, so the OLD exact-identity check failed and this arm declined with no graceful
+                // fallback (see the arm's own `IsReachableThroughArithmeticSpine` doc comment for the widened
+                // mechanism). Note the asymmetry this used to record, now closed for the arithmetic-spine
+                // case specifically (a filtered count behind some OTHER operator, or wrapped in a `new {...}`,
+                // is untouched by this widening and still hard-fails/goes native the same way it always did):
+                // the UNFILTERED `Select(b => b.Posts.Count * 2)` is a graceful decline with correct values in
+                // the two fallback modes, while this FILTERED spelling used to be a hard fail in all three,
+                // and the WRAPPED filtered form is native. The `new {...}` is the difference, not the
+                // arithmetic.
                 //
                 // The Enumerable overload takes a Func<,>, not an Expression<Func<,>>, so the predicate lambda
                 // must be UNQUOTED — UnwrapLambdaFromQuote (used the same way by the adjacent Select case above)
@@ -706,38 +793,52 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 // InvalidOperationException("could not be translated") every other declined shape in this file
                 // fails with, rather than trading it for a confusing `ArgumentException`.
                 //
-                // MUST BE THE BARE SELECTOR BODY ITSELF, not a leaf nested inside a WRAPPED anonymous/DTO
-                // projection. A WRAPPED projection's element predicate can decline to Fallback for reasons
-                // unrelated to this arm (correlated-beyond-element, a non-renderable predicate like
-                // `StartsWith`, a primitive-element collection, or the structurally distinct `Where(pred).Count()`
-                // shape) — see NativeOwnedCollectionFilteredCountTests' pinned `..._still_hard_fail(s)_in_every_mode`
-                // tests. Those shapes reach this SAME switch arm too (Route == Fallback for a DIFFERENT reason
-                // than a bare selector body), and `visitedSource` is STILL a genuine CollectionShaperExpression
-                // for them (visiting a real owned-collection navigation produces one regardless of Route) — so
-                // the shaper-type check alone does not distinguish a bare spelling from an unrelated decline
-                // residual. Reference-equality against `_translatedRootExpression` (the top-level expression
-                // this Translate() call started with — see its own doc comment) does: it is true only when
-                // this Count call IS the entire selector body. For a WRAPPED shape the Count call is nested
-                // inside a NewExpression/MemberInit, so identity fails and this arm declines as before.
+                // MUST BE REACHABLE FROM THE SELECTOR BODY THROUGH A PURE ARITHMETIC/CAST SPINE ONLY, not a
+                // leaf nested inside a WRAPPED anonymous/DTO projection, and not reachable through any OTHER
+                // kind of node (a method call, a member access, a conditional, ...). A WRAPPED projection's
+                // element predicate can decline to Fallback for reasons unrelated to this arm
+                // (correlated-beyond-element, a non-renderable predicate like `StartsWith`, a primitive-element
+                // collection, or the structurally distinct `Where(pred).Count()` shape) — see
+                // NativeOwnedCollectionFilteredCountTests' pinned `..._still_hard_fail(s)_in_every_mode` tests.
+                // Those shapes reach this SAME switch arm too (Route == Fallback for a DIFFERENT reason than a
+                // bare/arithmetic-reachable selector body), and `visitedSource` is STILL a genuine
+                // CollectionShaperExpression for them (visiting a real owned-collection navigation produces
+                // one regardless of Route) — so the shaper-type check alone does not distinguish a
+                // bare/arithmetic-reachable spelling from an unrelated decline residual.
+                // `IsReachableThroughArithmeticSpine(_translatedRootExpression, methodCallExpression)` (the
+                // top-level expression this Translate() call started with — see its own doc comment) does: it
+                // is true only when this Count call is the selector body itself OR reachable from it through
+                // nothing but arithmetic/cast nodes. For a WRAPPED shape the Count call is nested inside a
+                // NewExpression/MemberInit — a node kind the spine walk does not recurse into — so reachability
+                // fails and this arm declines as before.
                 //
                 // NOT REDUNDANT WITH `ContainsShaperReference` BELOW — the two guards protect DIFFERENT
-                // residual shapes. The identity guard alone does NOT restore the WRAPPED CORRELATED residual
+                // residual shapes. The reachability guard alone does NOT restore the WRAPPED CORRELATED residual
                 // (`Correlated_primitive_and_where_count_filtered_projections_still_hard_fail_in_every_mode`'s
                 // first row) — a proxy for "does this predicate reference the enclosing shaper", not that
                 // property itself; see `ContainsShaperReference`'s own doc comment for why a BARE correlated
-                // predicate slips past identity but is caught by the structural check. Conversely,
+                // predicate slips past reachability but is caught by the structural check. Conversely,
                 // `ContainsShaperReference` alone does NOT restore the WRAPPED NON-RENDERABLE residual
                 // (`Non_renderable_element_predicate_filtered_projection_still_hard_fails_in_every_mode`, the
                 // `StartsWith` case): that predicate references only its own element parameter `p` — no shaper
                 // node, no query parameter — so nothing about it is structurally distinguishable from the bare
                 // spelling except that the Count call is nested inside a `new {...}` rather than being the whole
-                // selector body. Only the identity check catches THAT one. Both guards stay.
+                // selector body. Only the reachability check catches THAT one. Both guards stay.
+                // Widened per EF-427 item 2: the filtered Count call need not BE the selector body — it may be
+                // any operand reachable from the root through a pure arithmetic/cast spine
+                // (Select(b => b.Posts.Count(pred) * 2), Select(b => (b.Posts.Count(pred) + 1) * 2), etc.).
+                // "No interposed shaper reference" means every node on the path from root to this call is
+                // itself just arithmetic/cast — never another operator that would need its own
+                // CollectionShaperExpression (which this rewrite has no way to thread through an arbitrary
+                // operand position). IsReachableThroughArithmeticSpine subsumes the old exact-identity check
+                // (ReferenceEquals(root, target) is its base case), so this replaces that check outright rather
+                // than adding a second arm above it.
                 case nameof(Queryable.Count)
                     when genericMethod == QueryableMethods.CountWithPredicate:
                 case nameof(Queryable.LongCount)
                     when genericMethod == QueryableMethods.LongCountWithPredicate:
                     if (visitedSource is not CollectionShaperExpression filteredCountShaper
-                        || !ReferenceEquals(methodCallExpression, _translatedRootExpression))
+                        || !IsReachableThroughArithmeticSpine(_translatedRootExpression, methodCallExpression))
                     {
                         break;
                     }
@@ -755,6 +856,64 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                         .MakeGenericMethod(method.GetGenericArguments()),
                         filteredCountShaper,
                         filteredCountLambda);
+            }
+
+            // EF-425. No case above claimed this Queryable operator, so it is about to reach the generic
+            // fall-through at the bottom of this method. That fall-through re-Visits every argument (including
+            // Arguments[0], which the `visitedSource` above already visited once) and then calls
+            // `methodCallExpression.Update(...)` — rebuilding the SAME Queryable call around the visited
+            // source. Both halves of that are unsound once the source has been visited into a MATERIALIZED
+            // collection expression, and each half produced its own bare, unnamed crash in EVERY query mode
+            // (Native, DriverLinq and NativeOnly alike — this runs at translation time, before the compile-time
+            // gate ever reads MongoQueryMode):
+            //
+            //   * `Update` re-validates argument assignability through Expression.Call's own BCL checks, and a
+            //     Queryable operator's first parameter is `IQueryable<T>`, which neither a
+            //     CollectionShaperExpression (typed as the navigation's List<T>) nor the `Enumerable.Select`
+            //     call the adjacent Select case rebuilds (typed IEnumerable<T>) is assignable to. MatchTypes
+            //     cannot rescue it: it only inserts a Convert when the target type has NO item type, and
+            //     `IQueryable<T>` always has one. Measured today on `b.Posts.Take(2).Select(p => p.Heading)`
+            //     and the `Reverse` analogue (EF pushes the projection INSIDE those two, so the source the
+            //     operator sees is the raw collection shaper): `ArgumentException: Expression of type
+            //     'List<Post>' cannot be used for parameter of type 'IQueryable<Post>'`.
+            //   * The second Visit of Arguments[0] is not side-effect-free when that subtree is an
+            //     owned-collection `Select`: the Select case above registers its lambda parameter in
+            //     `_collectionShaperMapping` with a non-idempotent `.Add`, so visiting it twice throws
+            //     `ArgumentException: An item with the same key has already been added. Key: p`. Measured today
+            //     on `b.Posts.Select(p => p.Heading).Distinct()` and the `DefaultIfEmpty` analogue (neither can
+            //     be pushed inside the projection, so the source they see IS the rebuilt Select). This is the
+            //     hazard the Count arms' `break` comments above already flag as the limit of their safety.
+            //
+            // Declining here — BEFORE the fall-through mutates anything — converts both into the same clean,
+            // named `InvalidOperationException` every other unsupported shape in this file produces, and
+            // `Print()` names the operator and the navigation (`Concat` already landed here by a different
+            // route and produced exactly this exception, which is why it never showed the crash).
+            //
+            // Deliberately a THROW, not `return null`: a null return folds through
+            // `MatchTypes(null, targetType)` to `Expression.Default(targetType)` — a silent null/empty
+            // collection for a collection-typed projection leaf — which is wrong data rather than a decline.
+            // Same reasoning the Count arms above give for using `break` rather than `return null`.
+            //
+            // Deliberately a STRUCTURAL guard rather than one case per operator. The failing family is not a
+            // fixed list of five methods: it is "any Queryable operator with no case of its own whose source
+            // has been rewritten into a materialized collection", so keying on assignability catches Skip,
+            // ElementAt, Where and the rest of the long tail on the same terms. It cannot fire on a shape that
+            // survives the fall-through today: `Expression.Call` (and hence `Update`) enforces this exact
+            // assignability itself, so any input that reaches and survives `Update` already satisfies the
+            // condition below and is left untouched.
+            //
+            // INSTRUMENTED, not assumed (temporary trace at this line, removed): across the whole functional
+            // Query suite the only inputs that reach this point at all are the four crashing shapes —
+            // `Distinct`/`DefaultIfEmpty` arriving with an `IEnumerable<string>`-typed rebuilt Select, and
+            // `Take`/`Reverse` arriving with a `List<Post>`-typed CollectionShaperExpression. Notably the
+            // wrapped filtered-`Count` declines whose comments above describe this fall-through never reach
+            // here (their `b.Posts.Count(pred)` binds to `Enumerable`, not `Queryable`, so this whole block is
+            // skipped for them) — which is why the EF-365 graceful-fallback shapes are unaffected.
+            if (visitedSource != null
+                && !ReferenceEquals(visitedSource, methodCallExpression.Arguments[0])
+                && !method.GetParameters()[0].ParameterType.IsAssignableFrom(visitedSource.Type))
+            {
+                throw new InvalidOperationException(CoreStrings.TranslationFailed(methodCallExpression.Print()));
             }
         }
 
@@ -1084,6 +1243,121 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
     private void ExitProjectionMember()
         => _projectionMembers.Pop();
+
+    /// <summary>
+    /// EF-427 item 1: decides whether <paramref name="visitedSource"/> — the already-visited
+    /// <c>Arguments[0]</c> of a bare <c>Queryable.First</c>/<c>FirstOrDefault</c>/<c>Single</c>/
+    /// <c>SingleOrDefault</c>/<c>Any</c> call — is a shape that would otherwise crash the generic
+    /// fall-through's <c>Expression.Call</c>/<c>Update</c> validation (the same "is this the crash-prone
+    /// shape" question the Count/LongCount arm above answers with a plain
+    /// <c>visitedSource is CollectionShaperExpression</c> check), and if so, hands back the source to rebuild
+    /// the <see cref="Enumerable"/> equivalent against.
+    /// </summary>
+    /// <remarks>
+    /// Wider than a bare <c>CollectionShaperExpression</c> check because — unlike <c>Count</c>/<c>LongCount</c>
+    /// — EF Core does not fuse a trailing member-access <c>Select</c> into these five reducers:
+    /// <c>b.Posts.First().Heading</c> nav-expands to <c>b.Posts.Select(o => o.Heading).First()</c>, so
+    /// <paramref name="visitedSource"/> here is often the ALREADY-REBUILT <c>Enumerable.Select(shaper, lambda)</c>
+    /// call the adjacent <c>Select</c> case produces (type <c>IEnumerable&lt;TResult&gt;</c>), not the raw
+    /// <c>CollectionShaperExpression</c> (type <c>List&lt;T&gt;</c>) a bodyless call like
+    /// <c>b.Posts.Any()</c> still produces directly. Both need rebuilding; neither is caught by a
+    /// type-specific check for the other.
+    /// </remarks>
+    /// <param name="method">The constructed generic <c>Queryable</c> method being visited.</param>
+    /// <param name="visitedSource">The already-visited <c>Arguments[0]</c>.</param>
+    /// <param name="originalSource">The UNVISITED <c>Arguments[0]</c>, to detect "nothing changed".</param>
+    /// <param name="enumerableSource">On success, <paramref name="visitedSource"/> itself, ready to pass as the
+    /// <see cref="Enumerable"/> equivalent's source argument.</param>
+    /// <returns>
+    /// <see langword="false"/> — leave this case's <c>break</c> to fall through UNCHANGED — when: (a)
+    /// <paramref name="visitedSource"/> is null; (b) nothing was rewritten (<c>ReferenceEquals</c> the
+    /// original argument), i.e. a genuine, still-untouched <c>IQueryable&lt;TSource&gt;</c> source that the
+    /// ordinary generic fall-through already handles correctly; (c) <paramref name="visitedSource"/> is
+    /// STILL assignable to this Queryable method's own <c>IQueryable&lt;TSource&gt;</c> parameter, i.e. not a
+    /// crash-prone shape at all; or (d) — defence in depth — <paramref name="visitedSource"/> is not even
+    /// assignable to the <see cref="Enumerable"/> equivalent's own <c>IEnumerable&lt;TSource&gt;</c> parameter,
+    /// in which case rebuilding would just trade today's <see cref="InvalidOperationException"/> (from the
+    /// fall-through's own decline further down) for a worse, confusing <see cref="ArgumentException"/> from
+    /// <see cref="Expression.Call(MethodInfo, Expression[])"/>'s own BCL validation — so this declines instead,
+    /// exactly the same "clean decline over a confusing crash" preference the filtered-Count arm's
+    /// <c>ContainsQueryParameter</c> guard documents.
+    /// </returns>
+    private static bool TryRebuildAsEnumerableSource(
+        MethodInfo method, Expression visitedSource, Expression originalSource, out Expression enumerableSource)
+    {
+        enumerableSource = null;
+
+        if (visitedSource is null || ReferenceEquals(visitedSource, originalSource))
+        {
+            return false;
+        }
+
+        if (method.GetParameters()[0].ParameterType.IsAssignableFrom(visitedSource.Type))
+        {
+            return false;
+        }
+
+        var elementType = method.GetGenericArguments()[0];
+        if (!typeof(IEnumerable<>).MakeGenericType(elementType).IsAssignableFrom(visitedSource.Type))
+        {
+            return false;
+        }
+
+        enumerableSource = visitedSource;
+        return true;
+    }
+
+    /// <summary>
+    /// EF-427 item 2: true when <paramref name="target"/> — a filtered <c>Count</c>/<c>LongCount</c> call — is
+    /// reachable from <paramref name="root"/> (the whole selector body,
+    /// <see cref="_translatedRootExpression"/>) through a spine of nothing but arithmetic (<c>+ - * / %</c>)
+    /// and numeric <c>Convert</c> nodes, e.g. <c>Select(b => b.Posts.Count(pred) * 2)</c> or
+    /// <c>Select(b => (b.Posts.Count(pred) + 1) * 2)</c>.
+    /// </summary>
+    /// <remarks>
+    /// This subsumes the old exact-identity check: the base case, <c>ReferenceEquals(root, target)</c>, is
+    /// exactly what a bare <c>Select(b => b.Posts.Count(pred))</c> selector body satisfies. Every other node
+    /// kind (a method call, a member access, a conditional, anything that is not plain arithmetic/cast)
+    /// declines — "no interposed shaper reference" means every node on the path from root to target is
+    /// ITSELF just arithmetic/cast, never another operator that would need its own
+    /// <see cref="CollectionShaperExpression"/> the way the filtered-count rebuild below needs one for
+    /// <paramref name="target"/>. This function is a pure, read-only structural walk over the RAW (not yet
+    /// visited) expression tree — it does not call <see cref="Visit"/> and has no side effects, so it cannot
+    /// introduce a double-registration hazard (e.g. the <c>_collectionShaperMapping.Add</c> non-idempotence
+    /// the Count/LongCount arms' own comments warn about); the actual visiting of every operand still happens
+    /// exactly once each, via the ordinary recursive <see cref="ExpressionVisitor.VisitBinary"/>/<see
+    /// cref="ExpressionVisitor.VisitUnary"/> dispatch, unaffected by this check. If the same filtered-Count
+    /// call is reachable more than once (e.g. two syntactically distinct predicates on either side of a `+`),
+    /// each occurrence is a genuinely distinct <see cref="MethodCallExpression"/> node that reaches this
+    /// switch's filtered-Count case independently and is rebuilt independently and correctly — this function
+    /// is a pure predicate re-evaluated per call site, not shared mutable state. It also cannot change
+    /// anything about the EF-425 interposed-operator family (<c>Distinct</c>/<c>Take</c>/<c>Reverse</c>/
+    /// <c>DefaultIfEmpty</c>/<c>Concat</c> between an owned-collection <c>Select</c> and a terminal operator):
+    /// that family's decline happens while visiting <paramref name="target"/>'s OWN <c>Arguments[0]</c> (the
+    /// collection source the count call is filtering over), a step this function never touches — it only
+    /// decides whether <paramref name="target"/> ITSELF is reachable from the root, never how its argument is
+    /// visited.
+    /// </remarks>
+    private static bool IsReachableThroughArithmeticSpine(Expression root, MethodCallExpression target)
+    {
+        if (ReferenceEquals(root, target))
+        {
+            return true;
+        }
+
+        return root switch
+        {
+            BinaryExpression
+            {
+                NodeType: ExpressionType.Add or ExpressionType.Subtract or ExpressionType.Multiply
+                    or ExpressionType.Divide or ExpressionType.Modulo
+            } binary
+                => IsReachableThroughArithmeticSpine(binary.Left, target) || IsReachableThroughArithmeticSpine(binary.Right, target),
+            UnaryExpression { NodeType: ExpressionType.Convert } unary
+                => IsReachableThroughArithmeticSpine(unary.Operand, target),
+            _ => false
+        };
+    }
 
     /// <summary>
     /// Checks whether <paramref name="method"/> is one of the eight canonical <c>Count</c>/<c>LongCount</c>

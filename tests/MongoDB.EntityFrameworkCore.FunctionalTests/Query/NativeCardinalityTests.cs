@@ -184,12 +184,93 @@ public class NativeCardinalityTests(TemporaryDatabaseFixture database) : IClassF
         Assert.Contains("more than one", ex.Message);
     }
 
+    // ── Reducer composed after Take/Skip now goes native (EF-397) ─────────────────────────────────
+    //
+    // This block replaces the former First_after_Take_falls_back pin. NativeCardinalityBinder.TryBindReducer
+    // used to decline unconditionally when Select.HasLimit was already true (a preceding Take), on the
+    // grounds that "two limits" were not reconcilable in canonical order. They are: the binder APPENDS its
+    // own $limit to the TAIL of the ordered op list (MongoSelectDefinition.AppendLimit -> ActiveOps.Add), and
+    // consecutive $limit stages narrow monotonically — [$limit 3, $limit 1] yields exactly the first row of
+    // the first three. That is the same fact the set-op TrailingOps path already relied on (HasLimit scans
+    // _pipelineOps only, so a Take recorded into TrailingOps was already invisible to the guard and a second
+    // $limit was already being appended there — deliberately, per that path's own comment).
+    //
+    // The tests below are chosen so the ORDER of the two limits is observable, not just their presence.
+
     [Fact]
-    public void First_after_Take_falls_back()
+    public void First_after_Take_now_goes_native()
     {
-        using var db = CreateContext([1, 2, 3], MongoQueryMode.NativeOnly, nameof(First_after_Take_falls_back));
-        // Limit already populated by Take => reducer not representable => NativeOnly throws.
-        Assert.Throws<NativeTranslationNotSupportedException>(() => db.Entities.Take(2).First());
+        using var db = CreateContext([1, 2, 3, 4, 5], MongoQueryMode.NativeOnly, nameof(First_after_Take_now_goes_native));
+        // Take(3) then First => [$limit 3, $limit 1] => the first of the first three.
+        Assert.Equal(1, db.Entities.OrderBy(e => e.Value).Take(3).First().Value); // NativeOnly succeeds => native
+    }
+
+    [Fact]
+    public void First_after_Skip_then_Take_composes_in_recorded_order()
+    {
+        // THE ordering discriminator. Correct emission is [$sort, $skip 2, $limit 2, $limit 1] => row 3.
+        // If the reducer's $limit were hoisted ahead of the paging ([$limit 1, $skip 2, $limit 2]) the
+        // pipeline would yield NO rows and First() would throw "no elements" instead of returning 3 — so a
+        // wrong composition cannot pass this test by coincidence.
+        using var nativeOnly = CreateContext(
+            [1, 2, 3, 4, 5], MongoQueryMode.NativeOnly, nameof(First_after_Skip_then_Take_composes_in_recorded_order) + "only");
+        Assert.Equal(3, nativeOnly.Entities.OrderBy(e => e.Value).Skip(2).Take(2).First().Value);
+
+        using var driver = CreateContext(
+            [1, 2, 3, 4, 5], MongoQueryMode.DriverLinq, nameof(First_after_Skip_then_Take_composes_in_recorded_order) + "driver");
+        Assert.Equal(3, driver.Entities.OrderBy(e => e.Value).Skip(2).Take(2).First().Value); // driver-LINQ oracle agrees
+    }
+
+    [Fact]
+    public void FirstOrDefault_after_Take_that_selects_nothing_is_null()
+    {
+        // Take(2) keeps rows 1,2; the Where then rejects both. The reducer's $limit composes onto an empty
+        // stream and FirstOrDefault must answer null (not throw, and not see row 5, which Take excluded).
+        using var db = CreateContext(
+            [1, 2, 5], MongoQueryMode.NativeOnly, nameof(FirstOrDefault_after_Take_that_selects_nothing_is_null));
+        Assert.Null(db.Entities.OrderBy(e => e.Value).Take(2).Where(e => e.Value == 5).FirstOrDefault());
+    }
+
+    [Fact]
+    public void Single_after_Take_of_two_still_throws_more_than_one()
+    {
+        // Single appends $limit 2 (so the server can still distinguish "exactly one" from "more than one").
+        // After Take(2) the pipeline is [$limit 2, $limit 2] => two rows survive => Single must throw. A
+        // reducer limit that wrongly REPLACED the Take's limit with 1 would return a value instead.
+        using var db = CreateContext(
+            [1, 2, 3], MongoQueryMode.NativeOnly, nameof(Single_after_Take_of_two_still_throws_more_than_one));
+        var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.OrderBy(e => e.Value).Take(2).Single());
+        Assert.Contains("more than one", ex.Message);
+    }
+
+    [Fact]
+    public void Single_after_Take_of_one_returns_that_element()
+    {
+        // [$limit 1, $limit 2] => one row => Single returns it. Pairs with the test above: together they
+        // prove the two limits MIN correctly rather than one clobbering the other in either direction.
+        using var db = CreateContext(
+            [7, 8, 9], MongoQueryMode.NativeOnly, nameof(Single_after_Take_of_one_returns_that_element));
+        Assert.Equal(7, db.Entities.OrderBy(e => e.Value).Take(1).Single().Value);
+    }
+
+    [Fact]
+    public void First_after_Take_zero_throws_no_elements()
+    {
+        // Take(0) lowers to $limit 0, which MongoPipelineFactory.NormalizePagingStages rewrites in place to
+        // the always-false $match (EF-323/EF-254). Composing a reducer on top must therefore see an EMPTY
+        // stream and throw "no elements" — NOT the ArgumentOutOfRangeException a raw $limit:0 would raise.
+        using var db = CreateContext([1, 2, 3], MongoQueryMode.NativeOnly, nameof(First_after_Take_zero_throws_no_elements));
+        var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.Take(0).First());
+        Assert.Contains("no elements", ex.Message);
+    }
+
+    [Fact]
+    public void First_after_Skip_only_is_unaffected()
+    {
+        // Skip alone never set HasLimit, so this was ALREADY native before EF-397 — pinned so the guard
+        // removal is proven not to have disturbed the pre-existing Skip case.
+        using var db = CreateContext([1, 2, 3], MongoQueryMode.NativeOnly, nameof(First_after_Skip_only_is_unaffected));
+        Assert.Equal(2, db.Entities.OrderBy(e => e.Value).Skip(1).First().Value);
     }
 
     // ── Scalar-aggregate native path (EF-SP4 Task 5) ────────────────────────────────────────────

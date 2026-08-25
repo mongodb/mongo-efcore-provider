@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
@@ -440,21 +441,22 @@ public class MongoExpressionTranslatorTests
     }
 
     [Fact]
-    public void Composite_PK_property_access_reports_not_translatable()
+    public void Composite_PK_property_access_resolves_natively()
     {
         // Build a model where (OrderId, ProductId) form the composite primary key.
         using var db = SingleEntityDbContext.Create<OrderLine>(mb =>
             mb.Entity<OrderLine>().HasKey(e => new { e.OrderId, e.ProductId }));
         var entityType = db.Model.FindEntityType(typeof(OrderLine))!;
 
-        // A predicate over one of the composite-PK components should be rejected.
+        // A predicate over one of the composite-PK components should now resolve natively via _id.<name>.
         var body = PredicateBody<OrderLine>(ol => ol.OrderId == 10248);
         var translator = NewTranslator(entityType);
 
         var translated = translator.TryTranslate(body, out var result);
 
-        Assert.False(translated);
-        Assert.Null(result);
+        Assert.True(translated);
+        Assert.NotNull(result);
+        Assert.IsType<MongoBinaryExpression>(result);
     }
 
     // ------------------------------------------------------------------
@@ -717,6 +719,86 @@ public class MongoExpressionTranslatorTests
     }
 
     // ------------------------------------------------------------------
+    // Test 18c-18f (EF-382): arrayField.Contains(constant) — the MIRROR shape of the $in arm above (there
+    // the ITEM resolves to a field and the collection is a client-side set of values; here the RECEIVER is a
+    // genuine stored array FIELD and the item is a single constant value). MongoDB's implicit array-element
+    // match ({ field: value }) expresses this natively → MongoArrayContainsExpression, never $in.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Array_field_contains_constant_translates_to_array_contains_expression()
+    {
+        var entityType = GetOwnedBlogEntityType();
+        var translator = NewTranslator(entityType);
+        var body = PredicateBody<OwnedBlog>(b => b.Tags.Contains("keep"));
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var containsExpr = Assert.IsType<MongoArrayContainsExpression>(result);
+        Assert.False(containsExpr.Negated);
+        Assert.Equal("Tags", containsExpr.Field.ElementName);
+        var constant = Assert.IsType<MongoConstantExpression>(containsExpr.Value);
+        Assert.Null(constant.ForSerialization); // eagerly rendered to a BsonValue at translate time
+        Assert.Equal(new BsonString("keep"), constant.Value);
+    }
+
+    [Fact]
+    public void Negated_array_field_contains_constant_translates_to_negated_array_contains()
+    {
+        var entityType = GetOwnedBlogEntityType();
+        var translator = NewTranslator(entityType);
+        var body = PredicateBody<OwnedBlog>(b => !b.Tags.Contains("keep"));
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var containsExpr = Assert.IsType<MongoArrayContainsExpression>(result);
+        Assert.True(containsExpr.Negated);
+        Assert.Equal("Tags", containsExpr.Field.ElementName);
+    }
+
+    // Item is a FIELD, not a constant — this is the AMBIGUOUS double-field shape (neither the new arm, which
+    // requires a constant item, nor the $in arm's own TranslateInValues, which requires a constant/parameter/
+    // array-literal collection, can represent it): declines exactly as it did before EF-382, not a regression.
+    [Fact]
+    public void Array_field_contains_field_item_still_declines()
+    {
+        var entityType = GetOwnedBlogEntityType();
+        var translator = NewTranslator(entityType);
+        var body = PredicateBody<OwnedBlog>(b => b.Tags.Contains(b.Title));
+
+        var translated = translator.TryTranslate(body, out var result);
+
+        Assert.False(translated);
+        Assert.Null(result);
+    }
+
+    // The correctness guard: a WHOLE-COLLECTION value converter has no per-element serializer
+    // (IBsonArraySerializer.TryGetItemSerializationInfo is unavailable on the resulting
+    // ValueConverterSerializer<,>), so this declines rather than risk comparing the constant against the
+    // wrong (whole-list) shape — see TranslateArrayContainsItem's remarks.
+    [Fact]
+    public void Array_field_contains_over_whole_collection_value_converted_property_declines()
+    {
+        using var db = SingleEntityDbContext.Create<ConvertedListEntity>(mb =>
+            mb.Entity<ConvertedListEntity>().Property(e => e.Ratings)
+                .HasConversion(
+                    v => v.Select(x => x.ToString()).ToList(),
+                    v => v.Select(x => (Tier)Enum.Parse(typeof(Tier), x)).ToList()));
+        var entityType = db.Model.FindEntityType(typeof(ConvertedListEntity))!;
+        var translator = NewTranslator(entityType);
+        var body = PredicateBody<ConvertedListEntity>(e => e.Ratings.Contains(Tier.Gold));
+
+        var translated = translator.TryTranslate(body, out var result);
+
+        Assert.False(translated);
+        Assert.Null(result);
+    }
+
+    private class ConvertedListEntity
+    {
+        public ObjectId Id { get; set; }
+        public List<Tier> Ratings { get; set; } = [];
+    }
+
+    // ------------------------------------------------------------------
     // Test 19-23: string.StartsWith/EndsWith/Contains (EF-329) → MongoRegexExpression
     // ------------------------------------------------------------------
 
@@ -879,12 +961,15 @@ public class MongoExpressionTranslatorTests
         Assert.Equal(MongoBinaryOperator.Multiply, mul.Operator);
     }
 
-    // Empirically, the driver's own LINQ translator emits raw $divide / $mod for int operands with no
-    // truncation emulation (confirmed via MongoQueryMode.DriverLinq — see task-7-report.md), so the
-    // renderer's existing $expr rendering already matches driver output exactly: no special-casing needed.
+    // Modulo still maps straight through: the driver's own LINQ translator emits a raw $mod for int operands
+    // with no dividend-sign emulation, and so does this translator. DIVISION no longer matches driver-LINQ —
+    // EF-434 gave it C#'s truncating semantics (MongoBinaryOperator.IntegerDivide → $trunc of $divide) on the
+    // grounds that agreeing with C# beats agreeing with a driver-LINQ shape that is simply wrong for an
+    // integral result; the emitted MQL of a supported query is not contract (see the top-level AGENTS.md
+    // versioning rubric).
 
     [Fact]
-    public void Translates_divide_operand()
+    public void Translates_integral_divide_operand_as_IntegerDivide()
     {
         var translator = NewTranslator(GetEntityType<Customer>());
         Expression<Func<Customer, bool>> predicate = c => c.Age / c.Score > 1;
@@ -892,6 +977,22 @@ public class MongoExpressionTranslatorTests
         Assert.True(translator.TryTranslate(predicate.Body, out var result));
         var cmp = Assert.IsType<MongoBinaryExpression>(result);
         var div = Assert.IsType<MongoBinaryExpression>(cmp.Left);
+        Assert.Equal(MongoBinaryOperator.IntegerDivide, div.Operator);
+    }
+
+    [Fact]
+    public void Translates_non_integral_divide_operand_as_plain_Divide()
+    {
+        // THE DISCRIMINATOR for where the integral-ness decision is made. Both operands are still int-typed
+        // MongoFieldExpressions after TranslateOperand unwraps the widening Convert, so a renderer-side
+        // "are the operands integral?" rule would wrongly truncate this. Only the BinaryExpression's own
+        // result type (double) tells the two apart, which is why MapArithmeticOperator takes the node.
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => (double)c.Age / c.Score > 1;
+
+        Assert.True(translator.TryTranslateValue(
+            ((BinaryExpression)predicate.Body).Left, out var value));
+        var div = Assert.IsType<MongoBinaryExpression>(value);
         Assert.Equal(MongoBinaryOperator.Divide, div.Operator);
     }
 
@@ -1541,10 +1642,11 @@ public class MongoExpressionTranslatorTests
     }
 
     [Fact]
-    public void TryTranslateValue_integer_division_is_rejected() // guard A
+    public void TryTranslateValue_integer_division_translates_to_integer_divide() // EF-434: guard A removed
     {
         var (translator, body) = BuildValueBody<Order>(o => o.Price / o.Qty); // int / int
-        Assert.False(translator.TryTranslateValue(body, out _));
+        Assert.True(translator.TryTranslateValue(body, out var expr));
+        Assert.Equal(MongoBinaryOperator.IntegerDivide, Assert.IsType<MongoBinaryExpression>(expr).Operator);
     }
 
     [Fact]
@@ -1673,10 +1775,12 @@ public class MongoExpressionTranslatorTests
         // deliberately GetOwnedBlogEntityType() (a type that genuinely owns an "Address" embedded-reference
         // navigation), not an unrelated type: an unrelated innerType (e.g. Customer, which has no "Address")
         // would decline anyway via FindNavigation returning null, passing vacuously even if the two-scope
-        // guard were deleted. Probed directly (fix-report record): with ONLY the two-scope guard commented
-        // out, this test fails — TryResolveOwnedFieldPath's sibling IsDocumentRoot guard does NOT also catch
-        // this input, because innerType here is the ROOT OwnedBlog type (IsDocumentRoot() is true for it),
-        // not an owned sub-type — so the two guards do not overlap for this shape.
+        // guard were deleted. Probed directly (fix-report record, pre-EF-424): with ONLY the two-scope guard
+        // commented out, this test failed — TryResolveOwnedFieldPath had NO other guard that also caught this
+        // input, because innerType here is the ROOT OwnedBlog type. (Its old IsDocumentRoot guard, since
+        // removed by EF-424 in favor of scope-relative path construction, would not have caught it either, for
+        // the same reason — it never overlapped with the two-scope guard for this shape.) The two-scope guard
+        // below is therefore the ONLY thing standing between this input and a wrong dotted path.
         var outerType = GetOwnedBlogEntityType();
         var innerType = GetOwnedBlogEntityType();
         var outerParam = Expression.Parameter(typeof(OwnedBlog), "o");
@@ -1821,15 +1925,23 @@ public class MongoExpressionTranslatorTests
     }
 
     [Fact]
-    public void Owned_collection_Any_with_nested_owned_scalar_leaf_is_declined()
+    public void Owned_collection_Any_with_nested_owned_scalar_leaf_resolves_scope_relatively()
     {
-        // p.Geo.Country is a scalar leaf reached through an owned reference INSIDE the element. The
-        // element-scoped child translator is not a document root, so TryResolveOwnedFieldPath's
-        // IsDocumentRoot guard declines it — a clean decline, not a mis-addressed path.
+        // FLIPPED BY EF-424 (this test USED TO ASSERT A DECLINE, as "..._is_declined" — the comment that
+        // stood here explained why: "the element-scoped child translator is not a document root, so
+        // TryResolveOwnedFieldPath's IsDocumentRoot guard declines it"). EF-424 replaced that guard with a
+        // SCOPE-RELATIVE path construction (joining each hop's own containing element name, mirroring the
+        // sibling TryResolveOwnedCollectionPath), so p.Geo.Country — a scalar leaf reached through an owned
+        // single-reference hop INSIDE the element — now resolves to "Geo.Country", relative to the element
+        // scope, and the whole quantifier goes native via $elemMatch.
         var translator = NewTranslator(GetOwnedBlogEntityType());
         var body = PredicateBody<OwnedBlog>(b => b.Posts.Any(p => p.Geo.Country == "US"));
 
-        Assert.False(translator.TryTranslate(body, out _));
+        Assert.True(translator.TryTranslate(body, out var result));
+        var elemMatch = Assert.IsType<MongoElemMatchExpression>(result);
+        Assert.Equal("Posts", elemMatch.ArrayPath);
+        var comparison = Assert.IsType<MongoBinaryExpression>(elemMatch.ElementPredicate);
+        Assert.Equal("Geo.Country", Assert.IsType<MongoFieldExpression>(comparison.Left).ElementName);
     }
 
     [Fact]
@@ -2182,19 +2294,23 @@ public class MongoExpressionTranslatorTests
     }
 
     [Fact]
-    public void Element_predicate_outside_the_renderable_set_declines_at_translate_time()
+    public void Element_predicate_outside_the_renderable_set_is_now_admitted_at_translate_time()
     {
-        // THE non-vacuous pin for MongoAggregationExpressionRenderer.CanRender's decline in TranslateOperand's
-        // filtered-count branch (EF-359 fix round 1). A regex predicate has no aggregation-dialect rendering, so
-        // CanRender declines it — and at THIS layer (the bare translator, with no query-mode gate and no
-        // MongoShapedQueryCompilingExpressionVisitor catch-and-fallback wrapped around it) that is the only thing
-        // standing between a clean null and a MongoBinaryExpression whose Left is a MongoFilteredSizeExpression
-        // wrapping an unrenderable MongoRegexExpression. Mutation-verified: deleting the CanRender check turns
-        // this test red (TryTranslateBlogPredicate returns non-null); it does NOT turn the sibling functional test
-        // (NativeOwnedCollectionFilteredCountTests.Element_predicate_outside_the_renderable_set_declines) red,
-        // because that test only checks NativeOnly's exception TYPE, which stays the same NativeTranslationNotSupportedException
-        // either way (translate-time decline vs. Render's own catch-all) — see the remarks on the CanRender call site.
-        Assert.Null(TryTranslateBlogPredicate(b => b.Posts.Count(p => p.Heading.StartsWith("h")) > 0));
+        // EF-365 REBASELINE. This test used to pin MongoAggregationExpressionRenderer.CanRender's decline in
+        // TranslateOperand's filtered-count branch (EF-359 fix round 1): a regex predicate has no
+        // aggregation-dialect rendering, so CanRender declined it here, at the bare translator layer, before the
+        // leaf was ever admitted. EF-365 deleted that translate-time CanRender call site so a non-renderable
+        // element predicate gets a graceful driver-LINQ fallback instead of a crash (see
+        // NativeOwnedCollectionFilteredCountTests' EF-365 tests for the end-to-end behavior). At THIS layer the
+        // leaf is therefore now ADMITTED — a MongoBinaryExpression whose Left is a MongoFilteredSizeExpression
+        // wrapping the unrenderable MongoRegexExpression — and the decline moves downstream, to
+        // MongoAggregationExpressionRenderer.Render's own catch-all (still gated by CanRender internally) at
+        // pipeline-build time.
+        var comparison = Assert.IsType<MongoBinaryExpression>(
+            TryTranslateBlogPredicate(b => b.Posts.Count(p => p.Heading.StartsWith("h")) > 0));
+
+        var filtered = Assert.IsType<MongoFilteredSizeExpression>(comparison.Left);
+        Assert.IsType<MongoRegexExpression>(filtered.ElementPredicate);
     }
 
     [Fact]
@@ -2287,22 +2403,20 @@ public class MongoExpressionTranslatorTests
     }
 
     [Fact]
-    public void EF_Property_naming_a_composite_primary_key_component_still_declines()
+    public void EF_Property_naming_a_composite_primary_key_component_resolves_natively()
     {
-        // A composite-PK component is stored nested under "_id" and is NOT addressable by its top-level element
-        // name. TryResolveMember declines it for the member-access spelling; the EF.Property spelling must
-        // decline identically, or the emitted $match addresses a field that does not exist and silently
-        // returns nothing.
+        // A composite-PK component is stored nested under "_id" and is now addressable via the "_id.<element>"
+        // dotted path. Both member-access and EF.Property spellings resolve natively.
         using var db = SingleEntityDbContext.Create<CompositeKeyed>(
             mb => mb.Entity<CompositeKeyed>().HasKey(x => new { x.KeyA, x.KeyB }));
         var entityType = db.Model.FindEntityType(typeof(CompositeKeyed))!;
         var translator = NewTranslator(entityType);
         var param = Expression.Parameter(typeof(CompositeKeyed), "c");
 
-        Assert.False(translator.TryTranslateField(EfProperty<int>(param, nameof(CompositeKeyed.KeyA)), out _));
+        Assert.True(translator.TryTranslateField(EfProperty<int>(param, nameof(CompositeKeyed.KeyA)), out var compositeKeyField));
+        Assert.Equal("_id.KeyA", compositeKeyField!.ElementName);
 
-        // Control: a NON-key scalar on the same entity resolves, so the decline above is the composite-PK guard
-        // and not a general failure of this fixture.
+        // Control: a NON-key scalar on the same entity also resolves.
         Assert.True(translator.TryTranslateField(EfProperty<string>(param, nameof(CompositeKeyed.Label)), out var ok));
         Assert.Equal("Label", ok!.ElementName);
     }

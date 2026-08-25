@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -62,6 +63,13 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
     private class Stats
     {
         public int Score { get; set; }        // required non-nullable scalar on owned sub-document
+    }
+
+    private class Named
+    {
+        public ObjectId Id { get; set; }
+        public string Name { get; set; } = "";      // required non-nullable REFERENCE scalar
+        public List<int> Tags { get; set; } = [];   // required non-nullable REFERENCE scalar (collection)
     }
 
     private static SingleEntityDbContext<T> CreateContext<T>(
@@ -175,6 +183,52 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
 
         Assert.Null(driverBonus);
         Assert.Equal(driverBonus, nativeBonus);
+    }
+
+    // ── EF-343: explicit BSON null on a non-nullable REFERENCE-typed scalar must THROW, not silently
+    // materialize an invalid null on a required member ────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("Name")]
+    [InlineData("Tags")]
+    public void Explicit_null_on_non_nullable_reference_scalar_throws_under_native_matching_driver(string element)
+    {
+        var collection = database.CreateCollection<Named>(values: [element]);
+        var raw = database.GetCollection<BsonDocument>(collection.CollectionNamespace);
+        // Every OTHER required property must be present with a valid value, so the materializer reaches
+        // `element` rather than throwing "missing" on a sibling required property first.
+        var doc = new BsonDocument
+        {
+            { "_id", ObjectId.GenerateNewId() },
+            { "Name", "a name" },
+            { "Tags", new BsonArray([1, 2, 3]) }
+        };
+        doc[element] = BsonNull.Value;
+        raw.InsertOne(doc);
+
+        InvalidOperationException driverEx;
+        using (var driver = CreateContext(collection, MongoQueryMode.DriverLinq))
+        {
+            driverEx = Assert.Throws<InvalidOperationException>(() => driver.Entities.ToList());
+        }
+
+        // Before EF-343: native silently assigned `default(T)` (null) instead of throwing here, producing
+        // an invalid object (a required reference member left null).
+        InvalidOperationException nativeEx;
+        using (var native = CreateContext(collection, MongoQueryMode.Native))
+        {
+            nativeEx = Assert.Throws<InvalidOperationException>(() => native.Entities.ToList());
+        }
+
+        Assert.Equal(driverEx.Message, nativeEx.Message);
+
+        // And it must genuinely go native (throwing InvalidOperationException, not falling back and then
+        // throwing something else) — proves the streaming materializer itself enforces this, not the DOM path.
+        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
+        {
+            var nativeOnlyEx = Assert.Throws<InvalidOperationException>(() => nativeOnly.Entities.ToList());
+            Assert.Equal(driverEx.Message, nativeOnlyEx.Message);
+        }
     }
 
     // ── Happy path: complete document materializes correctly under both modes ─────────────────────

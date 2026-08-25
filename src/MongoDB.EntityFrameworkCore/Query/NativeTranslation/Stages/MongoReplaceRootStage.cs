@@ -19,9 +19,16 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 /// A <c>$replaceRoot</c> stage that promotes a field to the root document.
 /// <para>
 /// When <see cref="MergeOwnerKeySentinels"/> is <see langword="true"/> (owned bare-element SelectMany):
-/// merges in the owner key and array ordinal under sentinel field names so the re-rooted owned element's
-/// shadow key properties materialize non-null:
-/// <c>{ $replaceRoot: { newRoot: { $mergeObjects: [ "$&lt;NewRoot&gt;", { __ownerKey: "$_id", __ord: "$__ord" } ] } } }</c>.
+/// merges in the owner key and array ordinal so the re-rooted owned element's shadow key properties
+/// materialize non-null. Both sentinels are nested one level under a SINGLE reserved wrapper field
+/// (<see cref="ShadowField"/>), never as two individually-named top-level keys:
+/// <c>{ $replaceRoot: { newRoot: { $mergeObjects: [ "$&lt;NewRoot&gt;",
+/// { __mongoef_shadow: { __ownerKey: "$_id", __ord: "$__ord" } } ] } } }</c>.
+/// The nesting is what keeps an ordinary stored property from colliding with the sentinels: because
+/// <c>$mergeObjects</c> merges the sentinel document AFTER the unwound element, a same-named real field
+/// would be silently overwritten — with the wrapper, only the one reserved <see cref="ShadowField"/> name
+/// can collide (and the translator declines that shape; see
+/// <c>MongoQueryableMethodTranslatingExpressionVisitor.IsWholeElementRepresentable</c>).
 /// </para>
 /// <para>
 /// When <see cref="MergeOwnerKeySentinels"/> is <see langword="false"/> (reference bare-entity SelectMany):
@@ -45,6 +52,15 @@ internal sealed class MongoReplaceRootStage : MongoPipelineStage
     /// plain <c>$replaceRoot</c> form.
     /// </summary>
     public bool MergeOwnerKeySentinels { get; }
+
+    /// <summary>
+    /// The single reserved top-level field the sentinel merge adds to the re-rooted document. The owner-key
+    /// and ordinal sentinels are nested one level UNDER it (<c>__mongoef_shadow.__ownerKey</c> /
+    /// <c>__mongoef_shadow.__ord</c>), so an ordinary stored property can only ever collide with this ONE
+    /// name — never with <see cref="OwnerKeyField"/>/<see cref="OrdinalField"/> individually, which are not
+    /// top-level keys of the merged document.
+    /// </summary>
+    public const string ShadowField = "__mongoef_shadow";
 
     public const string OwnerKeyField = "__ownerKey";
     public const string OrdinalField = "__ord";

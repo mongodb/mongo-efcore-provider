@@ -85,6 +85,7 @@ internal sealed class MongoQueryLanguageRenderer
             MongoUnaryExpression unary => RenderUnary(unary, placeholders),
             MongoFieldExpression field => RenderBareField(field, placeholders),
             MongoInExpression inExpr => RenderIn(inExpr, placeholders),
+            MongoArrayContainsExpression arrayContains => RenderArrayContains(arrayContains, placeholders),
             MongoRegexExpression regex => RenderRegex(regex, placeholders),
             MongoElemMatchExpression elemMatch => RenderElemMatch(elemMatch, placeholders),
             _ => RenderAsExpr(node, placeholders)
@@ -177,8 +178,23 @@ internal sealed class MongoQueryLanguageRenderer
         }
 
         if (unary.Operand is not MongoFieldExpression field)
+        {
+            // Neither a query-native comparison nor a bare field: this subtree has no query-dialect form at
+            // all (e.g. a field-to-field comparison, arithmetic, or an $in). Delegate to $expr the same way
+            // RenderNode's own catch-all does for any other unrenderable node — MongoUnaryExpression is
+            // otherwise matched explicitly in RenderNode's switch (see its MongoUnaryExpression arm), so
+            // without this branch a Not never reaches that catch-all and always either succeeds above or
+            // throws here.
+            if (MongoAggregationExpressionRenderer.CanRender(unary.Operand))
+            {
+                return new BsonDocument("$expr",
+                    new BsonDocument("$not", new BsonArray { MongoAggregationExpressionRenderer.Render(unary.Operand, placeholders) }));
+            }
+
             throw new NativeTranslationNotSupportedException(
-                "MongoQueryLanguageRenderer only supports Not over a MongoFieldExpression or a query-native comparison.");
+                "MongoQueryLanguageRenderer only supports Not over a MongoFieldExpression, a query-native comparison, "
+                + "or a subtree the aggregation-expression renderer can express.");
+        }
 
         // !boolProperty → { field: { $ne: true } }
         // (Matches driver-LINQ rendering; also matches missing/null-field semantics.)
@@ -230,6 +246,24 @@ internal sealed class MongoQueryLanguageRenderer
             default:
                 throw new NativeTranslationNotSupportedException("Unsupported $in values node.");
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Array-field-contains-value ({ field: value } — the implicit array-element match)
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// Renders an <c>arrayField.Contains(constant)</c> test as MongoDB's implicit array-element-equality
+    /// match: <c>{ field: value }</c>. Negation uses <c>$ne</c>, the exact complement (same reasoning as
+    /// <c>$eq</c>/<c>$ne</c> in <see cref="RenderComparison"/>: both partition every BSON value including
+    /// missing/null, so inversion is exact rather than merely close).
+    /// </summary>
+    private BsonDocument RenderArrayContains(MongoArrayContainsExpression contains, PlaceholderTable placeholders)
+    {
+        var value = MongoValueRenderer.RenderValue(contains.Value, placeholders);
+        return contains.Negated
+            ? new BsonDocument(contains.Field.ElementName, new BsonDocument("$ne", value))
+            : new BsonDocument(contains.Field.ElementName, value);
     }
 
     // ------------------------------------------------------------------
@@ -422,8 +456,15 @@ internal sealed class MongoQueryLanguageRenderer
             MongoBinaryExpression sizeComparison when TryRenderSizeComparison(sizeComparison) is not null
                 => true,
             MongoBinaryExpression comparison => IsQueryNativeComparison(comparison),
-            // RenderUnary supports Not over a bare field, and over a QUERY-NATIVE comparison; it throws for
-            // anything else (e.g. Not over a conjunction, or over a field-to-field comparison).
+            // These two are the ONLY forms of Not that have a QUERY-DIALECT rendering: a bare field
+            // ({ field: { $ne: true } }) and a query-native comparison ({ field: { $not: { $op: value } } }).
+            // Every other operand (a conjunction, a field-to-field comparison, arithmetic, an $in) is still
+            // RENDERABLE by RenderUnary — since EF-396 it falls through to MongoAggregationExpressionRenderer
+            // and emits { $expr: { $not: [ … ] } } rather than throwing — but must NOT be admitted here,
+            // because $expr is a hard server error inside $elemMatch, which is the position this classifier
+            // gates. "Renderable" is therefore not the test; "has a query-dialect rendering" is. Pinned by
+            // MongoQueryLanguageRendererTests
+            // .IsQueryDialectRenderable_still_rejects_but_Render_now_falls_to_expr_for_Not_over_a_field_to_field_comparison.
             MongoUnaryExpression { Operator: MongoUnaryOperator.Not, Operand: MongoFieldExpression } => true,
             MongoUnaryExpression { Operator: MongoUnaryOperator.Not, Operand: MongoBinaryExpression cmp }
                 => IsQueryNativeComparison(cmp),
@@ -437,6 +478,11 @@ internal sealed class MongoQueryLanguageRenderer
             MongoInExpression inExpr
                 => inExpr.Values is MongoConstantExpression { Value: System.Collections.IEnumerable }
                     or MongoParameterExpression,
+            // RenderArrayContains always has a query-dialect form ({ field: value } / { field: { $ne: value } });
+            // MongoExpressionTranslator only ever constructs this node with a Value it has already resolved
+            // and rendered, so there is no unrenderable sub-shape to exclude here (unlike MongoInExpression's
+            // Values, which can carry an unsupported node the renderer would throw on).
+            MongoArrayContainsExpression => true,
             // RenderRegex throws for a parameterized term — only a constant is baked into a pattern.
             MongoRegexExpression { Term: MongoConstantExpression { Value: string } } => true,
             MongoElemMatchExpression elemMatch => IsQueryDialectRenderable(elemMatch.ElementPredicate),

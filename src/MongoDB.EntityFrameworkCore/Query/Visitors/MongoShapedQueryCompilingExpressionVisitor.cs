@@ -562,9 +562,13 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                         typeof(Func<,,,>).MakeGenericType(
                             typeof(QueryContext), typeof(IBsonReader), typeof(BsonDeserializationContext), resultType)));
             }
-            catch (Exception) when (mode != MongoQueryMode.NativeOnly)
+            catch (NativeTranslationNotSupportedException) when (mode != MongoQueryMode.NativeOnly)
             {
                 // The entity shape itself isn't streamable; fall through to the DOM path (still native).
+                // Narrowed from a broad `catch (Exception)` (EF-340): that swallowed ANY failure of the
+                // rewrite/compile above — including an unintended bug in the rewriter itself — as a silent
+                // fall-through to DOM. NativeTranslationNotSupportedException is the rewriter's only
+                // intended "can't stream this shape" signal; every other exception should surface.
                 streaming = false;
             }
         }

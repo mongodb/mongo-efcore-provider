@@ -123,11 +123,17 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     // is intercepted above, before this comment's invariant is ever consulted.) The
                     // assert below pins the invariant so a future change that violates it fails loudly
                     // rather than mis-deserialising via the wrong property's serializer.
+                    //
+                    // Nullability can differ in EITHER direction, and both are legitimate: the binding type can
+                    // be the nullable form of a non-nullable property (widening), or — since TryResolveFieldAccess
+                    // now peels a `Nullable<T>.Value` leaf (EF-402) — the property can be the NULLABLE form of a
+                    // non-nullable binding type (`x.Converted.Value` binds as `int` against a `Converted` property
+                    // typed `int?`). Unwrap both sides before comparing so either direction is accepted.
                     var fieldAccess = TryResolveFieldAccess(projection.Expression);
                     if (fieldAccess.Property != null)
                     {
                         if (fieldAccess.Property.ClrType != projectionBindingExpression.Type
-                            && fieldAccess.Property.ClrType != projectionBindingExpression.Type.UnwrapNullableType())
+                            && fieldAccess.Property.ClrType.UnwrapNullableType() != projectionBindingExpression.Type.UnwrapNullableType())
                         {
                             throw new InvalidOperationException(
                                 $"Aliased projection type '{projectionBindingExpression.Type}' does not match source property " +
@@ -263,6 +269,8 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     return Expression.Call(
                         PopulateCollectionMethodInfo.MakeGenericMethod(navigation.TargetEntityType.ClrType, navigation.ClrType),
                         Expression.Constant(navigation.GetCollectionAccessor()),
+                        Expression.Constant(navigation.DeclaringEntityType.DisplayName()),
+                        Expression.Constant(navigation.Name),
                         entities);
                 }
 
@@ -547,12 +555,20 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             // whole-element case, making it a safe discriminator).
             if (entityType == _rootEntityType)
             {
-                var sentinel = property.IsOwnedTypeOrdinalKey()
-                    ? MongoReplaceRootStage.OrdinalField
-                    : MongoReplaceRootStage.OwnerKeyField;
+                // Both sentinels live nested one level UNDER the single reserved ShadowField wrapper the
+                // $mergeObjects adds (EF-428), so this is a two-segment path read, not a top-level element
+                // read. CreateGetElementValueAtPath walks the segments; CreateGetElementValue would look
+                // "__mongoef_shadow.__ownerKey" up as one literal document key and find nothing.
+                string[] sentinelPath =
+                [
+                    MongoReplaceRootStage.ShadowField,
+                    property.IsOwnedTypeOrdinalKey()
+                        ? MongoReplaceRootStage.OrdinalField
+                        : MongoReplaceRootStage.OwnerKeyField
+                ];
                 // includeArrayIndex writes the ordinal as a BSON int64; read the owner key at its own CLR type.
                 var readClrType = property.IsOwnedTypeOrdinalKey() ? typeof(long) : property.ClrType;
-                Expression read = BsonBinding.CreateGetElementValue(DocParameter, sentinel, readClrType);
+                Expression read = BsonBinding.CreateGetElementValueAtPath(DocParameter, sentinelPath, readClrType);
                 if (readClrType != property.ClrType)
                 {
                     read = Expression.Convert(read, property.ClrType);
@@ -724,6 +740,19 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         if (expression == null) return default;
 
         expression = expression.RemoveConvert();
+
+        // Nullable<T>.Value: `x.Score.Value` is a MemberExpression whose OWN receiver (`x.Score`) is the member
+        // access that actually names the stored field — `.Value` only changes the CLR type, never the element
+        // read. Peeling it here, before Member/Expression are split apart below, mirrors
+        // MongoExpressionTranslator.TryResolveMember's emit-side peel so both sides resolve to the same
+        // IProperty/serializer for this leaf (EF-402). Without this peel, `memberExpression.Member` below is the
+        // "Value" PropertyInfo itself — never a real mapped property on any entity — so FindProperty always
+        // misses and the caller falls through to a raw alias read that discards the property's value converter.
+        if (expression is MemberExpression { Member.Name: nameof(Nullable<int>.Value), Expression: { } valueReceiver }
+            && Nullable.GetUnderlyingType(valueReceiver.Type) is not null)
+        {
+            expression = valueReceiver.RemoveConvert();
+        }
 
         if (expression is MemberExpression memberExpression)
         {
@@ -1123,12 +1152,20 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
     private static TCollection PopulateCollection<TEntity, TCollection>(
         IClrCollectionAccessor accessor,
+        string declaringEntityTypeDisplayName,
+        string navigationName,
         IEnumerable<TEntity> entities)
     {
-        // TODO: throw a diagnosable exception for a non-ICollection<T> collection navigation. As it
-        // stands, such a model surfaces as a bare InvalidCastException from the cast below, naming driver/EF
-        // internal types rather than the navigation the user got wrong.
-        var collection = (ICollection<TEntity>)accessor.Create();
+        var created = accessor.Create();
+        if (created is not ICollection<TEntity> collection)
+        {
+            throw new InvalidOperationException(
+                $"The collection navigation '{declaringEntityTypeDisplayName}.{navigationName}' is typed as "
+                + $"'{created.GetType().ShortDisplayName()}', which does not implement "
+                + $"'{typeof(ICollection<TEntity>).ShortDisplayName()}'. Collection navigations must be backed "
+                + "by a type that implements ICollection<T> so the provider can populate it during materialization.");
+        }
+
         foreach (var entity in entities)
         {
             collection.Add(entity);

@@ -161,13 +161,22 @@ internal sealed class MongoPipelineFactory
                 }),
             MongoReplaceRootStage replaceRoot => new BsonDocument("$replaceRoot",
                 new BsonDocument("newRoot", replaceRoot.MergeOwnerKeySentinels
+                    // The sentinels are nested under ONE reserved wrapper field. A real stored property can
+                    // therefore only collide with the single ShadowField name, never with OwnerKeyField/
+                    // OrdinalField individually — those are no longer top-level keys of the merged document.
                     ? new BsonDocument("$mergeObjects", new BsonArray
                     {
                         "$" + replaceRoot.NewRoot,
                         new BsonDocument
                         {
-                            { MongoReplaceRootStage.OwnerKeyField, "$_id" },
-                            { MongoReplaceRootStage.OrdinalField, "$" + MongoReplaceRootStage.OrdinalField }
+                            {
+                                MongoReplaceRootStage.ShadowField,
+                                new BsonDocument
+                                {
+                                    { MongoReplaceRootStage.OwnerKeyField, "$_id" },
+                                    { MongoReplaceRootStage.OrdinalField, "$" + MongoReplaceRootStage.OrdinalField }
+                                }
+                            }
                         }
                     })
                     : (BsonValue)("$" + replaceRoot.NewRoot))),

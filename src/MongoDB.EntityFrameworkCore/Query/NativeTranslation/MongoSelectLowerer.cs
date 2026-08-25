@@ -63,8 +63,7 @@ internal sealed class MongoSelectLowerer
     {
         var select = query.Select;
         var stages = new List<MongoPipelineStage>();
-        var sortFields = new SyntheticSortFieldAllocator(
-            TopLevelElementNames(query.CollectionExpression.EntityType));
+        var sortFields = new SyntheticSortFieldAllocator(ReservedElementNames(query));
 
         // 0. $vectorSearch MUST be the first stage in the pipeline — the server rejects it anywhere else
         // (Location40602), for every preceding-stage shape. This is why it lives in a dedicated slot rather
@@ -87,7 +86,18 @@ internal sealed class MongoSelectLowerer
         // (InjectAfterRoot=true) so its _lookup_<Nav> array is already present by the time the $project
         // below reads it via $size — placing lookups after the filter/sort/page block (but before $project)
         // satisfies that without any lowerer change.
-        AppendLookupStages(query, stages);
+        //
+        // EF-397: a SET-OP query defers this block until AFTER the set-op stage and TrailingOps (see the
+        // deferred call below). Emitting a $lookup here would join only source1's rows: the operand pipeline
+        // nested inside $unionWith/$setDifference lowers from setOp.OperandSelect.PipelineOps alone and
+        // carries no lookups, so every row contributed by the operand would come back with an EMPTY joined
+        // array — silent wrong data, which is exactly the failure mode TranslateSelect's collection-Include
+        // post-terminal guard used to avoid by declining outright. Running the join over the COMBINED
+        // (and, for Union, already-deduped) result joins every row exactly once instead.
+        if (select.SetOperation == null)
+        {
+            AppendLookupStages(query, stages);
+        }
 
         // Set operation terminal ($unionWith [+ dedup] or a set-difference shape for Intersect/Except).
         // Guaranteed whole-entity by the QMTEV guard (the operand is a plain whole-entity select — no
@@ -130,6 +140,24 @@ internal sealed class MongoSelectLowerer
             // aggregate/reducer). UnwindSource/Grouping stay empty for a set-op query and their blocks are
             // skipped.
             AppendSelectOpStages(select.TrailingOps, stages, sortFields);
+
+            // EF-397: the deferred $lookup block (see the skipped call at step 2). Emitted here — after the
+            // combine and after the trailing filter/sort/page, before the Projection and Cardinality blocks
+            // — so it occupies exactly the same slot relative to the surrounding stages that it does on the
+            // non-set-op path (ops → $lookup → $project → terminal), just over the combined stream.
+            // Placing it after the Union dedup ($group{_id:"$$ROOT"}) / Intersect-Except source tagging is
+            // also required for correctness of the SET operation itself: those compare whole documents by
+            // value, so a joined array present at that point would join the comparison key and dedup by
+            // "entity + its children" rather than by entity.
+            // FUTURE EDITORS: this deferred-emission mechanism ASSUMES a PROJECTED set-op operand never
+            // carries a $lookup of its own. If one ever did, the pre-combine $project emitted above (the
+            // OperandsProjected branch) would run BEFORE this block and read a joined field that does not
+            // exist yet — silently projecting a missing value, and dropping the lookup array from the
+            // combined stream. Currently unreachable: an operand only reaches here through
+            // MongoQueryableMethodTranslatingExpressionVisitor.IsPlainProjectedSelect, which requires
+            // Lookups.Count == 0 && !IsJoinQuery (and IsPlainWholeEntitySelect requires the same for the
+            // whole-entity form). Weaken either of those and this ordering must be revisited.
+            AppendLookupStages(query, stages);
             // NB: no early return — control continues to the Cardinality block.
         }
 
@@ -385,14 +413,17 @@ internal sealed class MongoSelectLowerer
     /// a model may map a property to any element name, including one of these, via <c>HasElementName</c>.
     /// </para>
     /// <para>
-    /// <b>This guard is incomplete — two known gaps remain.</b> (1) A set-op operand of a
-    /// different entity type is not covered, since the reserved set is built once from the root entity type
-    /// and <see cref="MongoSetOperation"/> exposes no way to reach the operand's own <see cref="IEntityType"/>.
-    /// (2) A TPH derived type's own members are not covered, since <see cref="IEntityType.GetProperties"/>/
-    /// <see cref="IEntityType.GetNavigations"/> on the root return declared and inherited members only, not
-    /// derived ones, though every derived type occupies the same top-level document namespace. Either gap
-    /// means a property renamed via <c>HasElementName</c> onto one of these synthetic names would be silently
-    /// clobbered by <c>$set</c> under the default <c>Native</c> mode; neither has been shown reachable.
+    /// The two gaps this guard used to carry as "accepted but unverified" were MEASURED REACHABLE and are now
+    /// CLOSED (EF-408) — see <see cref="ReservedElementNames"/>. (1) A set-op operand of a DIFFERENT entity
+    /// type: a projected-operand <c>Union</c>/<c>Concat</c>/<c>Intersect</c>/<c>Except</c> does not require the
+    /// two operands to share an entity type, the operand's own ops lower through this SAME allocator into the
+    /// nested <c>$unionWith</c>/set-difference pipeline, and a computed sort there <c>$set</c>-clobbered an
+    /// operand element mapped onto the synthetic name. (2) A TPH derived type's own members: every derived
+    /// type shares the root's top-level document namespace, but <see cref="IEntityType.GetProperties"/>/
+    /// <see cref="IEntityType.GetNavigations"/> on the root return declared and inherited members only. Both
+    /// produced silently wrong data (a missing element, or an
+    /// <see cref="InvalidOperationException"/> for a required non-nullable property) under the default
+    /// <c>Native</c> mode; both are covered by tests in <c>NativeComputedSortTests</c>.
     /// </para>
     /// </remarks>
     private sealed class SyntheticSortFieldAllocator(IReadOnlyCollection<string> reservedElementNames)
@@ -410,27 +441,49 @@ internal sealed class MongoSelectLowerer
         }
     }
 
-    // Top-level element names of the root entity type: every mapped property, plus the containing element
-    // name of each owned navigation (an owned sub-document occupies a top-level element too), plus the
-    // element name of each complex property (a ComplexProperty occupies its own top-level document slot too
-    // — GetProperties() does not see it, mirroring the precedent at
-    // MongoQueryableMethodTranslatingExpressionVisitor.IsWholeElementRepresentable's third guard arm).
-    private static IReadOnlyCollection<string> TopLevelElementNames(IEntityType entityType)
+    // Every top-level element name a synthetic $set could collide with anywhere in THIS pipeline: the root
+    // entity type's names, plus — for a set operation — the operand's own entity type's names, because the
+    // operand's ops lower through the same allocator into the nested $unionWith / set-difference pipeline and
+    // a projected-operand set op does not require the two operands to share an entity type (EF-408 gap 1).
+    private static IReadOnlyCollection<string> ReservedElementNames(MongoQueryExpression query)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var property in entityType.GetProperties())
-            names.Add(property.GetElementName());
+        AddTopLevelElementNames(query.CollectionExpression.EntityType, names);
 
-        foreach (var navigation in entityType.GetNavigations())
-        {
-            if (navigation.IsEmbedded() && navigation.TargetEntityType.GetContainingElementName() is { } elementName)
-                names.Add(elementName);
-        }
-
-        foreach (var complexProperty in entityType.GetComplexProperties())
-            names.Add(GetComplexPropertyElementName(complexProperty));
+        if (query.Select.SetOperation is { } setOp)
+            AddTopLevelElementNames(setOp.OperandEntityType, names);
 
         return names;
+    }
+
+    // Top-level element names of an entity type: every mapped property, plus the containing element name of
+    // each owned navigation (an owned sub-document occupies a top-level element too), plus the element name
+    // of each complex property (a ComplexProperty occupies its own top-level document slot too —
+    // GetProperties() does not see it, mirroring the precedent at
+    // MongoQueryableMethodTranslatingExpressionVisitor.IsWholeElementRepresentable's third guard arm).
+    //
+    // Walks GetDerivedTypesInclusive(), not just the type itself: in a TPH hierarchy every derived type's
+    // documents live in the SAME collection and occupy the SAME top-level namespace, but GetProperties()/
+    // GetNavigations()/GetComplexProperties() on a base type return declared+inherited members only — never
+    // members declared on a derived type. A query over the base whose computed sort key allocated a synthetic
+    // name that a derived type had mapped onto via HasElementName $set-clobbered it, and the trailing $unset
+    // then REMOVED that real element from the document entirely (EF-408 gap 2, measured reachable).
+    private static void AddTopLevelElementNames(IEntityType entityType, HashSet<string> names)
+    {
+        foreach (var type in entityType.GetDerivedTypesInclusive())
+        {
+            foreach (var property in type.GetProperties())
+                names.Add(property.GetElementName());
+
+            foreach (var navigation in type.GetNavigations())
+            {
+                if (navigation.IsEmbedded() && navigation.TargetEntityType.GetContainingElementName() is { } elementName)
+                    names.Add(elementName);
+            }
+
+            foreach (var complexProperty in type.GetComplexProperties())
+                names.Add(GetComplexPropertyElementName(complexProperty));
+        }
     }
 
     // The document element name a complex property occupies at its own declaring type's top level. Mirrors

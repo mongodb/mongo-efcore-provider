@@ -978,7 +978,7 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
 
         AssertMql(
             """
-            OrderDetails.{ "$match" : { "UnitPrice" : { "$lt" : { "$numberDecimal" : "7" } } } }, { "$match" : { "_id.ProductID" : { "$gt" : 10 } } }
+            OrderDetails.{ "$match" : { "UnitPrice" : { "$lt" : { "$numberDecimal" : "7" } }, "_id.ProductID" : { "$gt" : 10 } } }
             """);
     }
 

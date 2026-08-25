@@ -147,7 +147,16 @@ internal sealed class MongoSelectDefinition
     /// <summary><see langword="true"/> when any $sort op is present.</summary>
     internal bool HasOrdering => _pipelineOps.Exists(o => o is MongoSortOp);
 
-    /// <summary><see langword="true"/> when any $limit op is present.</summary>
+    /// <summary>
+    /// <see langword="true"/> when any $limit op is present.
+    /// <para>
+    /// No production call site as of EF-397: <c>NativeCardinalityBinder.TryBindReducer</c> was the sole
+    /// consumer and its guard was deleted (a reducer's own <c>$limit</c> composes with a preceding Take's —
+    /// consecutive <c>$limit</c> stages narrow monotonically). Kept as the sibling of
+    /// <see cref="HasPaging"/>/<see cref="HasOrdering"/>, but do NOT reintroduce it as a "a limit already
+    /// exists, so decline" test without re-deriving why that would be true — it was not.
+    /// </para>
+    /// </summary>
     internal bool HasLimit => _pipelineOps.Exists(o => o is MongoLimitOp);
 
     // ── Projection ───────────────────────────────────────────────────────────────

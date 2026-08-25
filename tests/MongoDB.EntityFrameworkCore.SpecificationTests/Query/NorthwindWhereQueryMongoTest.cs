@@ -791,8 +791,8 @@ Employees.{ "$limit" : 9 }, { "$match" : { "_id" : 5 } }, { "$project" : { "_id"
 
         AssertMql(
             """
-            Products.{ "$match" : { "Discontinued" : true } }
-            """);
+Products.{ "$match" : { "$expr" : { "$not" : [{ "$not" : [{ "$eq" : ["$Discontinued", true] }] }] } } }
+""");
     }
 
     public override async Task Where_bool_member_shadow(bool async)
@@ -850,8 +850,8 @@ Products.{ "$match" : { "Discontinued" : { "$ne" : true } } }
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : { "$eq" : [{ "$not" : "$Discontinued" }, { "$not" : "$Discontinued" }] } } }
-            """);
+Products.{ "$match" : { "$expr" : { "$eq" : [{ "$not" : ["$Discontinued"] }, { "$not" : ["$Discontinued"] }] } } }
+""");
     }
 
     public override async Task Where_negated_boolean_expression_compared_to_another_negated_boolean_expression(bool async)
@@ -860,8 +860,8 @@ Products.{ "$match" : { "Discontinued" : { "$ne" : true } } }
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : { "$eq" : [{ "$not" : { "$gt" : ["$_id", 50] } }, { "$not" : { "$gt" : ["$_id", 20] } }] } } }
-            """);
+Products.{ "$match" : { "$expr" : { "$eq" : [{ "$not" : [{ "$gt" : ["$_id", 50] }] }, { "$not" : [{ "$gt" : ["$_id", 20] }] }] } } }
+""");
     }
 
     public override async Task Where_not_bool_member_compared_to_binary_expression(bool async)
@@ -910,8 +910,8 @@ Products.{ "$match" : { "Discontinued" : { "$ne" : true } } }
 
         AssertMql(
             """
-            Products.{ "$match" : { "$nor" : [{ "$or" : [{ "Discontinued" : true }, { "_id" : { "$lt" : 20 } }] }] } }
-            """);
+Products.{ "$match" : { "$expr" : { "$not" : [{ "$or" : ["$Discontinued", { "$lt" : ["$_id", 20] }] }] } } }
+""");
     }
 
     public override async Task Where_de_morgan_and_optimized(bool async)
@@ -920,8 +920,8 @@ Products.{ "$match" : { "Discontinued" : { "$ne" : true } } }
 
         AssertMql(
             """
-            Products.{ "$match" : { "$nor" : [{ "Discontinued" : true, "_id" : { "$lt" : 20 } }] } }
-            """);
+Products.{ "$match" : { "$expr" : { "$not" : [{ "$and" : ["$Discontinued", { "$lt" : ["$_id", 20] }] }] } } }
+""");
     }
 
     public override async Task Where_complex_negated_expression_optimized(bool async)
@@ -930,8 +930,8 @@ Products.{ "$match" : { "Discontinued" : { "$ne" : true } } }
 
         AssertMql(
             """
-            Products.{ "$match" : { "$nor" : [{ "$or" : [{ "$nor" : [{ "Discontinued" : { "$ne" : true }, "_id" : { "$lt" : 60 } }] }, { "_id" : { "$not" : { "$gt" : 30 } } }] }] } }
-            """);
+Products.{ "$match" : { "$expr" : { "$not" : [{ "$or" : [{ "$not" : [{ "$and" : [{ "$not" : ["$Discontinued"] }, { "$lt" : ["$_id", 60] }] }] }, { "$not" : [{ "$gt" : ["$_id", 30] }] }] }] } } }
+""");
     }
 
     public override async Task Where_short_member_comparison(bool async)

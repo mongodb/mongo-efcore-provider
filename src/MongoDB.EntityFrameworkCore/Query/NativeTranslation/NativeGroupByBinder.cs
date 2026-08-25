@@ -353,20 +353,17 @@ internal static class NativeGroupByBinder
         // Projection applied after the set-op stage as a genuine trailing projection, which this method
         // converts to a $group safely and correctly — a documented native capability that must be preserved.
         //
-        // A bare projection (Select(o => o.Country).Distinct()) is also declined — a correctness guard, not
-        // a scope choice: binding it would clear Projection, install a Grouping and flip Route to
-        // NativeRoute.GroupBy, but MongoQueryExpression.ApplyProjection's own `Route == NativeRoute.Projection`
-        // conjunct then reverts the bare body's alias to null after the emit side has already committed, so
-        // the shaper's ProjectionExpression has no alias and the shaper's result type becomes BsonDocument
-        // instead of the scalar type — a runtime crash.
-        //
-        // Note what this does NOT decline: a Distinct after a wrapped projection, and a Distinct after a
-        // whole-entity set op's trailing wrapped projection, both of which stay native exactly as before —
-        // IsBareProjection is true only when a bare selector body populated Projection. Pinned by
-        // NativeBareProjectionTests.
+        // EF-395: a bare projection (Select(o => o.Country).Distinct()) is now ADMITTED — this no longer
+        // declines on select.IsBareProjection. Binding it clears Projection, installs a Grouping and flips
+        // Route to NativeRoute.GroupBy; the mechanical hazard that used to make this unsafe was
+        // MongoQueryExpression.ApplyProjection's alias-override lookup being gated on `Route ==
+        // NativeRoute.Projection`, which reverted the bare body's alias to null once Route flipped, crashing
+        // the shaper. That lookup now ALSO fires when Select.IsDistinct is set (see ApplyProjection) —
+        // IsDistinct is set nowhere but here, immediately below, alongside the flatten that re-adds the exact
+        // same alias(es) the override describes, so the override is provably still valid whenever IsDistinct
+        // is true. Pinned by NativeBareProjectionTests.
         if (select.Projection.Count == 0 || select.Grouping != null || select.Cardinality != null || select.HasPaging
-            || select.UnwindSource != null || select.SetOperation is { OperandsProjected: true }
-            || select.IsBareProjection)
+            || select.UnwindSource != null || select.SetOperation is { OperandsProjected: true })
             return false;
 
         var keyParts = new List<MongoGroupingKeyPart>();

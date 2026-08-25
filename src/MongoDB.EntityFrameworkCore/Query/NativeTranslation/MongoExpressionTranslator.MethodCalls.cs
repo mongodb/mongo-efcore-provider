@@ -25,6 +25,8 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;           // QueryableMethods
 using MongoDB.EntityFrameworkCore.Extensions;        // GetDocumentPath(), IsEmbedded()
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Serializers;       // BsonSerializerFactory
+using IBsonArraySerializer = MongoDB.Bson.Serialization.IBsonArraySerializer;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
@@ -445,6 +447,90 @@ internal sealed partial class MongoExpressionTranslator
         }
 
         return null; // any other node shape (method call, sub-expression, etc.) is not supported
+    }
+
+    /// <summary>
+    /// Translates the ITEM side of an <c>arrayField.Contains(constant)</c> call to a
+    /// <see cref="MongoConstantExpression"/> serialized through the array field's own ELEMENT serializer —
+    /// mirroring how <see cref="TranslateInValues"/>/<c>MongoQueryLanguageRenderer.RenderInValues</c> resolve
+    /// element serialization for <c>$in</c> today, not the array field's own top-level (whole-collection) serializer.
+    /// Returns <see langword="null"/> for any shape this cannot serialize correctly.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why not just reuse <paramref name="arrayProperty"/> as the constant's serialization context.</b>
+    /// <see cref="MongoValueRenderer"/> coerces a constant to <c>property.ClrType</c> before serializing
+    /// through that property's own serializer; for an array property that is the WHOLE collection type
+    /// (e.g. <c>List&lt;string&gt;</c>), and the item value is a single element — coercing a scalar to
+    /// <c>List&lt;string&gt;</c> would either throw or, worse, silently mismatch. Instead this resolves the
+    /// array's ALREADY-BUILT serializer via <see cref="BsonSerializerFactory.GetPropertySerializationInfo"/>
+    /// and asks it, via <see cref="IBsonArraySerializer.TryGetItemSerializationInfo"/>, for the serializer it
+    /// actually uses for one element — the same object the array's own reads/writes use, so a value converter
+    /// or a non-default <see cref="MongoDB.EntityFrameworkCore.Metadata.MongoAnnotationNames"/> representation
+    /// on individual elements (where the provider supports one) is automatically honored.
+    /// </para>
+    /// <para>
+    /// <b>The correctness guard.</b> A WHOLE-COLLECTION value converter (e.g. a <c>List&lt;MyEnum&gt;</c>
+    /// property converted as one unit to <c>List&lt;string&gt;</c>) produces a
+    /// <c>ValueConverterSerializer&lt;,&gt;</c>, which does NOT implement <see cref="IBsonArraySerializer"/> —
+    /// there is no way to decompose an arbitrary whole-list transform into a per-element one, so
+    /// <see cref="IBsonArraySerializer.TryGetItemSerializationInfo"/> is unavailable and this method declines
+    /// (returns <see langword="null"/>) rather than risk silently mis-serializing the item against the wrong
+    /// (whole-list) shape. This is the exact hazard EF-382's review called out: a value-converted array
+    /// element must never be compared using the array's own top-level (whole-collection) serializer.
+    /// </para>
+    /// <para>
+    /// The result is eagerly rendered to a <c>BsonValue</c> at TRANSLATE time (not deferred to render time via
+    /// an <see cref="IProperty"/>-carrying node) because translate time and render time are the same
+    /// compile-time phase for a native query (the B2 pipeline template is built once, before execution) — see
+    /// <c>MongoValueRenderer.RenderValue</c>'s <see cref="MongoConstantExpression"/> arm, which returns a
+    /// <c>BsonValue</c> <see cref="MongoConstantExpression.Value"/> unchanged via <c>BsonValue.Create</c>'s
+    /// identity case.
+    /// </para>
+    /// </remarks>
+    private static MongoConstantExpression? TranslateArrayContainsItem(Expression itemExpr, IProperty arrayProperty)
+    {
+        // Scoped to EF-382: only a genuine constant item is supported today (see the dispatch case's own
+        // remarks on why a parameterized item is left to fall through and decline).
+        if (itemExpr is not ConstantExpression constant)
+            return null;
+
+        var elementType = GetEnumerableElementType(arrayProperty.ClrType);
+        if (elementType is null)
+            return null;
+
+        // The C# compiler's own generic-method resolution for List<T>.Contains(T) / Enumerable.Contains<T>
+        // already guarantees itemExpr.Type is T (or assignable to it); this is a cheap defensive re-check —
+        // primarily for a hand-built expression tree (e.g. a unit test) rather than anything EF itself emits.
+        var underlyingElementType = Nullable.GetUnderlyingType(elementType) ?? elementType;
+        var underlyingItemType = Nullable.GetUnderlyingType(itemExpr.Type) ?? itemExpr.Type;
+        if (underlyingItemType != underlyingElementType)
+            return null;
+
+        // A null item has different array-membership semantics ({ field: null } also matches a MISSING
+        // element, not just a stored null) that this arm does not attempt to reproduce — decline rather than
+        // risk it. Narrow, not a correctness gap for the ticket's scope (a non-null constant).
+        if (constant.Value is null)
+            return null;
+
+        var arrayInfo = BsonSerializerFactory.GetPropertySerializationInfo(arrayProperty);
+        if (arrayInfo.Serializer is not IBsonArraySerializer arraySerializer
+            || !arraySerializer.TryGetItemSerializationInfo(out var itemInfo))
+        {
+            return null; // e.g. a whole-collection value converter — no per-element serializer to resolve.
+        }
+
+        try
+        {
+            var coerced = BsonValueSerializer.Coerce(elementType, constant.Value);
+            var rendered = BsonValueSerializer.SerializeThroughWriter(itemInfo.Serializer, coerced);
+            return new MongoConstantExpression(rendered, forSerialization: null);
+        }
+        catch (Exception ex) when (ex is InvalidCastException or FormatException or OverflowException
+                                       or InvalidOperationException)
+        {
+            return null;
+        }
     }
 
     private static Type? GetEnumerableElementType(Type type)

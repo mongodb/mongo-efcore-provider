@@ -322,27 +322,16 @@ internal static class NativeProjectionBinder
         {
             // A non-default-serialized leaf (a value converter, or a non-default BsonRepresentation) is only
             // read back correctly when the DOM shaper can resolve the leaf expression to its own IProperty and
-            // therefore to its own serializer. Two spellings defeat that resolution and must decline here, or
-            // the projection silently returns the raw stored value under the default Native mode:
+            // therefore to its own serializer. A DOTTED (owned single-ref) leaf still must decline here, or the
+            // projection silently returns the raw stored value under the default Native mode:
+            // MongoProjectionBindingRemovingExpressionVisitor's field-access resolver is single-hop and cannot
+            // walk a nested owned chain.
             //
-            //  (a) A DOTTED (owned single-ref) leaf — MongoProjectionBindingRemovingExpressionVisitor's
-            //      field-access resolver is single-hop and cannot walk a nested owned chain.
-            //
-            //  (b) A `Nullable<T>.Value` leaf, even at top level. The emit side peels `.Value`
-            //      (MongoExpressionTranslator.TryResolveMember), so `x.Score.Value` addresses the same field as
-            //      `x.Score`; the read side does not — TryResolveFieldAccessSource recognises a
-            //      StructuralTypeShaperExpression but not a MemberExpression wrapping one, so Property comes
-            //      back null and the read falls to BsonBinding.GetElementValue<T>, which builds a default type
-            //      serializer and discards the converter.
-            //
-            // The `.Value` disjunct is a decline, not a fix — the projection falls back to driver-LINQ, which
-            // for this mapping throws exactly as the released packages do. Teaching TryResolveFieldAccess to
-            // peel `.Value` so emit and read agree by construction is the real fix; remove this second disjunct
-            // when that lands.
-            if (!NativeGroupByBinder.HasDefaultKeySerialization(field.Property)
-                && (field.ElementName.Contains('.')
-                    || (leafExpression is MemberExpression {Member.Name: nameof(Nullable<int>.Value), Expression: { } valueReceiver}
-                        && Nullable.GetUnderlyingType(valueReceiver.Type) is not null)))
+            // A `Nullable<T>.Value` leaf used to need the same decline: the emit side peels `.Value`
+            // (MongoExpressionTranslator.TryResolveMember) but the read side didn't, so the two disagreed on
+            // which IProperty/serializer applied. EF-402 taught TryResolveFieldAccess to peel `.Value` the same
+            // way, so the two sides now agree by construction and this leaf no longer needs to decline.
+            if (!NativeGroupByBinder.HasDefaultKeySerialization(field.Property) && field.ElementName.Contains('.'))
             {
                 result = null!;
                 return false;
@@ -445,17 +434,20 @@ internal static class NativeProjectionBinder
         // NativeCastTests.Cast_over_a_value_converted_property_declines_instead_of_reading_the_raw_stored_value
         // (there is no working driver-LINQ oracle for this shape either, so Native/DriverLinq both just throw).
         //
-        // A WIDENING cast (`(long)x.I`, `(double)x.I`) is a deliberate, documented boundary, not a defect this
-        // gate fails to close. TranslateOperand's Convert branch unwraps a widening conversion entirely rather
-        // than wrapping it in a MongoConvertExpression, producing a bare MongoFieldExpression this gate correctly
-        // declines (not one of the three admitted kinds); the whole wrapped projection then falls back gracefully
-        // via driver-LINQ, like any other declined leaf. Admitting an unwrapped field ref here would mean
-        // projecting the raw stored field under an alias whose declared CLR type is the cast's target type — a
-        // read-back type question deliberately not taken up here. A widening Convert is what
-        // the C# compiler inserts for ordinary numeric-cast projection shapes, so a fair fraction of them fall
-        // back here. Pinned by NativeCastTests.Widening_cast_projection_leaf_still_falls_back_gracefully.
+        // A WIDENING cast (`(long)x.I`, `(double)x.I`) is admitted too (EF-410), even though TranslateOperand's
+        // Convert branch unwraps it entirely rather than wrapping it in a MongoConvertExpression — the
+        // translated VALUE is a bare MongoFieldExpression, indistinguishable by node kind alone from a leaf that
+        // was never cast at all. So this arm re-derives "was this leaf syntactically a cast" from the ORIGINAL
+        // leafExpression (pre-translation) rather than from the already-lossy translated MongoExpression: a
+        // widening numeric Convert reads the same raw stored field either way (MongoDB's arithmetic/projection
+        // operators act on the raw BSON numeric value regardless of declared CLR width — see TranslateOperand's
+        // own remarks on `allowNumericWidening`), so projecting it under an alias typed to the cast's target
+        // is exact, and there is no read-back type question left to defer. Pinned by
+        // NativeCastTests.Widening_cast_bare_projection_leaf_goes_native /
+        // NativeCastTests.Widening_cast_projection_leaf_now_goes_native.
         if (translator.TryTranslateValue(leafExpression, out var value)
-            && value is MongoSizeExpression or MongoFilteredSizeExpression or MongoConvertExpression)
+            && (value is MongoSizeExpression or MongoFilteredSizeExpression or MongoConvertExpression
+                || (leafExpression is UnaryExpression { NodeType: ExpressionType.Convert } && value is MongoFieldExpression)))
         {
             result = value;
             return true;
@@ -1186,7 +1178,7 @@ internal static class NativeProjectionBinder
     /// If the driver-LINQ fallback route ever goes away, this arm needs a different answer, not a rename.
     /// </para>
     /// </remarks>
-    private const string SyntheticBareProjectionAlias = "_v";
+    internal const string SyntheticBareProjectionAlias = "_v";
 
     /// <summary>
     /// Derives a computed bare selector body's projection alias, admitting exactly the leaf kinds that render
@@ -1252,7 +1244,8 @@ internal static class NativeProjectionBinder
                 or MongoBinaryExpression
                 {
                     Operator: MongoBinaryOperator.Add or MongoBinaryOperator.Subtract
-                    or MongoBinaryOperator.Multiply or MongoBinaryOperator.Divide or MongoBinaryOperator.Modulo
+                    or MongoBinaryOperator.Multiply or MongoBinaryOperator.Divide
+                    or MongoBinaryOperator.IntegerDivide or MongoBinaryOperator.Modulo
                 } when IsArrayFreeComputedSubtree(leaf):
                 break;
 
@@ -1387,7 +1380,7 @@ internal static class NativeProjectionBinder
     /// <c>_ =&gt; true</c>, while this one answers "everything here is known safe" and ends in <c>_ =&gt; false</c>.
     /// </para>
     /// </remarks>
-    private static bool IsArrayFreeComputedSubtree(MongoExpression expression)
+    internal static bool IsArrayFreeComputedSubtree(MongoExpression expression)
         => expression switch
         {
             MongoBinaryExpression binary

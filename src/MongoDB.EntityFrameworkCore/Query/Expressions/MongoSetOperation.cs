@@ -13,6 +13,8 @@
  * limitations under the License.
  */
 
+using Microsoft.EntityFrameworkCore.Metadata;
+
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>The kind of set operation captured on a <see cref="MongoSelectDefinition"/>.</summary>
@@ -42,17 +44,31 @@ internal sealed class MongoSetOperation
 {
     public MongoSetOperation(
         MongoSetOperationKind kind, MongoSelectDefinition operandSelect, string operandCollectionName,
-        bool operandsProjected = false)
+        IEntityType operandEntityType, bool operandsProjected = false)
     {
         Kind = kind;
         OperandSelect = operandSelect;
         OperandCollectionName = operandCollectionName;
+        OperandEntityType = operandEntityType;
         OperandsProjected = operandsProjected;
     }
 
     public MongoSetOperationKind Kind { get; }
     public MongoSelectDefinition OperandSelect { get; }
     public string OperandCollectionName { get; }
+
+    /// <summary>
+    /// The operand's OWN entity type. For a whole-entity set op this equals the outer query's root entity
+    /// type (<c>TryTranslateSetOperation</c> requires the two to be equal), but for a PROJECTED-operand set op
+    /// the operands may be different entity types entirely — and the operand's own pipeline (its
+    /// <c>$match</c>/<c>$sort</c>/<c>$skip</c>/<c>$limit</c> ops and its <c>$project</c>) is emitted inside the
+    /// nested <c>$unionWith</c>/set-difference pipeline against ITS collection. The lowerer's synthetic
+    /// <c>$set</c> sort-field allocator therefore has to reserve the operand type's top-level element names
+    /// too: a computed sort on the operand allocates from the SAME allocator, and a <c>$set</c> of a name that
+    /// collides with one of the operand's own mapped elements silently clobbers it (EF-408 gap 1, measured
+    /// reachable — see NativeComputedSortTests.Synthetic_sort_field_does_not_clobber_a_set_op_operands_own_element).
+    /// </summary>
+    public IEntityType OperandEntityType { get; }
 
     /// <summary>
     /// <c>true</c> when both operands were plain projected selects (<see cref="MongoSelectDefinition.Projection"/>
