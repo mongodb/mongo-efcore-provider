@@ -55,6 +55,19 @@ internal static class NativeCardinalityBinder
         // lives in TrailingOps, was invisible to the guard, and a second $limit was already being appended
         // there deliberately. The previous unconditional decline treated the non-set-op case as
         // unrepresentable; it is representable, it just wasn't recognized as such.
+
+        if (kind is MongoReducerKind.Last or MongoReducerKind.LastOrDefault)
+        {
+            // Last/LastOrDefault have no MQL "take the last row" form and no defined element at all without
+            // an explicit prior sort (same policy as Reverse — LINQ order is undefined for an unordered
+            // source). Flip that sort's direction and reuse the ordinary First/FirstOrDefault $limit:1
+            // machinery below: the first row of the reversed order is the last row of the original order.
+            // TryFlipTrailingSortDirection declines (no mutation) when the tail op is not a sort, which is
+            // exactly the "no explicit order" case this reducer must not natively represent.
+            if (!select.TryFlipTrailingSortDirection())
+                return false;
+        }
+
         var limit = kind is MongoReducerKind.Single or MongoReducerKind.SingleOrDefault ? 2 : 1;
         select.AppendLimit(new MongoConstantExpression(limit, forSerialization: null));
         select.Cardinality = MongoCardinality.ForReducer(kind, resultType);

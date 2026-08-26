@@ -159,6 +159,63 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     internal bool HasLimit => _pipelineOps.Exists(o => o is MongoLimitOp);
 
+    /// <summary>
+    /// Flips the direction of every ordering in the tail op, if it is a <see cref="MongoSortOp"/> — the exact
+    /// complement of the sort MongoDB would otherwise apply, used by Reverse/Last/LastOrDefault to reuse the
+    /// existing ascending-sort machinery for the descending case (MQL has no "reverse row order" stage).
+    /// Targets <see cref="ActiveOps"/> so a set-op-terminal reducer/Reverse flips the TRAILING sort, matching
+    /// where a trailing OrderBy would have been recorded. Returns <see langword="false"/> (no mutation) when
+    /// the tail op is not a sort — an unordered source has no defined row order to complement, so the caller
+    /// should decline rather than invent an unreliable natural-order sort.
+    /// </summary>
+    internal bool TryFlipTrailingSortDirection()
+    {
+        var ops = ActiveOps;
+        if (ops.Count == 0 || ops[^1] is not MongoSortOp sort)
+            return false;
+
+        ops[^1] = new MongoSortOp([.. sort.Orderings.Select(o => o with { Ascending = !o.Ascending })]);
+        return true;
+    }
+
+    private bool _sawUnrecordedPaging;
+
+    /// <summary>
+    /// Records that a <c>Skip</c>/<c>Take</c> was SEEN on this sequence but NOT recorded as a
+    /// <see cref="MongoSkipOp"/>/<see cref="MongoLimitOp"/> — the operator was declined (the query falls back to
+    /// driver-LINQ) rather than lowered. The paging is still in the captured method chain the fallback executes,
+    /// so it still reaches the driver and CSHARP-6017 still applies; <see cref="HasPagingAnywhere"/> must
+    /// therefore see it. Deliberately does NOT mark the query non-native — every caller already does that for
+    /// its own reason.
+    /// TODO(EF-406): delete together with <see cref="HasPagingAnywhere"/> and
+    /// <see cref="MarkPagedJoinInnerFallbackUnsafe"/> when the driver stops folding — signalled by the tripwire
+    /// test <c>NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017</c>
+    /// going RED, NOT by CSHARP-6017 closing (that driver ticket is already Closed/Done at fixVersion 3.10.0,
+    /// the driver version this branch pins, and the fold is MEASURED still live against it).
+    /// </summary>
+    internal void MarkSawUnrecordedPaging() => _sawUnrecordedPaging = true;
+
+    /// <summary>
+    /// <see langword="true"/> when a <c>$skip</c> or <c>$limit</c> op is present in EITHER op list, OR a
+    /// <c>Skip</c>/<c>Take</c> was seen but declined rather than recorded (see
+    /// <see cref="MarkSawUnrecordedPaging"/>). Unlike <see cref="HasPaging"/> — which deliberately scans
+    /// <c>_pipelineOps</c> only, because its consumer gates a PRE-terminal GroupBy that is unreachable after a
+    /// set op — this must see paging wherever it appeared, including a <c>Take</c> composed AFTER a set operation
+    /// (which lands in <see cref="TrailingOps"/>) and a <c>Take</c> composed after a NON-set-op terminal (which
+    /// lands in neither list).
+    /// Read by the QMTEV's <c>TranslateJoinCore</c> paged-join-inner guard (EF-406; CSHARP-6017 is the defect's
+    /// historical provenance, not its removal trigger). The question it answers is "was a
+    /// <c>Skip</c>/<c>Take</c> RECORDED ANYWHERE on this sequence?", which is the right question because the
+    /// guard's real subject is the captured method chain the driver-LINQ fallback executes, not the native op
+    /// lists — a <c>Skip</c>/<c>Take</c> the native path declined is still in that chain and still folded.
+    /// TODO(EF-406): delete together with <see cref="MarkPagedJoinInnerFallbackUnsafe"/> when the driver stops
+    /// folding an uncorrelated join inner's paging into the correlated <c>$lookup</c> sub-pipeline — signalled
+    /// by the tripwire test going red, NOT by CSHARP-6017 closing (already Closed/Done at fixVersion 3.10.0,
+    /// the version this branch pins; the fold is MEASURED still live). See <see cref="MarkSawUnrecordedPaging"/>.
+    /// </summary>
+    internal bool HasPagingAnywhere
+        => HasPaging || _trailingOps.Exists(o => o is MongoSkipOp or MongoLimitOp) || _sawUnrecordedPaging;
+
     // ── Projection ───────────────────────────────────────────────────────────────
 
     /// <summary>

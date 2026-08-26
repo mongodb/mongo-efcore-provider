@@ -1174,8 +1174,8 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
-            """);
+Customers.{ "$sort" : { "ContactName" : -1 } }, { "$limit" : 1 }
+""");
     }
 
     public override async Task Last_Predicate(bool async)
@@ -1204,8 +1204,8 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
-            """);
+Customers.{ "$sort" : { "ContactName" : -1 } }, { "$limit" : 1 }
+""");
     }
 
     public override async Task LastOrDefault_Predicate(bool async)

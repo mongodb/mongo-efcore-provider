@@ -18,7 +18,7 @@ using System;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>The cardinality reducer applied to an entity result.</summary>
-internal enum MongoReducerKind { First, FirstOrDefault, Single, SingleOrDefault }
+internal enum MongoReducerKind { First, FirstOrDefault, Single, SingleOrDefault, Last, LastOrDefault }
 
 /// <summary>The scalar aggregate applied to a query.</summary>
 internal enum MongoAggregateOperator { Count, LongCount, Sum, Min, Max, Average, Any, All }

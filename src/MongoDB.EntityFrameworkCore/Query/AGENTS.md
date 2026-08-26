@@ -111,6 +111,61 @@ B2 = the pipeline template is built **once at compile time** (lower + render →
 - `MongoExecutableQuery` + `QueryingEnumerable` — the compiled-query handoff. `QueryingEnumerable` calls `MongoClientWrapper.Execute(MongoExecutableQuery)` and applies the shaper. For the native path `MongoExecutableQuery` carries `NativePipeline` (the built `BsonDocument[]`), `Streaming`, and `Session` (internal); for the fallback it carries the driver-LINQ `Query` expression.
 - `Factories/*` — EF Core DI factories registered in `MongoServiceCollectionExtensions.AddEntityFrameworkMongoDB()`.
 
+> **`Reverse`/`Last`/`LastOrDefault` for an explicit trailing sort (EF-411).** Native now also covers
+> `Reverse()`, `Last()`, and `LastOrDefault()` when the select has an explicit trailing `$sort` — MQL has no
+> "reverse row order" stage, so the only sound native form is flipping that sort's direction (the exact
+> complement of the original order) via the new `MongoSelectDefinition.TryFlipTrailingSortDirection()`, which
+> flips every `MongoOrdering` in the TAIL op if it is a `MongoSortOp` and returns `false` (no mutation)
+> otherwise. `Reverse` (in `NativeSlotPopulator.PopulateNativeSlots`) just flips and stops there;
+> `Last`/`LastOrDefault` (two new `MongoReducerKind` members, dispatched through the existing
+> `TryGetReducerKind`/`NativeCardinalityBinder.TryBindReducer` path First/FirstOrDefault already use) flip
+> first and then append the ordinary `$limit: 1` — the first row of the reversed order is the last row of
+> the original order, so this is a pure reuse of the existing reducer machinery, not new shaper/lowerer code.
+> Both flip via `ActiveOps` (not `PipelineOps` directly), so a set-op-terminal `Last`/`LastOrDefault` flips the
+> TRAILING sort, matching where a trailing `OrderBy` would itself have been recorded. **Ordered-case only,
+> deliberately:** an unordered source has no defined LINQ row order to complement, and the tail op must be
+> LITERALLY the sort (a `Where`/other op after it makes the tail a `$match`, not a `$sort`) — no attempt is
+> made to search back through the op list or synthesize a `$natural` order. **`HasLimit` (pre-existing First/
+> Single guard, unchanged) still declines a reducer once a user `Take`/`Skip` already occupies the limit
+> slot** — `Last`/`LastOrDefault` inherit this for free, not a new guard.
+>
+> **Reverse has NO driver-LINQ oracle at all — MEASURED, and this is the one asymmetry worth remembering.**
+> The C# driver's own LINQ v3 provider does not translate `Queryable.Reverse()` in ANY shape, ordered or not
+> (`MongoDB.Driver.Linq.ExpressionNotSupportedException`, confirmed live both ways) — tracked upstream as
+> **CSHARP-5836**. So a `Reverse()` this slice cannot route natively (unordered, or composed after a
+> non-tail-sort op) hard-fails in **every** `MongoQueryMode` — `Native`'s own fallback attempt included, not
+> just `NativeOnly` — same family as reference `SelectMany`/`Intersect`/`Except` elsewhere in this file. This
+> is **not a regression**: every `Reverse()` call hard-failed in every mode before this slice too, since
+> native had no coverage for it at all and the driver never did either; the slice only adds the ordered case
+> as newly-reachable capability, closing 2 of the 14 CSHARP-5836-tagged specification tests
+> (`docs/failing-spec-tests.md`) — `Last`/`LastOrDefault`, by contrast, DO have a working driver-LINQ oracle
+> (MEASURED, both ordered and unordered), so their unordered/non-tail-sort decline falls back gracefully —
+> correct results, throwing only under `NativeOnly` — exactly like the pre-existing First/FirstOrDefault
+> disposition.
+>
+> **Scoping history, so the ticket's original framing is not re-derived from scratch.** EF-411 originally
+> named five unrelated areas (scalar-aggregate binder, `Distinct`, set operations, no-binder operators,
+> post-terminal guards, 282 cases); a rescoping spike found three of those already closed or deliberately
+> declined by EF-347/EF-408, and a follow-on prototype spike found `SkipWhile`/`TakeWhile`/`ElementAt`/
+> `ElementAtOrDefault` have **zero** occurrences in this repo's test corpus (split off as **EF-437**) and bare
+> `DefaultIfEmpty` is a materialization-layer concern, not a translator one (split off as **EF-438**) — see
+> `docs/superpowers/specs/2026-08-26-ef411-scoping-spike.md` and `…-ef411-nobinder-prototype.md`. This note
+> covers the one piece that survived rescoping: `Reverse`/`Last`/`LastOrDefault` for the ordered case.
+>
+> **Spec-suite delta (EF10, both axes, MEASURED against the branch tip before this slice): 16 `Failed→Passed`,
+> zero `Passed→Failed`.** `NativeOnly`: 2507/2086/17 → 2523/2070/17 — `NorthwindAggregateOperatorsQueryMongoTest
+> .Last`/`.LastOrDefault` (2 tests × 2 async), the four `Include_collection_with_last` overrides across
+> `NorthwindIncludeQueryMongoTest`/`NorthwindStringIncludeQueryMongoTest`/`NorthwindEFPropertyIncludeQueryMongoTest`
+> /`NorthwindIncludeNoTrackingQueryMongoTest` (4 × 2 async), and `NorthwindSelectQueryMongoTest
+> .Reverse_after_multiple_orderbys`/`.Reverse_after_orderby_thenby` (2 × 2 async) — `2+8+4+2` = 16. Default
+> `Native`: unchanged pass/fail SET (4593/0/17), six `AssertMql` baselines re-based to the new MQL (the
+> Include cases move filter/sort/paging AHEAD of the `$lookup`, per the collection-Include ordering this file
+> already documents, so the reducer narrows the joined set instead of joining first and reducing after —
+> re-based via `EF_TEST_REWRITE_BASELINES`, not hand-written). **Multi-version:** zero `#if` lines added or
+> removed under `src/`; EF8/EF9/EF10 all green with the identical MQL baselines (checked directly — no
+> version-conditional branch was needed anywhere). **Not a break**: fallback → native with unchanged results,
+> and the emitted MQL for a supported query is not contract, per the rubric at the top of this file.
+
 ## Boundaries with adjacent areas
 
 - **vs Storage.** Query stops at the executable query — it produces *data*: either a native `BsonDocument[]` pipeline (`MongoExecutableQuery.NativePipeline`) or a driver-LINQ expression. `MongoClientWrapper.Execute(...)` (Storage) owns execution: it runs `collection.Aggregate(nativePipeline)` for the native path and hands the expression to `IMongoQueryProvider` for the fallback. Cursor lifecycle, transaction/session binding, retries are Storage + driver. Never call `IMongoCollection<>.Aggregate(...)` directly from Query — build the `BsonDocument[]` and let the wrapper run it.

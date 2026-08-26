@@ -120,6 +120,16 @@ internal static class NativeSlotPopulator
             else
                 mongoQ.Select.AppendLimit(count);
         }
+        else if (methodDefinition == QueryableMethods.Reverse)
+        {
+            // MQL has no "reverse row order" stage. The only sound native form is inverting an explicit
+            // trailing sort (the exact complement of the original order — see
+            // MongoSelectDefinition.TryFlipTrailingSortDirection). Reverse() over an otherwise-unordered
+            // source has undefined result order in LINQ generally, so decline rather than invent an
+            // unreliable $natural sort.
+            if (!mongoQ.Select.TryFlipTrailingSortDirection())
+                mongoQ.Select.MarkNotNativelyRepresentable();
+        }
         else if (TryGetReducerKind(methodDefinition, out var reducerKind))
         {
             // First/FirstOrDefault/Single/SingleOrDefault (no predicate — EF normalizes the predicate
@@ -214,6 +224,9 @@ internal static class NativeSlotPopulator
            || methodDefinition == QueryableMethods.FirstOrDefaultWithoutPredicate
            || methodDefinition == QueryableMethods.SingleWithoutPredicate
            || methodDefinition == QueryableMethods.SingleOrDefaultWithoutPredicate
+           || methodDefinition == QueryableMethods.LastWithoutPredicate
+           || methodDefinition == QueryableMethods.LastOrDefaultWithoutPredicate
+           || methodDefinition == QueryableMethods.Reverse
            || methodDefinition == QueryableMethods.CountWithoutPredicate
            || methodDefinition == QueryableMethods.LongCountWithoutPredicate
            || methodDefinition == QueryableMethods.AnyWithoutPredicate
@@ -227,7 +240,7 @@ internal static class NativeSlotPopulator
            || QueryableMethods.IsAverageWithoutSelector(methodDefinition)
            || QueryableMethods.IsAverageWithSelector(methodDefinition);
 
-    // Maps the four no-predicate cardinality-reducer QueryableMethods to their MongoReducerKind. The
+    // Maps the six no-predicate cardinality-reducer QueryableMethods to their MongoReducerKind. The
     // predicate-taking overloads are normalized by EF to Where(pred).First()/... before reaching here, so
     // they are intentionally not matched — leaving them off means the catch-all in PopulateNativeSlots
     // marks them non-native if one somehow arrives unnormalized.
@@ -254,6 +267,18 @@ internal static class NativeSlotPopulator
         if (methodDefinition == QueryableMethods.SingleOrDefaultWithoutPredicate)
         {
             kind = MongoReducerKind.SingleOrDefault;
+            return true;
+        }
+
+        if (methodDefinition == QueryableMethods.LastWithoutPredicate)
+        {
+            kind = MongoReducerKind.Last;
+            return true;
+        }
+
+        if (methodDefinition == QueryableMethods.LastOrDefaultWithoutPredicate)
+        {
+            kind = MongoReducerKind.LastOrDefault;
             return true;
         }
 

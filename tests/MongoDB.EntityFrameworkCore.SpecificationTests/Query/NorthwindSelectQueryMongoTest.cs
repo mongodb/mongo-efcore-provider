@@ -1323,29 +1323,28 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$project" : { "_outer" : "$
 
     public override async Task Reverse_after_multiple_orderbys(bool async)
     {
-        // Fails: Reverse not supported CSHARP-5836
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Reverse_after_multiple_orderbys(async))).Message);
+        // EF-411: Reverse over an explicit trailing sort is now native (flips the sort direction) — was
+        // "Fails: Reverse not supported CSHARP-5836" (the driver's own LINQ provider never supported
+        // Reverse() at all, ordered or not; native coverage is what changed, not the driver).
+        await base.Reverse_after_multiple_orderbys(async);
 
         AssertMql(
             """
-            Employees.
-            """);
+Employees.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_id" : "$_id" } }
+""");
     }
 
     public override async Task Reverse_after_orderby_thenby(bool async)
     {
-        // Fails: Reverse not supported CSHARP-5836
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Reverse_after_orderby_thenby(async))).Message);
+        // EF-411: Reverse over an explicit trailing sort is now native (flips the sort direction) — was
+        // "Fails: Reverse not supported CSHARP-5836" (the driver's own LINQ provider never supported
+        // Reverse() at all, ordered or not; native coverage is what changed, not the driver).
+        await base.Reverse_after_orderby_thenby(async);
 
         AssertMql(
             """
-            Employees.
-            """);
+Employees.{ "$sort" : { "_id" : -1, "City" : 1 } }, { "$project" : { "_id" : "$_id" } }
+""");
     }
 
     public override async Task Reverse_in_subquery_via_pushdown(bool async)
