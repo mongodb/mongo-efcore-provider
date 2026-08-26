@@ -625,10 +625,10 @@ OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "f
         await AssertNoMultiCollectionQuerySupport(() => AssertQuery(
             async,
             ss => from p in ss.Set<Product>()
-                where p.OrderDetails.Contains(
-                    ss.Set<OrderDetail>().OrderByDescending(o => o.OrderID).ThenBy(o => o.ProductID)
-                        .FirstOrDefault(orderDetail => orderDetail.Quantity == 1))
-                select p));
+                  where p.OrderDetails.Contains(
+                      ss.Set<OrderDetail>().OrderByDescending(o => o.OrderID).ThenBy(o => o.ProductID)
+                          .FirstOrDefault(orderDetail => orderDetail.Quantity == 1))
+                  select p));
     }
 
     public override async Task Where_subquery_on_navigation2(bool async)
@@ -637,9 +637,9 @@ OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "f
         await AssertNoMultiCollectionQuerySupport(() => AssertQuery(
             async,
             ss => from p in ss.Set<Product>()
-                where p.OrderDetails.Contains(
-                    ss.Set<OrderDetail>().OrderByDescending(o => o.OrderID).ThenBy(o => o.ProductID).FirstOrDefault())
-                select p));
+                  where p.OrderDetails.Contains(
+                      ss.Set<OrderDetail>().OrderByDescending(o => o.OrderID).ThenBy(o => o.ProductID).FirstOrDefault())
+                  select p));
     }
 
     public override async Task Navigation_in_subquery_referencing_outer_query(bool async)
@@ -651,10 +651,8 @@ OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "f
         AssertMql(
         );
 #else
-        Assert.Contains(
-            "is not defined for type",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.Navigation_in_subquery_referencing_outer_query(async))).Message);
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Navigation_in_subquery_referencing_outer_query(async), typeof(ArgumentException));
 
         AssertMql(
         );
@@ -698,10 +696,7 @@ OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "f
         AssertMql(
         );
 #else
-        Assert.Contains(
-            "Unsupported cross-DbSet query",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.GroupJoin_with_complex_subquery_and_LOJ_gets_flattened(async))).Message);
+        await AssertNoMultiCollectionQuerySupport(() => base.GroupJoin_with_complex_subquery_and_LOJ_gets_flattened(async));
 
         AssertMql(
         );
@@ -717,10 +712,7 @@ OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "f
         AssertMql(
         );
 #else
-        Assert.Contains(
-            "Unsupported cross-DbSet query",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.GroupJoin_with_complex_subquery_and_LOJ_gets_flattened2(async))).Message);
+        await AssertNoMultiCollectionQuerySupport(() => base.GroupJoin_with_complex_subquery_and_LOJ_gets_flattened2(async));
 
         AssertMql(
         );
@@ -736,15 +728,20 @@ OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "f
         AssertMql(
         );
 #else
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Navigation_with_collection_with_nullable_type_key(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Navigation_with_collection_with_nullable_type_key(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Orders.
 """);
+        }
 #endif
     }
 
@@ -773,10 +770,8 @@ OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "f
         AssertMql(
         );
 #else
-        Assert.Contains(
-            "is not defined for type",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.Navigation_in_subquery_referencing_outer_query_with_client_side_result_operator_and_count(async))).Message);
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Navigation_in_subquery_referencing_outer_query_with_client_side_result_operator_and_count(async), typeof(ArgumentException));
 
         AssertMql(
         );
@@ -843,27 +838,32 @@ OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "f
     {
 #if EF8 || EF9
         // Fails: Not throwing expected translation failed exception from EF. EF-X002
-        Assert.Contains(
-            "The LINQ expression",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.Select_Where_Navigation_Client(async))).Message);
+        await Assert.ThrowsAsync<ContainsException>(() =>
+            base.Select_Where_Navigation_Client(async));
 
         AssertMql();
 #else
         var exception = await Assert.ThrowsAnyAsync<Exception>(() => base.Select_Where_Navigation_Client(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Orders.
 """);
+        }
 #endif
     }
 
     public override async Task Collection_select_nav_prop_all_client(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF. EF-X002
-        Assert.Contains(
-            "The LINQ expression",
-            (await Assert.ThrowsAsync<ContainsException>(() => base.Collection_select_nav_prop_all_client(async))).Message);
+        await Assert.ThrowsAsync<ContainsException>(() =>
+            base.Collection_select_nav_prop_all_client(async));
 
         AssertMql();
     }
@@ -873,9 +873,9 @@ Orders.
         await AssertNoMultiCollectionQuerySupport(() => AssertQuery(
             async,
             ss => from c in ss.Set<Customer>()
-                orderby c.CustomerID
-                where c.Orders.All(o => o.ShipCity == "London")
-                select c));
+                  orderby c.CustomerID
+                  where c.Orders.All(o => o.ShipCity == "London")
+                  select c));
     }
 
     private void AssertMql(params string[] expected)
@@ -885,7 +885,9 @@ Orders.
         => Fixture.TestMqlLoggerFactory.Clear();
 
     // Fails: Cross-document navigation access issue EF-216
-    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
-        => Assert.Contains("Unsupported cross-DbSet query between",
-            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+    private static Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNoMultiCollectionQuerySupportAsync(query);
+
+    protected new static Task AssertTranslationFailed(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 }

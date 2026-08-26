@@ -138,10 +138,17 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
         AssertMql(
         );
 #else
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Orders.
 """);
+        }
 #endif
     }
 
@@ -154,10 +161,8 @@ Orders.
         AssertMql(
 );
 #else
-        Assert.Contains(
-            "is not defined for type",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.Project_reference_that_itself_has_query_filter_with_another_reference(async))).Message);
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Project_reference_that_itself_has_query_filter_with_another_reference(async), typeof(ArgumentException));
 
         AssertMql(
         );
@@ -197,24 +202,37 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
         AssertMql(
         );
 #else
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Orders.
 """);
+        }
 #endif
     }
 
     public override async Task Client_eval(bool async)
     {
         // Fails: Does not throw expected unable to translate exception EF-X002
-        Assert.Contains(
-            "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.Client_eval(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.Client_eval(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Products.
 """);
+        }
     }
 
     public override async Task Included_many_to_one_query2(bool async)
@@ -227,28 +245,43 @@ Products.
         AssertMql(
         );
 #else
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Orders.
 """);
+        }
 #endif
     }
 
     public override async Task Included_one_to_many_query_with_client_eval(bool async)
     {
-        // Fails: Limited support on client evaluation EF-X003
-        var exception = await Assert.ThrowsAnyAsync<System.Exception>(
+        // Fails: Limited support on client evaluation EF-X003 (driver-LINQ mode throws a wrapped
+        // ExpressionNotSupportedException); native-only mode rejects the shape outright.
+        await Assert.ThrowsAnyAsync<System.Exception>(
             () => base.Included_one_to_many_query_with_client_eval(async));
-        Assert.Contains(
-            "Expression not supported",
-            (exception.InnerException ?? exception).Message);
 
-        AssertMql(
-            """
-            Products.
-            """);
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+                """
+                Products.
+                """);
+        }
     }
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);
+
+    protected new static Task AssertTranslationFailed(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 }

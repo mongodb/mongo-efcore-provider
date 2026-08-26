@@ -169,10 +169,8 @@ public class NorthwindFunctionsQueryMongoTest : NorthwindFunctionsQueryTestBase<
     public override async Task String_StartsWith_with_StringComparison_Ordinal(bool async)
     {
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_StartsWith_with_StringComparison_Ordinal(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.String_StartsWith_with_StringComparison_Ordinal(async));
 
         AssertMql(
             """
@@ -183,10 +181,8 @@ Customers.
     public override async Task String_StartsWith_with_StringComparison_OrdinalIgnoreCase(bool async)
     {
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_StartsWith_with_StringComparison_OrdinalIgnoreCase(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.String_StartsWith_with_StringComparison_OrdinalIgnoreCase(async));
 
         AssertMql(
             """
@@ -201,16 +197,12 @@ Customers.
         await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.StartsWith("m", StringComparison.CurrentCultureIgnoreCase)));
 
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.StartsWith("M", StringComparison.InvariantCulture))))).Message);
+        await AssertTranslationFailed(() =>
+            AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.StartsWith("M", StringComparison.InvariantCulture))));
 
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.StartsWith("M", StringComparison.InvariantCultureIgnoreCase))))).Message);
+        await AssertTranslationFailed(() =>
+            AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.StartsWith("M", StringComparison.InvariantCultureIgnoreCase))));
 
         AssertMql(
             """
@@ -286,10 +278,8 @@ Customers.
     public override async Task String_EndsWith_with_StringComparison_Ordinal(bool async)
     {
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_EndsWith_with_StringComparison_Ordinal(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.String_EndsWith_with_StringComparison_Ordinal(async));
 
         AssertMql(
             """
@@ -300,10 +290,8 @@ Customers.
     public override async Task String_EndsWith_with_StringComparison_OrdinalIgnoreCase(bool async)
     {
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_EndsWith_with_StringComparison_OrdinalIgnoreCase(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.String_EndsWith_with_StringComparison_OrdinalIgnoreCase(async));
 
         AssertMql(
             """
@@ -318,16 +306,12 @@ Customers.
         await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.EndsWith("m", StringComparison.CurrentCultureIgnoreCase)));
 
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.EndsWith("M", StringComparison.InvariantCulture))))).Message);
+        await AssertTranslationFailed(() =>
+            AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.EndsWith("M", StringComparison.InvariantCulture))));
 
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.EndsWith("M", StringComparison.InvariantCultureIgnoreCase))))).Message);
+        await AssertTranslationFailed(() =>
+            AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.EndsWith("M", StringComparison.InvariantCultureIgnoreCase))));
 
         AssertMql(
             """
@@ -492,10 +476,8 @@ Customers.{ "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName",
     public override async Task String_Join_non_aggregate(bool async)
     {
         // Fails: String.Join issue EF-245
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_Join_non_aggregate(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.String_Join_non_aggregate(async));
 
         AssertMql(
             """
@@ -1248,10 +1230,8 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
     public override async Task Where_math_sign(bool async)
     {
         // Fails: Math.Sign mapping issue EF-239
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_math_sign(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_math_sign(async));
 
         AssertMql(
             """
@@ -1262,10 +1242,8 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
     public override async Task Where_math_min(bool async)
     {
         // Fails: Math.Min/Math.Max mapping issue EF-238
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_math_min(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_math_min(async));
 
         AssertMql(
             """
@@ -1277,10 +1255,8 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
     public override async Task Where_math_min_nested(bool async)
     {
         // Fails: Math.Min/Math.Max mapping issue EF-238
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_math_min_nested(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_math_min_nested(async));
 
         AssertMql(
             """
@@ -1291,10 +1267,8 @@ OrderDetails.
     public override async Task Where_math_min_nested_twice(bool async)
     {
         // Fails: Math.Min/Math.Max mapping issue EF-238
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_math_min_nested_twice(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_math_min_nested_twice(async));
 
         AssertMql(
             """
@@ -1307,10 +1281,8 @@ OrderDetails.
     public override async Task Where_math_max(bool async)
     {
         // Fails: Math.Min/Math.Max mapping issue EF-238
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_math_max(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_math_max(async));
 
         AssertMql(
             """
@@ -1322,10 +1294,8 @@ OrderDetails.
     public override async Task Where_math_max_nested(bool async)
     {
         // Fails: Math.Min/Math.Max mapping issue EF-238
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_math_max_nested(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_math_max_nested(async));
 
         AssertMql(
             """
@@ -1336,10 +1306,8 @@ OrderDetails.
     public override async Task Where_math_max_nested_twice(bool async)
     {
         // Fails: Math.Min/Math.Max mapping issue EF-238
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_math_max_nested_twice(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_math_max_nested_twice(async));
 
         AssertMql(
             """
@@ -1352,10 +1320,8 @@ OrderDetails.
     public override async Task Where_math_degrees(bool async)
     {
         // Fails: Double.RadiansToDegrees and Double.DegreesToRadians mapping issue EF-240
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_math_degrees(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_math_degrees(async));
 
         AssertMql(
             """
@@ -1366,10 +1332,8 @@ OrderDetails.
     public override async Task Where_math_radians(bool async)
     {
         // Fails: Double.RadiansToDegrees and Double.DegreesToRadians mapping issue EF-240
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_math_radians(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_math_radians(async));
 
         AssertMql(
             """
@@ -1380,10 +1344,8 @@ OrderDetails.
     public override async Task Where_mathf_abs1(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_abs1(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_abs1(async));
 
         AssertMql(
             """
@@ -1394,10 +1356,8 @@ OrderDetails.
     public override async Task Where_mathf_ceiling1(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_ceiling1(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_ceiling1(async));
 
         AssertMql(
             """
@@ -1408,10 +1368,8 @@ OrderDetails.
     public override async Task Where_mathf_floor(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_floor(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_floor(async));
 
         AssertMql(
             """
@@ -1422,10 +1380,8 @@ OrderDetails.
     public override async Task Where_mathf_power(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_power(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_power(async));
 
         AssertMql(
             """
@@ -1436,10 +1392,8 @@ OrderDetails.
     public override async Task Where_mathf_square(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_square(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_square(async));
 
         AssertMql(
             """
@@ -1450,10 +1404,8 @@ OrderDetails.
     public override async Task Where_mathf_round2(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_round2(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_round2(async));
 
         AssertMql(
             """
@@ -1464,10 +1416,8 @@ OrderDetails.
     public override async Task Select_mathf_round(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Select_mathf_round(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Select_mathf_round(async));
 
         AssertMql(
             """
@@ -1478,10 +1428,8 @@ OrderDetails.
     public override async Task Select_mathf_round2(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Select_mathf_round2(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Select_mathf_round2(async));
 
         AssertMql(
             """
@@ -1492,10 +1440,8 @@ OrderDetails.
     public override async Task Where_mathf_truncate(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_truncate(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_truncate(async));
 
         AssertMql(
             """
@@ -1506,10 +1452,8 @@ OrderDetails.
     public override async Task Select_mathf_truncate(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Select_mathf_truncate(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Select_mathf_truncate(async));
 
         AssertMql(
             """
@@ -1520,10 +1464,8 @@ OrderDetails.
     public override async Task Where_mathf_exp(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_exp(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_exp(async));
 
         AssertMql(
             """
@@ -1534,10 +1476,8 @@ OrderDetails.
     public override async Task Where_mathf_log10(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_log10(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_log10(async));
 
         AssertMql(
             """
@@ -1548,10 +1488,8 @@ OrderDetails.
     public override async Task Where_mathf_log(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_log(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_log(async));
 
         AssertMql(
             """
@@ -1562,10 +1500,8 @@ OrderDetails.
     public override async Task Where_mathf_log_new_base(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_log_new_base(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_log_new_base(async));
 
         AssertMql(
             """
@@ -1576,10 +1512,8 @@ OrderDetails.
     public override async Task Where_mathf_sqrt(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_sqrt(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_sqrt(async));
 
         AssertMql(
             """
@@ -1590,10 +1524,8 @@ OrderDetails.
     public override async Task Where_mathf_acos(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_acos(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_acos(async));
 
         AssertMql(
             """
@@ -1604,10 +1536,8 @@ OrderDetails.
     public override async Task Where_mathf_asin(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_asin(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_asin(async));
 
         AssertMql(
             """
@@ -1618,10 +1548,8 @@ OrderDetails.
     public override async Task Where_mathf_atan(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_atan(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_atan(async));
 
         AssertMql(
             """
@@ -1632,10 +1560,8 @@ OrderDetails.
     public override async Task Where_mathf_atan2(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_atan2(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_atan2(async));
 
         AssertMql(
             """
@@ -1646,10 +1572,8 @@ OrderDetails.
     public override async Task Where_mathf_cos(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_cos(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_cos(async));
 
         AssertMql(
             """
@@ -1660,10 +1584,8 @@ OrderDetails.
     public override async Task Where_mathf_sin(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_sin(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_sin(async));
 
         AssertMql(
             """
@@ -1674,10 +1596,8 @@ OrderDetails.
     public override async Task Where_mathf_tan(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_tan(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_tan(async));
 
         AssertMql(
             """
@@ -1688,10 +1608,8 @@ OrderDetails.
     public override async Task Where_mathf_sign(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_sign(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_sign(async));
 
         AssertMql(
             """
@@ -1702,10 +1620,8 @@ OrderDetails.
     public override async Task Where_mathf_degrees(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_degrees(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_degrees(async));
 
         AssertMql(
             """
@@ -1716,10 +1632,8 @@ OrderDetails.
     public override async Task Where_mathf_radians(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_radians(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_radians(async));
 
         AssertMql(
             """
@@ -1770,9 +1684,8 @@ OrderDetails.
     public override async Task Convert_ToBoolean(bool async)
     {
         // Fails: Translate Convert methods issue EF-235
-        Assert.Contains(
-            "Expression not supported: ToBoolean(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Convert_ToBoolean(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Convert_ToBoolean(async));
 
         AssertMql(
             """
@@ -1783,9 +1696,8 @@ OrderDetails.
     public override async Task Convert_ToByte(bool async)
     {
         // Fails: Translate Convert methods issue EF-235
-        Assert.Contains(
-            "Expression not supported: ToByte(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Convert_ToByte(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Convert_ToByte(async));
 
         AssertMql(
             """
@@ -1796,9 +1708,8 @@ OrderDetails.
     public override async Task Convert_ToDecimal(bool async)
     {
         // Fails: Translate Convert methods issue EF-235
-        Assert.Contains(
-            "Expression not supported: ToDecimal(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Convert_ToDecimal(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Convert_ToDecimal(async));
 
         AssertMql(
             """
@@ -1809,9 +1720,8 @@ OrderDetails.
     public override async Task Convert_ToDouble(bool async)
     {
         // Fails: Translate Convert methods issue EF-235
-        Assert.Contains(
-            "Expression not supported: ToDouble(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Convert_ToDouble(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Convert_ToDouble(async));
 
         AssertMql(
             """
@@ -1822,9 +1732,8 @@ OrderDetails.
     public override async Task Convert_ToInt16(bool async)
     {
         // Fails: Translate Convert methods issue EF-235
-        Assert.Contains(
-            "Expression not supported: ToInt16(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Convert_ToInt16(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Convert_ToInt16(async));
 
         AssertMql(
             """
@@ -1835,9 +1744,8 @@ OrderDetails.
     public override async Task Convert_ToInt32(bool async)
     {
         // Fails: Translate Convert methods issue EF-235
-        Assert.Contains(
-            "Expression not supported: ToInt32(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Convert_ToInt32(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Convert_ToInt32(async));
 
         AssertMql(
             """
@@ -1848,9 +1756,8 @@ OrderDetails.
     public override async Task Convert_ToInt64(bool async)
     {
         // Fails: Translate Convert methods issue EF-235
-        Assert.Contains(
-            "Expression not supported: ToInt64(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Convert_ToInt64(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Convert_ToInt64(async));
 
         AssertMql(
             """
@@ -1861,9 +1768,8 @@ OrderDetails.
     public override async Task Convert_ToString(bool async)
     {
         // Fails: Translate Convert methods issue EF-235
-        Assert.Contains(
-            "Expression not supported: ToString(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Convert_ToString(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Convert_ToString(async));
 
         AssertMql(
             """
@@ -2091,10 +1997,8 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
     public override async Task TrimStart_without_arguments_in_predicate(bool async)
     {
         // Fails: Translate string.Trim methods issue EF-241
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.TrimStart_without_arguments_in_predicate(async)))
-            .Message);
+        await AssertTranslationFailed(() =>
+            base.TrimStart_without_arguments_in_predicate(async));
 
         AssertMql(
             """
@@ -2105,10 +2009,8 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
     public override async Task TrimStart_with_char_argument_in_predicate(bool async)
     {
         // Fails: Translate string.Trim methods issue EF-241
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.TrimStart_without_arguments_in_predicate(async)))
-            .Message);
+        await AssertTranslationFailed(() =>
+            base.TrimStart_without_arguments_in_predicate(async));
 
         AssertMql(
             """
@@ -2129,10 +2031,8 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
     public override async Task TrimEnd_without_arguments_in_predicate(bool async)
     {
         // Fails: Translate string.Trim methods issue EF-241
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.TrimEnd_without_arguments_in_predicate(async)))
-            .Message);
+        await AssertTranslationFailed(() =>
+            base.TrimEnd_without_arguments_in_predicate(async));
 
         AssertMql(
             """
@@ -2143,10 +2043,8 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
     public override async Task TrimEnd_with_char_argument_in_predicate(bool async)
     {
         // Fails: Translate string.Trim methods issue EF-241
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.TrimEnd_with_char_argument_in_predicate(async)))
-            .Message);
+        await AssertTranslationFailed(() =>
+            base.TrimEnd_with_char_argument_in_predicate(async));
 
         AssertMql(
             """
@@ -2177,10 +2075,8 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
     public override async Task Trim_with_char_argument_in_predicate(bool async)
     {
         // Fails: Translate string.Trim methods issue EF-241
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Trim_with_char_argument_in_predicate(async)))
-            .Message);
+        await AssertTranslationFailed(() =>
+            base.Trim_with_char_argument_in_predicate(async));
 
         AssertMql(
             """
@@ -2191,10 +2087,8 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
     public override async Task Trim_with_char_array_argument_in_predicate(bool async)
     {
         // Fails: Translate string.Trim methods issue EF-241
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Trim_with_char_argument_in_predicate(async)))
-            .Message);
+        await AssertTranslationFailed(() =>
+            base.Trim_with_char_argument_in_predicate(async));
 
         AssertMql(
             """
@@ -2260,9 +2154,8 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
     public override async Task Where_DateOnly_FromDateTime(bool async)
     {
         // Fails: DateOnly support issue EF-242
-        Assert.Contains(
-            "Expression not supported: FromDateTime",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_DateOnly_FromDateTime(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_DateOnly_FromDateTime(async));
 
         AssertMql(
             """
@@ -2313,10 +2206,8 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
     public override async Task Regex_IsMatch_MethodCall_constant_input(bool async)
     {
         // Fails: Regex with non-constant pattern issue EF-247
-        Assert.Contains(
-            "Expression not supported: IsMatch",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Regex_IsMatch_MethodCall_constant_input(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Regex_IsMatch_MethodCall_constant_input(async));
 
         AssertMql(
             """
@@ -2327,10 +2218,8 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
     public override async Task Datetime_subtraction_TotalDays(bool async)
     {
         // Fails: DateTime subtraction issue EF-246
-        Assert.Contains(
-            "Expression not supported: (o.OrderDate.Value",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Datetime_subtraction_TotalDays(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Datetime_subtraction_TotalDays(async));
 
         AssertMql(
             """
@@ -2392,10 +2281,8 @@ Customers.{ "$project" : { "_id" : "$_id", "Value" : { "$not" : { "$gte" : [{ "$
     public override async Task String_Contains_with_StringComparison_Ordinal(bool async)
     {
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_Contains_with_StringComparison_Ordinal(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.String_Contains_with_StringComparison_Ordinal(async));
 
         AssertMql(
             """
@@ -2406,10 +2293,8 @@ Customers.
     public override async Task String_Contains_with_StringComparison_OrdinalIgnoreCase(bool async)
     {
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_Contains_with_StringComparison_OrdinalIgnoreCase(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.String_Contains_with_StringComparison_OrdinalIgnoreCase(async));
 
         AssertMql(
             """
@@ -2424,16 +2309,12 @@ Customers.
         await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.Contains("m", StringComparison.CurrentCultureIgnoreCase)));
 
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.Contains("M", StringComparison.InvariantCulture))))).Message);
+        await AssertTranslationFailed(() =>
+            AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.Contains("M", StringComparison.InvariantCulture))));
 
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.Contains("M", StringComparison.InvariantCultureIgnoreCase))))).Message);
+        await AssertTranslationFailed(() =>
+            AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.Contains("M", StringComparison.InvariantCultureIgnoreCase))));
 
         AssertMql(
             """

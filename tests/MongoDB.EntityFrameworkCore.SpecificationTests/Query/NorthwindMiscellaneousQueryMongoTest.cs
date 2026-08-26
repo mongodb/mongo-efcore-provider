@@ -123,19 +123,33 @@ public class NorthwindMiscellaneousQueryMongoTest
     public override async Task Late_subquery_pushdown(bool async)
     {
         // Fails: Subquery selection EF-X001
-        await Assert.ThrowsAnyAsync<ExpressionNotSupportedException>(() => base.Late_subquery_pushdown(async));
+        await AssertTranslationFailed(() => base.Late_subquery_pushdown(async));
 
-        AssertMql("Orders."
-        );
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql("Orders."
+);
+        }
     }
 
     public override async Task Where_nanosecond_and_microsecond_component(bool async)
     {
         // Fails: Sub-second DateTime component translation EF-X015
-        await Assert.ThrowsAnyAsync<ExpressionNotSupportedException>(() => base.Where_nanosecond_and_microsecond_component(async));
+        await AssertTranslationFailed(() => base.Where_nanosecond_and_microsecond_component(async));
 
-        AssertMql("Orders."
-        );
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql("Orders."
+);
+        }
     }
 
     public override async Task Coalesce_Correct_TypeMapping_String(bool async)
@@ -151,19 +165,19 @@ public class NorthwindMiscellaneousQueryMongoTest
     public override async Task Any_on_distinct(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
-        await Assert.ThrowsAsync<InvalidOperationException>(() => base.Any_on_distinct(async));
+        await AssertNoMultiCollectionQuerySupport(() => base.Any_on_distinct(async));
     }
 
     public override async Task Contains_on_distinct(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
-        await Assert.ThrowsAsync<InvalidOperationException>(() => base.Contains_on_distinct(async));
+        await AssertNoMultiCollectionQuerySupport(() => base.Contains_on_distinct(async));
     }
 
     public override async Task All_on_distinct(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
-        await Assert.ThrowsAsync<InvalidOperationException>(() => base.All_on_distinct(async));
+        await AssertNoMultiCollectionQuerySupport(() => base.All_on_distinct(async));
     }
 
     public override async Task SelectMany_correlated_with_DefaultIfEmpty_and_Select_value_type_in_selector_throws(bool async)
@@ -196,13 +210,13 @@ Customers.{ "$sort" : { "_id" : -1 } }, { "$project" : { "_id" : "$_id" } }
     public override async Task Where_Order_First(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
-        await Assert.ThrowsAsync<InvalidOperationException>(() => base.Where_Order_First(async));
+        await AssertNoMultiCollectionQuerySupport(() => base.Where_Order_First(async));
     }
 
     public override async Task IQueryable_captured_variable()
     {
         // Fails: Cross-document navigation access issue EF-216
-        await Assert.ThrowsAsync<InvalidOperationException>(() => base.IQueryable_captured_variable());
+        await AssertNoMultiCollectionQuerySupport(() => base.IQueryable_captured_variable());
     }
 
     public override async Task Skip_1_Take_0_works_when_constant(bool async)
@@ -284,7 +298,7 @@ Customers.{ "$sort" : { "_id" : -1 } }, { "$project" : { "_id" : "$_id" } }
     public override async Task Column_access_inside_subquery_predicate(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
-        await Assert.ThrowsAsync<InvalidOperationException>(() => base.Column_access_inside_subquery_predicate(async));
+        await AssertNoMultiCollectionQuerySupport(() => base.Column_access_inside_subquery_predicate(async));
     }
 
     public override async Task Cast_to_object_over_parameter_directly_in_lambda(bool async)
@@ -404,15 +418,20 @@ Customers.{ "$sort" : { "_id" : -1 } }, { "$project" : { "_id" : "$_id" } }
     public override async Task Join_with_entity_equality_local_on_both_sources(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Join_with_entity_equality_local_on_both_sources(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Join_with_entity_equality_local_on_both_sources(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task Entity_equality_local_inline(bool async)
@@ -599,250 +618,343 @@ Customers.
     public override async Task Where_query_composition(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_query_composition(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_query_composition(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Where_query_composition_is_null(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_query_composition_is_null(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_query_composition_is_null(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Where_query_composition_is_not_null(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_query_composition_is_not_null(async)))
-            .Message);
+        await AssertTranslationFailed(() =>
+            base.Where_query_composition_is_not_null(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Where_query_composition_entity_equality_one_element_SingleOrDefault(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_query_composition_entity_equality_one_element_SingleOrDefault(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_query_composition_entity_equality_one_element_SingleOrDefault(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Where_query_composition_entity_equality_one_element_Single(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_query_composition_entity_equality_one_element_Single(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_query_composition_entity_equality_one_element_Single(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Where_query_composition_entity_equality_one_element_FirstOrDefault(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_query_composition_entity_equality_one_element_FirstOrDefault(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_query_composition_entity_equality_one_element_FirstOrDefault(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Where_query_composition_entity_equality_one_element_First(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_query_composition_entity_equality_one_element_First(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_query_composition_entity_equality_one_element_First(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Where_query_composition_entity_equality_no_elements_SingleOrDefault(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_query_composition_entity_equality_no_elements_SingleOrDefault(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_query_composition_entity_equality_no_elements_SingleOrDefault(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Where_query_composition_entity_equality_no_elements_Single(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_query_composition_entity_equality_no_elements_Single(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_query_composition_entity_equality_no_elements_Single(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Where_query_composition_entity_equality_no_elements_FirstOrDefault(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_query_composition_entity_equality_no_elements_FirstOrDefault(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_query_composition_entity_equality_no_elements_FirstOrDefault(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Where_query_composition_entity_equality_no_elements_First(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_query_composition_entity_equality_no_elements_First(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_query_composition_entity_equality_no_elements_First(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Where_query_composition_entity_equality_multiple_elements_SingleOrDefault(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_query_composition_entity_equality_multiple_elements_SingleOrDefault(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_query_composition_entity_equality_multiple_elements_SingleOrDefault(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Where_query_composition_entity_equality_multiple_elements_Single(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_query_composition_entity_equality_multiple_elements_Single(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_query_composition_entity_equality_multiple_elements_Single(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Where_query_composition_entity_equality_multiple_elements_FirstOrDefault(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_query_composition_entity_equality_multiple_elements_FirstOrDefault(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_query_composition_entity_equality_multiple_elements_FirstOrDefault(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Where_query_composition_entity_equality_multiple_elements_First(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_query_composition_entity_equality_multiple_elements_First(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_query_composition_entity_equality_multiple_elements_First(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Where_query_composition2(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_query_composition2(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_query_composition2(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Where_query_composition2_FirstOrDefault(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_query_composition2_FirstOrDefault(async)))
-            .Message);
+        await AssertTranslationFailed(() =>
+            base.Where_query_composition2_FirstOrDefault(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Where_query_composition2_FirstOrDefault_with_anonymous(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_query_composition2_FirstOrDefault_with_anonymous(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_query_composition2_FirstOrDefault_with_anonymous(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Select_Subquery_Single(bool async)
@@ -1299,29 +1411,39 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 2 }, { "$project" : { "City"
     public override async Task All_top_level_subquery(bool async)
     {
         // Fails: Subqueries not supported EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.All_top_level_subquery(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.All_top_level_subquery(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task All_top_level_subquery_ef_property(bool async)
     {
         // Fails: Subqueries not supported EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.All_top_level_subquery_ef_property(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.All_top_level_subquery_ef_property(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task Where_select_many_or(bool async)
@@ -1791,14 +1913,20 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
     public override async Task OrderBy_correlated_subquery1(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.OrderBy_correlated_subquery1(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.OrderBy_correlated_subquery1(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task OrderBy_correlated_subquery2(bool async)
@@ -1809,15 +1937,20 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
     public override async Task Where_subquery_recursive_trivial(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_subquery_recursive_trivial(async)))
-            .Message);
+        await AssertTranslationFailed(() =>
+            base.Where_subquery_recursive_trivial(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Employees.
             """);
+        }
     }
 
     public override async Task Select_DTO_distinct_translated_to_server(bool async)
@@ -1937,14 +2070,20 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "I
     public override async Task Where_subquery_on_bool(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_subquery_on_bool(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_subquery_on_bool(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Products.
             """);
+        }
     }
 
     public override async Task Where_subquery_on_collection(bool async)
@@ -2181,10 +2320,10 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "I
         await base.Environment_newline_is_funcletized(async);
 
         // Not asserting baseline since the newline character is different on different platforms.
-//         AssertMql(
-//             """
-// Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "\\n", "options" : "s" } } } }
-// """);
+        //         AssertMql(
+        //             """
+        // Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "\\n", "options" : "s" } } } }
+        // """);
     }
 
     public override async Task Concat_string_int(bool async)
@@ -2518,10 +2657,8 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Ship
 
     public override async Task ToString_with_formatter_is_evaluated_on_the_client(bool async)
     {
-        Assert.Contains(
-            "Expression not supported: o.OrderID.ToString(",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.ToString_with_formatter_is_evaluated_on_the_client(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.ToString_with_formatter_is_evaluated_on_the_client(async));
     }
 
     public override async Task Select_expression_other_to_string(bool async)
@@ -2534,114 +2671,162 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Ship
 
     public override async Task Select_expression_date_add_year(bool async)
     {
-        // Fails: Unsupported by driver EF-X003
-        Assert.Contains(
-            "Assert.Equal() Failure",
-            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
-                () => base.Select_expression_date_add_year(async))).Message);
+        // Fails: Unsupported by driver EF-X003 (driver-LINQ mode, which executes and returns wrong
+        // data). Native-only mode rejects the shape outright.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Select_expression_date_add_year(async), typeof(EqualException));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+                """
 Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "year", "amount" : 1 } }, "_id" : 0 } }
 """);
+        }
     }
 
     public override async Task Select_expression_datetime_add_month(bool async)
     {
-        // Fails: Unsupported by driver EF-X003
-        Assert.Contains(
-            "Assert.Equal() Failure",
-            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
-                () => base.Select_expression_datetime_add_month(async))).Message);
+        // Fails: Unsupported by driver EF-X003 (driver-LINQ mode, which executes and returns wrong
+        // data). Native-only mode rejects the shape outright.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Select_expression_datetime_add_month(async), typeof(EqualException));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+                """
 Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "month", "amount" : 1 } }, "_id" : 0 } }
 """);
+        }
     }
 
     public override async Task Select_expression_datetime_add_hour(bool async)
     {
-        // Fails: Unsupported by driver EF-X003
-        Assert.Contains(
-            "Assert.Equal() Failure",
-            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
-                () => base.Select_expression_datetime_add_hour(async))).Message);
+        // Fails: Unsupported by driver EF-X003 (driver-LINQ mode, which executes and returns wrong
+        // data). Native-only mode rejects the shape outright.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Select_expression_datetime_add_hour(async), typeof(EqualException));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+                """
 Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "hour", "amount" : 1.0 } }, "_id" : 0 } }
 """);
+        }
     }
 
     public override async Task Select_expression_datetime_add_minute(bool async)
     {
-        // Fails: Unsupported by driver EF-X003
-        Assert.Contains(
-            "Assert.Equal() Failure",
-            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
-                () => base.Select_expression_datetime_add_minute(async))).Message);
+        // Fails: Unsupported by driver EF-X003 (driver-LINQ mode, which executes and returns wrong
+        // data). Native-only mode rejects the shape outright.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Select_expression_datetime_add_minute(async), typeof(EqualException));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+                """
 Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "minute", "amount" : 1.0 } }, "_id" : 0 } }
 """);
+        }
     }
 
     public override async Task Select_expression_datetime_add_second(bool async)
     {
-        // Fails: Unsupported by driver EF-X003
-        Assert.Contains(
-            "Assert.Equal() Failure",
-            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
-                () => base.Select_expression_datetime_add_second(async))).Message);
+        // Fails: Unsupported by driver EF-X003 (driver-LINQ mode, which executes and returns wrong
+        // data). Native-only mode rejects the shape outright.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Select_expression_datetime_add_second(async), typeof(EqualException));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+                """
 Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "second", "amount" : 1.0 } }, "_id" : 0 } }
 """);
+        }
     }
 
     public override async Task Select_expression_date_add_milliseconds_above_the_range(bool async)
     {
-        // Fails: Unsupported by driver EF-X003
-        Assert.Contains(
-            "Assert.Equal() Failure",
-            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
-                () => base.Select_expression_date_add_milliseconds_above_the_range(async))).Message);
+        // Fails: Unsupported by driver EF-X003 (driver-LINQ mode, which executes and returns wrong
+        // data). Native-only mode rejects the shape outright.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Select_expression_date_add_milliseconds_above_the_range(async), typeof(EqualException));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+                """
 Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "millisecond", "amount" : 1000000000000.0 } }, "_id" : 0 } }
 """);
+        }
     }
 
     public override async Task Select_expression_date_add_milliseconds_below_the_range(bool async)
     {
-        // Fails: Unsupported by driver EF-X003
-        Assert.Contains(
-            "Assert.Equal() Failure",
-            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
-                () => base.Select_expression_date_add_milliseconds_below_the_range(async))).Message);
+        // Fails: Unsupported by driver EF-X003 (driver-LINQ mode, which executes and returns wrong
+        // data). Native-only mode rejects the shape outright.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Select_expression_date_add_milliseconds_below_the_range(async), typeof(EqualException));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+                """
 Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "millisecond", "amount" : -1000000000000.0 } }, "_id" : 0 } }
 """);
+        }
     }
 
     public override async Task Select_expression_date_add_milliseconds_large_number_divided(bool async)
     {
-        // Fails: Unsupported by driver EF-X003
-        Assert.Contains(
-            "Cannot deserialize a 'Int32' from BsonType 'DateTime'",
-            (await Assert.ThrowsAsync<FormatException>(() =>
-                base.Select_expression_date_add_milliseconds_large_number_divided(async))).Message);
+        // Fails: Unsupported by driver EF-X003 (driver-LINQ mode, which executes and fails deserializing the
+        // result). Native-only mode rejects the shape outright, before anything is logged.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Select_expression_date_add_milliseconds_large_number_divided(async), typeof(FormatException));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+                """
 Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "day", "amount" : { "$divide" : [{ "$millisecond" : "$OrderDate" }, 86400000] } } }, "unit" : "millisecond", "amount" : { "$mod" : [{ "$millisecond" : "$OrderDate" }, 86400000] } } }, "_id" : 0 } }
 """);
+        }
     }
 
     public override async Task Add_minutes_on_constant_value(bool async)
@@ -2886,29 +3071,39 @@ Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
     public override async Task Complex_query_with_repeated_query_model_compiles_correctly(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Complex_query_with_repeated_query_model_compiles_correctly(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Complex_query_with_repeated_query_model_compiles_correctly(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task Complex_query_with_repeated_nested_query_model_compiles_correctly(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Complex_query_with_repeated_nested_query_model_compiles_correctly(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Complex_query_with_repeated_nested_query_model_compiles_correctly(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task Anonymous_member_distinct_where(bool async)
@@ -3349,15 +3544,20 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
     public override async Task Comparing_entity_to_null_using_Equals(bool async)
     {
         // Fails: Cross-document navigation access issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Comparing_entity_to_null_using_Equals(async)))
-            .Message);
+        await AssertTranslationFailed(() =>
+            base.Comparing_entity_to_null_using_Equals(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task Comparing_navigations_using_Equals(bool async)
@@ -3411,10 +3611,17 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 #else
         await Assert.ThrowsAnyAsync<Exception>(() => base.Comparing_collection_navigation_to_null_complex(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 OrderDetails.
 """);
+        }
 #endif
     }
 
@@ -3508,15 +3715,20 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
     public override async Task Join_take_count_works(bool async)
     {
         // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Join_take_count_works(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Join_take_count_works(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Orders.
 """);
+        }
     }
 
     public override async Task OrderBy_empty_list_contains(bool async)
@@ -3619,15 +3831,20 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$project" : { "_outer" :
         AssertMql(
         );
 #else
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Navigation_inside_interpolated_string_is_expanded(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Navigation_inside_interpolated_string_is_expanded(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Orders.
 """);
+        }
 #endif
     }
 
@@ -4046,32 +4263,46 @@ OrderDetails.{ "$match" : { "$and" : [{ "$expr" : { "$eq" : [{ "$add" : [{ "$toI
     public override async Task Throws_on_concurrent_query_first(bool async)
     {
         // Fails: Concurrency detector tests broken EF-252
-        Assert.Contains(
-            "Failure: No exception was thrown",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.Throws_on_concurrent_query_first(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.Throws_on_concurrent_query_first(async));
 
-        AssertMql(
-            """
-            Customers.
-            """,
-            //
-            """
-            Customers.{ "$limit" : 1 }
-            """);
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql(
+                """
+Customers.{ "$limit" : 1 }
+""");
+        }
+        else
+        {
+            AssertMql(
+                """
+                Customers.
+                """,
+                //
+                """
+                Customers.{ "$limit" : 1 }
+                """);
+        }
     }
 
     public override async Task Non_nullable_property_through_optional_navigation(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
-        Assert.Contains(
-            "MongoCommandException",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.Non_nullable_property_through_optional_navigation(async)))
-            .Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.Non_nullable_property_through_optional_navigation(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.{ "$project" : { "Length" : { "$strLenCP" : "$Region" }, "_id" : 0 } }
             """);
+        }
     }
 
     public override async Task OrderByDescending(bool async)
@@ -4162,15 +4393,20 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "ContactName" : "$Contac
     public override async Task OrderBy_Join(bool async)
     {
         // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.OrderBy_Join(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.OrderBy_Join(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task Where_Property_shadow_closure(bool async)
@@ -4199,18 +4435,27 @@ Customers.
     public override async Task Throws_on_concurrent_query_list(bool async)
     {
         // Fails: Concurrency detector tests broken EF-252
-        Assert.Contains(
-            "Failure: No exception was thrown",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.Throws_on_concurrent_query_list(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.Throws_on_concurrent_query_list(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql(
+                """
+Customers.
+""");
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """,
-            //
-            """
+    //
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task Select_Property_when_shadow(bool async)
@@ -4390,34 +4635,48 @@ Customers.{ "$sort" : { "_id" : -1, "Country" : -1 } }, { "$project" : { "City" 
 
     public override async Task Select_expression_datetime_add_ticks(bool async)
     {
-        // Fails: Unsupported by driver EF-X003
-        Assert.Contains(
-            "Assert.Equal() Failure",
-            (await Assert.ThrowsAsync<Xunit.Sdk.EqualException>(
-                () => base.Select_expression_datetime_add_ticks(async))).Message);
+        // Fails: Unsupported by driver EF-X003 (driver-LINQ mode, which executes and returns wrong
+        // data). Native-only mode rejects the shape outright.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Select_expression_datetime_add_ticks(async), typeof(EqualException));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+                """
 Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "millisecond", "amount" : 1.0 } }, "_id" : 0 } }
 """);
+        }
     }
 
     public override async Task Where_subquery_expression_same_parametername(bool async)
     {
         // Fails: Navigations issue EF-216
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_subquery_expression_same_parametername(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_subquery_expression_same_parametername(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql(
+                """
+Orders.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }
+""");
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }
             """,
-            //
-            """
+    //
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task Cast_results_to_object(bool async)
@@ -4503,29 +4762,39 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
     public override async Task Using_static_string_Equals_with_StringComparison_throws_informative_error(bool async)
     {
         // Fails: Throws different exception, but still throws EF-X002
-        Assert.Contains(
-            "Expression not supported: Equals",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Using_static_string_Equals_with_StringComparison_throws_informative_error(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Using_static_string_Equals_with_StringComparison_throws_informative_error(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task Using_string_Equals_with_StringComparison_throws_informative_error(bool async)
     {
         // Fails: Throws different exception, but still throws EF-X002
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Using_string_Equals_with_StringComparison_throws_informative_error(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Using_string_Equals_with_StringComparison_throws_informative_error(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
 #if EF8 || EF9
@@ -4690,14 +4959,20 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
     public override async Task Client_code_unknown_method(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Client_code_unknown_method(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Client_code_unknown_method(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task String_include_on_incorrect_property_throws(bool async)
@@ -4747,53 +5022,77 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
     public override async Task Where_query_composition3(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
-        Assert.Contains(
-            "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_query_composition3(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.Where_query_composition3(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task Where_query_composition4(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
-        Assert.Contains(
-            "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_query_composition4(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.Where_query_composition4(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task Where_query_composition5(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws. EF-X002
-        Assert.Contains(
-            "ExpressionNotSupportedException",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_query_composition5(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.Where_query_composition5(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task Where_query_composition6(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws. EF-X002
-        Assert.Contains(
-            "ExpressionNotSupportedException",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.Where_query_composition6(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.Where_query_composition6(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task SelectMany_mixed(bool async)
@@ -4848,14 +5147,20 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
     public override async Task OrderBy_client_mixed(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws. EF-X002
-        Assert.Contains(
-            "ExpressionNotSupportedException",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.OrderBy_client_mixed(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.OrderBy_client_mixed(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task OrderBy_multiple_queries(bool async)
@@ -4863,10 +5168,17 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
         // Fails: Multiple query roots issue EF-220
         await Assert.ThrowsAnyAsync<Exception>(() => base.OrderBy_multiple_queries(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override void Can_cast_CreateQuery_result_to_IQueryable_T_bug_1730()
@@ -4923,65 +5235,95 @@ Customers.
     public override async Task Queryable_reprojection(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws. EF-X002
-        Assert.Contains(
-            "ExpressionNotSupportedException",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.Queryable_reprojection(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.Queryable_reprojection(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task All_client(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws. EF-X002
-        Assert.Contains(
-            "ExpressionNotSupportedException",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.All_client(async))).Message);
-        AssertMql(
-            """
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.All_client(async));
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task All_client_and_server_top_level(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws. EF-X002
-        Assert.Contains(
-            "ExpressionNotSupportedException",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.All_client_and_server_top_level(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.All_client_and_server_top_level(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task All_client_or_server_top_level(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws. EF-X002
-        Assert.Contains(
-            "ExpressionNotSupportedException",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.All_client_or_server_top_level(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.All_client_or_server_top_level(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task First_client_predicate(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
-        Assert.Contains(
-            "ExpressionNotSupportedException",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.First_client_predicate(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.First_client_predicate(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task Select_correlated_subquery_filtered_returning_queryable_throws(bool async)
@@ -5186,9 +5528,8 @@ Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$
         => Fixture.TestMqlLoggerFactory.Clear();
 
     // Fails: Cross-document navigation access issue EF-216
-    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
-        => Assert.Contains("Unsupported cross-DbSet query between",
-            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+    private static Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNoMultiCollectionQuerySupportAsync(query);
 
     // A GroupBy/aggregate shape the native translator does not support must fail as a *translation*
     // failure, but the exact exception depends on the query mode and how far the driver-LINQ fallback

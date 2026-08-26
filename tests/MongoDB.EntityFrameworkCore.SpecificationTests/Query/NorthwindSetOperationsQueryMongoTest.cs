@@ -739,10 +739,17 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
         // "Cross-document navigation access issue EF-216" (Except hard-failed unconditionally pre-EF-347).
         await AssertTranslationFailed(() => base.Except_simple_followed_by_projecting_constant(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task Except_nested(bool async)
@@ -913,15 +920,20 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
     public override async Task Client_eval_Union_FirstOrDefault(bool async)
     {
         // Fails: Not throwing expected translation failed exception from EF, but still throws. EF-X002
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Client_eval_Union_FirstOrDefault(async)))
-            .Message);
+        await AssertTranslationFailed(() =>
+            base.Client_eval_Union_FirstOrDefault(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     private void AssertMql(params string[] expected)
@@ -931,9 +943,8 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
         => Fixture.TestMqlLoggerFactory.Clear();
 
     // Fails: Cross-document navigation access issue EF-216
-    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
-        => Assert.Contains("Unsupported cross-DbSet query between",
-            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+    private static Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNoMultiCollectionQuerySupportAsync(query);
 
     // A GroupBy/aggregate shape the native translator does not support must fail as a *translation*
     // failure, but the exact exception depends on the query mode and how far the driver-LINQ fallback

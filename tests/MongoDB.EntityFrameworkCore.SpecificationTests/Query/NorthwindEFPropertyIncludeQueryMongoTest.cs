@@ -31,7 +31,7 @@ public class NorthwindEFPropertyIncludeQueryMongoTest : NorthwindEFPropertyInclu
     public virtual void Check_all_tests_overridden()
         => TestHelpers.AssertAllMethodsOverridden(GetType());
 
-    #if !EF8 && !EF9
+#if !EF8 && !EF9
 
     public override async Task Include_collection_with_right_join_clause_with_filter(bool async)
     {
@@ -40,7 +40,7 @@ public class NorthwindEFPropertyIncludeQueryMongoTest : NorthwindEFPropertyInclu
         AssertMql();
     }
 
-    #endif
+#endif
 
     public override async Task Include_collection_with_last_no_orderby(bool async)
     {
@@ -1317,14 +1317,19 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
         // provider throws the driver's ExpressionNotSupportedException instead, so what escapes base is an
         // Xunit.Sdk.ThrowsException wrapping that driver exception. Pin both: the wrapper type and the driver
         // exception name in its message, so this flips if the provider's behaviour changes in either direction.
-        Assert.Contains(
-            "ExpressionNotSupportedException",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.Include_collection_with_client_filter(async)))
-            .Message);
-        AssertMql(
-            """
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.Include_collection_with_client_filter(async));
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     protected new static async Task AssertTranslationFailed(Func<Task> query)

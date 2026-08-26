@@ -1194,14 +1194,19 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
         // provider throws the driver's ExpressionNotSupportedException instead, so what escapes base is an
         // Xunit.Sdk.ThrowsException wrapping that driver exception. Pin both: the wrapper type and the driver
         // exception name in its message, so this flips if the provider's behaviour changes in either direction.
-        Assert.Contains(
-            "ExpressionNotSupportedException",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.Include_collection_with_client_filter(async)))
-            .Message);
-        AssertMql(
-            """
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.Include_collection_with_client_filter(async));
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
 

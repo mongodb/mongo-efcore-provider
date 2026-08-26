@@ -43,8 +43,11 @@ Customers.{ "$match" : { "City" : "London" } }
 
     public override async Task KeylessEntity_by_database_view(bool async)
     {
-        // Fails: Views are not supported, so this returns all entities from mapped collection. EF-X007
-        await Assert.ThrowsAsync<EqualException>(() => base.KeylessEntity_by_database_view(async));
+        // Fails: Views are not supported, so this returns all entities from mapped collection (driver-LINQ
+        // mode, which executes and returns wrong data). EF-X007. Native-only mode also rejects the query as
+        // a translation failure, but only after logging the same bare collection scan.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.KeylessEntity_by_database_view(async), typeof(EqualException));
 
         AssertMql(
             """
@@ -71,8 +74,11 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
     public override async Task KeylessEntity_with_nav_defining_query(bool async)
     {
-        // Fails: Defining queries are not supported. EF-X007
-        await Assert.ThrowsAsync<EqualException>(() => base.KeylessEntity_with_nav_defining_query(async));
+        // Fails: Defining queries are not supported (driver-LINQ mode, which executes and returns wrong
+        // data). EF-X007. Native-only mode also rejects the query as a translation failure, but only after
+        // logging the same pipeline.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.KeylessEntity_with_nav_defining_query(async), typeof(EqualException));
 
         AssertMql(
             """
@@ -138,10 +144,7 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
         AssertMql();
 #else
-        Assert.Contains(
-            "Unsupported cross-DbSet query",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.KeylessEntity_select_where_navigation_multi_level(async))).Message);
+        await AssertNoMultiCollectionQuerySupport(() => base.KeylessEntity_select_where_navigation_multi_level(async));
 
         AssertMql(
         );
@@ -218,7 +221,9 @@ Customers.{ "$limit" : 10 }, { "$count" : "v" }
         => Fixture.TestMqlLoggerFactory.Clear();
 
     // Fails: Cross-document navigation access issue EF-216
-    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
-        =>  Assert.Contains("Unsupported cross-DbSet query between",
-            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+    private static Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNoMultiCollectionQuerySupportAsync(query);
+
+    protected new static Task AssertTranslationFailed(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 }

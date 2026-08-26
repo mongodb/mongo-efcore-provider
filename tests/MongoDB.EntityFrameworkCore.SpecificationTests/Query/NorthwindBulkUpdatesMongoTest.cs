@@ -447,17 +447,14 @@ public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<Northw
 
     // Out-of-subset bulk shapes (and the base *_throws cases) are rejected during translation: the
     // MongoDB provider surfaces them as an InvalidOperationException whose message reports the LINQ
-    // expression could not be translated.
-    private static async Task AssertTranslationFailed(Func<Task> query)
-        => Assert.Contains(
-            "could not be translated",
-            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+    // expression could not be translated (driver-LINQ mode) or a NativeTranslationNotSupportedException
+    // (native-only mode).
+    private static Task AssertTranslationFailed(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 
     // Fails: Cross-document navigation access issue EF-216
-    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
-        => Assert.Contains(
-            "Unsupported cross-DbSet query between",
-            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+    private static Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNoMultiCollectionQuerySupportAsync(query);
 }
 
 #endif

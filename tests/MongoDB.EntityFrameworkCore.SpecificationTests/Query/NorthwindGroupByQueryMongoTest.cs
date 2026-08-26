@@ -256,10 +256,17 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.GroupBy_aggregate_projecting_conditional_expression(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.{ "$group" : { "_id" : "$OrderDate", "__agg0" : { "$sum" : 1 }, "__agg1" : { "$sum" : { "$cond" : { "if" : { "$eq" : [{ "$mod" : ["$_id", 2] }, 0] }, "then" : 1, "else" : 0 } } } } }, { "$project" : { "Key" : "$_id", "SomeValue" : { "$cond" : { "if" : { "$eq" : ["$__agg0", 0] }, "then" : 1, "else" : { "$divide" : ["$__agg1", "$__agg0"] } } }, "_id" : 0 } }
             """);
+        }
     }
 
     public override async Task GroupBy_aggregate_projecting_conditional_expression_based_on_group_key(bool async)
@@ -847,10 +854,8 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
     public override async Task GroupBy_conditional_properties(bool async)
     {
         // Fails: GroupBy issue EF-149
-        Assert.Contains(
-            "Expression of type 'MongoDB.EntityFrameworkCore.Query.QueryingEnumerable",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.GroupBy_conditional_properties(async))).Message);
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.GroupBy_conditional_properties(async), typeof(ArgumentException));
 
         AssertMql(
         );
@@ -970,10 +975,17 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         // The rejection happens after the outer collection is logged, so a partial pipeline is captured.
         await AssertTranslationFailed(() => base.Join_complex_GroupBy_Aggregate(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task GroupJoin_GroupBy_Aggregate(bool async)
@@ -1040,10 +1052,17 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         // The rejection happens after the outer collection is logged, so a partial pipeline is captured.
         await AssertTranslationFailed(() => base.GroupJoin_complex_GroupBy_Aggregate(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task Self_join_GroupBy_Aggregate(bool async)
@@ -1166,15 +1185,20 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
     public override async Task GroupBy_aggregate_Contains(bool async)
     {
         // Fails: GroupBy issue EF-149
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.GroupBy_aggregate_Contains(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.GroupBy_aggregate_Contains(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task GroupBy_aggregate_Pushdown(bool async)
@@ -1191,10 +1215,17 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.GroupBy_aggregate_using_grouping_key_Pushdown(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 }, "__agg1" : { "$max" : "$_id" } } }, { "$match" : { "$expr" : { "$gt" : ["$__agg0", 10] } } }, { "$project" : { "Key" : "$_id", "Max" : "$__agg1", "_id" : 0 } }, { "$sort" : { "Key" : 1 } }, { "$limit" : 20 }, { "$skip" : 4 }
             """);
+        }
     }
 
     public override async Task GroupBy_aggregate_Pushdown_followed_by_projecting_Length(bool async)
@@ -1351,10 +1382,8 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
     public override async Task GroupBy_with_result_selector(bool async)
     {
         // Fails: GroupBy issue EF-149
-        Assert.Contains(
-            "Expression of type 'MongoDB.EntityFrameworkCore.Query.QueryingEnumerable",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.GroupBy_with_result_selector(async))).Message);
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.GroupBy_with_result_selector(async), typeof(ArgumentException));
 
         AssertMql(
         );
@@ -1579,10 +1608,17 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.GroupBy_with_aggregate_containing_complex_where(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task GroupBy_Shadow(bool async)
@@ -1617,10 +1653,17 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.GroupBy_select_grouping_list(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.{ "$group" : { "_id" : "$City", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "Key" : "$_id", "List" : "$_elements", "_id" : 0 } }
             """);
+        }
     }
 
     public override async Task GroupBy_select_grouping_array(bool async)
@@ -1628,10 +1671,17 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.GroupBy_select_grouping_array(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.{ "$group" : { "_id" : "$City", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "Key" : "$_id", "List" : "$_elements", "_id" : 0 } }
             """);
+        }
     }
 
     public override async Task GroupBy_select_grouping_composed_list(bool async)
@@ -1639,10 +1689,17 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.GroupBy_select_grouping_composed_list(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.{ "$group" : { "_id" : "$City", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "Key" : "$_id", "List" : { "$filter" : { "input" : "$_elements", "as" : "e", "cond" : { "$eq" : [{ "$indexOfCP" : ["$$e._id", "A"] }, 0] } } }, "_id" : 0 } }
             """);
+        }
     }
 
     public override async Task GroupBy_select_grouping_composed_list_2(bool async)
@@ -1662,10 +1719,17 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
                 typeof(ArgumentException), typeof(FormatException), typeof(MongoCommandException));
         }
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.{ "$group" : { "_id" : "$City", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "Key" : "$_id", "List" : { "$sortArray" : { "input" : "$_elements", "sortBy" : { "_id" : 1 } } }, "_id" : 0 } }
             """);
+        }
     }
 
     public override async Task Select_GroupBy_SelectMany(bool async)
@@ -1863,10 +1927,17 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.GroupBy_nominal_type_count(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task GroupBy_based_on_renamed_property_simple(bool async)
@@ -1936,10 +2007,17 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.GroupBy_with_group_key_being_navigation(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             OrderDetails.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id.OrderID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$group" : { "_id" : "$Inner", "__agg0" : { "$sum" : "$Outer._id.OrderID" } } }, { "$project" : { "Key" : "$_id", "Aggregate" : "$__agg0", "_id" : 0 } }
             """);
+        }
     }
 
     public override async Task GroupBy_with_group_key_being_nested_navigation(bool async)
@@ -2141,10 +2219,17 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.GroupBy_with_grouping_key_using_Like(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task GroupBy_with_grouping_key_DateTime_Day(bool async)
@@ -2317,10 +2402,17 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         await AssertTranslationFailed(() =>
             base.Select_correlated_collection_after_GroupBy_aggregate_when_identifier_changes(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task Select_correlated_collection_after_GroupBy_aggregate_when_identifier_changes_to_complex(bool async)
@@ -2329,10 +2421,17 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         await AssertTranslationFailed(() =>
             base.Select_correlated_collection_after_GroupBy_aggregate_when_identifier_changes_to_complex(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     //AssertMql(" ");
@@ -2540,9 +2639,8 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         => Fixture.TestMqlLoggerFactory.Clear();
 
     // Fails: Cross-document navigation access issue EF-216
-    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
-        =>  Assert.Contains("Unsupported cross-DbSet query between",
-            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+    private static Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNoMultiCollectionQuerySupportAsync(query);
 
     // Fails: GroupBy issue EF-149
     private static async Task AssertGroupByUnsupported(Func<Task> query)
