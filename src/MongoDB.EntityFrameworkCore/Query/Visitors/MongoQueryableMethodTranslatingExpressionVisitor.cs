@@ -362,15 +362,29 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return source.UpdateShaperExpression(selectManyShaper);
         }
 
-        if (IsSingleLevelReferenceIncludeSelector(selector))
+        if (TryGetReferenceIncludeChain(selector, out var transitiveLevels) is { } referenceIncludeChain)
         {
-            if (!TryConfirmReferenceInclude(mongoQueryExpression, selector))
+            if (!TryConfirmReferenceIncludeChain(mongoQueryExpression, referenceIncludeChain, transitiveLevels))
             {
-                // Recognized the SHAPE but declined the case (second reference Include, composite key,
-                // post-terminal, transitive hop, …). The candidate join stays unconfirmed, so Route
+                // Recognized the SHAPE but declined the case (composite key, post-terminal, transitive
+                // hop, a mismatched join count, …). The candidate join(s) stay unconfirmed, so Route
                 // computes Fallback (MongoSelectDefinition.HasUnconfirmedCandidateJoin).
                 mongoQueryExpression.Select.MarkNotNativelyRepresentable();
             }
+        }
+        else if (TryGetMixedReferenceAndCollectionIncludeChain(
+                     selector, out var mixedReferenceLevels, out var mixedTransitiveLevels, out _))
+        {
+            if (!TryConfirmReferenceIncludeChain(mongoQueryExpression, mixedReferenceLevels, mixedTransitiveLevels))
+            {
+                mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+            }
+
+            // On success: do NOT mark non-representable, mirroring IsSingleLevelCollectionIncludeSelector's
+            // own "must not mark non-representable" rule below. The collection level's own $lookup is not
+            // touched here at all — it registers unconditionally, later, during native shaper/
+            // projection-binding compilation (MongoProjectionBindingExpressionVisitor's IncludeExpression
+            // case), exactly as it already does for a bare single collection Include.
         }
         else if (IsSingleLevelCollectionIncludeSelector(selector) && mongoQueryExpression.Select.HasTerminalOperator
                  && !mongoQueryExpression.Select.IsSetOpTerminalOnly)
@@ -399,7 +413,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // the lookup block genuinely cannot be reconciled with) and false once a trailing projection has
             // been populated, so an Include composed after one of those still falls back. A REFERENCE
             // Include never reaches this branch at all — it is recognized above and declined by
-            // TryConfirmReferenceInclude's own post-terminal check, which this does not touch.
+            // TryConfirmReferenceIncludeChain's own post-terminal check, which this does not touch.
             mongoQueryExpression.Select.MarkNotNativelyRepresentable();
         }
         else if (!IsTransparentIdentifierSelector(selector) && !IsSingleLevelCollectionIncludeSelector(selector)
@@ -809,37 +823,243 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            && !navigation.IsEmbedded();
 
     /// <summary>
-    /// Returns <see langword="true"/> when <paramref name="selector"/> is the synthetic
-    /// <c>Select(ti =&gt; Include(ti.Outer, Nav, ti.Inner))</c> EF's nav-expansion generates for a
-    /// single-level, root-level REFERENCE <c>Include</c> (e.g. <c>Orders.Include(o =&gt; o.Customer)</c>).
+    /// Recognizes <paramref name="selector"/> as a chain of one or more single-level reference
+    /// <c>Include</c>s — stacked via <see cref="IncludeExpression.EntityExpression"/> nesting for SIBLING
+    /// Includes (e.g. <c>Docs.Include(d =&gt; d.Author).Include(d =&gt; d.Editor)</c>, which nav-expansion
+    /// compiles to <c>Include(Include(x, Author), Editor)</c>), or via
+    /// <see cref="IncludeExpression.NavigationExpression"/> nesting for a <c>ThenInclude</c> chain (e.g.
+    /// <c>Orders.Include(o =&gt; o.Buyer).ThenInclude(b =&gt; b.SomeRef)</c>) — including a single reference
+    /// <c>Include</c> on its own (the N=1 case, e.g. <c>Orders.Include(o =&gt; o.Customer)</c>). The two
+    /// nesting axes freely combine (a sibling can carry its own <c>ThenInclude</c> chain).
     /// <para>
-    /// The single-hop requirement — the <c>IncludeExpression</c>'s <see cref="IncludeExpression.EntityExpression"/>
-    /// must be a member access whose own <c>Expression</c> IS the lambda parameter — is LOAD-BEARING, not
-    /// defence-in-depth. A user-authored join with a downstream Include, e.g.
+    /// PURE reference chains only — a collection navigation at ANY level (e.g. the "reference + collection"
+    /// combo, <c>Orders.Include(o =&gt; o.Buyer).Include(o =&gt; o.Lines)</c>, or a collection
+    /// <c>ThenInclude</c>) returns <see langword="null"/> for the WHOLE chain here; the sibling combo is
+    /// recognized separately by <see cref="TryGetMixedReferenceAndCollectionIncludeChain"/>, which this
+    /// method defers to via the shared <see cref="TryWalkIncludeChain"/> walker so the two recognizers can
+    /// never disagree on the underlying structure, only on which shape (pure vs. mixed) they each admit. A
+    /// collection <c>ThenInclude</c>, and a sibling hanging off a <c>ThenInclude</c>, are declined outright
+    /// by neither recognizer admitting them — out of scope for both.
+    /// </para>
+    /// <para>
+    /// The walk bottoms out at a pure <c>.Outer</c>* member-access chain reaching the selector's own
+    /// parameter — the TransparentIdentifier plumbing EF builds for N stacked joins (one <c>.Outer</c> hop
+    /// per join beyond the innermost). This is deliberately NOT capped at one hop: a USER-authored join with
+    /// a downstream Include, e.g.
     /// <c>Orders.Join(Customers, o =&gt; o.CustomerId, c =&gt; c.Id, (o, c) =&gt; o).Include(o =&gt; o.Customer)</c>,
-    /// DOES produce a trailing <c>IncludeExpression</c>; it differs from the nav-expansion shape only by a
-    /// DOUBLE hop (<c>ti.Outer.Outer</c>) and by having two inner collections. Matching merely
-    /// <c>Member.Name == "Outer"</c> would admit it, because the outermost hop of <c>ti.Outer.Outer</c> is also
-    /// named <c>Outer</c> — and admitting it would change a user query's row semantics.
+    /// also produces a (single-level, not chained) trailing <c>IncludeExpression</c> whose
+    /// <c>EntityExpression</c> is a multi-hop <c>ti.Outer.Outer</c> chain — indistinguishable from a genuine
+    /// sibling chain by hop count alone, since both are "some number of <c>.Outer</c> hops reaching the
+    /// parameter". What distinguishes them is not hop depth but JOIN COUNT versus RECOGNIZED-LEVEL COUNT:
+    /// the user-join case recognizes exactly ONE level (one actual <c>.Include()</c> call) while the
+    /// underlying query has TWO joins (the user's own, plus nav-expansion's synthesized one for the
+    /// Include), so <see cref="TryConfirmReferenceIncludeChain"/>'s <c>Joins.Count != chain.Count</c> check —
+    /// not this method — is what keeps that shape declining. This method's job is purely to recognize the
+    /// STRUCTURE; every semantic/count-based decline lives in the confirm step.
     /// </para>
     /// </summary>
-    internal static bool IsSingleLevelReferenceIncludeSelector(LambdaExpression selector)
-        => selector.Parameters.Count == 1
-           && selector.Body is IncludeExpression { Navigation: INavigation navigation } include
-           && !navigation.IsCollection
-           && !navigation.IsEmbedded()
-           && include.EntityExpression is MemberExpression { Member.Name: "Outer" } outerAccess
-           && outerAccess.Expression == selector.Parameters[0]
-           && selector.Parameters[0].Type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal);
+    internal static List<IncludeExpression>? TryGetReferenceIncludeChain(LambdaExpression selector)
+        => TryGetReferenceIncludeChain(selector, out _);
 
     /// <summary>
-    /// Registers the forced-unwind reference <c>$lookup</c> for a recognized single-level reference
-    /// <c>Include</c> and confirms the candidate join, or returns <see langword="false"/> to decline.
+    /// Overload of <see cref="TryGetReferenceIncludeChain(LambdaExpression)"/> that also reports which
+    /// recognized levels are TRANSITIVE — reached via a <c>ThenInclude</c> nested under an earlier level
+    /// (<see cref="IncludeExpression.NavigationExpression"/>), rather than a root-level sibling reached
+    /// directly off the query root (<see cref="IncludeExpression.EntityExpression"/> nesting). Needed by
+    /// <see cref="TryConfirmReferenceIncludeChain"/>, which applies its root-<c>DeclaringEntityType</c>
+    /// check only to non-transitive entries — a transitive entry's declaring type was already verified
+    /// against its PARENT's target type, structurally, inside <see cref="TryWalkIncludeChain"/>.
+    /// </summary>
+    internal static List<IncludeExpression>? TryGetReferenceIncludeChain(
+        LambdaExpression selector, out HashSet<IncludeExpression> transitiveLevels)
+    {
+        if (!TryWalkIncludeChain(selector, out var referenceLevels, out transitiveLevels, out var collectionLevel)
+            || collectionLevel != null
+            || referenceLevels.Count == 0)
+        {
+            transitiveLevels = [];
+            return null;
+        }
+
+        return referenceLevels;
+    }
+
+    /// <summary>
+    /// Recognizes <paramref name="selector"/> as a reference-Include chain (structurally identical to
+    /// <see cref="TryGetReferenceIncludeChain(LambdaExpression)"/>'s shape) with exactly one additional single-level,
+    /// non-embedded COLLECTION <c>Include</c> mixed in anywhere among the <c>EntityExpression</c>-nested
+    /// levels — the "reference + collection" combo, e.g.
+    /// <c>Orders.Include(o =&gt; o.Buyer).Include(o =&gt; o.Lines)</c>. Returns <see langword="false"/> (with
+    /// empty/null outputs) for a PURE reference-only chain (handled by
+    /// <see cref="TryGetReferenceIncludeChain(LambdaExpression)"/> instead) or a bare single collection <c>Include</c> with no
+    /// reference sibling (handled by <see cref="IsSingleLevelCollectionIncludeSelector"/> instead) — the
+    /// three recognizers partition the space without overlap.
     /// <para>
-    /// Registering the lookup makes <see cref="MongoQueryExpression.UsesDriverJoinFields"/> compute
-    /// <see langword="false"/>, so the native lowerer, the DOM shaper and the driver-LINQ
-    /// <c>StripJoinForLookup</c> fallback all agree on the <c>_lookup_&lt;Nav&gt;</c> field — which is why
-    /// the shaper is correct whichever way the gate later decides.
+    /// The collection level is returned separately and deliberately UNCONFIRMED here — its own
+    /// <c>$lookup</c> registers later, unconditionally, during native shaper/projection-binding compilation
+    /// (<see cref="MongoProjectionBindingExpressionVisitor"/>'s <c>IncludeExpression</c> case), exactly as
+    /// it already does for a bare single collection <c>Include</c>. Only the reference levels need
+    /// confirming through the candidate/confirmed counter
+    /// (<see cref="TryConfirmReferenceIncludeChain"/>, called with JUST the reference levels) — a collection
+    /// <c>Include</c> never registers a <c>Join</c> (<see cref="MongoQueryExpression.Joins"/> is unaffected
+    /// by it), so that method's existing <c>Joins.Count != chain.Count</c> check naturally continues to
+    /// compare only against the reference-level count, unchanged.
+    /// </para>
+    /// </summary>
+    internal static bool TryGetMixedReferenceAndCollectionIncludeChain(
+        LambdaExpression selector,
+        out List<IncludeExpression> referenceLevels,
+        out HashSet<IncludeExpression> transitiveLevels,
+        out IncludeExpression? collectionLevel)
+    {
+        if (!TryWalkIncludeChain(selector, out referenceLevels, out transitiveLevels, out collectionLevel)
+            || collectionLevel == null
+            || referenceLevels.Count == 0)
+        {
+            referenceLevels = [];
+            transitiveLevels = [];
+            collectionLevel = null;
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Shared structural walk behind <see cref="TryGetReferenceIncludeChain(LambdaExpression)"/> and
+    /// <see cref="TryGetMixedReferenceAndCollectionIncludeChain"/>. Walks the SIBLING spine — a chain of
+    /// <see cref="IncludeExpression"/>s nested via <see cref="IncludeExpression.EntityExpression"/> — and,
+    /// for each sibling level found, ALSO follows a linear <c>ThenInclude</c> chain hanging off it via
+    /// <see cref="IncludeExpression.NavigationExpression"/>, partitioning every level's navigation
+    /// (sibling or transitive) into <paramref name="referenceLevels"/> (non-collection, non-embedded) or
+    /// <paramref name="collectionLevel"/> (non-embedded collection — at most ONE across the whole chain,
+    /// and only reachable via the SIBLING axis, never via a <c>ThenInclude</c> — a collection
+    /// <c>ThenInclude</c> rejects the whole chain). A transitive (<c>ThenInclude</c>-nested) level is also
+    /// recorded in <paramref name="transitiveLevels"/>, since <see cref="TryConfirmReferenceIncludeChain"/>
+    /// needs to know which entries are root-level (checked against the query's own root entity type) versus
+    /// transitive (already verified against their PARENT's target type, structurally, right here).
+    /// <para>
+    /// An embedded navigation found while following a <c>ThenInclude</c> chain (an owned auto-include, or
+    /// chain of them) is transparent — not added as its own entry — but is verified (via the existing
+    /// <see cref="HasNonEmbeddedThenInclude"/>) to have nothing REAL nested past it; if it does (EF-407's
+    /// shape, a real navigation reached THROUGH an embedded hop), the whole chain is rejected, unchanged
+    /// scope. An embedded navigation found on the SIBLING axis directly (<c>IsEmbedded()</c> on the
+    /// sibling's own navigation) rejects the whole chain outright, as before — that shape is recognized by
+    /// <see cref="IsOwnedEmbeddedIncludeSelector"/> instead.
+    /// </para>
+    /// <para>
+    /// Requires the base (once every sibling level's own <c>EntityExpression</c> is exhausted) to be a pure
+    /// <c>.Outer</c>* member-access chain reaching the selector's own <c>TransparentIdentifier</c>-typed
+    /// parameter. Callers apply their own shape-specific acceptance rule on top (pure-reference-only vs.
+    /// exactly-one-collection-mixed-in) — this method only answers "is this the general
+    /// nested-Include-chain-over-a-join-plumbing-base shape at all".
+    /// </para>
+    /// </summary>
+    private static bool TryWalkIncludeChain(
+        LambdaExpression selector,
+        out List<IncludeExpression> referenceLevels,
+        out HashSet<IncludeExpression> transitiveLevels,
+        out IncludeExpression? collectionLevel)
+    {
+        referenceLevels = [];
+        transitiveLevels = [];
+        collectionLevel = null;
+
+        if (selector.Parameters.Count != 1
+            || !selector.Parameters[0].Type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var parameter = selector.Parameters[0];
+        var body = selector.Body;
+
+        while (body is IncludeExpression { Navigation: INavigation navigation } include)
+        {
+            if (navigation.IsEmbedded())
+            {
+                return false;
+            }
+
+            if (navigation.IsCollection)
+            {
+                if (collectionLevel != null)
+                {
+                    // A second collection Include in the chain — out of scope, decline the whole shape.
+                    return false;
+                }
+
+                collectionLevel = include;
+            }
+            else
+            {
+                referenceLevels.Add(include);
+            }
+
+            // Follow a linear ThenInclude chain hanging off THIS level, via NavigationExpression — the
+            // axis a sibling Include never uses (that's EntityExpression, the outer loop here).
+            var thenIncludeLevel = include;
+            var thenIncludeTargetType = navigation.TargetEntityType;
+            while (thenIncludeLevel.NavigationExpression is IncludeExpression { Navigation: INavigation thenNav } thenInclude)
+            {
+                if (thenNav.IsEmbedded())
+                {
+                    // An owned auto-include (or chain of them) on the target — lives inside the same
+                    // document, no lookup needed (EF-368). Verify nothing REAL is nested past it — the
+                    // existing rule, unchanged — and stop following THIS level's ThenInclude chain
+                    // either way (embedded or not, this is where it ends for this sibling).
+                    if (HasNonEmbeddedThenInclude(thenInclude))
+                    {
+                        return false;
+                    }
+
+                    break;
+                }
+
+                if (thenNav.IsCollection
+                    || thenInclude.EntityExpression is IncludeExpression
+                    || thenNav.DeclaringEntityType != thenIncludeTargetType)
+                {
+                    // A collection ThenInclude, a sibling hanging off a ThenInclude, or a structural
+                    // mismatch (this hop doesn't declare on the previous hop's target) — out of scope
+                    // for this recognizer; decline the whole chain rather than mishandle it.
+                    return false;
+                }
+
+                referenceLevels.Add(thenInclude);
+                transitiveLevels.Add(thenInclude);
+                thenIncludeLevel = thenInclude;
+                thenIncludeTargetType = thenNav.TargetEntityType;
+            }
+
+            body = include.EntityExpression;
+        }
+
+        var current = body;
+        while (current is MemberExpression { Member.Name: "Outer" } outerAccess)
+        {
+            current = outerAccess.Expression;
+        }
+
+        return current == parameter;
+    }
+
+    /// <summary>
+    /// Validates and confirms every navigation in a recognized reference-Include chain
+    /// (<see cref="TryGetReferenceIncludeChain(LambdaExpression)"/>), all-or-nothing, or returns <see langword="false"/> to
+    /// decline the WHOLE chain.
+    /// <para>
+    /// For N=1 (today's ordinary single reference Include) this constructs and registers the
+    /// forced-unwind <c>$lookup</c> itself, exactly as before. For N&gt;=2 (sibling reference Includes),
+    /// <c>TranslateJoinCore</c>/<c>RebindInnerShaperToOuterQuery</c> already registered every join's
+    /// <c>$lookup</c> unconditionally once <c>Joins.Count &gt; 1</c> (see that method's
+    /// <c>isSecondOrLaterJoin</c> branch) — independent of whether any Include ever confirms — so this
+    /// method only needs to CONFIRM each navigation matches an already-registered lookup, not re-register
+    /// it. Either way, registering/confirming a lookup makes
+    /// <see cref="MongoQueryExpression.UsesDriverJoinFields"/> compute <see langword="false"/>, so the
+    /// native lowerer, the DOM shaper and the driver-LINQ <c>StripJoinForLookup</c> fallback all agree on
+    /// the <c>_lookup_&lt;Nav&gt;</c> field — which is why the shaper is correct whichever way the gate
+    /// later decides.
     /// </para>
     /// <para>
     /// That safety property is about the SHAPER only, and the distinction is load-bearing for anyone widening
@@ -851,102 +1071,124 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// catch it".
     /// </para>
     /// <para>
-    /// <see cref="IsSingleLevelReferenceIncludeSelector"/> only inspects <see cref="IncludeExpression.EntityExpression"/>
-    /// (the single-hop-back guard) — it says nothing about <see cref="IncludeExpression.NavigationExpression"/>, so a
-    /// <c>ThenInclude</c> riding forward off the SAME <c>IncludeExpression</c> (e.g.
-    /// <c>Orders.Include(o =&gt; o.Customer).ThenInclude(c =&gt; c.Orders)</c> — EF nests the <c>ThenInclude</c>
-    /// inside <c>NavigationExpression</c>, not as a further <c>EntityExpression</c> wrapper) still reaches the
-    /// recognizer. Confirming it anyway registers only the OUTER reference's lookup while the collection
-    /// <c>ThenInclude</c>'s own machinery (<c>MongoProjectionBindingExpressionVisitor</c>'s flat-multi-lookup
-    /// branch) tries to nest under it — reachable, but not a shape this single-level slice is built for, and
-    /// found to break end to end (a shaper-time missing-<c>_id</c> exception) rather than gracefully declining.
-    /// So this is a decline, not merely an unhandled shape — but it is narrowed to a <b>non-embedded</b>
-    /// <c>ThenInclude</c> only: EF also auto-includes the target's OWN owned/embedded navigations the same
-    /// way (e.g. <c>Buyer</c> owning an <c>Address</c> via <c>OwnsOne</c>), producing the identical
-    /// <c>NavigationExpression is IncludeExpression</c> shape for data that lives INSIDE the very document
-    /// the <c>$lookup</c> already reads — a blanket decline here would narrow the whole feature to targets
-    /// with no owned data at all. Only a further hop whose OWN navigation is non-embedded — a real
-    /// <c>ThenInclude</c>, reference or collection, reaching past the looked-up document — still declines and
-    /// falls back exactly like the transitive-hop (<c>EntityExpression</c>-side) case just below.
+    /// <c>ThenInclude</c> riding forward off any level in the chain (e.g.
+    /// <c>Orders.Include(o =&gt; o.Customer).ThenInclude(c =&gt; c.SomeRef)</c> — EF nests the
+    /// <c>ThenInclude</c> inside <c>NavigationExpression</c>, not as a further <c>EntityExpression</c>
+    /// wrapper) is now ADMITTED as its own chain entry when it's a genuine non-embedded reference — the
+    /// walker (<c>TryWalkIncludeChain</c>) is the sole authority on which <c>ThenInclude</c> nesting is
+    /// admissible, so this method no longer re-checks <c>HasNonEmbeddedThenInclude</c> per level (checking
+    /// it here too would wrongly decline a level whose <c>NavigationExpression</c> is a legitimately
+    /// admitted further chain entry). A collection <c>ThenInclude</c>, or a sibling hanging off a
+    /// <c>ThenInclude</c>, still declines — the walker never lets those shapes reach here at all. EF also
+    /// auto-includes each level's target's OWN owned/embedded navigations the same way (e.g. <c>Buyer</c>
+    /// owning an <c>Address</c> via <c>OwnsOne</c>) — the walker keeps admitting that too, unchanged,
+    /// verifying (via <c>HasNonEmbeddedThenInclude</c>, still) that nothing REAL is nested past it.
     /// </para>
     /// </summary>
-    private static bool TryConfirmReferenceInclude(
+    private static bool TryConfirmReferenceIncludeChain(
         MongoQueryExpression mongoQueryExpression,
-        LambdaExpression selector)
+        List<IncludeExpression> chain,
+        HashSet<IncludeExpression> transitiveLevels)
     {
-        var include = (IncludeExpression)selector.Body;
-        var navigation = (INavigation)include.Navigation;
+        // Declines that apply to the WHOLE chain, not per-navigation. Joins.Count must equal chain.Count
+        // EXACTLY — not InnerCollections.Count (entity-type-keyed, so two same-target sibling joins would
+        // wrongly collapse to one entry, see MongoQueryExpression.Lookup.cs) — because Joins is a list, one
+        // entry per join, so it correctly distinguishes N=1, N>=2 siblings (same or different target
+        // types), AND a mismatched case like a user Join plus a downstream Include targeting the same
+        // type (that shape recognizes only ONE level here but has TWO joins registered — see
+        // TryGetReferenceIncludeChain's own remarks — so it declines here, not at the recognizer).
+        if (mongoQueryExpression.Select.HasTerminalOperator                // composed after a terminal
+            || mongoQueryExpression.Select.SawNonBareJoinInner             // a filtered/non-bare-scan inner, any join
+            || mongoQueryExpression.Joins.Count != chain.Count)
+        {
+            return false;
+        }
 
-        // Declines, each with a tripwire test.
-        if (mongoQueryExpression.Select.HasTerminalOperator                       // composed after a terminal
-            || mongoQueryExpression.InnerCollections.Count != 1                   // sibling Include / user double-join
-            || mongoQueryExpression.GetPendingLookups().Any(l => l.ForceUnwind)   // second reference Include, incl. same-target
-            || navigation.ForeignKey.Properties.Count != 1                        // composite FK
-            || navigation.ForeignKey.PrincipalKey.Properties.Count != 1           // composite PK
-            || HasNonEmbeddedThenInclude(include.NavigationExpression)           // a real ThenInclude riding along
+        var pendingByAlias = mongoQueryExpression.GetPendingLookups().ToDictionary(l => l.As);
+        var newLookups = new List<LookupExpression>();
+
+        foreach (var include in chain)
+        {
+            var navigation = (INavigation)include.Navigation!;
+
             // A metadata navigation.TargetEntityType.GetQueryFilter() != null test would consult only the
             // target's OWN anonymous filter and miss two reachable routes — a filter declared on the ROOT of
             // a TPH hierarchy (GetQueryFilter() returns null on a DERIVED target) and an EF10 NAMED filter
             // (which lives in GetDeclaredQueryFilters()) — each of which would admit a shape the flat
             // $lookup cannot filter, returning silently wrong rows in EVERY mode, DriverLinq included. EF
-            // applies the filter as a Where on the JOIN'S INNER SEQUENCE regardless of spelling, so "the
-            // inner select was not a bare collection scan" (SawNonBareJoinInner) catches all of them
-            // structurally, plus any other sub-pipeline-requiring inner (a filtered Include) for free. This
-            // does NOT close TPH discriminator narrowing — a TPH derived-type Include target is currently
-            // admitted natively because EF does not record a discriminator predicate on the join's inner
-            // select for this shape. Not a data bug: the one shape where the missing discriminator could
-            // matter (a required nav typed to the derived type whose FK points at a base-type document)
-            // throws InvalidOperationException identically in every mode.
-            || mongoQueryExpression.Select.SawNonBareJoinInner
-            // TranslateJoinCore resolves the navigation it keys the shaper's projection on independently (by
-            // FK-property name, with a FirstOrDefault(n => n.TargetEntityType == inner) fallback), while
-            // this site emits as: "_lookup_<navFromInclude>". If the two ever disagreed the shaper would
-            // read a field nothing wrote. Not demonstrated reachable — a divergence needs the Include's
-            // navigation to be declared off-root or to target something other than the join's single inner
-            // collection — but cheap, and a decline is always correct (it falls back and returns the right
-            // rows).
-            || navigation.DeclaringEntityType != mongoQueryExpression.CollectionExpression.EntityType
-            || !mongoQueryExpression.InnerCollections.ContainsKey(navigation.TargetEntityType))
-        {
-            return false;
-        }
-
-        var lookup = new LookupExpression(navigation, forceUnwind: true)
-        {
-            // Inner $unwind for a required navigation, left-outer for an optional one.
+            // applies the filter as a Where on the JOIN'S INNER SEQUENCE regardless of spelling, so
+            // SawNonBareJoinInner (checked once above, for the whole query) catches all of them
+            // structurally, plus any other sub-pipeline-requiring inner (a filtered Include) for free.
             //
-            // Elsewhere the LINQ OPERATOR is the discriminator (isLeftOuter: Join => inner, LeftJoin/GroupJoin
-            // => left-outer) because ForeignKey.IsRequired alone is insufficient in general — a user-authored
-            // LeftJoin over a required FK must still preserve principals, and IsRequired cannot see that. No
-            // operator is in hand at THIS site (the confirm runs on the trailing Select, not the join), so
-            // IsRequired is read directly, and that is sound HERE SPECIFICALLY: the recognizer admits only
-            // EF's own nav-expansion shape for a single-level reference Include, and nav-expansion emits
-            // Queryable.Join for a required navigation and LeftJoin for an optional one — so for this one
-            // admitted shape the operator and IsRequired coincide by construction. It is not a general
-            // substitute for the operator; TranslateJoinCore keeps using isLeftOuter for every other join.
-            PreserveNullAndEmptyArrays = !navigation.ForeignKey.IsRequired
-        };
+            // DeclaringEntityType is checked against the query ROOT only for a root-level (non-transitive)
+            // entry — a transitive entry's declaring type was already verified against its PARENT's target
+            // type, structurally, inside TryWalkIncludeChain.
+            if (navigation.ForeignKey.Properties.Count != 1                        // composite FK
+                || navigation.ForeignKey.PrincipalKey.Properties.Count != 1        // composite PK
+                || (!transitiveLevels.Contains(include)
+                    && navigation.DeclaringEntityType != mongoQueryExpression.CollectionExpression.EntityType)
+                || !mongoQueryExpression.InnerCollections.ContainsKey(navigation.TargetEntityType))
+            {
+                return false;
+            }
 
-        // Brief-mandated defence-in-depth, kept even though it is not known reachable at this call site:
-        // LookupExpression's own constructor never prefixes LocalField. Five OTHER sites do prefix it
-        // (TranslateJoinCore's retroactive multi-join flattening just below; three sites in
-        // MongoProjectionBindingExpressionVisitor.cs; NativeSelectManyBinder.cs's nested-reference-
-        // SelectMany scoping) but every one of them runs AFTER a lookup is already registered on
-        // MongoQueryExpression, mutating the SAME LookupExpression instance in place — none of them can
-        // affect the freshly-constructed `lookup` local this check reads, above `AddLookup`, so this check
-        // is structurally a no-op at THIS call site today. The single-hop conjunct in
-        // IsSingleLevelReferenceIncludeSelector plus the ThenInclude guard just above are what actually rule
-        // out a transitive/ThenInclude hop reaching this point. If a future change to either of those ever
-        // lets a transitive shape through, this is the last line of defence against emitting a $lookup keyed
-        // on a field that does not exist on the root document — matching what
-        // LookupExpression.IsStreamableReference independently rejects for the same shape.
-        if (lookup.LocalField.StartsWith(LookupExpression.LookupAliasPrefix, StringComparison.Ordinal))
-        {
-            return false;
+            var alias = LookupExpression.GetLookupAlias(navigation);
+            if (pendingByAlias.TryGetValue(alias, out var existing))
+            {
+                // Already registered by TranslateJoinCore's multi-join flattening — confirm it matches
+                // this Include's own navigation rather than re-registering it.
+                if (!existing.ForceUnwind)
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                // The single-join case (chain.Count == 1): TranslateJoinCore never flattens a lone join,
+                // so nothing is registered yet. Build and add it here, exactly as the pre-chain
+                // single-Include recognizer did.
+                var lookup = new LookupExpression(navigation, forceUnwind: true)
+                {
+                    // Inner $unwind for a required navigation, left-outer for an optional one. Elsewhere
+                    // the LINQ OPERATOR is the discriminator (isLeftOuter: Join => inner, LeftJoin/GroupJoin
+                    // => left-outer) because ForeignKey.IsRequired alone is insufficient in general — a
+                    // user-authored LeftJoin over a required FK must still preserve principals, and
+                    // IsRequired cannot see that. No operator is in hand at THIS site (the confirm runs on
+                    // the trailing Select, not the join), so IsRequired is read directly, and that is sound
+                    // HERE SPECIFICALLY: the recognizer admits only EF's own nav-expansion shape for a
+                    // single-level reference Include, and nav-expansion emits Queryable.Join for a required
+                    // navigation and LeftJoin for an optional one — so for this one admitted shape the
+                    // operator and IsRequired coincide by construction. It is not a general substitute for
+                    // the operator; TranslateJoinCore keeps using isLeftOuter for every other join.
+                    PreserveNullAndEmptyArrays = !navigation.ForeignKey.IsRequired
+                };
+
+                // Brief-mandated defence-in-depth, kept even though it is not known reachable at this call
+                // site: LookupExpression's own constructor never prefixes LocalField. Other sites do
+                // prefix it (TranslateJoinCore's retroactive multi-join flattening; three sites in
+                // MongoProjectionBindingExpressionVisitor.cs; NativeSelectManyBinder.cs's
+                // nested-reference-SelectMany scoping) but every one of them runs AFTER a lookup is
+                // already registered on MongoQueryExpression, mutating the SAME LookupExpression instance
+                // in place — none of them can affect this freshly-constructed local, above AddLookup.
+                if (lookup.LocalField.StartsWith(LookupExpression.LookupAliasPrefix, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                newLookups.Add(lookup);
+            }
         }
 
-        mongoQueryExpression.AddLookup(lookup);
-        mongoQueryExpression.Select.MarkReferenceIncludeConfirmed();
+        foreach (var lookup in newLookups)
+        {
+            mongoQueryExpression.AddLookup(lookup);
+        }
+
+        for (var i = 0; i < chain.Count; i++)
+        {
+            mongoQueryExpression.Select.MarkReferenceIncludeConfirmed();
+        }
+
         return true;
     }
 
@@ -961,16 +1203,17 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// <see cref="IncludeExpression.NavigationExpression"/> (where a further, deeper hop nests). A shape like
     /// <c>Include(o =&gt; o.Buyer).ThenInclude(b =&gt; b.Address).ThenInclude(a =&gt; a.Region)</c> (<c>Address</c>
     /// owned, <c>Region</c> a real cross-collection navigation) is actually filtered out earlier — adding a
-    /// real cross-collection nav requires EF's nav-expansion to inject an additional join, which restructures
-    /// the OUTER (<c>Buyer</c>) <c>IncludeExpression</c>'s own <c>EntityExpression</c> into a double hop
-    /// (<c>ti.Outer.Outer</c>), which <see cref="IsSingleLevelReferenceIncludeSelector"/>'s single-hop
-    /// conjunct already rejects before this method is ever reached.
+    /// real cross-collection nav requires EF's nav-expansion to inject an additional join that no chain
+    /// level's <see cref="IncludeExpression.EntityExpression"/> walk in <c>TryGetReferenceIncludeChain</c>
+    /// ever counts (a <c>ThenInclude</c> nests via <c>NavigationExpression</c>, not <c>EntityExpression</c>),
+    /// so <c>TryConfirmReferenceIncludeChain</c>'s <c>Joins.Count != chain.Count</c> check already rejects the
+    /// whole chain before this method's own call, for THIS example, is ever reached.
     /// </para>
     /// <para>
-    /// The recursion here is kept as defence-in-depth: if a future change to the single-hop conjunct, or to
-    /// how EF nav-expands a nested real navigation, ever lets such a shape through to
-    /// <see cref="TryConfirmReferenceInclude"/>, this recursive walk is what stops it being silently admitted
-    /// rather than declined.
+    /// The recursion here is kept as defence-in-depth: if a future change to the join-count check, or to how
+    /// EF nav-expands a nested real navigation, ever lets such a shape through to
+    /// <see cref="TryConfirmReferenceIncludeChain"/>, this recursive walk is what stops it being silently
+    /// admitted rather than declined.
     /// </para>
     /// </summary>
     private static bool HasNonEmbeddedThenInclude(Expression navigationExpression)
@@ -1663,7 +1906,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // EF-368 finding 1. The reference-Include path emits a flat $lookup with NO sub-pipeline, so it can
         // only stand in for a join whose INNER side is the whole target collection and nothing else. Record
         // the inner's shape here — the only point at which the inner's translated MongoSelectDefinition is in
-        // hand — and let TryConfirmReferenceInclude decline on it. See
+        // hand — and let TryConfirmReferenceIncludeChain decline on it. See
         // MongoSelectDefinition.IsBareCollectionScan / MarkSawNonBareJoinInner for why this replaced the
         // metadata GetQueryFilter() test that used to live at the confirm site.
         if (!innerQueryExpression.Select.IsBareCollectionScan)

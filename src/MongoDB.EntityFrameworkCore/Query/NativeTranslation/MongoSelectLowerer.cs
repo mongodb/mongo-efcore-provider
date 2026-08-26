@@ -353,7 +353,7 @@ internal sealed class MongoSelectLowerer
 
         foreach (var lookup in lookups)
         {
-            if (lookup.IsStreamableReference)
+            if (lookup.IsReference && !lookup.HasPipeline)
             {
                 // The $unwind must follow the navigation's own requiredness (inner for a required nav so a
                 // dangling FK drops the row; left-outer for an optional one so it survives with a null
@@ -361,6 +361,15 @@ internal sealed class MongoSelectLowerer
                 // decision on PreserveNullAndEmptyArrays (set at confirmation time); it must be threaded
                 // through here explicitly, or every reference Include would silently unwind left-outer
                 // regardless of requiredness.
+                //
+                // Deliberately broader than IsStreamableReference (EF-392): a $lookup + $unwind pair is
+                // identical whether localField is a plain root field or one prefixed with a prior lookup's
+                // alias (a TRANSITIVE hop, e.g. a reference ThenInclude chain) — MongoDB doesn't care, and
+                // TranslateJoinCore/RebindInnerShaperToOuterQuery already computed that prefix correctly at
+                // join-registration time (see Ef372DeepReferenceIncludeTests). IsStreamableReference itself
+                // is UNCHANGED and still excludes the transitive case — it's also used by
+                // AllPendingLookupsAreStreamable to keep a transitive-lookup query on the DOM shaper rather
+                // than the one-pass streaming materializer, which hasn't been verified safe for this shape.
                 stages.Add(new MongoLookupStage(lookup));
                 stages.Add(new MongoUnwindStage(lookup, lookup.PreserveNullAndEmptyArrays));
             }

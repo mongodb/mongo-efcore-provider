@@ -631,7 +631,8 @@ internal static class NativeSelectManyBinder
             MongoExpression projected;
 
             if (argExpr is MemberExpression member
-                && TryResolveScopeDepth(member.Expression, ti, sources.Count, out var scopeIndex))
+                && MongoTransparentScopeResolver.TryResolveScopeDepth(
+                    member.Expression, ti, hopNames: ["Outer", "Inner"], sources.Count, out var scopeIndex))
             {
                 var rerooted = Expression.MakeMemberAccess(scopeParams[scopeIndex], member.Member);
                 if (!translators[scopeIndex].TryTranslateField(rerooted, out var field))
@@ -728,7 +729,7 @@ internal static class NativeSelectManyBinder
     /// <summary>
     /// Translates an arithmetic computed projection leaf whose operands span TWO scopes — e.g.
     /// <c>ti.Outer.Discount * ti.Inner.Price</c>, which <see cref="TryTranslateSingleScopeComputedLeaf"/>
-    /// declines because its re-rooting visitor flags <see cref="ScopeRerootingVisitor.CrossScope"/>.
+    /// declines because its re-rooting visitor flags <see cref="MongoTransparentScopeResolver.ScopeRerootingVisitor.CrossScope"/>.
     /// </summary>
     /// <remarks>
     /// Instead of re-rooting the WHOLE subtree onto one synthetic parameter, each operand is translated
@@ -770,12 +771,13 @@ internal static class NativeSelectManyBinder
 
         // Reachable ONLY for a leaf the single-scope path declined FOR THE SCOPE REASON. This is the whole
         // admission boundary of this method and it is deliberately expressed as the very signal the
-        // single-scope path declines on (ScopeRerootingVisitor.CrossScope over the same subtree), not as a
+        // single-scope path declines on (MongoTransparentScopeResolver.ScopeRerootingVisitor.CrossScope over the same subtree), not as a
         // restatement of "what looks cross-scope". Both regressions this guard prevents were measured: without
         // it, a leaf with NO scope-rooted operand at all (`2m * 3m`) binds through the scope-free operand arm,
         // and a leaf the value translator rejected for a non-scope reason (string concat, before the numeric
         // guard above) gets a second, weaker chance at translation here.
-        var scopes = new ScopeRerootingVisitor(ti, sources.Count, scopeParams);
+        var scopes = new MongoTransparentScopeResolver.ScopeRerootingVisitor(
+            ti, hopNames: ["Outer", "Inner"], sources.Count, scopeParams);
         scopes.Visit(leaf);
         if (!scopes.CrossScope)
             return false;
@@ -807,7 +809,7 @@ internal static class NativeSelectManyBinder
     /// <summary>
     /// The shared re-root / translate / prefix core, factored out of the original single-scope computed-leaf
     /// method so the cross-scope path reuses it per operand rather than duplicating the
-    /// <see cref="ScopeRerootingVisitor"/> construction.
+    /// <see cref="MongoTransparentScopeResolver.ScopeRerootingVisitor"/> construction.
     /// </summary>
     /// <remarks>
     /// <paramref name="requireScopeRooted"/> is the ONLY difference between the two callers, and it preserves
@@ -829,7 +831,8 @@ internal static class NativeSelectManyBinder
     {
         result = null;
 
-        var visitor = new ScopeRerootingVisitor(ti, sources.Count, scopeParams);
+        var visitor = new MongoTransparentScopeResolver.ScopeRerootingVisitor(
+            ti, hopNames: ["Outer", "Inner"], sources.Count, scopeParams);
         var rerooted = visitor.Visit(subtree);
         if (visitor.CrossScope)
             return false;
@@ -848,76 +851,6 @@ internal static class NativeSelectManyBinder
             ? MongoFieldPrefixRewriter.Rewrite(computed, sources[scope - 1].InnerScopePath)
             : computed;
         return true;
-    }
-
-    /// <summary>
-    /// Rewrites every scope-rooted transparent-identifier member access (<c>ti.Outer…/ti.Inner…</c>) in an
-    /// arithmetic leaf onto the matching per-scope synthetic parameter, recording the single scope it resolves
-    /// to (or flagging <see cref="CrossScope"/> if operands span more than one). A non-scope-rooted member is
-    /// left untouched, so a constant/parameter operand still reaches
-    /// <see cref="MongoExpressionTranslator.TryTranslateValue"/> unchanged.
-    /// </summary>
-    private sealed class ScopeRerootingVisitor(ParameterExpression ti, int sourceCount, ParameterExpression[] scopeParams)
-        : ExpressionVisitor
-    {
-        public int? ResolvedScope { get; private set; }
-        public bool CrossScope { get; private set; }
-
-        protected override Expression VisitMember(MemberExpression node)
-        {
-            if (TryResolveScopeDepth(node.Expression, ti, sourceCount, out var scope))
-            {
-                if (ResolvedScope is { } prior && prior != scope)
-                    CrossScope = true;
-                ResolvedScope = scope;
-                return Expression.MakeMemberAccess(scopeParams[scope], node.Member);
-            }
-
-            return base.VisitMember(node);
-        }
-    }
-
-    /// <summary>
-    /// Peels a chain of <c>ti.Outer</c>/<c>ti.Outer.Outer</c>/…/<c>ti.Inner</c> member accesses down to the
-    /// bare <paramref name="ti"/> parameter, and resolves which scope it refers to (generalizes the 2-scope
-    /// <c>ti.Outer</c>/<c>ti.Inner</c> shape to N scopes). Given <paramref name="sourceCount"/> chained unwind
-    /// sources, the <c>k</c>-th level's own element is reached via <c>(sourceCount - k)</c> leading
-    /// <c>"Outer"</c> hops followed by exactly one trailing <c>"Inner"</c> hop; the query root (owner) is
-    /// reached via exactly <paramref name="sourceCount"/> <c>"Outer"</c> hops and no <c>"Inner"</c> at all.
-    /// <paramref name="scopeIndex"/> is <c>0</c> for the root, or <c>k</c> (1-based) for
-    /// <c>UnwindSources[k-1]</c>. Returns <see langword="false"/> — declining cleanly — for any chain that
-    /// does not terminate exactly at <paramref name="ti"/>, is empty, exceeds <paramref name="sourceCount"/>
-    /// hops, or does not match either of the two valid shapes above.
-    /// </summary>
-    private static bool TryResolveScopeDepth(Expression? scopeAccess, ParameterExpression ti, int sourceCount, out int scopeIndex)
-    {
-        scopeIndex = -1;
-        var path = new List<string>();
-        var current = scopeAccess;
-        while (current is MemberExpression { Member.Name: "Outer" or "Inner" } hop)
-        {
-            path.Add(hop.Member.Name);
-            current = hop.Expression;
-        }
-
-        if (current != ti || path.Count == 0 || path.Count > sourceCount)
-            return false;
-
-        path.Reverse(); // now ordered outward-from-ti: path[0] is the first hop off ti.
-
-        if (path[^1] == "Inner" && path.Take(path.Count - 1).All(h => h == "Outer"))
-        {
-            scopeIndex = sourceCount - path.Count + 1;
-            return true;
-        }
-
-        if (path.Count == sourceCount && path.All(h => h == "Outer"))
-        {
-            scopeIndex = 0;
-            return true;
-        }
-
-        return false;
     }
 
     /// <summary>

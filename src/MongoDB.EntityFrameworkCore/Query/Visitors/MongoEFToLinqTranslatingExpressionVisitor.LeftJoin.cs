@@ -700,17 +700,14 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 // that chain — and any tail-appended remainder would also land after a scalar terminal such
                 // as Count. A hop that enters transitive resolution either gets a scoped prefix or declines
                 // translation outright; it is never emitted with a silently-missing prefix. The join-hop
-                // classification (MongoQueryableMethodTranslatingExpressionVisitor.ClassifyJoinHop) decides
-                // root-vs-transitive from the key selector's receiver structure before either root tier
-                // runs, so a transitive hop can't be short-circuited by an unrelated root navigation.
-                //
-                // Known gap: a receiver that is itself an EF.Property hop — a ThenInclude nested underneath
-                // an owned (embedded) hop, e.g. Orders.Include(o => o.Buyer).ThenInclude(b => b.Address)
-                // .ThenInclude(a => a.Region) — falls through the classifier unclassified, emits an
-                // unprefixed localField, and returns the deep navigation silently null under both Native and
-                // DriverLinq (only NativeOnly throws). Grouping stays correct for that case regardless: an
-                // unprefixed localField depends on no earlier lookup, and the group is a conservative
-                // superset of the dependency chain.
+                // classification (MongoQueryableMethodTranslatingExpressionVisitor.AnalyzeKeySelectorTarget,
+                // via PeelEmbeddedSegments for an owned/embedded receiver — e.g. Orders.Include(o => o.Buyer)
+                // .ThenInclude(b => b.Address).ThenInclude(a => a.Region), EF-380) decides root-vs-transitive
+                // from the key selector's receiver structure before either root tier runs, so a transitive
+                // hop can't be short-circuited by an unrelated root navigation. Verified (EF-407) that this
+                // embedded-hop shape resolves correctly end to end — a scoped, correctly-prefixed localField,
+                // matching data under Native (fallback) and DriverLinq alike; see
+                // NativeReferenceIncludeTests.Deep_ThenInclude_through_embedded_hop_returns_correct_data_via_fallback.
                 var contiguousGroup = _pendingLookups.Where(l => l.ForceUnwind).ToList();
                 foreach (var lookup in contiguousGroup)
                 {

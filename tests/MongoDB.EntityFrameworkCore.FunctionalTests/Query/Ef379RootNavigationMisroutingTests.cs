@@ -109,17 +109,20 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     }
 
     [Fact]
-    public void Colliding_fk_name_transitive_hop_still_declines_under_NativeOnly()
+    public void Colliding_fk_name_transitive_hop_now_goes_native_under_NativeOnly()
     {
         // A ROUTING claim, so it needs NativeOnly — MQL shape cannot prove which path ran, and since EF-370
-        // the driver-LINQ fallback emits the same flat _lookup_<Nav> shape. Multi-level (ThenInclude)
-        // reference Include is a DEFERRED native shape, so it declines to the fallback; this fix changes the
-        // localField it emits, not which path emits it.
+        // the driver-LINQ fallback emits the same flat _lookup_<Nav> shape. EF-392 lifted the "Multi-level
+        // (ThenInclude) reference Include is a DEFERRED native shape" disposition this test used to pin —
+        // a linear 2-hop reference ThenInclude chain now goes native, reusing EF-379's own fix (this exact
+        // colliding-FK-name localField prefixing) rather than needing anything new.
         using var db = CreateCollidingContext(
-            nameof(Colliding_fk_name_transitive_hop_still_declines_under_NativeOnly), MongoQueryMode.NativeOnly);
+            nameof(Colliding_fk_name_transitive_hop_now_goes_native_under_NativeOnly), MongoQueryMode.NativeOnly);
 
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.PRoots.Include(r => r.Mid).ThenInclude(m => m.Leaf).ToList());
+        var results = db.PRoots.Include(r => r.Mid).ThenInclude(m => m.Leaf).ToList();
+
+        Assert.Equal(2, results.Count);
+        Assert.All(results, r => Assert.NotNull(r.Mid.Leaf));
     }
 
     // ---- Doorway 2: tier 2 (TARGET ENTITY TYPE only). NO name collision exists anywhere in this model —
@@ -170,18 +173,21 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     }
 
     [Fact]
-    public void Renamed_fk_transitive_hop_still_declines_under_NativeOnly()
+    public void Renamed_fk_transitive_hop_now_goes_native_under_NativeOnly()
     {
         // Same caveat as the tier-1 twin above, repeated rather than cross-referenced because the NAME reads
         // like a defect assertion and is not one: this is a ROUTING pin, NOT a guard for the EF-379 fix.
-        // Multi-level (ThenInclude) reference Include is a DEFERRED native shape, so it declines to the
-        // driver-LINQ fallback with or without this fix — the fix changes the localField that path emits,
-        // not which path emits it. It is green against the unfixed tree too.
+        // EF-392 lifted the "Multi-level (ThenInclude) reference Include is a DEFERRED native shape"
+        // disposition this test used to pin — a linear 2-hop reference ThenInclude chain now goes native,
+        // reusing EF-379's own fix (this exact renamed-FK localField prefixing) rather than needing anything
+        // new.
         using var db = CreateRenamedContext(
-            nameof(Renamed_fk_transitive_hop_still_declines_under_NativeOnly), MongoQueryMode.NativeOnly);
+            nameof(Renamed_fk_transitive_hop_now_goes_native_under_NativeOnly), MongoQueryMode.NativeOnly);
 
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.RRoots.Include(r => r.Mid).ThenInclude(m => m.Leaf).ToList());
+        var results = db.RRoots.Include(r => r.Mid).ThenInclude(m => m.Leaf).ToList();
+
+        Assert.Equal(2, results.Count);
+        Assert.All(results, r => Assert.NotNull(r.Mid.Leaf));
     }
 
     // ---- The THIRD wrong-data family, and the one the two doorways above do NOT reach. Both of those give
@@ -333,16 +339,22 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
     }
 
     [Fact]
-    public void Self_referencing_two_hop_chain_declines_at_the_gate_under_NativeOnly()
+    public void Self_referencing_two_hop_chain_now_goes_native_under_NativeOnly()
     {
-        // The third mode, pinned separately because its disposition differs: multi-level reference Include is
-        // a deferred native shape, so NativeOnly refuses the driver-LINQ fallback at the gate and never
-        // reaches the materialization crash above. Also measured byte-identical at the base commit.
+        // The third mode, pinned separately because its disposition used to differ: multi-level reference
+        // Include was a deferred native shape, so NativeOnly refused the driver-LINQ fallback at the gate
+        // and never reached the materialization crash the Theory above documents. EF-392 lifted that
+        // deferral for a linear ThenInclude chain — including the self-referencing case, since EF-371's own
+        // fix (one JoinInfo per join, uniquified aliases) already disambiguates the two hops correctly at
+        // join-registration time, independent of Include confirmation.
         using var db = CreateSelfRefContext(
-            nameof(Self_referencing_two_hop_chain_declines_at_the_gate_under_NativeOnly), MongoQueryMode.NativeOnly);
+            nameof(Self_referencing_two_hop_chain_now_goes_native_under_NativeOnly), MongoQueryMode.NativeOnly);
 
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.FNodes.Include(n => n.Parent).ThenInclude(p => p.Parent).ToList());
+        var nodes = db.FNodes.Include(n => n.Parent).ThenInclude(p => p.Parent).OrderBy(n => n.Label).ToList();
+
+        Assert.Equal(["F1", "F2", "F3"], nodes.Select(n => n.Label).ToArray());
+        Assert.Equal(["F2", "F3", "F1"], nodes.Select(n => n.Parent.Label).ToArray());
+        Assert.Equal(["F3", "F1", "F2"], nodes.Select(n => n.Parent.Parent.Label).ToArray());
     }
 
     // ---- The regression control for EF-379 fix round 1: a transparent identifier is NOT only produced by a

@@ -187,8 +187,7 @@ internal sealed class MongoSelectDefinition
     /// so it still reaches the driver and CSHARP-6017 still applies; <see cref="HasPagingAnywhere"/> must
     /// therefore see it. Deliberately does NOT mark the query non-native — every caller already does that for
     /// its own reason.
-    /// TODO(EF-406): delete together with <see cref="HasPagingAnywhere"/> and
-    /// <see cref="MarkPagedJoinInnerFallbackUnsafe"/> when the driver stops folding — signalled by the tripwire
+    /// TODO(EF-406): delete together with <see cref="HasPagingAnywhere"/> when the driver stops folding — signalled by the tripwire
     /// test <c>NativeJoinPagedInnerDeclineTests.Driver_still_folds_a_paged_join_inner_into_the_lookup_subpipeline_CSHARP_6017</c>
     /// going RED, NOT by CSHARP-6017 closing (that driver ticket is already Closed/Done at fixVersion 3.10.0,
     /// the driver version this branch pins, and the fold is MEASURED still live against it).
@@ -208,7 +207,7 @@ internal sealed class MongoSelectDefinition
     /// <c>Skip</c>/<c>Take</c> RECORDED ANYWHERE on this sequence?", which is the right question because the
     /// guard's real subject is the captured method chain the driver-LINQ fallback executes, not the native op
     /// lists — a <c>Skip</c>/<c>Take</c> the native path declined is still in that chain and still folded.
-    /// TODO(EF-406): delete together with <see cref="MarkPagedJoinInnerFallbackUnsafe"/> when the driver stops
+    /// TODO(EF-406): delete when the driver stops
     /// folding an uncorrelated join inner's paging into the correlated <c>$lookup</c> sub-pipeline — signalled
     /// by the tripwire test going red, NOT by CSHARP-6017 closing (already Closed/Done at fixVersion 3.10.0,
     /// the version this branch pins; the fold is MEASURED still live). See <see cref="MarkSawUnrecordedPaging"/>.
@@ -644,9 +643,11 @@ internal sealed class MongoSelectDefinition
         => _candidateReferenceIncludeJoins++;
 
     /// <summary>
-    /// Records that a trailing <c>Select</c> was recognized as a single-level reference <c>Include</c>
-    /// (see <c>MongoQueryableMethodTranslatingExpressionVisitor.IsSingleLevelReferenceIncludeSelector</c>),
-    /// confirming ONE of the candidate joins recorded by <see cref="MarkSawCandidateReferenceIncludeJoin"/>.
+    /// Records that a trailing <c>Select</c> was recognized as a reference <c>Include</c> chain level
+    /// (see <c>MongoQueryableMethodTranslatingExpressionVisitor.TryGetReferenceIncludeChain</c>/
+    /// <c>TryConfirmReferenceIncludeChain</c>), confirming ONE of the candidate joins recorded by
+    /// <see cref="MarkSawCandidateReferenceIncludeJoin"/> — called once per navigation in the chain, so N
+    /// sibling reference Includes confirm N candidates, not just one.
     /// </summary>
     internal void MarkReferenceIncludeConfirmed()
         => _confirmedReferenceIncludes++;
@@ -667,7 +668,7 @@ internal sealed class MongoSelectDefinition
     /// not a bare collection scan — i.e. its own <see cref="MongoSelectDefinition"/> carried at least one
     /// recorded operation (a <c>$match</c>/<c>$sort</c>/<c>$skip</c>/<c>$limit</c> op, a projection, a
     /// terminal, a cardinality, or an operator that was declined outright). Set by the QMTEV's
-    /// <c>TranslateJoinCore</c>, read by <c>TryConfirmReferenceInclude</c>.
+    /// <c>TranslateJoinCore</c>, read by <c>TryConfirmReferenceIncludeChain</c>.
     /// <para>
     /// This replaces an earlier metadata-only guard that consulted <c>navigation.TargetEntityType.GetQueryFilter()</c>,
     /// which misses a filter declared on the ROOT of a TPH hierarchy when read from a DERIVED target, and

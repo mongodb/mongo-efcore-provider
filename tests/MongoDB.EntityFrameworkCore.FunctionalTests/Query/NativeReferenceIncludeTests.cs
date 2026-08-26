@@ -150,6 +150,176 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
             () => db.Orders.Include(o => o.Buyer).ThenInclude(b => b.Address).ThenInclude(a => a.Region).ToList());
     }
 
+    [Fact]
+    public void Sibling_reference_Includes_go_native_with_correct_data()
+    {
+        // EF-392 (Include-breadth remainder): different target types (Order, Product) — the smallest
+        // sibling shape. NativeOnly succeeding proves native, not fallback; the Native == DriverLinq
+        // comparison proves the two independently-scoped $lookups (each with its own required-FK inner
+        // unwind) return the same rows a working, well-understood driver-LINQ oracle would.
+        using var nativeOnly = CreateContext(MongoQueryMode.NativeOnly,
+            nameof(Sibling_reference_Includes_go_native_with_correct_data) + "_NativeOnly");
+        var nativeOnlyResults = nativeOnly.Lines.Include(l => l.Order).Include(l => l.Product).ToList();
+
+        // 4 lines seeded: 2 clean, 1 with a dangling OrderId, 1 with a dangling ProductId. Both Order and
+        // Product are REQUIRED references, so each dangling FK drops its own row via an inner unwind — 2
+        // rows survive.
+        Assert.Equal(2, nativeOnlyResults.Count);
+        Assert.All(nativeOnlyResults, l => Assert.NotNull(l.Order));
+        Assert.All(nativeOnlyResults, l => Assert.NotNull(l.Product));
+
+        using var nativeDb = CreateContext(MongoQueryMode.Native,
+            nameof(Sibling_reference_Includes_go_native_with_correct_data) + "_Native");
+        var nativeResults = nativeDb.Lines.Include(l => l.Order).Include(l => l.Product).ToList();
+
+        using var driverDb = CreateContext(MongoQueryMode.DriverLinq,
+            nameof(Sibling_reference_Includes_go_native_with_correct_data) + "_DriverLinq");
+        var driverResults = driverDb.Lines.Include(l => l.Order).Include(l => l.Product).ToList();
+
+        Assert.Equal(driverResults.Count, nativeResults.Count);
+        Assert.All(nativeResults, l => Assert.NotNull(l.Order));
+        Assert.All(nativeResults, l => Assert.NotNull(l.Product));
+    }
+
+    [Fact]
+    public void Same_target_sibling_reference_Includes_go_native_with_correct_data()
+    {
+        // EF-392 (Include-breadth remainder): SAME target type (Buyer) for both Author and Editor —
+        // proves InnerCollections' entity-type keying (which would collapse these two joins into one
+        // dictionary entry) is NOT what this recognizer relies on for correctness; Joins.Count (a list,
+        // one entry per join) and the navigation-keyed $lookup alias are.
+        using var nativeOnly = CreateContext(MongoQueryMode.NativeOnly,
+            nameof(Same_target_sibling_reference_Includes_go_native_with_correct_data) + "_NativeOnly");
+        var nativeOnlyResults = nativeOnly.Docs.Include(d => d.Author).Include(d => d.Editor).ToList();
+
+        // 3 docs seeded: 1 clean, 1 with a dangling AuthorId, 1 with a dangling EditorId. Both are
+        // required references, so each dangling FK drops its own row — 1 row survives, and it must have
+        // DIFFERENT, correctly-scoped Author and Editor navigations (not one field accidentally reused
+        // for both).
+        var only = Assert.Single(nativeOnlyResults);
+        Assert.NotNull(only.Author);
+        Assert.NotNull(only.Editor);
+        Assert.NotEqual(only.Author.Id, only.Editor.Id);
+
+        using var nativeDb = CreateContext(MongoQueryMode.Native,
+            nameof(Same_target_sibling_reference_Includes_go_native_with_correct_data) + "_Native");
+        var nativeResults = nativeDb.Docs.Include(d => d.Author).Include(d => d.Editor).ToList();
+
+        using var driverDb = CreateContext(MongoQueryMode.DriverLinq,
+            nameof(Same_target_sibling_reference_Includes_go_native_with_correct_data) + "_DriverLinq");
+        var driverResults = driverDb.Docs.Include(d => d.Author).Include(d => d.Editor).ToList();
+
+        Assert.Equal(driverResults.Count, nativeResults.Count);
+        Assert.All(nativeResults, d => Assert.NotEqual(d.Author.Id, d.Editor.Id));
+    }
+
+    [Fact]
+    public void Reference_and_collection_Include_combo_goes_native_with_correct_data()
+    {
+        // EF-392 (Include-breadth remainder): Buyer (reference, needs a forced-unwind $lookup) and Lines
+        // (collection, needs a flat $lookup with no unwind) on the same query — the last remaining
+        // DeclinedShapeDescriptions row this exact shape used to occupy.
+        using var nativeOnly = CreateContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_and_collection_Include_combo_goes_native_with_correct_data) + "_NativeOnly");
+        var nativeOnlyResults = nativeOnly.Orders.Include(o => o.Buyer).Include(o => o.Lines).ToList();
+
+        // O3's buyer is dangling (required FK), so it's dropped before Lines even matters: 3 of the 4
+        // seeded orders survive. O4 has zero Lines rows referencing it — the empty-array collection case
+        // coexisting correctly alongside the reference lookup's required-FK-drops-the-row case.
+        Assert.Equal(3, nativeOnlyResults.Count);
+        Assert.All(nativeOnlyResults, o => Assert.NotNull(o.Buyer));
+        var order1 = Assert.Single(nativeOnlyResults, o => o.Total == 5);
+        Assert.Equal(2, order1.Lines.Count);
+        var order4 = Assert.Single(nativeOnlyResults, o => o.Total == 35);
+        Assert.Empty(order4.Lines);
+
+        using var nativeDb = CreateContext(MongoQueryMode.Native,
+            nameof(Reference_and_collection_Include_combo_goes_native_with_correct_data) + "_Native");
+        var nativeResults = nativeDb.Orders.Include(o => o.Buyer).Include(o => o.Lines).ToList();
+
+        using var driverDb = CreateContext(MongoQueryMode.DriverLinq,
+            nameof(Reference_and_collection_Include_combo_goes_native_with_correct_data) + "_DriverLinq");
+        var driverResults = driverDb.Orders.Include(o => o.Buyer).Include(o => o.Lines).ToList();
+
+        Assert.Equal(driverResults.Count, nativeResults.Count);
+        Assert.All(nativeResults, o => Assert.NotNull(o.Buyer));
+        Assert.Equal(
+            driverResults.OrderBy(o => o.Total).Select(o => o.Lines.Count),
+            nativeResults.OrderBy(o => o.Total).Select(o => o.Lines.Count));
+    }
+
+    [Fact]
+    public void Reference_ThenInclude_chain_goes_native_with_correct_data()
+    {
+        // EF-392 (Include-breadth remainder): Lines.Include(l => l.Order).ThenInclude(o => o.Buyer) — a
+        // genuine 2-hop reference ThenInclude chain, previously the "ThenInclude / transitive"
+        // DeclinedShapeDescriptions row.
+        using var nativeOnly = CreateContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_ThenInclude_chain_goes_native_with_correct_data) + "_NativeOnly");
+        var nativeOnlyResults = nativeOnly.Lines.Include(l => l.Order).ThenInclude(o => o.Buyer).ToList();
+
+        // 4 lines seeded: 2 with a valid Order (order1 x2 lines, order2 x1 — wait, 3 valid-Order lines: one
+        // dangling-Order line is dropped by Order's required-FK inner unwind), each of whose Orders has a
+        // valid Buyer, so all surviving lines carry a non-null Order.Buyer.
+        Assert.All(nativeOnlyResults, l => Assert.NotNull(l.Order));
+        Assert.All(nativeOnlyResults, l => Assert.NotNull(l.Order.Buyer));
+
+        using var nativeDb = CreateContext(MongoQueryMode.Native,
+            nameof(Reference_ThenInclude_chain_goes_native_with_correct_data) + "_Native");
+        var nativeResults = nativeDb.Lines.Include(l => l.Order).ThenInclude(o => o.Buyer).ToList();
+
+        using var driverDb = CreateContext(MongoQueryMode.DriverLinq,
+            nameof(Reference_ThenInclude_chain_goes_native_with_correct_data) + "_DriverLinq");
+        var driverResults = driverDb.Lines.Include(l => l.Order).ThenInclude(o => o.Buyer).ToList();
+
+        Assert.Equal(driverResults.Count, nativeResults.Count);
+        Assert.All(nativeResults, l => Assert.NotNull(l.Order));
+        Assert.All(nativeResults, l => Assert.NotNull(l.Order.Buyer));
+    }
+
+    [Fact]
+    public void Deep_ThenInclude_through_embedded_hop_returns_correct_data_via_fallback()
+    {
+        // EF-407: this exact shape declines natively (see the test above) and falls back to DriverLinq
+        // under the default Native mode. EF-407 alleged that fallback silently materialized Region as
+        // null. Re-measured 2026-08-26: it does not — the fallback's join-stripping bridge
+        // (MongoEFToLinqTranslatingExpressionVisitor.LeftJoin.cs) correctly scopes the second $lookup's
+        // localField under the first lookup's alias ("_lookup_Buyer.Address.RegionId"), most likely fixed
+        // as a side effect of EF-380's PeelEmbeddedSegments/AnalyzeKeySelectorTarget machinery, which both
+        // the native lowerer and this fallback bridge share via the same registered LookupExpression list.
+        // Pinned here so a future regression in that shared machinery is caught by data, not just by the
+        // decline-under-NativeOnly assertion above (which only proves a clean decline, not correct fallback
+        // data).
+        //
+        // EF8/EF9 only (measured, full-suite regression on 2026-08-26): this exact shape does not reach
+        // this provider's fallback at all — EF Core's own translation visitor throws
+        // InvalidOperationException ("could not be translated") upstream, in EVERY MongoQueryMode, matching
+        // the disposition already documented on A_real_ThenInclude_nested_underneath_an_embedded_hop_still_declines
+        // above. Only EF10 reaches this provider's fallback bridge and returns correct data.
+#if EF8 || EF9
+        using var nativeDb = CreateContext(MongoQueryMode.Native,
+            nameof(Deep_ThenInclude_through_embedded_hop_returns_correct_data_via_fallback) + "_Native");
+        Assert.ThrowsAny<Exception>(
+            () => nativeDb.Orders.Include(o => o.Buyer).ThenInclude(b => b.Address).ThenInclude(a => a.Region).ToList());
+#else
+        using var nativeDb = CreateContext(MongoQueryMode.Native,
+            nameof(Deep_ThenInclude_through_embedded_hop_returns_correct_data_via_fallback) + "_Native");
+        var nativeResults = nativeDb.Orders.Include(o => o.Buyer).ThenInclude(b => b.Address).ThenInclude(a => a.Region)
+            .ToList();
+
+        using var driverDb = CreateContext(MongoQueryMode.DriverLinq,
+            nameof(Deep_ThenInclude_through_embedded_hop_returns_correct_data_via_fallback) + "_DriverLinq");
+        var driverResults = driverDb.Orders.Include(o => o.Buyer).ThenInclude(b => b.Address).ThenInclude(a => a.Region)
+            .ToList();
+
+        // O3's buyer is dangling (required FK), so 3 of the 4 seeded orders survive the Buyer unwind.
+        Assert.Equal(3, nativeResults.Count);
+        Assert.Equal(3, driverResults.Count);
+        Assert.All(nativeResults, o => Assert.Equal("Midwest", o.Buyer.Address.Region?.Name));
+        Assert.All(driverResults, o => Assert.Equal("Midwest", o.Buyer.Address.Region?.Name));
+#endif
+    }
+
     /// <summary>
     /// EF-368 Task 6: every decline in <c>TryConfirmReferenceInclude</c> must be a decline, not a silent
     /// pass (design §5.3). Each row here asserts BOTH halves: <see cref="MongoQueryMode.NativeOnly"/>
@@ -164,11 +334,14 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     // test body instead.
     public static TheoryData<string> DeclinedShapeDescriptions => new()
     {
-        "sibling reference Includes",
-        "same-target sibling Includes",
-        "ThenInclude / transitive",
+        // "sibling reference Includes" / "same-target sibling Includes" REMOVED (EF-392): both now go
+        // native — see Sibling_reference_Includes_go_native_with_correct_data /
+        // Same_target_sibling_reference_Includes_go_native_with_correct_data below.
+        // "reference + collection" REMOVED (EF-392): now goes native — see
+        // Reference_and_collection_Include_combo_goes_native_with_correct_data below.
+        // "ThenInclude / transitive" REMOVED (EF-392): a genuine reference ThenInclude chain now goes
+        // native — see Reference_ThenInclude_chain_goes_native_with_correct_data below.
         "after a terminal",
-        "reference + collection",
         // THE LOAD-BEARING ROW. A user-authored join with a downstream Include produces a trailing
         // IncludeExpression whose EntityExpression is ti.Outer.Outer - a DOUBLE hop, confirmed by direct
         // instrumentation (see the GetDeclinedShapeBuilder comment on this row below and task-6-report.md's
@@ -185,76 +358,26 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     private static Func<ReferenceIncludeDbContext, IQueryable> GetDeclinedShapeBuilder(string description)
         => description switch
         {
-            "sibling reference Includes" => db => db.Lines.Include(l => l.Order).Include(l => l.Product),
-            // NO trailing .Select here — fix round 1 review (2026-08-04) measured that a trailing scalar
-            // Select on this shape and on "user join with downstream Include" below produced a DEAD test:
-            // EF Core's own nav-expansion drops the pending Include entirely once a trailing scalar Select
-            // doesn't reference it, so both rows threw the GENERIC bare-scalar-projection decline ("Query
-            // projects a non-entity result") under NativeOnly — identical whether or not the Include was
-            // even present — rather than the shape's own decline. The whole-entity form below is what
-            // actually reaches the recognizer/guard machinery.
-            //
-            // MUTATION EVIDENCE (fix round 1, full trace in task-6-report.md): this row's real EF-compiled
-            // tree is a NESTED IncludeExpression — selector.Body is IncludeExpression(Navigation: Editor,
-            // EntityExpression: IncludeExpression(Navigation: Author, ...)) — NOT a ti.Outer.Outer
-            // double-hop MemberExpression chain (that shape belongs to the "user join with downstream
-            // Include" row below; sibling Includes produce a DIFFERENT tree shape). Direct instrumentation
-            // confirms IsSingleLevelReferenceIncludeSelector's `include.EntityExpression is MemberExpression`
-            // pattern match fails outright on this nested-IncludeExpression EntityExpression (Result=False,
-            // logged before TryConfirmReferenceInclude is ever reached) — this structural type check, not
-            // the hop-depth `outerAccess.Expression == selector.Parameters[0]` conjunct, is what actually
-            // declines THIS row, and it does so ALONE: with the candidate/confirmed counter (Task 4)
-            // separately neutralized (HasUnconfirmedCandidateJoin mutated to return false unconditionally),
-            // the row still declined correctly, because the recognizer's structural mismatch means
-            // TryConfirmReferenceInclude — and so MarkReferenceIncludeConfirmed — is never called for the
-            // nested (Author) Include at all. Only loosening the recognizer to ALSO accept a nested
-            // IncludeExpression as EntityExpression, WHILE ALSO neutralizing the counter, admitted the
-            // shape — and it then produced SILENT WRONG DATA (Author materialized null while Editor
-            // materialized correctly), because the inner (Author) Include is structurally discarded the
-            // moment only the outer (Editor) Include is confirmed. The ForceUnwind-pending-lookup guard
-            // this task's brief named (GetPendingLookups().Any(l => l.ForceUnwind), the line commented
-            // "second reference Include, incl. same-target") is NOT what protects this row — verified by
-            // restoring it while the recognizer and counter mutations stayed in place: the shape still
-            // wrongly admitted, because TryConfirmReferenceInclude is called only ONCE (for the outer
-            // Editor Include) and GetPendingLookups() is still empty at that point, so the guard never
-            // fires. So this row is doubly protected by two DIFFERENT mechanisms than the brief assumed —
-            // the recognizer's structural EntityExpression-type check (sufficient alone) and the
-            // candidate/confirmed counter (sufficient alone, once the recognizer is defeated) — and NOT by
-            // the ForceUnwind guard at all for this exact tree shape.
-            "same-target sibling Includes" => db => db.Docs.Include(d => d.Author).Include(d => d.Editor),
-            "ThenInclude / transitive" => db => db.Lines.Include(l => l.Order).ThenInclude(o => o.Buyer),
             "after a terminal" => db => db.Orders.Distinct().Include(o => o.Buyer),
-            "reference + collection" => db => db.Orders.Include(o => o.Buyer).Include(o => o.Lines),
-            // NO trailing .Select here either — see the comment on "same-target sibling Includes" above;
-            // this is the SAME dead-test defect, on the load-bearing row itself.
+            // NO trailing .Select here — fix round 1 review (2026-08-04) measured that a trailing scalar
+            // Select on this shape produced a DEAD test: EF Core's own nav-expansion drops the pending
+            // Include entirely once a trailing scalar Select doesn't reference it, so the row threw the
+            // GENERIC bare-scalar-projection decline ("Query projects a non-entity result") under
+            // NativeOnly — identical whether or not the Include was even present — rather than the shape's
+            // own decline. The whole-entity form below is what actually reaches the recognizer/guard
+            // machinery.
             //
-            // MUTATION EVIDENCE (fix round 1, full trace in task-6-report.md): direct instrumentation
-            // confirms this row's EntityExpression genuinely IS ti.Outer.Outer (a double hop), and that
-            // loosening IsSingleLevelReferenceIncludeSelector's hop-depth conjunct alone (removing
-            // `outerAccess.Expression == selector.Parameters[0]`) does NOT admit the shape — NativeOnly
-            // still threw "Query is not natively representable" unchanged. That is because this exact
-            // query independently trips the candidate/confirmed counter (Task 4): the translated tree
-            // contains TWO Join nodes (the user's own explicit Join, plus the nav-expansion's own synthesized
-            // join for Include(Buyer)) — both against the SAME target type, Buyer — so
-            // MarkSawCandidateReferenceIncludeJoin fires twice while at most one MarkReferenceIncludeConfirmed
-            // can fire, leaving HasUnconfirmedCandidateJoin true regardless of the recognizer. Defeating
-            // BOTH the hop-depth conjunct AND the counter together (mutation-verified) admits the shape as
-            // native — but for THIS query, where the join and the Include target the SAME entity (Buyer)
-            // and Buyer's FK (BuyerId) lives on the true document root regardless of accessor depth, the
-            // wrongly-admitted native pipeline still happened to return the correct 3 rows with correctly
-            // resolved Buyer navigations. A SEPARATE probe confirmed the danger the recognizer's own doc
-            // comment describes IS real for a shape where the user's join targets a DIFFERENT entity than
-            // the Include (e.g. joining Carriers then Include(Buyer)) — but that shape is independently
-            // declined by InnerCollections.Count != 1 (Carrier and Buyer are different entity types, so
-            // they do NOT collapse into one InnerCollections entry), even with both other guards defeated.
-            // So for the BRIEF'S LITERAL query the hop-depth conjunct's own unique contribution could not be
-            // isolated from the candidate/confirmed counter — the two are genuinely redundant for this
-            // reachable shape, a correction to this row's original claim that the conjunct is uniquely
-            // "load-bearing, not defence-in-depth" here. The row is kept: it still proves EF's real
-            // ti.Outer.Outer tree declines cleanly (the brief's core requirement), and it is not a pure
-            // duplicate of Two_joins_onto_the_same_target_stay_declined above (a structurally different
-            // tree — Include-then-Join vs. this row's Join-then-Include) even though both are ultimately
-            // caught by the same candidate/confirmed counter.
+            // EF-392 update: this row's real EF-compiled tree is a DOUBLE hop (ti.Outer.Outer) —
+            // structurally the SAME shape TryGetReferenceIncludeChain now admits for a genuine N=2 sibling
+            // chain's innermost level (see that method's own remarks). What still declines THIS row is
+            // TryConfirmReferenceIncludeChain's Joins.Count != chain.Count check: the translated tree
+            // contains TWO Join nodes (the user's own explicit Join, plus the nav-expansion's own
+            // synthesized join for Include(Buyer)) — both against the SAME target type, Buyer — but only
+            // ONE IncludeExpression (Buyer), so chain.Count == 1 while Joins.Count == 2, a mismatch. This
+            // is also independently backed by the candidate/confirmed counter (MarkSawCandidateReferenceIncludeJoin
+            // fires twice, MarkReferenceIncludeConfirmed only once for a chain of length 1) — the same
+            // double-protection the original mutation-testing evidence (pre-EF-392, see git history for
+            // this file) found for this exact row before the recognizer was generalized.
             "user join with downstream Include" =>
                 db => db.Orders.Join(db.Buyers, o => o.BuyerId, b => b.Id, (o, b) => o).Include(o => o.Buyer),
             _ => throw new ArgumentOutOfRangeException(nameof(description), description, "Unknown declined shape.")
@@ -989,15 +1112,28 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
             new() { Id = product1Id, Name = "Widget" },
         ]);
 
+        var danglingOrderId = ObjectId.GenerateNewId(); // never inserted: dangling FK, Line -> Order side.
+        var danglingProductId = ObjectId.GenerateNewId(); // never inserted: dangling FK, Line -> Product side.
+
         database.MongoDatabase.GetCollection<Line>(linesName).InsertMany(
         [
             new() { Id = ObjectId.GenerateNewId(), OrderId = order1Id, ProductId = product1Id, Quantity = 2 },
             new() { Id = ObjectId.GenerateNewId(), OrderId = order2Id, ProductId = product1Id, Quantity = 3 },
+            // EF-392 (sibling reference Includes): one dangling FK per side, on DIFFERENT rows, so a
+            // differential test can prove each lookup's own required-FK inner-unwind semantics
+            // independently rather than only proving "doesn't throw".
+            new() { Id = ObjectId.GenerateNewId(), OrderId = danglingOrderId, ProductId = product1Id, Quantity = 1 },
+            new() { Id = ObjectId.GenerateNewId(), OrderId = order1Id, ProductId = danglingProductId, Quantity = 1 },
         ]);
 
         database.MongoDatabase.GetCollection<Doc>(docsName).InsertMany(
         [
             new() { Id = ObjectId.GenerateNewId(), AuthorId = buyer1Id, EditorId = buyer2Id, Title = "Doc1" },
+            // EF-392 (same-target sibling reference Includes): a dangling AuthorId and a dangling EditorId
+            // on separate rows, so a differential test can prove the two _lookup_Author/_lookup_Editor
+            // fields are independently scoped (neither lookup accidentally reads the other's field).
+            new() { Id = ObjectId.GenerateNewId(), AuthorId = ObjectId.GenerateNewId(), EditorId = buyer2Id, Title = "Doc2" },
+            new() { Id = ObjectId.GenerateNewId(), AuthorId = buyer1Id, EditorId = ObjectId.GenerateNewId(), Title = "Doc3" },
         ]);
 
         database.MongoDatabase.GetCollection<CompositeOrder>(compositeOrdersName).InsertMany(

@@ -71,6 +71,26 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Equal(["T1", "T2", "T3"], results.Select(r => r.Mid.Leaf.Tip.Label).OrderBy(x => x));
     }
 
+    [Fact]
+    public void Two_hop_reference_ThenInclude_goes_native()
+    {
+        // EF-392: this exact shape declined under NativeOnly before this change (the recognizer now
+        // admits it; this test proves the lowerer can actually emit the transitive $lookup too).
+        using var db = CreateContext(MongoQueryMode.NativeOnly,
+            nameof(Two_hop_reference_ThenInclude_goes_native), out var spyLogger);
+
+        var results = db.Roots.Include(r => r.Mid).ThenInclude(m => m.Leaf).ToList();
+
+        Assert.Equal(3, results.Count);
+        Assert.All(results, r => Assert.NotNull(r.Mid));
+        Assert.All(results, r => Assert.NotNull(r.Mid.Leaf));
+        Assert.Equal(["L1", "L2", "L3"], results.Select(r => r.Mid.Leaf.Label).OrderBy(x => x));
+
+        var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("\"localField\" : \"MidId\"", mql);
+        Assert.Contains("\"localField\" : \"_lookup_Mid.LeafId\"", mql);
+    }
+
     // ---- T2: the MQL pin. Hop 3's localField must be scoped under hop 2's lookup alias. ----
 
     [Fact]
