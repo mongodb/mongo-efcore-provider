@@ -289,6 +289,9 @@ internal static class NativeProjectionBinder
         return true;
     }
 
+    private static bool IsEnumType(Type type)
+        => (Nullable.GetUnderlyingType(type) ?? type).IsEnum;
+
     /// <summary>
     /// Translates a single projection leaf: a plain top-level member access, an owned entity-collection leaf
     /// (<c>b.Posts</c> — a <see cref="MaterializeCollectionNavigationExpression"/>), or a projected
@@ -337,6 +340,33 @@ internal static class NativeProjectionBinder
                 return false;
             }
             result = field;
+            return true;
+        }
+
+        // An enum-to-enum CAST over a plain top-level scalar leaf — `(TargetEnum)c.SourceEnum`, e.g. mapping
+        // an entity enum onto an unrelated DTO enum with the same members. MongoConvertExpression.ToOperatorFor
+        // has no $toX target for an enum type (MQL has nothing to convert TO), so this can never render as a
+        // computed leaf the way a numeric cast does — but it needs no server-side computation at all: the cast
+        // is a pure CLR relabeling of an already-correctly-typed value, not a BSON representation change. This
+        // leaf is therefore admitted as a BARE field leaf (the cast is dropped entirely, same as the plain
+        // member branch above) rather than as a MongoConvertExpression.
+        //
+        // MongoProjectionBindingExpressionVisitor.Visit still registers the WHOLE Convert node for the shaper
+        // (its cast-leaf case is unconditional on Convert, not on which MongoExpression kind NativeProjectionBinder
+        // chose), which routes the read through MongoProjectionBindingRemovingExpressionVisitor's generic
+        // alias-read path (no IProperty, no source serializer) rather than the property-aware one — so the
+        // field must be DEFAULT-serialized (no value converter, no non-default BsonRepresentation) for the raw
+        // stored value to deserialize correctly as the target enum type; a converted/non-default-represented
+        // source declines here exactly as the numeric cast leaf does (Guard B, AllFieldsDefaultSerialized).
+        if (leafExpression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } castUnary
+            && IsEnumType(castUnary.Operand.Type)
+            && IsEnumType(castUnary.Type)
+            && (castUnary.Operand is MemberExpression
+                || (castUnary.Operand is MethodCallExpression castEfPropertyCall && castEfPropertyCall.Method.IsEFPropertyMethod()))
+            && translator.TryTranslateField(castUnary.Operand, out var castField)
+            && NativeGroupByBinder.HasDefaultKeySerialization(castField.Property))
+        {
+            result = castField;
             return true;
         }
 
@@ -447,6 +477,8 @@ internal static class NativeProjectionBinder
         // NativeCastTests.Widening_cast_projection_leaf_now_goes_native.
         if (translator.TryTranslateValue(leafExpression, out var value)
             && (value is MongoSizeExpression or MongoFilteredSizeExpression or MongoConvertExpression
+                    or MongoConditionalExpression or MongoDatePartExpression or MongoDateTimeOffsetLocalExpression
+                    or MongoElementRefExpression
                 || (leafExpression is UnaryExpression { NodeType: ExpressionType.Convert } && value is MongoFieldExpression)))
         {
             result = value;
@@ -1249,6 +1281,16 @@ internal static class NativeProjectionBinder
                 } when IsArrayFreeComputedSubtree(leaf):
                 break;
 
+            // Gate 1c — a conditional or date-part top node. Same subtree-safety story as gate 1b: a
+            // conditional branch (or, in principle, a
+            // date-part operand) could itself contain a nested MongoSizeExpression/MongoFilteredSizeExpression
+            // (e.g. `x.Flag ? x.Posts.Count : 0`) whose un-stripped driver-fallback rendering aborts on a
+            // missing/null array — IsArrayFreeComputedSubtree now recurses into these node kinds too, so this
+            // arm gets the same protection gate 1b already has.
+            case MongoConditionalExpression or MongoDatePartExpression or MongoDateTimeOffsetLocalExpression
+                when IsArrayFreeComputedSubtree(leaf):
+                break;
+
             default:
                 return false;
         }
@@ -1386,6 +1428,12 @@ internal static class NativeProjectionBinder
             MongoBinaryExpression binary
                 => IsArrayFreeComputedSubtree(binary.Left) && IsArrayFreeComputedSubtree(binary.Right),
             MongoConvertExpression convert => IsArrayFreeComputedSubtree(convert.Operand),
+            MongoConditionalExpression conditional
+                => IsArrayFreeComputedSubtree(conditional.Test)
+                    && IsArrayFreeComputedSubtree(conditional.IfTrue)
+                    && IsArrayFreeComputedSubtree(conditional.IfFalse),
+            MongoDatePartExpression datePart => IsArrayFreeComputedSubtree(datePart.Operand),
+            MongoDateTimeOffsetLocalExpression local => IsArrayFreeComputedSubtree(local.Operand),
             MongoFieldExpression or MongoConstantExpression or MongoParameterExpression => true,
             // Everything else, including MongoSizeExpression and MongoFilteredSizeExpression — see the remarks:
             // the size kinds are excluded by this catch-all rather than by an arm of their own, deliberately.

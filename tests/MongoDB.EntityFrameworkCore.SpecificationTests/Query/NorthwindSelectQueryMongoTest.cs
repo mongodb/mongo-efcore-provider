@@ -910,7 +910,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : { "$eq" : ["$_id", "ALFKI"] }, "_id" : 0 } }
+            Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$_id", "ALFKI"] }, "then" : true, "else" : false } }, "_id" : 0 } }
             """);
     }
 
@@ -1914,7 +1914,7 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "local
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : { "$subtract" : [{ "$dayOfWeek" : "$OrderDate" }, 1] }, "_id" : 0 } }
+            Orders.{ "$project" : { "_v" : { "$toInt" : { "$subtract" : [{ "$dayOfWeek" : "$OrderDate" }, 1] } }, "_id" : 0 } }
             """);
     }
 

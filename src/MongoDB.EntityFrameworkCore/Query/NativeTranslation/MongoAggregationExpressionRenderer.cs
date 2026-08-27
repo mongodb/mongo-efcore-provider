@@ -68,6 +68,21 @@ internal static class MongoAggregationExpressionRenderer
                             $"MQL has no conversion operator for '{convert.Type.Name}'. A convert to an "
                             + "unrenderable target should have been declined at translate time."),
                     Render(convert.Operand, placeholders, elementVariable)),
+            MongoConditionalExpression conditional
+                => new BsonDocument("$cond", new BsonDocument
+                {
+                    { "if", Render(conditional.Test, placeholders, elementVariable) },
+                    { "then", Render(conditional.IfTrue, placeholders, elementVariable) },
+                    { "else", Render(conditional.IfFalse, placeholders, elementVariable) }
+                }),
+            MongoDateTimeOffsetLocalExpression local
+                => new BsonDocument("$dateAdd", new BsonDocument
+                {
+                    { "startDate", FieldRef(local.Operand.ElementName + ".DateTime", elementVariable) },
+                    { "unit", "minute" },
+                    { "amount", FieldRef(local.Operand.ElementName + ".Offset", elementVariable) }
+                }),
+            MongoDatePartExpression datePart => RenderDatePart(datePart, placeholders, elementVariable),
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoAggregationExpressionRenderer does not support node type '{node.GetType().Name}'.")
         };
@@ -130,6 +145,10 @@ internal static class MongoAggregationExpressionRenderer
                         || MongoExpressionTranslator.AllFieldsDefaultSerialized(field)),
             MongoConvertExpression convert
                 => MongoConvertExpression.ToOperatorFor(convert.Type) is not null && CanRender(convert.Operand),
+            MongoConditionalExpression conditional
+                => CanRender(conditional.Test) && CanRender(conditional.IfTrue) && CanRender(conditional.IfFalse),
+            MongoDateTimeOffsetLocalExpression local => CanRender(local.Operand),
+            MongoDatePartExpression datePart => CanRender(datePart.Operand),
             _ => false
         };
 
@@ -174,6 +193,28 @@ internal static class MongoAggregationExpressionRenderer
     // keeps every pre-existing call site's emitted MQL byte-identical.
     private static BsonValue FieldRef(string path, string? elementVariable)
         => elementVariable is null ? "$" + path : "$$" + elementVariable + "." + path;
+
+    // MongoDB's $dayOfWeek returns 1 (Sunday)..7 (Saturday); .NET's DayOfWeek enum is 0 (Sunday)..6 (Saturday).
+    // The subtraction is mandatory, not defensive — omitting it silently shifts every day of the week by one.
+    private static BsonValue RenderDatePart(MongoDatePartExpression node, PlaceholderTable placeholders, string? elementVariable)
+    {
+        var operand = Render(node.Operand, placeholders, elementVariable);
+        return node.Part switch
+        {
+            MongoDatePart.Year => new BsonDocument("$year", operand),
+            MongoDatePart.Month => new BsonDocument("$month", operand),
+            MongoDatePart.Day => new BsonDocument("$dayOfMonth", operand),
+            MongoDatePart.Hour => new BsonDocument("$hour", operand),
+            MongoDatePart.Minute => new BsonDocument("$minute", operand),
+            MongoDatePart.Second => new BsonDocument("$second", operand),
+            MongoDatePart.Millisecond => new BsonDocument("$millisecond", operand),
+            MongoDatePart.DayOfYear => new BsonDocument("$dayOfYear", operand),
+            MongoDatePart.DayOfWeek
+                => new BsonDocument("$subtract", new BsonArray { new BsonDocument("$dayOfWeek", operand), 1 }),
+            MongoDatePart.Date => new BsonDocument("$dateTrunc", new BsonDocument { { "date", operand }, { "unit", "day" } }),
+            _ => throw new NativeTranslationNotSupportedException($"Unhandled {nameof(MongoDatePart)} '{node.Part}'.")
+        };
+    }
 
     // A missing or explicitly-null array makes $size a hard server error that aborts the whole aggregate, so an
     // EMBEDDED array path is wrapped in $ifNull (count 0 — what LINQ answers for a missing embedded array). A

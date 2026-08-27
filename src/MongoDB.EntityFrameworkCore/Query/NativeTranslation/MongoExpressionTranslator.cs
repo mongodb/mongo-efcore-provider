@@ -149,6 +149,80 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
+    /// Resolves a <c>DateTime</c>/<c>DateTimeOffset</c> member-access chain (<c>.Year</c>, <c>.Date</c>,
+    /// <c>.DateTime</c>, <c>.UtcDateTime</c>, etc.) to a native date expression. Recurses into the receiver so
+    /// a multi-hop chain composes correctly — e.g. <c>x.Dto.Value.DateTime.Date</c> resolves the field first
+    /// (the <c>.Value</c> hop is peeled generically by <see cref="TryResolveMember"/>), wraps it in
+    /// <see cref="MongoDateTimeOffsetLocalExpression"/> for <c>.DateTime</c>, then wraps THAT in
+    /// <see cref="MongoDatePartExpression"/> for <c>.Date</c>.
+    /// </summary>
+    /// <remarks>
+    /// The ULTIMATE receiver (the innermost hop) must resolve to a plain stored field via
+    /// <see cref="TryResolveMember"/> — a receiver that is itself an arbitrary COMPUTED value (a conditional
+    /// branch, arithmetic) has no MQL sub-field-access form for the <c>DateTimeOffset</c> reconstruction case
+    /// and declines here rather than being mistranslated. This does not limit chains of date-member hops
+    /// themselves (those recurse through this same method), only what the chain may ultimately be rooted on.
+    /// </remarks>
+    private bool TryTranslateDateTimeMember(Expression node, [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+        if (node is not MemberExpression { Expression: { } receiver } member)
+            return false;
+
+        var receiverType = Nullable.GetUnderlyingType(receiver.Type) ?? receiver.Type;
+        if (receiverType != typeof(DateTime) && receiverType != typeof(DateTimeOffset))
+            return false;
+
+        MongoExpression receiverExpr;
+        if (TryResolveMember(receiver, out var property, out var fieldPath))
+        {
+            receiverExpr = new MongoFieldExpression(property, fieldPath!);
+        }
+        else if (TryTranslateDateTimeMember(receiver, out var nestedDateTimeExpr))
+        {
+            receiverExpr = nestedDateTimeExpr;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (receiverType == typeof(DateTimeOffset))
+        {
+            switch (member.Member.Name)
+            {
+                case nameof(DateTimeOffset.UtcDateTime):
+                    if (receiverExpr is not MongoFieldExpression utcField)
+                        return false;
+                    result = new MongoElementRefExpression(utcField.ElementName + ".DateTime", typeof(DateTime));
+                    return true;
+
+                case nameof(DateTimeOffset.DateTime):
+                case nameof(DateTimeOffset.LocalDateTime):
+                    if (receiverExpr is not MongoFieldExpression localField)
+                        return false;
+                    result = new MongoDateTimeOffsetLocalExpression(localField);
+                    return true;
+
+                default:
+                    if (!DatePartsByMemberName.TryGetValue(member.Member.Name, out var offsetPart))
+                        return false;
+                    if (receiverExpr is not MongoFieldExpression partField)
+                        return false;
+                    result = new MongoDatePartExpression(new MongoDateTimeOffsetLocalExpression(partField), offsetPart);
+                    return true;
+            }
+        }
+
+        // Plain DateTime receiver: no offset reconstruction, extract directly.
+        if (!DatePartsByMemberName.TryGetValue(member.Member.Name, out var plainPart))
+            return false;
+
+        result = new MongoDatePartExpression(receiverExpr, plainPart);
+        return true;
+    }
+
+    /// <summary>
     /// Resolves a rooted member-access chain whose final hop is an embedded COLLECTION navigation into a raw
     /// element reference for the array ITSELF (e.g. <c>b.Posts</c> → <c>Posts</c>,
     /// <c>b.Home.Notes</c> → <c>Home.Notes</c>), for use as a native projection leaf — the array is emitted by
@@ -183,6 +257,23 @@ internal sealed partial class MongoExpressionTranslator
         result = null;
         return false;
     }
+
+    // Mirrors MongoEFToLinqTranslatingExpressionVisitor.DateTimeOffsetComponentMembers' member set, minus
+    // TimeOfDay (see MongoDatePart's own remarks for why that one is excluded), and applies identically to a
+    // plain DateTime receiver, which needs none of that visitor's offset-reconstruction dance.
+    private static readonly Dictionary<string, MongoDatePart> DatePartsByMemberName = new()
+    {
+        [nameof(DateTime.Year)] = MongoDatePart.Year,
+        [nameof(DateTime.Month)] = MongoDatePart.Month,
+        [nameof(DateTime.Day)] = MongoDatePart.Day,
+        [nameof(DateTime.Hour)] = MongoDatePart.Hour,
+        [nameof(DateTime.Minute)] = MongoDatePart.Minute,
+        [nameof(DateTime.Second)] = MongoDatePart.Second,
+        [nameof(DateTime.Millisecond)] = MongoDatePart.Millisecond,
+        [nameof(DateTime.DayOfWeek)] = MongoDatePart.DayOfWeek,
+        [nameof(DateTime.DayOfYear)] = MongoDatePart.DayOfYear,
+        [nameof(DateTime.Date)] = MongoDatePart.Date
+    };
 
     // The C# compiler's own implicit numeric conversion table (C# language spec §10.2.1) — exactly the set
     // of numeric widenings the compiler inserts automatically for mixed-numeric-type arithmetic (and that a
@@ -256,6 +347,20 @@ internal sealed partial class MongoExpressionTranslator
             // bool. Recursing into the operand catches this the same way the MongoBinaryExpression arm above
             // does for a comparison operand.
             MongoUnaryExpression u => AllFieldsDefaultSerialized(u.Operand),
+            // A $cond's test/branches can each independently reach a non-default-serialized field (e.g. a
+            // branch that is itself a raw field read) — recurse into all three the same way the binary/unary
+            // arms above do, rather than falling into the catch-all below.
+            MongoConditionalExpression cond => AllFieldsDefaultSerialized(cond.Test)
+                && AllFieldsDefaultSerialized(cond.IfTrue)
+                && AllFieldsDefaultSerialized(cond.IfFalse),
+            // A date-part extraction or DateTimeOffset local-time reconstruction renders a raw MQL date
+            // operator directly against its operand's BSON representation — a non-default BsonRepresentation
+            // or ValueConverter on the underlying field would make that operator run against a value that
+            // isn't actually a raw BSON date, silently producing a server-side type error or wrong values.
+            // Recurse into the operand so a non-default-serialized field underneath is caught here, the same
+            // way MongoConvertExpression's arm above does for an explicit cast.
+            MongoDatePartExpression datePart => AllFieldsDefaultSerialized(datePart.Operand),
+            MongoDateTimeOffsetLocalExpression local => AllFieldsDefaultSerialized(local.Operand),
             // A MongoInExpression is deliberately NOT given its own arm — it is correct via the catch-all
             // below: RenderIn/RenderInValues serialize every candidate value through the field's own property
             // serializer (MongoConstantExpression.ForSerialization / the parameter's serializer), so a
@@ -879,6 +984,35 @@ internal sealed partial class MongoExpressionTranslator
             return TranslateOperand(unary.Operand, allowNumericWidening); // benign or widening convert — unwrap and recurse
         }
 
+        // A ternary. Test is translated via the ORDINARY predicate translator (TryTranslate — the same one
+        // Where uses), so anything already supported there as a predicate (nullable equality/comparison,
+        // field-to-field, etc.) works as a $cond condition too. Both branches recurse through this same
+        // method, so a branch may itself be a cast, arithmetic, nested conditional, or date-part expression.
+        // A branch that declines declines the WHOLE conditional — there is no partial/fallback rendering for
+        // one branch of a $cond.
+        if (node is ConditionalExpression conditional)
+        {
+            if (!TryTranslate(conditional.Test, out var test))
+                return null;
+
+            var ifTrue = TranslateConditionalBranch(conditional.IfTrue, allowNumericWidening);
+            if (ifTrue is null)
+                return null;
+
+            var ifFalse = TranslateConditionalBranch(conditional.IfFalse, allowNumericWidening);
+            if (ifFalse is null)
+                return null;
+
+            return new MongoConditionalExpression(test, ifTrue, ifFalse);
+        }
+
+        // A DateTime/DateTimeOffset member-access or date-part chain (.Year, .Date, .DateTime, etc.). Must run
+        // regardless of whether TryResolveMember below would also be tried — it never matches this shape
+        // anyway (the member's OWN receiver is never the query parameter directly for a date-member chain),
+        // but this is placed here to keep it visually adjacent to the ConditionalExpression case above.
+        if (TryTranslateDateTimeMember(node, out var dateTimeMember))
+            return dateTimeMember;
+
         if (TryResolveMember(node, out var property, out var fieldPath))
             return new MongoFieldExpression(property, fieldPath!);
 
@@ -996,6 +1130,22 @@ internal sealed partial class MongoExpressionTranslator
         // A bare constant/parameter operand has no associated property for serialization context — these
         // are pure numeric $expr operands, not stored field values, so they serialize via BsonValue.Create.
         return TranslateValue(node, forSerialization: null);
+    }
+
+    // A `(T?)null` conditional branch compiles to Convert(Constant(null, typeof(object)), typeof(T?)) — an
+    // unboxing conversion from the untyped null literal, not a numeric widening and not a same-underlying-type
+    // nullable wrap, so TranslateOperand's generic Convert-handling declines it (no $toX operator exists for
+    // most target types, and even where one does, Object->T is not in the numeric-widening table). The value
+    // is unconditionally null regardless of the declared conversion, so recognize it here — narrowly, only for
+    // a conditional's own branch position — rather than loosening the shared Convert branch every other caller
+    // (predicate/sort/arithmetic operands) also goes through.
+    private MongoExpression? TranslateConditionalBranch(Expression branch, bool allowNumericWidening)
+    {
+        if (branch is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary
+            && unary.Operand is ConstantExpression { Value: null } nullConstant)
+            return TranslateValue(nullConstant, forSerialization: null);
+
+        return TranslateOperand(branch, allowNumericWidening);
     }
 
     // True for the numeric CLR types $add/$subtract/$multiply/$divide/$mod accept — used to keep
@@ -1138,10 +1288,23 @@ internal sealed partial class MongoExpressionTranslator
     /// renders at all — see <see cref="ConstantSerializationContext"/>'s remarks).
     /// </summary>
     /// <remarks>
-    /// Four shapes are identity-like: enum → its own underlying type or a WIDENING of it (and back);
-    /// <see cref="char"/> → <see cref="int"/>; and <c>T</c> → <see cref="object"/> (boxing for a value type, or
-    /// a plain reference upcast for a reference type — both leave the stored value unchanged, only its declared
-    /// CLR type, so both count as identity-like despite the method name's "boxing" resonance).
+    /// Five shapes are identity-like: enum → its own underlying type or a WIDENING of it (and back); enum →
+    /// an UNRELATED enum with the SAME underlying type (e.g. an entity enum reinterpreted as a DTO enum with
+    /// matching members — the two CLR types disagree, but the stored value doesn't change); <see cref="char"/>
+    /// → <see cref="int"/>; and <c>T</c> → <see cref="object"/> (boxing for a value type, or a plain reference
+    /// upcast for a reference type — both leave the stored value unchanged, only its declared CLR type, so
+    /// both count as identity-like despite the method name's "boxing" resonance).
+    /// <para>
+    /// The enum-to-enum arm requires an EXACT underlying-type match, not a widening one: composing it with a
+    /// genuine cross-width conversion (e.g. a <c>byte</c>-backed enum reinterpreted as an <c>int</c>-backed
+    /// one) would need an actual numeric conversion this arm does not attempt, so a mismatch declines rather
+    /// than mis-serializing. A chain like <c>(int)(DtoEnum)entity.SourceEnum</c> (the shape a C# enum equality
+    /// comparison against an unrelated enum constant lowers to, since both operands are promoted to their
+    /// shared underlying type before comparing) is still admitted overall: the OUTER <c>Convert(DtoEnum, int)</c>
+    /// layer is caught by the pre-existing enum-to-its-own-underlying-type arm below, and this arm catches the
+    /// INNER <c>Convert(SourceEnum, DtoEnum)</c> layer — <see cref="HasNumericConvert"/> walks every layer, so
+    /// each is classified independently.
+    /// </para>
     /// <para>
     /// The enum arm checks against the enum's OWN underlying type, not against <see cref="int"/>: C# promotes a
     /// sub-<c>int</c> enum (<c>short</c>/<c>byte</c>/<c>ushort</c>/<c>sbyte</c>-backed) to <see cref="int"/> for
@@ -1159,6 +1322,11 @@ internal sealed partial class MongoExpressionTranslator
     /// </remarks>
     private static bool IsIdentityLikeConvert(Type fromType, Type toType)
     {
+        if (fromType.IsEnum && toType.IsEnum)
+        {
+            return Enum.GetUnderlyingType(fromType) == Enum.GetUnderlyingType(toType);
+        }
+
         if (fromType.IsEnum)
         {
             var underlying = Enum.GetUnderlyingType(fromType);

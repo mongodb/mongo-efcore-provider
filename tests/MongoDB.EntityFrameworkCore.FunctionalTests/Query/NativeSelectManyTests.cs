@@ -134,6 +134,13 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // conflates the outer (unprefixed "$Name") and inner ("$Items.Name") field refs.
         public string Name { get; set; } = "";
         public decimal Price { get; set; }
+
+        // Regression coverage (MongoFieldPrefixRewriter throwing instead of declining on
+        // MongoConditionalExpression/MongoDatePartExpression cross-scope leaves): a DateTime field so an
+        // inner-scope date-part extraction (i.Occurred.Year) and a conditional (i.Flag ? ... : ...) can appear
+        // as a computed result-selector leaf that requires the scope-1 ("$Items.Occurred") prefix.
+        public DateTime Occurred { get; set; }
+        public bool Flag { get; set; }
     }
 
     private static Owner[] SeedOwners() =>
@@ -143,15 +150,15 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             Id = ObjectId.GenerateNewId(), Name = "Alice", Rank = 3m,
             Items =
             [
-                new Item { Name = "Widget", Price = 9.99m },
-                new Item { Name = "Gadget", Price = 19.99m },
+                new Item { Name = "Widget", Price = 9.99m, Occurred = new DateTime(2020, 3, 15), Flag = true },
+                new Item { Name = "Gadget", Price = 19.99m, Occurred = new DateTime(2021, 7, 4), Flag = false },
             ],
         },
         new() { Id = ObjectId.GenerateNewId(), Name = "Bob", Rank = 5m, Items = [] }, // empty owned collection
         new()
         {
             Id = ObjectId.GenerateNewId(), Name = "Carol", Rank = 7m,
-            Items = [new Item { Name = "Thing", Price = 5m }],
+            Items = [new Item { Name = "Thing", Price = 5m, Occurred = new DateTime(2022, 12, 25), Flag = true }],
         },
         // EF-347 correlated-beyond-outer: discriminating owner so a correlated predicate like
         // i.Name == o.Name has both a satisfying row (Match/Match) and a non-satisfying one (Match/NoMatch) —
@@ -577,6 +584,54 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
             .AsEnumerable().OrderBy(r => r.Sum).ToList();
 
         Assert.Equal(expected, result);
+    }
+
+    [Fact]
+    public void Explicit_result_selector_form_computed_date_part_leaf_goes_native()
+    {
+        // Regression test for the MongoFieldPrefixRewriter gap: a date-part extraction (i.Occurred.Year) over
+        // the INNER (scope-1) unwound element requires MongoFieldPrefixRewriter.Rewrite to prefix a
+        // MongoDatePartExpression's operand with the unwind path ("$Items.Occurred"). Before the fix, this
+        // reached the switch's default arm and threw NativeTranslationNotSupportedException in every
+        // MongoQueryMode instead of falling back gracefully — asserted here under both Native and NativeOnly
+        // to prove it now succeeds outright (native), not merely falls back.
+        var seed = SeedOwners();
+        var expected = seed.SelectMany(o => o.Items, (o, i) => new { X = i.Occurred.Year + 1 })
+            .OrderBy(r => r.X).ToList();
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateContext(seed, mode,
+                nameof(Explicit_result_selector_form_computed_date_part_leaf_goes_native) + mode);
+            var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { X = i.Occurred.Year + 1 })
+                .AsEnumerable().OrderBy(r => r.X).ToList();
+            Assert.Equal(expected, result);
+        }
+    }
+
+    [Fact]
+    public void Explicit_result_selector_form_computed_conditional_leaf_goes_native()
+    {
+        // Regression test for the MongoFieldPrefixRewriter gap: a ternary (i.Flag ? ... : ...) over the INNER
+        // (scope-1) unwound element requires MongoFieldPrefixRewriter.Rewrite to prefix a
+        // MongoConditionalExpression's Test/IfTrue/IfFalse operands with the unwind path. Before the fix, this
+        // hit the switch's default arm and threw NativeTranslationNotSupportedException in every
+        // MongoQueryMode instead of falling back gracefully. NativeSelectManyBinder.IsArithmeticComputedLeaf
+        // only admits a leaf whose TOP node is arithmetic (a bare top-level ternary declines there, unrelated
+        // to this bug), so the conditional is nested inside a top-level `+` to reach the same computed-leaf
+        // re-rooting path Explicit_result_selector_form_computed_date_part_leaf_goes_native exercises.
+        var seed = SeedOwners();
+        var expected = seed.SelectMany(o => o.Items, (o, i) => new { X = (i.Flag ? 1m : 2m) + 0m })
+            .OrderBy(r => r.X).ToList();
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.NativeOnly })
+        {
+            using var db = CreateContext(seed, mode,
+                nameof(Explicit_result_selector_form_computed_conditional_leaf_goes_native) + mode);
+            var result = db.Entities.SelectMany(o => o.Items, (o, i) => new { X = (i.Flag ? 1m : 2m) + 0m })
+                .AsEnumerable().OrderBy(r => r.X).ToList();
+            Assert.Equal(expected, result);
+        }
     }
 
     [Fact]

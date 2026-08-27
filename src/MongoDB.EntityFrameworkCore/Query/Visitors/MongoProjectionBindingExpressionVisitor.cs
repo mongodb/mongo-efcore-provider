@@ -209,6 +209,19 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 _projectionMapping[castProjectionMember] = castExpression;
                 return new ProjectionBindingExpression(_queryExpression, castProjectionMember, expression.Type);
 
+            // Native conditional projection leaf: register the WHOLE ConditionalExpression node as ONE
+            // projection member, exactly like the arithmetic and cast cases above (NOT caught by the earlier
+            // unconditional `case MemberExpression memberExpression:` -- a ConditionalExpression is not a
+            // MemberExpression). Without this, the default recursive walk would visit Test/IfTrue/IfFalse
+            // independently, writing the SAME ProjectionMember slot three times and silently producing wrong
+            // data. The Route == Projection guard is load-bearing for the same reason as the arithmetic case's:
+            // it confines this mapping to a projection NativeProjectionBinder already accepted in full, so a
+            // mixed/fallback shape falls through to the ordinary default walk untouched.
+            case ConditionalExpression when _queryExpression.Select.Route == NativeRoute.Projection:
+                var conditionalMember = GetCurrentProjectionMember();
+                _projectionMapping[conditionalMember] = expression;
+                return new ProjectionBindingExpression(_queryExpression, conditionalMember, expression.Type);
+
             case MethodCallExpression methodCallExpression
                 when IsScalarMethodPropertyAccess(methodCallExpression):
                 var projMember = GetCurrentProjectionMember();

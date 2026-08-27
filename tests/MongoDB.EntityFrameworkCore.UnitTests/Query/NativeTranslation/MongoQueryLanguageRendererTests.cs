@@ -980,4 +980,24 @@ public class MongoQueryLanguageRendererTests
             BsonDocument.Parse("{ Posts: { $elemMatch: { 'Comments.1': { $exists: true } } } }"),
             rendered);
     }
+
+    [Fact]
+    public void IsQueryDialectRenderable_rejects_a_conditional_expression()
+    {
+        var conditional = new MongoConditionalExpression(
+            new MongoConstantExpression(true, forSerialization: null),
+            new MongoConstantExpression(1, forSerialization: null),
+            new MongoConstantExpression(2, forSerialization: null));
+
+        Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(conditional));
+    }
+
+    [Fact]
+    public void IsQueryDialectRenderable_rejects_a_date_part_expression()
+    {
+        var datePart = new MongoDatePartExpression(
+            new MongoConstantExpression(DateTime.UtcNow, forSerialization: null), MongoDatePart.Year);
+
+        Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(datePart));
+    }
 }

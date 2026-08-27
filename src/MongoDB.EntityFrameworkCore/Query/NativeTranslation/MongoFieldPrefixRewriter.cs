@@ -60,6 +60,18 @@ internal static class MongoFieldPrefixRewriter
             MongoFilteredSizeExpression f => new MongoFilteredSizeExpression(prefix + "." + f.ArrayPath, f.ElementPredicate, f.Type),
             // The operand carries the field path; the conversion itself has nothing to prefix.
             MongoConvertExpression c => new MongoConvertExpression(Rewrite(c.Operand, prefix), c.Type),
+            // This switch's default THROWS rather than declining gracefully (unlike every other gate in this
+            // area — see the durable-invariants list in Query/AGENTS.md). A SelectMany result-selector
+            // projection leaf that needs cross-scope field prefixing reaches here for any node kind
+            // TryTranslateValue can produce; a new node kind added there must get an arm here too, or it
+            // silently regresses a shape that used to decline cleanly and fall back to driver-LINQ into a
+            // hard failure in every MongoQueryMode.
+            MongoConditionalExpression c2 => new MongoConditionalExpression(
+                Rewrite(c2.Test, prefix), Rewrite(c2.IfTrue, prefix), Rewrite(c2.IfFalse, prefix)),
+            MongoDatePartExpression dp => new MongoDatePartExpression(Rewrite(dp.Operand, prefix), dp.Part),
+            MongoDateTimeOffsetLocalExpression l => new MongoDateTimeOffsetLocalExpression(
+                (MongoFieldExpression)Rewrite(l.Operand, prefix)),
+            MongoElementRefExpression er => new MongoElementRefExpression(prefix + "." + er.Path, er.Type),
             MongoConstantExpression or MongoParameterExpression => expr,
             _ => throw new NativeTranslationNotSupportedException(
                 $"Cannot prefix-rewrite MongoExpression node '{expr.GetType().Name}'.")

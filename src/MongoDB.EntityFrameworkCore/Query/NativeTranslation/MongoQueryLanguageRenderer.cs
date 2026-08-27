@@ -474,6 +474,12 @@ internal sealed class MongoQueryLanguageRenderer
             // convert is excluded separately by IsQueryNativeComparison's requirement that the left operand
             // be a bare MongoFieldExpression.
             MongoConvertExpression => false,
+            // Explicit rather than left to the catch-all, matching MongoConvertExpression above: none of these
+            // has a query-dialect form, so admitting any of them here would put $expr inside $elemMatch, a
+            // hard server error.
+            MongoConditionalExpression => false,
+            MongoDatePartExpression => false,
+            MongoDateTimeOffsetLocalExpression => false,
             // RenderInValues throws for any values node other than a constant enumerable or a parameter.
             MongoInExpression inExpr
                 => inExpr.Values is MongoConstantExpression { Value: System.Collections.IEnumerable }

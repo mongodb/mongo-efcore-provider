@@ -546,4 +546,15 @@ public class MongoExpressionNegatorTests
             Assert.Equal(RenderOf(input), RenderOf(twice));
         }
     }
+
+    [Fact]
+    public void Negator_declines_a_conditional_expression_rather_than_mis_negating_it()
+    {
+        var conditional = new MongoConditionalExpression(
+            new MongoConstantExpression(true, forSerialization: null),
+            new MongoConstantExpression(1, forSerialization: null),
+            new MongoConstantExpression(2, forSerialization: null));
+
+        Assert.False(MongoExpressionNegator.TryNegate(conditional, out _));
+    }
 }
