@@ -35,9 +35,16 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// for result-set parity between native and driver-LINQ execution, and asserted for the expected aggregation
 /// operator in the captured MQL. Two shapes (integer division, string concatenation) are guarded OFF the native
 /// path on purpose and are covered here as "graceful fallback" — they must still produce correct driver-LINQ
-/// results and must still throw under <c>NativeOnly</c>. One additional test documents a known, PRE-EXISTING,
-/// out-of-scope limitation (a mixed whole-entity + computed-arithmetic projection) that this slice neither
-/// introduces nor fixes.
+/// results and must still throw under <c>NativeOnly</c>.
+///
+/// EF-412 extends this file with a distinct shape: a whole-ROOT-ENTITY leaf mixed with a computed/scalar/count
+/// sibling in the same projection (e.g. <c>Select(c => new { c, Total = c.Age * c.Score })</c>). This USED TO be
+/// a fallback-only shape (and, before EF-356, a silent wrong-data bug on that fallback path — the computed
+/// sibling's operand binding could be clobbered by the entity leaf). Both are now fixed: the shape has its own
+/// native route (<c>NativeRoute.Projection</c>, distinct from the pre-existing bare <c>Select(c => c)</c>
+/// <c>NativeRoute.WholeEntity</c> route) and is proven native, with correct values, under <c>NativeOnly</c>
+/// below. The remaining fallback-mode tests in this file exist to pin the late-fallback leg (a query that starts
+/// out routed native but has to fall back mid-compile) and the driver-LINQ leg, not to document a known gap.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
@@ -80,10 +87,12 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
         return (database.MongoDatabase.GetCollection<Customer>(collectionName), []);
     }
 
-    private SingleEntityDbContext<Customer> CreateContext(
-        IMongoCollection<Customer> collection, List<string> logs, MongoQueryMode mode)
+    private SingleEntityDbContext<T> CreateContext<T>(
+        IMongoCollection<T> collection, List<string> logs, MongoQueryMode mode,
+        Action<ModelBuilder>? modelBuilderAction = null) where T : class
         => SingleEntityDbContext.Create(
             collection,
+            modelBuilderAction: modelBuilderAction,
             optionsBuilderAction: b =>
             {
                 b.LogTo(logs.Add)
@@ -91,6 +100,55 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
                     .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
+
+    // ── EF-412 Task 4: entity type + fixture for the owned-collection-count sibling variation ─────────
+
+    private class CustomerWithPosts
+    {
+        public ObjectId Id { get; set; }
+        public string Name { get; set; } = "";
+        public int Age { get; set; }
+        public int Score { get; set; }
+        public List<Post> Posts { get; set; } = [];
+    }
+
+    private class Post
+    {
+        public string Heading { get; set; } = "";
+    }
+
+    private static readonly Action<ModelBuilder> CustomerWithPostsModel =
+        mb => mb.Entity<CustomerWithPosts>().OwnsMany(c => c.Posts);
+
+    // Alice: 2 posts, Bob: 0 posts, Carol: 1 post.
+    private (IMongoCollection<CustomerWithPosts> collection, List<string> logs) SeedCustomersWithPosts(string name)
+    {
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
+        var bson = database.MongoDatabase.GetCollection<BsonDocument>(collectionName);
+        bson.InsertMany([
+            new BsonDocument
+            {
+                { "_id", ObjectId.GenerateNewId() }, { "Name", "Alice" }, { "Age", 7 }, { "Score", 2 },
+                {
+                    "Posts", new BsonArray
+                    {
+                        new BsonDocument { { "Heading", "a1" } }, new BsonDocument { { "Heading", "a2" } }
+                    }
+                }
+            },
+            new BsonDocument
+            {
+                { "_id", ObjectId.GenerateNewId() }, { "Name", "Bob" }, { "Age", 20 }, { "Score", 20 },
+                { "Posts", new BsonArray() }
+            },
+            new BsonDocument
+            {
+                { "_id", ObjectId.GenerateNewId() }, { "Name", "Carol" }, { "Age", -7 }, { "Score", 2 },
+                { "Posts", new BsonArray { new BsonDocument { { "Heading", "c1" } } } }
+            },
+        ]);
+        return (database.MongoDatabase.GetCollection<CustomerWithPosts>(collectionName), []);
+    }
 
     private static string Mql(List<string> logs)
         => Assert.Single(logs, l => l.Contains("Executed MQL query"));
@@ -278,6 +336,158 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
         Assert.Equal(-14, nativeResults.Single(r => r.Name == "Carol").X);
     }
 
+    // ── EF-412 Task 4: breadth coverage for the whole-root-entity leaf mixed with a sibling ────────────
+
+    // Step 1: entity leaf + a plain scalar MEMBER sibling (as opposed to the arithmetic sibling the earlier
+    // Mixed_whole_entity_and_computed_leaf_* tests use) — proves the new Route == Projection branch is not
+    // somehow keyed off the sibling being a BinaryExpression specifically.
+    //
+    // FINAL-REVIEW WIDENING (finding F2): a [Theory] over ALL THREE modes. Before this slice every shape that is
+    // now native had Route == Fallback, so Select.Projection stayed EMPTY and the MIXED removing visitor never
+    // saw a "c"-style $$ROOT alias at all; now any admitted shape populates Select.Projection under an explicit
+    // DriverLinq too, so the IsWholeRootEntityAlias null-out in MongoProjectionBindingRemovingExpressionVisitor
+    // is load-bearing for this shape as well. NativeOnly remains a row, so the original "goes native" proof
+    // (a fallback shape would throw there) is not traded away for the fallback-leg coverage.
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Mixed_whole_entity_and_scalar_member_leaf_works_in_every_mode(MongoQueryMode mode)
+    {
+        var (collection, logs) = SeedCustomers(
+            nameof(Mixed_whole_entity_and_scalar_member_leaf_works_in_every_mode) + mode);
+        using var db = CreateContext(collection, logs, mode);
+
+        // Must not throw NativeTranslationNotSupportedException under NativeOnly.
+        var results = db.Entities.Select(c => new { Entity = c, Name = c.Name })
+            .OrderBy(r => r.Entity.Name).ToList();
+
+        Assert.Equal(["Alice", "Bob", "Carol"], results.Select(r => r.Entity.Name).ToArray());
+        Assert.Equal(["Alice", "Bob", "Carol"], results.Select(r => r.Name).ToArray());
+        Assert.Equal([7, 20, -7], results.Select(r => r.Entity.Age).ToArray());
+    }
+
+    // Step 2: entity leaf + a projected owned-collection .Count sibling — exercises the interaction between
+    // this slice's whole-entity-leaf branch and the pre-existing count-leaf branch in the same NewExpression.
+    //
+    // FINAL-REVIEW WIDENING (finding F2): a [Theory] over the two NATIVE-side modes, not NativeOnly alone —
+    // NativeOnly proves the shape goes native, the default Native row proves the default mode agrees. The
+    // DriverLinq row was ATTEMPTED and then split out: this exact shape fails on the explicit-DriverLinq leg,
+    // and that failure is PRE-EXISTING, not caused by this slice (MEASURED at 8b996aa7 — the commit before the
+    // slice — where all three modes failed: NativeOnly with the "projects a non-entity result" decline, and
+    // BOTH Native and DriverLinq with a NullReferenceException from BsonBinding.TryGetValueAtPath). The slice
+    // FIXED the two native legs and left the DriverLinq leg failing, now with a clearer compile-time throw.
+    // DriverLinq is DELIBERATELY NOT a row here — see
+    // Mixed_whole_entity_and_owned_collection_count_leaf_still_fails_under_explicit_DriverLinq below, which pins
+    // the PRE-EXISTING (measured at 8b996aa7, the commit before this slice) failure of this ONE shape on the
+    // explicit-DriverLinq leg. The other two newly-native shapes carry the DriverLinq coverage F2 asked for.
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    public void Mixed_whole_entity_and_owned_collection_count_leaf_works_in_both_native_modes(MongoQueryMode mode)
+    {
+        var (collection, logs) = SeedCustomersWithPosts(
+            nameof(Mixed_whole_entity_and_owned_collection_count_leaf_works_in_both_native_modes) + mode);
+        using var db = CreateContext(collection, logs, mode, CustomerWithPostsModel);
+
+        // Must not throw NativeTranslationNotSupportedException under NativeOnly.
+        var results = db.Entities.Select(c => new { c, PostCount = c.Posts.Count })
+            .OrderBy(r => r.c.Name).ToList();
+
+        Assert.Equal(["Alice", "Bob", "Carol"], results.Select(r => r.c.Name).ToArray());
+        Assert.Equal([7, 20, -7], results.Select(r => r.c.Age).ToArray());
+        Assert.Equal([2, 0, 1], results.Select(r => r.PostCount).ToArray());
+    }
+
+    // The DriverLinq half of the shape above, pinned as a KNOWN, PRE-EXISTING gap rather than left as an
+    // unmeasured hole — it was found by the final review's F2 widening (adding a DriverLinq row to the test
+    // above), and MEASURED against the pre-slice baseline before being classified.
+    //
+    // MEASUREMENT (worktree at 8b996aa7, the commit immediately BEFORE this slice, running this same file):
+    // all three modes failed for this shape — NativeOnly with NativeTranslationNotSupportedException ("projects
+    // a non-entity result"), and BOTH Native and DriverLinq with a NullReferenceException out of
+    // BsonBinding.TryGetValueAtPath. So `new { c, PostCount = c.Posts.Count }` NEVER worked on the fallback
+    // legs; EF-412 fixed the two native legs and did not touch this one. What DID change is the exception:
+    // the mixed removing visitor now resolves the populated Select.Projection's "PostCount" alias and asks for
+    // a model property of that name, so the failure is a clearer compile-time InvalidOperationException instead
+    // of a per-row NRE. Per the versioning rubric that is not a break (this shape has no working baseline to
+    // regress, and the exception type of an unsupported shape is not contract), and per the read-side design it
+    // is not silent wrong data either — it throws.
+    //
+    // Deliberately asserts only that it FAILS, not the exception type or message: the point of the test is that
+    // the gap is known and covered, and a future fix should make this test fail loudly (delete it and add the
+    // DriverLinq row back to the theory above) rather than leaving the gap re-discoverable. Follow-up ticket
+    // filed: EF-443 — the owned-collection-count leaf's read side on the mixed/DriverLinq leg.
+    [Fact]
+    public void Mixed_whole_entity_and_owned_collection_count_leaf_still_fails_under_explicit_DriverLinq()
+    {
+        var (collection, logs) = SeedCustomersWithPosts(
+            nameof(Mixed_whole_entity_and_owned_collection_count_leaf_still_fails_under_explicit_DriverLinq));
+        using var db = CreateContext(collection, logs, MongoQueryMode.DriverLinq, CustomerWithPostsModel);
+
+        Assert.ThrowsAny<Exception>(
+            () => db.Entities.Select(c => new { c, PostCount = c.Posts.Count }).OrderBy(r => r.c.Name).ToList());
+    }
+
+    // Step 3: the DEGENERATE single-leaf case — Select(c => new { c }), i.e. the entity leaf with NO sibling
+    // at all. This must go native via the NEW Route == Projection mechanism this slice adds, which is a
+    // DIFFERENT NativeRoute value from the pre-existing bare Select(c => c) NativeRoute.WholeEntity route —
+    // both are proven side by side here under NativeOnly so neither can be quietly broken by a change that
+    // conflates the two.
+    //
+    // FINAL-REVIEW WIDENING (finding F2): a [Theory] over ALL THREE modes, for the same reason as
+    // Mixed_whole_entity_and_owned_collection_count_leaf_works_in_both_native_modes above — the DEGENERATE
+    // `new { c }` body is a second newly-native shape whose $$ROOT alias now reaches the mixed removing
+    // visitor under an explicit DriverLinq, and it had no DriverLinq row. Both halves are driven by the same
+    // mode: the bare `Select(c => c)` half takes the pre-existing WholeEntity route in every mode and is
+    // unaffected, so keeping it in the loop costs nothing and keeps the two routes proven side by side.
+    // The NativeOnly row still carries the original "both go native" proof.
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Wrapped_and_bare_whole_entity_leaves_both_go_native_and_work_in_every_mode(MongoQueryMode mode)
+    {
+        var (collection, logs) = SeedCustomers(
+            nameof(Wrapped_and_bare_whole_entity_leaves_both_go_native_and_work_in_every_mode) + mode);
+
+        // The wrapped/degenerate shape: Route == Projection (this slice's mechanism), NOT WholeEntity.
+        using (var wrapped = CreateContext(collection, logs, mode))
+        {
+            var results = wrapped.Entities.Select(c => new { c }).OrderBy(r => r.c.Name).ToList();
+
+            Assert.Equal(["Alice", "Bob", "Carol"], results.Select(r => r.c.Name).ToArray());
+            Assert.Equal([7, 20, -7], results.Select(r => r.c.Age).ToArray());
+        }
+
+        // The pre-existing bare shape: Route == WholeEntity. Side-by-side proof the two routes coexist.
+        using (var bare = CreateContext(collection, [], mode))
+        {
+            var results = bare.Entities.OrderBy(c => c.Name).ToList();
+
+            Assert.Equal(["Alice", "Bob", "Carol"], results.Select(c => c.Name).ToArray());
+            Assert.Equal([7, 20, -7], results.Select(c => c.Age).ToArray());
+        }
+    }
+
+    // Step 4: entity leaf + computed sibling, ordered by the COMPUTED sibling rather than an entity member —
+    // catches any accidental coupling of the native routing to OrderBy-by-entity-member, which every other
+    // Mixed_whole_entity_and_computed_leaf_* test in this file happens to use (OrderBy(r => r.c.Name)).
+    [Fact]
+    public void Mixed_whole_entity_and_computed_leaf_ordered_by_the_computed_sibling_goes_native()
+    {
+        var (collection, logs) = SeedCustomers(
+            nameof(Mixed_whole_entity_and_computed_leaf_ordered_by_the_computed_sibling_goes_native));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        // Must not throw NativeTranslationNotSupportedException under NativeOnly.
+        var results = db.Entities.Select(c => new { c, Total = c.Age * c.Score })
+            .OrderBy(r => r.Total).ToList();
+
+        Assert.Equal([-14, 14, 400], results.Select(r => r.Total).ToArray());
+        Assert.Equal(["Carol", "Alice", "Bob"], results.Select(r => r.c.Name).ToArray());
+    }
+
     // ── Guard fallbacks: graceful — there IS a driver-LINQ oracle, and results must agree ────────────
 
     // EF-434 RE-BASELINE. Was Integer_division_projection_falls_back_gracefully_except_under_NativeOnly, which
@@ -343,23 +553,23 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
         Assert.Equal(["Alice!", "Bob!", "Carol!"], nativeResults.Select(r => r.X).ToArray());
     }
 
-    // ── Known, pre-existing, OUT-OF-SCOPE limitation: mixed whole-entity + computed-arithmetic ───────
+    // ── FIXED (EF-412/EF-356): mixed whole-entity + computed-arithmetic, once a silent wrong-data bug ─────
     //
     // Select(c => new { c, Total = c.Age * c.Score }) mixes a whole-entity leaf with a computed-arithmetic
-    // leaf. The native projection binder's Route stays Fallback (an entity leaf isn't natively representable),
-    // so this shape routes to the pre-existing MIXED shaper (MongoMixedProjectionBindingRemovingExpressionVisitor)
-    // via the default (non-native) projection-binding walk — NOT through the new Route == Projection-gated
-    // BinaryExpression case added in this slice (see MongoProjectionBindingExpressionVisitor), which is exactly
-    // what confines this slice's change to the native path. Under the default walk, the BinaryExpression's two
-    // operands (c.Age, c.Score) are each visited as ordinary MemberExpressions against the SAME current
-    // projection member (there is no per-operand member push for a bare arithmetic node), so the second operand's
-    // binding silently overwrites the first's in the projection mapping. The net observed effect: EVERY row's
-    // "Total" comes out as Score*Score instead of Age*Score (e.g. Alice Age=7,Score=2 → Total=4, not 14; Carol
-    // Age=-7,Score=2 → Total=4, not -14; Bob Age=20,Score=20 → Total=400, which happens to be correct only because
-    // Age==Score for that row). No exception is thrown — this is a SILENT wrong-data bug that predates this slice
-    // and is unrelated to it (the mixed shaper has no BinaryExpression handling at all). This test pins down that
-    // exact, reproducible, wrong value so any future change to this area shows up as a test diff; it is NOT
-    // asserting correct behavior. Tracked as a follow-up ticket (see task-4-report.md).
+    // leaf. This shape now has its own native route (NativeRoute.Projection, emitted as {"c": "$$ROOT"} in the
+    // $project — see NativeProjectionBinder and MongoProjectionBindingExpressionVisitor), proven native under
+    // NativeOnly by Mixed_whole_entity_and_computed_leaf_goes_native below.
+    //
+    // Historically (pre-EF-356, before this native route existed) this shape routed to the MIXED shaper
+    // (MongoMixedProjectionBindingRemovingExpressionVisitor) via the default (non-native) projection-binding
+    // walk, where the BinaryExpression's two operands (c.Age, c.Score) were each visited as ordinary
+    // MemberExpressions against the SAME current projection member (no per-operand member push for a bare
+    // arithmetic node) — so the second operand's binding silently overwrote the first's in the projection
+    // mapping, and every row's "Total" came out as Score*Score instead of Age*Score. That bug was fixed as
+    // EF-356 on the mixed-shaper path itself (independent of, and prior to, EF-412's native route). This test
+    // now asserts the CORRECT values under the default (Native) mode and doubles as a regression pin for both
+    // fixes: a future change to either the mixed shaper or the native route that reintroduced the clobber would
+    // show up here as a wrong Total, not a thrown exception.
     [Fact]
     public void Mixed_whole_entity_and_computed_leaf_returns_the_correct_computed_value()
     {
@@ -379,5 +589,112 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
         // discriminate the fix; Bob's row cannot, because Age == Score there makes both answers 400.
         Assert.Equal([14, 400, -14], results.Select(r => r.Total).ToArray());
         Assert.Equal(14, results.Single(r => r.c.Name == "Alice").Total);
+    }
+
+    // EF-412 bind-side slice: the emit side (NativeProjectionBinder, task 1) now recognizes a whole-root-entity
+    // leaf mixed with a computed sibling and routes it to Route == Projection (emitted as {"c": "$$ROOT"} in the
+    // native $project). This test proves the BIND side (MongoProjectionBindingExpressionVisitor) no longer
+    // declines that shape under NativeOnly with NativeTranslationNotSupportedException. The read side (Task 3)
+    // may still be incomplete, so this test may still fail here with a DIFFERENT (read-side) error.
+    [Fact]
+    public void Mixed_whole_entity_and_computed_leaf_goes_native()
+    {
+        var (collection, _) = SeedCustomers(nameof(Mixed_whole_entity_and_computed_leaf_goes_native));
+        using var db = CreateContext(collection, [], MongoQueryMode.NativeOnly);
+
+        // Must not throw NativeTranslationNotSupportedException under NativeOnly.
+        var results = db.Entities.Select(c => new { c, Total = c.Age * c.Score }).OrderBy(r => r.c.Name).ToList();
+
+        Assert.Equal(["Alice", "Bob", "Carol"], results.Select(r => r.c.Name).ToArray());
+        Assert.Equal([14, 400, -14], results.Select(r => r.Total).ToArray());
+    }
+
+    // EF-412 read-side slice. The emit + bind sides route this shape natively, which means the FALLBACK leg
+    // has to keep working too: under explicit DriverLinq, MongoShapedQueryCompilingExpressionVisitor skips the
+    // native Route == Projection branch and hands the MIXED removing visitor a WHOLE, un-projected document —
+    // where the emitted "c" alias ($$ROOT) names no element. Without the read-side fix this case fails with
+    // "Field 'c' required but not present in BsonDocument for a 'Customer'". This shape worked correctly on
+    // DriverLinq before this slice, so a failure here is a regression, not a gap.
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Mixed_whole_entity_and_computed_leaf_works_in_every_mode(MongoQueryMode mode)
+    {
+        var (collection, _) = SeedCustomers(nameof(Mixed_whole_entity_and_computed_leaf_works_in_every_mode) + mode);
+        using var db = CreateContext(collection, [], mode);
+
+        var results = db.Entities.Select(c => new { c, Total = c.Age * c.Score }).OrderBy(r => r.c.Name).ToList();
+
+        Assert.Equal(["Alice", "Bob", "Carol"], results.Select(r => r.c.Name).ToArray());
+        Assert.Equal([14, 400, -14], results.Select(r => r.Total).ToArray());
+    }
+
+    // EF-412 LATE-FALLBACK leg. The shaper is built FIRST and native-vs-driver decided SECOND, so a query
+    // routed native at translate time (Route == Projection) can still have TryBuildNativeFactory decline
+    // MID-COMPILE — while the ALREADY alias-addressed native (non-mixed) removing visitor stays in place over
+    // whatever the driver-LINQ bridge renders. A CAPTURED LOCAL in a string.StartsWith is the measured trigger
+    // (the native renderer declines a parameterized regex term); a constant would never reach this leg and
+    // would leave this test falsely green. This is the same mechanism Ef362OwnedHopArrayProjectionTests
+    // documents, and the risk the EF-412 spike flagged as unverified for a "$$ROOT"-bound alias.
+    //
+    // Asserted under the DEFAULT Native mode (not DriverLinq): the point is that the default mode must not
+    // return wrong data or throw on this combination. Values, not counts — the failure mode this pins is
+    // "Field 'c' required but not present in BsonDocument", but a near-miss variant could equally have
+    // returned a null entity or a misread Total.
+    [Fact]
+    public void Mixed_whole_entity_and_computed_leaf_behind_a_parameterized_where_reads_correct_values()
+    {
+        var (collection, logs) = SeedCustomers(
+            nameof(Mixed_whole_entity_and_computed_leaf_behind_a_parameterized_where_reads_correct_values));
+
+        var namePrefix = "A";
+
+        // HALF THE DISCRIMINATOR, and it is not decoration. Without it this test would pass just as happily if
+        // the shape went fully native, and would then prove nothing about the late-fallback leg at all.
+        // NativeOnly forbids the fallback, so this throw is the proof that TryBuildNativeFactory declines
+        // MID-COMPILE for this exact query (MQL has no parameterized-regex form — see
+        // MongoQueryLanguageRenderer.RenderRegex) and therefore that the Native leg below genuinely executes
+        // the driver-LINQ bridge underneath an already alias-addressed native shaper. MEASURED, not assumed.
+        //
+        // The OTHER half is the MQL assertion at the end of this test: this throw alone establishes only that
+        // the query is ROUTED down the fallback leg, not that the shaper and the driver's rendering agree on
+        // the alias — that is what the "c" : "$$ROOT" assertion pins, and it is the part that would catch a
+        // renderer change on either side. Neither assertion is sufficient alone.
+        using (var nativeOnly = CreateContext(collection, [], MongoQueryMode.NativeOnly))
+        {
+            var declined = nativeOnly.Entities
+                .Where(c => c.Name.StartsWith(namePrefix))
+                .Select(c => new { c, Total = c.Age * c.Score });
+            Assert.Throws<NativeTranslationNotSupportedException>(() => declined.ToList());
+        }
+
+        using var db = CreateContext(collection, logs, MongoQueryMode.Native);
+
+        var results = db.Entities
+            .Where(c => c.Name.StartsWith(namePrefix))
+            .Select(c => new { c, Total = c.Age * c.Score })
+            .OrderBy(r => r.c.Name)
+            .ToList();
+
+        var row = Assert.Single(results);
+        Assert.Equal("Alice", row.c.Name);
+        Assert.Equal(7, row.c.Age);
+        Assert.Equal(2, row.c.Score);
+        Assert.NotEqual(ObjectId.Empty, row.c.Id);
+        Assert.Equal(14, row.Total);
+
+        // WHY this passes with NO code change, recorded so the negative result is not re-derived from scratch.
+        // The driver-LINQ bridge renders the SAME projection the native emit side would have — the alias is the
+        // projection MEMBER name ("c") and the value is "$$ROOT" — so the alias-addressed native shaper's
+        // doc["c"] read hits. That is precisely the harmless case ShouldStripBareProjectionOnFallback's remarks
+        // describe: this leaf registers no ProjectionAliasTier.DocumentPath alias OVERRIDE (its alias already IS
+        // the member name), so HasDocumentPathAliasOverride stays false, no late-fallback strip fires, and none
+        // is needed. Contrast the EF-362 owned-hop array leaf, whose emit-side alias ("Home.Notes") is a
+        // document path the driver would never pick — that is what makes the strip load-bearing there and inert
+        // here. Asserted on the captured MQL so a future change to EITHER renderer that breaks that agreement
+        // fails loudly here instead of silently returning a null entity.
+        var mql = Mql(logs);
+        Assert.Contains("\"c\" : \"$$ROOT\"", mql);
+        Assert.Contains("$multiply", mql);
     }
 }

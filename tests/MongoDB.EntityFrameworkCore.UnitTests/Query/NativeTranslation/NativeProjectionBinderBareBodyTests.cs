@@ -39,6 +39,8 @@ public class NativeProjectionBinderBareBodyTests
         public string Country { get; set; } = "";
         public int Amount { get; set; }
         public double Weight { get; set; }
+        public int Age { get; set; }
+        public double Score { get; set; }
         public List<string> Tags { get; set; } = null!;
         public Address Address { get; set; } = null!;
         public List<Line> Lines { get; set; } = null!;
@@ -486,6 +488,57 @@ public class NativeProjectionBinderBareBodyTests
         // binder is ever called, so this shape does not reach here in practice — but the arm must not be able to
         // match a bare ParameterExpression even if it did, or whole-entity queries would start emitting a
         // $project keyed by nothing.
+        Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
+        Assert.Empty(mongoQ.Select.Projection);
+        Assert.False(mongoQ.Select.IsBareProjection);
+    }
+
+    // ── EF-412: wrapped whole-entity leaf recognition ───────────────────────────────────────────────────
+    //
+    // These tests ensure that when a wrapped projection (anonymous type / DTO) contains a whole-entity leaf,
+    // it is recognized and emitted as `$$ROOT`, but ONLY in wrapped contexts (NewExpression/MemberInitExpression).
+    // The bare-body parameter is NOT admitted by this new arm — it must keep taking the pre-existing path.
+
+    [Fact]
+    public void Wrapped_whole_entity_leaf_is_admitted_as_ROOT()
+    {
+        var mongoQ = TestQuery();
+        Expression<Func<Order, object>> selector = o => new { o, Total = o.Age * o.Score };
+
+        // The new arm admits a wrapped whole-entity leaf as `$$ROOT`.
+        Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
+
+        var projections = mongoQ.Select.Projection;
+        Assert.Equal(2, projections.Count);
+
+        // First projection entry should be the whole-entity leaf aliased as "o"
+        var firstProjection = projections[0];
+        Assert.Equal("o", firstProjection.Alias);
+        var rootRef = Assert.IsType<MongoElementRefExpression>(firstProjection.Expression);
+        Assert.Equal("$ROOT", rootRef.Path);
+        Assert.Equal(typeof(Order), rootRef.Type);
+
+        // Second projection entry should be the computed leaf aliased as "Total"
+        var secondProjection = projections[1];
+        Assert.Equal("Total", secondProjection.Alias);
+        // The computed (arithmetic) leaf is a MongoBinaryExpression
+        Assert.IsType<MongoBinaryExpression>(secondProjection.Expression);
+
+        // Neither bare projection nor override expected for a wrapped body
+        Assert.False(mongoQ.Select.IsBareProjection);
+        Assert.False(mongoQ.Select.TryGetProjectionAlias(null, out _));
+    }
+
+    [Fact]
+    public void Bare_whole_entity_parameter_is_still_declined_by_the_new_arm()
+    {
+        // NEGATIVE CONTROL: ensure the new arm doesn't admit a bare `o => o`.
+        // This test is what catches the load-bearing gate — a bare body MUST NOT be admitted by the new arm,
+        // or it would silently break the pre-existing WholeEntity route (which EF's query compilation expects).
+        var mongoQ = TestQuery();
+        Expression<Func<Order, Order>> selector = o => o;
+
+        // Even though the new arm is now in the code, a bare body still must be declined.
         Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
         Assert.Empty(mongoQ.Select.Projection);
         Assert.False(mongoQ.Select.IsBareProjection);

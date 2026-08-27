@@ -1254,12 +1254,15 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$project" : { "_outer" : "$
 
     public override async Task ToList_Count_in_projection_works(bool async)
     {
-        // Fails: mixed entity-and-count projection (new { c, c.Orders.ToList().Count() }) is the mixed path
-        // (the entity `c` is projected too), which does not route through the scalar collection-navigation
-        // count push-down, and is not supported. EF-X001
-        await AssertTranslationFailed(() => base.ToList_Count_in_projection_works(async));
+        // NEWLY PASSING as of EF-412: the mixed entity-and-count projection
+        // (new { c, c.Orders.ToList().Count() }) now goes native — the whole-root-entity leaf emits as
+        // {"c": "$$ROOT"} and the $lookup-backed count is its sibling — so this no longer fails translation.
+        await base.ToList_Count_in_projection_works(async);
 
-        AssertMql();
+        AssertMql(
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$project" : { "c" : "$$ROOT", "Count" : { "$size" : "$_lookup_Orders" }, "_id" : 0 } }
+""");
     }
 
     public override async Task LastOrDefault_member_access_in_projection_translates_to_server(bool async)
@@ -1894,8 +1897,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "local
 
         AssertMql(
             """
-            Customers.
-            """);
+Customers.{ "$project" : { "City" : "$City", "c" : "$$ROOT", "_id" : 0 } }
+""");
     }
 
     public override async Task Client_method_in_projection_requiring_materialization_1(bool async)

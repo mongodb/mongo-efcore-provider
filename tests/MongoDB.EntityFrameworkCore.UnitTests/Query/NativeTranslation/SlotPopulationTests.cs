@@ -39,6 +39,20 @@ public class SlotPopulationTests
         public string Name { get; set; } = "";
     }
 
+    // Used only by Mixed_owned_reference_entity_and_arithmetic_leaves_do_not_populate_projection: an
+    // OWNED-reference entity leaf is the "entity leaf that still declines" control for EF-412's root-entity arm.
+    private class CustomerWithOwnedAddress
+    {
+        public ObjectId Id { get; set; }
+        public int Age { get; set; }
+        public OwnedAddress Address { get; set; } = null!;
+    }
+
+    private class OwnedAddress
+    {
+        public string City { get; set; } = "";
+    }
+
     // ── Test harness ─────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -55,10 +69,15 @@ public class SlotPopulationTests
     /// A function that applies LINQ operators to the DbSet's <see cref="IQueryable{T}"/> — e.g.
     /// <c>q => q.Where(c => c.Age > 21)</c>. The result's <c>.Expression</c> is fed into the visitor.
     /// </param>
+    /// <param name="modelBuilderAction">
+    /// Optional model customization, for the few tests whose shape needs more than a flat entity (e.g. an
+    /// owned navigation). Threaded straight through to <see cref="SingleEntityDbContext.Create{T}"/>.
+    /// </param>
     private static MongoQueryExpression TranslateToMongoQuery<T>(
-        Func<IQueryable<T>, IQueryable> buildQuery) where T : class
+        Func<IQueryable<T>, IQueryable> buildQuery,
+        Action<ModelBuilder>? modelBuilderAction = null) where T : class
     {
-        using var db = SingleEntityDbContext.Create<T>();
+        using var db = SingleEntityDbContext.Create<T>(modelBuilderAction);
 
         // Obtain the factory and compilation context from EF's DI container.
         var visitorFactory = db.GetService<IQueryableMethodTranslatingExpressionVisitorFactory>();
@@ -307,17 +326,44 @@ public class SlotPopulationTests
         Assert.IsType<MongoBinaryExpression>(mongoQuery.Select.Projection[1].Expression);
     }
 
+    // INVERTED by EF-412, which is the whole point of that slice. This test previously asserted
+    // Route == Fallback / Projection empty for `new { c, Total = ... }`, on the premise that a whole-entity
+    // leaf is never natively representable. That premise is now false for the specific case of the WHOLE ROOT
+    // ENTITY: NativeProjectionBinder.TryTranslateLeaf admits the selector's own parameter as a
+    // MongoElementRefExpression("$ROOT") when it appears inside a WRAPPED (new{}/member-init) body, so the
+    // projection populates and emits {"c": "$$ROOT", "Total": {...}}. The removed assertion's INTENT — that
+    // SOME entity leaves still decline — is not lost: it moved to the sibling test below, which pins an
+    // entity leaf that is genuinely still out of scope.
     [Fact]
-    public void Mixed_whole_entity_and_arithmetic_leaves_do_not_populate_projection()
+    public void Mixed_whole_root_entity_and_arithmetic_leaves_populate_projection()
     {
-        // A whole-entity leaf (`c`) alongside an arithmetic leaf: the whole-entity leaf is not natively
-        // representable, so the binder rejects the WHOLE projection → Route stays Fallback and Projection
-        // stays empty. This is the precondition the Route == NativeRoute.Projection guard on the new
-        // BinaryExpression case in MongoProjectionBindingExpressionVisitor relies on: because Route is
-        // Fallback here, that case does NOT fire and the arithmetic leaf is never registered as a native
-        // projection leaf that the mixed shaper cannot read. (The end-to-end value-correctness of this mixed
-        // shape is out of scope for this slice and carried as a follow-up; Task 4 functional covers it.)
         var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { c, Total = c.Age * c.Age }));
+
+        Assert.Equal(NativeRoute.Projection, mongoQuery.Select.Route);
+        Assert.Equal(2, mongoQuery.Select.Projection.Count);
+        Assert.Equal("c", mongoQuery.Select.Projection[0].Alias);
+        Assert.Equal("$ROOT", Assert.IsType<MongoElementRefExpression>(mongoQuery.Select.Projection[0].Expression).Path);
+        Assert.Equal("Total", mongoQuery.Select.Projection[1].Alias);
+        Assert.IsType<MongoBinaryExpression>(mongoQuery.Select.Projection[1].Expression);
+    }
+
+    // The SIBLING that carries the inverted test's original intent. EF-412 admits exactly one entity leaf —
+    // the selector's own root parameter, which is what `$$ROOT` names. An OWNED-reference entity leaf
+    // (`c.Address`, an embedded sub-document) is a different entity and is NOT the root parameter, so
+    // TryTranslateLeaf's `IsSelectorParameter` conjunct rejects it and the WHOLE projection declines — Route
+    // stays Fallback and Projection stays empty, exactly as the pre-EF-412 behavior did for every entity leaf.
+    //
+    // This matters beyond bookkeeping: Route == Fallback here is the precondition that keeps the
+    // Route == NativeRoute.Projection-gated arms in MongoProjectionBindingExpressionVisitor from firing for a
+    // shape the native shaper cannot read, so the arithmetic sibling is never registered as a native leaf the
+    // mixed shaper would then misread. If a future slice widens the emit gate to another entity leaf kind, this
+    // test must fail rather than the widening landing silently.
+    [Fact]
+    public void Mixed_owned_reference_entity_and_arithmetic_leaves_do_not_populate_projection()
+    {
+        var mongoQuery = TranslateToMongoQuery<CustomerWithOwnedAddress>(
+            q => q.Select(c => new { c.Address, Total = c.Age * c.Age }),
+            mb => mb.Entity<CustomerWithOwnedAddress>().OwnsOne(c => c.Address));
 
         Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
         Assert.Empty(mongoQuery.Select.Projection);

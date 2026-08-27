@@ -1975,8 +1975,8 @@ Customers.{ "$match" : { "City" : "London" } }, { "$project" : { "CompanyName" :
 
         AssertMql(
             """
-            Employees.{ "$match" : { "Title" : "Sales Representative" } }
-            """);
+Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { "e" : "$$ROOT", "Title" : "$Title", "_id" : 0 } }
+""");
     }
 
     public override async Task Where_primitive_tracked(bool async)
@@ -1995,8 +1995,8 @@ Customers.{ "$match" : { "City" : "London" } }, { "$project" : { "CompanyName" :
 
         AssertMql(
             """
-            Employees.{ "$limit" : 9 }, { "$match" : { "_id" : 5 } }
-            """);
+Employees.{ "$limit" : 9 }, { "$match" : { "_id" : 5 } }, { "$project" : { "e" : "$$ROOT", "_id" : 0 } }
+""");
     }
 
     public override async Task Where_poco_closure(bool async)

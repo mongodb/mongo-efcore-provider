@@ -83,7 +83,7 @@ internal static class NativeProjectionBinder
                 {
                     var memberName = newExpression.Members[i].Name;
                     var alias = DeriveWrappedLeafAlias(mongoQ, newExpression.Arguments[i], memberName);
-                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], newExpression.Arguments[i], alias, pendingLookups, out var leaf, out var isArrayLeaf))
+                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], newExpression.Arguments[i], alias, pendingLookups, out var leaf, out var isArrayLeaf, allowWholeRootEntityLeaf: true))
                         return false;
                     if (!seenAliases.Add(alias))
                         return false;
@@ -105,7 +105,7 @@ internal static class NativeProjectionBinder
 
                     var memberName = binding.Member.Name;
                     var alias = DeriveWrappedLeafAlias(mongoQ, assignment.Expression, memberName);
-                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], assignment.Expression, alias, pendingLookups, out var leaf, out var isArrayLeaf))
+                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], assignment.Expression, alias, pendingLookups, out var leaf, out var isArrayLeaf, allowWholeRootEntityLeaf: true))
                         return false;
                     if (!seenAliases.Add(alias))
                         return false;
@@ -307,7 +307,8 @@ internal static class NativeProjectionBinder
         string alias,
         List<LookupExpression> pendingLookups,
         out MongoExpression result,
-        out bool isArrayLeaf)
+        out bool isArrayLeaf,
+        bool allowWholeRootEntityLeaf = false)
     {
         // Only the owned array-leaf branch below ever sets this true; every other accepted leaf kind (a plain
         // field, a projected count, an arithmetic leaf) needs no owner-key emission.
@@ -367,6 +368,19 @@ internal static class NativeProjectionBinder
             && NativeGroupByBinder.HasDefaultKeySerialization(castField.Property))
         {
             result = castField;
+            return true;
+        }
+
+        // A WHOLE-ROOT-ENTITY leaf — `new { c, Total = ... }`. The selector's own parameter
+        // (possibly wrapped in EF auto-include layers) projected as `$$ROOT`. Gated to WRAPPED
+        // selector bodies only (allowWholeRootEntityLeaf), never the bare-body arm — a bare
+        // `c => c` must keep taking the pre-existing WholeEntity route, not this one.
+        if (allowWholeRootEntityLeaf
+            && IsSelectorParameter(leafExpression, outerParameter)
+            && leafExpression.Type == mongoQ.CollectionExpression.EntityType.ClrType)
+        {
+            result = new MongoElementRefExpression(
+                MongoElementRefExpression.WholeRootDocumentPath, mongoQ.CollectionExpression.EntityType.ClrType);
             return true;
         }
 
@@ -1121,6 +1135,27 @@ internal static class NativeProjectionBinder
     /// <see cref="MongoSizeExpression"/> count or an arithmetic <see cref="MongoBinaryExpression"/>, neither of
     /// which is backed by any single document element) all read back wrong or not at all and must decline.
     /// </summary>
+    /// <remarks>
+    /// <b>This method is also what keeps a <c>$$ROOT</c>-bound projection safe from the late-fallback strip
+    /// (EF-412, recorded at the final review because the connection is real but invisible from either side).</b>
+    /// The reasoning, not a restatement of the code: the strip
+    /// (<c>MongoShapedQueryCompilingExpressionVisitor.ShouldStripBareProjectionOnFallback</c> →
+    /// <c>MongoSelectDefinition.HasDocumentPathAliasOverride</c>) hands the shaper WHOLE documents, and the
+    /// native (non-mixed) removing visitor has <c>ReadsUnprojectedDocuments == false</c>, so it would read a
+    /// <c>$$ROOT</c> leaf's alias as a named element that does not exist. For a WRAPPED body a document-path
+    /// alias override can only come from an owned-ARRAY leaf (<see cref="DeriveWrappedLeafAlias"/> — that is the
+    /// only leaf kind whose alias is ever something other than its member name), and admitting an array leaf
+    /// forces the sibling sweep at the call site to run this predicate over EVERY non-array leaf. This predicate
+    /// requires a <see cref="MongoFieldExpression"/>, so it REJECTS the
+    /// <c>MongoElementRefExpression(WholeRootDocumentPath)</c> a whole-root-entity leaf translates to — the
+    /// whole projection therefore declines to <c>Fallback</c> before any state is mutated, and a
+    /// <c>$$ROOT</c> leaf can never coexist with a strip-triggering alias override in the first place. So the
+    /// combination "strip fires AND a <c>$$ROOT</c> leaf is present" is unreachable BY CONSTRUCTION rather than
+    /// by any check downstream. Pinned by
+    /// <c>Ef362ArrayLeafPathTests.A_whole_root_entity_leaf_beside_an_owned_hop_array_leaf_declines_the_whole_projection</c>
+    /// (with a positive control proving the array leaf itself IS admitted in that harness) — if this predicate
+    /// is ever widened to admit a non-field leaf, that test must fail rather than the widening landing silently.
+    /// </remarks>
     private static bool IsWholeDocumentReadableLeaf(string alias, MongoExpression leaf)
         => leaf is MongoFieldExpression field
            && !field.ElementName.Contains('.')

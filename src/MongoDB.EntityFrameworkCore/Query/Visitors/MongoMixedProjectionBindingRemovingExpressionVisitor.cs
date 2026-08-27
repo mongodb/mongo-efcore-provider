@@ -51,6 +51,9 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         _docParameter = docParameter;
     }
 
+    /// <inheritdoc />
+    protected override bool ReadsUnprojectedDocuments => true;
+
     protected override Expression VisitExtension(Expression extensionExpression)
     {
         if (extensionExpression is ProjectionBindingExpression projectionBindingExpression)

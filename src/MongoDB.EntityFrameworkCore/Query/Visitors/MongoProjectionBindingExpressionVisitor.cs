@@ -276,6 +276,34 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     {
         switch (extensionExpression)
         {
+            // A whole-root-entity leaf inside a NATIVE projection ($project emits {"c": "$$ROOT"}).
+            //
+            // WHY THE TWO GATES CANNOT DIVERGE SILENTLY (recorded at the final review, because the emit and bind
+            // gates are deliberately spelled differently and a reader will wonder). The EMIT side
+            // (NativeProjectionBinder.TryTranslateLeaf) admits the leaf on CLR-TYPE EQUALITY against the root
+            // entity type plus parameter identity; this BIND side keys on entity-type IDENTITY plus
+            // `Index: null`. The `Index: null` conjunct is what closes the only interesting gap: an
+            // index-BOUND root shaper arises solely for a join's inner entity (rebound by index during join
+            // translation), and that case is routed to the pre-existing StructuralTypeShaperExpression arm
+            // below — including when the join's inner entity type IS the root type (a self-referencing
+            // navigation), which is precisely the shape a CLR-type check alone could not tell apart. Any other
+            // conceivable divergence fails LOUDLY rather than silently: if this arm did not fire for a leaf the
+            // emit side projected as "$$ROOT", the shaper would look for named elements that the $project never
+            // emitted and materialization would throw on the required `_id` being absent — not return a wrong
+            // or null entity. So a mismatch is a hard failure, never silent wrong data.
+            case StructuralTypeShaperExpression nativeRootShaper
+                when _queryExpression.Select.Route == NativeRoute.Projection
+                     && nativeRootShaper.StructuralType == _queryExpression.CollectionExpression.EntityType
+                     && nativeRootShaper.ValueBufferExpression is ProjectionBindingExpression { Index: null } rootBinding:
+                {
+                    var entityProj = (EntityProjectionExpression)_queryExpression.GetMappedProjection(
+                        rootBinding.ProjectionMember);
+                    var member = GetCurrentProjectionMember();
+                    _projectionMapping[member] = entityProj;
+                    return nativeRootShaper.Update(
+                        new ProjectionBindingExpression(_queryExpression, member, typeof(ValueBuffer)));
+                }
+
             case StructuralTypeShaperExpression structuralTypeShaperExpression:
                 {
                     var projectionBindingExpression =
@@ -515,6 +543,17 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             EntityProjectionExpression innerEntityProjection;
             switch (shaperExpression.ValueBufferExpression)
             {
+                // A whole-root-entity leaf in a native projection is bound by ProjectionMember
+                // (Index == null, per site 1 above), so resolve through the LOCAL mapping in that case —
+                // _queryExpression.GetMappedProjection is not populated yet; ReplaceProjectionMapping only
+                // copies _projectionMapping into the query expression at the end of Translate.
+                case ProjectionBindingExpression { Index: null } memberBoundBinding:
+                    innerEntityProjection = (EntityProjectionExpression)(
+                        _projectionMapping.TryGetValue(memberBoundBinding.ProjectionMember, out var localEntityProj)
+                            ? localEntityProj
+                            : _queryExpression.GetMappedProjection(memberBoundBinding.ProjectionMember));
+                    break;
+
                 case ProjectionBindingExpression innerProjectionBindingExpression:
                     innerEntityProjection = (EntityProjectionExpression)_queryExpression.Projection[
                         innerProjectionBindingExpression.Index.Value].Expression;
@@ -1064,6 +1103,18 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         EntityProjectionExpression innerEntityProjection;
         switch (shaperExpression.ValueBufferExpression)
         {
+            // NOTE: same unconditional .Index.Value deref shape as the site above (VisitMethodCall), which
+            // EF-412's Index: null bindings could in principle trip. UPGRADED FROM AN OPEN QUESTION TO A BOUND
+            // at the final review: a whole-root-entity leaf (or any other projection leaf) does NOT reach here.
+            // This visitor's own Visit override matches `case MemberExpression` unconditionally and returns a
+            // ProjectionBindingExpression there, so a MemberExpression is never handed to base.Visit and
+            // VisitMember is never dispatched for it; the only base.Visit calls that could carry a foreign node
+            // are for a MaterializeCollectionNavigationExpression's Subquery (a method-call chain, never a
+            // member access) and the default arm (which a MemberExpression cannot reach, being matched earlier).
+            // MEASURED, not just read: with `throw` inserted as VisitMember's first statement the entire EF10
+            // suite stayed green (947 unit + 4599 spec + 2961 functional, 0 failures), i.e. no test in the tree
+            // dispatches here at all. Re-verify by the same mutation if Visit's MemberExpression arm ever gains
+            // a guard that lets a member access fall through.
             case ProjectionBindingExpression innerProjectionBindingExpression:
                 innerEntityProjection = (EntityProjectionExpression)_queryExpression.Projection[
                     innerProjectionBindingExpression.Index.Value].Expression;

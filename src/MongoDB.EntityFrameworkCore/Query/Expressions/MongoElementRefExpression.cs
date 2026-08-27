@@ -28,6 +28,23 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </remarks>
 internal sealed class MongoElementRefExpression(string path, Type clrType) : MongoExpression
 {
+    /// <summary>
+    /// The <see cref="Path"/> spelling that means "the WHOLE current document", i.e. the aggregation system
+    /// variable <c>$$ROOT</c> — rendered as <c>"$" + "$ROOT"</c> by the ordinary <c>"$" + Path</c> rule, so no
+    /// special-casing is needed in the renderer.
+    /// </summary>
+    /// <remarks>
+    /// SHARED between the emit side (<c>NativeProjectionBinder.TryTranslateLeaf</c>, which constructs the node
+    /// for a whole-root-entity projection leaf) and the read side
+    /// (<c>MongoProjectionBindingRemovingExpressionVisitor.IsWholeRootEntityAlias</c>, which recognizes it to
+    /// null out the alias on the FALLBACK leg). Those two must agree EXACTLY, and the failure mode if they
+    /// drift is asymmetric enough to be worth a named constant: the read side simply stops matching, the
+    /// fallback null-out silently stops firing, and the explicit <c>DriverLinq</c> leg regresses to
+    /// <c>Field 'c' required but not present in BsonDocument</c> — loud, but only on the non-default query
+    /// mode, so a default-mode-only test run would not see it.
+    /// </remarks>
+    internal const string WholeRootDocumentPath = "$ROOT";
+
     /// <summary>The (possibly dotted) element path, e.g. <c>_id</c>, <c>_id.Country</c>, or <c>Total</c>.</summary>
     public string Path { get; } = path;
 

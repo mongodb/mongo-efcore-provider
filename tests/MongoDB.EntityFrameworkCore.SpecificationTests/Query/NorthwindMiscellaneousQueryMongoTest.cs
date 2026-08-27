@@ -1218,8 +1218,8 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
         AssertMql(
             """
-            Customers.
-            """);
+Customers.{ "$project" : { "c" : "$$ROOT", "_id" : 0 } }
+""");
     }
 
     public override async Task Queryable_nested_simple(bool async)
@@ -1856,8 +1856,8 @@ Customers.{ "$set" : { "__sort0" : { "$literal" : 5 } } }, { "$sort" : { "__sort
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }
-            """);
+Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "c" : "$$ROOT", "_id" : 0 } }
+""");
     }
 
     public override async Task Distinct_Take(bool async)

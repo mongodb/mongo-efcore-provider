@@ -69,6 +69,19 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         _trackQueryResults = trackingBehavior == QueryTrackingBehavior.TrackAll;
     }
 
+    /// <summary>True for the fallback shaper, which sees whole un-projected documents.</summary>
+    protected virtual bool ReadsUnprojectedDocuments => false;
+
+    /// <summary>Whether <paramref name="alias"/> is a native whole-root-entity ("$$ROOT") leaf.</summary>
+    private bool IsWholeRootEntityAlias(string? alias)
+        => alias != null
+           && _queryExpression.Select.Projection.Any(
+               p => p.Alias == alias
+                    && p.Expression is MongoElementRefExpression
+                    {
+                        Path: MongoElementRefExpression.WholeRootDocumentPath
+                    });
+
     protected override Expression VisitExtension(Expression extensionExpression)
     {
         switch (extensionExpression)
@@ -420,6 +433,14 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                                 break;
                             case RootReferenceExpression:
                                 innerAccessExpression = DocParameter;
+                                // On the FALLBACK route the shaper is handed WHOLE, un-projected documents, so a
+                                // whole-root-entity leaf's "$$ROOT" alias names no element and must resolve to the
+                                // document itself rather than a non-existent "c" field.
+                                if (ReadsUnprojectedDocuments && IsWholeRootEntityAlias(fieldName))
+                                {
+                                    fieldName = null;
+                                }
+
                                 if (_ownerMappings.TryGetValue(accessExpression, out var ownerInfo))
                                 {
                                     _ownerMappings[parameterExpression] = (ownerInfo.EntityType, ownerInfo.BsonDocExpression);
