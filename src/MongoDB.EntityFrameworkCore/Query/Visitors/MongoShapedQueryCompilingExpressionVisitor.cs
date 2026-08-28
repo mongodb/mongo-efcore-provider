@@ -286,7 +286,11 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 (bsonDoc, behavior) => new MongoProjectionBindingRemovingExpressionVisitor(
                     rootEntityType, mongoQueryExpression, bsonDoc, behavior),
                 allowStreaming: false,
-                stripBareProjectionOnFallback: ShouldStripBareProjectionOnFallback(mongoQueryExpression.Select));
+                stripBareProjectionOnFallback: ShouldStripBareProjectionOnFallback(mongoQueryExpression.Select),
+                createFallbackBindingRemover: HasJoinScopeInnerEntityProjectionLeaf(mongoQueryExpression)
+                    ? (bsonDoc, behavior) => new MongoMixedProjectionBindingRemovingExpressionVisitor(
+                        rootEntityType, mongoQueryExpression, bsonDoc, behavior)
+                    : null);
         }
 
         // Native scalar-aggregate path: Count/LongCount/Sum/Min/Max/Average/Any/All were
@@ -460,13 +464,63 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     internal static bool ShouldStripBareProjectionOnFallback(MongoSelectDefinition select)
         => select.HasDocumentPathAliasOverride;
 
+    /// <summary>
+    /// Whether the <see cref="NativeRoute.Projection"/> route staged a whole-entity INNER leaf for a genuine
+    /// two-sided join (EF-444) — the one alias in this provider that is neither a projection-member name nor a
+    /// <see cref="ProjectionAliasTier.DocumentPath"/> override, and therefore the one that a late
+    /// <c>TryBuildNativeFactory</c> decline cannot read correctly off the driver-LINQ bridge's own rendering.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// MEASURED, not predicted (EF-444 Task 4). For <c>Join(…).Where(parameterized).Select(x =&gt; new { x.Outer,
+    /// x.Inner })</c> the bridge renders <c>{"o": "$$ROOT", "r": "$_lookup_Orders"}</c> — every leaf under its
+    /// MEMBER name. The Outer leaf is fine (its native alias IS the member name, which is exactly the
+    /// coincidence EF-412's own late-fallback leg relies on), but the Inner leaf's native alias is the join's
+    /// <c>$lookup</c> prefix (<c>MongoJoinScope.InnerPrefix</c>, e.g. <c>_lookup_Orders</c>) — forced, because
+    /// <c>MongoProjectionBindingRemovingExpressionVisitor</c>'s cross-collection arm derives the field name from
+    /// the NAVIGATION and discards the projection alias entirely. So the shaper reads <c>doc["_lookup_Orders"]</c>
+    /// against a document that only has <c>"r"</c>, the read is non-required, and the inner entity came back
+    /// SILENTLY NULL — no exception, wrong data.
+    /// </para>
+    /// <para>
+    /// The fix routes that leg to the same place an explicit <see cref="MongoQueryMode.DriverLinq"/> already
+    /// sends this shape: strip the pushed-down <c>Select</c> so the bridge yields WHOLE, un-projected documents
+    /// (which still carry the join's own <c>_lookup_&lt;Nav&gt;</c> field, since the <c>$lookup</c>/<c>$unwind</c>
+    /// were registered at translation time and are mode-independent) and shape them with
+    /// <see cref="MongoMixedProjectionBindingRemovingExpressionVisitor"/>, whose
+    /// <c>ReadsUnprojectedDocuments</c> is what makes the sibling Outer leaf's <c>$$ROOT</c> alias resolve to the
+    /// document itself. That combination is not new machinery and is not a guess about the driver's rendering:
+    /// it is the pre-EF-444 behaviour of this exact shape, still exercised on every explicit-DriverLinq run.
+    /// </para>
+    /// <para>
+    /// Deliberately NOT applied to every <see cref="NativeRoute.Projection"/> late fallback. EF-412's
+    /// root-entity leaf and every scalar/computed leaf are read by member-name alias and the bridge renders
+    /// member-name aliases, so they are correct against the driver's own <c>$project</c> and would be made
+    /// WORSE by stripping it (a computed leaf has no whole-document field to read at all). The gate is
+    /// therefore the presence of the one alias that disagrees.
+    /// </para>
+    /// </remarks>
+    /// <remarks>
+    /// The <see cref="MongoElementRefExpression"/> conjunct is not redundant with the alias match. Only
+    /// <c>NativeJoinScopeProjectionBinder</c>'s Inner arm stages that alias, and only as an element ref — but
+    /// that is a fact two files away (kept true there by its <c>seenAliases</c> seeding, which declines a user
+    /// member spelled exactly like the lookup prefix). Checking the node kind here makes the predicate
+    /// self-evidently correct instead of correct-by-remote-invariant.
+    /// </remarks>
+    private static bool HasJoinScopeInnerEntityProjectionLeaf(MongoQueryExpression mongoQueryExpression)
+        => mongoQueryExpression.Select.JoinScope is { } scope
+           && mongoQueryExpression.Select.Projection.Any(
+               p => p.Alias == scope.InnerPrefix && p.Expression is MongoElementRefExpression);
+
     private MethodCallExpression CompileShapedQuery(
         ShapedQueryExpression shapedQueryExpression,
         MongoQueryExpression mongoQueryExpression,
         IEntityType rootEntityType,
         Func<ParameterExpression, QueryTrackingBehavior, System.Linq.Expressions.ExpressionVisitor> createBindingRemover,
         bool allowStreaming = true,
-        bool stripBareProjectionOnFallback = false)
+        bool stripBareProjectionOnFallback = false,
+        Func<ParameterExpression, QueryTrackingBehavior, System.Linq.Expressions.ExpressionVisitor>?
+            createFallbackBindingRemover = null)
     {
         var bsonDocParameter = Expression.Parameter(typeof(BsonDocument), "bsonDoc");
         var trackingBehavior = QueryCompilationContext.QueryTrackingBehavior;
@@ -489,7 +543,17 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // for why this is tier-conditional and why the flag is decided at the call site.
         // Only CapturedExpression is touched, and only the driver-LINQ execution path reads it, so the shaper
         // built above is unaffected.
-        if (nativeFactory == null && stripBareProjectionOnFallback)
+        //
+        // createFallbackBindingRemover is the second, EF-444 arm of the SAME late-fallback problem: a join's
+        // whole-entity INNER leaf whose native alias is the join's own $lookup prefix, which the bridge never
+        // renders. That arm strips for the same reason and additionally swaps in the MIXED removing visitor,
+        // because the whole-document read it lands on needs ReadsUnprojectedDocuments for its sibling $$ROOT
+        // Outer leaf. See HasJoinScopeInnerEntityProjectionLeaf. The two arms are disjoint by construction
+        // (a DocumentPath alias override and a join-scope inner leaf cannot coexist on one projection — the
+        // join binder stages neither array nor bare leaves), but the strip is written as one branch so it can
+        // never run twice.
+        var useFallbackBindingRemover = nativeFactory == null && createFallbackBindingRemover != null;
+        if (nativeFactory == null && (stripBareProjectionOnFallback || useFallbackBindingRemover))
         {
             mongoQueryExpression.CapturedExpression =
                 StripPushedDownSelect(mongoQueryExpression.CapturedExpression);
@@ -573,7 +637,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             }
         }
 
-        var domShaperBody = createBindingRemover(bsonDocParameter, trackingBehavior).Visit(injectedBody);
+        var domShaperBody = (useFallbackBindingRemover ? createFallbackBindingRemover! : createBindingRemover)(
+            bsonDocParameter, trackingBehavior).Visit(injectedBody);
 
         // Lift all BsonDocument/BsonArray variables to the lambda level so they are
         // accessible across entity boundaries in join projections.

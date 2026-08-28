@@ -415,6 +415,17 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                                 // that element rather than the absolute query root.
                                 innerAccessExpression = GetCrossCollectionRootDocument(crossCollectionAccess);
                                 fieldName = GetCrossCollectionFieldName(crossCollectionAccess);
+                                // fieldRequired = false is also what makes a native LeftJoin's unmatched Inner
+                                // row (a dangling-FK dependent row with no matching principal) read as a plain
+                                // null reference navigation, with no exception, for a whole-entity Inner leaf in
+                                // a join projection (EF-444 Task 3). MongoSelectLowerer already emits
+                                // preserveNullAndEmptyArrays: true for a left-outer REFERENCE navigation (as
+                                // opposed to a left-outer COLLECTION navigation, which is a hard-coded false and
+                                // handled by a separate, still-declining conjunct elsewhere), so the joined field
+                                // is simply absent from the document for an unmatched row; requiring it here
+                                // would turn that absence into a spurious exception instead of EF Core's own
+                                // null-reference-navigation convention. No new code was needed to get this right
+                                // — see NativeJoinTests.LeftJoin_unmatched_inner_row_reads_as_null_reference_navigation.
                                 fieldRequired = false;
                                 break;
                             // Embedded sub-document access: the navigation is always present here because

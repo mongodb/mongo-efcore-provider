@@ -289,9 +289,13 @@ Customers.{ "$match" : { "_id" : "ALFKI ?" } }, { "$limit" : 2 }, { "$lookup" : 
     public override async Task Include_collection_with_left_join_clause_with_filter(bool async)
     {
 #if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
+        // Fails: single-join driver-LINQ-bridge LeftJoin-recognition gap (same as
+        // NorthwindJoinQueryMongoTest.GroupJoin_DefaultIfEmpty - see its comment) - out of scope for EF-436.
         await AssertTranslationFailed(() => base.Include_collection_with_left_join_clause_with_filter(async));
-        AssertMql();
+        AssertMql(
+    """
+Customers.
+""");
 #else
         // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.Include_collection_with_left_join_clause_with_filter(async);
@@ -753,9 +757,13 @@ OrderDetails.{ "$match" : { "_id.OrderID" : { "$mod" : [23, 13] } } }, { "$looku
     public override async Task Outer_identifier_correctly_determined_when_doing_include_on_right_side_of_left_join(bool async)
     {
 #if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
+        // Fails: single-join driver-LINQ-bridge LeftJoin-recognition gap (same as
+        // NorthwindJoinQueryMongoTest.GroupJoin_DefaultIfEmpty - see its comment) - out of scope for EF-436.
         await AssertTranslationFailed(() => base.Outer_identifier_correctly_determined_when_doing_include_on_right_side_of_left_join(async));
-        AssertMql();
+        AssertMql(
+    """
+Customers.
+""");
 #else
         await base.Outer_identifier_correctly_determined_when_doing_include_on_right_side_of_left_join(async);
 

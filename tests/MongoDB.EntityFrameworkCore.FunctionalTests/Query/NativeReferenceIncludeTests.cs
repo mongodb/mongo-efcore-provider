@@ -50,11 +50,50 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     {
         // A user join with NO Include: nothing ever confirms, so the candidate signal alone must not
         // make this native. NativeOnly forbids the fallback, so a decline surfaces as a throw.
+        //
+        // EF-392 Task 5 update: the result selector is now `new { o, b }` rather than the original bare
+        // `(o, b) => o`. That bare form is a WHOLE-ENTITY leaf over an eligible single-level join, which
+        // Task 5's TranslateSelect arm now explicitly CONFIRMS and translates natively (with correct
+        // results — see User_join_projecting_the_whole_outer_entity_goes_native_with_correct_results below).
+        // The confirmation is an explicit, shape-specific act by that arm, so the invariant THIS test exists
+        // for — "the candidate signal on its own admits nothing" — is untouched; it just needs a shape no
+        // confirming arm claims. `new { o, b }` is one: both leaves are whole entities, which
+        // NativeJoinScopeProjectionBinder declines outright (no native shaper for an entity projection leaf
+        // — Task 5b), so nothing ever confirms and HasUnconfirmedCandidateJoin still forces Fallback.
         using var db = CreateContext(MongoQueryMode.NativeOnly,
             nameof(User_join_is_not_admitted_by_the_candidate_join_signal));
 
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
-            db.Orders.Join(db.Buyers, o => o.BuyerId, b => b.Id, (o, b) => o).ToList());
+            db.Orders.Join(db.Buyers, o => o.BuyerId, b => b.Id, (o, b) => new { o, b }).ToList());
+    }
+
+    [Fact]
+    public void User_join_projecting_the_whole_outer_entity_goes_native_with_correct_results()
+    {
+        // EF-392 Task 5, shape 1: `Orders.Join(Buyers, o.BuyerId, b.Id, (o, b) => o)` — EF normalizes this to
+        // a TransparentIdentifier join plus a trailing `Select(x => x.Outer)`, which the new bare-whole-entity
+        // arm confirms. The emitted $lookup + $unwind(preserveNullAndEmptyArrays: false) reproduces inner-join
+        // semantics exactly: O3's BuyerId is dangling, so it drops — 3 of the 4 seeded orders survive, the
+        // same answer the driver-LINQ fallback gives.
+        using var nativeOnlyDb = CreateContext(MongoQueryMode.NativeOnly,
+            nameof(User_join_projecting_the_whole_outer_entity_goes_native_with_correct_results) + "_NativeOnly");
+        var nativeResults = nativeOnlyDb.Orders
+            .Join(nativeOnlyDb.Buyers, o => o.BuyerId, b => b.Id, (o, b) => o)
+            .ToList();
+
+        using var driverDb = CreateContext(MongoQueryMode.DriverLinq,
+            nameof(User_join_projecting_the_whole_outer_entity_goes_native_with_correct_results) + "_DriverLinq");
+        var driverResults = driverDb.Orders
+            .Join(driverDb.Buyers, o => o.BuyerId, b => b.Id, (o, b) => o)
+            .ToList();
+
+        // Each mode's CreateContext seeds its OWN collection with freshly-generated ObjectIds, so the two
+        // result sets are compared by shape (row count and the stable Total values), not by identity.
+        Assert.Equal(driverResults.Count, nativeResults.Count);
+        Assert.Equal(3, nativeResults.Count);
+        Assert.Equal(
+            driverResults.Select(o => o.Total).OrderBy(t => t),
+            nativeResults.Select(o => o.Total).OrderBy(t => t));
     }
 
     [Fact]

@@ -445,9 +445,12 @@ internal sealed class MongoSelectDefinition
     /// <c>Grouping != null</c> is included for completeness (a finalized grouping always also sets
     /// <see cref="IsGroupBy"/> or <see cref="IsDistinct"/> by construction, so it's a no-op in practice).
     /// <see cref="UnwindSource"/> joins the same gate: a native owned-collection SelectMany is terminal-only,
-    /// exactly like Distinct/GroupBy/Union/Concat.
+    /// exactly like Distinct/GroupBy/Union/Concat. Note: <see cref="JoinScope"/> is pure metadata and does
+    /// NOT contribute to this predicate — it is recorded unconditionally for eligible joins (including
+    /// Include-shaped ones) and consumed only by later translation steps.
     /// </summary>
-    internal bool HasTerminalOperator => IsGroupBy || IsDistinct || IsSetOp || Grouping != null || UnwindSources.Count > 0;
+    internal bool HasTerminalOperator
+        => IsGroupBy || IsDistinct || IsSetOp || Grouping != null || UnwindSources.Count > 0;
 
     /// <summary>
     /// <see langword="true"/> when the ONLY terminal on this select is a set operation — a set op is attached
@@ -507,6 +510,79 @@ internal sealed class MongoSelectDefinition
     /// reaches the value comparison.
     /// </remarks>
     internal bool HasArrayProjectionLeaf { get; set; }
+
+    /// <summary>The native single-level join scope recorded by <c>TranslateJoinCore</c>, or <see
+    /// langword="null"/> if this select has no eligible native join.</summary>
+    internal MongoJoinScope? JoinScope { get; set; }
+
+    private bool _hasConfirmedJoinLookup;
+
+    /// <summary>
+    /// <see langword="true"/> once one of the two Select-side arms in <c>TranslateSelect</c> has CONFIRMED the
+    /// genuine two-sided join described by <see cref="JoinScope"/> and registered its <c>$lookup</c> (the bare
+    /// whole-entity-leaf arm, or <c>NativeJoinScopeProjectionBinder.TryBindProjection</c>). Set by
+    /// <see cref="MarkJoinLookupConfirmed"/>; never unset.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>This is a POST-CONFIRMATION gate, and that distinction is the whole point.</b> It exists because,
+    /// once either arm confirms, <see cref="Route"/> becomes <see cref="NativeRoute.WholeEntity"/>/
+    /// <see cref="NativeRoute.Projection"/> and <see cref="HasUnsupportedOperator"/> is <see langword="false"/>
+    /// — so nothing otherwise stopped an operator composed AFTER the confirming Select from going native too.
+    /// Two measured wrong-data hazards follow from that:
+    /// </para>
+    /// <para>
+    /// (1) <b>Paging/reducing before the join.</b> <c>MongoSelectLowerer.Lower</c> emits
+    /// <see cref="PipelineOps"/> BEFORE <c>AppendLookupStages</c>' <c>$lookup</c> + <c>$unwind</c>. For a
+    /// genuine join over a COLLECTION navigation that <c>$unwind</c> is 1:N (unlike a reference Include's 1:1),
+    /// so a <c>Take</c>/<c>Skip</c>/<c>First</c> recorded into <see cref="PipelineOps"/> pages the UN-joined
+    /// outer rows — <c>Join(...).Take(5)</c> would emit <c>$limit 5</c> then expand those five owners into N
+    /// joined rows, where LINQ asks for exactly five result rows.
+    /// </para>
+    /// <para>
+    /// (2) <b>Member resolution against the stale root entity type.</b> After the bare whole-entity-leaf arm
+    /// confirms <c>Select(x =&gt; x.Inner)</c>, the shaper yields INNER entities but
+    /// <c>MongoQueryExpression.CollectionExpression.EntityType</c> is still the OUTER one — and
+    /// <c>NativeSlotPopulator</c> builds its single-scope <c>MongoExpressionTranslator</c> from exactly that.
+    /// A trailing <c>Where(r =&gt; r.Id == …)</c> would resolve "Id" by NAME against the outer type and emit a
+    /// <c>$match</c> on the ROOT document, before the <c>$lookup</c> — filtering outer rows by an inner key.
+    /// </para>
+    /// <para>
+    /// <b>REACHABILITY, MEASURED (2026-08-27) — do not upgrade either statement without re-measuring.</b> Only
+    /// the REDUCER half of (1) is reachable through EF Core's own pipeline today: nav-expansion defers a join's
+    /// result selector as a PENDING SELECTOR applied LAST and hoists a trailing <c>Where</c> ahead of it
+    /// (measured: <c>Join(…).Select(x =&gt; x.Inner).Where(r =&gt; r.Id == k)</c> preprocesses to
+    /// <c>Where(ti =&gt; ti.Inner.Id == k).Select(ti =&gt; ti.Inner)</c>), so a slot operator normally arrives
+    /// BEFORE the confirming Select, not after — which is why the forward-ordering conjuncts
+    /// (<c>HasPaging</c>/<c>Cardinality</c>) in
+    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope</c> exist and are
+    /// what actually catch <c>Join(…).Take(n)</c>. Instrumenting both read sites and running the whole
+    /// functional suite (3018 tests) plus the spec suite in both query modes (4613 × 2) produced ZERO hits on
+    /// the slot-operator site and exactly two on the reducer site (<c>Join(…).Select(x =&gt;
+    /// x.Inner).First()/.FirstOrDefault()</c>, pinned by
+    /// <c>NativeJoinTests.First_after_a_confirmed_join_declines_cleanly_under_NativeOnly</c>). The
+    /// slot-operator read site is therefore deliberate defence-in-depth against structural drift — a future
+    /// confirming arm that runs earlier, or an EF normalization change — and is documented as such rather than
+    /// advertised as live.
+    /// </para>
+    /// <para>
+    /// Read by <c>NativeSlotPopulator.PopulateNativeSlots</c> (the seven slot operators, which covers both
+    /// hazards — the <c>Where</c>/<c>OrderBy</c> arms are among them) and by
+    /// <c>NativeCardinalityBinder.TryBindReducer</c>. It deliberately does NOT join
+    /// <see cref="HasTerminalOperator"/>: that predicate is evaluated at join-RECORDING time (in
+    /// <c>TranslateJoinCore</c> and in <c>TryConfirmReferenceIncludeChain</c>'s own precondition), where adding
+    /// a <c>JoinScope != null</c> conjunct was tried and reverted — it breaks native reference-<c>Include</c>
+    /// confirmation, which never reaches either of the two arms above.
+    /// </para>
+    /// </remarks>
+    internal bool HasConfirmedJoinLookup => _hasConfirmedJoinLookup;
+
+    /// <summary>
+    /// Records that a Select-side arm has confirmed this select's genuine two-sided join and registered its
+    /// <c>$lookup</c>. See <see cref="HasConfirmedJoinLookup"/>.
+    /// </summary>
+    internal void MarkJoinLookupConfirmed()
+        => _hasConfirmedJoinLookup = true;
 
     private readonly List<MongoUnwindSource> _unwindSources = [];
 
@@ -608,6 +684,23 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     internal void MarkNotNativelyRepresentable()
         => _hasUnsupportedOperator = true;
+
+    /// <summary>
+    /// Whether <see cref="MarkNotNativelyRepresentable"/> has already been called on this select.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately NOT the same question as <c>Route == NativeRoute.Fallback</c>, which is also true while a
+    /// candidate join is merely UNCONFIRMED (see <see cref="HasUnconfirmedCandidateJoin"/>) — i.e. true at
+    /// exactly the moment a confirming arm is deciding whether to confirm, which would make it useless as that
+    /// arm's own gate. This asks the narrower question "has something on this select ALREADY declined?", which
+    /// is what a join-confirming arm must check before registering a <c>$lookup</c>: registration is
+    /// mode-independent (it happens at translation time) and flips
+    /// <c>MongoQueryExpression.UsesDriverJoinFields</c>, so confirming a join on a query that is already
+    /// destined for the driver-LINQ fallback changes that fallback's document shape for no benefit — the very
+    /// perturbation <see cref="JoinScope"/>'s deferred-registration design exists to avoid. See
+    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope</c>.
+    /// </remarks>
+    internal bool HasUnsupportedOperator => _hasUnsupportedOperator;
 
     // ── Reference-Include candidate join ────────────────────────────────────────────
     //

@@ -63,7 +63,45 @@ internal static class NativeSlotPopulator
         // SetOperation is attached), filtering/sorting/paging the combined result and emitting after the
         // set-op stage. A GroupBy/Distinct/SelectMany terminal (or a mixed one) still trips this guard.
         if (mongoQ.Select.HasTerminalOperator && !mongoQ.Select.IsSetOpTerminalOnly
-            && IsPostGroupSlotOperator(methodDefinition))
+            && IsSevenSlotOperator(methodDefinition))
+        {
+            mongoQ.Select.MarkNotNativelyRepresentable();
+            return;
+        }
+
+        // Post-CONFIRMED-JOIN slot-operator guard (EF-392). Structurally the same hazard as the post-group one
+        // above, at a different point in the pipeline: once a Select-side arm has confirmed a genuine two-sided
+        // join and registered its $lookup, Route is no longer Fallback and HasUnsupportedOperator is false, so
+        // a slot operator composed AFTER that Select would record into PipelineOps — which MongoSelectLowerer
+        // emits BEFORE the $lookup/$unwind. Over a 1:N collection-navigation $unwind that pages/filters the
+        // UN-joined outer rows (Join(...).Take(5) limits to five OWNERS, then expands them into N joined rows),
+        // and after the bare whole-entity-leaf arm it also resolves member names against the stale OUTER
+        // CollectionExpression.EntityType used to build `translator` above. Decline so the query falls back to
+        // driver-LINQ (throwing only under NativeOnly) instead of returning silently wrong rows.
+        //
+        // Deliberately NOT folded into HasTerminalOperator: that is evaluated at join-RECORDING time too,
+        // where it gates TryConfirmReferenceIncludeChain's own precondition and would break native
+        // reference-Include confirmation (tried and reverted earlier in EF-392, commit 4c7b852). This flag is
+        // set only at CONFIRMATION, which the Include path never reaches.
+        //
+        // DEFENCE-IN-DEPTH, NOT A LIVE GUARD — measured, and stated here so nobody re-derives it as load-
+        // bearing: EF Core's nav-expansion applies a join's result selector LAST (pending selector) and hoists
+        // a trailing Where ahead of it, so a slot operator normally reaches this method BEFORE the confirming
+        // Select. Instrumenting this exact branch across the whole functional suite (3018 tests) and the spec
+        // suite in both query modes (4613 × 2) produced ZERO hits; the sibling gate in
+        // NativeCardinalityBinder.TryBindReducer DID fire (twice). The forward ordering — the one that actually
+        // happens — is closed by the HasPaging/Cardinality conjuncts in
+        // MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope. Keep this branch
+        // anyway: it costs one predicate, and it is what stops the hazard the moment the ordering changes
+        // (a confirming arm that runs earlier, or an EF normalization change).
+        //
+        // Scoped to the seven slot operators, matching the guard above. Reverse needs no arm here: it declines
+        // on its own unless the tail op is literally a $sort, and no sort can have been recorded before a
+        // confirmed join (an OrderBy over a join scope isn't translatable by the single-scope arms below, so it
+        // marks the query non-native, which in turn blocks confirmation via HasUnsupportedOperator). The
+        // reducer arm's own gate lives in NativeCardinalityBinder.TryBindReducer; scalar AGGREGATES are
+        // deliberately not gated, because their $count/$group stage is emitted AFTER the lookup block.
+        if (mongoQ.Select.HasConfirmedJoinLookup && IsSevenSlotOperator(methodDefinition))
         {
             mongoQ.Select.MarkNotNativelyRepresentable();
             return;
@@ -77,6 +115,25 @@ internal static class NativeSlotPopulator
             var predicate = call.Arguments[1].UnwrapLambdaFromQuote();
             if (translator.TryTranslate(predicate.Body, out var predicateNode))
                 mongoQ.Select.AddPredicateConjunct(predicateNode);
+            // Outer-side-only: PipelineOps ($match) always lower BEFORE the $lookup stage that materializes
+            // the join's Inner side, so a Where reaching Inner would filter on a not-yet-joined field —
+            // NativeJoinScopeTranslator.ReferencesInnerScope declines that here, deferring Inner access to
+            // the Select-side binder (Task 5). See NativeJoinScopeTranslator.ReferencesInnerScope's remarks.
+            //
+            // WHY THIS GATE HAS FEWER CONJUNCTS THAN THE SELECT ARMS' SHARED ONE
+            // (MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope, which adds
+            // Joins.Count == 1, the key-selector/left-outer/collection-nav checks and !HasUnsupportedOperator):
+            // those conjuncts all protect the act of REGISTERING the join's $lookup, and this arm registers
+            // nothing — it only records a $match conjunct into PipelineOps. If the join is never confirmed the
+            // query routes to Fallback and that conjunct is discarded unused; if it IS confirmed, it was
+            // confirmed through the shared gate, so every one of those conjuncts held. The asymmetry is
+            // therefore deliberate: do NOT copy this shorter set to a registering call site, and do not weaken
+            // the Select arms' gate to match it.
+            else if (mongoQ.Select.JoinScope is { } joinScope
+                     && !NativeJoinScopeTranslator.ReferencesInnerScope(predicate.Parameters[0], predicate.Body)
+                     && NativeJoinScopeTranslator.TryTranslatePredicate(
+                         joinScope, predicate.Parameters[0], predicate.Body, out var joinPredicateNode))
+                mongoQ.Select.AddPredicateConjunct(joinPredicateNode);
             else
                 mongoQ.Select.MarkNotNativelyRepresentable();
         }
@@ -183,10 +240,11 @@ internal static class NativeSlotPopulator
     }
 
     // The seven slot operators whose native lowering (a $match / $sort / $skip / $limit) would be emitted
-    // BEFORE a $group when applied after a GroupBy — so they must force fallback on a grouped query (see the
-    // post-group guard in PopulateNativeSlots). Deliberately excludes Select / OfType / GroupBy and the
-    // reducer / scalar-aggregate operators so the supported grouped Select is not marked non-native.
-    private static bool IsPostGroupSlotOperator(MethodInfo methodDefinition)
+    // BEFORE a stage they must run after — a $group when applied after a GroupBy, or the $lookup/$unwind when
+    // applied after a CONFIRMED genuine join. Both post-terminal guards in PopulateNativeSlots key off this
+    // same list. Deliberately excludes Select / OfType / GroupBy and the reducer / scalar-aggregate operators
+    // so the supported grouped Select is not marked non-native.
+    private static bool IsSevenSlotOperator(MethodInfo methodDefinition)
         => methodDefinition == QueryableMethods.Where
            || methodDefinition == QueryableMethods.OrderBy
            || methodDefinition == QueryableMethods.OrderByDescending

@@ -47,6 +47,16 @@ internal static class NativeCardinalityBinder
         if (select.HasTerminalOperator && !select.IsSetOpTerminalOnly)
             return false;
 
+        // A reducer composed after a CONFIRMED genuine two-sided join must fall back too (EF-392). The $limit
+        // synthesized below lands in PipelineOps, which MongoSelectLowerer emits BEFORE the join's
+        // $lookup/$unwind — so `Join(...).Select(...).First()` would limit to the first OUTER row and only then
+        // expand it across a 1:N $unwind: if that row has no match the $unwind drops it entirely and First()
+        // throws on a query LINQ answers with the second outer row's first joined row. Unlike a reducer, a
+        // scalar AGGREGATE (Count/Sum/…) is safe and stays native: its $count/$group stage is emitted after the
+        // lookup block, so it already counts joined rows. See MongoSelectDefinition.HasConfirmedJoinLookup.
+        if (select.HasConfirmedJoinLookup)
+            return false;
+
         // EF-397: no HasLimit guard. A reducer's own $limit composes safely with a $limit a preceding Take
         // already recorded — AppendLimit appends to the TAIL of the ordered op list, and consecutive $limit
         // stages narrow monotonically, so Take(3).First() emits [$limit 3, $limit 1] = "the first of the
