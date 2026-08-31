@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Linq;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Serializers;
@@ -55,6 +56,8 @@ internal static class MongoAggregationExpressionRenderer
         {
             MongoFieldExpression field => FieldRef(field.ElementName, elementVariable),
             MongoElementRefExpression elementRef => FieldRef(elementRef.Path, elementVariable),
+            // Always at document root, REGARDLESS of elementVariable — see the node's own remarks.
+            MongoOuterFieldExpression outer => FieldRef(outer.ElementName, elementVariable: null),
             MongoConstantExpression or MongoParameterExpression => MongoValueRenderer.RenderValue(node, placeholders),
             MongoBinaryExpression binary => RenderBinary(binary, placeholders, elementVariable),
             MongoSizeExpression size => RenderSize(size, elementVariable),
@@ -83,6 +86,14 @@ internal static class MongoAggregationExpressionRenderer
                     { "amount", FieldRef(local.Operand.ElementName + ".Offset", elementVariable) }
                 }),
             MongoDatePartExpression datePart => RenderDatePart(datePart, placeholders, elementVariable),
+            MongoQuantifierExpression quantifier => RenderQuantifier(quantifier, placeholders, elementVariable),
+            // A constructed nested sub-document leaf (EF-447, `new Book { Id = e.Id, Title = e.Title }`).
+            // Each member renders through this SAME Render call, recursively, so a nested field ref renders as
+            // "$ElementName" (an aggregation-expression field path) exactly like any other computed leaf value —
+            // never a bare unprefixed name, which $project would otherwise misread as an inclusion flag.
+            MongoDocumentConstructionExpression construction
+                => new BsonDocument(construction.Members.Select(
+                    m => new BsonElement(m.MemberName, Render(m.Value, placeholders, elementVariable)))),
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoAggregationExpressionRenderer does not support node type '{node.GetType().Name}'.")
         };
@@ -118,7 +129,7 @@ internal static class MongoAggregationExpressionRenderer
     public static bool CanRender(MongoExpression node)
         => node switch
         {
-            MongoFieldExpression or MongoElementRefExpression => true,
+            MongoFieldExpression or MongoElementRefExpression or MongoOuterFieldExpression => true,
             MongoConstantExpression or MongoParameterExpression => true,
             // EF-396 (review fix): $and/$or evaluate a BARE operand by TRUTHINESS, not by CLR boolean value —
             // the same hazard the Not arm below already guards against for its own bare-field operand. Without
@@ -138,17 +149,21 @@ internal static class MongoAggregationExpressionRenderer
             MongoInExpression inExpr => CanRenderInValues(inExpr.Values),
             // A bare-field operand must ALSO be default-serialized — mirrors RenderUnary's own render-time
             // guard (EF-413 review fix), so the two can never disagree: CanRender=true must mean Render
-            // actually succeeds AND answers correctly, not merely "doesn't throw".
+            // actually succeeds AND answers correctly, not merely "doesn't throw". Checked via
+            // TryGetBareFieldProperty (final-review fix), which matches BOTH MongoFieldExpression and
+            // MongoOuterFieldExpression — a bare outer-scoped bool under Not has the exact same
+            // truthiness hazard as an ordinary bare field.
             MongoUnaryExpression { Operator: MongoUnaryOperator.Not } unary
                 => CanRender(unary.Operand)
-                    && (unary.Operand is not MongoFieldExpression field
-                        || MongoExpressionTranslator.AllFieldsDefaultSerialized(field)),
+                    && (!MongoExpressionTranslator.TryGetBareFieldProperty(unary.Operand, out _)
+                        || MongoExpressionTranslator.AllFieldsDefaultSerialized(unary.Operand)),
             MongoConvertExpression convert
                 => MongoConvertExpression.ToOperatorFor(convert.Type) is not null && CanRender(convert.Operand),
             MongoConditionalExpression conditional
                 => CanRender(conditional.Test) && CanRender(conditional.IfTrue) && CanRender(conditional.IfFalse),
             MongoDateTimeOffsetLocalExpression local => CanRender(local.Operand),
             MongoDatePartExpression datePart => CanRender(datePart.Operand),
+            MongoQuantifierExpression quantifier => CanRender(quantifier.ArrayPath) && CanRender(quantifier.ElementPredicate),
             _ => false
         };
 
@@ -160,7 +175,12 @@ internal static class MongoAggregationExpressionRenderer
     private static bool CanRenderLogicalOperand(MongoExpression node)
         => node switch
         {
-            MongoFieldExpression field => MongoExpressionTranslator.AllFieldsDefaultSerialized(field),
+            // TryGetBareFieldProperty (final-review fix) matches BOTH MongoFieldExpression and
+            // MongoOuterFieldExpression — a bare outer-scoped bool used as an &&/|| operand is truthiness-
+            // tested exactly the same way an ordinary bare field is; missing the outer-scoped sibling here
+            // was the CRITICAL finding from EF-421's final review.
+            MongoFieldExpression or MongoOuterFieldExpression
+                => MongoExpressionTranslator.AllFieldsDefaultSerialized(node),
             MongoBinaryExpression { Operator: MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse } nested
                 => CanRenderLogicalOperand(nested.Left) && CanRenderLogicalOperand(nested.Right),
             _ => CanRender(node)
@@ -234,6 +254,16 @@ internal static class MongoAggregationExpressionRenderer
         // server requires of a $filter `as` name.
         var variable = elementVariable is null ? "e" : elementVariable + "e";
 
+        // Final-review fix: $filter's own "cond" is evaluated by TRUTHINESS (same hazard as $and/$or/$not),
+        // but a BARE ElementPredicate root (e.g. Count(p => b.Flag), no comparison/Not/&&/|| wrapping it) skips
+        // every OTHER truthiness guard in this file — RenderBinary's CheckLogicalOperandSerialization only
+        // fires when Render actually dispatches into an AndAlso/OrElse node, and RenderUnary's guard only fires
+        // for a Not — neither runs when the WHOLE predicate is nothing but a bare field. Checked here,
+        // render-time (not translate-time), per this call's own established EF-413 design: a translate-time
+        // decline hard-fails this shape in EVERY mode (no alternate representation for a filtered count),
+        // while this render-time throw is caught by TryBuildPipeline as a graceful driver-LINQ fallback.
+        CheckBooleanRootSerialization(node.ElementPredicate);
+
         return new BsonDocument("$size",
             new BsonDocument("$filter", new BsonDocument
             {
@@ -244,6 +274,61 @@ internal static class MongoAggregationExpressionRenderer
                 { "as", variable },
                 { "cond", Render(node.ElementPredicate, placeholders, variable) }
             }));
+    }
+
+    private static BsonValue RenderQuantifier(
+        MongoQuantifierExpression node, PlaceholderTable placeholders, string? elementVariable)
+    {
+        // Same nesting-variable convention as RenderFilteredSize: each nesting level gets its own $map `as`
+        // name, derived from the enclosing one, so nested quantifiers/filters never collide.
+        var variable = elementVariable is null ? "e" : elementVariable + "e";
+
+        // Final-review fix (CRITICAL — silent wrong-data risk): $anyElementTrue/$allElementsTrue evaluate every
+        // mapped-to "in" result by TRUTHINESS, exactly like $and/$or/$not. A BARE ElementPredicate root (e.g.
+        // `b.Posts.Any(p => b.Flag)`, with no comparison/Not/&&/|| around it) is the one shape none of this
+        // file's other truthiness guards catch: the translate-time CanRender check at this node's construction
+        // site (MongoExpressionTranslator.TranslateNode's quantifier arm) admits ANY bare field unconditionally
+        // via CanRender's own top arm, and a bare field's Render (FieldRef) has no guard of its own — so a
+        // value-converted/non-default-represented bare bool (e.g. HasConversion<string>() storing "False", a
+        // non-empty — therefore truthy — string) would otherwise render successfully and silently answer the
+        // WRONG boolean for every row. Checked here as render-time defense-in-depth (mirroring RenderUnary's/
+        // RenderBinary's own pattern for the same hazard).
+        CheckBooleanRootSerialization(node.ElementPredicate);
+
+        var map = new BsonDocument("$map", new BsonDocument
+        {
+            // $ifNull is MANDATORY, same reasoning as RenderFilteredSize/RenderSize: $map over a missing or
+            // explicitly-null array is a hard server error. [] yields a $map result of [], and
+            // $anyElementTrue/$allElementsTrue over [] answer false/true respectively — exactly LINQ's
+            // Any/All-over-an-empty-sequence semantics.
+            { "input", new BsonDocument("$ifNull", new BsonArray { Render(node.ArrayPath, placeholders, elementVariable), new BsonArray() }) },
+            { "as", variable },
+            { "in", Render(node.ElementPredicate, placeholders, variable) }
+        });
+
+        var op = node.Kind == MongoExpressionTranslator.MongoQuantifierKind.All ? "$allElementsTrue" : "$anyElementTrue";
+        return new BsonDocument(op, map);
+    }
+
+    // Shared render-time guard for any position where MongoDB evaluates a WHOLE sub-expression's result by
+    // TRUTHINESS (a $filter's own "cond", or a quantifier's $map "in") rather than via an operator that
+    // produces a genuine computed boolean. Unlike CheckLogicalOperandSerialization (which the AndAlso/OrElse
+    // dispatch in RenderBinary already applies to ITS OWN Left/Right whenever one is actually rendered), a
+    // BARE field root reaches neither RenderBinary nor RenderUnary at all — Render's own dispatch just returns
+    // its raw field ref — so this is the one guard that must be invoked explicitly, by the two callers whose
+    // whole ElementPredicate sits in such a position. Nested AndAlso/OrElse/Not underneath need no extra
+    // recursion here: when Render actually descends into one, RenderBinary/RenderUnary already re-check their
+    // own operands using the identical TryGetBareFieldProperty rule.
+    private static void CheckBooleanRootSerialization(MongoExpression node)
+    {
+        if (MongoExpressionTranslator.TryGetBareFieldProperty(node, out var property)
+            && !MongoExpressionTranslator.AllFieldsDefaultSerialized(node))
+        {
+            throw new NativeTranslationNotSupportedException(
+                $"Cannot render '{property.Name}' as a bare boolean predicate root: it does not use default "
+                + "BSON serialization, and this position is evaluated by truthiness, which would answer the "
+                + "wrong boolean.");
+        }
     }
 
     // Aggregation-dialect $in: { $in: [needle, haystack] }. Negated form wraps in $not (an array-form operator,
@@ -308,11 +393,15 @@ internal static class MongoAggregationExpressionRenderer
         // shape is already declined earlier and more cheaply by
         // NativeSlotPopulator.TryTranslateComputedSortKey's CanRender/AllFieldsDefaultSerialized gate, so this
         // check never actually fires on that path — it exists here for the position that has no such gate.
-        if (unary.Operand is MongoFieldExpression field
-            && !MongoExpressionTranslator.AllFieldsDefaultSerialized(field))
+        // TryGetBareFieldProperty (final-review fix) matches BOTH MongoFieldExpression and
+        // MongoOuterFieldExpression — a bare OUTER-scoped bool under Not has the exact same truthiness hazard
+        // as an ordinary bare field; missing that sibling here was one of the three (really four) sites the
+        // EF-421 final review found checking MongoFieldExpression alone.
+        if (MongoExpressionTranslator.TryGetBareFieldProperty(unary.Operand, out var notProperty)
+            && !MongoExpressionTranslator.AllFieldsDefaultSerialized(unary.Operand))
         {
             throw new NativeTranslationNotSupportedException(
-                $"Cannot render 'Not' over '{field.Property.Name}': it does not use default BSON "
+                $"Cannot render 'Not' over '{notProperty.Name}': it does not use default BSON "
                 + "serialization, and a raw-field $not would answer the wrong boolean.");
         }
 
@@ -374,10 +463,13 @@ internal static class MongoAggregationExpressionRenderer
 
     private static void CheckLogicalOperandSerialization(MongoExpression operand)
     {
-        if (operand is MongoFieldExpression field && !MongoExpressionTranslator.AllFieldsDefaultSerialized(field))
+        // TryGetBareFieldProperty (final-review fix) matches BOTH MongoFieldExpression and
+        // MongoOuterFieldExpression — see RenderUnary's and CanRenderLogicalOperand's matching comments above.
+        if (MongoExpressionTranslator.TryGetBareFieldProperty(operand, out var logicalProperty)
+            && !MongoExpressionTranslator.AllFieldsDefaultSerialized(operand))
         {
             throw new NativeTranslationNotSupportedException(
-                $"Cannot render '{field.Property.Name}' as a bare logical (&&/||) operand: it does not use "
+                $"Cannot render '{logicalProperty.Name}' as a bare logical (&&/||) operand: it does not use "
                 + "default BSON serialization, and $and/$or evaluate operands by truthiness, which would "
                 + "answer the wrong boolean.");
         }

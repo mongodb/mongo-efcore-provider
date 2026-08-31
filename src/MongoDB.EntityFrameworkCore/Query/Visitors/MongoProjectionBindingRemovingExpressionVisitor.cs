@@ -97,6 +97,18 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         return DocParameter;
                     }
 
+                    // A CONSTRUCTED sub-entity leaf (EF-447, `new { Book = new Book { Id = e.Id, ... } }`) —
+                    // rebuild the CLR object, reading each member NESTED under this leaf's own $project alias
+                    // (e.g. "Book.Id"), which is where the native $project actually put it (see
+                    // MongoAggregationExpressionRenderer's MongoDocumentConstructionExpression case). The mixed
+                    // visitor overrides ReadDocumentConstructionMember to read each member from its own NATURAL
+                    // root-relative document path instead, for the whole-un-projected-document shape it runs
+                    // over — see BuildDocumentConstructionExpression's own remarks.
+                    if (projection.Expression is MongoDocumentConstructionExpression construction)
+                    {
+                        return BuildDocumentConstructionExpression(construction, projection.Alias);
+                    }
+
                     // A native numeric-cast projection leaf
                     // (`new { X = (int)x.D }`) is registered on the WRITE side as the whole
                     // UnaryExpression{Convert} node (see MongoProjectionBindingExpressionVisitor.Visit), and the
@@ -711,6 +723,83 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     /// <returns>The registered <see cref="ProjectionExpression"/> this <paramref name="projectionBindingExpression"/> relates to.</returns>
     protected ProjectionExpression GetProjection(ProjectionBindingExpression projectionBindingExpression)
         => _queryExpression.Projection[GetProjectionIndex(projectionBindingExpression)];
+
+    /// <summary>
+    /// Rebuilds the CLR object a <see cref="MongoDocumentConstructionExpression"/> leaf (EF-447) represents,
+    /// reading each member's value via <see cref="ReadDocumentConstructionMember"/> (overridden by the mixed
+    /// visitor to read a different physical location — see that method's remarks).
+    /// </summary>
+    /// <remarks>
+    /// Supports the same two shapes <c>NativeProjectionBinder.TryGetDocumentConstructionLeaf</c> recognizes on
+    /// the emit side — a <see cref="MemberInitExpression"/> (<c>new Book { Id = ... }</c>) or a
+    /// <see cref="NewExpression"/> with named <c>Members</c> (<c>new Book(id, title)</c> on a record-like type).
+    /// </remarks>
+    protected Expression BuildDocumentConstructionExpression(MongoDocumentConstructionExpression construction, string alias)
+    {
+        switch (construction.OriginalExpression)
+        {
+            case MemberInitExpression memberInit:
+                {
+                    var bindings = new MemberBinding[construction.Members.Count];
+                    for (var i = 0; i < construction.Members.Count; i++)
+                    {
+                        var (memberName, value) = construction.Members[i];
+                        var member = memberInit.Bindings.First(b => b.Member.Name == memberName).Member;
+                        bindings[i] = Expression.Bind(
+                            member, ReadDocumentConstructionMemberTyped(construction, alias, memberName, value, member));
+                    }
+
+                    return Expression.MemberInit(memberInit.NewExpression, bindings);
+                }
+
+            case NewExpression { Members: not null } newExpression:
+                {
+                    var arguments = new Expression[construction.Members.Count];
+                    for (var i = 0; i < construction.Members.Count; i++)
+                    {
+                        var (memberName, value) = construction.Members[i];
+                        arguments[i] = ReadDocumentConstructionMemberTyped(
+                            construction, alias, memberName, value, newExpression.Members[i]);
+                    }
+
+                    return Expression.New(newExpression.Constructor!, arguments, newExpression.Members);
+                }
+
+            default:
+                throw new InvalidOperationException(CoreStrings.TranslationFailed(construction.OriginalExpression.Print()));
+        }
+    }
+
+    private Expression ReadDocumentConstructionMemberTyped(
+        MongoDocumentConstructionExpression construction, string alias, string memberName, MongoExpression value,
+        MemberInfo member)
+    {
+        var field = (MongoFieldExpression)value;
+        var memberType = member switch
+        {
+            PropertyInfo property => property.PropertyType,
+            FieldInfo fieldInfo => fieldInfo.FieldType,
+            _ => field.Property.ClrType
+        };
+
+        var read = ReadDocumentConstructionMember(construction, alias, memberName, field, memberType);
+        return read.Type == memberType ? read : Expression.Convert(read, memberType);
+    }
+
+    /// <summary>
+    /// Reads one member of a <see cref="MongoDocumentConstructionExpression"/> leaf (EF-447) from the current
+    /// document. The base (native) implementation reads the member NESTED under the leaf's own <c>$project</c>
+    /// alias (<c>"{alias}.{memberName}"</c>) — where the native <c>$project</c> actually placed it (see
+    /// <see cref="MongoDB.EntityFrameworkCore.Query.NativeTranslation.MongoAggregationExpressionRenderer"/>'s
+    /// <see cref="MongoDocumentConstructionExpression"/> case). <see cref="MongoMixedProjectionBindingRemovingExpressionVisitor"/>
+    /// overrides this to read <paramref name="field"/>'s own NATURAL root-relative document path instead, since
+    /// that visitor only ever runs over WHOLE, un-projected documents that never had this leaf's alias applied
+    /// to them at all.
+    /// </summary>
+    protected virtual Expression ReadDocumentConstructionMember(
+        MongoDocumentConstructionExpression construction, string alias, string memberName, MongoFieldExpression field,
+        Type memberType)
+        => BsonBinding.CreateGetPropertyValueAtPath(DocParameter, [alias, memberName], field.Property, memberType);
 
     /// <summary>
     /// Create a new compilable <see cref="Expression"/> the shaper can use to obtain the value from the <see cref="BsonDocument"/>.

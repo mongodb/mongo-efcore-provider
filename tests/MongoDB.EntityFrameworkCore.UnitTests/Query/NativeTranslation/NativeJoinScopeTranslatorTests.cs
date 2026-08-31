@@ -87,7 +87,13 @@ public class NativeJoinScopeTranslatorTests
         var translated = NativeJoinScopeTranslator.TryTranslateValue(scope, x, body, out var result);
 
         Assert.True(translated);
-        var field = Assert.IsType<MongoFieldExpression>(result);
+        // MongoOuterFieldExpression, not MongoFieldExpression: the two-scope translator resolves an
+        // Outer-rooted member via TryResolveMember's isOuter branch, which this operand path (TranslateOperand)
+        // does not confine to the new element-scope (Count(pred)/quantifier) translators — see
+        // MongoExpressionTranslator.cs's own remarks at that call site. It renders identically to
+        // MongoFieldExpression outside any $filter/$map element-variable scope, matching
+        // NativeSelectManyBinderTests' established convention for this same node.
+        var field = Assert.IsType<MongoOuterFieldExpression>(result);
         Assert.Equal("Name", field.ElementName);
     }
 
@@ -121,7 +127,8 @@ public class NativeJoinScopeTranslatorTests
         Assert.True(translated);
         var binary = Assert.IsType<MongoBinaryExpression>(result);
         Assert.Equal(MongoBinaryOperator.Equal, binary.Operator);
-        var left = Assert.IsType<MongoFieldExpression>(binary.Left);
+        // Left (Outer) is MongoOuterFieldExpression — same reason as Translates_outer_side_member_access_unprefixed.
+        var left = Assert.IsType<MongoOuterFieldExpression>(binary.Left);
         Assert.Equal("Name", left.ElementName);
         var right = Assert.IsType<MongoFieldExpression>(binary.Right);
         Assert.Equal(InnerPrefix + ".Name", right.ElementName);

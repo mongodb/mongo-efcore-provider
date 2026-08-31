@@ -68,7 +68,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         // members by NAME, so an owner-rooted `b.Title` inside the Any lambda only MIS-RESOLVES (rather than
         // declining for the unrelated reason "no such property on Post") when Post declares a Title too.
         // Seeded so the two interpretations give different answers — see
-        // Correlated_element_predicate_declines_and_falls_back_to_correct_rows.
+        // Correlated_element_predicate_now_goes_native_since_EF421.
         public string Title { get; set; } = "";
         public int Rank { get; set; }
         public int Other { get; set; }
@@ -120,7 +120,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     // Post.Title is present on every seeded post because it is a required non-nullable property (a post
     // document missing it would fail materialization); its VALUES are chosen so that owner-scoped and
     // element-scoped readings of `b.Title` give DIFFERENT answers — see
-    // Correlated_element_predicate_declines_and_falls_back_to_correct_rows.
+    // Correlated_element_predicate_now_goes_native_since_EF421.
 
     // Posts with a matching element (plus a second, non-matching element). NOTE neither post's own Title is
     // "match" (the OWNER's Title is) — that asymmetry is what makes the correlation test discriminating.
@@ -509,33 +509,37 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     }
 
     [Fact]
-    public void Correlated_element_predicate_declines_and_falls_back_to_correct_rows()
+    public void Correlated_element_predicate_now_goes_native_since_EF421()
     {
-        // CRITICAL-FINDING REGRESSION TEST (review fix C1). An element predicate that reaches OUT of the element
-        // into the enclosing entity must DECLINE, because the element-scoped translator resolves members by NAME
-        // with no parameter-identity check: `b.Title` (the OWNER's Title) would silently resolve against Post,
-        // which also declares a Title, emitting { Posts: { $elemMatch: { Title: "match" } } } — a condition on
-        // the ELEMENT, not the owner. GUARD REACHABILITY (this repo's convention for a guard test): the seed is
-        // built so the two readings give DIFFERENT answers, so this input would otherwise be ACCEPTED and return
-        // wrong rows — it is not an input that declines for some unrelated reason.
+        // SUPERSEDED by EF-421 (was CRITICAL-FINDING REGRESSION TEST, review fix C1, asserting a DECLINE — see
+        // git history for the pre-EF-421 version of this test). An element predicate that reaches OUT of the
+        // element into the enclosing entity used to decline outright, because the (single-scope) element-scoped
+        // translator resolves members by NAME with no parameter-identity check: `b.Title` (the OWNER's Title)
+        // would silently resolve against Post, which also declares a Title, emitting the WRONG condition — one
+        // scoped to the ELEMENT, not the owner. EF-421's two-scope translator resolves `b.Title` by
+        // `ReferenceEquals` against the captured `SelfParam`, not by name, so it now correctly routes to the
+        // OUTER scope and renders as `$anyElementTrue`-over-`$map`. GUARD REACHABILITY (this repo's convention
+        // for a guard test) still applies to the seed even though the guard no longer declines: it is built so
+        // the two readings give DIFFERENT answers, so a regression back to by-name resolution would silently
+        // flip this test's expected rows rather than merely failing to throw.
         //
         //   owner-scoped (CORRECT): blogs whose own Title == "match" and that have at least one post -> ["match"]
         //   element-scoped (WRONG): blogs having a post whose Title == "match"                        -> ["nomatch"]
         //
-        // The well-formed seed is used because AssertDeclinesCleanly's Native/DriverLinq legs must actually run,
-        // and the driver's own Any() translation crashes on the full matrix's missing/null Posts rows (see
-        // AssertNativeOnlyMatches).
-        var wellFormed = SeedWellFormedBlogs(nameof(Correlated_element_predicate_declines_and_falls_back_to_correct_rows));
+        // The well-formed seed is used because DriverLinq's own Any() translation crashes on the full matrix's
+        // missing/null Posts rows (see AssertNativeOnlyMatches's comment above), so the well-formed seed is what
+        // lets AssertNativeAndParity's DriverLinq leg actually run.
+        var wellFormed = SeedWellFormedBlogs(nameof(Correlated_element_predicate_now_goes_native_since_EF421));
 
-        var titles = AssertDeclinesCleanly(wellFormed, q => q.Where(b => b.Posts.Any(p => b.Title == "match")));
+        var titles = AssertNativeAndParity(wellFormed, q => q.Where(b => b.Posts.Any(p => b.Title == "match")));
         Assert.Equal(["match"], titles);
 
         // Mixed form: one element-only conjunct plus one correlated conjunct. Same discrimination —
         // owner-scoped gives ["match"] (its Title is "match" and it has a post with Rank 5 > 3), element-scoped
         // gives [] (the only post titled "match" has Rank 2).
         var mixed = SeedWellFormedBlogs(
-            nameof(Correlated_element_predicate_declines_and_falls_back_to_correct_rows) + "_Mixed");
-        var mixedTitles = AssertDeclinesCleanly(
+            nameof(Correlated_element_predicate_now_goes_native_since_EF421) + "_Mixed");
+        var mixedTitles = AssertNativeAndParity(
             mixed, q => q.Where(b => b.Posts.Any(p => b.Title == "match" && p.Rank > 3)));
         Assert.Equal(["match"], mixedTitles);
     }

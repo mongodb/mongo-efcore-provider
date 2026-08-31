@@ -231,6 +231,136 @@ public class MongoExpressionNegatorTests
         Assert.True(Assert.IsType<MongoElemMatchExpression>(negated).Negated);
     }
 
+    // EF-421 Task 7 review fix: MongoQuantifierExpression (the CORRELATED Any/All node — see its own remarks)
+    // has no Negated flag; $anyElementTrue/$allElementsTrue are each other's De Morgan dual, so negation
+    // flips Kind and recurses into ElementPredicate instead. Exercised by NativeCardinalityBinder's root-level
+    // All(pred) arm, where pred.Body can itself be (or contain) a correlated Any/All translated to this node.
+    [Fact]
+    public void Quantifier_Any_negates_to_All_with_the_negated_element_predicate()
+    {
+        var quantifier = new MongoQuantifierExpression(
+            new MongoElementRefExpression("Posts", typeof(object)),
+            Comparison(MongoBinaryOperator.Equal, 1),
+            MongoExpressionTranslator.MongoQuantifierKind.Any);
+
+        Assert.True(MongoExpressionNegator.TryNegate(quantifier, out var negated));
+        var negatedQuantifier = Assert.IsType<MongoQuantifierExpression>(negated);
+        Assert.Equal(MongoExpressionTranslator.MongoQuantifierKind.All, negatedQuantifier.Kind);
+        Assert.Same(quantifier.ArrayPath, negatedQuantifier.ArrayPath);
+        var negatedElement = Assert.IsType<MongoBinaryExpression>(negatedQuantifier.ElementPredicate);
+        Assert.Equal(MongoBinaryOperator.NotEqual, negatedElement.Operator);
+    }
+
+    [Fact]
+    public void Quantifier_All_negates_to_Any_with_the_negated_element_predicate()
+    {
+        var quantifier = new MongoQuantifierExpression(
+            new MongoElementRefExpression("Posts", typeof(object)),
+            Comparison(MongoBinaryOperator.GreaterThan, 5),
+            MongoExpressionTranslator.MongoQuantifierKind.All);
+
+        Assert.True(MongoExpressionNegator.TryNegate(quantifier, out var negated));
+        var negatedQuantifier = Assert.IsType<MongoQuantifierExpression>(negated);
+        Assert.Equal(MongoExpressionTranslator.MongoQuantifierKind.Any, negatedQuantifier.Kind);
+        Assert.Same(quantifier.ArrayPath, negatedQuantifier.ArrayPath);
+        // A relational operator is $not-wrapped, not inverted — same rule as everywhere else in this file.
+        var negatedElement = Assert.IsType<MongoUnaryExpression>(negatedQuantifier.ElementPredicate);
+        Assert.Equal(MongoUnaryOperator.Not, negatedElement.Operator);
+    }
+
+    [Fact]
+    public void Quantifier_negation_is_an_involution()
+    {
+        var quantifier = new MongoQuantifierExpression(
+            new MongoElementRefExpression("Posts", typeof(object)),
+            Comparison(MongoBinaryOperator.Equal, 1),
+            MongoExpressionTranslator.MongoQuantifierKind.Any);
+
+        Assert.True(MongoExpressionNegator.TryNegate(quantifier, out var once));
+        Assert.True(MongoExpressionNegator.TryNegate(once, out var twice));
+        var twiceQuantifier = Assert.IsType<MongoQuantifierExpression>(twice);
+        Assert.Equal(MongoExpressionTranslator.MongoQuantifierKind.Any, twiceQuantifier.Kind);
+        Assert.Equal(
+            MongoBinaryOperator.Equal, Assert.IsType<MongoBinaryExpression>(twiceQuantifier.ElementPredicate).Operator);
+    }
+
+    [Fact]
+    public void Quantifier_negation_declines_when_the_element_predicate_has_no_exact_complement()
+    {
+        // No approximation: a declining element predicate must decline the whole quantifier negation, not
+        // produce a quantifier whose ElementPredicate is left un-negated (which would be silently wrong,
+        // not just conservative). A field-to-field/outer-field comparison is NOT the right shape to prove
+        // this with — see the Field_to_field_within_a_quantifier... test below, which shows that shape now
+        // negates exactly (Equal/relational still partition/wrap the same way inside the quantifier's own
+        // aggregation-expression $map). Arithmetic is not a predicate at all, so it is the genuine decline.
+        var rank = GetPostProperty(nameof(Post.Rank));
+        var arithmetic = new MongoBinaryExpression(
+            MongoBinaryOperator.Add,
+            new MongoFieldExpression(rank, "Rank"),
+            new MongoConstantExpression(1, rank));
+        var quantifier = new MongoQuantifierExpression(
+            new MongoElementRefExpression("Posts", typeof(object)),
+            arithmetic,
+            MongoExpressionTranslator.MongoQuantifierKind.Any);
+
+        Assert.False(MongoExpressionNegator.TryNegate(quantifier, out var negated));
+        Assert.Null(negated);
+    }
+
+    // EF-421 Task 7 review fix: this is the exact shape a correlated quantifier's ElementPredicate is built
+    // from (p.Field == b.Field, both sides a field ref — the outer one would be a MongoOuterFieldExpression
+    // in the real translator output, but the negator's new comparison3 case treats any non-query-dialect-
+    // native comparison shape identically, so a second bare field stands in fine here). This is NOT admitted
+    // by the ordinary (IsQueryNativeComparison-gated) comparison case — proving the new, wider case is what
+    // makes this negate, not the pre-existing one.
+    [Fact]
+    public void Field_to_field_comparison_inside_a_quantifier_element_predicate_negates_exactly()
+    {
+        var rank = GetPostProperty(nameof(Post.Rank));
+        var fieldToField = new MongoBinaryExpression(
+            MongoBinaryOperator.Equal,
+            new MongoFieldExpression(rank, "Rank"),
+            new MongoFieldExpression(rank, "Rank"));
+
+        // Sanity: the bare comparison, in isolation, still declines through the ordinary gated path (this is
+        // the pre-existing, unchanged invariant the $elemMatch-building call sites rely on).
+        Assert.False(MongoExpressionNegator.TryNegate(fieldToField, out _));
+
+        var quantifier = new MongoQuantifierExpression(
+            new MongoElementRefExpression("Posts", typeof(object)),
+            fieldToField,
+            MongoExpressionTranslator.MongoQuantifierKind.Any);
+
+        Assert.True(MongoExpressionNegator.TryNegate(quantifier, out var negated));
+        var negatedQuantifier = Assert.IsType<MongoQuantifierExpression>(negated);
+        Assert.Equal(MongoExpressionTranslator.MongoQuantifierKind.All, negatedQuantifier.Kind);
+        var negatedElement = Assert.IsType<MongoBinaryExpression>(negatedQuantifier.ElementPredicate);
+        Assert.Equal(MongoBinaryOperator.NotEqual, negatedElement.Operator);
+    }
+
+    // Code-review finding (Task 7 fix round 2): comparison3 (the wider, non-query-dialect-native comparison
+    // case) must be STRUCTURALLY unreachable outside the quantifier's own ElementPredicate recursion, not
+    // merely unreached by today's IsQueryDialectRenderable shape. Proven two ways: a bare top-level
+    // field-to-field comparison (already covered above) AND — the case that would actually catch a future
+    // regression, since AndAlso/OrElse recurse internally — the SAME shape nested inside a conjunction
+    // reached from the top-level public TryNegate entry point. If inAggregationContext ever failed to
+    // propagate as `false` through that recursion (or comparison3's `when` guard were ever dropped), this
+    // would start succeeding with a silently-wrong-for-$elemMatch result instead of declining.
+    [Fact]
+    public void Field_to_field_comparison_nested_in_a_top_level_conjunction_still_declines()
+    {
+        var rank = GetPostProperty(nameof(Post.Rank));
+        var fieldToField = new MongoBinaryExpression(
+            MongoBinaryOperator.Equal,
+            new MongoFieldExpression(rank, "Rank"),
+            new MongoFieldExpression(rank, "Rank"));
+        var and = new MongoBinaryExpression(
+            MongoBinaryOperator.AndAlso, Comparison(MongoBinaryOperator.Equal, 1), fieldToField);
+
+        Assert.False(MongoExpressionNegator.TryNegate(and, out var negated));
+        Assert.Null(negated);
+    }
+
     [Fact]
     public void Bare_Any_elem_match_flips_to_exists_false()
     {

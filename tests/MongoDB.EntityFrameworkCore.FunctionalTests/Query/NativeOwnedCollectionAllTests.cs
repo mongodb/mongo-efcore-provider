@@ -516,29 +516,20 @@ public class NativeOwnedCollectionAllTests(TemporaryDatabaseFixture database) : 
     }
 
     [Fact]
-    public void All_with_a_correlated_element_predicate_declines_and_falls_back_to_correct_rows()
+    public void All_with_a_correlated_element_predicate_now_goes_native_since_EF421()
     {
-        // Post.Title collides with Blog.Title, so a mis-scoped owner-rooted condition would select DIFFERENT
-        // rows — which is what makes this decline test discriminating rather than vacuous.
-        //
-        //   owner-scoped (CORRECT): b.Title == "match" is constant per blog, so All(p => ...) over the
-        //   blog's non-empty Posts reduces to whether the OWNER's Title is "match". Blog "match" has
-        //   Title == "match" and one post -> All true. Blog "other" has Title == "other" -> All false.
-        //   Correct fallback result: ["match"].
-        //
-        //   element-scoped (WRONG — what a mis-resolved `b.Title` retargeted at Post.Title would return):
-        //   blog "match"'s single post has Title "other" (Post.Title != "match") -> All false -> excluded.
-        //   blog "other"'s single post has Title "match" (Post.Title == "match") -> All true (vacuously, one
-        //   satisfying element) -> included. Wrong result: ["other"].
-        //
-        // Asserting the returned titles, not just that NativeOnly throws, is what actually proves the
-        // fallback resolves against the OWNER rather than the element — a mis-scoped fallback would still
-        // throw under NativeOnly and pass a title-less version of this test silently.
-        var collection = Seed(nameof(All_with_a_correlated_element_predicate_declines_and_falls_back_to_correct_rows),
+        // SUPERSEDED by EF-421: this shape used to decline outright (see git history for the pre-EF-421
+        // version of this test, which asserted AssertDeclinesCleanly). It is now natively representable via
+        // a two-scope translator + $allElementsTrue — same seed, same expected rows (the correlated
+        // predicate `b.Title == "match"` does not depend on p at all, so All reduces to whether the OWNER's
+        // Title is "match" AND the blog has at least one post — "match" qualifies on both counts; "other"
+        // fails the Title check). Post.Title collides with Blog.Title, so a mis-scoped (element-rooted)
+        // resolution would select DIFFERENT rows, keeping this test discriminating rather than vacuous.
+        var collection = Seed(nameof(All_with_a_correlated_element_predicate_now_goes_native_since_EF421),
             Row("match", new BsonArray { PostDoc(rank: 9, heading: "a", title: "other") }),
             Row("other", new BsonArray { PostDoc(rank: 9, heading: "a", title: "match") }));
 
-        var titles = AssertDeclinesCleanly(collection, q => q.Where(b => b.Posts.All(p => b.Title == "match")));
+        var titles = AssertNativeOnlyMatches(collection, q => q.Where(b => b.Posts.All(p => b.Title == "match")));
         Assert.Equal(new[] { "match" }, titles);
     }
 

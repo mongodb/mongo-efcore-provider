@@ -99,7 +99,9 @@ public class NativeJoinScopeProjectionBinderTests
         // The Inner leaf resolves through the join's $lookup alias; the Outer leaf reads the root document.
         var innerLeaf = Assert.IsType<MongoFieldExpression>(mongoQ.Select.Projection[1].Expression);
         Assert.StartsWith(mongoQ.Select.JoinScope!.InnerPrefix + ".", innerLeaf.ElementName);
-        var outerLeaf = Assert.IsType<MongoFieldExpression>(mongoQ.Select.Projection[0].Expression);
+        // MongoOuterFieldExpression, not MongoFieldExpression — see NativeJoinScopeTranslatorTests'
+        // Translates_outer_side_member_access_unprefixed for why (same TranslateOperand call site).
+        var outerLeaf = Assert.IsType<MongoOuterFieldExpression>(mongoQ.Select.Projection[0].Expression);
         Assert.DoesNotContain(".", outerLeaf.ElementName);
 
         // The join's $lookup was registered (deferred until this Select confirmed the shape) and the
@@ -124,7 +126,9 @@ public class NativeJoinScopeProjectionBinderTests
         // The emitted alias is the join's own $lookup prefix, NOT the member name "r".
         Assert.Equal(["Name", innerPrefix], mongoQ.Select.Projection.Select(p => p.Alias).ToArray());
 
-        var outerLeaf = Assert.IsType<MongoFieldExpression>(mongoQ.Select.Projection[0].Expression);
+        // MongoOuterFieldExpression, not MongoFieldExpression — see NativeJoinScopeTranslatorTests'
+        // Translates_outer_side_member_access_unprefixed for why (same TranslateOperand call site).
+        var outerLeaf = Assert.IsType<MongoOuterFieldExpression>(mongoQ.Select.Projection[0].Expression);
         Assert.DoesNotContain(".", outerLeaf.ElementName);
 
         // Self-referential: both the alias and the MongoElementRefExpression's own path are innerPrefix.

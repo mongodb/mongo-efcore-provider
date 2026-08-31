@@ -56,27 +56,60 @@ internal sealed partial class MongoExpressionTranslator
     /// Creates a single-scope <see cref="MongoExpressionTranslator"/> for the given entity type.
     /// </summary>
     /// <param name="entityType">The entity type whose properties and element names are used during translation.</param>
-    public MongoExpressionTranslator(IEntityType entityType)
+    /// <param name="selfParam">
+    /// The root <see cref="ParameterExpression"/> this translator was built for (a <c>Where</c> predicate's,
+    /// an <c>OrderBy</c> key selector's, a <c>Select</c> projection's, etc.), or <see langword="null"/> when
+    /// none is available. Used ONLY to detect a single-level CORRELATED owned-collection element predicate
+    /// (<c>Count(pred)</c>/<c>Any</c>/<c>All</c>) nested inside this translator's own tree: when such a
+    /// predicate's free parameter is identical (by parameter identity) to <see cref="SelfParam"/>, the
+    /// quantifier/count call sites build a two-scope child translator instead of declining. See EF-421.
+    /// </param>
+    public MongoExpressionTranslator(IEntityType entityType, ParameterExpression? selfParam = null)
     {
         _entityType = entityType;
+        SelfParam = selfParam;
     }
 
     /// <summary>
-    /// Creates a two-scope translator for a CORRELATED reference-<c>SelectMany</c> inner filter: a member access
-    /// rooted on <paramref name="outerParam"/> resolves against <paramref name="outerEntityType"/> at document
-    /// root (no prefix); any other member resolves against <paramref name="innerEntityType"/> and is prefixed
-    /// with <paramref name="innerPrefix"/> (the <c>_lookup_&lt;Nav&gt;</c> unwind scope). Outer members are
-    /// identified by reference identity, never by name, so a member name shared between the two scopes never
-    /// conflates them.
+    /// Creates a two-scope translator for a CORRELATED reference-<c>SelectMany</c> inner filter, or for a
+    /// CORRELATED owned-collection element predicate rendered via <c>$filter</c>: a member access rooted on
+    /// <paramref name="outerParam"/> resolves against <paramref name="outerEntityType"/> at document root (no
+    /// prefix); any other member resolves against <paramref name="innerEntityType"/> and is prefixed with
+    /// <paramref name="innerPrefix"/> (the <c>_lookup_&lt;Nav&gt;</c> unwind scope) when non-null, or left
+    /// unprefixed when <paramref name="innerPrefix"/> is <see langword="null"/> — the correct choice for a
+    /// <c>$filter</c>'s element scope, whose fields are addressed by the renderer via the <c>$filter</c>'s own
+    /// <c>as</c> variable (<c>"$$e.&lt;path&gt;"</c>), never via a baked-in document-relative prefix. Passing
+    /// <c>""</c> instead of <see langword="null"/> here would NOT mean "no prefix" — it would render as a
+    /// leading-dot path segment (<c>"$$e..&lt;path&gt;"</c>), which MongoDB rejects as an empty field-path
+    /// segment. Outer members are identified by reference identity, never by name, so a member name shared
+    /// between the two scopes never conflates them.
     /// </summary>
     public MongoExpressionTranslator(
-        IEntityType innerEntityType, ParameterExpression outerParam, IEntityType outerEntityType, string innerPrefix)
+        IEntityType innerEntityType, ParameterExpression outerParam, IEntityType outerEntityType, string? innerPrefix)
     {
         _entityType = innerEntityType;
         _outerParam = outerParam;
         _outerEntityType = outerEntityType;
         _innerPrefix = innerPrefix;
     }
+
+    /// <summary>
+    /// The root <see cref="ParameterExpression"/> this SINGLE-SCOPE translator was built for — see the
+    /// constructor parameter of the same name. SETTABLE (not constructor-only) because
+    /// <see cref="NativeSlotPopulator.PopulateNativeSlots"/> handles exactly ONE <see cref="MethodCallExpression"/>
+    /// per call, but constructs its translator generically at the TOP of that method — before the `if`/`else if`
+    /// dispatch has determined which of the seven slot operators (<c>Where</c>/<c>OrderBy</c>/<c>ThenBy</c>/etc.)
+    /// this call is for, and therefore before that operator's own lambda parameter is known. Only the single
+    /// arm that actually runs sets this field, to ITS OWN parameter, immediately before translating — a plain
+    /// constructor argument would require constructing a separate translator inside each arm instead (final-
+    /// review fix: corrected a factually wrong claim that this setter existed because ONE translator instance
+    /// was reused ACROSS SEVERAL slot operators — it never is; each call to <c>PopulateNativeSlots</c> handles
+    /// one operator and constructs one translator). Always <see langword="null"/> on a two-scope translator
+    /// (the constructor below never sets it) — a correlation nested two-or-more scopes deep is out of EF-421's
+    /// scope and must keep declining, which requires that a two-scope child never itself exposes a further
+    /// <see cref="SelfParam"/>.
+    /// </summary>
+    internal ParameterExpression? SelfParam { get; set; }
 
     /// <summary>
     /// Attempts to translate an EF Core expression body into a <see cref="MongoExpression"/>.
@@ -108,7 +141,11 @@ internal sealed partial class MongoExpressionTranslator
     public bool TryTranslateField(Expression keySelectorBody, [NotNullWhen(true)] out MongoFieldExpression? result)
     {
         result = null;
-        if (!TryResolveMember(UnwrapOrderPreserving(keySelectorBody), out var property, out var path))
+        if (!TryResolveMember(UnwrapOrderPreserving(keySelectorBody), out var property, out var path, out var isOuter)
+            || isOuter) // a sort key is never inside a $filter/$map scope, so an outer-scoped one has no
+                         // meaning here — this translator is always the ROOT translator for a sort key
+                         // (never itself the two-scope child), so isOuter is always false in practice; the
+                         // guard exists so a future caller cannot silently regress this.
             return false;
 
         result = new MongoFieldExpression(property, path);
@@ -174,8 +211,13 @@ internal sealed partial class MongoExpressionTranslator
             return false;
 
         MongoExpression receiverExpr;
-        if (TryResolveMember(receiver, out var property, out var fieldPath))
+        if (TryResolveMember(receiver, out var property, out var fieldPath, out var dateTimeIsOuter))
         {
+            // A correlated outer-scoped DateTime/DateTimeOffset chain is out of EF-421's scope — decline
+            // rather than silently building an inner-scoped field reference for an outer property.
+            if (dateTimeIsOuter)
+                return false;
+
             receiverExpr = new MongoFieldExpression(property, fieldPath!);
         }
         else if (TryTranslateDateTimeMember(receiver, out var nestedDateTimeExpr))
@@ -246,7 +288,7 @@ internal sealed partial class MongoExpressionTranslator
         [NotNullWhen(true)] out MongoElementRefExpression? result)
     {
         var source = UnwrapAsQueryable(expression);
-        if (TryResolveOwnedCollectionPath(source, out var arrayPath, out _))
+        if (TryResolveOwnedCollectionPath(source, out var arrayPath, out _, out var arrayIsOuter) && !arrayIsOuter)
         {
             // Use the unwrapped source's type (the navigation's own collection type), not the AsQueryable()
             // wrapper's IQueryable<T> — nothing renders from it, but misreporting the CLR type is a trap.
@@ -310,16 +352,53 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
+    /// Matches a BARE field reference at document root, regardless of which of the two sibling node kinds it
+    /// arrived as — an ordinary/inner-scope <see cref="MongoFieldExpression"/> or a two-scope translator's
+    /// outer-scoped <see cref="MongoOuterFieldExpression"/> — and yields its backing <see cref="IProperty"/>.
+    /// </summary>
+    /// <remarks>
+    /// Exists so every call site that must recognize "this operand is a bare stored value, not a computed
+    /// one" (the bare-bool-truthiness hazard <see cref="AllFieldsDefaultSerialized"/>'s remarks describe)
+    /// checks BOTH node kinds identically, rather than each site restating its own
+    /// <c>is MongoFieldExpression</c> pattern and silently missing the outer-scoped sibling — exactly the gap
+    /// EF-421's final review found in three (really four) sites in <see cref="MongoAggregationExpressionRenderer"/>.
+    /// A THIRD sibling node kind, if one is ever added, only needs a case here — every caller stays correct.
+    /// </remarks>
+    internal static bool TryGetBareFieldProperty(MongoExpression node, [NotNullWhen(true)] out IProperty? property)
+    {
+        switch (node)
+        {
+            case MongoFieldExpression f:
+                property = f.Property;
+                return true;
+            case MongoOuterFieldExpression o:
+                property = o.Property;
+                return true;
+            default:
+                property = null;
+                return false;
+        }
+    }
+
+    /// <summary>
     /// Returns whether every field reachable from <paramref name="expr"/> uses its property's DEFAULT BSON
     /// serialization (no value converter, no non-default <c>BsonRepresentation</c>).
     /// </summary>
     /// <remarks>
-    /// <b>Internal, not private</b> — it is the single correctness predicate behind FOUR separate guards in
-    /// <see cref="MongoAggregationExpressionRenderer"/>, two at classify time and two at render time:
+    /// <b>Internal, not private</b> — it is the single correctness predicate behind SIX separate guards: five
+    /// in <see cref="MongoAggregationExpressionRenderer"/>, and one in <see cref="MongoQueryLanguageRenderer"/>.
+    /// In <see cref="MongoAggregationExpressionRenderer"/>, split between classify time and render time:
     /// <c>CanRender</c>'s <c>Not</c> arm and <c>CanRenderLogicalOperand</c> (EF-396) answer "would Render
-    /// succeed AND answer correctly?", while <c>RenderUnary</c> (EF-413) and
-    /// <c>CheckLogicalOperandSerialization</c> (EF-396) re-check at render time for the callers that invoke
-    /// <c>Render</c> without going through <c>CanRender</c> first. All four exist for the same reason
+    /// succeed AND answer correctly?", while its own private <c>RenderUnary</c> (EF-413),
+    /// <c>CheckLogicalOperandSerialization</c> (EF-396), and <c>CheckBooleanRootSerialization</c>
+    /// (final-review fix — guards a BARE <c>ElementPredicate</c> root under a quantifier/filtered-count, the
+    /// one shape none of the other four catch) re-check at render time for the callers that invoke
+    /// <c>Render</c> without going through <c>CanRender</c> first. The sixth lives in a DIFFERENT class and
+    /// method of the same name — <see cref="MongoQueryLanguageRenderer"/>'s own <c>RenderUnary</c>, in its
+    /// fall-to-<c>$expr</c> branch (EF-421 final-review round 2): that branch calls
+    /// <c>MongoAggregationExpressionRenderer.CanRender</c> on the Not's OPERAND directly, so a bare field
+    /// operand hits <c>CanRender</c>'s unconditional top arm rather than <c>CanRender</c>'s own already-guarded
+    /// <c>Not</c> arm, and must repeat the check itself. All six exist for the same reason
     /// <see cref="TryTranslateValue"/> calls this at translate time: a raw-field aggregation <c>$not</c> —
     /// and, identically, a bare-field <c>$and</c>/<c>$or</c> operand — is TRUTHINESS-based (only
     /// <c>false</c>/<c>null</c>/<c>0</c>/<c>undefined</c> are falsy), so a value-converted/non-default-
@@ -340,6 +419,8 @@ internal sealed partial class MongoExpressionTranslator
         => expr switch
         {
             MongoFieldExpression f => NativeGroupByBinder.HasDefaultKeySerialization(f.Property),
+            // Same correctness check as the MongoFieldExpression arm above, over the OUTER property instead.
+            MongoOuterFieldExpression outerField => NativeGroupByBinder.HasDefaultKeySerialization(outerField.Property),
             MongoBinaryExpression b => AllFieldsDefaultSerialized(b.Left) && AllFieldsDefaultSerialized(b.Right),
             MongoConvertExpression c => AllFieldsDefaultSerialized(c.Operand),
             // EF-413: MongoUnaryExpression{Not} needs an explicit arm, NOT the catch-all — see this method's
@@ -483,6 +564,23 @@ internal sealed partial class MongoExpressionTranslator
                 if (operand is MongoElemMatchExpression elemMatchExpr)
                     return new MongoElemMatchExpression(
                         elemMatchExpr.ArrayPath, elemMatchExpr.ElementPredicate, negated: !elemMatchExpr.Negated);
+                // !collection.Any(pred)/.All(pred) where pred is CORRELATED (translated to a
+                // MongoQuantifierExpression rather than a MongoElemMatchExpression, since $elemMatch cannot
+                // reference the enclosing document) → recurse into MongoExpressionNegator's own quantifier
+                // case (flips Kind, negates ElementPredicate) rather than falling through to the generic
+                // Unary(Not) wrap below. This mirrors the MongoElemMatchExpression arm immediately above and
+                // the MongoSizeExpression-comparison arm immediately below — and is load-bearing for
+                // NativeCardinalityBinder's root-level All(pred) arm: a generic Unary(Not) wrapping a
+                // quantifier has no query-dialect form (MongoQueryLanguageRenderer.IsQueryDialectRenderable
+                // declines a Not over anything but a bare field or query-native comparison), so
+                // MongoExpressionNegator.TryNegate's outer gate would decline it before ever reaching the
+                // quantifier-aware case — flipping Kind HERE, at the one-level-shallower point where the node
+                // is still a bare MongoQuantifierExpression, is what lets `All(b => !b.Posts.Any(...))` re-
+                // negate cleanly when NativeCardinalityBinder negates the WHOLE predicate a second time.
+                if (operand is MongoQuantifierExpression quantifierOperand)
+                    return MongoExpressionNegator.TryNegate(quantifierOperand, out var quantifierComplement)
+                        ? quantifierComplement
+                        : null;
                 // !(collection.Count > n) → INVERT the comparison rather than wrapping in a generic Not node:
                 // the array-index form has no $not wrapper, and MongoExpressionNegator owns the (exact)
                 // inversion rule for this family — see its remarks for why inversion is exact here and is NOT
@@ -494,7 +592,11 @@ internal sealed partial class MongoExpressionTranslator
                         ? countComplement
                         : null;
                 // Only allow Not over a field or further translated expression; nullable bools fall back.
-                if (operand is MongoFieldExpression fieldExpr && fieldExpr.Property.IsNullable)
+                // TryGetBareFieldProperty covers BOTH bare-field sibling kinds (MongoFieldExpression and the
+                // outer-scoped MongoOuterFieldExpression) — final-review fix: a NULLABLE outer bool reached
+                // through a correlated SelectMany inner filter must decline here exactly as a nullable
+                // MongoFieldExpression already did, not slip through as newly-translatable.
+                if (TryGetBareFieldProperty(operand, out var notOperandProperty) && notOperandProperty.IsNullable)
                     return null; // conservative: nullable bool Not could diverge from driver rendering
                 return new MongoUnaryExpression(MongoUnaryOperator.Not, operand);
             }
@@ -518,7 +620,8 @@ internal sealed partial class MongoExpressionTranslator
             case MethodCallExpression call
                 when TryMatchContainsMethod(call, out var arrayReceiver, out var containsItem)
                      && Unwrap(containsItem) is ConstantExpression
-                     && TryResolveMember(Unwrap(arrayReceiver), out var arrayProperty, out var arrayFieldPath)
+                     && TryResolveMember(Unwrap(arrayReceiver), out var arrayProperty, out var arrayFieldPath, out var arrayIsOuter)
+                     && !arrayIsOuter // an outer-scoped array receiver is out of EF-421's scope — decline
                      && GetEnumerableElementType(arrayProperty.ClrType) is not null:
             {
                 var itemNode = TranslateArrayContainsItem(Unwrap(containsItem), arrayProperty);
@@ -533,7 +636,8 @@ internal sealed partial class MongoExpressionTranslator
 
             case MethodCallExpression call when TryMatchContainsMethod(call, out var collectionExpr, out var itemExpr):
             {
-                if (!TryResolveMember(Unwrap(itemExpr), out var property, out var fieldPath))
+                if (!TryResolveMember(Unwrap(itemExpr), out var property, out var fieldPath, out var itemIsOuter)
+                    || itemIsOuter) // an outer-scoped item is out of EF-421's scope — decline
                     return null; // item must resolve to a bare field
 
                 var valuesNode = TranslateInValues(collectionExpr, property);
@@ -548,8 +652,21 @@ internal sealed partial class MongoExpressionTranslator
 
             case MethodCallExpression call when TryMatchRegexMethod(call, out var kind, out var receiver, out var termExpr):
             {
-                if (!TryResolveMember(Unwrap(receiver), out var property, out var fieldPath))
+                if (!TryResolveMember(Unwrap(receiver), out var property, out var fieldPath, out var receiverIsOuter))
                     return null; // receiver must resolve to a bare string field
+
+                // An outer-scoped receiver reached from the NEW element-scope translators (Count(pred)/
+                // quantifier, both built with innerPrefix: null) is still out of EF-421's scope — MongoRegexExpression
+                // is strictly typed to MongoFieldExpression, and this shape would need MongoOuterFieldExpression's
+                // document-root-regardless-of-elementVariable rendering to be correct inside a $filter/$map.
+                // But an outer-scoped receiver reached from a PRE-EXISTING two-scope translator (NativeSelectManyBinder,
+                // NativeJoinScopeTranslator — both built with a real non-null innerPrefix) is NOT a new shape this
+                // plan needs to gate at all: TryResolveMember already resolves it to the correct, unprefixed
+                // OUTER-relative path, exactly as it did before this plan ever touched this method, so it renders
+                // correctly as a plain MongoFieldExpression (query-dialect $regularExpression, not $expr). Declining
+                // it here regressed x.Outer.Name.StartsWith(...) inside a join-scope Where predicate.
+                if (receiverIsOuter && _innerPrefix is null)
+                    return null;
 
                 if (property!.ClrType != typeof(string))
                     return null;
@@ -567,8 +684,11 @@ internal sealed partial class MongoExpressionTranslator
             case MethodCallExpression call
                 when TryMatchQuantifierMethod(call, out var quantifier, out var quantifierSource, out var elementLambda):
             {
-                if (!TryResolveOwnedCollectionPath(Unwrap(quantifierSource), out var arrayPath, out var elementType))
+                if (!TryResolveOwnedCollectionPath(Unwrap(quantifierSource), out var arrayPath, out var elementType, out var sourceIsOuter))
                     return null; // not an owned-collection source rooted at the query parameter
+
+                if (sourceIsOuter)
+                    return null; // the ARRAY itself being reached through the outer scope is a separate, not-yet-supported shape (e.g. a quantifier over an outer sibling collection) — out of EF-421's scope
 
                 if (elementLambda is null)
                 {
@@ -582,13 +702,46 @@ internal sealed partial class MongoExpressionTranslator
                         new MongoConstantExpression(1, forSerialization: null));
                 }
 
-                // A CORRELATED element predicate — one reaching outside the element into the enclosing entity —
-                // must be declined BEFORE the element-scoped translator ever sees it. See the helper's remarks:
-                // the element-scoped translator resolves a member by NAME alone, so an enclosing-scoped access
-                // whose name also exists on the element would be silently retargeted at the element. This
-                // applies to All exactly as it does to Any.
-                if (ReferencesEnclosingScope(elementLambda.Body, elementLambda.Parameters[0]))
-                    return null;
+                // A CORRELATED element predicate — one reaching outside the element into the enclosing entity.
+                //
+                // EF-421: no longer an outright decline. If the free parameter found is IDENTICAL
+                // (ReferenceEquals) to THIS translator's own SelfParam, build a two-scope child translator and
+                // emit a MongoQuantifierExpression ($anyElementTrue/$allElementsTrue over $map) instead of the
+                // ordinary $elemMatch path below — $elemMatch cannot reference the enclosing document at all,
+                // so that dialect is unusable here regardless of scope handling. Any OTHER free parameter
+                // (correlation reaching past the immediate enclosing scope) still declines exactly as before.
+                if (ReferencesEnclosingScope(elementLambda.Body, elementLambda.Parameters[0], out var quantifierFreeParam))
+                {
+                    if (SelfParam is null || !ReferenceEquals(quantifierFreeParam, SelfParam))
+                        return null;
+
+                    var correlatedElementTranslator = new MongoExpressionTranslator(
+                        elementType, outerParam: SelfParam, outerEntityType: _entityType, innerPrefix: null);
+                    if (!correlatedElementTranslator.TryTranslate(elementLambda.Body, out var correlatedPredicate))
+                        return null;
+
+                    // No negation for All here, unlike the uncorrelated path below: $allElementsTrue is
+                    // itself a "for all" operator, so the predicate translates DIRECTLY for both Any and All.
+                    if (!MongoAggregationExpressionRenderer.CanRender(correlatedPredicate))
+                        return null; // no equivalent graceful degrade exists for this node — decline cleanly
+
+                    // Final-review fix (CRITICAL — silent wrong-data risk): CanRender's own top arm admits ANY
+                    // bare field (MongoFieldExpression/MongoOuterFieldExpression) unconditionally — it answers
+                    // "would Render throw", not "would Render answer correctly" — so a BARE correlatedPredicate
+                    // root (e.g. `b.Posts.Any(p => b.Flag)`, no comparison/Not/&&/|| wrapping it) sails through
+                    // the check above even when the field is value-converted/non-default-represented, and
+                    // $anyElementTrue/$allElementsTrue would then truthiness-test its raw stored form and
+                    // silently answer the wrong boolean. Decline cleanly here (translate time, matching this
+                    // whole branch's existing disposition) rather than let it reach the render-time throw in
+                    // MongoAggregationExpressionRenderer.RenderQuantifier — which exists too, as defense in
+                    // depth, but this branch already has a decline path so there is no reason to hard-throw.
+                    if (TryGetBareFieldProperty(correlatedPredicate, out _)
+                        && !AllFieldsDefaultSerialized(correlatedPredicate))
+                        return null;
+
+                    return new MongoQuantifierExpression(
+                        new MongoElementRefExpression(arrayPath, quantifierSource.Type), correlatedPredicate, quantifier);
+                }
 
                 // Translate the element predicate with an ELEMENT-SCOPED translator: its field paths come out
                 // element-relative, which is what $elemMatch requires. This is the mirror image of
@@ -639,7 +792,8 @@ internal sealed partial class MongoExpressionTranslator
             case MemberExpression { Member.Name: nameof(Nullable<int>.HasValue), Expression: { } hasValueReceiver }
                 when Nullable.GetUnderlyingType(hasValueReceiver.Type) is not null:
             {
-                if (!TryResolveMember(Unwrap(hasValueReceiver), out var nullableProperty, out var nullablePath))
+                if (!TryResolveMember(Unwrap(hasValueReceiver), out var nullableProperty, out var nullablePath, out var hasValueIsOuter)
+                    || hasValueIsOuter) // an outer-scoped nullable HasValue check is out of EF-421's scope — decline
                     return null;
 
                 return new MongoBinaryExpression(
@@ -651,12 +805,21 @@ internal sealed partial class MongoExpressionTranslator
             // --- Bare boolean member access (c.Active) ---
 
             default:
-                if (TryResolveMember(node, out var boolProp, out var boolPath))
+                if (TryResolveMember(node, out var boolProp, out var boolPath, out var boolIsOuter))
                 {
                     // Accept only non-nullable bools; a nullable bool bare access could diverge.
                     if (boolProp!.ClrType != typeof(bool) || boolProp.IsNullable)
                         return null;
-                    return new MongoFieldExpression(boolProp, boolPath!);
+                    // Same confinement as TranslateComparison's two branches (final-review fix): only the NEW
+                    // element-scope two-scope translators (Count(pred)/quantifier, innerPrefix: null) get a
+                    // MongoOuterFieldExpression here. The PRE-EXISTING SelectMany two-scope translator
+                    // (_innerPrefix non-null) must keep emitting a plain MongoFieldExpression at document root,
+                    // exactly as it did before this plan — MongoOuterFieldExpression is not query-dialect-
+                    // renderable, so it would route through $expr as raw truthiness instead of through the
+                    // property's own serializer.
+                    return boolIsOuter && _innerPrefix is null
+                        ? new MongoOuterFieldExpression(boolProp, boolPath!)
+                        : new MongoFieldExpression(boolProp, boolPath!);
                 }
 
                 return null;
@@ -708,7 +871,8 @@ internal sealed partial class MongoExpressionTranslator
 
         // --- Query-native shape: member on exactly one side, value on the other ---
 
-        if (TryResolveMember(leftUnwrapped, out var leftProperty, out var leftPath) && IsSimpleValue(rightUnwrapped))
+        if (TryResolveMember(leftUnwrapped, out var leftProperty, out var leftPath, out var leftIsOuter)
+            && IsSimpleValue(rightUnwrapped))
         {
             // A WIDENING numeric cast or an IDENTITY-LIKE cast on the member side is absorbed (the field ref
             // is the stored field exactly as for a bare member); anything else still changes comparison
@@ -733,15 +897,27 @@ internal sealed partial class MongoExpressionTranslator
                 if (valueExpr is null)
                     return null;
 
-                return new MongoBinaryExpression(
-                    mongoOp.Value, new MongoFieldExpression(leftProperty, leftPath!), valueExpr);
+                // MongoOuterFieldExpression only for the NEW element-scope two-scope translators (Count(pred)/
+                // quantifier, both constructed with innerPrefix: null) — final-review fix. The PRE-EXISTING
+                // SelectMany two-scope translator (_innerPrefix non-null, a real "_lookup_<Nav>" document-path
+                // string) must keep emitting a plain MongoFieldExpression at document root exactly as it did
+                // before this plan, because MongoOuterFieldExpression is IsQueryDialectRenderable => false and
+                // would route the comparison through the $expr/aggregation-expression dialect instead of the
+                // query dialect — harmless for $eq/$ne, but for a RELATIONAL operator over a NULLABLE outer
+                // property it un-type-brackets the comparison (BSON total ordering admits null under $lt/$lte/
+                // $gt/$gte, where the query dialect would not), silently admitting null/missing rows a
+                // correlated SelectMany inner filter previously excluded.
+                MongoExpression leftField = leftIsOuter && _innerPrefix is null
+                    ? new MongoOuterFieldExpression(leftProperty, leftPath!)
+                    : new MongoFieldExpression(leftProperty, leftPath!);
+                return new MongoBinaryExpression(mongoOp.Value, leftField, valueExpr);
             }
         }
 
         // The mirrored shape, and the SAME fall-through rule. Note the $expr path does NOT mirror the operator
         // — it keeps the original left/right order, which is what a non-commutative comparison inside $expr
         // needs, so this is a genuinely different emission from the branch above rather than a spelling of it.
-        else if (TryResolveMember(rightUnwrapped, out var rightProperty, out var rightPath)
+        else if (TryResolveMember(rightUnwrapped, out var rightProperty, out var rightPath, out var rightIsOuter)
                  && IsSimpleValue(leftUnwrapped))
         {
             if (HasNumericConvert(be.Right, rightProperty!.ClrType, out var rightWideningTarget, out var rightIdentityLike))
@@ -763,8 +939,11 @@ internal sealed partial class MongoExpressionTranslator
                 if (valueExpr is null)
                     return null;
 
-                return new MongoBinaryExpression(
-                    mongoOp.Value, new MongoFieldExpression(rightProperty, rightPath!), valueExpr);
+                // Same confinement as the mirrored branch above — see its comment for the full rationale.
+                MongoExpression rightField = rightIsOuter && _innerPrefix is null
+                    ? new MongoOuterFieldExpression(rightProperty, rightPath!)
+                    : new MongoFieldExpression(rightProperty, rightPath!);
+                return new MongoBinaryExpression(mongoOp.Value, rightField, valueExpr);
             }
         }
 
@@ -1013,8 +1192,21 @@ internal sealed partial class MongoExpressionTranslator
         if (TryTranslateDateTimeMember(node, out var dateTimeMember))
             return dateTimeMember;
 
-        if (TryResolveMember(node, out var property, out var fieldPath))
-            return new MongoFieldExpression(property, fieldPath!);
+        if (TryResolveMember(node, out var property, out var fieldPath, out var operandIsOuter))
+        {
+            // Deliberately NOT confined to _innerPrefix is null here, unlike TranslateComparison's two
+            // branches and the bare-bool arm: this is the field-to-field/arithmetic/computed-value operand
+            // path, which never reaches the query-native dialect regardless of node type (IsQueryNativeComparison
+            // requires a bare field vs. a simple value on the OTHER side, never two operands both resolved
+            // through this method), so MongoOuterFieldExpression renders identically to MongoFieldExpression
+            // here — "$" + ElementName, outside any element-variable scope. NativeSelectManyBinderTests'
+            // correlated arithmetic/numeric-comparison shapes (established in the plan that added
+            // MongoOuterFieldExpression) assert MongoOuterFieldExpression at this exact site; confining it
+            // here would only break that type assertion for zero MQL benefit.
+            return operandIsOuter
+                ? new MongoOuterFieldExpression(property, fieldPath!)
+                : new MongoFieldExpression(property, fieldPath!);
+        }
 
         // An OWNED-collection element count — b.Posts.Count / .Count() / .LongCount(). The renderer decides the
         // dialect: a comparison against an admissible integer constant becomes an array-index existence test,
@@ -1022,20 +1214,24 @@ internal sealed partial class MongoExpressionTranslator
         //
         // This runs AFTER TryResolveMember, so an entity with a real mapped scalar property called "Count"
         // resolves as that field. The actual safety is structural, in TryResolveOwnedCollectionPath: it
-        // requires the chain to be rooted at the query parameter with at least one hop, every non-final hop to
+        // requires the chain to be rooted at a parameter with at least one hop, every non-final hop to
         // be an embedded single reference, and the FINAL hop to be an embedded collection NAVIGATION. A mapped
-        // scalar's receiver is an entity, never a collection, so a name collision can never resolve. The
-        // resolver also declines outright in two-scope mode, so a cross-scope count stays out of scope.
+        // scalar's receiver is an entity, never a collection, so a name collision can never resolve. In
+        // two-scope mode the resolver checks root identity (EF-421) — a chain rooted on the OUTER param
+        // resolves against the outer entity type; the `!countSourceIsOuter` guard below declines the array
+        // ITSELF being reached through the outer scope, which stays out of scope.
         //
-        // TryResolveOwnedCollectionPath does not check WHICH ParameterExpression roots the chain, so its safety
-        // depends on every non-root single-scope translator being constructed only after an identity guard has
-        // run — the quantifier arm's ReferencesEnclosingScope, or NativeSelectManyBinder's ReferencesParameter,
-        // which routes an outer-referencing layer to the two-scope constructor where this resolver declines
-        // outright. A future non-root single-scope translator built without such a guard would reopen a
+        // TryResolveOwnedCollectionPath does not check WHICH ParameterExpression roots the chain by name — only
+        // by ReferenceEquals against the known scope parameters — so its safety depends on every non-root
+        // single-scope translator being constructed only after an identity guard has run — the quantifier arm's
+        // ReferencesEnclosingScope, or NativeSelectManyBinder's ReferencesParameter, which routes an
+        // outer-referencing layer to the two-scope constructor where this resolver checks identity rather than
+        // guessing. A future non-root single-scope translator built without such a guard would reopen a
         // by-name retarget (an enclosing member resolved against the inner scope because the two types share a
         // property name) — a wrong-rows failure, not a decline.
         if (TryMatchCountExpression(node, out var countSource, out var countPredicate)
-            && TryResolveOwnedCollectionPath(countSource, out var arrayPath, out var countElementType))
+            && TryResolveOwnedCollectionPath(countSource, out var arrayPath, out var countElementType, out var countSourceIsOuter)
+            && !countSourceIsOuter) // same out-of-scope note as the quantifier arm above
         {
             if (countPredicate is null)
                 return new MongoSizeExpression(arrayPath, node.Type, nullSafe: true);
@@ -1048,10 +1244,42 @@ internal sealed partial class MongoExpressionTranslator
             // element would be silently retargeted at the element — wrong rows under the default Native mode.
             // A $filter cond CAN legally reference the enclosing document (unlike $elemMatch, which cannot at
             // all), so correlated support here is a deferrable capability, not an impossibility.
-            if (ReferencesEnclosingScope(countPredicate.Body, countPredicate.Parameters[0]))
-                return null;
+            //
+            // EF-421: a correlation whose free parameter is IDENTICAL (ReferenceEquals) to THIS translator's
+            // own SelfParam is no longer declined outright — it is translated with a two-scope child
+            // translator instead, mirroring NativeSelectManyBinder's existing pattern. Any other free
+            // parameter (correlation reaching past the immediate enclosing scope) still declines exactly as
+            // before — SelfParam is null for a translator that is itself already a two-scope child, so a
+            // two-level-deep correlation can never match here.
+            //
+            // countFreeParam is null both when there is NO free parameter (impossible here — we're inside
+            // ReferencesEnclosingScope's true branch) and when there are TWO OR MORE DISTINCT free parameters
+            // (FreeParameterVisitor.FoundParameter's contract) — a body like
+            // `p => p.X == b.Y && p.Z == someOtherCapturedVar` must decline, not silently build a two-scope
+            // translator keyed on whichever of the two happened to be found first: the SECOND free parameter's
+            // members would then be resolved by NAME against the element scope with no identity check, which
+            // is exactly the wrong-rows hazard this file's own constraint forbids. Because null can never
+            // ReferenceEquals a real ParameterExpression, the ordinary identity check below already declines
+            // this shape correctly with no extra condition needed.
+            MongoExpressionTranslator countElementTranslator;
+            if (ReferencesEnclosingScope(countPredicate.Body, countPredicate.Parameters[0], out var countFreeParam))
+            {
+                if (SelfParam is null || countFreeParam is null || !ReferenceEquals(countFreeParam, SelfParam))
+                    return null;
 
-            var countElementTranslator = new MongoExpressionTranslator(countElementType);
+                // innerPrefix is deliberately null, not "": the element predicate here is rendered via
+                // $filter's own "as" variable (RenderFilteredSize / MongoAggregationExpressionRenderer's
+                // elementVariable threading), so an inner field must resolve UNPREFIXED — the renderer
+                // itself prepends "$$e." at render time. Passing "" would bake in a leading-dot path segment
+                // instead (see the two-scope constructor's remarks).
+                countElementTranslator = new MongoExpressionTranslator(
+                    countElementType, outerParam: SelfParam, outerEntityType: _entityType, innerPrefix: null);
+            }
+            else
+            {
+                countElementTranslator = new MongoExpressionTranslator(countElementType);
+            }
+
             if (!countElementTranslator.TryTranslate(countPredicate.Body, out var elementPredicate))
                 return null;
 

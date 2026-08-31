@@ -288,6 +288,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 allowStreaming: false,
                 stripBareProjectionOnFallback: ShouldStripBareProjectionOnFallback(mongoQueryExpression.Select),
                 createFallbackBindingRemover: HasJoinScopeInnerEntityProjectionLeaf(mongoQueryExpression)
+                                              || HasDocumentConstructionProjectionLeaf(mongoQueryExpression)
                     ? (bsonDoc, behavior) => new MongoMixedProjectionBindingRemovingExpressionVisitor(
                         rootEntityType, mongoQueryExpression, bsonDoc, behavior)
                     : null);
@@ -511,6 +512,20 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         => mongoQueryExpression.Select.JoinScope is { } scope
            && mongoQueryExpression.Select.Projection.Any(
                p => p.Alias == scope.InnerPrefix && p.Expression is MongoElementRefExpression);
+
+    /// <summary>
+    /// A THIRD trigger (EF-447) for the same late-fallback problem <see cref="HasJoinScopeInnerEntityProjectionLeaf"/>
+    /// guards: a constructed sub-entity leaf (<c>Select(b =&gt; new { Copy = new Book { Id = b.Id, ... } })</c>)
+    /// has no whole-document field it can be read at all — its members live NESTED under its own <c>$project</c>
+    /// alias (<c>"Copy.Id"</c>), a path that exists ONLY in the native <c>$project</c> output, never on a raw
+    /// stored document. So a late <c>TryBuildNativeFactory</c> decline can't reuse the ordinary alias-addressed
+    /// DOM shaper the way EF-412's whole-root-entity leaf or a plain scalar leaf can (their aliases ARE real
+    /// document paths); it must strip the pushed-down <c>Select</c> AND swap in the mixed removing visitor,
+    /// whose <c>ReadDocumentConstructionMember</c> override reads each member at its own NATURAL root-relative
+    /// path off the whole document instead.
+    /// </summary>
+    private static bool HasDocumentConstructionProjectionLeaf(MongoQueryExpression mongoQueryExpression)
+        => mongoQueryExpression.Select.Projection.Any(p => p.Expression is MongoDocumentConstructionExpression);
 
     private MethodCallExpression CompileShapedQuery(
         ShapedQueryExpression shapedQueryExpression,

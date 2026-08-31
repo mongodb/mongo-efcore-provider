@@ -270,8 +270,14 @@ internal static class NativeJoinScopeProjectionBinder
         // it did before EF-444 (Route == Fallback → the mixed shaper over EF's own ProjectionMapping), which is
         // measurably correct in every mode. This is the same rule NativeProjectionBinder.IsWholeDocumentReadableLeaf
         // applies for an array leaf's siblings, and for the same reason.
+        // MongoOuterFieldExpression is included alongside MongoFieldExpression: a join scope's OUTER-side
+        // scalar leaf resolves as one via NativeJoinScopeTranslator's shared TranslateOperand path (see that
+        // method's own remarks in MongoExpressionTranslator.cs), and it is exactly as document-root-relative/
+        // whole-document-readable as MongoFieldExpression — MongoMixedProjectionBindingRemovingExpressionVisitor
+        // .TryBindNativeFieldLeafAsDocumentPath reads both the same way. Treating it as a NON-readable sibling
+        // here would decline a shape (a scalar Outer leaf mixed with a whole-entity leaf) that is in fact fine.
         if (staged.Exists(p => p.Expression is MongoElementRefExpression)
-            && staged.Exists(p => p.Expression is not (MongoElementRefExpression or MongoFieldExpression)))
+            && staged.Exists(p => p.Expression is not (MongoElementRefExpression or MongoFieldExpression or MongoOuterFieldExpression)))
         {
             return false;
         }

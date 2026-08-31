@@ -113,6 +113,10 @@ internal static class NativeSlotPopulator
             // recorded after it too, and the lowerer emits ops in that same order — correct by MongoDB's
             // sequential pipeline semantics. No canonical-order guard.
             var predicate = call.Arguments[1].UnwrapLambdaFromQuote();
+            // EF-421: SelfParam identifies THIS predicate's own root parameter, so a nested correlated
+            // element predicate (Count(pred)/Any/All) whose free parameter is identical to it can be built
+            // as a two-scope translator instead of declining outright — see MongoExpressionTranslator.SelfParam.
+            translator.SelfParam = predicate.Parameters[0];
             if (translator.TryTranslate(predicate.Body, out var predicateNode))
                 mongoQ.Select.AddPredicateConjunct(predicateNode);
             // Outer-side-only: PipelineOps ($match) always lower BEFORE the $lookup stage that materializes
@@ -141,6 +145,7 @@ internal static class NativeSlotPopulator
         {
             var keySelector = call.Arguments[1].UnwrapLambdaFromQuote();
             var ascending = methodDefinition == QueryableMethods.OrderBy;
+            translator.SelfParam = keySelector.Parameters[0];
             if (translator.TryTranslateField(keySelector.Body, out var keyNode))
                 mongoQ.Select.StartOrReplaceSort(new MongoOrdering(keyNode, ascending));
             else if (TryTranslateComputedSortKey(translator, keySelector.Body, out var computedKey))
@@ -152,6 +157,7 @@ internal static class NativeSlotPopulator
         {
             var keySelector = call.Arguments[1].UnwrapLambdaFromQuote();
             var ascending = methodDefinition == QueryableMethods.ThenBy;
+            translator.SelfParam = keySelector.Parameters[0];
             if (translator.TryTranslateField(keySelector.Body, out var keyNode))
                 mongoQ.Select.AppendThenBy(new MongoOrdering(keyNode, ascending));
             else if (TryTranslateComputedSortKey(translator, keySelector.Body, out var computedKey))

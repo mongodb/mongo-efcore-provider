@@ -109,7 +109,10 @@ internal static class NativeCardinalityBinder
         if (select.HasTerminalOperator && !select.IsSetOpTerminalOnly)
             return false;
 
-        var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
+        // predicate is null for Sum/Min/Max/Average (which take a selector instead) and for a bare Any()/Count()
+        // with no predicate — SelfParam stays null in those cases, which is fine: there is no predicate lambda
+        // for a nested Count(pred)/Any/All to correlate against anyway.
+        var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType, predicate?.Parameters[0]);
 
         MongoFieldExpression? operand = null;
         if (op is MongoAggregateOperator.Sum or MongoAggregateOperator.Min

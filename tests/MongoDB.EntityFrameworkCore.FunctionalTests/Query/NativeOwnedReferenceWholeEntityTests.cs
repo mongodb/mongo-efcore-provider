@@ -21,7 +21,9 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
@@ -49,6 +51,32 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
+
+    // MQL-capture idiom mirrored from NativeOwnedCollectionCountTests.cs: FunctionalTests has no
+    // TestMqlLoggerFactory/AssertMql (those live in the SpecificationTests project), so MQL is captured
+    // through SpyLoggerProvider instead.
+    private static SingleEntityDbContext<T> CreateContextWithLogging<T>(
+        IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction,
+        out SpyLoggerProvider spyLogger)
+        where T : class
+    {
+        var (loggerFactory, provider) = SpyLoggerProvider.Create();
+        spyLogger = provider;
+
+        return SingleEntityDbContext.Create(
+            collection,
+            loggerFactory,
+            modelBuilderAction: modelBuilderAction,
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                b.EnableSensitiveDataLogging();
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
+    }
+
+    private static void AssertMql(SpyLoggerProvider spyLogger, string expected)
+        => Assert.Contains(expected, spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery));
 
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
@@ -694,4 +722,226 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         Assert.Equal("NYC", blog.Address.City);
         Assert.Equal(["a"], blog.Tags.Select(t => t.Name));
     }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    //  EF-441 Task 1: an owned single-reference navigation ENTITY LEAF inside a projection
+    //  (Select(b => new { b.Address, b.Title })) goes native. See NativeProjectionBinder's
+    //  TryGetOwnedReferenceNavigationLeaf / TryTranslateLeaf arm and .superpowers/sdd/
+    //  2026-08-28-ef441-navigation-entity-leaf-projection/task-0-report.md §2 for the mechanism.
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void Owned_reference_entity_leaf_beside_field_leaf_goes_native_and_reads_correct_values()
+    {
+        var collection = SeedBlogs(nameof(Owned_reference_entity_leaf_beside_field_leaf_goes_native_and_reads_correct_values));
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+
+        // NativeOnly: success here (rather than NativeTranslationNotSupportedException) is the routing
+        // proof that the mixed field+entity-nav projection genuinely goes native.
+        var results = db.Entities.AsNoTracking()
+            .Select(b => new { b.Address, b.Title })
+            .OrderBy(r => r.Title)
+            .ToList();
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal("Alpha", results[0].Title);
+        Assert.Equal("NYC", results[0].Address.City);
+        Assert.Equal("10001", results[0].Address.Zip);
+        Assert.Equal("Beta", results[1].Title);
+        Assert.Equal("LA", results[1].Address.City);
+    }
+
+    [Fact]
+    public void Owned_reference_entity_leaf_beside_field_leaf_emits_expected_project_stage_with_retained_id()
+    {
+        var collection = SeedBlogs(nameof(Owned_reference_entity_leaf_beside_field_leaf_emits_expected_project_stage_with_retained_id));
+        using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spyLogger);
+
+        _ = db.Entities.AsNoTracking().Select(b => new { b.Address, b.Title }).ToList();
+
+        // Matches spike report §2b's verified shape: the nav's own document path as the alias, the field
+        // sibling by its own name, and the retained owner _id (task 1, site 4) that the owned Address
+        // element's shadow-key read requires.
+        AssertMql(spyLogger, "{ \"$project\" : { \"Address\" : \"$Address\", \"Title\" : \"$Title\", \"_id\" : \"$_id\" } }");
+    }
+
+    [Fact]
+    public void Owned_reference_entity_leaf_parity_between_native_and_driver_linq()
+    {
+        var collection = SeedBlogs(nameof(Owned_reference_entity_leaf_parity_between_native_and_driver_linq));
+
+        List<(string Title, string City, string Zip)> driver;
+        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        {
+            driver = db.Entities.AsNoTracking().Select(b => new { b.Address, b.Title })
+                .OrderBy(r => r.Title)
+                .ToList()
+                .Select(r => (r.Title, r.Address.City, r.Address.Zip)).ToList();
+        }
+
+        List<(string Title, string City, string Zip)> native;
+        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        {
+            native = db.Entities.AsNoTracking().Select(b => new { b.Address, b.Title })
+                .OrderBy(r => r.Title)
+                .ToList()
+                .Select(r => (r.Title, r.Address.City, r.Address.Zip)).ToList();
+        }
+
+        Assert.Equal(driver, native);
+    }
+
+    // Fix round 1 (post-review): the LATE-FALLBACK leg for the field-sibling nav-entity-leaf projection was
+    // completely uncovered — reverting site 4's unconditional _id/DocumentPath-alias-override registration
+    // (NativeProjectionBinder.TryPopulateNativeProjection) leaves the ENTIRE unit/spec/functional suite green
+    // while silently breaking this exact shape under plain `Native` mode. Mirrors
+    // NativeComputedProjectionTests.Mixed_whole_entity_and_computed_leaf_behind_a_parameterized_where_reads_correct_values
+    // exactly: a captured-local `StartsWith` is the trigger MongoQueryLanguageRenderer.RenderRegex declines
+    // (MQL has no parameterized-regex form), so NativeOnly proves the query translates natively at compile time
+    // (Route == Projection) but then genuinely DECLINES mid-compile (TryBuildNativeFactory), which is exactly
+    // the leg that needs the strip (ShouldStripBareProjectionOnFallback -> HasDocumentPathAliasOverride) to hand
+    // the shaper whole documents — carrying both "Address" and the retained "_id" the owned element's shadow-key
+    // read requires — instead of the driver's own un-augmented $project (which never carries the synthetic _id).
+    [Fact]
+    public void Field_sibling_projection_behind_a_parameterized_where_reads_correct_values()
+    {
+        var collection = SeedBlogs(nameof(Field_sibling_projection_behind_a_parameterized_where_reads_correct_values));
+        var titlePrefix = "A";
+
+        // HALF THE DISCRIMINATOR: NativeOnly forbids the fallback, so this throw is the proof that
+        // TryBuildNativeFactory declines MID-COMPILE for this exact query, and therefore that the Native leg
+        // below genuinely exercises the late-fallback/strip mechanism rather than the plain native $project.
+        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        {
+            var declined = nativeOnly.Entities.AsNoTracking()
+                .Where(b => b.Title.StartsWith(titlePrefix))
+                .Select(b => new { b.Address, b.Title });
+            Assert.Throws<NativeTranslationNotSupportedException>(() => declined.ToList());
+        }
+
+        // The OTHER half: default Native mode must still read back CORRECT values on the late-fallback leg —
+        // this is what site 4's DocumentPath override / strip mechanism is actually for. Before this fix
+        // round, reverting that one registration left every other test green while this specific combination
+        // (mode-independent decline trigger + this leaf) threw
+        // `InvalidOperationException: Document element is missing for required non-nullable property 'Id'`.
+        using (var native = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        {
+            var results = native.Entities.AsNoTracking()
+                .Where(b => b.Title.StartsWith(titlePrefix))
+                .Select(b => new { b.Address, b.Title })
+                .ToList();
+
+            var row = Assert.Single(results);
+            Assert.Equal("Alpha", row.Title);
+            Assert.Equal("NYC", row.Address.City);
+            Assert.Equal("10001", row.Address.Zip);
+        }
+
+        // And explicit DriverLinq — the OTHER leg that needs the same shape to read correctly, per the spike's
+        // §5a finding (the mixed shaper's ReadsUnprojectedDocuments handles this leaf's alias without any
+        // null-out, since the alias names a real element on a whole document).
+        using (var driver = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        {
+            var results = driver.Entities.AsNoTracking()
+                .Where(b => b.Title.StartsWith(titlePrefix))
+                .Select(b => new { b.Address, b.Title })
+                .ToList();
+
+            var row = Assert.Single(results);
+            Assert.Equal("Alpha", row.Title);
+            Assert.Equal("NYC", row.Address.City);
+            Assert.Equal("10001", row.Address.Zip);
+        }
+    }
+
+    // Renamed member ("Addr" instead of "Address") must decline outright — the late-fallback leg's
+    // correctness depends on the emitted alias naming a real element the driver-LINQ bridge also renders
+    // under that same name (see TryTranslateLeaf's alias-must-equal-document-path conjunct).
+    [Fact]
+    public void Renamed_owned_reference_entity_leaf_falls_back_but_still_reads_correct_values()
+    {
+        var collection = SeedBlogs(nameof(Renamed_owned_reference_entity_leaf_falls_back_but_still_reads_correct_values));
+        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+        Assert.Throws<NativeTranslationNotSupportedException>(
+            () => nativeOnly.Entities.AsNoTracking().Select(b => new { Addr = b.Address, b.Title }).ToList());
+
+        using var db = CreateContext(collection, MongoQueryMode.Native, BlogModel);
+        var results = db.Entities.AsNoTracking().Select(b => new { Addr = b.Address, b.Title })
+            .OrderBy(r => r.Title).ToList();
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal("NYC", results[0].Addr.City);
+        Assert.Equal("LA", results[1].Addr.City);
+    }
+
+    // The computed-sibling carve-out (mirrors EF-444's Task-4 carve-out): a nav-entity leaf mixed with a
+    // COMPUTED leaf (no document path of its own) still declines the whole projection — there is no correct
+    // late-fallback rendering for that combination (spike report §5). This is EXPECTED, not a residual gap.
+    private class BlogWithRank
+    {
+        public ObjectId Id { get; set; }
+        public string Title { get; set; } = "";
+        public int Rank { get; set; }
+        public Address Address { get; set; } = null!;
+    }
+
+    private static readonly Action<ModelBuilder> BlogWithRankModel = mb => mb.Entity<BlogWithRank>().OwnsOne(b => b.Address);
+
+    private IMongoCollection<BlogWithRank> SeedBlogsWithRank(string name)
+    {
+        var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
+        coll.InsertOne(new BsonDocument
+        {
+            { "_id", ObjectId.GenerateNewId() }, { "Title", "Alpha" }, { "Rank", 3 },
+            { "Address", new BsonDocument { { "City", "NYC" }, { "Zip", "10001" } } }
+        });
+        return database.MongoDatabase.GetCollection<BlogWithRank>(coll.CollectionNamespace.CollectionName);
+    }
+
+    [Fact]
+    public void Owned_reference_entity_leaf_beside_computed_leaf_declines_but_still_reads_correct_values()
+    {
+        var collection = SeedBlogsWithRank(
+            nameof(Owned_reference_entity_leaf_beside_computed_leaf_declines_but_still_reads_correct_values));
+
+        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, BlogWithRankModel))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(
+                () => nativeOnly.Entities.AsNoTracking()
+                    .Select(b => new { b.Address, Total = b.Rank * b.Rank }).ToList());
+        }
+
+        using var db = CreateContext(collection, MongoQueryMode.Native, BlogWithRankModel);
+        var result = Assert.Single(
+            db.Entities.AsNoTracking().Select(b => new { b.Address, Total = b.Rank * b.Rank }).ToList());
+        Assert.Equal("NYC", result.Address.City);
+        Assert.Equal(9, result.Total);
+    }
+
+    // ── Set-op-gate regression (spike report §4's flagged-not-decided item) ────────────────────────
+    //
+    // A nav-entity-leaf projection's emitted _id would leak into a set operation's whole-document
+    // comparison/dedup key exactly like the owned-ARRAY leaf's does (see NativeProjectionBinder's own
+    // comment on HasArrayProjectionLeaf and MongoQueryableMethodTranslatingExpressionVisitor.
+    // IsPlainProjectedSelect). This leaf kind now sets that SAME flag (see NativeProjectionBinder's commit
+    // block), so it must decline as a set-op operand rather than silently emitting a wrong-comparison-key
+    // set op.
+    //
+    // NOT covered at THIS (functional/end-to-end) level, by design: a genuine Union/Concat of two operands
+    // that both push down a WRAPPED (entity/array-typed) projection — and, separately, a plain
+    // Select(...).Distinct() over one (no set op at all) — hits a SEPARATE, PRE-EXISTING gap in EF's own
+    // nav-expansion, confirmed by the reviewer's mutation testing to reproduce on the UNMODIFIED base commit
+    // too (i.e. it is not introduced by EF-441, and it is not specific to the nav-entity leaf — it would
+    // equally affect the pre-existing owned-ARRAY-leaf projection, which had simply never been combined with a
+    // set op or a projected Distinct in this repo's test suite before). Nav-expansion re-enters
+    // MongoProjectionBindingExpressionVisitor's shaper-building for what is really the same logical Select a
+    // second time; the second pass finds state left over from the first and throws InvalidCastException
+    // instead of returning either a correct native pipeline or a graceful NativeTranslationNotSupportedException
+    // decline. This is a real, loud failure (not silent wrong data), but the WRONG exception type, and it is
+    // outside this ticket's file scope (NativeProjectionBinder.cs) to fix — it lives in
+    // MongoProjectionBindingExpressionVisitor.cs and warrants its OWN follow-up ticket, since it predates
+    // EF-441 and is not specific to this leaf kind. The unit-level regression test
+    // (SlotPopulationTests.Owned_reference_entity_leaf_projection_sets_HasArrayProjectionLeaf_for_the_set_op_gate)
+    // proves the ONE fact this task owns — the gate's flag is set correctly — via a harness that bypasses
+    // nav-expansion and therefore does not hit this separate concern.
 }

@@ -496,18 +496,20 @@ internal sealed class MongoSelectDefinition
 
     /// <summary>
     /// <see langword="true"/> when <see cref="Projection"/> contains an owned entity-COLLECTION array leaf
-    /// (e.g. <c>Select(b =&gt; new { b.Title, b.Posts })</c>). Provenance only: it records what the projection
-    /// CONTAINS, and nothing on the ordinary projection path reads it.
+    /// (e.g. <c>Select(b =&gt; new { b.Title, b.Posts })</c>) OR an owned single-reference navigation ENTITY leaf
+    /// (EF-441, e.g. <c>Select(b =&gt; new { b.Title, b.Address })</c>). Provenance only: it records what the
+    /// projection CONTAINS, and nothing on the ordinary projection path reads it. Despite the name, both leaf
+    /// kinds set this one flag — see the remarks below for why sharing it is deliberate, not a naming drift.
     /// </summary>
     /// <remarks>
     /// Exists for one consumer — the projected-set-op-OPERAND scope gate
     /// (<c>MongoQueryableMethodTranslatingExpressionVisitor.IsPlainProjectedSelect</c>) — which must DECLINE
-    /// such a projection as a set-op operand: an array leaf forces the owner key into the projected document,
-    /// and a projected-operand set op dedups/source-tags over that whole projected document by value, so the
-    /// leaked <c>_id</c> would silently change the set operation's semantics from value-based to
-    /// identity-based. A TRAILING projection after a whole-entity set op is unaffected and stays native — its
-    /// dedup runs over whole entities BEFORE the <c>$project</c>, so neither the array nor the owner key ever
-    /// reaches the value comparison.
+    /// such a projection as a set-op operand: either leaf kind forces the owner key into the projected document
+    /// (see <c>NativeProjectionBinder.TryPopulateNativeProjection</c>'s owner-key block), and a projected-operand
+    /// set op dedups/source-tags over that whole projected document by value, so the leaked <c>_id</c> would
+    /// silently change the set operation's semantics from value-based to identity-based. A TRAILING projection
+    /// after a whole-entity set op is unaffected and stays native — its dedup runs over whole entities BEFORE the
+    /// <c>$project</c>, so neither leaf's owner key ever reaches the value comparison.
     /// </remarks>
     internal bool HasArrayProjectionLeaf { get; set; }
 

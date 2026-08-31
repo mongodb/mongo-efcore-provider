@@ -87,6 +87,27 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             case null:
                 return null;
 
+            // A CONSTRUCTED sub-entity leaf (EF-447, `new { Book = new Book { Id = e.Id, ... } }`) that
+            // NativeProjectionBinder already translated into a MongoDocumentConstructionExpression at emit
+            // time. Register the WHOLE New/MemberInit node as ONE opaque projection member — exactly like the
+            // arithmetic/cast/conditional leaves above it — rather than falling through to the default recursive
+            // walk (the `case NewExpression: case MemberInitExpression:` arm immediately below, which every
+            // OTHER shape, including the OUTER wrapping `new { Book = ..., Score = ... }` itself, still uses).
+            // Recursing here would register "Book.Id"/"Book.Title" as their own nested ProjectionMembers mapped
+            // to the RAW e.Id/e.Title member accesses — correct for driver-LINQ's whole-document read, but wrong
+            // for the native alias-addressed read this leaf actually needs (its members live nested under the
+            // "Book" $project alias, not at the document root).
+            // TryGetNativeDocumentConstructionLeaf calls back into NativeProjectionBinder's own emit-side result
+            // (via Select.Projection) rather than restating its own recognition predicate — the gate-must-call-
+            // the-fix's-own-predicate discipline this codebase requires (see Query/AGENTS.md).
+            case NewExpression or MemberInitExpression
+                when TryGetNativeDocumentConstructionLeaf(expression, out var documentConstructionLeaf):
+                {
+                    var constructionMember = GetCurrentProjectionMember();
+                    _projectionMapping[constructionMember] = documentConstructionLeaf;
+                    return new ProjectionBindingExpression(_queryExpression, constructionMember, expression.Type);
+                }
+
             case NewExpression:
             case MemberInitExpression:
             case StructuralTypeShaperExpression:
@@ -250,6 +271,59 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             default:
                 return base.Visit(expression);
         }
+    }
+
+    /// <summary>
+    /// True when <paramref name="expression"/> is the exact <see cref="NewExpression"/>/<see cref="MemberInitExpression"/>
+    /// that <c>NativeProjectionBinder.TryPopulateNativeProjection</c> already translated, for the CURRENT
+    /// projection member, into a <see cref="MongoDocumentConstructionExpression"/> — i.e. this leaf is going
+    /// native (EF-447). Looks the answer up in <c>Select.Projection</c> (the emit side's own committed result)
+    /// rather than re-deriving admissibility here, so the bind side can never admit a shape the emit side
+    /// declined — see <c>NativeTranslation.NativeProjectionBinder.TryGetDocumentConstructionLeaf</c> for the
+    /// actual recognition predicate.
+    /// </summary>
+    /// <remarks>
+    /// NOT a reference-equality check against <see cref="MongoDocumentConstructionExpression.OriginalExpression"/>
+    /// — this visitor is reached with <paramref name="expression"/> already rewritten by
+    /// <see cref="ReplacingExpressionVisitor"/> (the outer selector's own parameter substituted for the source
+    /// shaper before this visitor ever runs), so a deep member access inside the construction (e.g. <c>c.Id</c>)
+    /// makes every ancestor <c>NewExpression</c>/<c>MemberInitExpression</c>'s own <c>Update(...)</c> call return
+    /// a NEW node — the tree NativeProjectionBinder translated at emit time is a different object by the time
+    /// this runs. Matching on alias + CLR type is sufficient: a given projection member position names exactly
+    /// one leaf for the whole query.
+    /// </remarks>
+    private bool TryGetNativeDocumentConstructionLeaf(
+        Expression expression, out MongoDocumentConstructionExpression construction)
+    {
+        construction = null;
+
+        if (_queryExpression.Select.Route != NativeRoute.Projection)
+        {
+            return false;
+        }
+
+        var memberName = GetCurrentProjectionMember().Last?.Name;
+        if (memberName is null)
+        {
+            return false;
+        }
+
+        var alias = _queryExpression.Select.TryGetProjectionAlias(memberName, out var overriddenAlias)
+            ? overriddenAlias
+            : memberName;
+
+        foreach (var projection in _queryExpression.Select.Projection)
+        {
+            if (projection.Alias == alias
+                && projection.Expression is MongoDocumentConstructionExpression candidate
+                && candidate.OriginalExpression.Type == expression.Type)
+            {
+                construction = candidate;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool IsArithmeticNodeType(ExpressionType nodeType)
@@ -866,10 +940,16 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 //
                 // NOT REDUNDANT WITH `ContainsShaperReference` BELOW — the two guards protect DIFFERENT
                 // residual shapes. The reachability guard alone does NOT restore the WRAPPED CORRELATED residual
-                // (`Correlated_primitive_and_where_count_filtered_projections_still_hard_fail_in_every_mode`'s
-                // first row) — a proxy for "does this predicate reference the enclosing shaper", not that
+                // — a proxy for "does this predicate reference the enclosing shaper", not that
                 // property itself; see `ContainsShaperReference`'s own doc comment for why a BARE correlated
-                // predicate slips past reachability but is caught by the structural check. Conversely,
+                // predicate slips past reachability but is caught by the structural check. (EF-421 Task 7:
+                // SelfParam now reaches NativeProjectionBinder unconditionally, so a WRAPPED correlated
+                // predicate — formerly pinned by `NativeOwnedCollectionFilteredCountTests`'s
+                // `Correlated_primitive_and_where_count_filtered_projections_still_hard_fail_in_every_mode`'s
+                // first row, now split out to that file's `Correlated_count_filtered_projection_goes_native_
+                // EF421` — goes native upstream (Route stays Projection) and never reaches this Fallback-only
+                // arm at all any more; this guard's own reasoning is otherwise unchanged and is exercised now
+                // by any OTHER Fallback-reaching wrapped correlated shape.) Conversely,
                 // `ContainsShaperReference` alone does NOT restore the WRAPPED NON-RENDERABLE residual
                 // (`Non_renderable_element_predicate_filtered_projection_still_hard_fails_in_every_mode`, the
                 // `StartsWith` case): that predicate references only its own element parameter `p` — no shaper

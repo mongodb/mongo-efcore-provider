@@ -49,9 +49,19 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// under inversion.
 /// </para>
 /// <para>
-/// The admitted input set is a subset of <see cref="MongoQueryLanguageRenderer.IsQueryDialectRenderable"/>'s
-/// (enforced by gating on it directly), and every node produced is itself query-dialect renderable — it never
-/// routes to the <c>$expr</c> catch-all, which is a hard server error inside <c>$elemMatch</c>.
+/// <b>The output is query-dialect renderable — with one deliberate, narrow exception: the
+/// <see cref="MongoQuantifierExpression"/> family.</b> For every OTHER input, the admitted set is a subset of
+/// <see cref="MongoQueryLanguageRenderer.IsQueryDialectRenderable"/>'s (enforced by gating on it directly),
+/// and the node produced is itself query-dialect renderable — it never routes to the <c>$expr</c> catch-all,
+/// which is a hard server error inside <c>$elemMatch</c>. <see cref="MongoQuantifierExpression"/> is exempt
+/// from both halves of that rule on both sides — <see cref="TryNegate"/> admits it even though
+/// <c>IsQueryDialectRenderable</c> rejects it, and the negated result it produces (like the un-negated node)
+/// DOES route to the <c>$expr</c> catch-all — because a quantifier's negation-consuming caller
+/// (<c>NativeCardinalityBinder</c>'s root-level <c>All(pred)</c> arm) places the result at a TOP-LEVEL
+/// <c>$match</c> conjunct, where <c>$expr</c> is legal, and never inside <c>$elemMatch</c>, where it is not.
+/// Any FUTURE <c>TryNegate</c>/<c>TryNegateCore</c> caller that might place a quantifier's negation inside an
+/// <c>$elemMatch</c> would violate this exception's own precondition — check placement, not just result type,
+/// before adding one.
 /// </para>
 /// </remarks>
 internal static class MongoExpressionNegator
@@ -68,6 +78,19 @@ internal static class MongoExpressionNegator
     {
         negated = null;
 
+        // MongoQuantifierExpression is a DELIBERATE, NARROW exception to the query-dialect gate below: it is
+        // aggregation-expression-ONLY (IsQueryDialectRenderable declines it unconditionally, by design — see
+        // its own remarks) because it can never legally appear NESTED inside an $elemMatch. But its one
+        // negation call site (NativeCardinalityBinder's root-level All(pred) arm) never nests the result
+        // inside an $elemMatch either — it appends the negated node as a top-level $match CONJUNCT, a
+        // position MongoQueryLanguageRenderer.RenderNode's own "no dialect form -> wrap in $expr" catch-all
+        // already handles for the UN-negated node the same way. So admitting it here just for its own case
+        // (not through the AndAlso/OrElse recursion below, which stays gated — a composite predicate mixing a
+        // quantifier with a query-dialect clause still declines, since De Morgan'ing just the query-dialect
+        // half would drop the quantifier leaf) is safe.
+        if (node is MongoQuantifierExpression)
+            return TryNegateCore(node, out negated, inAggregationContext: false);
+
         // A node with no query-dialect rendering has no query-dialect COMPLEMENT either. Gating here makes
         // the output-domain invariant unconditional and makes every "not query-native" decline (field-to-
         // field comparison, arithmetic, a parameterized regex term, an unsupported $in values node) fall out
@@ -75,10 +98,24 @@ internal static class MongoExpressionNegator
         if (!MongoQueryLanguageRenderer.IsQueryDialectRenderable(node))
             return false;
 
-        return TryNegateCore(node, out negated);
+        return TryNegateCore(node, out negated, inAggregationContext: false);
     }
 
-    private static bool TryNegateCore(MongoExpression node, [NotNullWhen(true)] out MongoExpression? negated)
+    /// <param name="node">The node to negate.</param>
+    /// <param name="negated">The exact complement, or <see langword="null"/> when none exists.</param>
+    /// <param name="inAggregationContext">
+    /// <see langword="true"/> only when negating <see cref="MongoQuantifierExpression.ElementPredicate"/> (or a
+    /// subtree reached FROM it through the AndAlso/OrElse recursion below) — a position that always renders
+    /// inside the quantifier's own <c>$map</c> "in" clause, an aggregation-expression context, never
+    /// <c>$elemMatch</c>. Every other caller — the public <see cref="TryNegate"/> entry point, and every OTHER
+    /// recursive call below — passes <see langword="false"/>. This is what STRUCTURALLY confines the
+    /// comparison3 case (below) to that one recursion: its <c>when</c> guard requires this flag, so widening
+    /// <see cref="MongoQueryLanguageRenderer.IsQueryDialectRenderable"/> to admit some new binary shape in the
+    /// future cannot silently make comparison3 reachable from an ordinary (non-aggregation-context) caller —
+    /// it would still need this flag threaded in, which only the quantifier recursion does.
+    /// </param>
+    private static bool TryNegateCore(
+        MongoExpression node, [NotNullWhen(true)] out MongoExpression? negated, bool inAggregationContext)
     {
         negated = null;
 
@@ -92,7 +129,8 @@ internal static class MongoExpressionNegator
             // can't be built — but the reason it must not be is here.
             case MongoBinaryExpression { Operator: MongoBinaryOperator.AndAlso } and:
             {
-                if (!TryNegateCore(and.Left, out var left) || !TryNegateCore(and.Right, out var right))
+                if (!TryNegateCore(and.Left, out var left, inAggregationContext)
+                    || !TryNegateCore(and.Right, out var right, inAggregationContext))
                     return false;
                 negated = new MongoBinaryExpression(MongoBinaryOperator.OrElse, left, right);
                 return true;
@@ -100,7 +138,8 @@ internal static class MongoExpressionNegator
 
             case MongoBinaryExpression { Operator: MongoBinaryOperator.OrElse } or:
             {
-                if (!TryNegateCore(or.Left, out var left) || !TryNegateCore(or.Right, out var right))
+                if (!TryNegateCore(or.Left, out var left, inAggregationContext)
+                    || !TryNegateCore(or.Right, out var right, inAggregationContext))
                     return false;
                 negated = new MongoBinaryExpression(MongoBinaryOperator.AndAlso, left, right);
                 return true;
@@ -166,6 +205,49 @@ internal static class MongoExpressionNegator
                 return true;
             }
 
+            // A comparison whose shape is NOT query-dialect-native (e.g. a field-to-OUTER-field comparison,
+            // MongoOuterFieldExpression on the right — the exact shape a correlated quantifier's
+            // ElementPredicate is built from). GUARDED on `inAggregationContext`, not merely reachable-in-
+            // practice: every OTHER path into this switch passes inAggregationContext: false (see the
+            // parameter's own doc comment above TryNegateCore), so even if a FUTURE change widens
+            // MongoQueryLanguageRenderer.IsQueryDialectRenderable to admit some new binary shape the earlier
+            // cases don't already intercept, this case still cannot fire outside the quantifier's own
+            // ElementPredicate recursion — the guard is structural, not emergent from today's classifier
+            // shape. This is sound because ElementPredicate is rendered inside the quantifier's own $map "in"
+            // clause — an aggregation-expression context, never $elemMatch — so it never needs a query-DIALECT
+            // form in the first place. $eq/$ne still partition every BSON value there exactly as in the query
+            // dialect (inversion is exact regardless of whether either operand is a field, an outer field, or
+            // a constant); the relational operators still do NOT partition a missing/null value there either,
+            // so they are $not-WRAPPED, never inverted — same rule as the query-dialect case above, just
+            // rendered by MongoAggregationExpressionRenderer.RenderUnary instead of the query dialect's $not.
+            case MongoBinaryExpression comparison3 when inAggregationContext:
+            {
+                switch (comparison3.Operator)
+                {
+                    case MongoBinaryOperator.Equal:
+                        negated = new MongoBinaryExpression(
+                            MongoBinaryOperator.NotEqual, comparison3.Left, comparison3.Right);
+                        return true;
+
+                    case MongoBinaryOperator.NotEqual:
+                        negated = new MongoBinaryExpression(
+                            MongoBinaryOperator.Equal, comparison3.Left, comparison3.Right);
+                        return true;
+
+                    case MongoBinaryOperator.LessThan:
+                    case MongoBinaryOperator.LessThanOrEqual:
+                    case MongoBinaryOperator.GreaterThan:
+                    case MongoBinaryOperator.GreaterThanOrEqual:
+                        negated = new MongoUnaryExpression(MongoUnaryOperator.Not, comparison3);
+                        return true;
+
+                    // An arithmetic operator (or anything else reaching here) is not a predicate; nothing to
+                    // complement.
+                    default:
+                        return false;
+                }
+            }
+
             case MongoInExpression inExpr:
                 // $nin is defined as the complement of $in.
                 negated = new MongoInExpression(inExpr.Field, inExpr.Values, !inExpr.Negated);
@@ -188,6 +270,33 @@ internal static class MongoExpressionNegator
                 negated = new MongoElemMatchExpression(
                     elemMatch.ArrayPath, elemMatch.ElementPredicate, !elemMatch.Negated);
                 return true;
+
+            // De Morgan over a CORRELATED quantifier: !Any(pred) ≡ All(!pred), !All(pred) ≡ Any(!pred).
+            // $anyElementTrue/$allElementsTrue are each other's exact De Morgan dual with no separate
+            // negation flag (unlike MongoElemMatchExpression's Negated bool) — so the fix is to flip Kind and
+            // recurse into ElementPredicate, not to wrap or flag anything. ArrayPath is unchanged either way.
+            //
+            // The recursion is via TryNegateCore, not the public TryNegate, WITH inAggregationContext: true —
+            // ElementPredicate is rendered inside the quantifier's own $map "in" clause (an aggregation-
+            // expression context, never $elemMatch), so it never needs to be query-DIALECT-renderable, and
+            // this is the ONE call site that passes true (see the parameter's own doc comment on
+            // TryNegateCore), which is what makes the comparison3 case below reachable at all. Every other
+            // TryNegateCore case still enforces its own negation-correctness guard independently (e.g.
+            // IsQueryNativeComparison, MongoSizeExpression-on-the-left) via its own pattern guard, so an
+            // unsupported shape still declines through the switch's own default rather than slipping through
+            // unguarded.
+            case MongoQuantifierExpression quantifier:
+            {
+                if (!TryNegateCore(quantifier.ElementPredicate, out var negatedElementPredicate, inAggregationContext: true))
+                    return false; // no exact complement for the element predicate — decline, don't approximate
+
+                var negatedKind = quantifier.Kind == MongoExpressionTranslator.MongoQuantifierKind.Any
+                    ? MongoExpressionTranslator.MongoQuantifierKind.All
+                    : MongoExpressionTranslator.MongoQuantifierKind.Any;
+
+                negated = new MongoQuantifierExpression(quantifier.ArrayPath, negatedElementPredicate, negatedKind);
+                return true;
+            }
 
             case MongoUnaryExpression { Operator: MongoUnaryOperator.Not } not:
                 // Double negation. Exact for any operand, and the operand is renderable by TryNegate's gate

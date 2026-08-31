@@ -42,12 +42,49 @@ internal static class NativeProjectionBinder
 {
     internal static bool TryPopulateNativeProjection(MongoQueryExpression mongoQ, LambdaExpression selector)
     {
-        var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
+        // A WRAPPED body reached with Projection already populated (EF-441 finding, not anticipated by the
+        // original spike). Observed trigger, confirmed by mutation testing: a wrapped nav-entity-leaf
+        // projection re-entered via EF's nav-expansion under a plain Select(...).Distinct() — NOT specifically
+        // Union/Concat/Intersect/Except, despite this comment once claiming that; nav-expansion's own operand/
+        // subquery-sharing behavior is broader than the four named set ops, and a Union of two IDENTICAL plain
+        // FIELD projections (no entity/array leaf) was measured to NOT retrigger this path at all. Without a
+        // guard here, a second pass would re-run every wrapped-body arm below, re-adding each projection member
+        // to the (append-only) Projection list a SECOND time and throwing from AddProjectionAliasOverride's
+        // write-once Dictionary.Add the moment any leaf registers an override — which the owned-nav-entity
+        // leaf's unconditional registration (site 4 below) newly does even when alias == memberName, so this
+        // was reachable but silent (merely duplicated Projection entries) before EF-441 and became a loud
+        // crash after it.
+        //
+        // Declines (returns false) rather than claiming success, deliberately — the fail-safe direction: this
+        // guard does not actually verify the re-entrant selector is equivalent to the one that already
+        // populated Projection, so asserting "already fully translated, nothing to redo" would be an unproven
+        // claim. MEASURED (mutation testing) to be pure defense-in-depth today: every reachable shape that hits
+        // this guard (a wrapped nav-entity-leaf projection combined with Distinct, Union, or Concat) already
+        // throws InvalidCastException from a SEPARATE, PRE-EXISTING bug in MongoProjectionBindingExpressionVisitor
+        // (unrelated to EF-441 — it reproduces on the unmodified base commit too, and is not specific to this
+        // leaf kind) in every MongoQueryMode, before or after this guard's own return value has any chance to
+        // matter; a mutation to `throw` here instead of `return false` produced zero suite failures. Kept
+        // anyway as cheap insurance for if/when that pre-existing bug is ever fixed. See
+        // NativeOwnedReferenceWholeEntityTests' own remarks near its (removed) end-to-end Union test for the
+        // full account, and file a follow-up ticket for the InvalidCastException bug itself rather than folding
+        // it into this one.
+        if (selector.Body is NewExpression or MemberInitExpression && mongoQ.Select.Projection.Count > 0)
+        {
+            return false;
+        }
+
+        var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType, selector.Parameters[0]);
         var projections = new List<MongoProjection>();
         // Parallel to projections: true at index i when that leaf is itself the owned array leaf. Used by the
         // sibling-readability check below, which skips the array leaf(s) (already proven whole-document-readable
         // by IsNativeArrayProjectionLeaf) and examines every other leaf.
         var leafIsArray = new List<bool>();
+        // Parallel to projections: true at index i when that leaf is the owned single-reference navigation
+        // entity leaf (EF-441). Skipped by the same sibling-readability sweep for the same reason as an array
+        // leaf: its own alias-must-equal-document-path check (in TryTranslateLeaf) already proves it, and
+        // IsWholeDocumentReadableLeaf would otherwise reject it outright (it requires a MongoFieldExpression, not
+        // the MongoElementRefExpression this leaf translates to).
+        var leafIsOwnedNavEntity = new List<bool>();
         // Lookups discovered by count-leaves are staged here rather than applied to mongoQ immediately, so a
         // later leaf failing native recognition (whole projection falls back) never leaves a half-registered
         // lookup behind.
@@ -60,6 +97,12 @@ internal static class NativeProjectionBinder
         // True once any leaf accepted by TryTranslateLeaf was an owned array leaf. Drives the owner-key emission
         // below.
         var hasArrayLeaf = false;
+        // True once any leaf accepted by TryTranslateLeaf was an owned single-reference navigation entity leaf
+        // (EF-441, e.g. `new { b.Address, b.Title }`). Joins hasArrayLeaf at every one of its three consumers
+        // below (sibling-readability sweep, _id owner-key retention, HasArrayProjectionLeaf provenance) because
+        // this leaf shares the array leaf's exact hazard: it too drags the owner's shadow key into the projected
+        // document.
+        var hasOwnedNavEntityLeaf = false;
         // The alias a BARE selector body was admitted under, or null when the body was not bare. Registered on
         // the select in the commit block below, in the same block as AddProjection, so "the emit gate opened for
         // a bare body" and "the alias override exists" are one event.
@@ -83,15 +126,22 @@ internal static class NativeProjectionBinder
                 {
                     var memberName = newExpression.Members[i].Name;
                     var alias = DeriveWrappedLeafAlias(mongoQ, newExpression.Arguments[i], memberName);
-                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], newExpression.Arguments[i], alias, pendingLookups, out var leaf, out var isArrayLeaf, allowWholeRootEntityLeaf: true))
+                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], newExpression.Arguments[i], alias, pendingLookups, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
                         return false;
                     if (!seenAliases.Add(alias))
                         return false;
                     projections.Add(new MongoProjection(alias, leaf));
-                    if (alias != memberName)
+                    // The nav-entity leaf is registered unconditionally, even when alias == memberName (which it
+                    // always does — TryTranslateLeaf declines otherwise): unlike the array leaf, it needs the
+                    // DocumentPath override registered regardless of alias agreement, because the late-fallback
+                    // strip it triggers is what supplies the retained _id (see the commit block below), not an
+                    // alias disagreement to correct.
+                    if (alias != memberName || isOwnedNavEntityLeaf)
                         namedAliasOverrides.Add((memberName, alias));
                     leafIsArray.Add(isArrayLeaf);
                     hasArrayLeaf |= isArrayLeaf;
+                    leafIsOwnedNavEntity.Add(isOwnedNavEntityLeaf);
+                    hasOwnedNavEntityLeaf |= isOwnedNavEntityLeaf;
                 }
                 break;
 
@@ -105,15 +155,19 @@ internal static class NativeProjectionBinder
 
                     var memberName = binding.Member.Name;
                     var alias = DeriveWrappedLeafAlias(mongoQ, assignment.Expression, memberName);
-                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], assignment.Expression, alias, pendingLookups, out var leaf, out var isArrayLeaf, allowWholeRootEntityLeaf: true))
+                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], assignment.Expression, alias, pendingLookups, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
                         return false;
                     if (!seenAliases.Add(alias))
                         return false;
                     projections.Add(new MongoProjection(alias, leaf));
-                    if (alias != memberName)
+                    // See the matching comment in the NewExpression arm above for why the nav-entity leaf
+                    // registers unconditionally.
+                    if (alias != memberName || isOwnedNavEntityLeaf)
                         namedAliasOverrides.Add((memberName, alias));
                     leafIsArray.Add(isArrayLeaf);
                     hasArrayLeaf |= isArrayLeaf;
+                    leafIsOwnedNavEntity.Add(isOwnedNavEntityLeaf);
+                    hasOwnedNavEntityLeaf |= isOwnedNavEntityLeaf;
                 }
                 break;
 
@@ -178,8 +232,11 @@ internal static class NativeProjectionBinder
                       ?? BareLeafProvisionalAlias
                     : BareLeafProvisionalAlias;
 
+                // allowWholeRootEntityLeaf defaults to false here, so the owned-nav-entity leaf arm (gated on
+                // that same flag, for the same reason as the whole-root-entity leaf) never fires for a bare
+                // body — a bare `b => b.Address` keeps declining exactly as before this ticket.
                 if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], selector.Body, provisionalAlias,
-                        pendingLookups, out var bareLeaf, out var bareIsArrayLeaf))
+                        pendingLookups, out var bareLeaf, out var bareIsArrayLeaf, out _))
                 {
                     return false;
                 }
@@ -213,6 +270,9 @@ internal static class NativeProjectionBinder
                 projections.Add(new MongoProjection(derivedAlias, bareLeaf));
                 leafIsArray.Add(bareIsArrayLeaf);
                 hasArrayLeaf |= bareIsArrayLeaf;
+                // A bare body never admits the owned-nav-entity leaf (see the comment at the call site above) —
+                // always false here, kept only so leafIsOwnedNavEntity stays index-parallel with projections.
+                leafIsOwnedNavEntity.Add(false);
                 break;
             }
         }
@@ -227,11 +287,20 @@ internal static class NativeProjectionBinder
         // off a whole document; a renamed-alias field, a dotted (owned sub-property) field, or any computed leaf
         // (its alias names no document element at all) does not. Decline the whole projection when any sibling
         // fails this.
-        if (hasArrayLeaf)
+        //
+        // The owned single-reference navigation entity leaf (EF-441) forces this exact same "mixed"-shaper
+        // fallback for the exact same reason (it is entity-typed), so it joins the array leaf as a trigger — the
+        // two flags are checked with the same OR everywhere in this method. The leaf itself is skipped by the
+        // sweep for the same reason the array leaf is: its own alias-must-equal-document-path check (in
+        // TryTranslateLeaf) already proves it whole-document-readable, and IsWholeDocumentReadableLeaf would
+        // reject it outright anyway (it demands a MongoFieldExpression, not the MongoElementRefExpression this
+        // leaf translates to).
+        if (hasArrayLeaf || hasOwnedNavEntityLeaf)
         {
             for (var i = 0; i < projections.Count; i++)
             {
-                if (!leafIsArray[i] && !IsWholeDocumentReadableLeaf(projections[i].Alias, projections[i].Expression))
+                if (!leafIsArray[i] && !leafIsOwnedNavEntity[i]
+                    && !IsWholeDocumentReadableLeaf(projections[i].Alias, projections[i].Expression))
                     return false;
             }
         }
@@ -244,13 +313,14 @@ internal static class NativeProjectionBinder
         // reads every result member by alias, and "_id" is never bound to a ProjectionMember) and it correctly
         // suppresses MongoPipelineFactory.RenderProject's default `_id : 0` exclusion. An explicit-HasKey
         // element never performs the owner-key read, so emitting _id alongside it is harmless too. Keyed on the
-        // leaf kind (hasArrayLeaf) rather than the element's own key kind, since this binder has no cheap way to
-        // tell those apart and doesn't need to.
+        // leaf kind (hasArrayLeaf || hasOwnedNavEntityLeaf) rather than the element's own key kind, since this
+        // binder has no cheap way to tell those apart and doesn't need to.
         //
         // MongoQueryableMethodTranslatingExpressionVisitor.IsPlainProjectedSelect's set-op-operand decline is
-        // gated on this same HasArrayProjectionLeaf flag, because the hazard it guards is this owner key leaking
-        // into a set operation's whole-document comparison key — change both together if they ever diverge.
-        if (hasArrayLeaf && seenAliases.Add("_id"))
+        // gated on the HasArrayProjectionLeaf flag (set from either trigger below), because the hazard it guards
+        // is this owner key leaking into a set operation's whole-document comparison key — change both together
+        // if they ever diverge.
+        if ((hasArrayLeaf || hasOwnedNavEntityLeaf) && seenAliases.Add("_id"))
         {
             // Properties[0] approximates the projection's CLR Type for a hypothetical composite-key root (a
             // composite key is stored nested under "_id", so no single property's ClrType describes it). Inert
@@ -273,24 +343,183 @@ internal static class NativeProjectionBinder
                 MongoSelectDefinition.BareProjectionMemberKey, bareProjectionAlias, bareProjectionTier);
         }
 
-        // The same registration for a WRAPPED body's named members. DocumentPath by construction —
-        // DeriveWrappedLeafAlias returns a non-member-name alias only when it IS the leaf's root-relative
-        // document path.
+        // The same registration for a WRAPPED body's named members. DocumentPath by construction — either
+        // DeriveWrappedLeafAlias returned a non-member-name alias (which it does only when it IS the leaf's
+        // root-relative document path), or this is an owned-nav-entity leaf (EF-441), registered here
+        // unconditionally even though its alias equals the member name — see the comment at its two call sites
+        // above for why it still needs the override (the strip this triggers is what supplies the retained _id,
+        // not an alias disagreement).
         foreach (var (memberName, alias) in namedAliasOverrides)
         {
             mongoQ.Select.AddProjectionAliasOverride(memberName, alias, ProjectionAliasTier.DocumentPath);
         }
 
-        // Record the array leaf's presence for the one consumer that must decline this projection — the
-        // projected-set-op-operand scope gate. Set only here, alongside the commit, so a projection that
-        // declined on any path above leaves no provenance behind.
-        if (hasArrayLeaf)
+        // Record the array/nav-entity leaf's presence for the one consumer that must decline this projection as
+        // a set-op operand — the projected-set-op-operand scope gate
+        // (MongoQueryableMethodTranslatingExpressionVisitor.IsPlainProjectedSelect). Set only here, alongside the
+        // commit, so a projection that declined on any path above leaves no provenance behind. Both leaf kinds
+        // share this one flag deliberately (rather than each having its own) — they share the identical hazard
+        // the gate guards against (the leaked owner _id corrupting a set op's whole-document comparison key), so
+        // one flag is the single source of truth for "does this projection carry that hazard", per that gate's
+        // own comment ("change both together if they ever diverge").
+        if (hasArrayLeaf || hasOwnedNavEntityLeaf)
             mongoQ.Select.HasArrayProjectionLeaf = true;
         return true;
     }
 
     private static bool IsEnumType(Type type)
         => (Nullable.GetUnderlyingType(type) ?? type).IsEnum;
+
+    /// <summary>
+    /// Matches an OWNED SINGLE-REFERENCE navigation entity leaf (EF-441) — <c>b.Address</c> — in EITHER spelling
+    /// EF Core produces: a bare <see cref="MemberExpression"/> off the selector's own parameter, or the
+    /// shadow-safe <c>EF.Property(receiver, "Address")</c> call.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// BOTH spellings must be matched, not just the first. After real nav-expansion (the
+    /// <c>MongoQueryTranslationPreprocessor</c> phase every production query goes through) an owned-reference
+    /// navigation access always arrives as the shadow-safe <c>EF.Property</c> call, never as a bare member
+    /// access — the <see cref="MemberExpression"/> spelling is only ever seen by a unit-test harness
+    /// (<c>SlotPopulationTests.TranslateToMongoQuery</c>) that feeds the QMTEV directly and skips that
+    /// preprocessing phase. A gate written against the bare spelling alone would pass every unit test and never
+    /// actually fire against a real query.
+    /// </para>
+    /// <para>
+    /// Declines: a collection navigation (that is the array leaf's own arm, <see cref="IsNativeArrayProjectionLeaf"/>);
+    /// a navigation whose target entity type is not owned (a cross-collection, FK-correlated reference navigation
+    /// needs <c>$lookup</c> involvement this leaf kind does not attempt — out of scope for EF-441, tracked as a
+    /// follow-up); and a leaf whose static CLR type disagrees with the navigation's target entity type (a cast or
+    /// otherwise non-direct spelling).
+    /// </para>
+    /// </remarks>
+    private static bool TryGetOwnedReferenceNavigationLeaf(
+        MongoQueryExpression mongoQ, ParameterExpression outerParameter, Expression leafExpression,
+        [NotNullWhen(true)] out INavigation? navigation)
+    {
+        navigation = null;
+        Expression receiver;
+        string name;
+        switch (leafExpression)
+        {
+            case MemberExpression { Expression: not null } me:
+                receiver = me.Expression;
+                name = me.Member.Name;
+                break;
+            case MethodCallExpression call when call.Method.IsEFPropertyMethod()
+                                                 && call.Arguments.Count == 2
+                                                 && call.Arguments[1] is ConstantExpression { Value: string navName }:
+                receiver = call.Arguments[0];
+                name = navName;
+                break;
+            default:
+                return false;
+        }
+
+        if (!IsSelectorParameter(receiver, outerParameter))
+        {
+            return false;
+        }
+
+        if (mongoQ.CollectionExpression.EntityType.FindNavigation(name) is not { } nav
+            || nav.IsCollection
+            || !nav.IsEmbedded()
+            || leafExpression.Type != nav.TargetEntityType.ClrType)
+        {
+            return false;
+        }
+
+        navigation = nav;
+        return true;
+    }
+
+    /// <summary>
+    /// Matches a CONSTRUCTED (non-navigation) sub-entity leaf (EF-447) — <c>new Book { Id = e.Id, Title =
+    /// e.Title }</c> — and recursively translates its own member bindings into a
+    /// <see cref="MongoDocumentConstructionExpression"/> representing the literal nested sub-document a
+    /// <c>$project</c> should emit for it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Scope is deliberately narrow, matching this ticket's minimal-fix shape: every member's own value must
+    /// itself be a plain top-level scalar leaf (a bare member access or the shadow-safe <c>EF.Property</c>
+    /// spelling) resolving via <see cref="MongoExpressionTranslator.TryTranslateField"/> — the SAME translation a
+    /// top-level wrapped-body member uses. A computed/nested/navigation member declines the WHOLE leaf (not just
+    /// that member), keeping this a strict, minimal widening rather than a general nested-projection engine.
+    /// </para>
+    /// <para>
+    /// A DOTTED field (reached through an owned single-reference hop) also declines here, for the same
+    /// non-default-serialization-adjacent reason <see cref="TryTranslateLeaf"/>'s own plain-member arm declines
+    /// one: this leaf's read side resolves each member by its OWN natural (root-relative, undotted) document
+    /// path on a late fallback (see the class remarks on <see cref="Expressions.MongoDocumentConstructionExpression"/>
+    /// and the mixed-visitor read side), and a dotted path has no such single-segment natural read.
+    /// </para>
+    /// <para>
+    /// Unlike the owned-array/owned-nav-entity leaves, this leaf registers NO owner-key retention and is NOT
+    /// subject to the sibling-readability sweep: every member is read directly off the query ROOT by its own
+    /// natural element name (never an owned sub-document's own path), so a late fallback that hands the shaper a
+    /// whole, un-projected root document can still resolve every member correctly — see the mixed-visitor read
+    /// side's own remarks for the mechanism that makes this true.
+    /// </para>
+    /// </remarks>
+    private static bool TryGetDocumentConstructionLeaf(
+        MongoExpressionTranslator translator,
+        Expression leafExpression,
+        [NotNullWhen(true)] out MongoDocumentConstructionExpression? result)
+    {
+        result = null;
+
+        IReadOnlyList<MemberInfo> members;
+        IReadOnlyList<Expression> values;
+        switch (leafExpression)
+        {
+            case NewExpression { Members: not null } newExpression
+                when newExpression.Members.Count == newExpression.Arguments.Count && newExpression.Arguments.Count > 0:
+                members = newExpression.Members;
+                values = newExpression.Arguments;
+                break;
+
+            case MemberInitExpression { NewExpression.Arguments.Count: 0 } memberInit when memberInit.Bindings.Count > 0:
+                var boundMembers = new List<MemberInfo>();
+                var boundValues = new List<Expression>();
+                foreach (var binding in memberInit.Bindings)
+                {
+                    if (binding is not MemberAssignment assignment)
+                        return false;
+
+                    boundMembers.Add(assignment.Member);
+                    boundValues.Add(assignment.Expression);
+                }
+
+                members = boundMembers;
+                values = boundValues;
+                break;
+
+            default:
+                return false;
+        }
+
+        var translatedMembers = new List<(string, MongoExpression)>();
+        var seenMembers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < members.Count; i++)
+        {
+            if ((values[i] is MemberExpression
+                    || (values[i] is MethodCallExpression efPropertyCall && efPropertyCall.Method.IsEFPropertyMethod()))
+                && translator.TryTranslateField(values[i], out var field)
+                && !field.ElementName.Contains('.')
+                && NativeGroupByBinder.HasDefaultKeySerialization(field.Property)
+                && seenMembers.Add(members[i].Name))
+            {
+                translatedMembers.Add((members[i].Name, field));
+                continue;
+            }
+
+            return false;
+        }
+
+        result = new MongoDocumentConstructionExpression(leafExpression, translatedMembers);
+        return true;
+    }
 
     /// <summary>
     /// Translates a single projection leaf: a plain top-level member access, an owned entity-collection leaf
@@ -308,11 +537,14 @@ internal static class NativeProjectionBinder
         List<LookupExpression> pendingLookups,
         out MongoExpression result,
         out bool isArrayLeaf,
+        out bool isOwnedNavEntityLeaf,
         bool allowWholeRootEntityLeaf = false)
     {
         // Only the owned array-leaf branch below ever sets this true; every other accepted leaf kind (a plain
         // field, a projected count, an arithmetic leaf) needs no owner-key emission.
         isArrayLeaf = false;
+        // Only the owned single-reference navigation entity leaf branch below (EF-441) ever sets this true.
+        isOwnedNavEntityLeaf = false;
 
         // A plain top-level scalar leaf, in either spelling EF produces: a bare member (c.Foo) or the
         // shadow-safe EF.Property<T>(c, "Foo") call. Both are handed to TryTranslateField unconditionally — its
@@ -381,6 +613,48 @@ internal static class NativeProjectionBinder
         {
             result = new MongoElementRefExpression(
                 MongoElementRefExpression.WholeRootDocumentPath, mongoQ.CollectionExpression.EntityType.ClrType);
+            return true;
+        }
+
+        // An OWNED SINGLE-REFERENCE NAVIGATION entity leaf (EF-441) — `new { b.Address, b.Title }`. Mirrors the
+        // whole-ROOT-entity leaf just above, substituting the navigation's own document path
+        // (GetContainingElementName()) for `$$ROOT`. Gated to WRAPPED selector bodies only
+        // (allowWholeRootEntityLeaf), for the same reason as that arm — a bare `b => b.Address` keeps declining
+        // (no bare-projection arm exists for this leaf kind; see TryGetOwnedReferenceNavigationLeaf's remarks for
+        // why a cross-collection reference navigation, needing $lookup, is intentionally NOT matched here).
+        //
+        // The alias-must-equal-document-path conjunct is what makes this leaf's late-fallback leg (an explicit
+        // MongoQueryMode.DriverLinq, or a mid-compile TryBuildNativeFactory decline) correct: both legs strip the
+        // pushed-down Select and hand the shaper whole, un-projected documents (see the DocumentPath alias
+        // override this leaf registers, in the commit block below) — but a whole document only HAS an element
+        // named `alias` when the caller didn't rename the member (`new { Addr = b.Address }` would otherwise
+        // silently read nothing). Declining a renamed member here, rather than trying to alias the $project
+        // output to the caller's chosen name, keeps this leaf's fallback-leg alias identical to what the driver
+        // itself would render for the un-renamed member.
+        if (allowWholeRootEntityLeaf
+            && TryGetOwnedReferenceNavigationLeaf(mongoQ, outerParameter, leafExpression, out var ownedNav)
+            && ownedNav.TargetEntityType.GetContainingElementName() is { } ownedNavElementName
+            && alias == ownedNavElementName)
+        {
+            result = new MongoElementRefExpression(ownedNavElementName, ownedNav.TargetEntityType.ClrType);
+            isOwnedNavEntityLeaf = true;
+            return true;
+        }
+
+        // A CONSTRUCTED (non-navigation) sub-entity leaf (EF-447) — `new { Book = new Book { Id = e.Id, ... } }`.
+        // A freshly-built CLR object whose own members are plain root-relative scalar fields, as opposed to the
+        // owned-nav-entity leaf just above (which aliases an ALREADY-STORED owned sub-document). Gated to
+        // WRAPPED selector bodies only (allowWholeRootEntityLeaf) — this arm is reached ONLY when this
+        // New/MemberInit is itself the VALUE of a member inside an outer wrapped body (`Book = new Book {...}`);
+        // a New/MemberInit that IS the selector body itself (`b => new Book { Id = b.Id, ... }`) is not "bare"
+        // in any sense this ticket needs to handle at all — the pre-existing top-level switch in
+        // TryPopulateNativeProjection already treats it as an ordinary WRAPPED multi-member projection (each
+        // binding becomes its own top-level $project field, exactly like an anonymous `new {...}`), and that
+        // pre-existing behavior is untouched by this ticket.
+        if (allowWholeRootEntityLeaf
+            && TryGetDocumentConstructionLeaf(translator, leafExpression, out var construction))
+        {
+            result = construction;
             return true;
         }
 
@@ -1143,9 +1417,11 @@ internal static class NativeProjectionBinder
     /// <c>MongoSelectDefinition.HasDocumentPathAliasOverride</c>) hands the shaper WHOLE documents, and the
     /// native (non-mixed) removing visitor has <c>ReadsUnprojectedDocuments == false</c>, so it would read a
     /// <c>$$ROOT</c> leaf's alias as a named element that does not exist. For a WRAPPED body a document-path
-    /// alias override can only come from an owned-ARRAY leaf (<see cref="DeriveWrappedLeafAlias"/> — that is the
-    /// only leaf kind whose alias is ever something other than its member name), and admitting an array leaf
-    /// forces the sibling sweep at the call site to run this predicate over EVERY non-array leaf. This predicate
+    /// alias override can come from an owned-ARRAY leaf (<see cref="DeriveWrappedLeafAlias"/>) or from the
+    /// owned-nav-entity leaf (EF-441, <see cref="TryGetOwnedReferenceNavigationLeaf"/> — its alias equals its
+    /// member name in this case, unlike the array leaf, but it registers the same kind of override) — those are
+    /// the only leaf kinds whose alias is ever registered as a document-path override, and admitting either
+    /// forces the sibling sweep at the call site to run this predicate over EVERY other leaf. This predicate
     /// requires a <see cref="MongoFieldExpression"/>, so it REJECTS the
     /// <c>MongoElementRefExpression(WholeRootDocumentPath)</c> a whole-root-entity leaf translates to — the
     /// whole projection therefore declines to <c>Fallback</c> before any state is mutated, and a

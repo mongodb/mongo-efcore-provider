@@ -185,7 +185,17 @@ internal sealed class MongoQueryLanguageRenderer
             // otherwise matched explicitly in RenderNode's switch (see its MongoUnaryExpression arm), so
             // without this branch a Not never reaches that catch-all and always either succeeds above or
             // throws here.
-            if (MongoAggregationExpressionRenderer.CanRender(unary.Operand))
+            //
+            // CanRender is being invoked here on unary.Operand itself, NOT re-entering CanRender's own
+            // MongoUnaryExpression{Not} arm (which already carries the AllFieldsDefaultSerialized guard) —
+            // so if the operand is a bare field (MongoFieldExpression or MongoOuterFieldExpression), it hits
+            // CanRender's unconditional top arm (`=> true`) and this call site must repeat the same
+            // truthiness guard itself (final-review fix — mirrors CanRender's own Not arm exactly): a
+            // value-converted/non-default-represented outer bool under Not would otherwise render as
+            // {$expr: {$not: [...]}}  raw truthiness on the stored value  instead of correctly declining.
+            if (MongoAggregationExpressionRenderer.CanRender(unary.Operand)
+                && (!MongoExpressionTranslator.TryGetBareFieldProperty(unary.Operand, out _)
+                    || MongoExpressionTranslator.AllFieldsDefaultSerialized(unary.Operand)))
             {
                 return new BsonDocument("$expr",
                     new BsonDocument("$not", new BsonArray { MongoAggregationExpressionRenderer.Render(unary.Operand, placeholders) }));
@@ -480,6 +490,10 @@ internal sealed class MongoQueryLanguageRenderer
             MongoConditionalExpression => false,
             MongoDatePartExpression => false,
             MongoDateTimeOffsetLocalExpression => false,
+            // No query-dialect form at all — see the node's own remarks. Explicit rather than left to the
+            // catch-all, matching the style of MongoConditionalExpression/MongoDatePartExpression above.
+            MongoOuterFieldExpression => false,
+            MongoQuantifierExpression => false,
             // RenderInValues throws for any values node other than a constant enumerable or a parameter.
             MongoInExpression inExpr
                 => inExpr.Values is MongoConstantExpression { Value: System.Collections.IEnumerable }

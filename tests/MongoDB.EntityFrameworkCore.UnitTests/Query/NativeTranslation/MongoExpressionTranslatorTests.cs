@@ -1559,7 +1559,7 @@ public class MongoExpressionTranslatorTests
         var bin = Assert.IsType<MongoBinaryExpression>(result);
         Assert.Equal(MongoBinaryOperator.Equal, bin.Operator);
         Assert.Equal("_lookup_Refs.Tag", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
-        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
+        Assert.Equal("Name", Assert.IsType<MongoOuterFieldExpression>(bin.Right).ElementName);
     }
 
     [Fact]
@@ -1578,7 +1578,7 @@ public class MongoExpressionTranslatorTests
         Assert.True(translator.TryTranslate(body, out var result));
         var bin = Assert.IsType<MongoBinaryExpression>(result);
         Assert.Equal("_lookup_Refs.Name", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
-        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
+        Assert.Equal("Name", Assert.IsType<MongoOuterFieldExpression>(bin.Right).ElementName);
     }
 
     [Fact]
@@ -1617,7 +1617,7 @@ public class MongoExpressionTranslatorTests
         var bin = Assert.IsType<MongoBinaryExpression>(result);
         Assert.Equal(MongoBinaryOperator.GreaterThanOrEqual, bin.Operator);
         Assert.Equal("_lookup_Refs.Score", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
-        Assert.Equal("Threshold", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
+        Assert.Equal("Threshold", Assert.IsType<MongoOuterFieldExpression>(bin.Right).ElementName);
     }
 
     // ------------------------------------------------------------------
@@ -2318,6 +2318,58 @@ public class MongoExpressionTranslatorTests
         // TryResolveOwnedCollectionPath requires an embedded collection NAVIGATION; Tags is a property.
         => Assert.Null(TryTranslateBlogPredicate(b => b.Tags.Count > 2));
 
+    [Fact]
+    public void Correlated_Count_element_predicate_with_two_distinct_free_parameters_declines()
+    {
+        // Task-3 review fix (EF-421, Finding 1): the Count(pred) two-scope arm accepts a correlation only
+        // when ReferencesEnclosingScope reports EXACTLY ONE free parameter and it ReferenceEquals SelfParam.
+        // FreeParameterVisitor used to report only the FIRST free parameter found — so a predicate body with
+        // TWO distinct free parameters, where the first one happened to match SelfParam, would pass the
+        // identity check and build a two-scope child translator; that child would then resolve the SECOND
+        // free parameter's members by NAME against the element entity type (neither the outer param nor
+        // bound), silently retargeting the condition — the exact wrong-rows hazard this file's own constraint
+        // forbids. FreeParameterVisitor.FoundParameter now reports null whenever two-or-more DISTINCT free
+        // parameters are found, so the call site's ordinary ReferenceEquals check already declines this shape
+        // with no extra condition.
+        //
+        // No known EF LINQ query-authoring path produces a Count(pred) body with two distinct FREE
+        // ParameterExpressions today — a captured local surfaces as a closure-field MemberExpression, not an
+        // extra free parameter — so this shape is built by hand (rather than compiled from a C# lambda) as a
+        // defense-in-depth regression pin, mirroring how Query_parameter_becomes_MongoParameterExpression_
+        // not_constant above hand-builds a shape no ordinary lambda produces either.
+        var entityType = GetOwnedBlogEntityType();
+        var translator = NewTranslator(entityType);
+
+        var bParam = Expression.Parameter(typeof(OwnedBlog), "b");
+        var pParam = Expression.Parameter(typeof(OwnedPost), "p");
+        // An unrelated free parameter: neither the element parameter (p), nor a query parameter (plain name,
+        // no EF query-parameter prefix), nor the enclosing translator's own SelfParam (set to bParam below).
+        var xParam = Expression.Parameter(typeof(int), "x");
+
+        var postsMember = Expression.Property(bParam, nameof(OwnedBlog.Posts));
+
+        // Post.Title deliberately collides with Blog.Title (see the OwnedPost class comment) — if the guard
+        // were weakened, b.Title would be silently resolved as the ELEMENT's own Title instead of declining.
+        var titleEqualsOuter = Expression.Equal(
+            Expression.Property(pParam, nameof(OwnedPost.Title)),
+            Expression.Property(bParam, nameof(OwnedBlog.Title)));
+        var rankEqualsX = Expression.Equal(Expression.Property(pParam, nameof(OwnedPost.Rank)), xParam);
+        var predicateBody = Expression.AndAlso(titleEqualsOuter, rankEqualsX);
+        var predicateLambda = Expression.Lambda(predicateBody, pParam);
+
+        var countCall = Expression.Call(
+            typeof(Enumerable), nameof(Enumerable.Count), [typeof(OwnedPost)], postsMember, predicateLambda);
+        var comparisonBody = Expression.GreaterThan(countCall, Expression.Constant(0));
+
+        // Mirrors NativeSlotPopulator.PopulateNativeSlots: SelfParam is set to the enclosing predicate's own
+        // root parameter, which here is bParam — the FIRST free parameter FreeParameterVisitor would
+        // encounter under the pre-fix behavior, making this shape a false accept without the fix.
+        translator.SelfParam = bParam;
+
+        Assert.False(translator.TryTranslate(comparisonBody, out var result));
+        Assert.Null(result);
+    }
+
     // ------------------------------------------------------------------
     // EF-322 stream 1, slice A2: a top-level EF.Property leaf resolves in
     // all three positions (predicate / sort key / projection value).
@@ -2399,7 +2451,7 @@ public class MongoExpressionTranslatorTests
         Assert.True(translator.TryTranslate(body, out var result));
         var bin = Assert.IsType<MongoBinaryExpression>(result);
         Assert.Equal("_lookup_Refs.Name", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
-        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
+        Assert.Equal("Name", Assert.IsType<MongoOuterFieldExpression>(bin.Right).ElementName);
     }
 
     [Fact]

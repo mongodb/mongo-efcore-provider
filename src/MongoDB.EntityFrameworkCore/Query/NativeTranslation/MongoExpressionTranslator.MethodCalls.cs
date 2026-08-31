@@ -38,7 +38,7 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 internal sealed partial class MongoExpressionTranslator
 {
     /// <summary>Which quantifier <see cref="TryMatchQuantifierMethod"/> matched.</summary>
-    private enum MongoQuantifierKind
+    internal enum MongoQuantifierKind
     {
         /// <summary><c>Any</c> — at least one element satisfies the predicate (or, bare, the array is non-empty).</summary>
         Any,
@@ -208,6 +208,16 @@ internal sealed partial class MongoExpressionTranslator
     /// <b>free</b> <see cref="ParameterExpression"/> other than <paramref name="elementParameter"/>, i.e. the
     /// predicate is CORRELATED with an enclosing scope (in practice the query parameter, as in
     /// <c>Where(o =&gt; o.Items.Any(i =&gt; o.Name == "x"))</c>). Such a predicate is DECLINED by the <c>Any</c> arm.
+    /// This overload also reports the SOLE free parameter (if there is exactly one) via <paramref name="found"/>,
+    /// used by both the <c>Count(pred)</c> and quantifier (<c>Any</c>/<c>All</c>) call sites to check by parameter
+    /// identity whether that one free parameter is the immediate enclosing translator's own root parameter
+    /// (<see cref="MongoExpressionTranslator.SelfParam"/>). A match upgrades the shape from "decline" to "build a
+    /// two-scope child translator"; anything else — no free parameter matches (correlation reaches past the immediate
+    /// root), OR two-or-more DISTINCT free parameters were found (<paramref name="found"/> is <see langword="null"/>
+    /// in that case too — see <see cref="FreeParameterVisitor.FoundParameter"/>) — still declines exactly as before.
+    /// The multi-parameter distinction is load-bearing for BOTH call sites' correctness: a body with two distinct
+    /// free parameters must decline, not silently build a two-scope translator that would retarget the second
+    /// parameter's members by name against the element scope.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -235,10 +245,12 @@ internal sealed partial class MongoExpressionTranslator
     /// the driver-LINQ path, which translates it correctly today.
     /// </para>
     /// </remarks>
-    private static bool ReferencesEnclosingScope(Expression body, ParameterExpression elementParameter)
+    private static bool ReferencesEnclosingScope(
+        Expression body, ParameterExpression elementParameter, out ParameterExpression? found)
     {
         var visitor = new FreeParameterVisitor(elementParameter);
         visitor.Visit(body);
+        found = visitor.FoundParameter;
         return visitor.FoundFreeParameter;
     }
 
@@ -252,7 +264,28 @@ internal sealed partial class MongoExpressionTranslator
     {
         private readonly List<ParameterExpression> _bound = [elementParameter];
 
+        // Tracked by reference identity, not occurrence count: the same free parameter referenced twice must
+        // not be mistaken for two distinct free parameters.
+        private readonly List<ParameterExpression> _distinctFree = [];
+
         public bool FoundFreeParameter { get; private set; }
+
+        /// <summary>
+        /// The SOLE free parameter found, or <see langword="null"/> if EITHER zero free parameters were found
+        /// OR two-or-more DISTINCT (by reference identity) free parameters were found. A caller that builds a
+        /// two-scope child translator keyed on this value must therefore not need its own multi-parameter
+        /// check: a multi-free-parameter body already reports <see langword="null"/> here, which can never
+        /// <c>ReferenceEquals</c> a real <see cref="ParameterExpression"/> — so "exactly one free parameter,
+        /// and it matches the enclosing scope's own parameter" collapses to the ordinary
+        /// <c>ReferenceEquals(found, expectedScope)</c> check the caller already performs. Reporting the
+        /// first-found parameter unconditionally (the previous behavior) was unsound for such a caller: a body
+        /// with two distinct free parameters where the FIRST happened to match the caller's own scope would
+        /// pass the identity check while a SECOND, unrelated free parameter's members were then silently
+        /// resolved by name against the element scope — exactly the wrong-rows hazard this file's own
+        /// constraint forbids. A caller that only ever DECLINES on "any free parameter present" (i.e. uses
+        /// <see cref="FoundFreeParameter"/> alone, ignoring this property) is unaffected by any of this.
+        /// </summary>
+        public ParameterExpression? FoundParameter => _distinctFree.Count == 1 ? _distinctFree[0] : null;
 
         protected override Expression VisitLambda<T>(Expression<T> node)
         {
@@ -276,16 +309,22 @@ internal sealed partial class MongoExpressionTranslator
         protected override Expression VisitParameter(ParameterExpression node)
         {
             if (!ContainsByIdentity(node) && !NativeQueryParameter.TryGetQueryParameterName(node, out _))
+            {
                 FoundFreeParameter = true;
+                if (!ContainsByIdentity(node, _distinctFree))
+                    _distinctFree.Add(node);
+            }
 
             return node;
         }
 
-        private bool ContainsByIdentity(ParameterExpression parameter)
+        private bool ContainsByIdentity(ParameterExpression parameter) => ContainsByIdentity(parameter, _bound);
+
+        private static bool ContainsByIdentity(ParameterExpression parameter, List<ParameterExpression> candidates)
         {
-            foreach (var bound in _bound)
+            foreach (var candidate in candidates)
             {
-                if (ReferenceEquals(bound, parameter))
+                if (ReferenceEquals(candidate, parameter))
                     return true;
             }
 

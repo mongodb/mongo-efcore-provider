@@ -229,7 +229,7 @@ public class NativeSelectManyBinderTests
         var bin = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.UnwindSource!.Filter);
         Assert.Equal(MongoBinaryOperator.Equal, bin.Operator);
         Assert.Equal("Items.Name", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);   // inner, prefixed
-        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);          // outer, root
+        Assert.Equal("Name", Assert.IsType<MongoOuterFieldExpression>(bin.Right).ElementName);     // outer, root
     }
 
     [Fact]
@@ -249,7 +249,7 @@ public class NativeSelectManyBinderTests
         // correlated conjunct: inner prefixed vs outer root
         var right = Assert.IsType<MongoBinaryExpression>(and.Right);
         Assert.Equal("Items.Name", Assert.IsType<MongoFieldExpression>(right.Left).ElementName);
-        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(right.Right).ElementName);
+        Assert.Equal("Name", Assert.IsType<MongoOuterFieldExpression>(right.Right).ElementName);
     }
 
     [Fact]
@@ -299,7 +299,7 @@ public class NativeSelectManyBinderTests
         var bin = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.UnwindSource!.Filter);
         Assert.Equal(MongoBinaryOperator.Equal, bin.Operator);
         Assert.Equal("Items.Name", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
-        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
+        Assert.Equal("Name", Assert.IsType<MongoOuterFieldExpression>(bin.Right).ElementName);
     }
 
     // ── TryBindTransparentIdentifierProjection: explicit-result-selector / query-syntax form ───────
@@ -1086,7 +1086,7 @@ public class NativeSelectManyBinderTests
         // Inner field prefixed with the lookup scope; outer field at document root — resolved by parameter
         // identity, so the shared-nothing scopes never conflate.
         Assert.Equal("_lookup_Tags.Label", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
-        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(bin.Right).ElementName);
+        Assert.Equal("Name", Assert.IsType<MongoOuterFieldExpression>(bin.Right).ElementName);
     }
 
     [Fact]

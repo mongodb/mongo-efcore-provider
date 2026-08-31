@@ -18,7 +18,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
+using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 using MongoDB.EntityFrameworkCore.Query.Visitors;
 using MongoDB.EntityFrameworkCore.UnitTests.TestUtilities;
 
@@ -50,6 +52,24 @@ public class SlotPopulationTests
 
     private class OwnedAddress
     {
+        public string City { get; set; } = "";
+    }
+
+    // Used only by Non_embedded_owned_reference_entity_leaf_declines_to_fallback (final-review Finding 1): a
+    // non-embedded owned navigation — one with its own Mongo:CollectionName annotation, so it is its own
+    // document root stored in a SEPARATE collection rather than a nested sub-document of its owner — must NOT
+    // be admitted by the EF-441 owned-nav-entity-leaf gate. IsOwned() is true for BOTH this shape and the
+    // embedded CustomerWithOwnedAddress/OwnedAddress shape above; only IsEmbedded() tells them apart.
+    private class ProbeCustomer
+    {
+        public ObjectId Id { get; set; }
+        public int Age { get; set; }
+        public ProbeAddress Address { get; set; } = null!;
+    }
+
+    private class ProbeAddress
+    {
+        public ObjectId Id { get; set; }
         public string City { get; set; } = "";
     }
 
@@ -101,6 +121,40 @@ public class SlotPopulationTests
 
         // Visit the top-level expression tree.
         var result = visitor.Visit(query.Expression);
+
+        Assert.NotNull(result);
+        var shaped = Assert.IsAssignableFrom<ShapedQueryExpression>(result);
+        return Assert.IsType<MongoQueryExpression>(shaped.QueryExpression);
+    }
+
+    /// <summary>
+    /// Like <see cref="TranslateToMongoQuery{T}"/>, but builds a <c>Union</c> of two independently-constructed
+    /// operand queries over the SAME entity type and root, then feeds the combined tree through the QMTEV. Used
+    /// by the EF-441 set-op-gate regression test — this harness bypasses EF's nav-expansion/preprocessing
+    /// phase entirely (like <see cref="TranslateToMongoQuery{T}"/> does), so it does NOT exercise the
+    /// nav-expansion-level operand-sharing quirk a full functional-test Union hits for a wrapped projected
+    /// operand (see the functional test file's own remarks); it exists to isolate and pin the ONE fact this
+    /// task owns — the emit-side gate (<c>HasArrayProjectionLeaf</c>/<c>IsPlainProjectedSelect</c>) — from that
+    /// separate, deeper concern.
+    /// </summary>
+    private static MongoQueryExpression TranslateUnionToMongoQuery<T, TResult>(
+        Func<IQueryable<T>, IQueryable<TResult>> buildLeft,
+        Func<IQueryable<T>, IQueryable<TResult>> buildRight,
+        Action<ModelBuilder>? modelBuilderAction = null) where T : class
+    {
+        using var db = SingleEntityDbContext.Create<T>(modelBuilderAction);
+
+        var visitorFactory = db.GetService<IQueryableMethodTranslatingExpressionVisitorFactory>();
+        var ccFactory = db.GetService<IQueryCompilationContextFactory>();
+        var compilationContext = ccFactory.Create(async: false);
+        var visitor = visitorFactory.Create(compilationContext);
+
+        var entityType = db.Model.FindEntityType(typeof(T))!;
+        var left = buildLeft(new RootExpressionQueryable<T>(new EntityQueryRootExpression(entityType)));
+        var right = buildRight(new RootExpressionQueryable<T>(new EntityQueryRootExpression(entityType)));
+        var unioned = System.Linq.Queryable.Union(left, right);
+
+        var result = visitor.Visit(unioned.Expression);
 
         Assert.NotNull(result);
         var shaped = Assert.IsAssignableFrom<ShapedQueryExpression>(result);
@@ -347,17 +401,23 @@ public class SlotPopulationTests
         Assert.IsType<MongoBinaryExpression>(mongoQuery.Select.Projection[1].Expression);
     }
 
-    // The SIBLING that carries the inverted test's original intent. EF-412 admits exactly one entity leaf —
-    // the selector's own root parameter, which is what `$$ROOT` names. An OWNED-reference entity leaf
-    // (`c.Address`, an embedded sub-document) is a different entity and is NOT the root parameter, so
-    // TryTranslateLeaf's `IsSelectorParameter` conjunct rejects it and the WHOLE projection declines — Route
-    // stays Fallback and Projection stays empty, exactly as the pre-EF-412 behavior did for every entity leaf.
+    // The SIBLING that carries the inverted test's original intent. As of EF-441, an OWNED single-reference
+    // navigation entity leaf (`c.Address`, an embedded sub-document) DOES have its own native arm
+    // (TryGetOwnedReferenceNavigationLeaf) and is, on its own, admitted — so this is no longer a case of
+    // TryTranslateLeaf outright rejecting the leaf (that was true before EF-441, when no such arm existed).
+    // What still declines the WHOLE projection is the sibling-readability sweep
+    // (NativeProjectionBinder.IsWholeDocumentReadableLeaf, run over every OTHER leaf once an owned-array or
+    // owned-nav-entity leaf is admitted): a computed leaf like `Total = c.Age * c.Age` has no document path of
+    // its own, so it fails that sweep and the whole projection declines before anything is mutated — Route
+    // stays Fallback and Projection stays empty, same observable result as before EF-441, for a different and
+    // now more precise reason.
     //
     // This matters beyond bookkeeping: Route == Fallback here is the precondition that keeps the
     // Route == NativeRoute.Projection-gated arms in MongoProjectionBindingExpressionVisitor from firing for a
     // shape the native shaper cannot read, so the arithmetic sibling is never registered as a native leaf the
-    // mixed shaper would then misread. If a future slice widens the emit gate to another entity leaf kind, this
-    // test must fail rather than the widening landing silently.
+    // mixed shaper would then misread. If a future slice widens the sibling-readability sweep (or gives a
+    // computed leaf its own document-path story) to admit this shape, this test must fail rather than the
+    // widening landing silently.
     [Fact]
     public void Mixed_owned_reference_entity_and_arithmetic_leaves_do_not_populate_projection()
     {
@@ -367,6 +427,100 @@ public class SlotPopulationTests
 
         Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
         Assert.Empty(mongoQuery.Select.Projection);
+    }
+
+    // The POSITIVE case (EF-441): an owned single-reference navigation entity leaf mixed with a plain FIELD
+    // sibling (as opposed to the computed sibling above) is fully native — the field sibling is
+    // whole-document-readable, so the sibling-readability sweep admits it instead of declining the projection.
+    [Fact]
+    public void Mixed_owned_reference_entity_and_field_leaves_populate_projection_natively()
+    {
+        var mongoQuery = TranslateToMongoQuery<CustomerWithOwnedAddress>(
+            q => q.Select(c => new { c.Address, c.Age }),
+            mb => mb.Entity<CustomerWithOwnedAddress>().OwnsOne(c => c.Address));
+
+        Assert.Equal(NativeRoute.Projection, mongoQuery.Select.Route);
+        Assert.Equal(3, mongoQuery.Select.Projection.Count);
+        Assert.Equal("Address", mongoQuery.Select.Projection[0].Alias);
+        Assert.Equal(
+            "Address", Assert.IsType<MongoElementRefExpression>(mongoQuery.Select.Projection[0].Expression).Path);
+        Assert.Equal("Age", mongoQuery.Select.Projection[1].Alias);
+        // The owner-key retention (EF-441, mirroring the owned-array leaf): a $project that carried only the
+        // requested aliases would have no _id, and the owned Address element's shadow-key read resolves the
+        // owner's _id off the document root.
+        Assert.Equal("_id", mongoQuery.Select.Projection[2].Alias);
+        Assert.True(mongoQuery.Select.HasArrayProjectionLeaf);
+    }
+
+    // The RENAMED-alias negative control: `new { Addr = c.Address, c.Age }` must decline outright, because the
+    // late-fallback leg's correctness depends on the emitted alias naming a real element the driver-LINQ bridge
+    // also renders under that same name (see TryTranslateLeaf's alias-must-equal-document-path conjunct).
+    [Fact]
+    public void Renamed_owned_reference_entity_leaf_declines()
+    {
+        var mongoQuery = TranslateToMongoQuery<CustomerWithOwnedAddress>(
+            q => q.Select(c => new { Addr = c.Address, c.Age }),
+            mb => mb.Entity<CustomerWithOwnedAddress>().OwnsOne(c => c.Address));
+
+        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
+        Assert.Empty(mongoQuery.Select.Projection);
+    }
+
+    // Final-review Finding 1: before the fix, TryGetOwnedReferenceNavigationLeaf gated on
+    // `!nav.TargetEntityType.IsOwned()`, which is FALSE for both an embedded owned type (a nested sub-document
+    // of the same document — what this feature handles) and a non-embedded owned type (its own document root,
+    // in its own collection, per a Mongo:CollectionName annotation) — so the gate wrongly admitted the
+    // non-embedded shape too, and would have emitted `"Address": "$Address"` in the $project for data that
+    // isn't in the document at all. The fix keys on `!nav.IsEmbedded()` instead, matching every other owned-nav
+    // gate in this codebase (MongoExpressionTranslator.Members.cs, MongoSelectLowerer.cs). This must decline to
+    // Fallback; before the fix it incorrectly showed Route == Projection.
+    [Fact]
+    public void Non_embedded_owned_reference_entity_leaf_declines_to_fallback()
+    {
+        var mongoQuery = TranslateToMongoQuery<ProbeCustomer>(
+            q => q.Select(c => new { c.Address, c.Age }),
+            mb => mb.Entity<ProbeCustomer>().OwnsOne(c => c.Address, a =>
+            {
+                a.HasKey(x => x.Id);
+                a.Property(x => x.Id).HasElementName("_id");
+                a.HasAnnotation("Mongo:CollectionName", "addresses");
+            }));
+
+        var navigation = mongoQuery.CollectionExpression.EntityType.FindNavigation(nameof(ProbeCustomer.Address))!;
+        Assert.False(navigation.IsEmbedded());
+        Assert.True(navigation.TargetEntityType.IsOwned());
+        Assert.True(navigation.TargetEntityType.IsDocumentRoot());
+
+        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
+        Assert.Empty(mongoQuery.Select.Projection);
+    }
+
+    // Final-review Finding 3: the re-entrancy guard at the top of NativeProjectionBinder.TryPopulateNativeProjection
+    // (a wrapped body reached with Projection already populated declines rather than re-running every leaf arm)
+    // has zero coverage in the existing suite — every shape that reaches it in practice also hits a separate,
+    // pre-existing InvalidCastException bug first (see Query/AGENTS.md's EF-441 paragraph), so the guard's own
+    // return value never gets a chance to matter end-to-end. This test reaches the guard DIRECTLY (bypassing
+    // both nav-expansion and that unrelated bug) by calling NativeProjectionBinder.TryPopulateNativeProjection a
+    // second time on a MongoQueryExpression whose Projection is already populated — exactly the precondition the
+    // guard's own `Projection.Count > 0` check tests. A mutation removing the guard would re-run every leaf arm
+    // and duplicate the Projection list (or throw from AddProjectionAliasOverride's write-once Dictionary.Add).
+    [Fact]
+    public void Reentrant_wrapped_projection_call_declines_without_duplicating_projection()
+    {
+        var mongoQuery = TranslateToMongoQuery<CustomerWithOwnedAddress>(
+            q => q.Select(c => new { c.Address, c.Age }),
+            mb => mb.Entity<CustomerWithOwnedAddress>().OwnsOne(c => c.Address));
+
+        Assert.Equal(NativeRoute.Projection, mongoQuery.Select.Route);
+        var countBeforeReentry = mongoQuery.Select.Projection.Count;
+        Assert.True(countBeforeReentry > 0);
+
+        Expression<Func<CustomerWithOwnedAddress, object>> reentrantSelector = c => new { c.Address, c.Age };
+
+        var result = NativeProjectionBinder.TryPopulateNativeProjection(mongoQuery, reentrantSelector);
+
+        Assert.False(result);
+        Assert.Equal(countBeforeReentry, mongoQuery.Select.Projection.Count);
     }
 
     [Fact]
@@ -454,4 +608,102 @@ public class SlotPopulationTests
         Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
         Assert.NotNull(mongoQuery.CapturedExpression);
     }
+
+    // The set-op-gate regression (EF-441 Task 1's "also decide and implement" item): a nav-entity-leaf
+    // projection's emitted _id would leak into a set operation's whole-document comparison/dedup key exactly
+    // like the owned-ARRAY leaf's does, so NativeProjectionBinder sets the SAME HasArrayProjectionLeaf flag
+    // for this leaf kind (rather than inventing a parallel one) — MongoQueryableMethodTranslatingExpressionVisitor
+    // .IsPlainProjectedSelect already gates set-op operand admission on that flag, so no change was needed
+    // there. This pins that the flag really does end up true on the operand's select once combined into a
+    // Union — i.e. the gate has real data to decline on, not that the whole query throws (a full round-trip
+    // Union of two wrapped nav-entity-leaf projections hits a SEPARATE, deeper concern in the nav-expansion/
+    // shaper-binding layer once real preprocessing is involved — see the functional test file's own coverage
+    // and remarks; this unit-level test isolates the ONE fact this task owns).
+    [Fact]
+    public void Owned_reference_entity_leaf_projection_sets_HasArrayProjectionLeaf_for_the_set_op_gate()
+    {
+        var mongoQuery = TranslateUnionToMongoQuery(
+            (IQueryable<CustomerWithOwnedAddress> q) => q.Select(c => new { c.Address, c.Age }),
+            (IQueryable<CustomerWithOwnedAddress> q) => q.Select(c => new { c.Address, c.Age }),
+            mb => mb.Entity<CustomerWithOwnedAddress>().OwnsOne(c => c.Address));
+
+        Assert.True(mongoQuery.Select.HasArrayProjectionLeaf);
+        // The SAME flag is what IsPlainProjectedSelect gates on, so the Union must NOT have gone native as a
+        // projected-operand set op (SetOperation stays unset) — it must instead have marked non-natively
+        // representable, the graceful-fallback disposition Union/Concat get (see TryTranslateSetOperation).
+        Assert.Null(mongoQuery.Select.SetOperation);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════════════════════════
+    //  EF-447: a CONSTRUCTED (non-navigation) sub-entity leaf — `new { Copy = new CustomerDto { Id =
+    //  c.Id, ... } }` — mixed with a computed sibling in a projection.
+    // ══════════════════════════════════════════════════════════════════════════════════════════════
+
+    // A plain, unmapped DTO type reconstructed from root-level scalar fields — NOT a navigation, and not
+    // itself part of the model. Distinguishes this leaf from EF-441's owned-nav-entity leaf, which aliases an
+    // ALREADY-STORED owned sub-document.
+    private class CustomerDto
+    {
+        public ObjectId Id { get; set; }
+        public string Name { get; set; } = "";
+        public int Age { get; set; }
+    }
+
+    [Fact]
+    public void Document_construction_leaf_populates_projection_natively()
+    {
+        var mongoQuery = TranslateToMongoQuery<Customer>(
+            q => q.Select(c => new { Copy = new CustomerDto { Id = c.Id, Name = c.Name, Age = c.Age } }));
+
+        Assert.Equal(NativeRoute.Projection, mongoQuery.Select.Route);
+        var p = Assert.Single(mongoQuery.Select.Projection);
+        Assert.Equal("Copy", p.Alias);
+        var construction = Assert.IsType<MongoDocumentConstructionExpression>(p.Expression);
+        Assert.Equal(3, construction.Members.Count);
+        Assert.Equal("Id", construction.Members[0].MemberName);
+        Assert.Equal("_id", Assert.IsType<MongoFieldExpression>(construction.Members[0].Value).ElementName);
+        Assert.Equal("Name", construction.Members[1].MemberName);
+        Assert.Equal("Age", construction.Members[2].MemberName);
+        // This leaf carries NO owner-key hazard (every member is a plain root-relative field, readable at its
+        // own natural path on a whole/un-projected document too — see the mixed-visitor read side), so unlike
+        // the owned-array/owned-nav-entity leaves it must NOT set HasArrayProjectionLeaf.
+        Assert.False(mongoQuery.Select.HasArrayProjectionLeaf);
+    }
+
+    // The POSITIVE case this ticket is actually about: a constructed sub-entity leaf mixed with a COMPUTED
+    // sibling goes native, unlike EF-441's owned-nav-entity leaf (which forces the sibling-readability sweep
+    // and therefore declines a computed sibling). No sweep applies here because this leaf's own members are
+    // independently readable off a whole document by their own natural paths, so a computed sibling's lack of
+    // a document path is not a hazard for THIS leaf the way it is for the array/owned-nav-entity leaves.
+    [Fact]
+    public void Document_construction_leaf_mixed_with_computed_sibling_populates_projection_natively()
+    {
+        var mongoQuery = TranslateToMongoQuery<Customer>(
+            q => q.Select(c => new
+            {
+                Copy = new CustomerDto { Id = c.Id, Name = c.Name, Age = c.Age },
+                Total = c.Age * c.Age
+            }));
+
+        Assert.Equal(NativeRoute.Projection, mongoQuery.Select.Route);
+        Assert.Equal(2, mongoQuery.Select.Projection.Count);
+        Assert.Equal("Copy", mongoQuery.Select.Projection[0].Alias);
+        Assert.IsType<MongoDocumentConstructionExpression>(mongoQuery.Select.Projection[0].Expression);
+        Assert.Equal("Total", mongoQuery.Select.Projection[1].Alias);
+        Assert.IsType<MongoBinaryExpression>(mongoQuery.Select.Projection[1].Expression);
+    }
+
+    // A member value that is not a plain top-level scalar field (here, `c.Name.Length` — a MemberExpression
+    // whose OWN receiver is `c.Name`, not the selector parameter `c` itself) declines the WHOLE leaf, not just
+    // that member — this is a strict, minimal widening, not a general nested-projection engine.
+    [Fact]
+    public void Document_construction_leaf_with_computed_member_declines_to_fallback()
+    {
+        var mongoQuery = TranslateToMongoQuery<Customer>(
+            q => q.Select(c => new { Copy = new CustomerDto { Id = c.Id, Name = c.Name, Age = c.Name.Length } }));
+
+        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
+        Assert.Empty(mongoQuery.Select.Projection);
+    }
+
 }

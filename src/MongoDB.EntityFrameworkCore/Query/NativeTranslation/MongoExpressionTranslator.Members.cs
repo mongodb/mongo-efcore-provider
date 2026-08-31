@@ -52,10 +52,13 @@ internal sealed partial class MongoExpressionTranslator
     /// unconditional on the declaring type's root-ness; see <see cref="TryResolveOwnedFieldPath"/>'s leaf
     /// construction for the composed (scope-relative-prefix + local "_id.&lt;name&gt;" suffix) case.
     /// </summary>
-    private bool TryResolveMember(Expression node, [NotNullWhen(true)] out IProperty? property, [NotNullWhen(true)] out string? fieldPath)
+    private bool TryResolveMember(
+        Expression node, [NotNullWhen(true)] out IProperty? property, [NotNullWhen(true)] out string? fieldPath,
+        out bool isOuter)
     {
         property = null;
         fieldPath = null;
+        isOuter = false;
 
         // Peel Nullable<T>.Value: `x.A.Value` is a MemberExpression whose receiver is the member access we
         // actually want, so without this it misses the fast path below and is handed to the owned dotted-path
@@ -105,13 +108,13 @@ internal sealed partial class MongoExpressionTranslator
                 break;
 
             default:
-                return TryResolveOwnedFieldPath(node, out property, out fieldPath);
+                return TryResolveOwnedFieldPath(node, out property, out fieldPath, out isOuter);
         }
 
         // Two-scope mode: a member rooted on the outer param resolves against the outer entity type at document
         // root; every other member is inner-scoped. Identity (ReferenceEquals), never name — so a member name
         // shared between the two scopes cannot be mis-routed.
-        var isOuter = _outerParam is not null && ReferenceEquals(param, _outerParam);
+        isOuter = _outerParam is not null && ReferenceEquals(param, _outerParam);
         var scopeType = isOuter ? _outerEntityType! : _entityType;
 
         var resolved = scopeType.FindProperty(memberName);
@@ -151,8 +154,11 @@ internal sealed partial class MongoExpressionTranslator
     /// there is deliberately no <c>IsDocumentRoot</c> guard here, same reasoning as
     /// <see cref="TryResolveOwnedCollectionPath"/>'s own remarks.
     /// <para>
-    /// Two-scope mode (<c>_outerParam</c>/<c>_innerPrefix</c> set) is still declined: a cross-scope owned dotted
-    /// path is out of scope.
+    /// Two-scope mode (<c>_outerParam</c> set): a dotted chain rooted on the OUTER param resolves against
+    /// <c>_outerEntityType</c> (EF-421) — the root identity is checked the same way
+    /// <see cref="MongoExpressionTranslator.TryResolveMember"/> checks it for a single hop, never by name. A
+    /// dotted chain reached from an <c>_innerPrefix</c>-set (SelectMany-unwind) scope, or rooted on neither known
+    /// parameter, is still declined — that combination remains out of scope.
     /// </para>
     /// <para>
     /// <b>Why accepting any <see cref="ParameterExpression"/> root is safe</b> (same hazard, same resolution,
@@ -169,15 +175,21 @@ internal sealed partial class MongoExpressionTranslator
     /// </para>
     /// </remarks>
     private bool TryResolveOwnedFieldPath(
-        Expression node, [NotNullWhen(true)] out IProperty? property, [NotNullWhen(true)] out string? fieldPath)
+        Expression node, [NotNullWhen(true)] out IProperty? property, [NotNullWhen(true)] out string? fieldPath,
+        out bool isOuter)
     {
         property = null;
         fieldPath = null;
+        isOuter = false;
 
-        if (_outerParam is not null || _innerPrefix is not null)
-            return false; // two-scope mode: owned dotted paths are out of scope (declined, falls back)
+        // A dotted chain reached from an INNER-prefixed scope (SelectMany's unwind prefix) still declines: that
+        // shape is a different, still-out-of-scope combination this ticket does not address (a dotted owned
+        // path reached from inside a SelectMany element, itself further correlated). Only the "root is the
+        // OUTER param" two-scope case is relativized here — see EF-421 §6.
+        if (_innerPrefix is not null)
+            return false;
 
-        // Collect hop names from the outer (leaf) hop inward; the root must be the query parameter.
+        // Collect hop names from the outer (leaf) hop inward; the root must be a parameter.
         var names = new List<string>();
         var current = node;
         while (TryGetMemberOrEFProperty(current, out var inner, out var name))
@@ -186,16 +198,26 @@ internal sealed partial class MongoExpressionTranslator
             current = inner;
         }
 
-        if (current is not ParameterExpression)
+        if (current is not ParameterExpression rootParam)
             return false;
 
         // A single top-level member is handled by TryResolveMember's fast path, never here.
         if (names.Count < 2)
             return false;
 
+        // EF-421: resolve the hop's ROOT identity, mirroring TryResolveMember's own isOuter check — never by
+        // name. A two-scope translator whose root is the OUTER param resolves against the outer entity type,
+        // at the outer document's OWN root (segments accumulate relative to _outerEntityType, exactly as the
+        // existing code below already does relative to _entityType — the scopeType seed is the only change).
+        // A single-scope translator (_outerParam is null) is unaffected: isOuter is always false there.
+        isOuter = _outerParam is not null && ReferenceEquals(rootParam, _outerParam);
+        if (_outerParam is not null && !isOuter)
+            return false; // two-scope mode, but rooted on neither known parameter — not reachable in practice,
+                           // decline rather than guess which scope it belongs to
+
         names.Reverse(); // now root-first: [firstNav, ..., leaf]
 
-        var scopeType = _entityType;
+        var scopeType = isOuter ? _outerEntityType! : _entityType;
         var segments = new List<string>(names.Count);
         for (var i = 0; i < names.Count - 1; i++)
         {
@@ -296,7 +318,13 @@ internal sealed partial class MongoExpressionTranslator
     /// array relative to the element, which is exactly what the enclosing <c>$elemMatch</c> expects.
     /// </para>
     /// <para>
-    /// Two-scope mode is still declined: a cross-scope quantifier is out of scope.
+    /// Two-scope mode (<c>_outerParam</c> set): a chain rooted on the OUTER param resolves against
+    /// <c>_outerEntityType</c> (EF-421), by the same root-identity check as
+    /// <see cref="TryResolveOwnedFieldPath"/>. The array itself being reached through the outer scope
+    /// (a quantifier over an outer sibling collection) is left to the caller to decide — see
+    /// <see cref="MongoExpressionTranslator"/>'s quantifier/<c>Count</c> arms, which decline that combination.
+    /// A chain reached from an <c>_innerPrefix</c>-set (SelectMany-unwind) scope, or rooted on neither known
+    /// parameter, is still declined outright.
     /// </para>
     /// <para>
     /// <b>Why accepting any <see cref="ParameterExpression"/> root is safe.</b> This walk does not check which
@@ -310,15 +338,19 @@ internal sealed partial class MongoExpressionTranslator
     private bool TryResolveOwnedCollectionPath(
         Expression source,
         [NotNullWhen(true)] out string? arrayPath,
-        [NotNullWhen(true)] out IEntityType? elementType)
+        [NotNullWhen(true)] out IEntityType? elementType,
+        out bool isOuter)
     {
         arrayPath = null;
         elementType = null;
+        isOuter = false;
 
-        if (_outerParam is not null || _innerPrefix is not null)
-            return false; // two-scope mode: cross-scope quantifiers are out of scope (declined, falls back)
+        // Same restriction as TryResolveOwnedFieldPath: an inner-prefixed (SelectMany unwind) scope still
+        // declines outright — only the "root is the OUTER param" case is relativized.
+        if (_innerPrefix is not null)
+            return false;
 
-        // Collect hop names from the outer hop inward; the root must be the query parameter.
+        // Collect hop names from the outer hop inward; the root must be a parameter.
         var names = new List<string>();
         var current = source;
         while (TryGetMemberOrEFProperty(current, out var inner, out var name))
@@ -327,12 +359,16 @@ internal sealed partial class MongoExpressionTranslator
             current = inner;
         }
 
-        if (current is not ParameterExpression || names.Count == 0)
+        if (current is not ParameterExpression rootParam || names.Count == 0)
             return false;
+
+        isOuter = _outerParam is not null && ReferenceEquals(rootParam, _outerParam);
+        if (_outerParam is not null && !isOuter)
+            return false; // two-scope mode, rooted on neither known parameter — decline
 
         names.Reverse(); // now root-first: [ownedRefNav, ..., collectionNav]
 
-        var scopeType = _entityType;
+        var scopeType = isOuter ? _outerEntityType! : _entityType;
         var segments = new List<string>(names.Count);
         for (var i = 0; i < names.Count; i++)
         {

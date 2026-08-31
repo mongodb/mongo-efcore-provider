@@ -316,12 +316,41 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void B_owned_entity_projection_falls_back_under_NativeOnly()
+    // RENAMED (final-review Finding 4): this test's old name, B_owned_entity_projection_falls_back_under_
+    // NativeOnly, contradicted what it actually asserts — the shape DOES go native under NativeOnly; the test
+    // only verifies you can't TRACK the result. See the body comment below for the full history.
+    public void B_owned_entity_projection_tracking_query_throws_EFCore_guard()
     {
-        var collection = SeedAddress(nameof(B_owned_entity_projection_falls_back_under_NativeOnly));
-        // Projecting the whole owned entity (e.Address) is likewise not natively representable (the leaf is a
-        // navigation, not a scalar field) and must fall back.
-        Assert.False(WentNative(collection, q => q.Select(e => new { e.Address }), AddressModel));
+        // RE-POINTED (EF-441): projecting the whole owned entity (e.Address) as a BARE body used to fall back
+        // (the leaf was a navigation, not a scalar field, and no arm admitted it at all). EF-441 gave the owned
+        // single-reference navigation entity leaf its own native arm in NativeProjectionBinder, so this single-
+        // leaf wrapped projection now genuinely goes native. That exposes a DIFFERENT, pre-existing, mode-
+        // independent EF Core restriction this test happens to sit on: a TRACKING query (no AsNoTracking) that
+        // projects an owned entity without its owner cannot be tracked, so EF Core's own
+        // ShapedQueryCompilingExpressionVisitor.InjectStructuralTypeMaterializers guard rejects it — MEASURED to
+        // throw the identical InvalidOperationException under Native, DriverLinq, and (pre-EF-441) NativeOnly
+        // alike on the unmodified base commit too, so this is not a behavior change this feature introduces; per
+        // this repo's versioning rubric, only the exception TYPE under NativeOnly changing (from
+        // NativeTranslationNotSupportedException to this InvalidOperationException) is observable, and that is
+        // explicitly excluded from "breaking" for an already-illegal query. Re-pointed to assert EF Core's own
+        // exception rather than weakened or deleted.
+        var collection = SeedAddress(nameof(B_owned_entity_projection_tracking_query_throws_EFCore_guard));
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, AddressModel);
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => db.Entities.Select(e => new { e.Address }).ToList());
+        Assert.Contains("owned entities cannot be tracked without their owner", ex.Message);
+    }
+
+    [Fact]
+    // POSITIVE companion (final-review Finding 4): nothing previously pinned that the lone-leaf shape
+    // `new { e.Address }` actually goes native under NativeOnly once tracking is out of the way
+    // (AsNoTracking sidesteps the EF Core tracking guard the test above exercises).
+    public void B_owned_entity_projection_no_tracking_goes_native_under_NativeOnly()
+    {
+        var collection = SeedAddress(nameof(B_owned_entity_projection_no_tracking_goes_native_under_NativeOnly));
+        Assert.True(WentNative(
+            collection, q => q.AsNoTracking().Select(e => new { e.Address }), AddressModel));
     }
 
     [Fact]

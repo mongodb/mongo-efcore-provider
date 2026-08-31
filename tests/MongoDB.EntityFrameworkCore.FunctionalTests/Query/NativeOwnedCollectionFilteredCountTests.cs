@@ -390,24 +390,23 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     }
 
     [Fact]
-    public void Correlated_element_predicate_declines_and_falls_back_to_correct_rows()
+    public void Correlated_element_predicate_now_goes_native_via_two_scope_translator_and_returns_correct_rows()
     {
-        // Post.Title deliberately collides with Blog.Title: the element-scoped translator resolves members by NAME,
-        // so without ReferencesEnclosingScope this would silently retarget b.Title at the ELEMENT and return the
-        // wrong rows under the default Native mode. The guard is what makes this a decline instead.
+        // Post.Title deliberately collides with Blog.Title: a NAME-based (rather than parameter-identity-based)
+        // resolution of b.Title would silently retarget it at the ELEMENT and return the wrong rows. Before
+        // EF-421 this shape declined outright (see NativeOwnedCollectionCorrelatedTests, which is this test's
+        // updated home — EF-421 upgrades exactly this shape from "decline" to "translate via a two-scope
+        // translator routed by ReferenceEquals identity, not by name").
         var collection = Seed(
-            nameof(Correlated_element_predicate_declines_and_falls_back_to_correct_rows),
+            nameof(Correlated_element_predicate_now_goes_native_via_two_scope_translator_and_returns_correct_rows),
             Row("x", new BsonArray { PostDoc(rank: 1, heading: "h") }));
 
-        // ORDER IS DELIBERATE (fix round 1): the wrong-rows assertion runs FIRST and in its own `using` block, so
-        // it is independently load-bearing rather than merely unreachable filler after the NativeOnly throw below.
-        // xUnit stops a test method at its first failed assertion — if the NativeOnly Assert.Throws ran first and
-        // the ReferencesEnclosingScope guard were ever deleted, that assertion alone would already fail and this
-        // Native-mode Assert.Empty would never execute, silently failing to prove the wrong-DATA hazard the guard
-        // exists to prevent. Mutation-verified (delete ReferencesEnclosingScope, rebuild, run this test): WITH
-        // this ordering the Native leg goes red on its own (returns the row — "p" is compared to itself via the
-        // misresolved b.Title, a tautology — instead of staying empty); confirmed independently of the NativeOnly
-        // leg, which also goes red separately.
+        // ORDER IS DELIBERATE: the wrong-rows assertion runs FIRST and in its own `using` block, so it is
+        // independently load-bearing rather than merely unreachable filler after the NativeOnly assertion below.
+        // xUnit stops a test method at its first failed assertion — if the identity-routing guard were ever
+        // weakened to a by-name resolution, this Native-mode Assert.Empty would go red on its own (the element's
+        // own Title compared to itself is a tautology, returning the row instead of staying empty), independent
+        // of whatever the NativeOnly leg reports.
         using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
         {
             // "p" (PostDoc's Title) != "x" (the Blog's Title), so the correct answer is NO rows. An element-scoped
@@ -415,10 +414,12 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             Assert.Empty(db.Entities.AsNoTracking().Where(b => b.Posts.Count(p => p.Title == b.Title) > 0).ToList());
         }
 
+        // EF-421: this shape (correlation to the IMMEDIATE enclosing scope) now goes native — NativeOnly no
+        // longer throws, and still returns the correct (empty) result, proving the two-scope translator resolves
+        // b.Title against the OUTER scope rather than the colliding element-scoped Title.
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
-            Assert.Throws<NativeTranslationNotSupportedException>(
-                () => db.Entities.AsNoTracking().Where(b => b.Posts.Count(p => p.Title == b.Title) > 0).ToList());
+            Assert.Empty(db.Entities.AsNoTracking().Where(b => b.Posts.Count(p => p.Title == b.Title) > 0).ToList());
         }
     }
 
@@ -609,11 +610,21 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     // directly), so it never reaches the predicated arm at all; it is CountWithoutPredicate, the pre-existing
     // EF-357 arm, which Task 4 did not touch. It reaches the identical crash as its own, structurally distinct
     // case, not merely a duplicate of the plain Count(pred) shape.
+    //
+    // EF-421 Task 7 RE-BASELINE: the CORRELATED row that used to live here (Post.Title == b.Title, wrapped in
+    // a `new {...}` projection) has been MOVED OUT to
+    // Correlated_count_filtered_projection_goes_native_EF421 below — SelfParam now reaches
+    // NativeProjectionBinder unconditionally (Task 7), so `ReferencesEnclosingScope`'s correlation-match check
+    // succeeds for it instead of declining, and it goes native with correct data in every mode, exactly like
+    // the EF-413 RE-BASELINE rows above. The other two rows (Primitive, Where(pred).Count()) are UNAFFECTED —
+    // neither one's decline reason has anything to do with SelfParam/correlation (Primitive declines on
+    // TryResolveOwnedCollectionPath's final-hop check; Where(pred).Count() never reaches the predicated arm at
+    // all) — so they stay exactly where they were.
     [Fact]
-    public void Correlated_primitive_and_where_count_filtered_projections_still_hard_fail_in_every_mode()
+    public void Primitive_and_where_count_filtered_projections_still_hard_fail_in_every_mode()
     {
         var collection = Seed(
-            nameof(Correlated_primitive_and_where_count_filtered_projections_still_hard_fail_in_every_mode),
+            nameof(Primitive_and_where_count_filtered_projections_still_hard_fail_in_every_mode),
             Row("x", new BsonArray { PostDoc(rank: 1, heading: "hello") }),
             RowWithTags("y", "a", "bb"));
 
@@ -627,11 +638,6 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             }
         }
 
-        // Correlated: Post.Title deliberately collides with Blog.Title (see the Blog/Post class comments) —
-        // ReferencesEnclosingScope declines this predicate before the element-scoped translator is built.
-        AssertHardFailsEverywhere(
-            q => q.Select(b => new { b.Title, N = b.Posts.Count(p => p.Title == b.Title) }).Cast<object>());
-
         // Primitive collection: Tags is a mapped primitive-collection PROPERTY, not a navigation —
         // TryResolveOwnedCollectionPath's final-hop check declines it.
         AssertHardFailsEverywhere(
@@ -640,6 +646,28 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         // Posts.Where(pred).Count(): a DIFFERENT method-call shape from Count(pred), not fused upstream by EF.
         AssertHardFailsEverywhere(
             q => q.Select(b => new { b.Title, N = b.Posts.Where(p => p.Rank > 0).Count() }).Cast<object>());
+    }
+
+    // EF-421 Task 7 RE-BASELINE (moved out of Primitive_and_where_count_filtered_projections_still_hard_fail_
+    // in_every_mode above — see its own remarks). Post.Title deliberately collides with Blog.Title (see the
+    // Blog/Post class comments), so this exercises the real correlation-match, not a vacuous same-named
+    // coincidence: PostDoc always writes Title = "p", which never equals either seeded Blog's own Title ("x"
+    // or "y"), so the correct count is 0 for both rows — the same non-vacuous-seed discipline
+    // AssertElementPredicateGoesNative's other EF-413 callers already use.
+    [Fact]
+    public void Correlated_count_filtered_projection_goes_native_EF421()
+    {
+        var collection = Seed(
+            nameof(Correlated_count_filtered_projection_goes_native_EF421),
+            Row("x", new BsonArray { PostDoc(rank: 1, heading: "hello") }),
+            Row("y", new BsonArray { PostDoc(rank: 2, heading: "world") }));
+
+        AssertElementPredicateGoesNative(
+            collection,
+            q => ProjectTitleAndCount(
+                q.Select(b => new { b.Title, N = b.Posts.Count(p => p.Title == b.Title) }),
+                r => (r.Title, r.N)),
+            ["x=0", "y=0"]);
     }
 
     // EF-365 RE-BASELINE. This was Non_renderable_element_predicate_filtered_projection_still_hard_fails_in_
@@ -1334,41 +1362,39 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             legs);
     }
 
-    // Fix round 1 (Quality review): the top-level-identity guard restores the WRAPPED correlated residual
-    // (Correlated_primitive_and_where_count_filtered_projections_still_hard_fail_in_every_mode above), but a BARE
-    // correlated predicate — Select(b => b.Posts.Count(p => p.Title == b.Title)) — is a DIFFERENT shape the
-    // identity check does NOT protect: this Count call IS the top-level selector body, so identity holds and the
-    // arm proceeds. Before the structural fix below, that regressed to a WORSE failure than the pre-existing one:
-    // ReplacingExpressionVisitor has already rewritten the outer `b` in the predicate to the query root's entity
-    // shaper by the time this visitor runs, and since the predicate is deliberately not re-Visited, the unresolved
-    // shaper reference survived into the rebuilt client-side Enumerable.Count call and blew up downstream at
-    // shaper-compile time with KeyNotFoundException("...'EmptyProjectionMember'...") instead of the clean,
-    // pre-existing InvalidOperationException("could not be translated") every other declined shape in this file
-    // gets. The fix: decline whenever the predicate body contains a provider/EF shaper node (StructuralTypeShaperExpression /
-    // ProjectionBindingExpression / EntityProjectionExpression) — the structural property the identity guard was
-    // only ever a PROXY for. Measured A/B at HEAD (this fix): byte-identical to base c5b467b —
-    // InvalidOperationException, "could not be translated", under Native, DriverLinq, AND NativeOnly alike. This
-    // crash fires at TRANSLATION time (MongoProjectionBindingExpressionVisitor.Translate, reached unconditionally
-    // from TranslateSelect), before MongoQueryMode is ever read by the compile-time gate — so NativeOnly gets the
-    // identical exception, NOT a clean NativeTranslationNotSupportedException decline (an earlier draft of this
-    // test wrongly assumed the latter for the NativeOnly leg and was corrected once measured; this matches the
-    // design doc's own account of the pre-existing EF-359 crash family, and the sibling
-    // Correlated_primitive_and_where_count_filtered_projections_still_hard_fail_in_every_mode test above, which
-    // asserts the same InvalidOperationException across all three modes for its own correlated/primitive/Where
-    // rows).
+    // EF-421 RE-BASELINE (Task 7). History: Fix round 1 (Quality review, pre-EF-421) established that a BARE
+    // correlated predicate — Select(b => b.Posts.Count(p => p.Title == b.Title)) — is a DIFFERENT shape from
+    // the WRAPPED one below (Correlated_primitive_and_where_count_filtered_projections_still_hard_fail_in_
+    // every_mode): this Count call IS the top-level selector body, so the (now-obsolete) top-level-identity
+    // guard held and the predicated arm proceeded, which used to regress to a WORSE failure
+    // (KeyNotFoundException) than the pre-existing InvalidOperationException("could not be translated") every
+    // other declined shape got — fixed at the time by declining whenever the predicate body contains a
+    // provider/EF shaper node.
+    //
+    // EF-421 Task 7 wired MongoExpressionTranslator.SelfParam through NativeProjectionBinder's own translator
+    // (selector.Parameters[0], unconditionally, for EVERY Select — bare or wrapped alike), so
+    // ReferencesEnclosingScope's correlation-match check now succeeds for this exact predicate instead of
+    // declining, and Count(pred) is exactly NativeProjectionBinder.TryTranslateLeaf's admitted
+    // MongoFilteredSizeExpression leaf shape. This bare-selector-body spelling is admitted by the SAME
+    // mechanism as the wrapped one — there is no separate gate specific to "bare vs wrapped" for this leaf
+    // kind — so it goes native under EVERY mode (mode is read only on decline, never gates the attempt; see
+    // this file's own MongoQueryMode remarks elsewhere). Measured: Native, DriverLinq, and NativeOnly all now
+    // return the correct count instead of throwing.
     [Fact]
-    public void Bare_correlated_element_predicate_still_hard_fails_in_every_mode()
+    public void Bare_correlated_element_predicate_now_goes_native_EF421()
     {
         var collection = Seed(
-            nameof(Bare_correlated_element_predicate_still_hard_fails_in_every_mode),
+            nameof(Bare_correlated_element_predicate_now_goes_native_EF421),
             Row("x", new BsonArray { PostDoc(rank: 1, heading: "hello") }));
 
+        // PostDoc always writes Title = "p" (see its own remarks), which never equals the Blog's own Title
+        // ("x") — so the correct count is 0, proving this is a genuinely-correct native result, not merely
+        // "didn't throw".
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
         {
             using var db = CreateContext(collection, mode, BlogModel);
-            var ex = Assert.Throws<InvalidOperationException>(
-                () => db.Entities.AsNoTracking().Select(b => b.Posts.Count(p => p.Title == b.Title)).ToList());
-            Assert.Contains("could not be translated", ex.Message);
+            var result = db.Entities.AsNoTracking().Select(b => b.Posts.Count(p => p.Title == b.Title)).ToList();
+            Assert.Equal([0], result);
         }
     }
 
