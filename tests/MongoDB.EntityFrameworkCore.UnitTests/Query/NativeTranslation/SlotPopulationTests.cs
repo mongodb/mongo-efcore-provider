@@ -334,12 +334,17 @@ public class SlotPopulationTests
     }
 
     [Fact]
-    public void String_concat_leaf_does_not_populate_projection()
+    public void String_concat_leaf_populates_projection_as_MongoConcatExpression()
     {
+        // String concatenation now translates via a dedicated MongoConcatExpression ($concat) branch instead
+        // of declining — see MongoExpressionTranslator.TranslateStringConcat.
         var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { X = c.Name + "!" }));
 
-        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
-        Assert.Empty(mongoQuery.Select.Projection);
+        Assert.Equal(NativeRoute.Projection, mongoQuery.Select.Route);
+        var projection = Assert.Single(mongoQuery.Select.Projection);
+        Assert.Equal("X", projection.Alias);
+        var concat = Assert.IsType<MongoConcatExpression>(projection.Expression);
+        Assert.Equal(2, concat.Operands.Count);
     }
 
     [Fact]

@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Linq;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
@@ -72,6 +73,8 @@ internal static class MongoFieldPrefixRewriter
             MongoDateTimeOffsetLocalExpression l => new MongoDateTimeOffsetLocalExpression(
                 (MongoFieldExpression)Rewrite(l.Operand, prefix)),
             MongoElementRefExpression er => new MongoElementRefExpression(prefix + "." + er.Path, er.Type),
+            MongoConcatExpression concat => new MongoConcatExpression(
+                concat.Operands.Select(o => Rewrite(o, prefix)).ToList()),
             MongoConstantExpression or MongoParameterExpression => expr,
             _ => throw new NativeTranslationNotSupportedException(
                 $"Cannot prefix-rewrite MongoExpression node '{expr.GetType().Name}'.")

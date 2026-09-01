@@ -125,6 +125,11 @@ public class MongoExpressionTranslatorTests
         // is genuinely type-changing regardless of allowNumericWidening, so it always builds a
         // MongoConvertExpression wrapping the converted field — the shape the guard must inspect.
         public double EncWeight { get; set; }
+
+        // Fixtures for the bool/DateTime string-concat decline pins (MEASURED $toString divergence — see
+        // MongoExpressionTranslator.TranslateConcatOperand's remarks).
+        public bool Flag { get; set; }
+        public DateTime When { get; set; }
     }
 
     // Fixtures for owned single-reference dotted-path resolution (EF-322 Task 2).
@@ -1010,19 +1015,23 @@ public class MongoExpressionTranslatorTests
 
     // Compiler-generated string.Concat (ExpressionType.Add on string operands) must NOT be treated as
     // arithmetic $add — the IsNumericType guard on the arithmetic operand branch of TranslateOperand
-    // excludes it, so the whole predicate falls back to driver-LINQ rather than emitting an incorrect
-    // $add over strings.
+    // excludes it. It now translates via a dedicated MongoConcatExpression ($concat) branch instead of
+    // declining, matching the arithmetic-operand comparison shapes elsewhere in this file (e.g.
+    // Translates_modulo_operand).
 
     [Fact]
-    public void String_concatenation_operand_is_not_translated()
+    public void String_concatenation_operand_translates_to_concat_in_comparison_position()
     {
         var translator = NewTranslator(GetEntityType<Customer>());
         Expression<Func<Customer, bool>> predicate = c => c.Name + "y" == "Zed";
 
         var translated = translator.TryTranslate(predicate.Body, out var result);
 
-        Assert.False(translated);
-        Assert.Null(result);
+        Assert.True(translated);
+        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, cmp.Operator);
+        var concat = Assert.IsType<MongoConcatExpression>(cmp.Left);
+        Assert.Equal(2, concat.Operands.Count);
     }
 
     // EF-322 slice A1, Task 3: a numeric cast inside a field-to-field/arithmetic-operand comparison NOW
@@ -1658,10 +1667,77 @@ public class MongoExpressionTranslatorTests
     }
 
     [Fact]
-    public void TryTranslateValue_string_concat_is_rejected() // Add on strings is not numeric
+    public void TryTranslateValue_string_concat_translates_to_MongoConcatExpression()
     {
         var (translator, body) = BuildValueBody<Order>(o => o.Tag + "!");
+        Assert.True(translator.TryTranslateValue(body, out var expr));
+        var concat = Assert.IsType<MongoConcatExpression>(expr);
+        Assert.Equal(2, concat.Operands.Count);
+        Assert.IsType<MongoFieldExpression>(concat.Operands[0]);
+        Assert.IsType<MongoConstantExpression>(concat.Operands[1]);
+    }
+
+    [Fact]
+    public void TryTranslateValue_int_string_concat_wraps_the_int_operand_in_ToString()
+    {
+        // o.Tag + o.Price compiles to string.Concat(o.Tag, (object)o.Price) — the int operand arrives
+        // boxed (Convert to object), matching C#'s string operator +(string, object) overload.
+        var (translator, body) = BuildValueBody<Order>(o => o.Tag + o.Price);
+        Assert.True(translator.TryTranslateValue(body, out var expr));
+        var concat = Assert.IsType<MongoConcatExpression>(expr);
+        Assert.Equal(2, concat.Operands.Count);
+        Assert.IsType<MongoFieldExpression>(concat.Operands[0]);
+        var converted = Assert.IsType<MongoConvertExpression>(concat.Operands[1]);
+        Assert.Equal(typeof(string), converted.Type);
+        Assert.IsType<MongoFieldExpression>(converted.Operand);
+    }
+
+    [Fact]
+    public void TryTranslateValue_string_int_concat_reversed_order_wraps_the_int_operand_in_ToString()
+    {
+        var (translator, body) = BuildValueBody<Order>(o => o.Price + o.Tag);
+        Assert.True(translator.TryTranslateValue(body, out var expr));
+        var concat = Assert.IsType<MongoConcatExpression>(expr);
+        Assert.Equal(2, concat.Operands.Count);
+        var converted = Assert.IsType<MongoConvertExpression>(concat.Operands[0]);
+        Assert.Equal(typeof(string), converted.Type);
+        Assert.IsType<MongoFieldExpression>(concat.Operands[1]);
+    }
+
+    [Fact]
+    public void TryTranslateValue_three_way_string_concat_flattens_into_one_MongoConcatExpression()
+    {
+        var (translator, body) = BuildValueBody<Order>(o => o.Tag + o.Price + o.Qty);
+        Assert.True(translator.TryTranslateValue(body, out var expr));
+        var concat = Assert.IsType<MongoConcatExpression>(expr);
+        Assert.Equal(3, concat.Operands.Count);
+    }
+
+    [Fact]
+    public void TryTranslateValue_string_concat_with_value_converted_operand_is_rejected() // guard B
+    {
+        var (translator, body) = BuildValueBody<Order>(o => o.Tag + o.EncStatus);
         Assert.False(translator.TryTranslateValue(body, out _));
+    }
+
+    [Fact]
+    public void TryTranslateValue_string_concat_with_bool_operand_translates() // accepted divergence, matches driver-LINQ — see NativeStringConcatTests
+    {
+        var (translator, body) = BuildValueBody<Order>(o => o.Tag + o.Flag);
+        Assert.True(translator.TryTranslateValue(body, out var expr));
+        var concat = Assert.IsType<MongoConcatExpression>(expr);
+        var converted = Assert.IsType<MongoConvertExpression>(concat.Operands[1]);
+        Assert.Equal(typeof(string), converted.Type);
+    }
+
+    [Fact]
+    public void TryTranslateValue_string_concat_with_DateTime_operand_translates() // accepted divergence, matches driver-LINQ — see NativeStringConcatTests
+    {
+        var (translator, body) = BuildValueBody<Order>(o => o.Tag + o.When);
+        Assert.True(translator.TryTranslateValue(body, out var expr));
+        var concat = Assert.IsType<MongoConcatExpression>(expr);
+        var converted = Assert.IsType<MongoConvertExpression>(concat.Operands[1]);
+        Assert.Equal(typeof(string), converted.Type);
     }
 
     [Fact]

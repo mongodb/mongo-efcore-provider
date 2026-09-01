@@ -94,6 +94,9 @@ internal static class MongoAggregationExpressionRenderer
             MongoDocumentConstructionExpression construction
                 => new BsonDocument(construction.Members.Select(
                     m => new BsonElement(m.MemberName, Render(m.Value, placeholders, elementVariable)))),
+            MongoConcatExpression concat
+                => new BsonDocument("$concat",
+                    new BsonArray(concat.Operands.Select(o => Render(o, placeholders, elementVariable)))),
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoAggregationExpressionRenderer does not support node type '{node.GetType().Name}'.")
         };
@@ -164,6 +167,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoDateTimeOffsetLocalExpression local => CanRender(local.Operand),
             MongoDatePartExpression datePart => CanRender(datePart.Operand),
             MongoQuantifierExpression quantifier => CanRender(quantifier.ArrayPath) && CanRender(quantifier.ElementPredicate),
+            MongoConcatExpression concat => concat.Operands.All(CanRender),
             _ => false
         };
 

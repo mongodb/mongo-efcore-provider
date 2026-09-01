@@ -423,6 +423,9 @@ internal sealed partial class MongoExpressionTranslator
             MongoOuterFieldExpression outerField => NativeGroupByBinder.HasDefaultKeySerialization(outerField.Property),
             MongoBinaryExpression b => AllFieldsDefaultSerialized(b.Left) && AllFieldsDefaultSerialized(b.Right),
             MongoConvertExpression c => AllFieldsDefaultSerialized(c.Operand),
+            // Each concatenated piece can independently reach a non-default-serialized field — recurse into
+            // every operand the same way the binary arm above does for an arithmetic operand.
+            MongoConcatExpression concat => concat.Operands.All(AllFieldsDefaultSerialized),
             // EF-413: MongoUnaryExpression{Not} needs an explicit arm, NOT the catch-all — see this method's
             // own remarks above for why a raw-field $not silently answers wrong for a non-default-serialized
             // bool. Recursing into the operand catches this the same way the MongoBinaryExpression arm above
@@ -1322,6 +1325,13 @@ internal sealed partial class MongoExpressionTranslator
             return new MongoFilteredSizeExpression(arrayPath, elementPredicate, node.Type);
         }
 
+        // ExpressionType.Add on strings is compiler-generated concatenation (string.Concat), not arithmetic —
+        // it has no $add equivalent (confirmed empirically: the driver server rejects "$add" on strings with
+        // "$add only supports numeric or date types"). Handled here, ahead of the numeric-only arithmetic
+        // branch below, via a dedicated $concat translation instead.
+        if (node is BinaryExpression { NodeType: ExpressionType.Add } stringAdd && stringAdd.Type == typeof(string))
+            return TranslateStringConcat(stringAdd, allowNumericWidening);
+
         // Restrict to numeric operand types: ExpressionType.Add on strings is compiler-generated
         // concatenation (string.Concat), not arithmetic — it has no $add equivalent (confirmed empirically:
         // the driver server rejects "$add" on strings with "$add only supports numeric or date types").
@@ -1358,6 +1368,76 @@ internal sealed partial class MongoExpressionTranslator
         // A bare constant/parameter operand has no associated property for serialization context — these
         // are pure numeric $expr operands, not stored field values, so they serialize via BsonValue.Create.
         return TranslateValue(node, forSerialization: null);
+    }
+
+    /// <summary>
+    /// Translates a compiler-generated string-concatenation <see cref="BinaryExpression"/> (<c>a + b</c> where
+    /// the result type is <see cref="string"/>) to a <see cref="MongoConcatExpression"/>. A chained
+    /// concatenation (<c>a + b + c</c>, which nests as <c>Add(Add(a, b), c)</c>) is flattened into one node
+    /// rather than a tree of nested two-operand concats, purely for a simpler/shorter <c>$concat</c> — MQL's
+    /// <c>$concat</c> tolerates nesting equally well, so this is not a correctness requirement.
+    /// </summary>
+    private MongoExpression? TranslateStringConcat(BinaryExpression node, bool allowNumericWidening)
+    {
+        var left = TranslateConcatOperand(node.Left, allowNumericWidening);
+        if (left is null)
+            return null;
+
+        var right = TranslateConcatOperand(node.Right, allowNumericWidening);
+        if (right is null)
+            return null;
+
+        var operands = new List<MongoExpression>();
+        operands.AddRange(left is MongoConcatExpression leftConcat ? leftConcat.Operands : [left]);
+        operands.AddRange(right is MongoConcatExpression rightConcat ? rightConcat.Operands : [right]);
+        return new MongoConcatExpression(operands);
+    }
+
+    /// <summary>
+    /// Translates one operand of a string concatenation. A nested string-concat operand recurses through
+    /// <see cref="TranslateStringConcat"/> (so a 3+-way chain flattens correctly); every other operand is
+    /// translated as an ordinary computed value and, if it isn't already a <see cref="string"/>, wrapped in a
+    /// <see cref="MongoConvertExpression"/> targeting <see cref="string"/> (rendered as <c>$toString</c>).
+    /// </summary>
+    /// <remarks>
+    /// A non-string operand of C#'s <c>string operator +(string, object)</c> overload arrives boxed —
+    /// <c>Convert(x, typeof(object))</c> — never as a genuine cast to <see cref="string"/> (there is no C#
+    /// numeric-to-string cast; only <c>ToString()</c>), so the boxing wrapper is unwrapped here before
+    /// translating the underlying value.
+    /// <para>
+    /// <b><c>bool</c> and <c>DateTime</c>/<c>DateTimeOffset</c> operands render via <c>$toString</c> too, even
+    /// though MQL's <c>$toString</c> genuinely diverges from .NET's <c>object.ToString()</c> for both —
+    /// MEASURED against a real server: a bool renders lowercase (<c>"true"</c>) where .NET capitalizes
+    /// (<c>"True"</c>), and a date renders ISO-8601 where .NET's culture-dependent default format does not.
+    /// This is NOT a native-only defect to decline: the driver's OWN LINQ v3 bridge (the pre-existing
+    /// fallback path, unchanged by this feature) already renders string-concat as <c>$concat</c>/<c>$toString</c>
+    /// too, so it carries the IDENTICAL divergence from .NET today, already released. Declining here would
+    /// buy nothing — the fallback answers exactly as "wrong" — so per this file's own accepted-divergence
+    /// precedent (<see cref="MongoConvertExpression"/>'s remarks on long→double; <c>NativeCastTests</c>' case
+    /// 14), the correctness bar is native-vs-driver-LINQ agreement, not native-vs-CLR: both diverge from
+    /// in-memory LINQ identically, so going native introduces no NEW divergence a user doesn't already have.
+    /// See <c>NativeStringConcatTests.Concat_bool_operand_and_DateTime_operand_match_driver_linq_but_not_the_in_memory_oracle</c>.
+    /// </para>
+    /// </remarks>
+    private MongoExpression? TranslateConcatOperand(Expression operand, bool allowNumericWidening)
+    {
+        if (operand is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked, Type: var boxedType } boxing
+            && boxedType == typeof(object))
+            operand = boxing.Operand;
+
+        if (operand is BinaryExpression { NodeType: ExpressionType.Add } nestedAdd && nestedAdd.Type == typeof(string))
+            return TranslateStringConcat(nestedAdd, allowNumericWidening);
+
+        var value = TranslateOperand(operand, allowNumericWidening);
+        if (value is null)
+            return null;
+
+        // Whether a $toString wrap is needed is decided from the ORIGINAL expression's static CLR type, not
+        // from the translated MongoExpression's own Type: an untyped MongoParameterExpression/MongoConstantExpression
+        // (ForSerialization null, as produced by TranslateValue for a bare constant/parameter operand) reports
+        // typeof(object) regardless of the underlying value's real type, which would otherwise wrap an
+        // already-string parameter/constant in a needless (and baseline-mismatching) $toString.
+        return operand.Type == typeof(string) ? value : new MongoConvertExpression(value, typeof(string));
     }
 
     // A `(T?)null` conditional branch compiles to Convert(Constant(null, typeof(object)), typeof(T?)) — an

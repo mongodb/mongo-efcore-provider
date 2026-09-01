@@ -1584,6 +1584,7 @@ internal static class NativeProjectionBinder
             // `Select(b => b.Posts.Count * 2)` walks straight through it, and the null-coalesce rewrite does
             // not reach a nested count.
             case MongoConvertExpression
+                or MongoConcatExpression
                 or MongoBinaryExpression
                 {
                     Operator: MongoBinaryOperator.Add or MongoBinaryOperator.Subtract
@@ -1739,6 +1740,7 @@ internal static class NativeProjectionBinder
             MongoBinaryExpression binary
                 => IsArrayFreeComputedSubtree(binary.Left) && IsArrayFreeComputedSubtree(binary.Right),
             MongoConvertExpression convert => IsArrayFreeComputedSubtree(convert.Operand),
+            MongoConcatExpression concat => concat.Operands.All(IsArrayFreeComputedSubtree),
             MongoConditionalExpression conditional
                 => IsArrayFreeComputedSubtree(conditional.Test)
                     && IsArrayFreeComputedSubtree(conditional.IfTrue)

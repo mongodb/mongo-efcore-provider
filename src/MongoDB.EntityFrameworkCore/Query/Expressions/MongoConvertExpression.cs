@@ -73,6 +73,14 @@ internal sealed class MongoConvertExpression(MongoExpression operand, Type clrTy
     /// express it. This is the single definition of the admissible set — every gate consults it rather than
     /// re-deriving one.
     /// </summary>
+    /// <remarks>
+    /// <c>$toString</c> (<see cref="string"/>) was added for string-concatenation operand coercion only — there
+    /// is no C# cast that compiles to <c>Convert(x, typeof(string))</c> (numeric→string requires
+    /// <c>ToString()</c>, not a cast), so the only construction sites that can produce a
+    /// <see cref="MongoConvertExpression"/> targeting <see cref="string"/> are
+    /// <c>MongoExpressionTranslator.TranslateStringConcat</c>'s operand coercion. This does not reopen any
+    /// other admission path.
+    /// </remarks>
     public static string? ToOperatorFor(Type clrType)
     {
         var target = Nullable.GetUnderlyingType(clrType) ?? clrType;
@@ -80,6 +88,7 @@ internal sealed class MongoConvertExpression(MongoExpression operand, Type clrTy
             : target == typeof(long) ? "$toLong"
             : target == typeof(double) ? "$toDouble"
             : target == typeof(decimal) ? "$toDecimal"
+            : target == typeof(string) ? "$toString"
             : null;
     }
 }
