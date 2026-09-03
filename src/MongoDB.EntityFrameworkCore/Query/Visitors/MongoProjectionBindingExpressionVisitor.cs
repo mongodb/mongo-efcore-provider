@@ -243,6 +243,30 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 _projectionMapping[conditionalMember] = expression;
                 return new ProjectionBindingExpression(_queryExpression, conditionalMember, expression.Type);
 
+            // A reference-collection-nav First/FirstOrDefault projection leaf (EF-449,
+            // `a.IdentificationMethods.FirstOrDefault().Method`) that NativeProjectionBinder already recognized
+            // and staged as a MongoCorrelatedReducerLeaf at emit time. Nav-expansion hoists the reduced member
+            // access INSIDE the reducer (the tree arrives as `...Select(m => m.Method).FirstOrDefault()`, a
+            // MethodCallExpression, not a bare MemberExpression), so without this case the default recursive walk
+            // (base.Visit below) would try to translate the whole nav-expanded LINQ chain itself — including the
+            // untranslatable `DbSet<IdentificationMethod>()` root — and throw
+            // "The LINQ expression '...' could not be translated" for every leaf of this kind, accepted or not.
+            // Register the WHOLE node as one opaque projection member instead, exactly like the arithmetic/cast/
+            // conditional leaves above: the read side (MongoProjectionBindingRemovingExpressionVisitor) never
+            // inspects this mapped expression's shape for this leaf kind (TryResolveFieldAccess falls through to
+            // its default no-property case for an arbitrary MethodCallExpression), it only needs the ALIAS —
+            // already staged onto Select.Projection as a MongoElementRefExpression over
+            // "_lookup_<Nav>.<Member>" — so mapping the raw pre-nav-expansion-chain node here is sufficient.
+            // TryGetCorrelatedReducerLeaf looks the answer up by alias against the emit side's own committed
+            // result (CorrelatedReducerLeaves) rather than re-deriving admissibility here, mirroring
+            // TryGetNativeDocumentConstructionLeaf's discipline.
+            case MethodCallExpression correlatedReducerCandidate
+                when TryGetCorrelatedReducerLeaf(correlatedReducerCandidate, out _):
+                var reducerMember = GetCurrentProjectionMember();
+                _projectionMapping[reducerMember] = correlatedReducerCandidate;
+
+                return new ProjectionBindingExpression(_queryExpression, reducerMember, expression.Type);
+
             case MethodCallExpression methodCallExpression
                 when IsScalarMethodPropertyAccess(methodCallExpression):
                 var projMember = GetCurrentProjectionMember();
@@ -319,6 +343,48 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 && candidate.OriginalExpression.Type == expression.Type)
             {
                 construction = candidate;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// True when <paramref name="expression"/> is the CURRENT projection member's own reference-collection-nav
+    /// <c>First</c>/<c>FirstOrDefault</c> reducer leaf (EF-449), already staged by
+    /// <c>NativeProjectionBinder.TryGetCorrelatedReducerLeaf</c> at emit time. Looks the answer up by ALIAS
+    /// against <see cref="MongoQueryExpression.CorrelatedReducerLeaves"/> (the emit side's own committed result)
+    /// rather than re-deriving admissibility here — same discipline as
+    /// <see cref="TryGetNativeDocumentConstructionLeaf"/>. <paramref name="leaf"/> is not consumed by the caller
+    /// today (the caller only needs the boolean to decide whether to register the whole node opaquely); it is
+    /// still returned for symmetry with that sibling method and in case a future caller needs the staged
+    /// <c>Lookup</c>/<c>ThrowOnEmpty</c> detail.
+    /// </summary>
+    private bool TryGetCorrelatedReducerLeaf(Expression expression, out MongoCorrelatedReducerLeaf leaf)
+    {
+        leaf = null;
+
+        if (_queryExpression.Select.Route != NativeRoute.Projection)
+        {
+            return false;
+        }
+
+        var memberName = GetCurrentProjectionMember().Last?.Name;
+        if (memberName is null)
+        {
+            return false;
+        }
+
+        var alias = _queryExpression.Select.TryGetProjectionAlias(memberName, out var overriddenAlias)
+            ? overriddenAlias
+            : memberName;
+
+        foreach (var candidate in _queryExpression.CorrelatedReducerLeaves)
+        {
+            if (candidate.Alias == alias)
+            {
+                leaf = candidate;
                 return true;
             }
         }

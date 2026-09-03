@@ -2750,6 +2750,15 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 .AsEnumerable().OrderBy(x => x.Name).ToList());
     }
 
+    // SUPERSEDED (EF-448): `r.Tag + "!"` used to be this test's example of a computed leaf
+    // TryBindTransparentIdentifierProjection declines. `IsArithmeticComputedLeaf` only checks the
+    // BinaryExpression NodeType (Add/Subtract/Multiply/Divide/Modulo), not operand type, so it already
+    // admitted a string `+`; it used to decline downstream in MongoExpressionTranslator, which had no
+    // $concat branch. Now that EF-448 added native string-concatenation translation, this exact leaf goes
+    // fully native under Native/NativeOnly (proven correct against the in-memory oracle — see
+    // Reference_form_string_concat_computed_leaf_goes_native below) — it no longer reaches this test's
+    // decline path at all. `r.Tag.ToUpper()` is a MethodCallExpression, not a BinaryExpression, so
+    // IsArithmeticComputedLeaf still declines it, preserving the scenario this test exists to cover.
     [Fact]
     public void Reference_form_computed_leaf_hard_fails_in_every_mode()
     {
@@ -2759,27 +2768,51 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         // TryBindReferenceNavUnwind still succeeds on STRUCTURE alone (the collectionSelector is a valid
         // FK-correlated reference nav) before it can know the trailing projection is unsupported, so
         // UnwindSource is set unconditionally; the SEPARATE trailing Select's
-        // TryBindTransparentIdentifierProjection then rejects the computed leaf (r.Tag + "!" is not a bare
-        // ti.Outer.<m>/ti.Inner.<m> access) and calls the ordinary MarkNotNativelyRepresentable() guard — the
-        // SAME "graceful fallback" mechanism the owned form's sibling test relies on. But here the graceful
-        // fallback does not actually work (empirically confirmed, not assumed): the reference form has no
-        // driver-LINQ baseline at all (see the DriverLinq test above), so the fallback attempt itself throws
-        // the SAME "Unsupported cross-DbSet query" InvalidOperationException under BOTH Native and DriverLinq;
-        // NativeOnly (which forbids the fallback attempt entirely) throws its own distinct
-        // NativeTranslationNotSupportedException before ever reaching that fallback code, hence ThrowsAny there.
+        // TryBindTransparentIdentifierProjection then rejects the computed leaf (r.Tag.ToUpper() is not a bare
+        // ti.Outer.<m>/ti.Inner.<m> access, nor an arithmetic/string-concat BinaryExpression) and calls the
+        // ordinary MarkNotNativelyRepresentable() guard — the SAME "graceful fallback" mechanism the owned
+        // form's sibling test relies on. But here the graceful fallback does not actually work (empirically
+        // confirmed, not assumed): the reference form has no driver-LINQ baseline at all (see the DriverLinq
+        // test above), so the fallback attempt itself throws the SAME "Unsupported cross-DbSet query"
+        // InvalidOperationException under BOTH Native and DriverLinq; NativeOnly (which forbids the fallback
+        // attempt entirely) throws its own distinct NativeTranslationNotSupportedException before ever
+        // reaching that fallback code, hence ThrowsAny there.
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
         {
             using var db = CreateRefContext(mode, nameof(Reference_form_computed_leaf_hard_fails_in_every_mode) + mode, out _, out _);
 
             Assert.Throws<InvalidOperationException>(() =>
-                db.Owners.SelectMany(o => o.Refs, (o, r) => new { X = r.Tag + "!" }).ToList());
+                db.Owners.SelectMany(o => o.Refs, (o, r) => new { X = r.Tag.ToUpper() }).ToList());
         }
 
         using var nativeOnlyDb = CreateRefContext(MongoQueryMode.NativeOnly,
             nameof(Reference_form_computed_leaf_hard_fails_in_every_mode) + "NativeOnly", out _, out _);
 
         Assert.ThrowsAny<Exception>(() =>
-            nativeOnlyDb.Owners.SelectMany(o => o.Refs, (o, r) => new { X = r.Tag + "!" }).ToList());
+            nativeOnlyDb.Owners.SelectMany(o => o.Refs, (o, r) => new { X = r.Tag.ToUpper() }).ToList());
+    }
+
+    [Fact]
+    public void Reference_form_string_concat_computed_leaf_goes_native()
+    {
+        // EF-448: string concatenation (r.Tag + "!") is a single-scope BinaryExpression Add leaf, so it goes
+        // through the exact same TryTranslateSingleScopeComputedLeaf path an arithmetic leaf uses, and now
+        // that MongoExpressionTranslator has a $concat branch, it translates successfully — no different from
+        // Reference_form_computed_arithmetic_leaf_goes_native below except for the operator. Proven under
+        // NativeOnly (no driver-LINQ baseline exists for this shape at all) against the in-memory oracle.
+        using var db = CreateRefContext(MongoQueryMode.NativeOnly,
+            nameof(Reference_form_string_concat_computed_leaf_goes_native), out var owners, out var items);
+
+        var actual = db.Owners
+            .SelectMany(o => o.Refs, (o, r) => new { X = r.Tag + "!" })
+            .AsEnumerable()
+            .OrderBy(x => x.X).ToList();
+
+        var expected = owners
+            .SelectMany(o => items.Where(r => r.OwnerId == o.Id), (o, r) => new { X = r.Tag + "!" })
+            .OrderBy(x => x.X).ToList();
+
+        Assert.Equal(expected.Select(x => x.X), actual.Select(x => x.X));
     }
 
     [Fact]

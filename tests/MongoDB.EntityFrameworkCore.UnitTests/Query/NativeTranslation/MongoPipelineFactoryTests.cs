@@ -760,4 +760,47 @@ public class MongoPipelineFactoryTests
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer()));
     }
+
+    // ------------------------------------------------------------------
+    // MongoLookupStage rendering with pipeline stages (EF-449)
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Lookup_stage_includes_pipeline_field_when_HasPipeline()
+    {
+        var navigation = ChildrenNavigation();
+        var lookup = new LookupExpression(navigation);
+        lookup.PipelineStages.Add(new BsonDocument("$limit", 1));
+
+        var stages = new List<MongoPipelineStage> { new MongoLookupStage(lookup) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?>());
+
+        Assert.Single(result);
+        var lookupDoc = result[0]["$lookup"].AsBsonDocument;
+        Assert.True(lookupDoc.Contains("pipeline"));
+        Assert.Equal(new BsonArray { new BsonDocument("$limit", 1) }, lookupDoc["pipeline"]);
+        // Also verify that the standard fields are still present
+        Assert.Equal("LookupChild", lookupDoc["from"].AsString);
+        Assert.Equal("_id", lookupDoc["localField"].AsString);
+        Assert.Equal("ParentId", lookupDoc["foreignField"].AsString);
+        Assert.Equal("_lookup_Children", lookupDoc["as"].AsString);
+    }
+
+    [Fact]
+    public void Lookup_stage_omits_pipeline_field_when_no_pipeline()
+    {
+        var navigation = ChildrenNavigation();
+        var lookup = new LookupExpression(navigation);
+
+        var stages = new List<MongoPipelineStage> { new MongoLookupStage(lookup) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?>());
+
+        Assert.Single(result);
+        var lookupDoc = result[0]["$lookup"].AsBsonDocument;
+        Assert.False(lookupDoc.Contains("pipeline"));
+    }
 }

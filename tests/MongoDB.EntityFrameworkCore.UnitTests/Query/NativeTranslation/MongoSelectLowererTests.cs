@@ -604,6 +604,30 @@ public class MongoSelectLowererTests
         Assert.True(replaceRootIndex > matchIndex, "filter $match must precede the $replaceRoot");
     }
 
+    // EF-449: a reference-collection-nav First/FirstOrDefault projection leaf tags its LookupExpression
+    // with PipelineKind == CorrelatedReducer (the $lookup's own sub-pipeline already narrows to 0-or-1
+    // matches). AppendLookupStages must emit $lookup + a LEFT-OUTER $unwind for it, rather than falling
+    // through to the final else's NativeTranslationNotSupportedException.
+    [Fact]
+    public void AppendLookupStages_emits_lookup_and_left_outer_unwind_for_CorrelatedReducer()
+    {
+        var (query, navigation) = TestReferenceSelect();
+        var lookup = new LookupExpression(navigation) { PipelineKind = LookupPipelineKind.CorrelatedReducer };
+        lookup.PipelineStages.Add(new BsonDocument("$limit", 1));
+        query.AddLookup(lookup);
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.Collection(stages,
+            s => Assert.Same(lookup, Assert.IsType<MongoLookupStage>(s).Lookup),
+            s =>
+            {
+                var unwind = Assert.IsType<MongoUnwindStage>(s);
+                Assert.Same(lookup, unwind.Lookup);
+                Assert.True(unwind.PreserveNullAndEmptyArrays);
+            });
+    }
+
     // EF-347 filtered-inner OWNED SelectMany. Mirrors the reference filter test above but for an owned
     // $unwind: the lowerer's Filter $match block is kind-agnostic, so it must emit the $match after the
     // owned $unwind and before the $project (projected form) / $replaceRoot (whole-element form) with NO

@@ -389,6 +389,16 @@ internal sealed class MongoSelectLowerer
                 stages.Add(new MongoLookupStage(lookup));
                 stages.Add(new MongoUnwindStage(lookup, preserveNullAndEmptyArrays: false));
             }
+            else if (lookup.PipelineKind == LookupPipelineKind.CorrelatedReducer)
+            {
+                // A reference-collection-nav First/FirstOrDefault projection leaf (EF-449). The $lookup's own
+                // sub-pipeline has already narrowed to 0-or-1 matched documents (optional $match for a constant
+                // predicate, optional $sort, then $limit:1) — $unwind here just flattens that 0-or-1-element array
+                // to null-or-object. Always left-outer: the empty-vs-throw distinction between First and
+                // FirstOrDefault is a READ-side concern (see MongoCorrelatedReducerLeaf), not a join-shape one.
+                stages.Add(new MongoLookupStage(lookup));
+                stages.Add(new MongoUnwindStage(lookup, preserveNullAndEmptyArrays: true));
+            }
             else
             {
                 // Navigation is null for an EF-377 Join hop with no model navigation; name the target

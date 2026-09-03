@@ -82,6 +82,84 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         Path: MongoElementRefExpression.WholeRootDocumentPath
                     });
 
+    /// <summary>
+    /// Whether <paramref name="alias"/> names a reference-collection-nav <c>First</c> projection leaf (EF-449,
+    /// as opposed to its <c>FirstOrDefault</c> sibling) that must throw <see cref="InvalidOperationException"/>
+    /// rather than read a CLR default when the underlying navigation matched no row. Looks the answer up against
+    /// <see cref="MongoQueryExpression.CorrelatedReducerLeaves"/> — the emit side's own committed result — by
+    /// ALIAS only, keyed purely on <see cref="MongoCorrelatedReducerLeaf.ThrowOnEmpty"/>, so it can never
+    /// mis-fire for any other projection leaf kind (arithmetic, plain field, owned nav, or this leaf's own
+    /// FirstOrDefault sibling, which never registers a leaf with ThrowOnEmpty set).
+    /// </summary>
+    private bool TryGetThrowOnEmptyCorrelatedReducerLeaf(string? alias, out MongoCorrelatedReducerLeaf? leaf)
+    {
+        leaf = null;
+        if (alias is null)
+        {
+            return false;
+        }
+
+        foreach (var candidate in _queryExpression.CorrelatedReducerLeaves)
+        {
+            if (candidate.Alias == alias && candidate.ThrowOnEmpty)
+            {
+                leaf = candidate;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="alias"/> names a reference-collection-nav <c>FirstOrDefault</c> projection leaf
+    /// (EF-449) whose reduced member is a NON-NULLABLE VALUE type (an enum, <c>int</c>, <c>bool</c>,
+    /// <c>DateTime</c> …). Such a leaf needs an explicit default-on-empty read: when the navigation matched no
+    /// row the alias is MISSING from the projected document, and
+    /// <see cref="BsonBinding.GetElementValue{T}"/> THROWS ("Document element 'X' is missing but required") for
+    /// a non-nullable <c>T</c> rather than yielding <c>default(T)</c> — MEASURED, see
+    /// <c>NativeCorrelatedReducerProjectionTests.FirstOrDefault_over_a_non_nullable_int_member_reads_as_default_for_an_empty_collection</c>.
+    /// A nullable-typed member (a reference type, or <c>Nullable&lt;T&gt;</c>) needs nothing here — that read
+    /// already yields <c>null</c>, which IS its <c>default(T)</c>. Looked up by ALIAS against the emit side's own
+    /// committed <see cref="MongoQueryExpression.CorrelatedReducerLeaves"/>, exactly like its
+    /// <see cref="TryGetThrowOnEmptyCorrelatedReducerLeaf"/> sibling, so no other projection leaf kind can be
+    /// affected — and the two are mutually exclusive by <see cref="MongoCorrelatedReducerLeaf.ThrowOnEmpty"/>.
+    /// </summary>
+    private bool IsDefaultOnEmptyCorrelatedReducerLeaf(string? alias, Type leafType)
+    {
+        if (alias is null || !leafType.IsValueType || Nullable.GetUnderlyingType(leafType) is not null)
+        {
+            return false;
+        }
+
+        foreach (var candidate in _queryExpression.CorrelatedReducerLeaves)
+        {
+            if (candidate.Alias == alias && !candidate.ThrowOnEmpty)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// True when <paramref name="document"/> has no element named <paramref name="elementName"/>, or that
+    /// element's value is BSON null. Used by the EF-449 <c>First()</c> throw-on-empty check above: a left-outer
+    /// <c>$unwind</c> over an unmatched <c>$lookup</c> sub-pipeline leaves the lookup field null, and a dotted-
+    /// path read through it ("$_lookup_Nav.Member") evaluates to MISSING in a <c>$project</c> stage — either
+    /// state means "no related row" for this leaf's alias.
+    /// </summary>
+    internal static bool IsElementAbsentOrNull(BsonDocument document, string elementName)
+        => !document.TryGetValue(elementName, out var value) || value.IsBsonNull;
+
+    private static readonly MethodInfo IsElementAbsentOrNullMethodInfo =
+        typeof(MongoProjectionBindingRemovingExpressionVisitor)
+            .GetMethod(nameof(IsElementAbsentOrNull), BindingFlags.NonPublic | BindingFlags.Static)!;
+
+    private static readonly ConstructorInfo SequenceContainsNoElementsConstructorInfo =
+        typeof(InvalidOperationException).GetConstructor([typeof(string)])!;
+
     protected override Expression VisitExtension(Expression extensionExpression)
     {
         switch (extensionExpression)
@@ -107,6 +185,30 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     if (projection.Expression is MongoDocumentConstructionExpression construction)
                     {
                         return BuildDocumentConstructionExpression(construction, projection.Alias);
+                    }
+
+                    // The FirstOrDefault mirror of the First() throw-on-empty branch further below (EF-449): for a
+                    // NON-NULLABLE VALUE-TYPE reduced member, "no related row" leaves this leaf's alias MISSING
+                    // and an ordinary raw alias read THROWS ("Document element 'X' is missing but required")
+                    // instead of yielding default(T) — which is FirstOrDefault()'s own LINQ contract. Emit the
+                    // default explicitly for the absent/null case. A nullable-typed member needs nothing here:
+                    // its raw read already yields null, which IS its default.
+                    //
+                    // Placed BEFORE the numeric-cast branch below, deliberately: the nullable-widened shape this
+                    // covers (EF-449, `Convert(nav.Select(m => Convert(m.Rank, int?)).FirstOrDefault(), int)`) is
+                    // registered on the bind side as the whole UnaryExpression{Convert} node — the same
+                    // registration a genuine numeric-cast leaf uses — so that branch would otherwise claim it
+                    // first and emit the unconditional raw read. Keyed by ALIAS against the emit side's own
+                    // committed CorrelatedReducerLeaves, so it cannot claim any other leaf kind, cast or
+                    // otherwise.
+                    if (IsDefaultOnEmptyCorrelatedReducerLeaf(projection.Alias, projectionBindingExpression.Type))
+                    {
+                        return Expression.Condition(
+                            Expression.Call(
+                                IsElementAbsentOrNullMethodInfo, DocParameter, Expression.Constant(projection.Alias)),
+                            Expression.Default(projectionBindingExpression.Type),
+                            BsonBinding.CreateGetElementValue(
+                                DocParameter, projection.Alias, projectionBindingExpression.Type));
                     }
 
                     // A native numeric-cast projection leaf
@@ -179,6 +281,40 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         return valueExpression.Type == projectionBindingExpression.Type
                             ? valueExpression
                             : Expression.Convert(valueExpression, projectionBindingExpression.Type);
+                    }
+
+                    // A reference-collection-nav First().Member projection leaf (EF-449) — as opposed to its
+                    // FirstOrDefault() sibling, which needs no special handling here at all (see the ordinary
+                    // fallback read below): First() must THROW when the source collection was empty, matching
+                    // Enumerable.First()'s own contract, rather than silently reading a CLR default. The $lookup's
+                    // own array/unwind field (leaf.Lookup.As) does not itself survive the native $project (only
+                    // this leaf's own alias does — confirmed empirically, see
+                    // NativeCorrelatedReducerProjectionTests), so the only observable signal in the row this
+                    // visitor actually reads is whether the ALIAS itself is present: a left-outer $unwind
+                    // (preserveNullAndEmptyArrays: true) over a $lookup sub-pipeline that matched nothing leaves
+                    // the lookup field null, and a dotted-path read through a null parent
+                    // ("$_lookup_Nav.Member") evaluates to MISSING in a $project stage — which is exactly the
+                    // "no related row" case this check exists to catch. (A matched row whose own Member happens
+                    // to be null/absent would otherwise be indistinguishable from "no related row" by this
+                    // alias-only check — NativeProjectionBinder.TryGetCorrelatedReducerLeaf closes that gap by
+                    // declining First() (not FirstOrDefault(), which never throws) up front for a NULLABLE-typed
+                    // reduced member, so every leaf that reaches this branch has a non-nullable member type and
+                    // "alias missing/null" here can only mean "no related row matched" — EF-449 fix.) Keyed
+                    // purely by ALIAS, gated to ThrowOnEmpty leaves only, so every other projection leaf kind
+                    // (arithmetic, plain field, owned nav, FirstOrDefault's own leaf, …) is completely
+                    // unaffected.
+                    if (TryGetThrowOnEmptyCorrelatedReducerLeaf(projection.Alias, out _))
+                    {
+                        return Expression.Condition(
+                            Expression.Call(
+                                IsElementAbsentOrNullMethodInfo, DocParameter, Expression.Constant(projection.Alias)),
+                            Expression.Throw(
+                                Expression.New(
+                                    SequenceContainsNoElementsConstructorInfo,
+                                    Expression.Constant("Sequence contains no elements")),
+                                projectionBindingExpression.Type),
+                            BsonBinding.CreateGetElementValue(
+                                DocParameter, projection.Alias, projectionBindingExpression.Type));
                     }
 
                     // For non-property expressions (arithmetic, constants, Mql.Field) — and for

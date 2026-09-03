@@ -532,25 +532,30 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
                 .ToList().OrderBy(r => r.Name).Select(r => r.X).ToArray());
     }
 
+    // ── SUPERSEDED (EF-448): string CONCATENATION (`c.Name + "!"`) now goes native via $concat — see
+    // NativeStringConcatTests. This test originally used concatenation as its "falls back" example; it now
+    // uses a string-method-call leaf (ToUpper), which still has no native translation, to keep exercising the
+    // graceful-fallback-except-under-NativeOnly contract for a genuinely unrepresentable computed leaf.
+
     [Fact]
-    public void String_concat_projection_falls_back_gracefully_except_under_NativeOnly()
+    public void String_method_call_projection_falls_back_gracefully_except_under_NativeOnly()
     {
-        var (collection, logs) = SeedCustomers(nameof(String_concat_projection_falls_back_gracefully_except_under_NativeOnly));
+        var (collection, logs) = SeedCustomers(nameof(String_method_call_projection_falls_back_gracefully_except_under_NativeOnly));
 
         using (var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly))
         {
-            var query = nativeOnly.Entities.Select(c => new { X = c.Name + "!" });
+            var query = nativeOnly.Entities.Select(c => new { X = c.Name.ToUpper() });
             Assert.Throws<NativeTranslationNotSupportedException>(() => query.ToList());
         }
 
         using var native = CreateContext(collection, [], MongoQueryMode.Native);
         using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
 
-        var nativeResults = native.Entities.Select(c => new { X = c.Name + "!" }).OrderBy(r => r.X).ToList();
-        var driverResults = driver.Entities.Select(c => new { X = c.Name + "!" }).OrderBy(r => r.X).ToList();
+        var nativeResults = native.Entities.Select(c => new { X = c.Name.ToUpper() }).OrderBy(r => r.X).ToList();
+        var driverResults = driver.Entities.Select(c => new { X = c.Name.ToUpper() }).OrderBy(r => r.X).ToList();
 
         Assert.Equal(driverResults, nativeResults);
-        Assert.Equal(["Alice!", "Bob!", "Carol!"], nativeResults.Select(r => r.X).ToArray());
+        Assert.Equal(["ALICE", "BOB", "CAROL"], nativeResults.Select(r => r.X).ToArray());
     }
 
     // ── FIXED (EF-412/EF-356): mixed whole-entity + computed-arithmetic, once a silent wrong-data bug ─────

@@ -1405,8 +1405,8 @@ internal sealed partial class MongoExpressionTranslator
     /// numeric-to-string cast; only <c>ToString()</c>), so the boxing wrapper is unwrapped here before
     /// translating the underlying value.
     /// <para>
-    /// <b><c>bool</c> and <c>DateTime</c>/<c>DateTimeOffset</c> operands render via <c>$toString</c> too, even
-    /// though MQL's <c>$toString</c> genuinely diverges from .NET's <c>object.ToString()</c> for both —
+    /// <b><c>bool</c> and <c>DateTime</c>/<c>DateTimeOffset</c> operands render via <c>$toString</c> too</b>,
+    /// even though MQL's <c>$toString</c> genuinely diverges from .NET's <c>object.ToString()</c> for both —
     /// MEASURED against a real server: a bool renders lowercase (<c>"true"</c>) where .NET capitalizes
     /// (<c>"True"</c>), and a date renders ISO-8601 where .NET's culture-dependent default format does not.
     /// This is NOT a native-only defect to decline: the driver's OWN LINQ v3 bridge (the pre-existing

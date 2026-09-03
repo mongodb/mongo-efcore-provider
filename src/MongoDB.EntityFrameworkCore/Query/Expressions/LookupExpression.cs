@@ -23,6 +23,21 @@ using MongoDB.EntityFrameworkCore.Extensions;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
+/// Distinguishes WHY this lookup carries a non-empty <see cref="LookupExpression.PipelineStages"/> sub-pipeline, since
+/// each reason has a different native-eligibility answer. <see cref="None"/>: no pipeline stages.
+/// <see cref="FallbackOnly"/>: TPH discriminator narrowing or a nested Include lookup — both remain
+/// fallback/mixed-visitor-only (see <c>MongoSelectLowerer.AppendLookupStages</c>'s exhaustive
+/// pipeline-kind dispatch). <see cref="CorrelatedReducer"/>: a reference-collection-nav
+/// First/FirstOrDefault projection leaf (EF-449) — the one kind the NATIVE lowerer knows how to emit.
+/// </summary>
+internal enum LookupPipelineKind
+{
+    None,
+    FallbackOnly,
+    CorrelatedReducer
+}
+
+/// <summary>
 /// Represents the pending data needed to build a <c>$lookup</c> aggregation stage for including
 /// a cross-collection navigation property. This is a data holder, not a pipeline stage itself —
 /// the lowerer/pipeline factory render it into the actual <c>$lookup</c>/<c>$unwind</c> stage documents.
@@ -70,6 +85,7 @@ internal sealed class LookupExpression
 
             PipelineStages.Add(new BsonDocument("$match",
                 new BsonDocument(discriminatorProperty.GetElementName(), new BsonDocument("$in", discriminatorValues))));
+            PipelineKind = LookupPipelineKind.FallbackOnly;
         }
     }
 
@@ -150,6 +166,20 @@ internal sealed class LookupExpression
     /// When non-empty, the pipeline form of <c>$lookup</c> is used instead of localField/foreignField.
     /// </summary>
     public List<BsonDocument> PipelineStages { get; } = [];
+
+    /// <summary>See <see cref="LookupPipelineKind"/>.</summary>
+    /// <remarks>
+    /// Compile-time state on an object reused across executions, so the same write-once discipline
+    /// <see cref="PreserveNullAndEmptyArrays"/> enforces with <see langword="init"/> is EXPECTED of callers
+    /// here, even though it cannot be enforced by the language: this property must be settable after
+    /// construction (the fallback visitor stamps it once the lookup's disposition is known), so it stays a
+    /// plain <c>internal set</c>. Write it exactly once, at registration; never re-stamp a kind an earlier
+    /// registration already chose — in particular, an object-initializer assignment runs AFTER the
+    /// constructor and would silently overwrite the <see cref="LookupPipelineKind.FallbackOnly"/> the
+    /// TPH-discriminator branch of the constructor sets, leaving the discriminator <c>$match</c> it prepended
+    /// to <see cref="PipelineStages"/> unaccounted for.
+    /// </remarks>
+    public LookupPipelineKind PipelineKind { get; internal set; } = LookupPipelineKind.None;
 
     /// <summary>Whether this lookup uses a pipeline (filtered Include).</summary>
     public bool HasPipeline => PipelineStages.Count > 0;

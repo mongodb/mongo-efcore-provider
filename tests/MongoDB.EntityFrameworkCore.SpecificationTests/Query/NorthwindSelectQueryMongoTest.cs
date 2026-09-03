@@ -408,10 +408,12 @@ Customers.{ "$match" : { "City" : "London" } }, { "$project" : { "City" : "$City
 
     public override async Task Select_nested_collection_multi_level2(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Select_nested_collection_multi_level2(async));
+        await base.Select_nested_collection_multi_level2(async);
 
-        AssertMql();
+        AssertMql(
+            """
+Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "pipeline" : [{ "$match" : { "_id" : { "$lt" : 10500 } } }, { "$sort" : { "_id" : 1 } }, { "$limit" : 1 }], "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "OrderDates" : "$_lookup_Orders.OrderDate", "_id" : 0 } }
+""");
     }
 
     public override async Task Select_nested_collection_multi_level3(bool async)

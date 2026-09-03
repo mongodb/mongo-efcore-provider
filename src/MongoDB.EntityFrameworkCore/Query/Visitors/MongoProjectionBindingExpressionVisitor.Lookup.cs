@@ -114,7 +114,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             return false;
         }
 
-        var navigation = ResolveCollectionNavigation(outerEntityType, targetEntityType, whereCall);
+        var navigation = ResolveCollectionNavigation(outerEntityType, targetEntityType, whereCall.Arguments[1].UnwrapLambdaFromQuote());
         if (navigation == null)
         {
             return false;
@@ -221,7 +221,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             return false;
         }
 
-        var navigation = ResolveCollectionNavigation(outerEntityType, targetEntityType, whereCall);
+        var navigation = ResolveCollectionNavigation(outerEntityType, targetEntityType, whereCall.Arguments[1].UnwrapLambdaFromQuote());
         if (navigation == null)
         {
             return false;
@@ -324,15 +324,15 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// <paramref name="targetEntityType"/>. The target entity type alone is ambiguous when more than one
     /// collection navigation points at it — two foreign keys between the same pair of types, or a
     /// self-reference. In that case we disambiguate using the dependent-side foreign-key properties the
-    /// correlation predicate (<paramref name="whereCall"/>'s FK-equality lambda) actually compares against,
+    /// correlation predicate (the FK-equality lambda) actually compares against,
     /// matching the navigation whose <see cref="IForeignKey.Properties"/> are exactly those. Returns
     /// <see langword="null"/> when nothing matches, or when the match cannot be resolved unambiguously, in
     /// which case the caller declines the $lookup fast-path rather than guessing.
     /// </summary>
-    private static INavigation ResolveCollectionNavigation(
+    internal static INavigation ResolveCollectionNavigation(
         IEntityType outerEntityType,
         IEntityType targetEntityType,
-        MethodCallExpression whereCall)
+        LambdaExpression correlationPredicate)
     {
         var candidates = outerEntityType.GetNavigations()
             .Where(n => n.IsCollection && !n.IsEmbedded() && n.TargetEntityType == targetEntityType)
@@ -345,7 +345,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
         // Ambiguous by target type: select the navigation whose foreign-key properties are exactly the
         // dependent-side properties the correlation predicate compares against.
-        var dependentKeyNames = CollectDependentPropertyNames(whereCall.Arguments[1].UnwrapLambdaFromQuote());
+        var dependentKeyNames = CollectDependentPropertyNames(correlationPredicate);
         if (dependentKeyNames.Count == 0)
         {
             return null;
@@ -364,7 +364,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// <c>EF.Property(o, "CustomerId")</c> forms are both recognised; outer-shaper references (the principal
     /// key side) are ignored because they are not rooted at a lambda parameter.
     /// </summary>
-    private static HashSet<string> CollectDependentPropertyNames(LambdaExpression predicate)
+    internal static HashSet<string> CollectDependentPropertyNames(LambdaExpression predicate)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
         new DependentPropertyNameCollector(predicate.Parameters, names).Visit(predicate.Body);
@@ -541,6 +541,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             ExtractNestedIncludePipeline(nestedInclude.NavigationExpression, nestedLookup, nestedNav.TargetEntityType);
 
             parentLookup.PipelineStages.Add(BuildLookupDocument(nestedLookup));
+            parentLookup.PipelineKind = LookupPipelineKind.FallbackOnly;
 
             // Continue with the entity expression (which may have more wrapping)
             navigationExpression = nestedInclude.EntityExpression;
@@ -588,6 +589,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             }
 
             parentLookup.PipelineStages.Add(BuildLookupDocument(nestedLookup));
+            parentLookup.PipelineKind = LookupPipelineKind.FallbackOnly;
             current = nested.EntityExpression;
         }
 
@@ -624,6 +626,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             { "path", $"${refLookup.As}" },
             { "preserveNullAndEmptyArrays", true }
         }));
+        parentLookup.PipelineKind = LookupPipelineKind.FallbackOnly;
     }
 
     /// <summary>
@@ -742,7 +745,11 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
         // Stages were collected outermost-first; reverse so they execute in the right order.
         stages.Reverse();
-        lookup.PipelineStages.AddRange(stages);
+        if (stages.Count > 0)
+        {
+            lookup.PipelineStages.AddRange(stages);
+            lookup.PipelineKind = LookupPipelineKind.FallbackOnly;
+        }
     }
 
     /// <summary>

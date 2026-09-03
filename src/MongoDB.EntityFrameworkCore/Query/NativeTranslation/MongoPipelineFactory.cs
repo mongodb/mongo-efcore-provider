@@ -415,13 +415,22 @@ internal sealed class MongoPipelineFactory
         => new BsonDocument("$limit", MongoValueRenderer.RenderValue(stage.Limit, placeholders));
 
     private static BsonDocument RenderLookup(LookupExpression lookup)
-        => new BsonDocument("$lookup", new BsonDocument
+    {
+        var lookupDoc = new BsonDocument
         {
             { "from", lookup.From },
             { "localField", lookup.LocalField },
-            { "foreignField", lookup.ForeignField },
-            { "as", lookup.As }
-        });
+            { "foreignField", lookup.ForeignField }
+        };
+
+        if (lookup.HasPipeline)
+        {
+            lookupDoc.Add("pipeline", new BsonArray(lookup.PipelineStages));
+        }
+
+        lookupDoc.Add("as", lookup.As);
+        return new BsonDocument("$lookup", lookupDoc);
+    }
 
     private static BsonDocument RenderUnwind(LookupExpression lookup, bool preserveNullAndEmptyArrays)
         => new BsonDocument("$unwind", new BsonDocument

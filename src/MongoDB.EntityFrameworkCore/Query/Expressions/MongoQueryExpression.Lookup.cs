@@ -26,6 +26,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 internal sealed partial class MongoQueryExpression
 {
     private readonly List<LookupExpression> _pendingLookups = [];
+    private readonly List<MongoCorrelatedReducerLeaf> _correlatedReducerLeaves = [];
     private readonly Dictionary<IEntityType, MongoCollectionExpression> _innerCollections = new();
 
     // IEntityType, so a self-referencing navigation chain like Employee.Manager.Manager, or two sibling
@@ -153,6 +154,25 @@ internal sealed partial class MongoQueryExpression
             _pendingLookups.Add(lookup);
         }
     }
+
+    /// <summary>
+    /// The reference-collection-nav <c>First</c>/<c>FirstOrDefault</c> projection leaves (EF-449) registered on
+    /// this query, in projection order. See <see cref="MongoCorrelatedReducerLeaf"/>.
+    /// </summary>
+    public IReadOnlyList<MongoCorrelatedReducerLeaf> CorrelatedReducerLeaves => _correlatedReducerLeaves;
+
+    /// <summary>
+    /// Register a reference-collection-nav <c>First</c>/<c>FirstOrDefault</c> projection leaf (EF-449).
+    /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="AddLookup"/> this does NOT deduplicate: two distinct projection members can legitimately
+    /// reduce the same navigation only if they also share one <see cref="LookupExpression"/>, which the
+    /// recognizer declines outright (a second lookup on the same navigation would collide on
+    /// <see cref="LookupExpression.As"/> while carrying a different sub-pipeline). So each registered leaf here
+    /// names a distinct <see cref="MongoCorrelatedReducerLeaf.Alias"/> by construction.
+    /// </remarks>
+    public void AddCorrelatedReducerLeaf(MongoCorrelatedReducerLeaf leaf)
+        => _correlatedReducerLeaves.Add(leaf);
 
     /// <summary>
     /// Inner collections involved in join operations, deduplicated by entity type — one entry per

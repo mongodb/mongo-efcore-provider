@@ -22,6 +22,7 @@ using System.Reflection;
 using Microsoft.EntityFrameworkCore.Infrastructure;  // IsEFPropertyMethod()
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
+using MongoDB.Bson;
 using MongoDB.Driver;                                // Mql.Field
 using MongoDB.EntityFrameworkCore.Extensions;        // IsEmbedded()
 using MongoDB.EntityFrameworkCore.Query.Expressions;
@@ -89,6 +90,9 @@ internal static class NativeProjectionBinder
         // later leaf failing native recognition (whole projection falls back) never leaves a half-registered
         // lookup behind.
         var pendingLookups = new List<LookupExpression>();
+        // Parallel staging list for the EF-449 correlated-reducer leaves, for the same reason pendingLookups
+        // exists: a later leaf declining must not leave a half-registered reducer leaf behind.
+        var pendingReducerLeaves = new List<MongoCorrelatedReducerLeaf>();
         // MongoQueryExpression.AddToProjection disambiguates aliases case-insensitively (appending a counter on
         // collision). If two members here differ only by case, the DOM shaper would read the disambiguated
         // alias while the native $project emits the un-disambiguated one, silently dropping a value. Bail to
@@ -126,7 +130,7 @@ internal static class NativeProjectionBinder
                 {
                     var memberName = newExpression.Members[i].Name;
                     var alias = DeriveWrappedLeafAlias(mongoQ, newExpression.Arguments[i], memberName);
-                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], newExpression.Arguments[i], alias, pendingLookups, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
+                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], newExpression.Arguments[i], alias, pendingLookups, pendingReducerLeaves, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
                         return false;
                     if (!seenAliases.Add(alias))
                         return false;
@@ -155,7 +159,7 @@ internal static class NativeProjectionBinder
 
                     var memberName = binding.Member.Name;
                     var alias = DeriveWrappedLeafAlias(mongoQ, assignment.Expression, memberName);
-                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], assignment.Expression, alias, pendingLookups, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
+                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], assignment.Expression, alias, pendingLookups, pendingReducerLeaves, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
                         return false;
                     if (!seenAliases.Add(alias))
                         return false;
@@ -236,7 +240,7 @@ internal static class NativeProjectionBinder
                 // that same flag, for the same reason as the whole-root-entity leaf) never fires for a bare
                 // body — a bare `b => b.Address` keeps declining exactly as before this ticket.
                 if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], selector.Body, provisionalAlias,
-                        pendingLookups, out var bareLeaf, out var bareIsArrayLeaf, out _))
+                        pendingLookups, pendingReducerLeaves, out var bareLeaf, out var bareIsArrayLeaf, out _))
                 {
                     return false;
                 }
@@ -332,6 +336,8 @@ internal static class NativeProjectionBinder
 
         foreach (var lookup in pendingLookups)
             mongoQ.AddLookup(lookup);
+        foreach (var reducerLeaf in pendingReducerLeaves)
+            mongoQ.AddCorrelatedReducerLeaf(reducerLeaf);
         foreach (var projection in projections)
             mongoQ.Select.AddProjection(projection);
         // Register the bare body's alias override in the same commit block as the projections it describes,
@@ -535,6 +541,7 @@ internal static class NativeProjectionBinder
         Expression leafExpression,
         string alias,
         List<LookupExpression> pendingLookups,
+        List<MongoCorrelatedReducerLeaf> pendingReducerLeaves,
         out MongoExpression result,
         out bool isArrayLeaf,
         out bool isOwnedNavEntityLeaf,
@@ -685,6 +692,27 @@ internal static class NativeProjectionBinder
         {
             result = arrayRef;
             isArrayLeaf = true;
+            return true;
+        }
+
+        // A reference-collection-nav First/FirstOrDefault reduced to a scalar member (EF-449) —
+        // `new { a.Id, a.IdentificationMethods.FirstOrDefault().Method }`. Structurally disjoint from the count
+        // branch below (which requires Queryable.Count/LongCount) and from every branch above (this leaf is a
+        // MethodCallExpression rooted in Queryable.First/FirstOrDefault). Gated to WRAPPED selector bodies only
+        // (allowWholeRootEntityLeaf), for the same reason as the entity-shaped leaves above: a BARE body's alias
+        // is DERIVED from the translated leaf, and a `_lookup_<Nav>.<Member>` path is not an alias either
+        // derivation tier can honour — so a bare `a => a.IdentificationMethods.FirstOrDefault().Method` keeps
+        // declining, unchanged. MEASURED (mutation testing) to be defense-in-depth TODAY: with this conjunct
+        // removed the bare body still declines, because neither TryDeriveDocumentPathAlias nor
+        // TryDeriveSyntheticAlias answers for a MongoElementRefExpression. Kept anyway, because that is a
+        // property of the two alias tiers, not of this leaf — widening either tier without this gate would
+        // silently admit a bare body whose late-fallback read is impossible.
+        if (allowWholeRootEntityLeaf
+            && TryGetCorrelatedReducerLeaf(
+                mongoQ, outerParameter, leafExpression, alias, pendingLookups, pendingReducerLeaves,
+                out var correlatedReducerRef))
+        {
+            result = correlatedReducerRef;
             return true;
         }
 
@@ -1825,9 +1853,514 @@ internal static class NativeProjectionBinder
         if (!lookup.IsNativeCollectionLookup)
             return false;
 
-        pendingLookups.Add(lookup);
+        // CROSS-LEAF ALIAS COLLISION. Two leaves in one projection can both want `_lookup_<Nav>`, and
+        // MongoQueryExpression.AddLookup dedupes by As, silently KEEPING THE FIRST — so whichever leaf's lookup
+        // loses reads a shape it was not built for. That is only safe when the two lookups are interchangeable.
+        // The PipelineKind is what decides that: a CorrelatedReducer lookup (EF-449) carries a `$limit: 1`
+        // sub-pipeline and is unwound to a single DOCUMENT, whereas this leaf's `{$size: ...}` needs the whole
+        // ARRAY — mix them and either `$size` runs over a document (a hard server error) or the reducer's
+        // `_lookup_<Nav>.<Member>` path resolves against an array (silently reads nothing). MEASURED before the
+        // fix: for `new { M = a.Nav.FirstOrDefault().Member, N = a.Nav.Count }` the reducer's lookup was
+        // registered first and survived, leaving the count leaf's `$size` pointing at a single document.
+        //
+        // This is the MIRROR of the same-alias decline inside TryGetCorrelatedReducerLeaf: that one fires when
+        // the reducer leaf runs SECOND (it declines on ANY same-alias lookup, staged here or already pending on
+        // mongoQ), this one when the reducer leaf ran FIRST. Together they make the guard symmetric under
+        // left-to-right member processing, in either member order.
+        //
+        // A SAME-kind same-alias lookup (a second Count leaf over the same navigation, or an already-pending
+        // collection-Include lookup for it) IS interchangeable, so it is simply reused rather than re-staged —
+        // which is exactly what AddLookup's dedupe already did for it, so behaviour there is unchanged.
+        var collidingLookup = pendingLookups.FirstOrDefault(l => l.As == lookup.As)
+            ?? mongoQ.GetPendingLookups().FirstOrDefault(l => l.As == lookup.As);
+        if (collidingLookup is null)
+        {
+            pendingLookups.Add(lookup);
+        }
+        else if (collidingLookup.PipelineKind != lookup.PipelineKind)
+        {
+            return false;
+        }
 
         result = new MongoSizeExpression(LookupExpression.GetLookupAlias(navigation), leafExpression.Type);
         return true;
+    }
+
+    /// <summary>
+    /// Recognizes a reference-collection-nav reducer projected inline (EF-449) — e.g.
+    /// <c>animal.IdentificationMethods.FirstOrDefault().Method</c> — and, on a match, stages the
+    /// <c>$lookup</c>(+sub-pipeline) this leaf needs plus its <see cref="MongoCorrelatedReducerLeaf"/> record,
+    /// returning a <see cref="MongoElementRefExpression"/> that reads the reduced member off the unwound result.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The shape matched here is the OBSERVED nav-expanded one, not the shape the user wrote.</b> Measured by
+    /// running the real <c>IQueryTranslationPreprocessor</c> over
+    /// <c>Set&lt;Animal&gt;().Select(a =&gt; new { a.Id, a.IdentificationMethods.FirstOrDefault().Method })</c>:
+    /// EF Core's nav-expansion erases the navigation member access entirely, hoists the reduced member into an
+    /// inner <c>Select</c>, and rewrites a reducer predicate into its own <c>Where</c> layer. By the time this
+    /// binder runs the leaf is (outermost first):
+    /// </para>
+    /// <code>
+    /// Queryable.FirstOrDefault(                                   // or .First()
+    ///   Queryable.Select(                                         // the reduced member — MANDATORY
+    ///     [Queryable.Where(                                       // present only for FirstOrDefault(pred)
+    ///       [Queryable.OrderBy|OrderByDescending(                 // present only for an explicit sort
+    ///         Queryable.Where(EntityQueryRootExpression&lt;Target&gt;, fkCorrelation),
+    ///         keySelector)],
+    ///       predicate)],
+    ///     e =&gt; e.Member))
+    /// </code>
+    /// <para>
+    /// So there is NO trailing <see cref="MemberExpression"/> to peel and no navigation NAME left in the tree —
+    /// the navigation is resolved from the FK-correlation predicate via
+    /// <see cref="NativeCorrelationMatcher.TryMatchCorrelatedCollection"/>, exactly as
+    /// <see cref="TryTranslateProjectedCollectionCount"/> already does for the sibling
+    /// <c>c.Orders.Count</c> leaf at this same pipeline phase.
+    /// </para>
+    /// <para>
+    /// The stage order emitted into <see cref="LookupExpression.PipelineStages"/> is <c>$match</c>, <c>$sort</c>,
+    /// <c>$limit: 1</c> — which is the correct reading of the tree even though the <c>Where(predicate)</c> layer
+    /// sits OUTSIDE the <c>OrderBy</c> there: filtering then sorting and sorting then filtering select the same
+    /// first row, and filtering first is the index-friendlier form.
+    /// </para>
+    /// <para>
+    /// Declines (each one falls through to EF Core's own generic
+    /// <c>"The LINQ expression '…' could not be translated"</c> translation-failure path — MEASURED, and NOT the
+    /// provider's own "Unsupported cross-DbSet query" message, which belongs to a different, unrelated family
+    /// (<c>MongoEFToLinqTranslatingExpressionVisitor</c>'s bridge rejection). This family has no driver-LINQ
+    /// oracle at all — the shape hard-fails in every <c>MongoQueryMode</c>, the fallback bridge included — so
+    /// declining is never a silent regression):
+    /// </para>
+    /// <list type="bullet">
+    /// <item>A PARAMETERIZED predicate. <see cref="LookupExpression.PipelineStages"/> is rendered ONCE into the
+    /// pipeline template and has no placeholder-substitution mechanism, so a
+    /// <see cref="MongoParameterExpression"/> could only be baked in as a sentinel document that never gets
+    /// replaced. Checked twice: structurally via <see cref="IsConstantOnlyPredicate"/> (an allow-list, so an
+    /// unrecognized node kind fails CLOSED) and then again by asserting the throwaway
+    /// <see cref="PlaceholderTable"/> stayed empty after rendering. MEASURED: either check alone catches the
+    /// shapes reachable today, and removing BOTH is what breaks the pinning tests — the pair is deliberate
+    /// belt-and-braces for a failure mode (an unsubstituted sentinel document reaching the server) that has no
+    /// louder detector further downstream.</item>
+    /// <item>A TPH-DERIVED target entity type. <see cref="LookupExpression"/>'s own constructor would prepend a
+    /// discriminator <c>$match</c> and set <see cref="LookupPipelineKind.FallbackOnly"/>; rather than fight that,
+    /// this leaf declines and the query falls back (out of scope for EF-449). Guarded TWICE, deliberately: a
+    /// metadata gate before the lookup is constructed, and — because the object initializer that stamps
+    /// <see cref="LookupPipelineKind.CorrelatedReducer"/> runs AFTER the constructor and would silently overwrite
+    /// that <see cref="LookupPipelineKind.FallbackOnly"/> — a structural, fail-closed assertion that the
+    /// constructor left <see cref="LookupExpression.PipelineStages"/> empty before any of this leaf's own stages
+    /// are appended. The second one makes the exclusion a property of the code rather than of statement
+    /// ordering.</item>
+    /// <item>A TWO-HOP chain (<c>nav.FirstOrDefault().OtherNav.Member</c>) and a NON-SCALAR reduced member
+    /// (<c>nav.FirstOrDefault().OtherNav</c>). Both were measured to arrive with a <c>Queryable.Join(...)</c>
+    /// layer spliced between the FK <c>Where</c> and the inner <c>Select</c>, which no arm of the source walk
+    /// below accepts.</item>
+    /// <item>An OWNED (embedded) collection navigation. Measured to arrive as
+    /// <c>EF.Property&lt;List&lt;T&gt;&gt;(a, "Tags").AsQueryable()</c> — not an
+    /// <see cref="EntityQueryRootExpression"/> — so the walk declines before any navigation is resolved. That
+    /// shape belongs to the owned-collection machinery, not here.</item>
+    /// <item>A whole-element reduction with no member read (<c>nav.FirstOrDefault()</c>): the mandatory inner
+    /// <c>Select</c> is absent.</item>
+    /// <item>A predicate/sort-key/member selector reaching back OUT to <paramref name="outerParameter"/>. The
+    /// sub-pipeline runs in the FOREIGN collection's scope with no access to the local document, and a
+    /// single-scope translator over the target type would silently resolve <c>a.Id</c> against the TARGET's own
+    /// <c>Id</c> — wrong data, not a decline. Routed by parameter IDENTITY, never by member name.</item>
+    /// <item>A second correlated-reducer leaf over the SAME navigation. Both would want
+    /// <see cref="LookupExpression.As"/> = <c>_lookup_&lt;Nav&gt;</c> while carrying DIFFERENT sub-pipelines, and
+    /// <see cref="MongoQueryExpression.AddLookup"/> dedupes by that alias — so the second leaf's sub-pipeline
+    /// would be silently dropped and it would read the first leaf's row.</item>
+    /// <item><c>First()</c> (never <c>FirstOrDefault()</c>) reducing to a NULLABLE-typed member (<c>Nullable&lt;T&gt;</c>
+    /// or a reference type). The read side's throw-on-empty check can only tell "this leaf's alias is
+    /// missing/null", which is genuinely ambiguous between "no related row" and "a related row was found whose
+    /// own member is null/absent" when the member itself is nullable — declined here rather than risk throwing
+    /// "Sequence contains no elements" for a row that actually exists.</item>
+    /// </list>
+    /// </remarks>
+    private static bool TryGetCorrelatedReducerLeaf(
+        MongoQueryExpression mongoQ,
+        ParameterExpression outerParameter,
+        Expression leafExpression,
+        string alias,
+        List<LookupExpression> pendingLookups,
+        List<MongoCorrelatedReducerLeaf> pendingReducerLeaves,
+        [NotNullWhen(true)] out MongoElementRefExpression? result)
+    {
+        result = null;
+
+        // ── Normalize the NULLABLE-WIDENED FirstOrDefault() shape (EF-449) ───────────────────────────────────
+        // For a FirstOrDefault() reducing to a NON-NULLABLE VALUE-TYPE member (an enum, int, bool, DateTime …)
+        // EF's nav-expansion does NOT hand this binder the reducer call directly. It represents "no match" by
+        // WIDENING the reduced member to Nullable<T> inside the inner Select (so the no-row sentinel can be
+        // null), reduces over that nullable-typed sequence, then converts the whole reducer result back to the
+        // original non-nullable T:
+        //
+        //   Convert(DbSet<M>().Where(fk).Select(m => Convert(m.Rank, int?)).FirstOrDefault(), int)
+        //
+        // MEASURED (see NativeCorrelatedReducerLeafTests): a `string` member (already nullable) and every
+        // `First()` — value-type member or not — arrive UNWRAPPED, so the peel is scoped to FirstOrDefault only,
+        // and only to the exact Convert(reducer-of-Nullable<T>, T) idiom above. Both wrappers are peeled here as
+        // an early NORMALIZATION step so everything below — every decline gate included — runs unchanged on the
+        // normalized tree; there is deliberately no parallel code path.
+        //
+        // BOTH HALVES OF THE IDIOM MUST FIRE TOGETHER. The outer Convert's shape alone does NOT identify EF's
+        // widening idiom: a user-WRITTEN narrowing cast over an ALREADY-NULLABLE member produces the identical
+        // outer shape — MEASURED, `(int)a.Nav.FirstOrDefault()!.NullableRank` arrives as
+        // `Convert(nav.Where(fk).Select(m => m.NullableRank).FirstOrDefault(), int)`, i.e. an int?-typed reducer
+        // narrowed to int, but with a BARE MemberExpression as the inner Select's body and no inner Convert to
+        // peel. Admitting that shape would type the leaf `int` while the value can legitimately be BSON null for
+        // a MATCHED row, and the read side's default-on-empty branch would silently return 0 where real
+        // LINQ-to-objects throws InvalidOperationException ("Nullable object must not have a value"). So the
+        // inner peel's own firing is tracked and cross-checked below: outer-without-inner DECLINES.
+        //
+        // The MQL needs no special handling, but the READ side does: when no row matched the reduced field is
+        // absent from the left-outer $unwind's output, and a raw alias read of a NON-NULLABLE T THROWS
+        // ("Document element 'X' is missing but required") rather than yielding default(T) — so
+        // MongoProjectionBindingRemovingExpressionVisitor.IsDefaultOnEmptyCorrelatedReducerLeaf recognizes this
+        // leaf kind by alias and emits an explicit absent/null → default(T) conditional. (An earlier version of
+        // this comment claimed the generic alias read already yields default(T); that was DISPROVEN by mutation —
+        // see the functional test named in that helper's own remarks.)
+        // The projected leaf's own CLR type is ALWAYS the outer/narrowed one, captured before the peel — the
+        // element ref built at the bottom must be typed as the real, non-nullable member type the caller's
+        // shaper expects, never as the widened Nullable<T> the inner tree carries.
+        var leafType = leafExpression.Type;
+        var reducerNode = leafExpression;
+        var nullableWidened = false;
+        if (leafExpression is UnaryExpression
+            {
+                NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked,
+                Type: { IsValueType: true } narrowedType,
+                Operand: MethodCallExpression
+                {
+                    Method: { Name: nameof(Queryable.FirstOrDefault), DeclaringType: var widenedDeclaring }
+                } widenedReducer
+            }
+            && widenedDeclaring == typeof(Queryable)
+            // Nullable<Nullable<T>> is impossible, so this also establishes narrowedType is NOT itself a
+            // Nullable<T> — i.e. the peel only ever fires for the genuine widening idiom.
+            && Nullable.GetUnderlyingType(widenedReducer.Type) == narrowedType)
+        {
+            nullableWidened = true;
+            reducerNode = widenedReducer;
+        }
+
+        // ── The reducer itself: Queryable.First()/FirstOrDefault(), no-predicate overload only. ──────────────
+        // Nav-expansion always hoists a reducer predicate into its own Where layer (see the remarks), so the
+        // two-argument overload is not a shape this binder can be reached with; declining it is the fail-safe
+        // direction rather than an assumption.
+        if (reducerNode is not MethodCallExpression
+            {
+                Method: { DeclaringType: var reducerDeclaring } reducerMethod,
+                Arguments: [var reducerSource]
+            }
+            || reducerDeclaring != typeof(Queryable))
+        {
+            return false;
+        }
+
+        bool throwOnEmpty;
+        switch (reducerMethod.Name)
+        {
+            case nameof(Queryable.First):
+                throwOnEmpty = true;
+                break;
+            case nameof(Queryable.FirstOrDefault):
+                throwOnEmpty = false;
+                break;
+            default:
+                return false;
+        }
+
+        // ── The mandatory inner Select carrying the reduced member. ──────────────────────────────────────────
+        if (reducerSource is not MethodCallExpression
+            {
+                Method: { Name: nameof(Queryable.Select), DeclaringType: var selectDeclaring },
+                Arguments: [var selectSource, var memberSelectorArg]
+            }
+            || selectDeclaring != typeof(Queryable))
+        {
+            return false;
+        }
+
+        var memberSelector = memberSelectorArg.UnwrapLambdaFromQuote();
+        if (memberSelector is not { Parameters: [var elementParameter] })
+        {
+            return false;
+        }
+
+        // The second half of the EF-449 normalization: inside the widened shape the inner Select's body is
+        // `Convert(m.Member, Nullable<T>)` rather than a bare `m.Member`, so peel that widening Convert to reach
+        // the real member access every check below (IsDirectMemberAccessOn, TryTranslateField) needs. Scoped to
+        // the exact widening (Convert whose Type is Nullable-of the operand's own type) and only when the outer
+        // peel above actually fired, so an ordinary cast inside the selector still declines as before.
+        var memberBody = memberSelector.Body;
+        if (nullableWidened
+            && memberBody is UnaryExpression
+            {
+                NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked,
+                Operand: var widenedMemberBody
+            } widenedMemberConvert
+            && Nullable.GetUnderlyingType(widenedMemberConvert.Type) == widenedMemberBody.Type)
+        {
+            memberBody = widenedMemberBody;
+        }
+        else if (nullableWidened)
+        {
+            // Outer narrowing Convert present, inner widening Convert absent: this is NOT EF's no-match-sentinel
+            // idiom but a user-written narrowing cast over an already-nullable member (see the long remarks at
+            // the top of this method). Decline the whole shape rather than admit a leaf typed non-nullable whose
+            // value can legitimately be null for a row that DID match.
+            return false;
+        }
+
+        // ── The optional Where(predicate) and OrderBy/OrderByDescending layers, in the observed order. ───────
+        var source = selectSource;
+        LambdaExpression? predicate = null;
+        if (source is MethodCallExpression
+            {
+                Method: { Name: nameof(Queryable.Where), DeclaringType: var predWhereDeclaring },
+                Arguments: [var predWhereSource, var predicateArg]
+            }
+            && predWhereDeclaring == typeof(Queryable)
+            && predicateArg.UnwrapLambdaFromQuote() is { Parameters.Count: 1 } predicateLambda
+            // The FK-correlation Where is itself a Where over the ROOT; only peel this layer when it is NOT
+            // that one, or a bare `nav.FirstOrDefault().Member` would lose its correlation entirely.
+            && predWhereSource is not EntityQueryRootExpression)
+        {
+            predicate = predicateLambda;
+            source = predWhereSource;
+        }
+
+        LambdaExpression? sortKeySelector = null;
+        var sortAscending = true;
+        if (source is MethodCallExpression
+            {
+                Method:
+                {
+                    Name: nameof(Queryable.OrderBy) or nameof(Queryable.OrderByDescending),
+                    DeclaringType: var orderDeclaring
+                } orderMethod,
+                Arguments: [var orderSource, var sortKeyArg]
+            }
+            && orderDeclaring == typeof(Queryable)
+            && sortKeyArg.UnwrapLambdaFromQuote() is { Parameters.Count: 1 } sortKeyLambda)
+        {
+            sortAscending = orderMethod.Name == nameof(Queryable.OrderBy);
+            sortKeySelector = sortKeyLambda;
+            source = orderSource;
+        }
+
+        // ── What remains must be the FK-correlation Where over the target DbSet. ─────────────────────────────
+        if (source is not MethodCallExpression
+            {
+                Method: { Name: nameof(Queryable.Where), DeclaringType: var fkWhereDeclaring },
+                Arguments: [EntityQueryRootExpression rootExpression, var fkPredicateArg]
+            }
+            || fkWhereDeclaring != typeof(Queryable)
+            || fkPredicateArg.UnwrapLambdaFromQuote() is not { Parameters.Count: 1 } fkPredicate)
+        {
+            return false;
+        }
+
+        var targetEntityType = rootExpression.EntityType;
+        if (!NativeCorrelationMatcher.TryMatchCorrelatedCollection(
+                fkPredicate.Body, mongoQ.CollectionExpression.EntityType, outerParameter, targetEntityType,
+                requireEmbedded: false, out var navigation))
+        {
+            return false;
+        }
+
+        // A TPH-derived target would make LookupExpression's constructor prepend a discriminator $match and
+        // claim LookupPipelineKind.FallbackOnly — out of scope for EF-449.
+        if (targetEntityType.FindDiscriminatorProperty() is not null
+            && targetEntityType != targetEntityType.GetRootType())
+        {
+            return false;
+        }
+
+        // ── Nothing in the sub-pipeline may reach back out to the enclosing document. ─────────────────────────
+        if (ReferencesOuterParameter(memberBody, outerParameter)
+            || (predicate is not null && ReferencesOuterParameter(predicate.Body, outerParameter))
+            || (sortKeySelector is not null && ReferencesOuterParameter(sortKeySelector.Body, outerParameter)))
+        {
+            return false;
+        }
+
+        // ── The reduced member must be a plain, default-serialized, top-level scalar of the target. ──────────
+        var elementTranslator = new MongoExpressionTranslator(targetEntityType, elementParameter);
+        if (!IsDirectMemberAccessOn(memberBody, elementParameter)
+            || !elementTranslator.TryTranslateField(memberBody, out var memberField)
+            || memberField.ElementName.Contains('.')
+            // The read side resolves this leaf by its $project alias, with no backing IProperty to route a value
+            // converter / non-default BsonRepresentation through — the same reason the cast and
+            // document-construction leaves above demand default serialization.
+            || !NativeGroupByBinder.HasDefaultKeySerialization(memberField.Property))
+        {
+            return false;
+        }
+
+        // The read side's throw-on-empty check (MongoProjectionBindingRemovingExpressionVisitor.
+        // TryGetThrowOnEmptyCorrelatedReducerLeaf) can only observe whether this leaf's OWN $project alias is
+        // present/non-null — it has no separate signal for "a related row was found, but that row's Member is
+        // itself null/absent" versus "no related row matched at all". For a NULLABLE-typed member those two
+        // cases are genuinely indistinguishable on the read side and the first one would incorrectly throw
+        // "Sequence contains no elements" for a row that actually exists. Decline First() (not FirstOrDefault(),
+        // which never throws and reads a legitimate null/default either way) over a nullable-typed reduced
+        // member — Nullable<T> or a reference type. This is a narrowing of an already-declining family (no
+        // driver-LINQ oracle exists for this shape), so the decline surfaces as EF Core's own generic
+        // "The LINQ expression '...' could not be translated" (MEASURED — not the provider's "Unsupported
+        // cross-DbSet query", which is a different family's message), never silent wrong data.
+        if (throwOnEmpty && memberField.Property.ClrType.IsNullableType())
+        {
+            return false;
+        }
+
+        var lookup = new LookupExpression(navigation) { PipelineKind = LookupPipelineKind.CorrelatedReducer };
+
+        // FAIL-CLOSED, by construction rather than by statement ordering. The object initializer above runs
+        // AFTER the constructor, so for any target the constructor itself decided needs a sub-pipeline (today:
+        // a TPH-derived target, for which it prepends a discriminator $match and claims
+        // LookupPipelineKind.FallbackOnly) the initializer SILENTLY overwrites that kind back to
+        // CorrelatedReducer and leaves the prepended stage sitting in PipelineStages unaccounted for — this
+        // leaf's own $match/$sort/$limit would then be appended after a stage it never reasoned about.
+        // The TPH-derived-target gate above already declines the only shape that reaches this today, but that
+        // is an ORDERING property, not a structural one, and a gate wider than what the code below actually
+        // handles is the recurring silent-wrong-data trap this area's AGENTS.md invariants call out. So assert
+        // the constructor left the sub-pipeline EMPTY before appending anything of our own.
+        if (lookup.PipelineStages.Count > 0)
+        {
+            return false;
+        }
+
+        // A same-navigation collision would be silently resolved in AddLookup's favour (it dedupes by As,
+        // keeping the FIRST registered), dropping this leaf's own sub-pipeline. Decline instead. This covers
+        // this leaf running SECOND against ANY same-alias lookup — another reducer leaf, a projected-Count
+        // leaf, or an already-pending collection-Include lookup; the mirror case (this leaf running FIRST and a
+        // count leaf colliding with it afterwards) is guarded symmetrically at the count leaf's own
+        // registration site in TryTranslateProjectedCollectionCount.
+        if (pendingLookups.Exists(l => l.As == lookup.As)
+            || mongoQ.GetPendingLookups().Any(l => l.As == lookup.As))
+        {
+            return false;
+        }
+
+        if (predicate is not null)
+        {
+            var predicateTranslator = new MongoExpressionTranslator(targetEntityType, predicate.Parameters[0]);
+            if (!predicateTranslator.TryTranslate(predicate.Body, out var predicateNode)
+                || !IsConstantOnlyPredicate(predicateNode))
+            {
+                return false;
+            }
+
+            var placeholders = new PlaceholderTable();
+            var matchBody = new MongoQueryLanguageRenderer().Render(predicateNode, placeholders);
+            if (placeholders.Entries.Count > 0 || matchBody is not BsonDocument matchDoc)
+            {
+                // Defensive: IsConstantOnlyPredicate should already have declined anything parameterized.
+                return false;
+            }
+
+            lookup.PipelineStages.Add(new BsonDocument("$match", matchDoc));
+        }
+
+        if (sortKeySelector is not null)
+        {
+            if (!IsDirectMemberAccessOn(sortKeySelector.Body, sortKeySelector.Parameters[0])
+                || !new MongoExpressionTranslator(targetEntityType, sortKeySelector.Parameters[0])
+                    .TryTranslateField(sortKeySelector.Body, out var sortField)
+                || sortField.ElementName.Contains('.')
+                // The $sort stage orders by the STORED representation. For a value-converted key, or one with
+                // a non-default BsonRepresentation, the stored order need not agree with the CLR order real
+                // LINQ sorts by (an enum stored as a string sorts alphabetically, not by ordinal), so a
+                // DIFFERENT element would be picked as "first" — silent wrong data in the returned scalar, not
+                // a cosmetic MQL difference. Same conjunct, same reason, as the reduced member's own gate
+                // above; there is no serializer seam in a raw $sort key to route a conversion through.
+                || !NativeGroupByBinder.HasDefaultKeySerialization(sortField.Property))
+            {
+                return false;
+            }
+
+            lookup.PipelineStages.Add(
+                new BsonDocument("$sort", new BsonDocument(sortField.ElementName, sortAscending ? 1 : -1)));
+        }
+
+        lookup.PipelineStages.Add(new BsonDocument("$limit", 1));
+
+        pendingLookups.Add(lookup);
+        pendingReducerLeaves.Add(
+            new MongoCorrelatedReducerLeaf(alias, lookup, memberField.ElementName, throwOnEmpty));
+
+        result = new MongoElementRefExpression($"{lookup.As}.{memberField.ElementName}", leafType);
+        return true;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="expression"/> is a DIRECT single-hop member read off
+    /// <paramref name="parameter"/> — either <c>e.Member</c> or the shadow-safe <c>EF.Property(e, "Member")</c>
+    /// spelling. Used by <see cref="TryGetCorrelatedReducerLeaf"/> for the reduced member and the sort key, both
+    /// of which must be plain scalars of the looked-up element rather than anything reached through a further
+    /// hop, and both of which must be rooted on the element parameter by IDENTITY, not by name.
+    /// </summary>
+    private static bool IsDirectMemberAccessOn(Expression expression, ParameterExpression parameter)
+        => expression switch
+        {
+            MemberExpression { Expression: ParameterExpression p } => ReferenceEquals(p, parameter),
+            MethodCallExpression call
+                when call.Method.IsEFPropertyMethod()
+                     && call.Arguments is [ParameterExpression p, ConstantExpression { Value: string }]
+                => ReferenceEquals(p, parameter),
+            _ => false
+        };
+
+    /// <summary>
+    /// Whether every node in a translated <see cref="MongoExpression"/> predicate is one that renders to a
+    /// FULLY BAKED BSON value — i.e. the subtree contains no <see cref="MongoParameterExpression"/>.
+    /// </summary>
+    /// <remarks>
+    /// An ALLOW-LIST, mirroring <see cref="IsArrayFreeComputedSubtree"/>'s style and for the same reason: an
+    /// unrecognized (or future) node kind ends in the <c>_ =&gt; false</c> catch-all and DECLINES, rather than
+    /// being assumed parameter-free. That matters more here than usual — the consumer bakes the rendered result
+    /// into <see cref="LookupExpression.PipelineStages"/>, which is rendered once into the pipeline template and
+    /// has no per-execution placeholder substitution at all, so a parameter that slipped through would be an
+    /// unreplaced sentinel document sent to the server, not a slow path.
+    /// </remarks>
+    private static bool IsConstantOnlyPredicate(MongoExpression expression)
+        => expression switch
+        {
+            MongoBinaryExpression binary
+                => IsConstantOnlyPredicate(binary.Left) && IsConstantOnlyPredicate(binary.Right),
+            MongoUnaryExpression unary => IsConstantOnlyPredicate(unary.Operand),
+            MongoConvertExpression convert => IsConstantOnlyPredicate(convert.Operand),
+            MongoFieldExpression or MongoConstantExpression => true,
+            // Everything else, MongoParameterExpression included, is declined by this catch-all — see the remarks.
+            _ => false
+        };
+
+    /// <summary>
+    /// Whether <paramref name="expression"/> anywhere references <paramref name="outerParameter"/> — the
+    /// enclosing selector's own lambda parameter. Scope is decided by parameter IDENTITY, per this area's
+    /// standing invariant; a name-based test would conflate a member the outer and the looked-up entity type
+    /// happen to share (both typically have an <c>Id</c>).
+    /// </summary>
+    private static bool ReferencesOuterParameter(Expression expression, ParameterExpression outerParameter)
+    {
+        var visitor = new OuterParameterReferenceVisitor(outerParameter);
+        visitor.Visit(expression);
+        return visitor.Found;
+    }
+
+    private sealed class OuterParameterReferenceVisitor(ParameterExpression parameter) : ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            if (ReferenceEquals(node, parameter))
+            {
+                Found = true;
+            }
+
+            return node;
+        }
     }
 }

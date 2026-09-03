@@ -514,13 +514,14 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     [Fact]
     public void D_string_computed_projection_throws_under_NativeOnly()
     {
-        // Only numeric arithmetic computed leaves go native (EF-347); a string-concatenation leaf is still
-        // outside the arithmetic-binary gate, so NativeOnly still forbids the driver-LINQ fallback and throws.
+        // Only numeric arithmetic computed leaves (EF-347) and string CONCATENATION (EF-448, see
+        // NativeStringConcatTests) go native; a string-method-call leaf (ToUpper) has no native translation,
+        // so NativeOnly still forbids the driver-LINQ fallback and throws.
         var collection = SeedCustomer(nameof(D_string_computed_projection_throws_under_NativeOnly));
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.Entities.Select(c => new { Greeting = c.Name + "!" }).ToList());
+            () => db.Entities.Select(c => new { Greeting = c.Name.ToUpper() }).ToList());
     }
 
     [Fact]
