@@ -2005,11 +2005,11 @@ Employees.{ "$limit" : 9 }, { "$match" : { "_id" : 5 } }, { "$project" : { "e" :
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_id" : "$_id" } }
 """,
             //
             """
-Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
+Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_id" : "$_id" } }
 """);
     }
 

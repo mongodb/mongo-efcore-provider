@@ -489,6 +489,56 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
+    /// The computed-needle sibling of <see cref="TranslateInValues"/>: translates the collection side of a
+    /// <c>Contains</c> call whose ITEM is a COMPUTED value (e.g. a string concatenation) rather than a bare
+    /// field, so there is no backing <see cref="IProperty"/> to serialize the candidate values through.
+    /// Serializes RAW (property-less) instead — the same disposition
+    /// <see cref="MongoValueRenderer.RenderValue"/> already gives a null <c>ForSerialization</c>
+    /// (<c>BsonValue.Create</c>), matching how property-less primitive values (e.g. Skip/Take counts)
+    /// serialize elsewhere in this file. A query-PARAMETER collection is deliberately NOT supported here —
+    /// <see cref="PlaceholderTable.CreateArrayPlaceholder"/> requires a real element serializer, and there is
+    /// none to give it for a computed needle — so that shape declines rather than guessing at one.
+    /// </summary>
+    private static MongoExpression? TranslateInValuesRaw(Expression collectionExpr, Type elementClrType)
+    {
+        var unwrapped = Unwrap(collectionExpr);
+
+        var elementType = GetEnumerableElementType(unwrapped.Type);
+        if (elementType != elementClrType)
+            return null;
+
+        if (unwrapped is ConstantExpression { Value: System.Collections.IEnumerable } constant)
+            return new MongoConstantExpression(constant.Value, forSerialization: null);
+
+        // EF8's inline-array-literal shape — see TranslateInValues' own remarks on why this is recognized
+        // separately from the pre-folded ConstantExpression case above.
+        if (unwrapped is NewArrayExpression { NodeType: ExpressionType.NewArrayInit } newArray)
+        {
+            var values = Array.CreateInstance(elementType, newArray.Expressions.Count);
+            for (var i = 0; i < newArray.Expressions.Count; i++)
+            {
+                if (Unwrap(newArray.Expressions[i]) is not ConstantExpression elementConstant)
+                    return null; // non-constant element — not supported
+
+                values.SetValue(elementConstant.Value, i);
+            }
+
+            return new MongoConstantExpression(values, forSerialization: null);
+        }
+
+        // A captured local (e.g. the `data` array in `data.Contains(c.CustomerID + "SomeConstant")`) is
+        // EF Core's OWN query-parameter extraction, not a client-side value this translator evaluates
+        // itself — MEASURED to be the shape actually reaching this method for that exact query (a
+        // QueryParameterExpression, not a ConstantExpression). ForSerialization stays null (no backing
+        // IProperty); RenderInValues' parameter arm falls back to a plain element serializer keyed on
+        // elementClrType for that reason — see its own remarks.
+        if (NativeQueryParameter.TryGetQueryParameterName(unwrapped, out var parameterName))
+            return new MongoParameterExpression(parameterName, forSerialization: null);
+
+        return null; // any other shape is not supported for a computed needle
+    }
+
+    /// <summary>
     /// Translates the ITEM side of an <c>arrayField.Contains(constant)</c> call to a
     /// <see cref="MongoConstantExpression"/> serialized through the array field's own ELEMENT serializer —
     /// mirroring how <see cref="TranslateInValues"/>/<c>MongoQueryLanguageRenderer.RenderInValues</c> resolve

@@ -713,12 +713,19 @@ internal sealed class MongoPipelineFactory
         int index,
         IReadOnlyDictionary<string, object?> parameterValues)
     {
-        var (name, serializer, isArray, regexKind) = _placeholders.Entries[index];
+        var (name, serializer, isArray, regexKind, entityMemberProperty) = _placeholders.Entries[index];
 
         if (!parameterValues.TryGetValue(name, out var rawValue))
             throw new InvalidOperationException(
                 $"MongoPipelineFactory.Build: parameter '{name}' (placeholder index {index}) "
                 + "is not present in parameterValues. This is a bug in the query compilation pipeline.");
+
+        // Entity-equality rewrite (`c == local`): the raw parameter value is a WHOLE ENTITY instance, not
+        // the value to compare — extract the key member's own CLR value from it now, per execution, mirroring
+        // the regexKind deferred-computation pattern immediately below. Applied before the regexKind/serializer
+        // branches so the extracted value flows through the ordinary serialization path unchanged.
+        if (entityMemberProperty is not null && rawValue is not null)
+            rawValue = entityMemberProperty.GetGetter().GetClrValue(rawValue);
 
         // A parameterized string.StartsWith/EndsWith/Contains term: the escape+anchor transform can only
         // run now, per execution, since render (compile) time had no value to escape. Mirrors

@@ -253,6 +253,12 @@ internal static class MongoExpressionNegator
                 negated = new MongoInExpression(inExpr.Field, inExpr.Values, !inExpr.Negated);
                 return true;
 
+            case MongoComputedInExpression computedIn:
+                // The computed-needle sibling of MongoInExpression above — same exact-complement reasoning
+                // ($not: [{$in: [...]}]} is the exact complement of {$in: [...]}).
+                negated = new MongoComputedInExpression(computedIn.Needle, computedIn.Values, !computedIn.Negated);
+                return true;
+
             case MongoArrayContainsExpression arrayContains:
                 // { field: { $ne: value } } is the exact complement of { field: value } — see
                 // RenderArrayContains's remarks.

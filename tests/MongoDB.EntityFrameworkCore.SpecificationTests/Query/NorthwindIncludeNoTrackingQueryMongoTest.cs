@@ -430,7 +430,7 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$limit" : 1 }, { "$lookup" : { "from" : "Orders", "let" : { "localField" : "$_id" }, "pipeline" : [{ "$match" : { "$expr" : { "$eq" : ["$CustomerID", "$$localField"] } } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }], "as" : "_lookup_Orders" } }, { "$limit" : 1 }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$limit" : 1 }, { "$limit" : 1 }, { "$lookup" : { "from" : "Orders", "let" : { "localField" : "$_id" }, "pipeline" : [{ "$match" : { "$expr" : { "$eq" : ["$CustomerID", "$$localField"] } } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }], "as" : "_lookup_Orders" } }, { "$project" : { "CustomerID" : "$_id", "_lookup_Orders" : "$_lookup_Orders", "_id" : "$_id" } }
 """);
     }
 
@@ -514,7 +514,7 @@ Orders.{ "$match" : { "_id" : 10248 } }, { "$limit" : 2 }, { "$lookup" : { "from
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 1 }, { "$limit" : 1 }, { "$lookup" : { "from" : "Orders", "let" : { "localField" : "$_id" }, "pipeline" : [{ "$match" : { "$expr" : { "$eq" : ["$CustomerID", "$$localField"] } } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }], "as" : "_lookup_Orders" } }, { "$limit" : 1 }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 1 }, { "$limit" : 1 }, { "$limit" : 1 }, { "$lookup" : { "from" : "Orders", "let" : { "localField" : "$_id" }, "pipeline" : [{ "$match" : { "$expr" : { "$eq" : ["$CustomerID", "$$localField"] } } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }], "as" : "_lookup_Orders" } }, { "$project" : { "CustomerID" : "$_id", "_lookup_Orders" : "$_lookup_Orders", "_id" : "$_id" } }
 """);
     }
 
@@ -734,7 +734,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 1 }, { "$lookup" : { "from" : "Orders", "let" : { "localField" : "$_id" }, "pipeline" : [{ "$match" : { "$expr" : { "$eq" : ["$CustomerID", "$$localField"] } } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }], "as" : "_lookup_Orders" } }, { "$limit" : 1 }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 1 }, { "$limit" : 1 }, { "$lookup" : { "from" : "Orders", "let" : { "localField" : "$_id" }, "pipeline" : [{ "$match" : { "$expr" : { "$eq" : ["$CustomerID", "$$localField"] } } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }], "as" : "_lookup_Orders" } }, { "$project" : { "CustomerID" : "$_id", "_lookup_Orders" : "$_lookup_Orders", "_id" : "$_id" } }
 """);
     }
 

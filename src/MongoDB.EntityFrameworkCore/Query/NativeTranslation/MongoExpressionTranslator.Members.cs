@@ -297,6 +297,99 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
+    /// Resolves an ENTITY-TYPED comparison operand — the whole root entity (<c>c</c> in <c>c == null</c>) or an
+    /// owned/embedded single-reference navigation reached from it (<c>b.Address</c> in <c>b.Address == null</c>,
+    /// including a multi-hop chain like <c>b.Address.Recipient</c>) — to a <see cref="MongoElementRefExpression"/>
+    /// naming its document path. Used only by <see cref="TranslateComparison"/>'s entity-vs-null and
+    /// entity-vs-itself arms; NOT a general entity-operand resolver (no caller may compare the result against
+    /// anything other than a literal null, or against another identical entity-typed operand of the SAME
+    /// origin — see those callers' own remarks for why).
+    /// </summary>
+    private bool TryResolveEntityTypedOperand(Expression node, [NotNullWhen(true)] out MongoElementRefExpression? elementRef)
+    {
+        if (SelfParam is not null && ReferenceEquals(node, SelfParam))
+        {
+            elementRef = new MongoElementRefExpression(MongoElementRefExpression.WholeRootDocumentPath, _entityType.ClrType);
+            return true;
+        }
+
+        if (TryResolveOwnedReferenceNavigationPath(node, out var navPath, out var navigation))
+        {
+            // nullSafe: true — unlike WholeRootDocumentPath, a real element path CAN be entirely missing from
+            // the stored document (an unset owned single-reference nav), and $expr's $eq does not treat that
+            // the same as an explicit null the way the query dialect's {field: null} does. See
+            // MongoElementRefExpression.NullSafe's own remarks.
+            elementRef = new MongoElementRefExpression(navPath, navigation.TargetEntityType.ClrType, nullSafe: true);
+            return true;
+        }
+
+        elementRef = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Resolves a nested member/navigation access chain whose LEAF hop is itself an owned/embedded
+    /// single-reference (OwnsOne) navigation — e.g. <c>b.Address</c> or <c>b.Address.Recipient</c> — to its own
+    /// dotted document path, mirroring <see cref="TryResolveOwnedFieldPath"/>'s walk but stopping ONE hop
+    /// earlier: every hop, INCLUDING the leaf, must resolve to an embedded single-reference navigation, since
+    /// the leaf here is the navigation itself, not a scalar property underneath it. Returns
+    /// <see langword="false"/> for a collection navigation, a reference (non-embedded) navigation, or a single
+    /// top-level hop off a non-parameter receiver.
+    /// </summary>
+    private bool TryResolveOwnedReferenceNavigationPath(
+        Expression node, [NotNullWhen(true)] out string? path, [NotNullWhen(true)] out INavigation? navigation)
+    {
+        path = null;
+        navigation = null;
+
+        // Same scope restriction as TryResolveOwnedFieldPath — see its own remarks.
+        if (_innerPrefix is not null)
+            return false;
+
+        var names = new List<string>();
+        var current = node;
+        while (TryGetMemberOrEFProperty(current, out var inner, out var name))
+        {
+            names.Add(name);
+            current = inner;
+        }
+
+        if (current is not ParameterExpression rootParam || names.Count == 0)
+            return false;
+
+        // EF-421-style root-identity check — see TryResolveOwnedFieldPath's own remarks for why accepting any
+        // ParameterExpression root is safe in single-scope mode, and why two-scope mode must check identity.
+        var isOuter = _outerParam is not null && ReferenceEquals(rootParam, _outerParam);
+        if (_outerParam is not null && !isOuter)
+            return false;
+
+        names.Reverse(); // root-first: [firstNav, ..., leafNav]
+
+        var scopeType = isOuter ? _outerEntityType! : _entityType;
+        var segments = new List<string>(names.Count);
+        INavigation? leafNavigation = null;
+        foreach (var name in names)
+        {
+            var nav = scopeType.FindNavigation(name);
+            if (nav is null || !nav.IsEmbedded() || nav.IsCollection)
+                return false;
+
+            var elementName = nav.TargetEntityType.GetContainingElementName();
+            if (string.IsNullOrEmpty(elementName))
+                return false;
+
+            segments.Add(elementName);
+            scopeType = nav.TargetEntityType;
+            leafNavigation = nav;
+        }
+
+        // names.Count == 0 already declined above, so the loop ran at least once and leafNavigation is set.
+        navigation = leafNavigation!;
+        path = string.Join(".", segments);
+        return true;
+    }
+
+    /// <summary>
     /// Resolves the SOURCE of an owned-collection quantifier (<c>b.Posts</c>, <c>b.Address.Notes</c>) to the
     /// dotted document path of the embedded array — <b>relative to this translator's scope entity type</b> —
     /// and yields the array's element entity type. Every non-final hop must be an embedded single-reference

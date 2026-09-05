@@ -35,10 +35,18 @@ internal sealed class MongoParameterExpression : MongoExpression
     /// Optional <see cref="IProperty"/> that provides serialization context for
     /// the renderer. May be <see langword="null"/> for untyped parameters.
     /// </param>
-    public MongoParameterExpression(string name, IProperty? forSerialization)
+    /// <param name="extractFromEntityValue">
+    /// When <see langword="true"/>, the runtime value bound to <paramref name="name"/> is a WHOLE ENTITY
+    /// instance (e.g. a captured local compared via <c>c == local</c>), not the property's own value —
+    /// <paramref name="forSerialization"/>'s <see cref="IPropertyBase.GetGetter"/> must be applied to that
+    /// instance, per execution, to obtain the actual value before serialization. See the entity-equality
+    /// rewrite in <c>MongoExpressionTranslator.EntityEquality.cs</c>.
+    /// </param>
+    public MongoParameterExpression(string name, IProperty? forSerialization, bool extractFromEntityValue = false)
     {
         Name = name;
         ForSerialization = forSerialization;
+        ExtractFromEntityValue = extractFromEntityValue;
     }
 
     /// <summary>The parameter name.</summary>
@@ -48,6 +56,11 @@ internal sealed class MongoParameterExpression : MongoExpression
     /// Optional property metadata used by the renderer to select the correct serializer.
     /// </summary>
     public IProperty? ForSerialization { get; }
+
+    /// <summary>
+    /// See the constructor parameter of the same name.
+    /// </summary>
+    public bool ExtractFromEntityValue { get; }
 
     /// <inheritdoc />
     public override Type Type

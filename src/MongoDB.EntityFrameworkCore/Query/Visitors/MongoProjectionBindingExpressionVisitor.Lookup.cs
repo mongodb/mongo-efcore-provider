@@ -128,18 +128,74 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         _queryExpression.AddLookup(lookup);
 
         // Bind the outer entity so we can reach its EntityProjectionExpression / ParentAccessExpression.
+        //
+        // GATED on Route == NativeRoute.Projection, deliberately. Once a projection routes natively — as this
+        // one now does once the recognizer above accepts it — the general Visit(StructuralTypeShaperExpression)
+        // dispatch has a "whole-root-entity leaf" arm (VisitExtension's top case, ITSELF gated on
+        // Route == NativeRoute.Projection) that fires for ANY shaper matching the query's own root entity type,
+        // registering it under whatever ProjectionMember is CURRENTLY on the stack. That arm exists for a
+        // genuine top-level "c" leaf in a projection like `new { c, Total = ... }`; it has no way to tell that
+        // apart from outerShaper here, which is an internal lookup, not a projected member. outerShaper is
+        // reached from INSIDE VisitNew's per-argument loop (while translating the "Orders" member), so a plain
+        // Visit(outerShaper) call would silently clobber the "Orders" projection-member's own mapping with the
+        // whole customer entity instead of the intended array leaf, and return a ProjectionMember-keyed (not
+        // Index-keyed) binding this method's own Index check then declines on. The native-route branch below
+        // instead resolves the outer entity's EntityProjectionExpression directly, duplicating the DEFAULT
+        // StructuralTypeShaperExpression handling (VisitExtension's other case) without going through the
+        // special-cased leaf arm or touching _projectionMapping.
+        //
+        // For every OTHER route (an explicit MongoQueryMode.DriverLinq, or a translate-time decline that keeps
+        // this shape on the mixed/fallback path) the hazard above cannot fire — case 434 never runs when
+        // Route != Projection — so a plain Visit(outerShaper) call is exactly as safe as it was before this
+        // fix, and is kept unchanged below (including the AddToProjection side effect the default
+        // StructuralTypeShaperExpression case performs, which nothing in the native branch above needs to
+        // replicate: its own lookup of outerEntityProjection is purely local to resolving THIS single call and
+        // is never itself stored for a later reader to find via that side effect).
         _includedNavigations.Push(navigation);
-        var visitedOuter = Visit(outerShaper);
-        if (visitedOuter is not StructuralTypeShaperExpression
-            {
-                ValueBufferExpression: ProjectionBindingExpression { Index: int outerIndex }
-            })
+        EntityProjectionExpression outerEntityProjection;
+        if (_queryExpression.Select.Route == NativeRoute.Projection)
         {
-            _includedNavigations.Pop();
-            return false;
+            // Safe unchecked cast: FindOuterShaper only ever returns a shaper whose ValueBufferExpression is a
+            // ProjectionBindingExpression (see its own ShaperFinder callback above), so outerShaper is
+            // guaranteed to satisfy this cast.
+            var outerProjectionBinding = (ProjectionBindingExpression)outerShaper.ValueBufferExpression;
+            if (outerProjectionBinding.Index is int existingOuterIndex
+                && outerProjectionBinding.QueryExpression == _queryExpression)
+            {
+                outerEntityProjection = (EntityProjectionExpression)_queryExpression.Projection[existingOuterIndex].Expression;
+            }
+            else if (outerProjectionBinding.ProjectionMember is not null)
+            {
+                outerEntityProjection = (EntityProjectionExpression)_queryExpression.GetMappedProjection(
+                    outerProjectionBinding.ProjectionMember);
+            }
+            else
+            {
+                // outerProjectionBinding.Index is non-null (a ProjectionBindingExpression is constructed with
+                // exactly one of Index/ProjectionMember set, never both, per its own type) but bound to a
+                // DIFFERENT QueryExpression instance than this one — practically unreachable given how
+                // FindOuterShaper is used here (the outer shaper it locates is always bound through this same
+                // query's own ProjectionMember), but GetMappedProjection(null) would throw rather than decline
+                // if it somehow were reached. Decline gracefully instead, matching this method's own
+                // fail-closed style everywhere else.
+                _includedNavigations.Pop();
+                return false;
+            }
         }
+        else
+        {
+            var visitedOuter = Visit(outerShaper);
+            if (visitedOuter is not StructuralTypeShaperExpression
+                {
+                    ValueBufferExpression: ProjectionBindingExpression { Index: int outerIndex }
+                })
+            {
+                _includedNavigations.Pop();
+                return false;
+            }
 
-        var outerEntityProjection = (EntityProjectionExpression)_queryExpression.Projection[outerIndex].Expression;
+            outerEntityProjection = (EntityProjectionExpression)_queryExpression.Projection[outerIndex].Expression;
+        }
 
         var lookupAlias = LookupExpression.GetLookupAlias(navigation);
         var objectArrayProjection = new ObjectArrayProjectionExpression(

@@ -21,9 +21,12 @@ using System.Threading;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using MongoDB.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
@@ -299,18 +302,28 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
         public DbSet<NestedOrder> Orders { get; set; } = null!;
         public DbSet<NestedCustomer> Customers { get; set; } = null!;
 
-        public NestedOrderCustomerDbContext(TemporaryDatabaseFixture db, string orders, string customers, string orderDetails)
-            : base(new DbContextOptionsBuilder<NestedOrderCustomerDbContext>()
+        public NestedOrderCustomerDbContext(
+            TemporaryDatabaseFixture db, string orders, string customers, string orderDetails,
+            MongoQueryMode mode = MongoQueryMode.NativeOnly, ILoggerFactory? loggerFactory = null)
+            : base(Configure(new DbContextOptionsBuilder<NestedOrderCustomerDbContext>()
                 .UseMongoDB(db.Client, db.MongoDatabase.DatabaseNamespace.DatabaseName,
-                    o => o.UseQueryMode(MongoQueryMode.NativeOnly))
+                    o => o.UseQueryMode(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
-                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)), loggerFactory)
                 .Options)
         {
             _orders = orders;
             _customers = customers;
             _orderDetails = orderDetails;
         }
+
+        // Optional MQL-capture hook (review finding I4): a loggerFactory lets a caller assert the route the
+        // query actually took (e.g. via SpyLoggerProvider + MongoEventId.ExecutedMqlQuery), rather than only
+        // asserting the DATA an explicit MongoQueryMode produced. Byte-for-byte inert (no UseLoggerFactory
+        // call at all) for every pre-existing caller, which all pass null.
+        private static DbContextOptionsBuilder<NestedOrderCustomerDbContext> Configure(
+            DbContextOptionsBuilder<NestedOrderCustomerDbContext> builder, ILoggerFactory? loggerFactory)
+            => loggerFactory is null ? builder : builder.UseLoggerFactory(loggerFactory).EnableSensitiveDataLogging();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -379,6 +392,121 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
         var customer = Assert.Single(customers);
         var order = Assert.Single(customer.Orders);
         Assert.Equal(2, order.OrderDetails.Count);
+    }
+
+    [Fact]
+    public void Explicit_DriverLinq_mode_is_unaffected_by_a_separate_Include_plus_projected_list_of_the_same_nav()
+    {
+        // Task 4 (EF-322 native-projected-collection-navigation plan) Step 7: confirms the fallback path
+        // itself is unaffected by Task 1's new native recognizer for `select new { ..., Orders =
+        // c.Orders.ToList() }` sitting ALONGSIDE a separate `.Include(c => c.Orders).ThenInclude(o =>
+        // o.OrderDetails)` on the same navigation — the exact shape
+        // NorthwindIncludeQueryMongoTest.Multi_level_includes_are_applied_with_skip[_take] exercises, and the
+        // shape that surfaced two real bugs during this task (a whole-root-entity-leaf bind-side collision,
+        // and an ApplyProjection/AddLookup dedup gap) that were fixed in the source. Route selection is
+        // orthogonal to NativeProjectionBinder (only consulted for MongoQueryMode.Native/NativeOnly), so under
+        // an EXPLICIT MongoQueryMode.DriverLinq this query must still produce the SAME correct data it always
+        // did — Task 1 does not touch anything on the fallback path.
+        //
+        // Review finding I4: asserting data alone doesn't prove the query actually TOOK the DriverLinq route
+        // — a future change could silently make it go native under an explicit DriverLinq request and this
+        // test would not notice. Captures the executed MQL (SpyLoggerProvider, the FunctionalTests idiom —
+        // see NativeArrayProjectionTests) and asserts the one thing that DOES distinguish the two routes for
+        // this exact shape: the native route emits a terminal `$project` retaining `CustomerID`/
+        // `_lookup_Orders`/`_id` (see NorthwindIncludeQueryMongoTest's re-baselined AssertMql), while the
+        // array-typed `Orders` leaf forces the DriverLinq/mixed shaper to fold the projection CLIENT-side over
+        // whole documents instead (AGENTS.md: "any entity/collection-typed leaf makes ProjectionAnalyzer.
+        // CanPushDown refuse to hand the query to the driver's LINQ v3 provider") — so a genuine DriverLinq
+        // route for this shape never emits a `$project` stage at all.
+        var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateDriverLinqCustomers") + Guid.NewGuid().ToString("N")[..8];
+        var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateDriverLinqOrders") + Guid.NewGuid().ToString("N")[..8];
+        var orderDetailsName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateDriverLinqOrderDetails") + Guid.NewGuid().ToString("N")[..8];
+
+        var customerId = ObjectId.GenerateNewId();
+        var orderId = ObjectId.GenerateNewId();
+        database.MongoDatabase.GetCollection<BsonDocument>(customersName).InsertOne(
+            new BsonDocument { { "_id", customerId }, { "name", "Alice" } });
+        database.MongoDatabase.GetCollection<BsonDocument>(ordersName).InsertOne(
+            new BsonDocument
+            {
+                { "_id", orderId }, { "desc", "Order 1" }, { "cust_id", customerId }, { "Freight", 0.0 }
+            });
+        database.MongoDatabase.GetCollection<BsonDocument>(orderDetailsName).InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "order_id", orderId }, { "Detail", "Widget" } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "order_id", orderId }, { "Detail", "Gadget" } },
+        ]);
+
+        var (loggerFactory, spy) = SpyLoggerProvider.Create();
+        using var db = new NestedOrderCustomerDbContext(
+            database, ordersName, customersName, orderDetailsName, MongoQueryMode.DriverLinq, loggerFactory);
+
+        var results = db.Customers
+            .Include(c => c.Orders).ThenInclude(o => o.OrderDetails)
+            .Select(c => new { c.FullName, Orders = c.Orders.ToList() })
+            .ToList();
+
+        var row = Assert.Single(results);
+        Assert.Equal("Alice", row.FullName);
+        var order = Assert.Single(row.Orders);
+        Assert.Equal("Order 1", order.OrderDescription);
+        Assert.Equal(2, order.OrderDetails.Count);
+
+        // The route assertion: a genuine DriverLinq/mixed-shaper execution for this shape never emits a
+        // native $project — confirm this run didn't silently go native instead.
+        var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
+        Assert.DoesNotContain("$project", mql);
+        Assert.Equal(["Gadget", "Widget"], order.OrderDetails.Select(d => d.Detail).OrderBy(d => d).ToArray());
+    }
+
+    [Fact]
+    public void NativeOnly_mode_goes_native_for_a_separate_Include_plus_projected_list_of_the_same_nav()
+    {
+        // Positive twin of Explicit_DriverLinq_mode_is_unaffected_by_a_separate_Include_plus_projected_list_
+        // of_the_same_nav above, using the SAME query shape and data, but under NestedOrderCustomerDbContext's
+        // own DEFAULT MongoQueryMode.NativeOnly. Per this file's own stated rule (and AGENTS.md's "MQL shape
+        // cannot prove a query went native" pitfall), correct data alone never proves nativeness — only an
+        // explicit MongoQueryMode.NativeOnly run (which throws NativeTranslationNotSupportedException instead
+        // of silently falling back) plus a positive route signal genuinely proves it. Captures MQL the same
+        // way the DriverLinq twin does and asserts the inverse: a genuinely native run for this shape DOES
+        // emit a terminal `$project` retaining `FullName`/`_lookup_Orders`/`_id`.
+        var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateNativeOnlyCustomers") + Guid.NewGuid().ToString("N")[..8];
+        var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateNativeOnlyOrders") + Guid.NewGuid().ToString("N")[..8];
+        var orderDetailsName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateNativeOnlyOrderDetails") + Guid.NewGuid().ToString("N")[..8];
+
+        var customerId = ObjectId.GenerateNewId();
+        var orderId = ObjectId.GenerateNewId();
+        database.MongoDatabase.GetCollection<BsonDocument>(customersName).InsertOne(
+            new BsonDocument { { "_id", customerId }, { "name", "Alice" } });
+        database.MongoDatabase.GetCollection<BsonDocument>(ordersName).InsertOne(
+            new BsonDocument
+            {
+                { "_id", orderId }, { "desc", "Order 1" }, { "cust_id", customerId }, { "Freight", 0.0 }
+            });
+        database.MongoDatabase.GetCollection<BsonDocument>(orderDetailsName).InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "order_id", orderId }, { "Detail", "Widget" } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "order_id", orderId }, { "Detail", "Gadget" } },
+        ]);
+
+        var (loggerFactory, spy) = SpyLoggerProvider.Create();
+        using var db = new NestedOrderCustomerDbContext(
+            database, ordersName, customersName, orderDetailsName, MongoQueryMode.NativeOnly, loggerFactory);
+
+        // Should NOT throw NativeTranslationNotSupportedException under NativeOnly.
+        var results = db.Customers
+            .Include(c => c.Orders).ThenInclude(o => o.OrderDetails)
+            .Select(c => new { c.FullName, Orders = c.Orders.ToList() })
+            .ToList();
+
+        var row = Assert.Single(results);
+        Assert.Equal("Alice", row.FullName);
+        var order = Assert.Single(row.Orders);
+        Assert.Equal("Order 1", order.OrderDescription);
+        Assert.Equal(2, order.OrderDetails.Count);
+        Assert.Equal(["Gadget", "Widget"], order.OrderDetails.Select(d => d.Detail).OrderBy(d => d).ToArray());
+
+        // The route assertion: a genuinely native execution for this shape emits a terminal $project.
+        var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
+        Assert.Contains("$project", mql);
     }
 
     [Fact]

@@ -655,4 +655,58 @@ internal static class NativeGroupByBinder
             select.AddProjection(f);
         return true;
     }
+
+    /// <summary>
+    /// A scalar aggregate (Sum/Min/Max/Average) terminating DIRECTLY on a bare-scalar-projected
+    /// <c>Distinct()</c> — no intervening Select — e.g. <c>Select(o => o.OrderID).Distinct().Max()</c>
+    /// (EF-453). Mirrors <see cref="TryBindGroupTerminalAggregate"/>'s role for a bare <c>GroupBy(key)</c>,
+    /// but the aggregate's operand is NOT translated against the entity: unlike
+    /// <c>GroupBy(key).Select(g =&gt; g.Sum(x =&gt; x.Field))</c>, a bare <c>Distinct().Max()</c> carries no
+    /// selector lambda at all — <c>Max()</c> reduces whatever <c>Distinct()</c> already flattened. The
+    /// degenerate group <see cref="TryBindDistinctFromProjection"/> installs has zero accumulators and
+    /// exactly one key part (the projected value itself), so the operand is simply that key's own flattened
+    /// output alias, read back directly.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately scoped to Sum/Min/Max/Average — the only aggregates for which a bare, no-selector call
+    /// (<c>Max()</c>, never <c>Max(x =&gt; ...)</c>) is even reachable, which C#'s <c>IComparable</c>
+    /// constraint on the parameterless overloads restricts to a genuinely scalar-projected <c>Distinct()</c>.
+    /// <c>Count()</c>/<c>LongCount()</c> take no selector at all and so are ALSO reachable over a
+    /// multi-member <c>new {...}</c>-projected <c>Distinct()</c> (e.g.
+    /// <c>Select(o =&gt; new { o.Country }).Distinct().Count()</c>, pinned by
+    /// <c>NativeDistinctTests.Distinct_then_Count_throws_under_native_only</c> and
+    /// <c>NorthwindAggregateOperatorsQueryMongoTest.Select_Select_Distinct_Count</c> as an intentionally
+    /// out-of-scope fallback) — admitting them here would silently flip those pinned shapes to native too,
+    /// which is a real (if likely safe) capability change this ticket does not attempt.
+    /// </remarks>
+    internal static bool TryBindDistinctTerminalAggregate(
+        MongoQueryExpression mongoQ, MongoAggregateOperator op, LambdaExpression? selector, Type resultType)
+    {
+        var select = mongoQ.Select;
+        if (select.Grouping is not { Accumulators.Count: 0, Key.Count: 1 } grouping || select.Cardinality != null)
+            return false;
+
+        if (op is not (MongoAggregateOperator.Sum or MongoAggregateOperator.Min or MongoAggregateOperator.Max
+                or MongoAggregateOperator.Average))
+            return false;
+
+        var keyPart = grouping.Key[0];
+        if (keyPart.Name == null)
+            return false; // no flattened alias to read back (not reachable via TryBindDistinctFromProjection today)
+
+        // Sum/Min/Max/Average never take a predicate, and a selector here would mean reducing some OTHER
+        // value than the one Distinct already flattened (e.g. a computed re-projection) — this binder does
+        // not attempt that; decline so it falls back rather than silently aggregating the wrong value.
+        if (selector != null)
+            return false;
+
+        var operand = new MongoElementRefExpression(keyPart.Name, keyPart.FieldRef.Type);
+
+        NativeCardinalityBinder.BuildEmptyBehavior(op, resultType, out var emptyValue, out var emptyBehavior);
+
+        var cardinality = MongoCardinality.ForAggregate(
+            op, operand, emptyBehavior, emptyValue, resultType, presenceOnly: false, presentValue: null);
+        select.SetGroupedTerminalAggregate(grouping, cardinality, postGroupPredicate: null);
+        return true;
+    }
 }

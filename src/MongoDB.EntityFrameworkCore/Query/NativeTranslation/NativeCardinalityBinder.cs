@@ -113,6 +113,20 @@ internal static class NativeCardinalityBinder
             return true;
         }
 
+        // A scalar aggregate terminating DIRECTLY on a projected Distinct() — no intervening Select — e.g.
+        // Select(o => o.OrderID).Distinct().Max() (EF-453). Checked BEFORE the HasTerminalOperator guard
+        // below for the same reason as the bare-GroupBy carve-out above: TranslateDistinct finalizes
+        // IsDistinct/Grouping unconditionally the moment a projected Distinct is seen, so that guard would
+        // otherwise always decline this shape. TryBindDistinctTerminalAggregate itself re-checks Grouping's
+        // shape, so a false return here falls through safely to the ordinary guard below, which declines for
+        // the same underlying reason (IsDistinct already true) — no double-decision, just two paths to the
+        // same fallback.
+        if (select.IsDistinct && select.Cardinality == null
+            && NativeGroupByBinder.TryBindDistinctTerminalAggregate(mongoQ, op, selector, resultType))
+        {
+            return true;
+        }
+
         // A scalar aggregate applied after a finalized GroupBy(key).Select(anon)/Distinct must fall back:
         // setting Cardinality on an already-grouped select flips Route to ScalarAggregate (which takes
         // priority over Grouping), but the lowerer's grouping branch still emits [$group, $project] with no

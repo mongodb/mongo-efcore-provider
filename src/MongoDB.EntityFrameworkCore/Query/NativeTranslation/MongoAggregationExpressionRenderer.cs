@@ -15,6 +15,7 @@
 
 using System.Linq;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Serializers;
 
@@ -55,6 +56,11 @@ internal static class MongoAggregationExpressionRenderer
         => node switch
         {
             MongoFieldExpression field => FieldRef(field.ElementName, elementVariable),
+            // NullSafe wraps a MISSING element the same as an explicitly-stored null (see the node's own
+            // remarks) — needed for an owned-nav null-equality check, where $expr's own $eq does not
+            // otherwise treat "missing" and "null" alike the way the ordinary query dialect does.
+            MongoElementRefExpression { NullSafe: true } nullSafeElementRef
+                => new BsonDocument("$ifNull", new BsonArray { FieldRef(nullSafeElementRef.Path, elementVariable), BsonNull.Value }),
             MongoElementRefExpression elementRef => FieldRef(elementRef.Path, elementVariable),
             // Always at document root, REGARDLESS of elementVariable — see the node's own remarks.
             MongoOuterFieldExpression outer => FieldRef(outer.ElementName, elementVariable: null),
@@ -63,6 +69,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoSizeExpression size => RenderSize(size, elementVariable),
             MongoFilteredSizeExpression filtered => RenderFilteredSize(filtered, placeholders, elementVariable),
             MongoInExpression inExpr => RenderIn(inExpr, placeholders, elementVariable),
+            MongoComputedInExpression computedIn => RenderComputedIn(computedIn, placeholders, elementVariable),
             MongoUnaryExpression unary => RenderUnary(unary, placeholders, elementVariable),
             MongoConvertExpression convert
                 => new BsonDocument(
@@ -150,6 +157,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoSizeExpression => true,
             MongoFilteredSizeExpression filtered => CanRender(filtered.ElementPredicate),
             MongoInExpression inExpr => CanRenderInValues(inExpr.Values),
+            MongoComputedInExpression computedIn => CanRender(computedIn.Needle) && CanRenderInValues(computedIn.Values),
             // A bare-field operand must ALSO be default-serialized — mirrors RenderUnary's own render-time
             // guard (EF-413 review fix), so the two can never disagree: CanRender=true must mean Render
             // actually succeeds AND answers correctly, not merely "doesn't throw". Checked via
@@ -345,6 +353,18 @@ internal static class MongoAggregationExpressionRenderer
         return inExpr.Negated ? new BsonDocument("$not", new BsonArray { inDoc }) : inDoc;
     }
 
+    // The computed-needle sibling of RenderIn above: the needle renders through the ordinary recursive
+    // Render (a $concat, a field, etc.) rather than FieldRef-by-element-name, since there is no single
+    // field path to key on.
+    private static BsonValue RenderComputedIn(
+        MongoComputedInExpression computedIn, PlaceholderTable placeholders, string? elementVariable)
+    {
+        var needle = Render(computedIn.Needle, placeholders, elementVariable);
+        var haystack = RenderInValues(computedIn.Values, placeholders);
+        var inDoc = new BsonDocument("$in", new BsonArray { needle, haystack });
+        return computedIn.Negated ? new BsonDocument("$not", new BsonArray { inDoc }) : inDoc;
+    }
+
     private static BsonValue RenderInValues(MongoExpression values, PlaceholderTable placeholders)
     {
         switch (values)
@@ -359,8 +379,15 @@ internal static class MongoAggregationExpressionRenderer
             }
             case MongoParameterExpression parameter:
             {
-                var info = BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization!);
-                return placeholders.CreateArrayPlaceholder(parameter.Name, info.Serializer);
+                // A null ForSerialization means there is no backing IProperty — reached only via a
+                // COMPUTED needle's values (TranslateInValuesRaw), which today is scoped to a string-typed
+                // needle exclusively (MongoExpressionTranslator's collection-membership case), so a plain
+                // string element serializer is always correct here. An ordinary bare-field MongoInExpression
+                // never reaches this null branch — TranslateInValues always supplies a real property.
+                var elementSerializer = parameter.ForSerialization is null
+                    ? StringSerializer.Instance
+                    : BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization).Serializer;
+                return placeholders.CreateArrayPlaceholder(parameter.Name, elementSerializer);
             }
             default:
                 throw new NativeTranslationNotSupportedException(

@@ -147,11 +147,86 @@ internal sealed partial class MongoQueryExpression
     /// <summary>
     /// Register a $lookup stage for a cross-collection collection Include.
     /// </summary>
+    /// <remarks>
+    /// Two independent call sites can legitimately race to register the SAME navigation's lookup: the native
+    /// projection EMIT side (<c>NativeProjectionBinder.TryTranslateProjectedCollectionNavigationList</c>)
+    /// registers a BARE placeholder — no <c>ThenInclude</c> sub-pipeline; its own job is only to recognize the
+    /// shape and reserve the alias — before the pre-existing BIND-side pass
+    /// (<c>MongoProjectionBindingExpressionVisitor.TryBindProjectedCollectionNavigation</c>) registers the REAL
+    /// lookup, carrying any nested <c>ThenInclude</c> sub-pipeline populated via
+    /// <c>ExtractThenIncludesFromSubquery</c>. The emit side always runs first
+    /// (<c>MongoQueryableMethodTranslatingExpressionVisitor.TranslateSelect</c> calls
+    /// <c>NativeProjectionBinder</c> before <c>_projectionBindingExpressionVisitor.Translate</c>), so a plain
+    /// first-registration-wins dedup would silently keep the bare placeholder and DROP the real pipeline,
+    /// rendering a plain <c>localField</c>/<c>foreignField</c> <c>$lookup</c> with no nested <c>$lookup</c> for
+    /// the <c>ThenInclude</c>'d collection — measured: a <c>ThenInclude(OrderDetails)</c> on a projected-list
+    /// leaf silently returned zero <c>OrderDetails</c> rows for every <c>Order</c>.
+    /// <para>
+    /// The fix is a MERGE, not a swap. A first attempt replaced the list entry with the incoming, richer
+    /// object wholesale (<c>_pendingLookups[existingIndex] = lookup</c>) — review found this silently
+    /// discards every attribute the two-argument <c>HasPipeline</c> check never looks at: <c>ForceUnwind</c>,
+    /// <c>PreserveNullAndEmptyArrays</c>, and <c>InjectAfterRoot</c>. A join's own bare registration
+    /// (<see cref="AddJoin"/>, via <c>JoinInfo.Lookup</c>) sets <c>ForceUnwind: true</c> and
+    /// <c>PreserveNullAndEmptyArrays</c> from the join's own left-outer-ness; a projected-Count leaf's bare
+    /// registration sets <c>InjectAfterRoot</c>. Swapping the object for one built with none of that context
+    /// would silently drop the <c>$unwind</c> a join relies on (changing an inner join's row cardinality) or
+    /// the size-read ordering a projected Count relies on — and <see cref="JoinInfo.Lookup"/> specifically
+    /// keeps its OWN reference to the original object, so a swap here would leave that reference pointing at
+    /// a now-discarded, no-longer-registered <see cref="LookupExpression"/>. Merging the incoming pipeline
+    /// INTO the existing object (rather than replacing it) preserves the existing object's identity and every
+    /// attribute this dedup doesn't reason about, by construction. The write-once <see cref="LookupPipelineKind"/>
+    /// stamp mirrors the discipline <c>MongoProjectionBindingExpressionVisitor.ExtractNestedIncludePipeline</c>
+    /// already uses for the identical reason (never re-stamp a kind an earlier registration chose) — never
+    /// touching a genuine <see cref="LookupExpression.PipelineKind"/> conflict between two DIFFERENT non-empty
+    /// pipelines, which is a real ambiguity the two callers above already detect and decline for themselves
+    /// before ever reaching here (see <c>TryTranslateProjectedCollectionNavigationList</c>'s own
+    /// colliding-lookup check, and the mirror check in the projected-Count binder).
+    /// </para>
+    /// <para>
+    /// This merge is intentionally one-directional: it fires only when <c>!existing.HasPipeline &amp;&amp;
+    /// lookup.HasPipeline</c>. When the EXISTING registration already carries a pipeline (e.g. a TPH
+    /// discriminator-narrowing <c>$match</c>, <see cref="LookupPipelineKind.FallbackOnly"/>) and the INCOMING
+    /// registration also wants to add one, the incoming stages are silently NOT merged in — this asymmetry
+    /// predates this feature and is unchanged by it. It is currently unreachable with wrong data: both
+    /// emit-side recognizers that could produce a second pipeline-bearing registration for the same alias
+    /// (<c>NativeProjectionBinder.TryTranslateProjectedCollectionNavigationList</c>'s
+    /// <c>IsNativeCollectionLookup</c>/colliding-<see cref="LookupExpression.PipelineKind"/> guard above, and the
+    /// mirror guard in the projected-Count binder) decline a TPH-derived join target outright before ever
+    /// reaching this method, so a genuine existing-has-pipeline-and-incoming-has-pipeline collision never
+    /// actually occurs today. It is recorded here as a latent gap for whichever future feature relaxes one of
+    /// those guards.
+    /// </para>
+    /// <para>
+    /// The converse — and newer — widening is that this merge can make a LATER pipeline-bearing registration
+    /// land on top of an EARLIER *bare* registration that came from a completely DIFFERENT feature: a join's
+    /// own bare registration (<c>LookupExpression.ForceUnwind</c> set via <see cref="AddJoin"/>/<c>JoinInfo.Lookup</c>),
+    /// or a projected-Count leaf's bare registration (<c>LookupExpression.InjectAfterRoot</c>), can each
+    /// be merged into by a later-registered, pipeline-bearing registration for the same nav (e.g. a
+    /// <c>ThenInclude</c>, or this feature's own list leaf), which changes that lookup's emitted <c>$lookup</c>
+    /// shape from the plain <c>localField</c>/<c>foreignField</c> form to the <c>let</c>/<c>pipeline</c> form.
+    /// This is the intended, verified behavior of the fix above (a strict superset of the old
+    /// first-registered-wins behavior, which used to silently drop the second registration's pipeline instead)
+    /// — it is a CROSS-FEATURE widening of what this method does, not something specific to any one leaf kind,
+    /// which is why it is called out here rather than only where the new leaf kind is implemented.
+    /// </para>
+    /// </remarks>
     public void AddLookup(LookupExpression lookup)
     {
-        if (!_pendingLookups.Any(l => l.As == lookup.As))
+        var existingIndex = _pendingLookups.FindIndex(l => l.As == lookup.As);
+        if (existingIndex == -1)
         {
             _pendingLookups.Add(lookup);
+            return;
+        }
+
+        var existing = _pendingLookups[existingIndex];
+        if (!existing.HasPipeline && lookup.HasPipeline)
+        {
+            existing.PipelineStages.AddRange(lookup.PipelineStages);
+            if (existing.PipelineKind == LookupPipelineKind.None)
+            {
+                existing.PipelineKind = lookup.PipelineKind;
+            }
         }
     }
 

@@ -26,7 +26,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// composite <c>_id.&lt;Name&gt;</c> sub-key, or an accumulator field) into a top-level result alias.
 /// Renders in the aggregation-expression dialect as <c>"$" + Path</c>.
 /// </remarks>
-internal sealed class MongoElementRefExpression(string path, Type clrType) : MongoExpression
+internal sealed class MongoElementRefExpression(string path, Type clrType, bool nullSafe = false) : MongoExpression
 {
     /// <summary>
     /// The <see cref="Path"/> spelling that means "the WHOLE current document", i.e. the aggregation system
@@ -47,6 +47,20 @@ internal sealed class MongoElementRefExpression(string path, Type clrType) : Mon
 
     /// <summary>The (possibly dotted) element path, e.g. <c>_id</c>, <c>_id.Country</c>, or <c>Total</c>.</summary>
     public string Path { get; } = path;
+
+    /// <summary>
+    /// When <see langword="true"/>, the renderer wraps the reference in <c>$ifNull</c> against a literal
+    /// <c>null</c> before use, so a MISSING element (an unset owned single-reference navigation, e.g.) reads
+    /// the same as an explicitly-stored <c>null</c> one. Needed for an owned-nav null-equality check
+    /// (<c>b.Address == null</c>): unlike <see cref="WholeRootDocumentPath"/> — which can never actually be
+    /// missing, since it names the current document itself — a real element path can be entirely absent from
+    /// the stored document, and <c>$expr</c>'s <c>$eq</c> does NOT treat a missing field the same as an
+    /// explicit <c>null</c> (unlike the ORDINARY query-dialect <c>{field: null}</c>, which matches both). Kept
+    /// as an opt-in flag (mirroring <see cref="MongoSizeExpression.NullSafe"/>'s own precedent) rather than
+    /// applied unconditionally, so the pre-existing <c>WholeRootDocumentPath</c> callers' emitted MQL is
+    /// unaffected.
+    /// </summary>
+    public bool NullSafe { get; } = nullSafe;
 
     /// <inheritdoc />
     public override Type Type { get; } = clrType;

@@ -1109,10 +1109,19 @@ Customers.
 
     public override async Task FirstOrDefault_over_empty_collection_of_value_type_returns_correct_results(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.FirstOrDefault_over_empty_collection_of_value_type_returns_correct_results(async));
+        // EF-322: previously failed here (Where clause used c.CustomerID.Equals(...), which the native
+        // translator didn't recognize, forcing the whole query onto the driver-LINQ fallback bridge — which
+        // has no oracle at all for the OrderBy/Select/FirstOrDefault reference-collection-nav reduction in
+        // the projection). Now that Equals(...) method calls translate natively, the Where clause goes
+        // native and the whole query reaches the correlated-reducer projection leaf machinery (EF-449),
+        // which already supports this exact shape — so it now succeeds end-to-end, natively, with correct
+        // results (verified by AssertQuery's own data comparison below; also passes under NativeOnly).
+        await base.FirstOrDefault_over_empty_collection_of_value_type_returns_correct_results(async);
 
-        AssertMql();
+        AssertMql(
+            """
+            Customers.{ "$match" : { "_id" : "FISSA" } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "pipeline" : [{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }], "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "CustomerID" : "$_id", "OrderId" : "$_lookup_Orders._id", "_id" : 0 } }
+            """);
     }
 
     public override async Task Project_non_nullable_value_after_FirstOrDefault_on_empty_collection(bool async)

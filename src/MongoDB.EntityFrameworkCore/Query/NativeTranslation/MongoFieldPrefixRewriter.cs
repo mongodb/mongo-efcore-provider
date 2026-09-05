@@ -36,6 +36,11 @@ internal static class MongoFieldPrefixRewriter
             MongoUnaryExpression u => new MongoUnaryExpression(u.Operator, Rewrite(u.Operand, prefix)),
             MongoInExpression i => new MongoInExpression(
                 (MongoFieldExpression)Rewrite(i.Field, prefix), Rewrite(i.Values, prefix), i.Negated),
+            // The computed-needle sibling of MongoInExpression above — the needle is a general expression
+            // (e.g. a $concat), not necessarily a bare field, so it recurses through Rewrite rather than
+            // being cast to MongoFieldExpression.
+            MongoComputedInExpression ci => new MongoComputedInExpression(
+                Rewrite(ci.Needle, prefix), Rewrite(ci.Values, prefix), ci.Negated),
             // EF-382: the array-contains-value mirror of MongoInExpression above — same treatment, since
             // Field addresses a genuine document path exactly like MongoInExpression.Field does (Value is
             // always a MongoConstantExpression today, which passes through unchanged below, but Rewrite is
