@@ -46,6 +46,29 @@ internal static class NativeSlotPopulator
         var mongoQ = (MongoQueryExpression)shapedQuery.QueryExpression;
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
 
+        // EF-449: a Where composed DIRECTLY on a BARE GroupBy(key) result (no intervening Select) is, in
+        // every reachable case, EF Core's own normalization of Any(pred)/Count(pred)/LongCount(pred) into
+        // Where(pred).Any()/.Count()/.LongCount() — Where's lambda parameter is typed IGrouping<TKey,
+        // TElement>, not the root entity, so the general Where arm below (which resolves member access
+        // against the ENTITY type) must not even attempt it. Stash the recognized group-level predicate
+        // (NativeGroupByBinder.TryBindGroupWherePredicate) on MongoSelectDefinition.PendingGroupPredicate for
+        // the terminal Count/LongCount/Any to pick up (NativeGroupByBinder.TryBindGroupTerminalAggregate) —
+        // deliberately BEFORE the general post-terminal guard immediately below, which would otherwise always
+        // mark this non-native (bare GroupBy already sets IsGroupBy unconditionally). An out-of-scope
+        // predicate shape (TryBindGroupWherePredicate returns false) still marks non-native, same as today.
+        if (methodDefinition == QueryableMethods.Where
+            && mongoQ.Select.PendingGroupKey != null && mongoQ.Select.Grouping == null)
+        {
+            // A SECOND Where reaching here (mongoQ.Select.PendingGroupPredicate already set by a prior one)
+            // is out of scope — TryBindGroupWherePredicate has nowhere to put more than one stashed
+            // comparison, and overwriting it would silently drop the first Where's filter entirely.
+            var wherePredicate = call.Arguments[1].UnwrapLambdaFromQuote();
+            if (mongoQ.Select.PendingGroupPredicate != null
+                || !NativeGroupByBinder.TryBindGroupWherePredicate(mongoQ, wherePredicate))
+                mongoQ.Select.MarkNotNativelyRepresentable();
+            return;
+        }
+
         // Post-group slot-operator guard. Once a GroupBy or projected Distinct has been seen on this query
         // (IsGroupBy / IsDistinct — both bind the same degenerate-$group machinery), a slot operator applied
         // after it — a Where (HAVING) / OrderBy / ThenBy / Skip / Take — operates over the grouped result,

@@ -210,12 +210,30 @@ internal sealed class MongoSelectLowerer
         if (select.Grouping is { } grouping)
         {
             stages.Add(new MongoGroupStage(grouping));
+
+            // EF-449: a scalar aggregate (Count/LongCount/Any/All) terminating directly on a BARE
+            // GroupBy(key) — no Select — also finalizes Cardinality (NativeGroupByBinder.
+            // TryBindGroupTerminalAggregate, via MongoSelectDefinition.SetGroupedTerminalAggregate). Its own
+            // post-group predicate (referencing the $group's accumulator OUTPUT field, e.g. "__agg0") emits
+            // here as a $match, then control falls through past the ordinary flatten-$project below (Select
+            // .Projection is empty for this shape — there was no Select) to the aggregate-terminal switch
+            // further down, which appends the ordinary $count/$limit stage exactly as it does for the
+            // non-grouped scalar-aggregate case. Every OTHER Grouping shape (GroupBy(key).Select(aggregate),
+            // Cardinality == null) still returns immediately below, unchanged.
+            if (select.PostGroupPredicate is { } postGroupPredicate)
+            {
+                stages.Add(new MongoMatchStage(postGroupPredicate));
+            }
+
             if (select.Projection.Count > 0)
             {
                 stages.Add(new MongoProjectStage(select.Projection));
             }
 
-            return stages;
+            if (select.Cardinality?.Aggregate is null)
+            {
+                return stages;
+            }
         }
 
         // 6. $project — server-side projection (terminal member-access anonymous/DTO Select). Emitted last
@@ -223,8 +241,12 @@ internal sealed class MongoSelectLowerer
         // $lookup.
         // A projected-operand set op already emitted source1's $project above, ahead of the set-op stage —
         // don't re-emit it here. A trailing projection after a set op (OperandsProjected false) and a plain
-        // projected Select (no set op) both still emit here.
-        if (select.Projection.Count > 0 && !(select.SetOperation?.OperandsProjected ?? false))
+        // projected Select (no set op) both still emit here. Grouping == null: a grouped query's own
+        // Projection (if any) was already emitted inside the Grouping block above — never re-emit it here
+        // for the EF-449 grouped-terminal-aggregate fall-through (Projection is empty for that shape anyway,
+        // but this keeps the invariant explicit rather than relying on that being incidentally true).
+        if (select.Grouping == null
+            && select.Projection.Count > 0 && !(select.SetOperation?.OperandsProjected ?? false))
         {
             stages.Add(new MongoProjectStage(select.Projection));
         }

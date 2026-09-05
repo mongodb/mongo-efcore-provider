@@ -99,6 +99,20 @@ internal static class NativeCardinalityBinder
     {
         var select = mongoQ.Select;
 
+        // A scalar aggregate terminating DIRECTLY on a BARE GroupBy(key) — no intervening Select — e.g.
+        // GroupBy(o => o.CustomerID).Count()/.Any(g => g.Count() > 1) (EF-449). Checked BEFORE the
+        // HasTerminalOperator guard below: TranslateGroupBy sets IsGroupBy unconditionally the moment a
+        // GroupBy is seen, Select or not, so that guard would otherwise always decline this shape.
+        // TryBindGroupTerminalAggregate itself re-checks PendingGroupKey/Grouping, so a false return here
+        // (an out-of-scope predicate shape) falls through safely to the ordinary guard below, which declines
+        // for the same underlying reason (IsGroupBy already true) — no double-decision, just two paths to
+        // the same fallback.
+        if (select.PendingGroupKey != null && select.Grouping == null
+            && NativeGroupByBinder.TryBindGroupTerminalAggregate(mongoQ, op, predicate, resultType))
+        {
+            return true;
+        }
+
         // A scalar aggregate applied after a finalized GroupBy(key).Select(anon)/Distinct must fall back:
         // setting Cardinality on an already-grouped select flips Route to ScalarAggregate (which takes
         // priority over Grouping), but the lowerer's grouping branch still emits [$group, $project] with no

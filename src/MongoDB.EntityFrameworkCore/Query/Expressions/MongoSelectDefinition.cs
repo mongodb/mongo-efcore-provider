@@ -402,12 +402,54 @@ internal sealed class MongoSelectDefinition
     }
 
     /// <summary>
+    /// Atomically installs BOTH <see cref="Grouping"/> and <see cref="Cardinality"/> — the ONE sanctioned
+    /// exception to their ordinary mutual exclusion (see the <see cref="Cardinality"/>/<see cref="Grouping"/>
+    /// setters). Bypasses those setters' <see cref="Debug.Assert"/>s by writing the backing fields directly,
+    /// so the asserts stay live as a regression guard against any OTHER path accidentally setting both.
+    /// Used exclusively by <c>NativeGroupByBinder.TryBindGroupTerminalAggregate</c> for a scalar aggregate
+    /// terminating directly on a bare <c>GroupBy(key)</c> — a shape whose lowering genuinely needs both a
+    /// <c>$group</c> stage AND the ordinary aggregate-terminal machinery ($count/$limit) that
+    /// <see cref="Cardinality"/> drives, unlike the <c>GroupBy(key).Select(aggregate)</c> shape where they
+    /// are mutually exclusive by construction.
+    /// </summary>
+    internal void SetGroupedTerminalAggregate(
+        MongoGrouping grouping, MongoCardinality cardinality, MongoExpression? postGroupPredicate)
+    {
+        _grouping = grouping;
+        _cardinality = cardinality;
+        PostGroupPredicate = postGroupPredicate;
+    }
+
+    /// <summary>
     /// Group key parts parsed by <c>NativeGroupByBinder.TryBindGroupKey</c> and consumed by
     /// <c>NativeGroupByBinder.TryBindGroupProjection</c> to build <see cref="Grouping"/>. This is transient
     /// binder-owned state, not itself part of <see cref="Route"/> — <see cref="Route"/> only turns to
     /// <see cref="NativeRoute.GroupBy"/> once <see cref="Grouping"/> is finalized.
     /// </summary>
     internal IReadOnlyList<MongoGroupingKeyPart>? PendingGroupKey { get; set; }
+
+    /// <summary>
+    /// A <c>$match</c> predicate to emit immediately AFTER the <c>$group</c> stage, referencing the group's
+    /// own accumulator OUTPUT field(s) (via <see cref="MongoElementRefExpression"/>) rather than a row-level
+    /// entity field. Populated only by <c>NativeGroupByBinder.TryBindGroupTerminalAggregate</c>, for a scalar
+    /// aggregate (<c>Count</c>/<c>Any</c>/<c>All</c>) applied directly to a BARE <c>GroupBy(key)</c> result —
+    /// e.g. <c>GroupBy(o =&gt; o.CustomerID).Any(g =&gt; g.Count() &gt; 1)</c>. <see langword="null"/> for every
+    /// other query, including the ordinary <c>GroupBy(key).Select(aggregate)</c> shape (whose own post-group
+    /// filtering is an unrelated, unsupported "HAVING" shape handled by falling back, not by this field).
+    /// </summary>
+    internal MongoExpression? PostGroupPredicate { get; set; }
+
+    /// <summary>
+    /// Transient binder-owned state — the recognized group-level accumulator comparison from a
+    /// <c>Where</c> composed directly on a BARE <c>GroupBy(key)</c> result (EF Core's own normalization of
+    /// <c>Any(pred)</c>/<c>Count(pred)</c>/<c>LongCount(pred)</c> into <c>Where(pred).Any()</c> etc. — see
+    /// <c>NativeSlotPopulator.PopulateNativeSlots</c>'s dedicated Where carve-out). Written by
+    /// <c>NativeGroupByBinder.TryBindGroupWherePredicate</c>; consumed and cleared by
+    /// <c>NativeGroupByBinder.TryBindGroupTerminalAggregate</c> when a terminal <c>Count</c>/<c>LongCount</c>/
+    /// <c>Any</c> arrives with <see langword="null"/> own predicate (already consumed by the preceding Where).
+    /// Mirrors <see cref="PendingGroupKey"/>'s pattern: not itself part of <see cref="Route"/>.
+    /// </summary>
+    internal (MongoGroupAccumulator Accumulator, MongoExpression Comparison)? PendingGroupPredicate { get; set; }
 
     // ── GroupBy provenance / fallback safety ──────────────────────────────────────
 

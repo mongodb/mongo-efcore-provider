@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
@@ -118,6 +119,18 @@ internal static class NativeGroupByBinder
     {
         var select = mongoQ.Select;
         if (select.PendingGroupKey is not { } keyParts)
+            return false;
+
+        // EF-449: a HAVING Where was stashed between the GroupBy and this Select (e.g. GroupBy(key)
+        // .Where(o => o.Count() > 4).Select(g => new { g.Key, Count = g.Count() })) — recognized by
+        // NativeSlotPopulator's Where carve-out on the assumption it might be feeding a terminal
+        // Count/LongCount/Any (NativeGroupByBinder.TryBindGroupTerminalAggregate), the ONLY consumer that
+        // clears it. A Select reaching here instead means that assumption was wrong: this predicate has NO
+        // native $match-after-$group mechanism on the flattening-$project path this method builds, so
+        // silently finalizing Grouping without applying it would silently DROP the HAVING filter and return
+        // every group. Decline so the whole query falls back to driver-LINQ, matching this shape's
+        // pre-existing (pre-EF-449) behavior.
+        if (select.PendingGroupPredicate != null)
             return false;
 
         if (!TryGetProjectionBindings(resultSelector.Body, out var bindings))
@@ -326,6 +339,258 @@ internal static class NativeGroupByBinder
         => e is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } u
             ? Unwrap(u.Operand)
             : e;
+
+    /// <summary>
+    /// Attempts to bind a scalar aggregate terminal operator (<c>Count</c>/<c>LongCount</c>/<c>Any</c>/
+    /// <c>All</c>) applied directly to a BARE <c>GroupBy(key)</c> result — no intervening <c>Select</c> — e.g.
+    /// <c>GroupBy(o =&gt; o.CustomerID).Count()</c>, <c>.Any(g =&gt; g.Count() &gt; 1)</c>,
+    /// <c>.All(g =&gt; g.Count() &gt; 1)</c> (the "GroupBy_without_aggregate" family, EF-449). Finalizes
+    /// <see cref="MongoSelectDefinition.Grouping"/> from <see cref="MongoSelectDefinition.PendingGroupKey"/> and
+    /// installs a matching <see cref="MongoSelectDefinition.Cardinality"/> atomically via
+    /// <see cref="MongoSelectDefinition.SetGroupedTerminalAggregate"/>. Called from
+    /// <see cref="NativeCardinalityBinder.TryBindAggregate"/> BEFORE its general post-terminal guard — bare
+    /// <c>GroupBy</c> already sets <see cref="MongoSelectDefinition.IsGroupBy"/> unconditionally, so that guard
+    /// would otherwise always decline this shape.
+    /// </summary>
+    /// <remarks>
+    /// Scoped narrowly to what the EF Core spec suite's "without_aggregate" family actually needs: a bare
+    /// terminal with NO predicate (a plain "how many/any groups"), or a predicate that is a SINGLE comparison
+    /// of one group-level aggregate (<c>g.Count()</c>, or <c>g.Sum/Min/Max/Average(x =&gt; x.Field)</c> — the
+    /// same accumulator shapes <see cref="TryBindAccumulator"/> already recognizes for the Select-projection
+    /// case) against a constant/parameter. A compound (<c>&amp;&amp;</c>/<c>||</c>) predicate declines — no
+    /// reachable test shape needs it, and it keeps the <c>All</c> negation (a single De Morgan step) exact.
+    /// </remarks>
+    internal static bool TryBindGroupTerminalAggregate(
+        MongoQueryExpression mongoQ, MongoAggregateOperator op, LambdaExpression? predicate, Type resultType)
+    {
+        var select = mongoQ.Select;
+        if (select.PendingGroupKey is not { } keyParts || select.Grouping != null)
+            return false;
+
+        if (op is not (MongoAggregateOperator.Count or MongoAggregateOperator.LongCount
+                or MongoAggregateOperator.Any or MongoAggregateOperator.All))
+            return false;
+
+        var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
+        var accumulators = new List<MongoGroupAccumulator>();
+        MongoExpression? matchPredicate = null;
+        MongoGroupAccumulator? accumulator = null;
+        MongoExpression? comparisonNode = null;
+
+        if (predicate != null)
+        {
+            // All(pred) is never rewritten by EF (Where(pred).All() would change semantics — see below), so
+            // its predicate always arrives here directly. Count(pred)/Any(pred), by contrast, are USUALLY
+            // rewritten by EF's normalizer to Where(pred).Count()/.Any() — but not unconditionally (measured:
+            // both shapes reach this method with a non-null predicate depending on query form), so both must
+            // be handled.
+            if (!TryBindGroupPredicateComparison(predicate.Body, predicate.Parameters[0], translator,
+                    out accumulator, out comparisonNode))
+                return false;
+        }
+        else if (op is MongoAggregateOperator.All)
+        {
+            // LINQ's All() has no parameterless overload — unreachable in practice, declined defensively.
+            return false;
+        }
+        else if (select.PendingGroupPredicate is { } pending)
+        {
+            // EF-449: Count(pred)/Any(pred) normalized to Where(pred).Count()/.Any() — the Where already
+            // recognized and stashed the group-level comparison (NativeSlotPopulator's Where carve-out +
+            // TryBindGroupWherePredicate below); consume it here instead of re-parsing a (now null) predicate.
+            (accumulator, comparisonNode) = pending;
+        }
+
+        select.PendingGroupPredicate = null; // one-shot: consumed above, or never set for a bare terminal.
+
+        if (accumulator != null)
+        {
+            accumulators.Add(accumulator);
+
+            if (op is MongoAggregateOperator.All)
+            {
+                // All(pred) ≡ no group fails pred. Match the EXACT COMPLEMENT, mirroring
+                // NativeCardinalityBinder.TryBindAggregate's row-level All handling: presence of any
+                // surviving group (after $group + this $match) means at least one group failed pred.
+                // NOT MongoExpressionNegator.TryNegate: its public entry point gates on
+                // IsQueryDialectRenderable, which a MongoElementRefExpression comparison (aggregation-
+                // expression-only, like MongoOuterFieldExpression/a computed leaf) never satisfies — this
+                // node is ALWAYS rendered via $expr, so negate directly with the same $eq/$ne-invert,
+                // relational-$not-wrap rule the negator's own aggregation-context arm applies.
+                if (!TryNegateGroupComparison(comparisonNode!, out var negated))
+                    return false;
+                matchPredicate = negated;
+            }
+            else
+            {
+                matchPredicate = comparisonNode;
+            }
+        }
+
+        NativeCardinalityBinder.BuildEmptyBehavior(op, resultType, out var emptyValue, out var emptyBehavior);
+        var presenceOnly = op is MongoAggregateOperator.Any or MongoAggregateOperator.All;
+        object? presentValue = op switch
+        {
+            MongoAggregateOperator.Any => true,
+            MongoAggregateOperator.All => false,
+            _ => null
+        };
+
+        var cardinality = MongoCardinality.ForAggregate(
+            op, selector: null, emptyBehavior, emptyValue, resultType, presenceOnly, presentValue);
+        var grouping = new MongoGrouping(keyParts, accumulators);
+
+        select.SetGroupedTerminalAggregate(grouping, cardinality, matchPredicate);
+        return true;
+    }
+
+    /// <summary>
+    /// Recognizes a <c>Where</c> composed DIRECTLY on a BARE <c>GroupBy(key)</c> result as EF Core's own
+    /// normalization of <c>Any(pred)</c>/<c>Count(pred)</c>/<c>LongCount(pred)</c> into
+    /// <c>Where(pred).Any()</c>/<c>.Count()</c>/<c>.LongCount()</c> — <paramref name="predicate"/>'s parameter
+    /// is typed <c>IGrouping&lt;TKey,TElement&gt;</c>, never the root entity. Stashes the recognized
+    /// group-level comparison on <see cref="MongoSelectDefinition.PendingGroupPredicate"/> for the terminal
+    /// aggregate to consume (<see cref="TryBindGroupTerminalAggregate"/>). Called from
+    /// <see cref="NativeSlotPopulator.PopulateNativeSlots"/>'s dedicated Where carve-out, BEFORE the general
+    /// Where arm (which would otherwise resolve this predicate's member access against the wrong — entity —
+    /// type). Returns <see langword="false"/> for anything outside <see cref="TryBindGroupPredicateComparison"/>'s
+    /// scope, so the caller marks the query non-native.
+    /// </summary>
+    internal static bool TryBindGroupWherePredicate(MongoQueryExpression mongoQ, LambdaExpression predicate)
+    {
+        var select = mongoQ.Select;
+        var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
+
+        if (!TryBindGroupPredicateComparison(predicate.Body, predicate.Parameters[0], translator,
+                out var accumulator, out var comparisonNode))
+            return false;
+
+        select.PendingGroupPredicate = (accumulator, comparisonNode);
+        return true;
+    }
+
+    // Recognizes `body` as a single comparison of one group-level aggregate (bound via the SAME
+    // TryBindAccumulator shapes the Select-projection path uses) against a constant/parameter, in EITHER
+    // operand order. Returns the bound accumulator (output field "__agg0") and the translated comparison node
+    // (accumulator field-ref on the left, in normalized — not necessarily source — operator direction).
+    private static bool TryBindGroupPredicateComparison(
+        Expression body,
+        ParameterExpression groupingParameter,
+        MongoExpressionTranslator translator,
+        [NotNullWhen(true)] out MongoGroupAccumulator? accumulator,
+        [NotNullWhen(true)] out MongoExpression? comparisonNode)
+    {
+        accumulator = null;
+        comparisonNode = null;
+
+        const string outputField = "__agg0";
+
+        if (Unwrap(body) is not BinaryExpression
+            {
+                NodeType: ExpressionType.Equal or ExpressionType.NotEqual or ExpressionType.GreaterThan
+                or ExpressionType.GreaterThanOrEqual or ExpressionType.LessThan or ExpressionType.LessThanOrEqual
+            } bin)
+        {
+            return false;
+        }
+
+        if (TryBindAccumulator(bin.Left, outputField, groupingParameter, translator, out var acc)
+            && TryTranslateComparisonConstant(bin.Right, out var rightNode))
+        {
+            accumulator = acc;
+            comparisonNode = new MongoBinaryExpression(
+                MapComparisonOperator(bin.NodeType),
+                new MongoElementRefExpression(outputField, Unwrap(bin.Left).Type),
+                rightNode);
+            return true;
+        }
+
+        if (TryBindAccumulator(bin.Right, outputField, groupingParameter, translator, out acc)
+            && TryTranslateComparisonConstant(bin.Left, out var leftNode))
+        {
+            accumulator = acc;
+            comparisonNode = new MongoBinaryExpression(
+                MapComparisonOperator(FlipComparison(bin.NodeType)),
+                new MongoElementRefExpression(outputField, Unwrap(bin.Right).Type),
+                leftNode);
+            return true;
+        }
+
+        return false;
+    }
+
+    // The non-accumulator side of a group predicate comparison: a captured literal or a query parameter.
+    // Mirrors MongoExpressionTranslator's own private TranslateValue (not accessible from here) — this operand
+    // is never a member access, so the full translator is unnecessary.
+    private static bool TryTranslateComparisonConstant(
+        Expression expr, [NotNullWhen(true)] out MongoExpression? result)
+    {
+        expr = Unwrap(expr);
+        switch (expr)
+        {
+            case ConstantExpression constant:
+                result = new MongoConstantExpression(constant.Value, forSerialization: null);
+                return true;
+            default:
+                if (NativeQueryParameter.TryGetQueryParameterName(expr, out var name))
+                {
+                    result = new MongoParameterExpression(name, forSerialization: null);
+                    return true;
+                }
+
+                result = null;
+                return false;
+        }
+    }
+
+    private static MongoBinaryOperator MapComparisonOperator(ExpressionType nodeType) => nodeType switch
+    {
+        ExpressionType.Equal => MongoBinaryOperator.Equal,
+        ExpressionType.NotEqual => MongoBinaryOperator.NotEqual,
+        ExpressionType.GreaterThan => MongoBinaryOperator.GreaterThan,
+        ExpressionType.GreaterThanOrEqual => MongoBinaryOperator.GreaterThanOrEqual,
+        ExpressionType.LessThan => MongoBinaryOperator.LessThan,
+        ExpressionType.LessThanOrEqual => MongoBinaryOperator.LessThanOrEqual,
+        _ => throw new ArgumentOutOfRangeException(nameof(nodeType))
+    };
+
+    // The comparison `constant OP accumulator` is equivalent to `accumulator OP' constant` for the flipped
+    // relational operator OP' (equality/inequality are already symmetric).
+    private static ExpressionType FlipComparison(ExpressionType nodeType) => nodeType switch
+    {
+        ExpressionType.GreaterThan => ExpressionType.LessThan,
+        ExpressionType.GreaterThanOrEqual => ExpressionType.LessThanOrEqual,
+        ExpressionType.LessThan => ExpressionType.GreaterThan,
+        ExpressionType.LessThanOrEqual => ExpressionType.GreaterThanOrEqual,
+        _ => nodeType
+    };
+
+    // Negates a group-predicate comparison built by TryBindGroupPredicateComparison. Always aggregation-
+    // expression-only (the left operand is a MongoElementRefExpression, never query-dialect renderable), so
+    // this cannot reuse MongoExpressionNegator's public TryNegate (which gates on IsQueryDialectRenderable) —
+    // it applies the SAME rule as that negator's own private aggregation-context arm: $eq/$ne are inverted
+    // (they partition every value); the four relational operators are $not-wrapped, never inverted (the
+    // general reason — they don't partition a missing/null value — doesn't strictly apply to an accumulator
+    // output field, which is never missing/null, but wrapping is exact regardless and keeps one rule instead
+    // of a second, narrower one to maintain).
+    private static bool TryNegateGroupComparison(MongoExpression node, [NotNullWhen(true)] out MongoExpression? negated)
+    {
+        negated = node is MongoBinaryExpression comparison
+            ? comparison.Operator switch
+            {
+                MongoBinaryOperator.Equal =>
+                    new MongoBinaryExpression(MongoBinaryOperator.NotEqual, comparison.Left, comparison.Right),
+                MongoBinaryOperator.NotEqual =>
+                    new MongoBinaryExpression(MongoBinaryOperator.Equal, comparison.Left, comparison.Right),
+                MongoBinaryOperator.LessThan or MongoBinaryOperator.LessThanOrEqual
+                    or MongoBinaryOperator.GreaterThan or MongoBinaryOperator.GreaterThanOrEqual =>
+                    new MongoUnaryExpression(MongoUnaryOperator.Not, comparison),
+                _ => null
+            }
+            : null;
+
+        return negated != null;
+    }
 
     /// <summary>
     /// <c>Distinct(projection)</c>: the terminal <c>Select</c> already populated <see cref="MongoSelectDefinition.Projection"/>
