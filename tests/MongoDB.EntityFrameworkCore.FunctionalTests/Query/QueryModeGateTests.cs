@@ -604,11 +604,12 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void Native_parameterized_starts_with_falls_back_to_driver_linq()
+    public void Native_parameterized_starts_with_goes_native()
     {
-        // A parameterized search term is not baked into a native $regularExpression (Task 6 decision:
-        // constant-only native regex; parameterized falls back to driver-LINQ, still zero-regression).
-        var (collection, logs) = SeedCustomers(nameof(Native_parameterized_starts_with_falls_back_to_driver_linq));
+        // A parameterized search term IS now baked into a native $regularExpression: the escape/anchor
+        // transform defers to a regex placeholder sentinel resolved at Build (per-execution) time, rather
+        // than falling back to driver-LINQ.
+        var (collection, logs) = SeedCustomers(nameof(Native_parameterized_starts_with_goes_native));
         using var db = CreateContext(collection, logs, MongoQueryMode.Native);
 
         var term = "A";
@@ -618,15 +619,32 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void NativeOnly_parameterized_starts_with_throws()
+    public void NativeOnly_parameterized_starts_with_goes_native()
     {
-        // Same shape, but under NativeOnly a fallback is not permitted — it must throw rather than
-        // silently execute via driver-LINQ.
-        var (collection, logs) = SeedCustomers(nameof(NativeOnly_parameterized_starts_with_throws));
+        // Same shape under NativeOnly: it must succeed natively rather than throw, now that a
+        // parameterized StartsWith/EndsWith/Contains term is natively representable.
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_parameterized_starts_with_goes_native));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
         var term = "A";
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.Entities.Where(c => c.Name.StartsWith(term)).ToList());
+        var results = db.Entities.Where(c => c.Name.StartsWith(term)).ToList();
+
+        Assert.Equal(["Alice"], results.Select(c => c.Name).OrderBy(n => n).ToArray());
+    }
+
+    [Fact]
+    public void NativeOnly_parameterized_starts_with_escapes_regex_metacharacters()
+    {
+        // The parameterized case must escape the same way the constant case does (see
+        // NativeOnly_regex_metacharacters_are_escaped): "A." as a literal term must not match "Alice" via
+        // an unescaped '.' wildcard.
+        var (collection, logs) = SeedCustomers(nameof(NativeOnly_parameterized_starts_with_escapes_regex_metacharacters));
+        using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
+
+        var term = "A.";
+        var results = db.Entities.Where(c => c.Name.StartsWith(term)).ToList();
+
+        Assert.Empty(results);
+        Assert.Contains("\\\\.", Mql(logs));
     }
 }

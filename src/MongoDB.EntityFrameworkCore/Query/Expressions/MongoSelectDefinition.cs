@@ -404,7 +404,7 @@ internal sealed class MongoSelectDefinition
     /// <summary>
     /// Atomically installs BOTH <see cref="Grouping"/> and <see cref="Cardinality"/> — the ONE sanctioned
     /// exception to their ordinary mutual exclusion (see the <see cref="Cardinality"/>/<see cref="Grouping"/>
-    /// setters). Bypasses those setters' <see cref="Debug.Assert"/>s by writing the backing fields directly,
+    /// setters). Bypasses those setters' <see cref="Debug.Assert(bool)"/>s by writing the backing fields directly,
     /// so the asserts stay live as a regression guard against any OTHER path accidentally setting both.
     /// Used exclusively by <c>NativeGroupByBinder.TryBindGroupTerminalAggregate</c> for a scalar aggregate
     /// terminating directly on a bare <c>GroupBy(key)</c> — a shape whose lowering genuinely needs both a

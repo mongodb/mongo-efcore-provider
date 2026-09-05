@@ -284,28 +284,33 @@ internal sealed class MongoQueryLanguageRenderer
     /// Renders a <see cref="MongoRegexExpression"/> to a <c>$regularExpression</c> filter, matching the
     /// shape the driver-LINQ v3 provider emits for <c>string.StartsWith</c>/<c>EndsWith</c>/<c>Contains</c>:
     /// <c>{ field: { $regularExpression: { pattern: "...", options: "s" } } }</c> (negated via an
-    /// enclosing <c>$not</c>). Only a constant search term is baked into a native pattern; a parameterized
-    /// term is not supported here and must fall back to driver-LINQ.
+    /// enclosing <c>$not</c>). A constant search term is escaped/anchored and baked into the pattern here,
+    /// at render (compile) time. A parameterized term can't be — the value isn't known yet — so it defers
+    /// to a regex placeholder sentinel (<see cref="PlaceholderTable.CreateRegexPlaceholder"/>) that
+    /// <see cref="MongoPipelineFactory"/> resolves the same way, per execution, at Build time.
     /// </summary>
     private BsonDocument RenderRegex(MongoRegexExpression regex, PlaceholderTable placeholders)
     {
-        if (regex.Term is not MongoConstantExpression { Value: string literal })
-            throw new NativeTranslationNotSupportedException(
-                "Only constant regex terms are natively representable; parameterized string.StartsWith/EndsWith/Contains falls back to driver-LINQ.");
-
-        var escaped = System.Text.RegularExpressions.Regex.Escape(literal);
-        var pattern = regex.Kind switch
+        BsonValue body;
+        switch (regex.Term)
         {
-            MongoRegexKind.StartsWith => "^" + escaped,
-            MongoRegexKind.EndsWith => escaped + "$",
-            MongoRegexKind.Contains => escaped,
-            _ => throw new NativeTranslationNotSupportedException($"Unsupported regex kind '{regex.Kind}'.")
-        };
+            case MongoConstantExpression { Value: string literal }:
+                var pattern = MongoRegexPatternBuilder.BuildPattern(literal, regex.Kind);
 
-        // Matches the driver-LINQ v3 rendering exactly: a BsonRegularExpression value (canonical extended
-        // JSON: { $regularExpression: { pattern, options } }) with options "s" (dotall) — captured
-        // empirically by observing the translation under MongoQueryMode.DriverLinq.
-        BsonValue body = new BsonRegularExpression(pattern, "s");
+                // Matches the driver-LINQ v3 rendering exactly: a BsonRegularExpression value (canonical
+                // extended JSON: { $regularExpression: { pattern, options } }) with options "s" (dotall) —
+                // captured empirically by observing the translation under MongoQueryMode.DriverLinq.
+                body = new BsonRegularExpression(pattern, "s");
+                break;
+
+            case MongoParameterExpression parameter:
+                body = placeholders.CreateRegexPlaceholder(parameter.Name, regex.Kind);
+                break;
+
+            default:
+                throw new NativeTranslationNotSupportedException(
+                    "Only constant or parameterized string regex terms are natively representable.");
+        }
 
         return regex.Negated
             ? new BsonDocument(regex.Field.ElementName, new BsonDocument("$not", body))
@@ -503,8 +508,10 @@ internal sealed class MongoQueryLanguageRenderer
             // and rendered, so there is no unrenderable sub-shape to exclude here (unlike MongoInExpression's
             // Values, which can carry an unsupported node the renderer would throw on).
             MongoArrayContainsExpression => true,
-            // RenderRegex throws for a parameterized term — only a constant is baked into a pattern.
-            MongoRegexExpression { Term: MongoConstantExpression { Value: string } } => true,
+            // RenderRegex handles both a constant term (baked into the pattern at render time) and a
+            // parameterized term (deferred to a regex placeholder sentinel, resolved at Build time).
+            MongoRegexExpression { Term: MongoConstantExpression { Value: string } or MongoParameterExpression }
+                => true,
             MongoElemMatchExpression elemMatch => IsQueryDialectRenderable(elemMatch.ElementPredicate),
             _ => false
         };

@@ -747,6 +747,92 @@ public class MongoPipelineFactoryTests
         Assert.Equal(BsonDocument.Parse("""{ "$sort" : { "__sort0" : 1 } }"""), pipeline[0]);
     }
 
+    // ------------------------------------------------------------------
+    // MongoRegexExpression with a PARAMETERIZED term — the escape+anchor transform must run at
+    // Build (per-execution) time, not render (compile) time, since the value isn't known yet.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Parameterized_starts_with_binds_and_escapes_across_executions()
+    {
+        var nameProperty = GetProperty<Customer>("Name");
+        var field = new MongoFieldExpression(nameProperty, "Name");
+        var regex = new MongoRegexExpression(
+            field, MongoRegexKind.StartsWith, new MongoParameterExpression("term", nameProperty), negated: false);
+
+        var stages = new List<MongoPipelineStage> { new MongoMatchStage(regex) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var first = factory.Build(new Dictionary<string, object?> { ["term"] = "A.b" });
+        var second = factory.Build(new Dictionary<string, object?> { ["term"] = "Qu" });
+
+        Assert.Equal(
+            BsonDocument.Parse("{ $match: { Name: { $regularExpression: { pattern: '^A\\\\.b', options: 's' } } } }"),
+            first[0]);
+        Assert.Equal(
+            BsonDocument.Parse("{ $match: { Name: { $regularExpression: { pattern: '^Qu', options: 's' } } } }"),
+            second[0]);
+
+        // Template is not mutated between builds: re-binding the first value again must reproduce it.
+        var third = factory.Build(new Dictionary<string, object?> { ["term"] = "A.b" });
+        Assert.Equal(first[0], third[0]);
+    }
+
+    [Fact]
+    public void Parameterized_ends_with_binds_and_anchors_at_build_time()
+    {
+        var nameProperty = GetProperty<Customer>("Name");
+        var field = new MongoFieldExpression(nameProperty, "Name");
+        var regex = new MongoRegexExpression(
+            field, MongoRegexKind.EndsWith, new MongoParameterExpression("term", nameProperty), negated: false);
+
+        var stages = new List<MongoPipelineStage> { new MongoMatchStage(regex) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?> { ["term"] = "A.b" });
+
+        Assert.Equal(
+            BsonDocument.Parse("{ $match: { Name: { $regularExpression: { pattern: 'A\\\\.b$', options: 's' } } } }"),
+            result[0]);
+    }
+
+    [Fact]
+    public void Parameterized_contains_binds_unanchored_at_build_time()
+    {
+        var nameProperty = GetProperty<Customer>("Name");
+        var field = new MongoFieldExpression(nameProperty, "Name");
+        var regex = new MongoRegexExpression(
+            field, MongoRegexKind.Contains, new MongoParameterExpression("term", nameProperty), negated: false);
+
+        var stages = new List<MongoPipelineStage> { new MongoMatchStage(regex) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?> { ["term"] = "A.b" });
+
+        Assert.Equal(
+            BsonDocument.Parse("{ $match: { Name: { $regularExpression: { pattern: 'A\\\\.b', options: 's' } } } }"),
+            result[0]);
+    }
+
+    [Fact]
+    public void Parameterized_negated_starts_with_wraps_with_not_at_build_time()
+    {
+        var nameProperty = GetProperty<Customer>("Name");
+        var field = new MongoFieldExpression(nameProperty, "Name");
+        var regex = new MongoRegexExpression(
+            field, MongoRegexKind.StartsWith, new MongoParameterExpression("term", nameProperty), negated: true);
+
+        var stages = new List<MongoPipelineStage> { new MongoMatchStage(regex) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?> { ["term"] = "A" });
+
+        Assert.Equal(
+            BsonDocument.Parse(
+                "{ $match: { Name: { $not: { $regularExpression: { pattern: '^A', options: 's' } } } } }"),
+            result[0]);
+    }
+
     [Fact]
     public void Sort_stage_still_rejects_a_key_that_is_neither_a_field_nor_an_element_ref()
     {

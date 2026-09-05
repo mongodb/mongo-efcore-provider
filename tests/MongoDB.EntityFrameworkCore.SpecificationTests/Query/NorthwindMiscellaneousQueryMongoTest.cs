@@ -3176,8 +3176,8 @@ Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$concat" : ["$_id", "$City"] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$project" : { "A" : { "$concat" : ["$_id", "$City"] }, "_id" : 0 } }
-            """);
+Customers.{ "$set" : { "__sort0" : { "$concat" : ["$_id", "$City"] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$project" : { "A" : { "$concat" : ["$_id", "$City"] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Anonymous_subquery_orderby(bool async)
@@ -3255,8 +3255,8 @@ Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$concat" : ["$_id", "$City"] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$project" : { "Property" : { "$concat" : ["$_id", "$City"] }, "_id" : 0 } }
-            """);
+Customers.{ "$set" : { "__sort0" : { "$concat" : ["$_id", "$City"] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$project" : { "Property" : { "$concat" : ["$_id", "$City"] }, "_id" : 0 } }
+""");
     }
 
     public override async Task DTO_subquery_orderby(bool async)
@@ -3523,7 +3523,7 @@ Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { 
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "_id" : "$_id" } }
 """);
     }
 

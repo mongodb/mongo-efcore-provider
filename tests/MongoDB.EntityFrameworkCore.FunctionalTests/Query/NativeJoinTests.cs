@@ -795,53 +795,39 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.All(result, x => Assert.Equal(x.Item2, x.Item4));
     }
 
-    // EF-444 Task 4 — THE LATE-FALLBACK LEG, and the reason this test exists at all.
-    //
-    // The shaper is built FIRST and native-vs-driver decided SECOND, so a query routed native at translate time
-    // (Route == Projection) can still have TryBuildNativeFactory decline MID-COMPILE, leaving the ALREADY
-    // alias-addressed native shaper over whatever the driver-LINQ bridge renders. EF-412's own root-entity leaf
-    // survives that leg only because the bridge coincidentally renders the same member-name alias the native
-    // emit side chose ({"c": "$$ROOT"}). A join's whole-entity INNER leaf has no such coincidence available: its
-    // native alias is the join's own $lookup prefix (MongoJoinScope.InnerPrefix, "_lookup_Orders"), forced by
-    // MongoProjectionBindingRemovingExpressionVisitor's cross-collection arm deriving the field name from the
-    // NAVIGATION rather than the alias.
-    //
-    // MEASURED before the fix, verbatim: the bridge rendered
-    //   {"$project": {"o": "$$ROOT", "r": "$_lookup_Orders", "_id": 0}}
-    // the shaper read doc["_lookup_Orders"], the read is non-required (see that arm's fieldRequired = false), and
-    // every row came back with x.r == NULL. No exception. Silent wrong data — exactly the hazard the Task 0
-    // spike flagged as unverified.
-    //
-    // The fix routes this leg where an explicit MongoQueryMode.DriverLinq already sends the same shape: strip
-    // the pushed-down Select and shape WHOLE documents with the mixed removing visitor. See
-    // MongoShapedQueryCompilingExpressionVisitor.HasJoinScopeInnerEntityProjectionLeaf.
+    // EF-444 Task 4 — originally pinned the LATE-FALLBACK LEG (a query routed native at translate time,
+    // Route == Projection, whose TryBuildNativeFactory then declined MID-COMPILE because the Where's
+    // parameterized StartsWith had no native regex form and RenderRegex threw). That trigger no longer
+    // declines: a parameterized StartsWith/EndsWith/Contains term is natively representable (it defers its
+    // escape/anchor to a regex placeholder sentinel resolved at Build time — see
+    // MongoQueryLanguageRenderer.RenderRegex/PlaceholderTable.CreateRegexPlaceholder), so this shape now goes
+    // fully native under BOTH Native and NativeOnly rather than falling to the mixed/whole-document shaper.
+    // The mixed-shaper correctness this test used to exercise via that trigger remains covered directly under
+    // explicit MongoQueryMode.DriverLinq by Whole_entity_leaf_beside_a_renamed_or_dotted_scalar_leaf_reads_correctly
+    // below. This test now just proves the join's whole-entity leaves stay correct with a genuine (non-baked)
+    // query parameter, under both Native and NativeOnly.
     [Fact]
-    public void Whole_entity_leaves_behind_a_parameterized_where_read_correct_values()
+    public void Whole_entity_leaves_behind_a_parameterized_where_reads_correct_values()
     {
         var seed = SeedOwnersAndOrders();
+        var namePrefix = "A"; // a captured local, not a constant — a genuine query parameter
 
-        // A CAPTURED LOCAL, not a constant, and that is the whole trigger: MongoQueryLanguageRenderer.RenderRegex
-        // has no parameterized form, so it declines at RENDER time — after translate time already routed this
-        // query Route == Projection. A constant prefix would translate all the way natively and leave this test
-        // falsely green. Same mechanism NativeComputedProjectionTests
-        // .Mixed_whole_entity_and_computed_leaf_behind_a_parameterized_where_reads_correct_values uses.
-        var namePrefix = "A";
-
-        // HALF THE DISCRIMINATOR. NativeOnly forbids the fallback, so this throw is the proof that the decline
-        // really is MID-COMPILE for this exact query and that the Native leg below genuinely executes the
-        // driver-LINQ bridge underneath a shaper that was built for the native pipeline. MEASURED, not assumed.
         using (var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
-                   nameof(Whole_entity_leaves_behind_a_parameterized_where_read_correct_values) + "_nativeOnly"))
+                   nameof(Whole_entity_leaves_behind_a_parameterized_where_reads_correct_values) + "_nativeOnly"))
         {
-            var declined = nativeOnly.Owners
+            var nativeOnlyResult = nativeOnly.Owners
                 .Join(nativeOnly.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
                 .Where(x => x.o.Name.StartsWith(namePrefix))
-                .Select(x => new { x.o, x.r });
-            Assert.Throws<NativeTranslationNotSupportedException>(() => declined.ToList());
+                .Select(x => new { x.o, x.r })
+                .AsEnumerable()
+                .OrderBy(x => x.o.Name).ThenBy(x => x.r.Total)
+                .Select(x => (x.o.Name, x.o.Region, x.r.Id, x.r.OwnerId, x.r.Total))
+                .ToList();
+            Assert.Equal(2, nativeOnlyResult.Count);
         }
 
         using var db = CreateContext(seed, MongoQueryMode.Native,
-            nameof(Whole_entity_leaves_behind_a_parameterized_where_read_correct_values), out var spyLogger);
+            nameof(Whole_entity_leaves_behind_a_parameterized_where_reads_correct_values), out var spyLogger);
 
         var result = db.Owners
             .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
@@ -860,18 +846,13 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             .Select(x => (x.o.Name, x.o.Region, x.r.Id, x.r.OwnerId, x.r.Total))
             .ToList();
 
-        // VALUES, not counts. The pre-fix failure returned the right NUMBER of rows with a null inner entity, so
-        // a count assertion (or an "it didn't throw" assertion) would have passed straight through the bug.
+        // VALUES, not counts.
         Assert.Equal(expected, result);
         Assert.Equal(2, result.Count);
 
-        // THE OTHER HALF. The throw above establishes only that the query is routed down the fallback leg; this
-        // pins WHICH fallback shape it lands on. No $project stage at all means the strip fired and the shaper is
-        // reading whole documents (where "_lookup_Orders" is a real field) — if a future change stops stripping,
-        // the bridge's own {"r": "$_lookup_Orders"} $project comes back and the silent-null bug returns.
         var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("_lookup_Orders", mql);
-        Assert.DoesNotContain("$project", mql);
+        Assert.Contains("$regularExpression", mql);
     }
 
     // EF-444 Task 4 — the sibling half of the problem above, found while measuring it, and NOT specific to the
@@ -968,31 +949,30 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
                 .Select(x => (x.Id, x.o.Name, x.rOwnerId, x.r.Total)).ToList());
     }
 
-    // EF-444 Task 4 — THE SEAM between this task's two mechanisms, which nothing else exercises together.
-    //
-    // The late-fallback test above has a whole-entity leaf but no field leaf, so it only ever proves the SWAP
-    // (strip + mixed removing visitor). The Native/DriverLinq theory below has a field leaf whose alias differs
-    // from its path, but under those modes it never reaches the late-fallback swap. This test is the
-    // intersection: a whole-entity leaf AND an alias!=path scalar leaf, behind the parameterized-regex
-    // late-decline trigger — so the swap fires AND the swapped-in visitor must then resolve
-    // "Total" → "_lookup_Orders.Total" off a whole document. Either mechanism working alone leaves this shape
-    // wrong (before the fix it returned a silent null inner entity; with the swap but no path read it threw
-    // "Document element 'Total' is missing but required"), and this plan family has repeatedly found silent
-    // nulls hiding at exactly this kind of untested intersection.
+    // EF-444 Task 4 — originally THE SEAM between this task's two mechanisms (a parameterized-regex
+    // late-compile decline forcing the whole-entity leaf + alias!=path scalar leaf combination through the
+    // mixed/whole-document shaper). That decline trigger no longer applies — a parameterized StartsWith term
+    // is now natively representable (see MongoQueryLanguageRenderer.RenderRegex) — so this shape goes fully
+    // native under both Native and NativeOnly instead. The mixed-shaper "Total" → "_lookup_Orders.Total"
+    // path-read this test used to force is still covered directly under explicit MongoQueryMode.DriverLinq by
+    // Whole_entity_leaf_beside_a_renamed_or_dotted_scalar_leaf_reads_correctly above (its
+    // `new { x.r, T = x.r.Total }` case is the identical shape). This test now just proves the combination
+    // stays correct with a genuine query parameter, under both Native and NativeOnly.
     [Fact]
     public void Whole_entity_leaf_and_dotted_scalar_leaf_together_behind_a_parameterized_where()
     {
         var seed = SeedOwnersAndOrders();
-        var namePrefix = "A"; // captured local — see the late-fallback test above for why this is the trigger
+        var namePrefix = "A"; // a captured local, not a constant — a genuine query parameter
 
         using (var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
                    nameof(Whole_entity_leaf_and_dotted_scalar_leaf_together_behind_a_parameterized_where) + "_nativeOnly"))
         {
-            var declined = nativeOnly.Owners
+            var nativeOnlyRows = nativeOnly.Owners
                 .Join(nativeOnly.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
                 .Where(x => x.o.Name.StartsWith(namePrefix))
-                .Select(x => new { x.r, T = x.r.Total });
-            Assert.Throws<NativeTranslationNotSupportedException>(() => declined.ToList());
+                .Select(x => new { x.r, T = x.r.Total })
+                .ToList();
+            Assert.Equal(2, nativeOnlyRows.Count);
         }
 
         using var db = CreateContext(seed, MongoQueryMode.Native,
@@ -1035,12 +1015,11 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Equal(2, dottedRows.Count);
         Assert.Equal(2, renamedRows.Count);
 
-        // Both queries must have landed on the STRIPPED whole-document leg. Without this, the data assertions
-        // above would also pass if the swap silently stopped firing and the driver's own member-name-aliased
-        // $project happened to line up — which is exactly how the original bug hid.
+        // Both queries now go fully native (the parameterized Where renders a $regularExpression rather than
+        // declining), rather than landing on the mixed/whole-document fallback leg.
         Assert.All(
             spyLogger.GetLogMessagesByEventId(MongoEventId.ExecutedMqlQuery),
-            mql => Assert.DoesNotContain("$project", mql));
+            mql => Assert.Contains("$regularExpression", mql));
     }
 
 #if !EF8 && !EF9

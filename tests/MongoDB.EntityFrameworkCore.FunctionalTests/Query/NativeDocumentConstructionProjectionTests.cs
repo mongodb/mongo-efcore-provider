@@ -203,30 +203,33 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         Assert.Equal(driver, native);
     }
 
-    // The LATE-FALLBACK leg: a captured-local `StartsWith` is the trigger MongoQueryLanguageRenderer.RenderRegex
-    // declines (MQL has no parameterized-regex form), so NativeOnly proves the query translates natively at
-    // compile time (Route == Projection) but then genuinely DECLINES mid-compile (TryBuildNativeFactory) — the
-    // exact leg that hands the shaper WHOLE, un-projected documents (see
+    // This test originally used a captured-local `StartsWith` to force the LATE-FALLBACK leg (translate-time
+    // routes native, Route == Projection, then MongoQueryLanguageRenderer.RenderRegex declined at render
+    // time) — the leg that hands the shaper WHOLE, un-projected documents (see
     // MongoMixedProjectionBindingRemovingExpressionVisitor.ReadDocumentConstructionMember's override, which reads
-    // each member at its own NATURAL root-relative path instead of the native $project's nested alias). Mirrors
-    // NativeOwnedReferenceWholeEntityTests.Field_sibling_projection_behind_a_parameterized_where_reads_correct_values.
+    // each member at its own NATURAL root-relative path instead of the native $project's nested alias). That
+    // trigger no longer declines — a parameterized StartsWith term is now natively representable — so this
+    // shape goes fully native under both Native and NativeOnly. The mixed/whole-document shaper read this
+    // test used to force via that trigger remains covered directly by the explicit-DriverLinq leg below.
     [Fact]
     public void Document_construction_leaf_behind_a_parameterized_where_reads_correct_values()
     {
         var collection = SeedBooks(nameof(Document_construction_leaf_behind_a_parameterized_where_reads_correct_values));
-        var titlePrefix = "A";
+        var titlePrefix = "A"; // a captured local, not a constant — a genuine query parameter
 
-        // HALF THE DISCRIMINATOR: NativeOnly forbids the fallback, so this throw is the proof that
-        // TryBuildNativeFactory declines MID-COMPILE for this exact query.
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
         {
-            var declined = nativeOnly.Entities.AsNoTracking()
+            var nativeOnlyResults = nativeOnly.Entities.AsNoTracking()
                 .Where(b => b.Title.StartsWith(titlePrefix))
-                .Select(b => new { Copy = new BookCopy { Id = b.Id, Title = b.Title, Author = b.Author }, b.Rank });
-            Assert.Throws<NativeTranslationNotSupportedException>(() => declined.ToList());
+                .Select(b => new { Copy = new BookCopy { Id = b.Id, Title = b.Title, Author = b.Author }, b.Rank })
+                .ToList();
+
+            var nativeOnlyRow = Assert.Single(nativeOnlyResults);
+            Assert.Equal("Alpha", nativeOnlyRow.Copy.Title);
+            Assert.Equal("Ada", nativeOnlyRow.Copy.Author);
+            Assert.Equal(3, nativeOnlyRow.Rank);
         }
 
-        // The OTHER half: default Native mode must still read back CORRECT values on the late-fallback leg.
         using (var native = CreateContext(collection, MongoQueryMode.Native))
         {
             var results = native.Entities.AsNoTracking()

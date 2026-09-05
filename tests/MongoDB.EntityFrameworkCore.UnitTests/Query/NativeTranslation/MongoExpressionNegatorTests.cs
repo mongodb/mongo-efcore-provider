@@ -458,13 +458,12 @@ public class MongoExpressionNegatorTests
     }
 
     [Fact]
-    public void Node_that_is_not_query_dialect_renderable_declines_even_when_its_own_case_would_flip_it()
+    public void Parameterized_regex_term_is_query_dialect_renderable_and_negates_by_flipping()
     {
-        // TryNegateCore's `case MongoRegexExpression regex:` flips Negated unconditionally, with no check on
-        // Term — in isolation it would happily "negate" this node. It must never get the chance: a
-        // parameterized regex term is declined by IsQueryDialectRenderable (only a constant term is baked
-        // into a native pattern; see RenderRegex), so TryNegate's outer gate must refuse this node BEFORE
-        // TryNegateCore's per-case switch ever runs. Removing that outer gate must make this test red.
+        // A parameterized regex term is now query-dialect-renderable (it defers its escape/anchor to a
+        // placeholder sentinel resolved at Build time — see RenderRegex/PlaceholderTable.CreateRegexPlaceholder),
+        // so TryNegate's outer gate admits it and TryNegateCore's `case MongoRegexExpression regex:` flips
+        // Negated unconditionally, same as for a constant term.
         var heading = GetPostProperty(nameof(Post.Heading));
         var regex = new MongoRegexExpression(
             new MongoFieldExpression(heading, "Heading"),
@@ -472,8 +471,9 @@ public class MongoExpressionNegatorTests
             new MongoParameterExpression("term", heading),
             negated: false);
 
-        Assert.False(MongoExpressionNegator.TryNegate(regex, out var negated));
-        Assert.Null(negated);
+        Assert.True(MongoExpressionNegator.TryNegate(regex, out var negated));
+        var negatedRegex = Assert.IsType<MongoRegexExpression>(negated);
+        Assert.True(negatedRegex.Negated);
     }
 
     [Fact]

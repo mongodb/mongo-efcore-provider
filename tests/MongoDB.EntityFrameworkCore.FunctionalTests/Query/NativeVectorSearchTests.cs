@@ -206,47 +206,34 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     }
 
     // ---------------------------------------------------------------------------------------------------
-    // EF-412: the entity-and-score projection on the LATE-FALLBACK leg.
+    // EF-412: the entity-and-score projection.
     //
     // `new { Doc = e, Score = ... }` mixes a WHOLE-ROOT-ENTITY leaf with the synthetic __score leaf. EF-412
     // made that shape go native ({"Doc": "$$ROOT", "Score": "$__score"}); before it, an entity-bearing
     // projection was never push-downable (ProjectionAnalyzer.CanPushDown was false) and this only ever ran
-    // through the mixed-strip path. So the late-fallback leg is NEW EXPOSURE from EF-412, and it is not
-    // covered by the c/Total case in NativeComputedProjectionTests: that one proved the driver-LINQ bridge
-    // renders the same member-name alias for a plain arithmetic sibling, which says nothing about whether it
-    // also re-emits the $addFields{__score} companion this shape's Score leaf depends on.
+    // through the mixed-strip path.
     //
-    // The captured local in StartsWith is the trigger: it binds natively and then throws at RENDER time in
-    // MongoQueryLanguageRenderer.RenderRegex, i.e. AFTER CompileShapedQuery has already built the
-    // alias-addressed native shaper — the same mechanism Ef362OwnedHopArrayProjectionTests documents.
+    // This test originally used a captured-local StartsWith as a trigger to force a LATE, mid-compile decline
+    // (translate-time routes native, then MongoQueryLanguageRenderer.RenderRegex declines at render time) so
+    // it could prove the driver-LINQ bridge re-emits both the $addFields{__score} companion and the
+    // "Doc": "$$ROOT" alias the native shaper depends on. That trigger no longer declines — a parameterized
+    // StartsWith term is now natively representable — so this shape goes fully native under both Native and
+    // NativeOnly. It still proves both leaves read correctly with a genuine (non-baked) query parameter.
     // ---------------------------------------------------------------------------------------------------
 
     [AtlasFact]
     public void Entity_and_score_projection_behind_a_parameterized_filter_reads_correct_values()
     {
-        // A CAPTURED LOCAL, not a constant. A constant StartsWith renders natively and would never reach the
-        // late-fallback leg, leaving this test falsely green.
-        var prefix = "A";
+        var prefix = "A"; // a captured local, not a constant — a genuine query parameter
 
-        // THE DISCRIMINATOR. NativeOnly forbids the fallback, so this throw is what proves the decline happens
-        // MID-COMPILE for this exact query and therefore that the Native leg below really is the driver-LINQ
-        // bridge running underneath an already alias-addressed native shaper. Without it, a shape that simply
-        // went fully native would satisfy every assertion below and prove nothing about the fallback.
         using (var nativeOnly = CreateContext(MongoQueryMode.NativeOnly))
         {
-            var declined = nativeOnly.Docs
+            var nativeOnlyRows = nativeOnly.Docs
                 .VectorSearch(e => e.Embedding, QueryVector, limit: 4)
                 .Where(e => e.Label.StartsWith(prefix))
-                .Select(e => new { Doc = e, Score = EF.Property<double>(e, "__score") });
-            var declineReason = Assert.Throws<NativeTranslationNotSupportedException>(() => declined.ToList());
-
-            // And the decline must be the LATE, RENDER-time one, not an early routing decline. If the shape
-            // ever stops routing native at translate time (Route == Fallback), the throw above would still
-            // happen — it would just come from the projected-query gate instead, the query would take the
-            // pre-EF-412 MIXED path, and this test would silently stop covering the late-fallback leg it
-            // exists for. MEASURED: this message comes from MongoQueryLanguageRenderer.RenderRegex, which runs
-            // inside TryBuildNativeFactory, i.e. AFTER the alias-addressed shaper has been built.
-            Assert.Contains("Only constant regex terms are natively representable", declineReason.Message);
+                .Select(e => new { Doc = e, Score = EF.Property<double>(e, "__score") })
+                .ToList();
+            Assert.Single(nativeOnlyRows);
         }
 
         using var db = CreateContext(MongoQueryMode.Native, out var spyLogger);
@@ -265,14 +252,9 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
         Assert.Equal("note-A", row.Doc.Meta.Note); // the owned hop inside the entity leaf survives too
         Assert.Equal(1.0, row.Score, 3);           // "A" IS the query vector, so its cosine score is exactly 1
 
-        // WHY this passes with no code change, recorded so the negative result is not re-derived. The
-        // driver-LINQ bridge re-emits BOTH halves the native shaper reads by: the $addFields{__score}
-        // companion AND a $project whose keys are the projection MEMBER names ("Doc", "Score") with "$$ROOT"
-        // for the entity leaf. So no ProjectionAliasTier.DocumentPath alias override exists,
-        // HasDocumentPathAliasOverride stays false, and ShouldStripBareProjectionOnFallback correctly does not
-        // fire — stripping here would be actively WRONG, since it would hand whole documents to a visitor with
-        // ReadsUnprojectedDocuments == false. Asserted on the MQL because the two halves fail independently and
-        // both fail SILENTLY (a lost $addFields gives Score == 0, a renamed alias gives a null entity).
+        // Asserted on the MQL because the two halves fail independently and both fail SILENTLY (a lost
+        // $addFields gives Score == 0, a renamed/missing alias gives a null entity) — this pins the native
+        // $project/$addFields shape directly, now that the query goes fully native.
         var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("{ \"$addFields\" : { \"__score\" : { \"$meta\" : \"vectorSearchScore\" } } }", mql);
         Assert.Contains("\"Doc\" : \"$$ROOT\"", mql);

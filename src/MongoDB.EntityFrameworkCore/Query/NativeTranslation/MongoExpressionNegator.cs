@@ -93,8 +93,8 @@ internal static class MongoExpressionNegator
 
         // A node with no query-dialect rendering has no query-dialect COMPLEMENT either. Gating here makes
         // the output-domain invariant unconditional and makes every "not query-native" decline (field-to-
-        // field comparison, arithmetic, a parameterized regex term, an unsupported $in values node) fall out
-        // of one check instead of being re-derived per case.
+        // field comparison, arithmetic, an unsupported $in values node) fall out of one check instead of
+        // being re-derived per case.
         if (!MongoQueryLanguageRenderer.IsQueryDialectRenderable(node))
             return false;
 

@@ -713,12 +713,21 @@ internal sealed class MongoPipelineFactory
         int index,
         IReadOnlyDictionary<string, object?> parameterValues)
     {
-        var (name, serializer, isArray) = _placeholders.Entries[index];
+        var (name, serializer, isArray, regexKind) = _placeholders.Entries[index];
 
         if (!parameterValues.TryGetValue(name, out var rawValue))
             throw new InvalidOperationException(
                 $"MongoPipelineFactory.Build: parameter '{name}' (placeholder index {index}) "
                 + "is not present in parameterValues. This is a bug in the query compilation pipeline.");
+
+        // A parameterized string.StartsWith/EndsWith/Contains term: the escape+anchor transform can only
+        // run now, per execution, since render (compile) time had no value to escape. Mirrors
+        // MongoQueryLanguageRenderer.RenderRegex's constant-term branch exactly, just deferred.
+        if (regexKind is not null)
+        {
+            var pattern = MongoRegexPatternBuilder.BuildPattern((string)rawValue!, regexKind.Value);
+            return new BsonRegularExpression(pattern, "s");
+        }
 
         // Property-less primitive (e.g. Skip/Take count): serialize via BsonValue.Create.
         if (serializer is null)

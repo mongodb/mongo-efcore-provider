@@ -42,7 +42,7 @@ public class NorthwindQueryFiltersQueryMongoTest
 
         AssertMql(
             """
-Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$count" : "_v" }
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$count" : "v" }
 """);
     }
 
@@ -62,7 +62,7 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
 
         AssertMql(
             """
-Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$match" : { "_id" : "ALFKI" } }, { "$limit" : 1 }
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } }, "_id" : "ALFKI" } }, { "$limit" : 1 }
 """);
     }
 
@@ -96,7 +96,7 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
 
         AssertMql(
             """
-Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "_id" : "$_id" } }
 """);
     }
 
@@ -106,7 +106,7 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
 
         AssertMql(
             """
-Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$project" : { "_id" : "$_id" } }
 """);
     }
 
@@ -184,11 +184,11 @@ Orders.
 
         AssertMql(
             """
-Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$match" : { "_id" : "BERGS" } }
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } }, "_id" : "BERGS" } }
 """,
             //
             """
-Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$match" : { "_id" : "BLAUS" } }
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } }, "_id" : "BLAUS" } }
 """);
     }
 

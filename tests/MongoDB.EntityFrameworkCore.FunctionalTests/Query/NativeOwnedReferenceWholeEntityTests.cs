@@ -794,36 +794,34 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     // Fix round 1 (post-review): the LATE-FALLBACK leg for the field-sibling nav-entity-leaf projection was
     // completely uncovered — reverting site 4's unconditional _id/DocumentPath-alias-override registration
     // (NativeProjectionBinder.TryPopulateNativeProjection) leaves the ENTIRE unit/spec/functional suite green
-    // while silently breaking this exact shape under plain `Native` mode. Mirrors
-    // NativeComputedProjectionTests.Mixed_whole_entity_and_computed_leaf_behind_a_parameterized_where_reads_correct_values
-    // exactly: a captured-local `StartsWith` is the trigger MongoQueryLanguageRenderer.RenderRegex declines
-    // (MQL has no parameterized-regex form), so NativeOnly proves the query translates natively at compile time
-    // (Route == Projection) but then genuinely DECLINES mid-compile (TryBuildNativeFactory), which is exactly
-    // the leg that needs the strip (ShouldStripBareProjectionOnFallback -> HasDocumentPathAliasOverride) to hand
-    // the shaper whole documents — carrying both "Address" and the retained "_id" the owned element's shadow-key
-    // read requires — instead of the driver's own un-augmented $project (which never carries the synthetic _id).
+    // while silently breaking this exact shape under plain `Native` mode.
+    //
+    // This test originally used a captured-local `StartsWith` to force that late-fallback leg (translate-time
+    // routes native, Route == Projection, then MongoQueryLanguageRenderer.RenderRegex declined at render
+    // time). That trigger no longer declines — a parameterized StartsWith term is now natively representable
+    // — so this shape goes fully native under both Native and NativeOnly. The mixed/whole-document shaper
+    // read this test used to force via that trigger remains covered directly by the explicit-DriverLinq leg
+    // below (same shape, same read). This test now just proves the field-sibling projection stays correct
+    // with a genuine (non-baked) query parameter, under both Native and NativeOnly.
     [Fact]
     public void Field_sibling_projection_behind_a_parameterized_where_reads_correct_values()
     {
         var collection = SeedBlogs(nameof(Field_sibling_projection_behind_a_parameterized_where_reads_correct_values));
-        var titlePrefix = "A";
+        var titlePrefix = "A"; // a captured local, not a constant — a genuine query parameter
 
-        // HALF THE DISCRIMINATOR: NativeOnly forbids the fallback, so this throw is the proof that
-        // TryBuildNativeFactory declines MID-COMPILE for this exact query, and therefore that the Native leg
-        // below genuinely exercises the late-fallback/strip mechanism rather than the plain native $project.
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
-            var declined = nativeOnly.Entities.AsNoTracking()
+            var nativeOnlyResults = nativeOnly.Entities.AsNoTracking()
                 .Where(b => b.Title.StartsWith(titlePrefix))
-                .Select(b => new { b.Address, b.Title });
-            Assert.Throws<NativeTranslationNotSupportedException>(() => declined.ToList());
+                .Select(b => new { b.Address, b.Title })
+                .ToList();
+
+            var nativeOnlyRow = Assert.Single(nativeOnlyResults);
+            Assert.Equal("Alpha", nativeOnlyRow.Title);
+            Assert.Equal("NYC", nativeOnlyRow.Address.City);
+            Assert.Equal("10001", nativeOnlyRow.Address.Zip);
         }
 
-        // The OTHER half: default Native mode must still read back CORRECT values on the late-fallback leg —
-        // this is what site 4's DocumentPath override / strip mechanism is actually for. Before this fix
-        // round, reverting that one registration left every other test green while this specific combination
-        // (mode-independent decline trigger + this leaf) threw
-        // `InvalidOperationException: Document element is missing for required non-nullable property 'Id'`.
         using (var native = CreateContext(collection, MongoQueryMode.Native, BlogModel))
         {
             var results = native.Entities.AsNoTracking()

@@ -634,43 +634,34 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
         Assert.Equal([14, 400, -14], results.Select(r => r.Total).ToArray());
     }
 
-    // EF-412 LATE-FALLBACK leg. The shaper is built FIRST and native-vs-driver decided SECOND, so a query
-    // routed native at translate time (Route == Projection) can still have TryBuildNativeFactory decline
-    // MID-COMPILE — while the ALREADY alias-addressed native (non-mixed) removing visitor stays in place over
-    // whatever the driver-LINQ bridge renders. A CAPTURED LOCAL in a string.StartsWith is the measured trigger
-    // (the native renderer declines a parameterized regex term); a constant would never reach this leg and
-    // would leave this test falsely green. This is the same mechanism Ef362OwnedHopArrayProjectionTests
-    // documents, and the risk the EF-412 spike flagged as unverified for a "$$ROOT"-bound alias.
+    // EF-412 leaf combination: a whole-entity leaf mixed with a computed sibling.
     //
-    // Asserted under the DEFAULT Native mode (not DriverLinq): the point is that the default mode must not
-    // return wrong data or throw on this combination. Values, not counts — the failure mode this pins is
-    // "Field 'c' required but not present in BsonDocument", but a near-miss variant could equally have
-    // returned a null entity or a misread Total.
+    // This test originally used a CAPTURED LOCAL in a string.StartsWith to force the LATE-FALLBACK leg (the
+    // shaper is built FIRST and native-vs-driver decided SECOND, so a query routed native at translate time,
+    // Route == Projection, could have TryBuildNativeFactory decline MID-COMPILE while the already
+    // alias-addressed native shaper stayed in place over whatever the driver-LINQ bridge rendered). That
+    // trigger no longer declines — a parameterized StartsWith term is now natively representable (see
+    // MongoQueryLanguageRenderer.RenderRegex) — so this shape goes fully native under both Native and
+    // NativeOnly. This test now proves the whole-entity + computed leaf combination stays correct with a
+    // genuine (non-baked) query parameter, under both modes.
     [Fact]
     public void Mixed_whole_entity_and_computed_leaf_behind_a_parameterized_where_reads_correct_values()
     {
         var (collection, logs) = SeedCustomers(
             nameof(Mixed_whole_entity_and_computed_leaf_behind_a_parameterized_where_reads_correct_values));
 
-        var namePrefix = "A";
+        var namePrefix = "A"; // a captured local, not a constant — a genuine query parameter
 
-        // HALF THE DISCRIMINATOR, and it is not decoration. Without it this test would pass just as happily if
-        // the shape went fully native, and would then prove nothing about the late-fallback leg at all.
-        // NativeOnly forbids the fallback, so this throw is the proof that TryBuildNativeFactory declines
-        // MID-COMPILE for this exact query (MQL has no parameterized-regex form — see
-        // MongoQueryLanguageRenderer.RenderRegex) and therefore that the Native leg below genuinely executes
-        // the driver-LINQ bridge underneath an already alias-addressed native shaper. MEASURED, not assumed.
-        //
-        // The OTHER half is the MQL assertion at the end of this test: this throw alone establishes only that
-        // the query is ROUTED down the fallback leg, not that the shaper and the driver's rendering agree on
-        // the alias — that is what the "c" : "$$ROOT" assertion pins, and it is the part that would catch a
-        // renderer change on either side. Neither assertion is sufficient alone.
         using (var nativeOnly = CreateContext(collection, [], MongoQueryMode.NativeOnly))
         {
-            var declined = nativeOnly.Entities
+            var nativeOnlyResults = nativeOnly.Entities
                 .Where(c => c.Name.StartsWith(namePrefix))
-                .Select(c => new { c, Total = c.Age * c.Score });
-            Assert.Throws<NativeTranslationNotSupportedException>(() => declined.ToList());
+                .Select(c => new { c, Total = c.Age * c.Score })
+                .ToList();
+
+            var nativeOnlyRow = Assert.Single(nativeOnlyResults);
+            Assert.Equal("Alice", nativeOnlyRow.c.Name);
+            Assert.Equal(14, nativeOnlyRow.Total);
         }
 
         using var db = CreateContext(collection, logs, MongoQueryMode.Native);
@@ -688,16 +679,9 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
         Assert.NotEqual(ObjectId.Empty, row.c.Id);
         Assert.Equal(14, row.Total);
 
-        // WHY this passes with NO code change, recorded so the negative result is not re-derived from scratch.
-        // The driver-LINQ bridge renders the SAME projection the native emit side would have — the alias is the
-        // projection MEMBER name ("c") and the value is "$$ROOT" — so the alias-addressed native shaper's
-        // doc["c"] read hits. That is precisely the harmless case ShouldStripBareProjectionOnFallback's remarks
-        // describe: this leaf registers no ProjectionAliasTier.DocumentPath alias OVERRIDE (its alias already IS
-        // the member name), so HasDocumentPathAliasOverride stays false, no late-fallback strip fires, and none
-        // is needed. Contrast the EF-362 owned-hop array leaf, whose emit-side alias ("Home.Notes") is a
-        // document path the driver would never pick — that is what makes the strip load-bearing there and inert
-        // here. Asserted on the captured MQL so a future change to EITHER renderer that breaks that agreement
-        // fails loudly here instead of silently returning a null entity.
+        // Asserted on the captured MQL so a future regression in either the whole-entity leaf's "$$ROOT" alias
+        // or the computed sibling's arithmetic rendering fails loudly here instead of silently returning a
+        // null entity or a misread Total.
         var mql = Mql(logs);
         Assert.Contains("\"c\" : \"$$ROOT\"", mql);
         Assert.Contains("$multiply", mql);

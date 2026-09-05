@@ -499,14 +499,35 @@ public class MongoQueryLanguageRendererTests
     }
 
     [Fact]
-    public void Regex_with_parameterized_term_throws_not_supported()
+    public void Renders_parameterized_regex_term_as_a_placeholder_sentinel()
     {
+        // A parameterized term can't be escaped/anchored at render time (the value isn't known yet) — it
+        // must defer to a placeholder sentinel that MongoPipelineFactory.Build resolves per execution
+        // (see MongoPipelineFactoryTests for the end-to-end escape+anchor behavior at Build time).
         var name = GetProperty<Customer>("Name");
+        var placeholders = new PlaceholderTable();
         var expr = new MongoRegexExpression(new MongoFieldExpression(name, "Name"),
             MongoRegexKind.Contains, new MongoParameterExpression("term", name), negated: false);
 
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => new MongoQueryLanguageRenderer().Render(expr, new PlaceholderTable()));
+        var rendered = new MongoQueryLanguageRenderer().Render(expr, placeholders);
+
+        Assert.True(PlaceholderTable.TryGetPlaceholderIndex(rendered["Name"], out var index));
+        Assert.Equal(0, index);
+    }
+
+    [Fact]
+    public void Renders_negated_parameterized_regex_term_wraps_sentinel_in_not()
+    {
+        var name = GetProperty<Customer>("Name");
+        var placeholders = new PlaceholderTable();
+        var expr = new MongoRegexExpression(new MongoFieldExpression(name, "Name"),
+            MongoRegexKind.StartsWith, new MongoParameterExpression("term", name), negated: true);
+
+        var rendered = new MongoQueryLanguageRenderer().Render(expr, placeholders);
+
+        Assert.True(
+            PlaceholderTable.TryGetPlaceholderIndex(rendered["Name"].AsBsonDocument["$not"], out var index));
+        Assert.Equal(0, index);
     }
 
     // ------------------------------------------------------------------

@@ -1394,8 +1394,8 @@ Products.{ "$match" : { "UnitPrice" : { "$gt" : 100.0 } } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["10", "$_id", "10"] }, "10ALFKI10"] } } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
-            """);
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : 10 }, "$_id", { "$toString" : 10 }] }, "10ALFKI10"] } } }, { "$project" : { "_id" : "$_id" } }
+""");
     }
 
     public override async Task Where_Queryable_ToList_Count(bool async)
@@ -2039,8 +2039,8 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }
-            """);
+Customers.{ "$match" : { "$expr" : { "$eq" : ["$_id", { "$concat" : ["ALF", "KI"] }] } } }
+""");
     }
 
     public override async Task EF_Constant_with_non_evaluatable_argument_throws(bool async)
@@ -2077,7 +2077,7 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : ["$_id", { "$concat" : ["ALF", "KI"] }] } } }
             """);
     }
 
@@ -2116,8 +2116,8 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_
         await base.EF_Parameter_does_not_parameterized_as_part_of_bigger_subtree(async);
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }
-            """);
+Customers.{ "$match" : { "$expr" : { "$eq" : ["$_id", { "$concat" : ["ALF", "KI"] }] } } }
+""");
     }
 
     public override async Task EF_Parameter_with_non_evaluatable_argument_throws(bool async)
@@ -2487,7 +2487,7 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["$_id", "10"] }, "$CompanyName"] } } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["$_id", { "$toString" : 10 }] }, "$CompanyName"] } } }, { "$project" : { "_id" : "$_id" } }
             """);
     }
 
@@ -2497,7 +2497,7 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["10", "$_id"] }, "$CompanyName"] } } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : 10 }, "$_id"] }, "$CompanyName"] } } }, { "$project" : { "_id" : "$_id" } }
             """);
     }
 
@@ -2507,7 +2507,7 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["30", "$_id", "21", "42"] }, "$CompanyName"] } } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : 30 }, "$_id", { "$toString" : 21 }, { "$toString" : 42 }] }, "$CompanyName"] } } }, { "$project" : { "_id" : "$_id" } }
             """);
     }
 
@@ -2517,7 +2517,7 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_
 
         AssertMql(
             """
-            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : "$_id" }, "$CustomerID"] }, "$CustomerID"] } } }, { "$project" : { "_v" : "$CustomerID", "_id" : 0 } }
+            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : "$_id" }, "$CustomerID"] }, "$CustomerID"] } } }, { "$project" : { "CustomerID" : "$CustomerID", "_id" : 0 } }
             """);
     }
 
@@ -2527,7 +2527,7 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$project" : { "_v" : "$_id", "_
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["A", "$_id"] }, "AALFKI"] } } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["A", "$_id"] }, "AALFKI"] } } }, { "$project" : { "_id" : "$_id" } }
             """);
     }
 
