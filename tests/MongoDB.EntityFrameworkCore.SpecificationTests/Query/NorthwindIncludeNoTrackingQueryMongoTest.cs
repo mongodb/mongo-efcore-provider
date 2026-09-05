@@ -184,7 +184,7 @@ Customers.{ "$sort" : { "ContactTitle" : 1 } }, { "$limit" : 10 }, { "$lookup" :
         await base.Include_collection_then_include_collection_predicate(async);
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$lookup" : { "from" : "Orders", "let" : { "localField" : "$_id" }, "pipeline" : [{ "$match" : { "$expr" : { "$eq" : ["$CustomerID", "$$localField"] } } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }], "as" : "_lookup_Orders" } }, { "$limit" : 2 }
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }, { "$lookup" : { "from" : "Orders", "let" : { "localField" : "$_id" }, "pipeline" : [{ "$match" : { "$expr" : { "$eq" : ["$CustomerID", "$$localField"] } } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }], "as" : "_lookup_Orders" } }
 """);
     }
 
@@ -448,7 +448,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-Products.{ "$match" : { "_id" : { "$mod" : [17, 5] } } }, { "$lookup" : { "from" : "OrderDetails", "let" : { "localField" : "$_id" }, "pipeline" : [{ "$match" : { "$expr" : { "$eq" : ["$_id.ProductID", "$$localField"] } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : true } }], "as" : "_lookup_OrderDetails" } }
+Products.{ "$match" : { "$expr" : { "$eq" : [{ "$mod" : ["$_id", 17] }, 5] } } }, { "$lookup" : { "from" : "OrderDetails", "let" : { "localField" : "$_id" }, "pipeline" : [{ "$match" : { "$expr" : { "$eq" : ["$_id.ProductID", "$$localField"] } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : true } }], "as" : "_lookup_OrderDetails" } }
 """);
     }
 
@@ -504,7 +504,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
         AssertMql(
             """
-Orders.{ "$match" : { "_id" : 10248 } }, { "$lookup" : { "from" : "OrderDetails", "let" : { "localField" : "$_id" }, "pipeline" : [{ "$match" : { "$expr" : { "$eq" : ["$_id.OrderID", "$$localField"] } } }, { "$lookup" : { "from" : "Products", "localField" : "_id.ProductID", "foreignField" : "_id", "as" : "_lookup_Product" } }, { "$unwind" : { "path" : "$_lookup_Product", "preserveNullAndEmptyArrays" : true } }], "as" : "_lookup_OrderDetails" } }, { "$limit" : 2 }
+Orders.{ "$match" : { "_id" : 10248 } }, { "$limit" : 2 }, { "$lookup" : { "from" : "OrderDetails", "let" : { "localField" : "$_id" }, "pipeline" : [{ "$match" : { "$expr" : { "$eq" : ["$_id.OrderID", "$$localField"] } } }, { "$lookup" : { "from" : "Products", "localField" : "_id.ProductID", "foreignField" : "_id", "as" : "_lookup_Product" } }, { "$unwind" : { "path" : "$_lookup_Product", "preserveNullAndEmptyArrays" : true } }], "as" : "_lookup_OrderDetails" } }
 """);
     }
 
@@ -1113,7 +1113,7 @@ OrderDetails.{ "$match" : { "$expr" : { "$eq" : [{ "$mod" : ["$_id.OrderID", 23]
 
         AssertMql(
             """
-Products.{ "$match" : { "_id" : { "$mod" : [17, 5] }, "UnitPrice" : { "$lt" : { "$numberDecimal" : "20" } } } }, { "$lookup" : { "from" : "OrderDetails", "let" : { "localField" : "$_id" }, "pipeline" : [{ "$match" : { "$expr" : { "$eq" : ["$_id.ProductID", "$$localField"] } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : true } }], "as" : "_lookup_OrderDetails" } }
+Products.{ "$match" : { "$and" : [{ "$expr" : { "$eq" : [{ "$mod" : ["$_id", 17] }, 5] } }, { "UnitPrice" : { "$lt" : { "$numberDecimal" : "20" } } }] } }, { "$lookup" : { "from" : "OrderDetails", "let" : { "localField" : "$_id" }, "pipeline" : [{ "$match" : { "$expr" : { "$eq" : ["$_id.ProductID", "$$localField"] } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : true } }], "as" : "_lookup_OrderDetails" } }
 """);
     }
 

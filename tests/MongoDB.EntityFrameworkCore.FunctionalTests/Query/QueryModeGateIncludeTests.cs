@@ -25,7 +25,6 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Infrastructure;
-using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
@@ -343,16 +342,43 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void Nested_ThenInclude_still_falls_back()
+    public void Nested_ThenInclude_runs_native()
     {
+        // A collection-then-collection ThenInclude now goes NATIVE (this test's name and premise predate
+        // that — it used to be "..._still_falls_back" and asserted NativeTranslationNotSupportedException
+        // under NativeOnly). The nested $lookup(s) staged into the parent LookupExpression's own
+        // PipelineStages (MongoProjectionBindingExpressionVisitor's ExtractNestedIncludePipeline /
+        // ExtractThenIncludesFromSubquery — unchanged, and already shared with the driver-LINQ fallback
+        // bridge) are now rendered by the native pipeline too, via
+        // LookupExpression.ToLookupStageDocument()/MongoSelectLowerer.AppendLookupStages. Renamed/
+        // re-asserted as part of delivering the capability, mirroring
+        // Reference_include_goes_native_under_Native_mode above.
         var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateNestedCustomers") + Guid.NewGuid().ToString("N")[..8];
         var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateNestedOrders") + Guid.NewGuid().ToString("N")[..8];
         var orderDetailsName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateNestedOrderDetails") + Guid.NewGuid().ToString("N")[..8];
 
+        var customerId = ObjectId.GenerateNewId();
+        var orderId = ObjectId.GenerateNewId();
+        database.MongoDatabase.GetCollection<BsonDocument>(customersName).InsertOne(
+            new BsonDocument { { "_id", customerId }, { "name", "Alice" } });
+        database.MongoDatabase.GetCollection<BsonDocument>(ordersName).InsertOne(
+            new BsonDocument
+            {
+                { "_id", orderId }, { "desc", "Order 1" }, { "cust_id", customerId }, { "Freight", 0.0 }
+            });
+        database.MongoDatabase.GetCollection<BsonDocument>(orderDetailsName).InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "order_id", orderId }, { "Detail", "Widget" } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "order_id", orderId }, { "Detail", "Gadget" } },
+        ]);
+
         using var db = new NestedOrderCustomerDbContext(database, ordersName, customersName, orderDetailsName);
 
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.Customers.Include(c => c.Orders).ThenInclude(o => o.OrderDetails).ToList());
+        // Should NOT throw NativeTranslationNotSupportedException under NativeOnly.
+        var customers = db.Customers.Include(c => c.Orders).ThenInclude(o => o.OrderDetails).ToList();
+
+        var customer = Assert.Single(customers);
+        var order = Assert.Single(customer.Orders);
+        Assert.Equal(2, order.OrderDetails.Count);
     }
 
     [Fact]

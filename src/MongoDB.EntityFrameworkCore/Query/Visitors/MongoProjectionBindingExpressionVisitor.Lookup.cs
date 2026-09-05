@@ -541,7 +541,14 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             ExtractNestedIncludePipeline(nestedInclude.NavigationExpression, nestedLookup, nestedNav.TargetEntityType);
 
             parentLookup.PipelineStages.Add(BuildLookupDocument(nestedLookup));
-            parentLookup.PipelineKind = LookupPipelineKind.FallbackOnly;
+            // Never re-stamp a kind an earlier registration already chose (mirrors the write-once discipline
+            // LookupExpression.PipelineKind documents): if the constructor already claimed FallbackOnly (a TPH
+            // discriminator-narrowed target), or a sibling filtered-Include stage already did, this ThenInclude
+            // must not silently promote that lookup to NestedInclude's native eligibility.
+            if (parentLookup.PipelineKind == LookupPipelineKind.None)
+            {
+                parentLookup.PipelineKind = LookupPipelineKind.NestedInclude;
+            }
 
             // Continue with the entity expression (which may have more wrapping)
             navigationExpression = nestedInclude.EntityExpression;
@@ -589,7 +596,12 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             }
 
             parentLookup.PipelineStages.Add(BuildLookupDocument(nestedLookup));
-            parentLookup.PipelineKind = LookupPipelineKind.FallbackOnly;
+            // See the matching guard/comment in ExtractNestedIncludePipeline above.
+            if (parentLookup.PipelineKind == LookupPipelineKind.None)
+            {
+                parentLookup.PipelineKind = LookupPipelineKind.NestedInclude;
+            }
+
             current = nested.EntityExpression;
         }
 
@@ -626,7 +638,11 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             { "path", $"${refLookup.As}" },
             { "preserveNullAndEmptyArrays", true }
         }));
-        parentLookup.PipelineKind = LookupPipelineKind.FallbackOnly;
+        // See the matching guard/comment in ExtractNestedIncludePipeline above.
+        if (parentLookup.PipelineKind == LookupPipelineKind.None)
+        {
+            parentLookup.PipelineKind = LookupPipelineKind.NestedInclude;
+        }
     }
 
     /// <summary>
@@ -635,37 +651,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// flattened and loses them (EF-374).
     /// </summary>
     private static BsonDocument BuildLookupDocument(LookupExpression lookup)
-    {
-        if (!lookup.HasPipeline)
-        {
-            return new BsonDocument("$lookup", new BsonDocument
-            {
-                { "from", lookup.From },
-                { "localField", lookup.LocalField },
-                { "foreignField", lookup.ForeignField },
-                { "as", lookup.As }
-            });
-        }
-
-        var pipeline = new BsonArray
-        {
-            new BsonDocument("$match",
-                new BsonDocument("$expr",
-                    new BsonDocument("$eq", new BsonArray { $"${lookup.ForeignField}", "$$localField" })))
-        };
-        foreach (var stage in lookup.PipelineStages)
-        {
-            pipeline.Add(stage);
-        }
-
-        return new BsonDocument("$lookup", new BsonDocument
-        {
-            { "from", lookup.From },
-            { "let", new BsonDocument("localField", $"${lookup.LocalField}") },
-            { "pipeline", pipeline },
-            { "as", lookup.As }
-        });
-    }
+        => lookup.ToLookupStageDocument();
 
     /// <summary>
     /// Extract filtered Include operations (OrderBy, Skip, Take) from a subquery expression

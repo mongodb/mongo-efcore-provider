@@ -1393,39 +1393,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
         foreach (var lookup in lookupList)
         {
-            BsonDocument lookupDoc;
-            if (lookup.HasPipeline)
-            {
-                // Pipeline form: used for filtered Includes (OrderBy, Skip, Take on the included collection).
-                var pipeline = new BsonArray
-                {
-                    new BsonDocument("$match",
-                        new BsonDocument("$expr",
-                            new BsonDocument("$eq", new BsonArray { $"${lookup.ForeignField}", "$$localField" })))
-                };
-                foreach (var stage in lookup.PipelineStages)
-                {
-                    pipeline.Add(stage);
-                }
-
-                lookupDoc = new BsonDocument("$lookup", new BsonDocument
-                {
-                    { "from", lookup.From },
-                    { "let", new BsonDocument("localField", $"${lookup.LocalField}") },
-                    { "pipeline", pipeline },
-                    { "as", lookup.As }
-                });
-            }
-            else
-            {
-                lookupDoc = new BsonDocument("$lookup", new BsonDocument
-                {
-                    { "from", lookup.From },
-                    { "localField", lookup.LocalField },
-                    { "foreignField", lookup.ForeignField },
-                    { "as", lookup.As }
-                });
-            }
+            var lookupDoc = lookup.ToLookupStageDocument();
 
             query = Expression.Call(null, appendStageMethod, query,
                 Expression.New(stageConstructor,

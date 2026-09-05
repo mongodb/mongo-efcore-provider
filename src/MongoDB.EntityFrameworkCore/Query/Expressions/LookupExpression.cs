@@ -25,15 +25,23 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// <summary>
 /// Distinguishes WHY this lookup carries a non-empty <see cref="LookupExpression.PipelineStages"/> sub-pipeline, since
 /// each reason has a different native-eligibility answer. <see cref="None"/>: no pipeline stages.
-/// <see cref="FallbackOnly"/>: TPH discriminator narrowing or a nested Include lookup — both remain
-/// fallback/mixed-visitor-only (see <c>MongoSelectLowerer.AppendLookupStages</c>'s exhaustive
-/// pipeline-kind dispatch). <see cref="CorrelatedReducer"/>: a reference-collection-nav
-/// First/FirstOrDefault projection leaf (EF-449) — the one kind the NATIVE lowerer knows how to emit.
+/// <see cref="FallbackOnly"/>: TPH discriminator narrowing or a filtered Include (OrderBy/Skip/Take on the
+/// Include target, EF-440) — both remain fallback/mixed-visitor-only (see
+/// <c>MongoSelectLowerer.AppendLookupStages</c>'s exhaustive pipeline-kind dispatch).
+/// <see cref="NestedInclude"/>: a collection-then-collection/reference <c>ThenInclude</c> (EF-450) — its
+/// nested <c>$lookup</c>(s), staged by <c>MongoProjectionBindingExpressionVisitor</c>'s
+/// <c>ExtractNestedIncludePipeline</c>/<c>ExtractThenIncludesFromSubquery</c>/<c>AddReferenceLookupStages</c>,
+/// render via the same <c>let</c>+<c>pipeline</c> shape (<see cref="LookupExpression.ToLookupStageDocument"/>)
+/// the driver-LINQ fallback bridge already used. <see cref="CorrelatedReducer"/>: a reference-collection-nav
+/// First/FirstOrDefault projection leaf (EF-449) — rendered via the DIFFERENT localField/foreignField+pipeline
+/// shape (<c>MongoPipelineFactory.RenderLookup</c>'s own dispatch), since that shape has a real equality FK to
+/// combine with the pipeline, unlike <see cref="NestedInclude"/>'s own correlation.
 /// </summary>
 internal enum LookupPipelineKind
 {
     None,
     FallbackOnly,
+    NestedInclude,
     CorrelatedReducer
 }
 
@@ -248,4 +256,49 @@ internal sealed class LookupExpression
     /// reads the <c>_lookup_&lt;Nav&gt;</c> array via <c>{ $size: ... }</c> and so must see it already present.
     /// </summary>
     public bool InjectAfterRoot { get; set; }
+
+    /// <summary>
+    /// Builds the <c>$lookup</c> stage document for this lookup: the plain <c>localField</c>/<c>foreignField</c>
+    /// form, or — when <see cref="HasPipeline"/> — the pipeline form (<c>let</c> + <c>pipeline</c>, with the FK
+    /// equality as the pipeline's own leading <c>$match</c>, followed by <see cref="PipelineStages"/>).
+    /// </summary>
+    /// <remarks>
+    /// Shared by every <c>$lookup</c> construction site so they can't drift on shape: the driver-LINQ fallback
+    /// bridge (<c>MongoEFToLinqTranslatingExpressionVisitor.EmitLookupStages</c>), a nested ThenInclude
+    /// sub-lookup embedded in a parent's own <see cref="PipelineStages"/>
+    /// (<c>MongoProjectionBindingExpressionVisitor.BuildLookupDocument</c>), and the native pipeline
+    /// (<c>MongoPipelineFactory.RenderLookup</c>).
+    /// </remarks>
+    public BsonDocument ToLookupStageDocument()
+    {
+        if (!HasPipeline)
+        {
+            return new BsonDocument("$lookup", new BsonDocument
+            {
+                { "from", From },
+                { "localField", LocalField },
+                { "foreignField", ForeignField },
+                { "as", As }
+            });
+        }
+
+        var pipeline = new BsonArray
+        {
+            new BsonDocument("$match",
+                new BsonDocument("$expr",
+                    new BsonDocument("$eq", new BsonArray { $"${ForeignField}", "$$localField" })))
+        };
+        foreach (var stage in PipelineStages)
+        {
+            pipeline.Add(stage);
+        }
+
+        return new BsonDocument("$lookup", new BsonDocument
+        {
+            { "from", From },
+            { "let", new BsonDocument("localField", $"${LocalField}") },
+            { "pipeline", pipeline },
+            { "as", As }
+        });
+    }
 }

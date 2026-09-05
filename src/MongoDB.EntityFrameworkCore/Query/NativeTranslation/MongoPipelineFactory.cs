@@ -416,20 +416,27 @@ internal sealed class MongoPipelineFactory
 
     private static BsonDocument RenderLookup(LookupExpression lookup)
     {
-        var lookupDoc = new BsonDocument
+        // EF-449's CorrelatedReducer kind needs the localField/foreignField+pipeline shape specifically —
+        // an indexable equality join PLUS a supplementary pipeline ($match/$sort/$limit:1) MongoDB
+        // supports combining directly, unlike LookupExpression.ToLookupStageDocument()'s let+pipeline
+        // shape (which correlates via $expr instead, because EF-450's NestedInclude kind has no single
+        // equality-comparable field of its own to hand to localField/foreignField at this level — it
+        // exists purely to carry a nested ThenInclude's own $lookup(s), matching the shape the driver-LINQ
+        // fallback bridge already emits for that kind).
+        if (lookup.PipelineKind == LookupPipelineKind.CorrelatedReducer)
         {
-            { "from", lookup.From },
-            { "localField", lookup.LocalField },
-            { "foreignField", lookup.ForeignField }
-        };
-
-        if (lookup.HasPipeline)
-        {
-            lookupDoc.Add("pipeline", new BsonArray(lookup.PipelineStages));
+            var lookupDoc = new BsonDocument
+            {
+                { "from", lookup.From },
+                { "localField", lookup.LocalField },
+                { "foreignField", lookup.ForeignField },
+                { "pipeline", new BsonArray(lookup.PipelineStages) },
+                { "as", lookup.As }
+            };
+            return new BsonDocument("$lookup", lookupDoc);
         }
 
-        lookupDoc.Add("as", lookup.As);
-        return new BsonDocument("$lookup", lookupDoc);
+        return lookup.ToLookupStageDocument();
     }
 
     private static BsonDocument RenderUnwind(LookupExpression lookup, bool preserveNullAndEmptyArrays)

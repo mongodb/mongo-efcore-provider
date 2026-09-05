@@ -768,8 +768,13 @@ public class MongoPipelineFactoryTests
     [Fact]
     public void Lookup_stage_includes_pipeline_field_when_HasPipeline()
     {
+        // EF-450: RenderLookup's localField/foreignField+pipeline shape is now specific to
+        // LookupPipelineKind.CorrelatedReducer — a bare HasPipeline lookup with no kind tagged (which no
+        // real registration path produces any more) renders via the let+pipeline shape instead (see
+        // Lookup_stage_uses_let_pipeline_shape_for_NestedInclude below). Tag the kind explicitly so this
+        // test still exercises the shape it names.
         var navigation = ChildrenNavigation();
-        var lookup = new LookupExpression(navigation);
+        var lookup = new LookupExpression(navigation) { PipelineKind = LookupPipelineKind.CorrelatedReducer };
         lookup.PipelineStages.Add(new BsonDocument("$limit", 1));
 
         var stages = new List<MongoPipelineStage> { new MongoLookupStage(lookup) };
@@ -785,6 +790,35 @@ public class MongoPipelineFactoryTests
         Assert.Equal("LookupChild", lookupDoc["from"].AsString);
         Assert.Equal("_id", lookupDoc["localField"].AsString);
         Assert.Equal("ParentId", lookupDoc["foreignField"].AsString);
+        Assert.Equal("_lookup_Children", lookupDoc["as"].AsString);
+    }
+
+    [Fact]
+    public void Lookup_stage_uses_let_pipeline_shape_for_NestedInclude()
+    {
+        // EF-450: a NestedInclude-kind lookup (a collection-then-collection/reference ThenInclude) renders
+        // via LookupExpression.ToLookupStageDocument()'s let+pipeline shape — the SAME shape the driver-LINQ
+        // fallback bridge already emits for this kind — not the CorrelatedReducer localField/foreignField
+        // +pipeline shape.
+        var navigation = ChildrenNavigation();
+        var lookup = new LookupExpression(navigation) { PipelineKind = LookupPipelineKind.NestedInclude };
+        lookup.PipelineStages.Add(new BsonDocument("$limit", 1));
+
+        var stages = new List<MongoPipelineStage> { new MongoLookupStage(lookup) };
+        var factory = MongoPipelineFactory.Create(stages, new MongoQueryLanguageRenderer());
+
+        var result = factory.Build(new Dictionary<string, object?>());
+
+        Assert.Single(result);
+        var lookupDoc = result[0]["$lookup"].AsBsonDocument;
+        Assert.False(lookupDoc.Contains("localField"));
+        Assert.False(lookupDoc.Contains("foreignField"));
+        Assert.Equal("_id", lookupDoc["let"].AsBsonDocument["localField"].AsString.TrimStart('$'));
+        var pipeline = lookupDoc["pipeline"].AsBsonArray;
+        Assert.Equal(2, pipeline.Count);
+        Assert.Equal("$expr", pipeline[0].AsBsonDocument["$match"].AsBsonDocument.GetElement(0).Name);
+        Assert.Equal(new BsonDocument("$limit", 1), pipeline[1]);
+        Assert.Equal("LookupChild", lookupDoc["from"].AsString);
         Assert.Equal("_lookup_Children", lookupDoc["as"].AsString);
     }
 

@@ -373,11 +373,31 @@ internal sealed class MongoSelectLowerer
                 stages.Add(new MongoLookupStage(lookup));
                 stages.Add(new MongoUnwindStage(lookup, lookup.PreserveNullAndEmptyArrays));
             }
-            else if (lookup.IsNativeCollectionLookup)
+            else if (lookup.IsNativeCollectionLookup
+                     || (lookup.Navigation is { IsCollection: true } pipelinedNav
+                         && lookup.PipelineKind == LookupPipelineKind.NestedInclude
+                         && !lookup.ForceUnwind
+                         && lookup.As == LookupExpression.GetLookupAlias(pipelinedNav)))
             {
                 // Collection Include: keep the joined documents as an array under _lookup_<Nav>
                 // (no $unwind). The DOM collection materializer reads the array back and runs the
                 // IncludeCollection fixup, exactly as on the driver-LINQ path.
+                //
+                // The second disjunct widens this beyond IsNativeCollectionLookup's plain (no-pipeline)
+                // form to also admit a collection-then-collection/reference ThenInclude (EF-450): its
+                // nested $lookup(s) are staged into PipelineStages by
+                // MongoProjectionBindingExpressionVisitor's ExtractNestedIncludePipeline/
+                // ExtractThenIncludesFromSubquery/AddReferenceLookupStages — the SAME registration path the
+                // driver-LINQ fallback bridge already used — which also stamp PipelineKind.NestedInclude
+                // (guarded: never overwriting an already-FallbackOnly kind, e.g. a TPH discriminator-narrowed
+                // target or a sibling filtered-Include stage — both stay fallback-only, unaffected).
+                // MongoLookupStage/RenderLookup render this via LookupExpression.ToLookupStageDocument()'s
+                // let+pipeline form, the SAME shape the fallback bridge already emitted for this kind — this
+                // check is keyed on PipelineKind rather than bare HasPipeline specifically so it does NOT
+                // also swallow a PipelineKind.CorrelatedReducer lookup (EF-449, also a collection nav): that
+                // kind needs its own dedicated branch below (a mandatory left-outer $unwind + a DIFFERENT
+                // localField/foreignField+pipeline BSON shape), and would otherwise be silently
+                // mis-rendered here with no $unwind at all.
                 stages.Add(new MongoLookupStage(lookup));
             }
             else if (lookup.Navigation is { IsCollection: true } && lookup.ForceUnwind)
