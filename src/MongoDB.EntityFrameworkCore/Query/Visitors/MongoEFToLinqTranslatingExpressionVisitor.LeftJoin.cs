@@ -337,8 +337,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         // Unconditionally true: this builder is only reached from LeftJoin handling, which is left-outer by
         // definition. The flag that follows the LINQ operator (LookupExpression.PreserveNullAndEmptyArrays)
         // is only consulted on the flat-lookup path (EmitLookupStages); no inner Join routes through here.
-        var unwind = new BsonDocument("$unwind",
-            new BsonDocument { { "path", "$_inner" }, { "preserveNullAndEmptyArrays", true } });
+        var unwind = LookupExpression.UnwindStageDocument("_inner", preserveNullAndEmptyArrays: true);
         var projectResult = new BsonDocument("$project",
             new BsonDocument { { "_outer", "$_outer" }, { "_inner", "$_inner" }, { "_id", 0 } });
 
@@ -1410,11 +1409,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 // LookupExpression.PreserveNullAndEmptyArrays): an Include or LeftJoin/GroupJoin preserves
                 // the principal, a plain Join - including EF's lowering of a REQUIRED reference navigation -
                 // drops it when the foreign key matched nothing.
-                var unwindDoc = new BsonDocument("$unwind", new BsonDocument
-                {
-                    { "path", $"${lookup.As}" },
-                    { "preserveNullAndEmptyArrays", lookup.PreserveNullAndEmptyArrays }
-                });
+                var unwindDoc = lookup.ToUnwindStageDocument(lookup.PreserveNullAndEmptyArrays);
 
                 query = Expression.Call(null, appendStageMethod, query,
                     Expression.New(stageConstructor,

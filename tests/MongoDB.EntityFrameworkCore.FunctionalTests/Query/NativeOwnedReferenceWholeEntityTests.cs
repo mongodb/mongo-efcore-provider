@@ -75,9 +75,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
             });
     }
 
-    private static void AssertMql(SpyLoggerProvider spyLogger, string expected)
-        => Assert.Contains(expected, spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery));
-
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
@@ -762,7 +759,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         // Matches spike report §2b's verified shape: the nav's own document path as the alias, the field
         // sibling by its own name, and the retained owner _id (task 1, site 4) that the owned Address
         // element's shadow-key read requires.
-        AssertMql(spyLogger, "{ \"$project\" : { \"Address\" : \"$Address\", \"Title\" : \"$Title\", \"_id\" : \"$_id\" } }");
+        spyLogger.AssertExecutedMqlContains("{ \"$project\" : { \"Address\" : \"$Address\", \"Title\" : \"$Title\", \"_id\" : \"$_id\" } }");
     }
 
     [Fact]

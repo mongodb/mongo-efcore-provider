@@ -440,11 +440,7 @@ internal sealed class MongoPipelineFactory
     }
 
     private static BsonDocument RenderUnwind(LookupExpression lookup, bool preserveNullAndEmptyArrays)
-        => new BsonDocument("$unwind", new BsonDocument
-        {
-            { "path", "$" + lookup.As },
-            { "preserveNullAndEmptyArrays", preserveNullAndEmptyArrays }
-        });
+        => lookup.ToUnwindStageDocument(preserveNullAndEmptyArrays);
 
     // Renders a $unionWith over the operand's nested pipeline into the SAME placeholder table (so a
     // parameter inside the operand substitutes at Build time), then, for Union, the full-document dedup.

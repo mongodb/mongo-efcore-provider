@@ -31,6 +31,7 @@ using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -716,8 +717,16 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     private static readonly MethodInfo EFPropertyMethodInfo =
         typeof(EF).GetMethod(nameof(EF.Property))!;
 
+    // The element name comes from the shared constant, NOT a literal: MongoSelectLowerer requires this stage to
+    // be byte-identical to the native path's own (MongoPipelineFactory renders the same document from the same
+    // constant), and a literal here meant renaming ScoreField would compile clean while silently desyncing the
+    // two paths.
     private static readonly BsonDocument AddScoreField =
-        new("$addFields", new BsonDocument { { "__score", new BsonDocument("$meta", "vectorSearchScore") } });
+        new("$addFields",
+            new BsonDocument
+            {
+                { MongoVectorSearchScoreStage.ScoreField, new BsonDocument("$meta", "vectorSearchScore") }
+            });
 
     // Types whose Equals(object) requires an exact runtime-type match, i.e. no cross-type equality.
     private static readonly HashSet<Type> ExactTypeEqualityTypes =

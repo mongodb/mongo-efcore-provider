@@ -689,11 +689,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         // reference navigation. This $unwind runs INSIDE the parent collection lookup's sub-pipeline, so a
         // non-preserving one would drop collection ELEMENTS, not principals - and an Include must never
         // change the result set of the query it decorates (EF-370); making the two sites agree is not the fix.
-        parentLookup.PipelineStages.Add(new BsonDocument("$unwind", new BsonDocument
-        {
-            { "path", $"${refLookup.As}" },
-            { "preserveNullAndEmptyArrays", true }
-        }));
+        parentLookup.PipelineStages.Add(refLookup.ToUnwindStageDocument(preserveNullAndEmptyArrays: true));
         // See the matching guard/comment in ExtractNestedIncludePipeline above.
         if (parentLookup.PipelineKind == LookupPipelineKind.None)
         {

@@ -258,6 +258,180 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 
     [Fact]
+    public void Chained_join_Where_OrderBy_Any_goes_native_under_NativeOnly()
+    {
+        // Native-chained-join-scope plan (2026-09-07), Task 1, flipped to green by Task 6. This is now a
+        // REGRESSION PIN: a second chained Join followed by a Where/OrderBy/Any over the root (outermost)
+        // scope goes native under NativeOnly. Confirmation is via NativeCardinalityBinder.TryBindAggregate
+        // ONLY: EF's nav-expansion elides the join's pending wrap Select entirely for this selector-less bare
+        // Any() (MEASURED via LambdaExpression.Print() on the preprocessed tree — no Select node exists between
+        // the last Join and Where/OrderBy/Any), so there is no trailing Select for
+        // NativeJoinScopeProjectionBinder.TryBindProjection to ever see for THIS test's shape; only
+        // TryBindAggregate's no-trailing-Select confirming path (see IsSingleEligibleNativeJoinScope's own
+        // remarks) ever runs here. Originally added (pre-fix) as a "still declines" pin, superseded here by the
+        // "now goes native" assertion below, the same way earlier tests in this file evolved as their binders
+        // landed.
+        var seed = SeedOwnersOrdersAndLines();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Chained_join_Where_OrderBy_Any_goes_native_under_NativeOnly));
+
+        var found = db.Owners
+            .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+            .Join(db.OrderLines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r, l })
+            .Where(x => x.o.Name == seed.Owners[0].Name)
+            .OrderBy(x => x.o.Id)
+            .Any();
+
+        Assert.True(found);
+    }
+
+    [Fact]
+    public void Chained_join_Where_terminal_Count_goes_native_under_NativeOnly()
+    {
+        // Native-chained-join-scope plan (2026-09-07), Task 7. The sibling test above
+        // (Chained_join_Where_OrderBy_Any_goes_native_under_NativeOnly) already pins that a bare Any() over a
+        // fully-eligible chain reaches NativeCardinalityBinder.TryBindAggregate's chain-confirming call site
+        // (added by Task 6's fix round — see that method's own remarks). Any()/All() are the PRESENCE-ONLY
+        // arm of that same method (a boolean short-circuit); Count() is the ordinary $count arm, a distinct
+        // code path through the SAME confirming call site (which runs unconditionally right before the
+        // method's final success return, regardless of which aggregate op reached it). Both are worth pinning
+        // separately since the brief calls out Count specifically, not just Any.
+        var seed = SeedOwnersOrdersAndLines();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Chained_join_Where_terminal_Count_goes_native_under_NativeOnly));
+
+        var count = db.Owners
+            .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+            .Join(db.OrderLines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r, l })
+            .Where(x => x.o.Name == seed.Owners[0].Name)
+            .Count();
+
+        Assert.True(count > 0);
+    }
+
+    [Fact]
+    public void Chained_join_onto_the_same_target_entity_type_disambiguates_lookup_aliases_under_NativeOnly()
+    {
+        // Final-review fix (M9b). The final whole-branch review verified the "two joins onto the same target
+        // entity type within one chain" alias-disambiguation behavior (UniquifyLookupAlias producing
+        // "_lookup_Orders" then "_lookup_Orders_1") by hand but found it untested — this pins it. Both joins
+        // here are Owner.Orders (the SAME navigation, resolved twice): the second join's outer key selector
+        // (`e.o.Id`) reaches back to the ROOT scope through a pure Outer-hop chain (isDirectFromRoot), not
+        // through the first join's Inner side, so both joins resolve against Owner.GetNavigations() and find
+        // the identical Owner.Orders collection navigation — the exact shape that requires
+        // UniquifyLookupAlias's counter suffix rather than a bare navigation-name alias, or the second join's
+        // $lookup would collide with the first's.
+        var seed = SeedOwnersOrdersAndLines();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Chained_join_onto_the_same_target_entity_type_disambiguates_lookup_aliases_under_NativeOnly),
+            out var spyLogger);
+
+        var results = db.Owners
+            .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+            .Join(db.Orders, e => e.o.Id, r2 => r2.OwnerId, (e, r2) => new { e.o, e.r, r2 })
+            .Where(x => x.o.Name == seed.Owners[0].Name)
+            .AsEnumerable()
+            .Select(x => (x.r.Total, x.r2.Total))
+            .OrderBy(x => x.Item1).ThenBy(x => x.Item2)
+            .ToList();
+
+        // Owner[0] ("Alice") has exactly two orders in SeedOwnersOrdersAndLines (order1: 10, order2: 20), so
+        // the cross-product over both joins keyed on the SAME owner is 2 x 2 = 4 combinations.
+        var ownerAOrders = seed.Orders.Where(o => o.OwnerId == seed.Owners[0].Id).ToList();
+        var expected = (from r in ownerAOrders
+                         from r2 in ownerAOrders
+                         select (r.Total, r2.Total))
+            .OrderBy(x => x.Item1).ThenBy(x => x.Item2)
+            .ToList();
+
+        Assert.Equal(expected, results);
+
+        // Succeeding under NativeOnly is itself the "went native" signal — this is the actual point of the
+        // test, since a driver-LINQ fallback would ALSO happen to produce disambiguated aliases (the aliasing
+        // mechanism lives in TranslateJoinCore, shared by both legs) and so wouldn't distinguish the two.
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("_lookup_Orders\"", message);
+        Assert.Contains("_lookup_Orders_1\"", message);
+    }
+
+    [Fact]
+    public void Take_after_Where_over_a_two_level_collection_nav_chain_declines_cleanly_under_NativeOnly()
+    {
+        // Native-chained-join-scope plan (2026-09-07), Task 7. This task's brief proposed this exact shape
+        // (a Where then a Take over a 2-level Owners->Orders->OrderLines chain) as a test of "the existing
+        // post-confirmation Take guard" (MongoSelectDefinition.HasConfirmedJoinLookup, read by
+        // NativeSlotPopulator.cs's slot-operator check). MEASURED (temporary instrumentation added and
+        // reverted, not part of this change — probes placed both in NativeSlotPopulator.PopulateNativeSlots'
+        // Take arm and in the wrapped-Select confirming arm of
+        // MongoQueryableMethodTranslatingExpressionVisitor.TranslateSelect): that is not actually the
+        // mechanism this shape (or ANY chained-join + Take/Skip construction tried, including an EXPLICIT
+        // confirming `new {...}` Select composed immediately before Take, mirroring
+        // First_after_a_confirmed_join_declines_cleanly_under_NativeOnly's reducer pattern) exercises. EF's
+        // nav-expansion fuses even an explicit Select immediately following a join chain into the SAME
+        // deferred pending-selector mechanism an implicit trailing Select uses, so a Take is always visited
+        // — and its $limit recorded — BEFORE the chain's confirming Select runs, whether that Select is
+        // implicit or explicit. `HasConfirmedJoinLookup` therefore reads FALSE at the moment
+        // NativeSlotPopulator processes Take/Skip for every chained-join construction tried here — matching
+        // that guard's own "measured ZERO hits" comment, which this task's investigation did not overturn
+        // (nor find a new construction that does).
+        //
+        // The mechanism that ACTUALLY declines this shape (and Task 6's own adversarial chain-paging test,
+        // Chained_join_with_an_earlier_collection_nav_declines_paging_under_NativeOnly_even_when_the_last_join_is_safe,
+        // below) is the PRE-confirmation HasPaging conjunct in IsSingleEligibleNativeJoinScope: a $limit
+        // already recorded when the (deferred) confirming Select finally runs blocks confirmation outright,
+        // per level. Both levels here are ordinary Joins over COLLECTION navigations (Owner.Orders,
+        // Order.OrderLines) — each individually 1:N-unsafe — so this pins the SAME conjunct Task 6 already
+        // covers, over a DIFFERENT chain shape (two plain Joins plus an outer-scope Where, vs. Task 6's
+        // Join+LeftJoin with no Where): legitimate incremental regression coverage, but NOT proof that
+        // HasConfirmedJoinLookup's post-confirmation guard fires for a chain — nothing found in this task's
+        // investigation is. See task-7-report.md for the full investigation trail.
+        var seed = SeedOwnersOrdersAndLines();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Take_after_Where_over_a_two_level_collection_nav_chain_declines_cleanly_under_NativeOnly));
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() =>
+            db.Owners
+                .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(db.OrderLines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r, l })
+                .Where(x => x.o.Name == seed.Owners[0].Name)
+                .Take(1)
+                .ToList());
+    }
+
+#if !EF8 && !EF9
+    [Fact]
+    public void Chained_join_with_an_earlier_collection_nav_declines_paging_under_NativeOnly_even_when_the_last_join_is_safe()
+    {
+        // Fix round 1, Finding 1 (task-6-report.md review). IsSingleEligibleNativeJoinScope's
+        // paging/reducing carve-out used to inspect ONLY mongoQueryExpression.Joins[^1] (the LAST join in
+        // the chain) for the "$unwind preserves the outer row count 1:1" property. That is unsound for a
+        // chain of depth > 1: checking only the last level proves nothing about EARLIER levels.
+        //
+        // Level 1 here (Owners.Join(Orders, ...)) resolves Owner.Orders — a 1:N COLLECTION navigation via
+        // an ordinary (non-left-outer) Join — UNSAFE: its $unwind (ForceUnwind, preserveNullAndEmptyArrays:
+        // false) is not 1:1, so a $limit recorded ahead of it (from the trailing Take(1)) would page the
+        // un-joined OWNER rows rather than the joined result. Level 2 (.LeftJoin(Owners again, ...))
+        // resolves Order.Owner — a REFERENCE navigation taken as a LeftJoin — SAFE on its own
+        // (preserveNullAndEmptyArrays: true, strictly 1:1). A last-only check sees ONLY level 2's safety
+        // and would wrongly admit confirmation despite level 1 being unsafe; the fix requires EVERY level
+        // in the chain to be individually 1:1-safe before paging/reducing may confirm.
+        //
+        // This test only proves native correctly DECLINES (not that the fallback returns correct data —
+        // EF Core's own driver-LINQ semantics guarantee that independently).
+        var seed = SeedOwnersAndOrders();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Chained_join_with_an_earlier_collection_nav_declines_paging_under_NativeOnly_even_when_the_last_join_is_safe));
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() =>
+            db.Owners
+                .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .LeftJoin(db.Owners, e => e.r.OwnerId, o2 => o2.Id, (e, o2) => new { e.o, e.r, o2 })
+                .Take(1)
+                .ToList());
+    }
+#endif
+
+    [Fact]
     public void Take_or_Skip_after_a_confirmed_join_declines_cleanly_under_NativeOnly()
     {
         // FINAL-REVIEW CRITICAL 1. A Take/Skip composed onto a join was recorded into PipelineOps, which

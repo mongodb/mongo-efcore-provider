@@ -1170,9 +1170,6 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         string? FieldName,
         MemberInfo? MemberInfo);
 
-    private string? FindProjectionAlias(Expression expression)
-        => _queryExpression.Projection.FirstOrDefault(p => p.Expression != null && p.Expression.Equals(expression))?.Alias;
-
     private BlockExpression AddIncludes(BlockExpression shaperBlock)
     {
         if (_pendingIncludes.Count == 0)
@@ -1212,7 +1209,9 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             throw new InvalidOperationException(CoreStrings.TranslationFailed(includeExpression.Print()));
         }
 
-        var includeMethod = navigation.IsCollection ? IncludeCollectionMethodInfo : IncludeReferenceMethodInfo;
+        var includeMethod = navigation.IsCollection
+            ? MongoIncludeFixups.IncludeCollectionMethodInfo
+            : MongoIncludeFixups.IncludeReferenceMethodInfo;
         var includingClrType = navigation.DeclaringEntityType.ClrType;
         var relatedEntityClrType = navigation.TargetEntityType.ClrType;
 #pragma warning disable EF1001 // Internal EF Core API usage.
@@ -1223,7 +1222,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
         var concreteEntityTypeVariable = shaperBlock.Variables.Single(v => v.Type == typeof(IEntityType));
         var inverseNavigation = navigation.Inverse;
-        var fixup = GenerateFixup(
+        var fixup = MongoIncludeFixups.GenerateFixup(
             includingClrType, relatedEntityClrType, navigation, inverseNavigation!);
 
         var navigationExpression = Visit(includeExpression.NavigationExpression);
@@ -1232,7 +1231,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             Expression.IfThen(
                 Expression.Call(
                     Expression.Constant(navigation.DeclaringEntityType, typeof(IReadOnlyEntityType)),
-                    IsAssignableFromMethodInfo,
+                    MongoIncludeFixups.IsAssignableFromMethodInfo,
                     Expression.Convert(concreteEntityTypeVariable, typeof(IReadOnlyEntityType))),
                 Expression.Call(
                     includeMethod.MakeGenericMethod(includingClrType, relatedEntityClrType),
@@ -1248,164 +1247,9 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 #pragma warning restore EF1001 // Internal EF Core API usage.
     }
 
-    private static readonly MethodInfo IncludeReferenceMethodInfo
-        = typeof(MongoProjectionBindingRemovingExpressionVisitor).GetTypeInfo()
-            .GetDeclaredMethod(nameof(IncludeReference))!;
-
-    private static void IncludeReference<TIncludingEntity, TIncludedEntity>(
-#pragma warning disable EF1001 // Internal EF Core API usage.
-        InternalEntityEntry entry,
-#pragma warning restore EF1001 // Internal EF Core API usage.
-        object entity,
-        IEntityType entityType,
-        TIncludedEntity relatedEntity,
-        INavigation navigation,
-        INavigation inverseNavigation,
-        Action<TIncludingEntity, TIncludedEntity> fixup,
-        bool __)
-    {
-        if (entity == null
-            || !navigation.DeclaringEntityType.IsAssignableFrom(entityType))
-        {
-            return;
-        }
-
-        if (entry == null)
-        {
-            var includingEntity = (TIncludingEntity)entity;
-            navigation.SetIsLoadedWhenNoTracking(includingEntity);
-            if (relatedEntity != null)
-            {
-                fixup(includingEntity, relatedEntity);
-                if (inverseNavigation != null
-                    && !inverseNavigation.IsCollection)
-                {
-                    inverseNavigation.SetIsLoadedWhenNoTracking(relatedEntity);
-                }
-            }
-        }
-        // For non-null relatedEntity StateManager will set the flag
-        else if (relatedEntity == null)
-        {
-#pragma warning disable EF1001 // Internal EF Core API usage.
-            entry.SetIsLoaded(navigation);
-#pragma warning restore EF1001 // Internal EF Core API usage.
-        }
-    }
-
-    private static readonly MethodInfo IncludeCollectionMethodInfo
-        = typeof(MongoProjectionBindingRemovingExpressionVisitor).GetTypeInfo()
-            .GetDeclaredMethod(nameof(IncludeCollection))!;
-
-    private static void IncludeCollection<TIncludingEntity, TIncludedEntity>(
-#pragma warning disable EF1001 // Internal EF Core API usage.
-        InternalEntityEntry? entry,
-#pragma warning restore EF1001 // Internal EF Core API usage.
-        object? entity,
-        IEntityType entityType,
-        IEnumerable<TIncludedEntity>? relatedEntities,
-        INavigation navigation,
-        INavigation inverseNavigation,
-        Action<TIncludingEntity, TIncludedEntity> fixup,
-        bool setLoaded)
-    {
-        if (entity == null
-            || !navigation.DeclaringEntityType.IsAssignableFrom(entityType))
-        {
-            return;
-        }
-
-        if (entry == null)
-        {
-            var includingEntity = (TIncludingEntity)entity;
-            navigation.SetIsLoadedWhenNoTracking(includingEntity);
-
-            if (relatedEntities != null)
-            {
-                foreach (var relatedEntity in relatedEntities)
-                {
-                    fixup(includingEntity, relatedEntity);
-                    inverseNavigation?.SetIsLoadedWhenNoTracking(relatedEntity!);
-                }
-            }
-        }
-        else
-        {
-            if (setLoaded)
-            {
-#pragma warning disable EF1001 // Internal EF Core API usage.
-                entry.SetIsLoaded(navigation);
-#pragma warning restore EF1001 // Internal EF Core API usage.
-            }
-
-            if (relatedEntities != null)
-            {
-                using var enumerator = relatedEntities.GetEnumerator();
-                while (enumerator.MoveNext())
-                {
-                }
-            }
-        }
-
-        // Ensure empty collections still initialize a new CLR object for them
-        if (relatedEntities != null && !navigation.IsShadowProperty())
-        {
-            navigation.GetCollectionAccessor()!.GetOrCreate(entity, forMaterialization: true);
-        }
-    }
-
-    private static Delegate GenerateFixup(
-        Type entityType,
-        Type relatedEntityType,
-        INavigation navigation,
-        INavigation inverseNavigation)
-    {
-        var entityParameter = Expression.Parameter(entityType);
-        var relatedEntityParameter = Expression.Parameter(relatedEntityType);
-        List<Expression> expressions =
-        [
-            navigation.IsCollection
-                ? AddToCollectionNavigation(entityParameter, relatedEntityParameter, navigation)
-                : AssignReferenceNavigation(entityParameter, relatedEntityParameter, navigation)
-        ];
-
-        if (inverseNavigation != null)
-        {
-            expressions.Add(
-                inverseNavigation.IsCollection
-                    ? AddToCollectionNavigation(relatedEntityParameter, entityParameter, inverseNavigation)
-                    : AssignReferenceNavigation(relatedEntityParameter, entityParameter, inverseNavigation));
-        }
-
-        return Expression.Lambda(Expression.Block(typeof(void), expressions), entityParameter, relatedEntityParameter)
-            .Compile();
-    }
-
-    private static Expression AssignReferenceNavigation(
-        ParameterExpression entity,
-        ParameterExpression relatedEntity,
-        INavigation navigation)
-        => entity.MakeMemberAccess(navigation.GetMemberInfo(true, true)).Assign(relatedEntity);
-
-    private static Expression AddToCollectionNavigation(
-        ParameterExpression entity,
-        ParameterExpression relatedEntity,
-        INavigation navigation)
-        => Expression.Call(
-            Expression.Constant(navigation.GetCollectionAccessor()),
-            CollectionAccessorAddMethodInfo,
-            entity,
-            relatedEntity,
-            Expression.Constant(true));
-
     private static readonly MethodInfo PopulateCollectionMethodInfo
         = typeof(MongoProjectionBindingRemovingExpressionVisitor).GetTypeInfo()
             .GetDeclaredMethod(nameof(PopulateCollection))!;
-
-    private static readonly MethodInfo IsAssignableFromMethodInfo
-        = typeof(IReadOnlyEntityType).GetMethod(nameof(IReadOnlyEntityType.IsAssignableFrom), [
-            typeof(IReadOnlyEntityType)
-        ])!;
 
     private static TCollection PopulateCollection<TEntity, TCollection>(
         IClrCollectionAccessor accessor,

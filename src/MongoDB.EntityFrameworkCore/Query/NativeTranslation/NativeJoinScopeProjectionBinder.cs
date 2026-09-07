@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq.Expressions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
@@ -22,17 +23,30 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
 /// Attempts to populate the native <c>$project</c> slot for a wrapped <c>new {...}</c>/<c>MemberInit</c>
-/// <c>Select</c> composed immediately after an eligible single-level <c>Join</c>/<c>LeftJoin</c>
-/// (<see cref="MongoSelectDefinition.JoinScope"/>).
+/// <c>Select</c> composed immediately after an eligible <c>Join</c>/<c>LeftJoin</c> — a single level, or (since
+/// the native-chained-join-scope plan, Task 6) a CHAIN of them — (<see cref="MongoSelectDefinition.JoinScope"/>).
 /// </summary>
 /// <remarks>
 /// <para>
-/// An admitted leaf is one of: a scalar/computed value <see cref="NativeJoinScopeTranslator"/> can translate
-/// (<c>x.Outer.Foo</c>, <c>x.Inner.Foo</c>, or a computed expression combining both), or a WHOLE-ENTITY leaf
-/// (<c>x.Outer</c>/<c>x.Inner</c> verbatim — EF-444). The one combination deliberately NOT admitted is a
-/// whole-entity leaf alongside a COMPUTED leaf: the whole projection then declines, because a computed leaf
-/// has no document path for the whole-document fallback legs a whole-entity leaf forces — see the
-/// "whole-entity leaf makes every SIBLING leaf's readability a precondition" paragraph below.
+/// For a DEPTH-1 scope (<c>scope.Levels.Count == 1</c>, unchanged from before Task 6): an admitted leaf is one
+/// of: a scalar/computed value <see cref="NativeJoinScopeTranslator"/> can translate (<c>x.Outer.Foo</c>,
+/// <c>x.Inner.Foo</c>, or a computed expression combining both), or a WHOLE-ENTITY leaf (<c>x.Outer</c>/
+/// <c>x.Inner</c> verbatim — EF-444). The one combination deliberately NOT admitted is a whole-entity leaf
+/// alongside a COMPUTED leaf: the whole projection then declines, because a computed leaf has no document path
+/// for the whole-document fallback legs a whole-entity leaf forces — see the "whole-entity leaf makes every
+/// SIBLING leaf's readability a precondition" paragraph below.
+/// </para>
+/// <para>
+/// For a CHAIN (<c>scope.Levels.Count &gt; 1</c>, Task 6): every leaf MUST be a whole-entity leaf naming some
+/// scope in the chain (the root, or any level's Inner side) — a scalar/computed leaf declines the WHOLE
+/// projection outright, rather than being attempted through <see cref="NativeJoinScopeTranslator.TryTranslateValue"/>,
+/// because that method's own flat, depth-1-only shape check can — for one specific coincidental shape — pass
+/// while actually resolving against the WRONG level (see the "chain-only" comment on that decline in
+/// <see cref="TryBindProjection"/> for the worked example, and <c>NativeJoinScopeTranslator</c>'s own
+/// documented RESIDUAL GAP). This is a strict widening at Levels.Count == 1 (identical to before) and a
+/// stricter-than-depth-1 restriction at Levels.Count &gt; 1 (only whole-entity leaves, no scalars/computed at
+/// all) — see docs/superpowers/specs/2026-09-07-native-chained-join-scope-design.md, Component 6's "Out of
+/// scope" list.
 /// </para>
 /// <para>
 /// A whole-entity leaf (<c>x.Outer</c>/<c>x.Inner</c> verbatim) is asymmetric (EF-444) and BOTH sides now stage
@@ -42,16 +56,19 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// folds the join's own shaper into the selector body first, so the leaf arrives as the
 /// <c>StructuralTypeShaperExpression</c> the join already built and gets rebound by index, rather than
 /// mis-registered as a scalar alias read. The INNER leaf stages the SAME <c>$$ROOT</c>-analogue mechanism but
-/// under a FIXED, self-referential alias — <see cref="MongoJoinScope.InnerPrefix"/> — used as BOTH the emitted
+/// under a FIXED, self-referential alias — <see cref="MongoJoinScopeLevel.InnerPrefix"/> — used as BOTH the emitted
 /// <c>$project</c> field name AND the <see cref="MongoElementRefExpression"/>'s path, NOT the member's own
 /// alias. See the "Alias space" paragraph below for why this asymmetry is load-bearing and must not be
 /// "corrected" back to the member alias.
 /// </para>
 /// <para>
-/// On success: stages every leaf, then commits in one block — <c>Select.Projection</c> entries, the join's
-/// already-built <see cref="JoinInfo.Lookup"/> (<c>AddLookup</c>), and
-/// <see cref="MongoSelectDefinition.MarkReferenceIncludeConfirmed"/>. Nothing is mutated on any decline path,
-/// so a rejected leaf can never leave a half-registered <c>$lookup</c> or a stray projection entry behind.
+/// On success: stages every leaf, then commits in one block — <c>Select.Projection</c> entries, EVERY level's
+/// already-built <c>Lookup</c> (<c>AddLookup</c>, once per <see cref="MongoJoinScopeLevel"/> — for a chain this
+/// is redundant-but-harmless, since <c>TranslateJoinCore</c> already unconditionally registered every level's
+/// lookup the moment <c>Joins.Count &gt; 1</c>), and <see cref="MongoSelectDefinition.MarkReferenceIncludeConfirmed"/>
+/// (also once per level, matching the once-per-join <c>MarkSawCandidateReferenceIncludeJoin</c> call recorded
+/// at join-registration time). Nothing is mutated on any decline path, so a rejected leaf can never leave a
+/// half-registered <c>$lookup</c> or a stray projection entry behind.
 /// </para>
 /// <para>
 /// <b>Alias space.</b> Every ORDINARY leaf (a scalar/computed value, or a whole-entity OUTER leaf) is emitted
@@ -101,18 +118,24 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// non-default-<c>BsonRepresentation</c> field declines there, before this binder sees it.
 /// </para>
 /// <para>
-/// <b>On <see cref="NativeJoinScopeTranslator"/>'s documented RESIDUAL GAP.</b> That comment warns that the
-/// first caller to translate the Inner side WITHOUT the <c>Where</c> arm's blanket
+/// <b>On <see cref="NativeJoinScopeTranslator"/>'s documented RESIDUAL GAP (updated for Task 6).</b> That
+/// comment warns that the first caller to translate the Inner side WITHOUT the <c>Where</c> arm's blanket
 /// <c>ReferencesInnerScope</c> block — i.e. this binder — must either add a per-join identity check or
-/// re-validate the scope against the actual join being bound. It is closed here structurally, by this binder's
-/// call-site gate (<c>MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope</c>)
-/// requiring <c>Joins.Count == 1</c>: a <c>JoinScope</c> is recorded only for the FIRST join on a select, and
-/// every later join appends to that same <c>Joins</c> list on the same <c>MongoQueryExpression</c>, so "exactly
-/// one join has ever been recorded here" and "the recorded scope describes that join" are one fact, making
-/// <c>scope.InnerPrefix == joinInfo.Alias</c> hold by construction. The gap's own worked example —
-/// <c>Join(a, b, …).Select(x =&gt; x.Outer).Join(c, d, …)</c> — reaches the trailing <c>Select</c> with
-/// <c>Joins.Count == 2</c> and is declined by that gate. See the gate's own remarks for the full derivation;
-/// it is stated in one place so the two arms cannot drift.
+/// re-validate the scope against the actual join being bound. Before Task 6 it was closed structurally by this
+/// binder's call-site gate requiring <c>Joins.Count == 1</c> outright. Task 6's gate widening
+/// (<c>MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope</c>, now
+/// <c>scope.Levels.Count == Joins.Count</c>) reopens the gap's own worked example — a chained second join whose
+/// OWN flat <c>TransparentIdentifier&lt;TOuter,TInner&gt;</c> coincidentally matches the recorded scope's types
+/// (<c>Join(a, b, …).Select(x =&gt; x.Outer).Join(c, d, …)</c>) — as far as THAT gate is concerned (both joins
+/// individually eligible ⇒ the chain is rebuilt to cover both). It stays closed one layer down, HERE: this
+/// binder resolves a whole-entity leaf via <c>MongoTransparentScopeResolver.TryResolveScopeDepth</c>, which
+/// walks the actual member-NAME chain (never compares CLR types), and — the load-bearing half — a chain
+/// (<c>Levels.Count &gt; 1</c>) never falls through to the flat, type-comparing
+/// <c>NativeJoinScopeTranslator.TryTranslateValue</c> the gap warns about at all, for ANY leaf that doesn't
+/// resolve as whole-entity. See <c>NativeJoinScopeProjectionBinderTests
+/// .Declines_a_second_chained_join_rather_than_reusing_the_first_joins_scope</c>, whose trailing selector's
+/// leaves are scalar (not whole-entity) and so still declines here, unchanged, proving the gap's worked example
+/// remains closed after the widening.
 /// </para>
 /// </remarks>
 internal static class NativeJoinScopeProjectionBinder
@@ -121,7 +144,7 @@ internal static class NativeJoinScopeProjectionBinder
         MongoQueryExpression mongoQ, LambdaExpression selector, JoinInfo joinInfo)
     {
         if (mongoQ.Select.JoinScope is not { } scope
-            || joinInfo.Lookup is not { } lookup
+            || joinInfo.Lookup is null
             || mongoQ.Select.Projection.Count > 0
             || selector.Parameters.Count != 1)
         {
@@ -130,7 +153,7 @@ internal static class NativeJoinScopeProjectionBinder
 
         var rootParam = selector.Parameters[0];
 
-        if (!TryReadMembers(selector.Body, out var members))
+        if (!selector.Body.TryGetProjectionMembers(out var members))
         {
             return false;
         }
@@ -158,31 +181,37 @@ internal static class NativeJoinScopeProjectionBinder
 
         foreach (var (alias, leafBody) in members)
         {
-            // A whole-entity leaf (`x.Outer`/`x.Inner` verbatim). Recognized by the member's DECLARING TYPE
-            // (IsTransparentIdentifierOuterOrInnerAccess), never by member name alone, so a joined entity that
-            // happens to declare its own real "Outer"/"Inner" property is not mistaken for join-chain plumbing —
-            // the same rule NativeJoinScopeTranslator's own splitter and ExpressionExtensionMethods document
-            // every caller must stay in agreement on.
+            // A whole-entity leaf naming ANY scope in the chain — the root (scope index 0) or any level's
+            // Inner side (index k, 1 <= k <= scope.Levels.Count). Generalized (native-chained-join-scope plan,
+            // Task 6) from the old flat, single-hop `IsTransparentIdentifierOuterOrInnerAccess` check to
+            // MongoTransparentScopeResolver.TryResolveScopeDepth, the SAME chained-scope walker
+            // NativeSelectManyBinder already uses — resolution is still entirely by parameter IDENTITY
+            // (rootParam) and member NAME-CHAIN SHAPE (a pure run of "Outer" hops, optionally ending in one
+            // "Inner"), never by a single member's declaring type alone, but the shape it recognizes now
+            // spans the whole chain instead of one hop. A leaf whose body is not EXACTLY one of these two
+            // shapes (a computed/mixed leaf, a leaf reaching further through a scope, or one spanning more
+            // than one scope) fails to resolve and falls through to the ordinary scalar/computed arm below.
             //
-            // EF-444: the OUTER leaf stages a $$ROOT reference (MongoElementRefExpression over
-            // MongoElementRefExpression.WholeRootDocumentPath) under its OWN alias instead of declining — the
-            // bind side (MongoQueryableMethodTranslatingExpressionVisitor.BindResultMember) folds the join's
-            // own shaper into the selector body first, so a whole-entity leaf arrives there as the
+            // EF-444: the ROOT leaf (scopeIndex == 0) stages a $$ROOT reference (MongoElementRefExpression
+            // over MongoElementRefExpression.WholeRootDocumentPath) under its OWN alias instead of declining —
+            // the bind side (MongoQueryableMethodTranslatingExpressionVisitor.BindResultMember) folds the
+            // join's own shaper into the selector body first, so a whole-entity leaf arrives there as the
             // StructuralTypeShaperExpression the join already built and gets rebound by index, rather than
-            // mis-registered as a scalar alias read. The INNER leaf (EF-444 Task 2) stages the same way but
-            // under a FIXED, self-referential alias (scope.InnerPrefix, both as the $project field name and the
+            // mis-registered as a scalar alias read. An INNER leaf at level k (EF-444 Task 2, generalized to
+            // any k here) stages the same way but under a FIXED, self-referential alias
+            // (scope.Levels[k-1].InnerPrefix, both as the $project field name and the
             // MongoElementRefExpression's path) — NOT the member's own alias — because the read side resolves
             // the inner entity's field name from the NAVIGATION, not the projection alias. See this class's own
             // "Alias space" remarks for the full reasoning; do not "fix" this back to the member alias.
             //
-            // NativeJoinScopeTranslator would decline this leaf anyway (a bare scope leaf rewrites to the
-            // synthetic scope parameter, which resolves to no field), so this check is about being explicit
-            // and stable rather than about reachability.
-            if (leafBody is MemberExpression member
-                && ReferenceEquals(member.Expression, rootParam)
-                && member.IsTransparentIdentifierOuterOrInnerAccess())
+            // NativeJoinScopeTranslator.TryTranslateValue (the ordinary-leaf arm below) would decline this leaf
+            // anyway for a depth-1 scope (a bare scope leaf rewrites to the synthetic scope parameter, which
+            // resolves to no field) and is never even attempted for a depth-&gt;1 chain (see the comment on that
+            // arm below) — so this check is about being explicit and stable rather than about reachability.
+            if (MongoTransparentScopeResolver.TryResolveScopeDepth(
+                    leafBody, rootParam, hopNames: ["Outer", "Inner"], sourceCount: scope.Levels.Count, out var scopeIndex))
             {
-                if (member.Member.Name == "Outer")
+                if (scopeIndex == 0)
                 {
                     if (!seenAliases.Add(alias))
                     {
@@ -196,7 +225,9 @@ internal static class NativeJoinScopeProjectionBinder
                 }
                 else
                 {
-                    // Self-referential: alias AND path are both scope.InnerPrefix.
+                    var level = scope.Levels[scopeIndex - 1];
+
+                    // Self-referential: alias AND path are both level.InnerPrefix.
                     //
                     // The fixed alias is claimed on `seenAliases` EXPLICITLY here rather than only implicitly
                     // via the seed loop above. In normal operation this Add() returns FALSE — the alias is
@@ -206,35 +237,57 @@ internal static class NativeJoinScopeProjectionBinder
                     // silently on that three-file coupling (RebindInnerShaperToOuterQuery →
                     // EntityProjectionExpression.Name → the seed loop) for the ORDINARY-leaf arm below to
                     // decline a user member spelled exactly "_lookup_<Nav>".
-                    seenAliases.Add(scope.InnerPrefix);
+                    seenAliases.Add(level.InnerPrefix);
 
-                    // Dedup so a duplicated Inner leaf (e.g. `new { a = r, b = r }`) stages this fixed alias
-                    // only once — otherwise MongoQueryExpression/MongoPipelineFactory would hard-crash on a
-                    // duplicate $project field name under Native/NativeOnly (an explicit DriverLinq builds no
-                    // native pipeline, so it cannot crash there). Both members' bind-side AddToProjection calls
-                    // dedup to the same index by expression equality regardless, so both read correctly.
+                    // Dedup so a duplicated Inner leaf at the SAME level (e.g. `new { a = r, b = r }`) stages
+                    // this fixed alias only once — otherwise MongoQueryExpression/MongoPipelineFactory would
+                    // hard-crash on a duplicate $project field name under Native/NativeOnly (an explicit
+                    // DriverLinq builds no native pipeline, so it cannot crash there). Both members' bind-side
+                    // AddToProjection calls dedup to the same index by expression equality regardless, so both
+                    // read correctly. This is a per-LEVEL dedup key (level.InnerPrefix), not per-leaf — two
+                    // leaves naming the SAME level dedupe here; two leaves naming DIFFERENT levels each stage
+                    // (and later confirm) independently, which is exactly the chain-of-N generalization.
                     //
-                    // ASSERTED, not assumed (final-review finding): the already-staged entry must really be a
-                    // previous Inner leaf of THIS projection. A bare `TrueForAll(p => p.Alias != InnerPrefix)`
-                    // would treat ANY staged entry holding that alias as the dedup case and SILENTLY SKIP the
-                    // Inner leaf — a dropped value, not a decline — were the seeding coupling above ever to
-                    // break and let a user member named "_lookup_<Nav>" stage first. Declining converts that
-                    // latent silent drop into an explicit, visible fallback.
-                    var existingIndex = staged.FindIndex(p => p.Alias == scope.InnerPrefix);
+                    // ASSERTED, not assumed (final-review finding, depth-1): the already-staged entry must
+                    // really be a previous Inner leaf of THIS level. A bare `TrueForAll(p => p.Alias !=
+                    // level.InnerPrefix)` would treat ANY staged entry holding that alias as the dedup case and
+                    // SILENTLY SKIP the Inner leaf — a dropped value, not a decline — were the seeding coupling
+                    // above ever to break and let a user member named "_lookup_<Nav>" stage first. Declining
+                    // converts that latent silent drop into an explicit, visible fallback.
+                    var existingIndex = staged.FindIndex(p => p.Alias == level.InnerPrefix);
                     if (existingIndex < 0)
                     {
                         staged.Add(new MongoProjection(
-                            scope.InnerPrefix,
-                            new MongoElementRefExpression(scope.InnerPrefix, scope.InnerEntityType.ClrType)));
+                            level.InnerPrefix,
+                            new MongoElementRefExpression(level.InnerPrefix, level.InnerEntityType.ClrType)));
                     }
                     else if (staged[existingIndex].Expression is not MongoElementRefExpression existingRef
-                             || existingRef.Path != scope.InnerPrefix)
+                             || existingRef.Path != level.InnerPrefix)
                     {
                         return false;
                     }
                 }
 
                 continue;
+            }
+
+            // ORDINARY (scalar/computed) leaf. Only attempted for a DEPTH-1 scope, unchanged from before this
+            // task — NativeJoinScopeTranslator.TryTranslateValue's own flat-shape check (TryTranslateCore) only
+            // ever resolves against scope.Levels[0], and its documented RESIDUAL GAP is precisely that a
+            // CHAINED join whose own flat TransparentIdentifier<TOuter,TInner> coincidentally matches the
+            // recorded scope's Outer/Inner CLR types (e.g. two joins re-targeting the same entity type, with an
+            // intermediate confirming Select flattening the first back down to a plain entity — see
+            // MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope's own remarks)
+            // can pass that check while actually belonging to a LATER level — misresolving the leaf against the
+            // WRONG level's $lookup alias, silently. TryResolveScopeDepth above safely and structurally
+            // recognizes a whole-entity leaf at ANY level without this hazard (it walks the ACTUAL member-name
+            // chain rather than comparing CLR types), which is why it is tried first and unconditionally; a
+            // scalar/computed leaf has no such safe generalization available in this ticket's scope (see the
+            // design doc's explicit "Out of scope" listing), so for Levels.Count > 1 this arm declines the
+            // WHOLE projection outright rather than risk the flat-shape translator's known-unsafe fallback.
+            if (scope.Levels.Count > 1)
+            {
+                return false;
             }
 
             if (!NativeJoinScopeTranslator.TryTranslateValue(scope, rootParam, leafBody, out var computedLeaf))
@@ -287,58 +340,65 @@ internal static class NativeJoinScopeProjectionBinder
             mongoQ.Select.AddProjection(projection);
         }
 
-        mongoQ.AddLookup(lookup);
-        mongoQ.Select.MarkReferenceIncludeConfirmed();
+        ConfirmEntireChain(mongoQ, scope);
         return true;
     }
 
     /// <summary>
-    /// Splits an anonymous-type / DTO construction into its (member name, value expression) pairs.
+    /// Registers every level's own <c>$lookup</c> and confirms every level's candidate join, exactly once
+    /// each, unconditionally over <paramref name="scope"/>.Levels/<c>mongoQ.Joins</c> by matching index — NOT
+    /// gated on whether some leaf happened to name that level as a whole entity. This is a deliberate
+    /// generalization of depth-1's own existing unconditional behavior (<c>Levels.Count == 1</c>: the old
+    /// inline code always called <c>AddLookup(joinInfo.Lookup)</c> + <c>MarkReferenceIncludeConfirmed()</c>
+    /// exactly once on any successful bind, including an Outer-scalar-only projection that never references
+    /// the Inner side at all — e.g. <c>new { o.Name }</c> alone — because reaching the caller's success path
+    /// IS that select's dedicated confirming operator for that ONE join, full stop), not a narrower "only the
+    /// levels a leaf actually named" rule: gating on "named" would leave a level's
+    /// <c>MarkReferenceIncludeConfirmed()</c> call never made whenever a projection doesn't happen to
+    /// reference it by a whole-entity leaf (a plain scalar/Outer-only leaf touching it, or no leaf touching it
+    /// at all), permanently tripping <see cref="MongoSelectDefinition.HasUnconfirmedCandidateJoin"/>'s strict
+    /// candidate/confirmed COUNT equality (one <c>MarkSawCandidateReferenceIncludeJoin</c> was recorded per
+    /// join at <c>TranslateJoinCore</c> time, unconditionally, so every one of them needs exactly one matching
+    /// confirmation to ever route native) — and, far worse for the depth-1 case specifically, gating
+    /// <c>AddLookup</c> on "named" would leave that JOIN'S OWN <c>$lookup</c> NEVER REGISTERED AT ALL whenever
+    /// no leaf is whole-entity (depth-1 defers ALL lookup registration to this exact call; unlike a chain,
+    /// nothing else registers it first), which would silently omit the <c>$lookup</c> stage entirely rather
+    /// than just declining. For a genuine chain (<c>Joins.Count &gt; 1</c>) this loop's <c>AddLookup</c> calls
+    /// are redundant-but-harmless (already unconditionally registered by <c>TranslateJoinCore</c>'s own
+    /// multi-join flattening the moment the second join was seen — see
+    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope</c>'s remarks) —
+    /// <c>AddLookup</c> dedupes by alias — but the <c>MarkReferenceIncludeConfirmed()</c> calls remain
+    /// load-bearing at every depth, since nothing else ever calls that one.
+    /// <para>
+    /// <b>Second call site (native-chained-join-scope plan, Task 6 final round).</b> Also called directly by
+    /// <see cref="NativeCardinalityBinder.TryBindAggregate"/> for a scalar aggregate that reaches its own
+    /// unconditional success point with an eligible, still-unconfirmed <see cref="MongoJoinScope"/> and NO
+    /// trailing Select at all in the tree — see that method's own remarks (and
+    /// <c>IsSingleEligibleNativeJoinScope</c>'s) for why such a Select-less shape is real and reachable
+    /// (<c>Join(…).Join(…).Where(…).OrderBy(…).Any()</c>), not a theoretical concern.
+    /// </para>
     /// </summary>
-    /// <remarks>
-    /// Deliberately a local copy of the same two-case shape <c>NativeProjectionBinder</c> and
-    /// <c>NativeGroupByBinder</c> each parse: theirs are inlined into their own leaf-translation loops
-    /// (interleaved with alias derivation, pending-lookup staging and array-leaf bookkeeping this binder has no
-    /// analogue for), so there is no existing accessible helper to call. Kept to the same two admitted shapes —
-    /// a <see cref="NewExpression"/> carrying <c>Members</c>, or a <see cref="MemberInitExpression"/> over a
-    /// parameterless constructor with <see cref="MemberAssignment"/> bindings only.
-    /// </remarks>
-    private static bool TryReadMembers(
-        Expression body, out IReadOnlyList<(string Alias, Expression Leaf)> members)
+    internal static void ConfirmEntireChain(MongoQueryExpression mongoQ, MongoJoinScope scope)
     {
-        var list = new List<(string, Expression)>();
-        members = list;
+        // Defense-in-depth (final-review fix, I1/M1): every caller of this method reaches it only after
+        // IsSingleEligibleNativeJoinScope has confirmed scope.Levels.Count == mongoQ.Joins.Count AND every
+        // join's Lookup is non-null — so this bound should always hold. Asserting it here means a future
+        // caller that skips (or weakens) that gate fails loudly instead of silently under-registering a
+        // $lookup while still marking that level's reference-Include confirmed.
+        Debug.Assert(
+            scope.Levels.Count == mongoQ.Joins.Count,
+            "ConfirmEntireChain requires one MongoJoinScopeLevel per join on mongoQ.Joins.");
 
-        switch (body)
+        for (var i = 0; i < scope.Levels.Count; i++)
         {
-            case NewExpression newExpression
-                when newExpression.Members != null
-                     && newExpression.Members.Count == newExpression.Arguments.Count
-                     && newExpression.Arguments.Count > 0:
-                for (var i = 0; i < newExpression.Arguments.Count; i++)
-                {
-                    list.Add((newExpression.Members[i].Name, newExpression.Arguments[i]));
-                }
+            if (mongoQ.Joins[i].Lookup is { } levelLookup)
+            {
+                mongoQ.AddLookup(levelLookup);
+            }
 
-                return true;
-
-            case MemberInitExpression memberInit
-                when memberInit.NewExpression.Arguments.Count == 0
-                     && memberInit.Bindings.Count > 0:
-                foreach (var binding in memberInit.Bindings)
-                {
-                    if (binding is not MemberAssignment assignment)
-                    {
-                        return false;
-                    }
-
-                    list.Add((binding.Member.Name, assignment.Expression));
-                }
-
-                return true;
-
-            default:
-                return false;
+            mongoQ.Select.MarkReferenceIncludeConfirmed();
         }
+
+        mongoQ.Select.MarkJoinLookupConfirmed();
     }
 }

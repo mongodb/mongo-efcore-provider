@@ -2560,6 +2560,36 @@ public class MongoExpressionTranslatorTests
         => Assert.Null(TryTranslateBlogPredicate(b => b.Tags.Count > 2));
 
     [Fact]
+    public void An_outer_scoped_owned_navigation_null_equality_declines_in_a_two_scope_element_translator()
+    {
+        // REGRESSION: this shape used to translate, and translate WRONG. `b.Address == null` inside a
+        // correlated element predicate (`b.Posts.Any(p => b.Address == null)`) resolved the OUTER entity's
+        // owned-nav path and wrapped it in a MongoElementRefExpression, which renders ELEMENT-relative when
+        // an elementVariable is in scope. The emitted aggregation expression was
+        //     { "$eq": [ { "$ifNull": [ "$$this.Address", null ] }, null ] }
+        // where $$this is the ELEMENT (an OwnedPost, which has no Address at all), so the NullSafe $ifNull read
+        // the always-missing element as null and the predicate answered TRUE for every row regardless of the
+        // stored Address. MongoOuterFieldExpression is the root-anchored node that would be correct here, but
+        // it requires a backing IProperty that a navigation path does not have — so the correct disposition is
+        // a clean decline to driver-LINQ, which is what this pins.
+        var blog = GetOwnedBlogEntityType();
+        var postType = blog.FindNavigation(nameof(OwnedBlog.Posts))!.TargetEntityType;
+        var addressType = blog.FindNavigation(nameof(OwnedBlog.Address))!.TargetEntityType;
+
+        var bParam = Expression.Parameter(blog.ClrType, "b");
+        var body = Expression.Equal(
+            Expression.Property(bParam, nameof(OwnedBlog.Address)),
+            Expression.Constant(null, addressType.ClrType));
+
+        // The element-scoped two-scope translator the correlated-quantifier / Count(pred) arms build:
+        // outerParam set, innerPrefix null.
+        var translator = new MongoExpressionTranslator(postType, bParam, blog, innerPrefix: null);
+
+        Assert.False(translator.TryTranslate(body, out var result));
+        Assert.Null(result);
+    }
+
+    [Fact]
     public void Correlated_Count_element_predicate_with_two_distinct_free_parameters_declines()
     {
         // Task-3 review fix (EF-421, Finding 1): the Count(pred) two-scope arm accepts a correlation only

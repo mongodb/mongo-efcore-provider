@@ -72,7 +72,7 @@ internal static class NativeSelectManyBinder
         // are a bare member access, so every Where here is an inner-element user filter (no FK correlation).
         var userPredicates = new List<LambdaExpression>();
         var navExpr = PeelOwnedInnerWhere(selectSource, userPredicates);
-        if (!TryGetMemberAccess(navExpr, out var navRoot, out var navName) || !ReferenceEquals(navRoot, outerParam))
+        if (!navExpr.TryGetMemberOrEFProperty(out var navRoot, out var navName) || !ReferenceEquals(navRoot, outerParam))
             return false;
 
         var outerEntityType = mongoQ.CollectionExpression.EntityType;
@@ -87,7 +87,7 @@ internal static class NativeSelectManyBinder
             return false;
         var innerParam = innerLambda.Parameters[0];
 
-        if (!TryReadProjection(innerLambda.Body, out var members))
+        if (!innerLambda.Body.TryGetProjectionMembers(out var members))
             return false;
 
         var outerTranslator = new MongoExpressionTranslator(outerEntityType);
@@ -97,7 +97,7 @@ internal static class NativeSelectManyBinder
 
         foreach (var (alias, argExpr) in members)
         {
-            if (!TryGetMemberAccess(argExpr, out var root, out _))
+            if (!argExpr.TryGetMemberOrEFProperty(out var root, out _))
                 return false;
 
             bool isInner;
@@ -142,7 +142,7 @@ internal static class NativeSelectManyBinder
 
         var userPredicates = new List<LambdaExpression>();
         var navExpr = PeelOwnedInnerWhere(collectionSelector.Body, userPredicates);
-        if (!TryGetMemberAccess(navExpr, out var navRoot, out var navName) || !ReferenceEquals(navRoot, outerParam))
+        if (!navExpr.TryGetMemberOrEFProperty(out var navRoot, out var navName) || !ReferenceEquals(navRoot, outerParam))
             return false;
 
         var outerEntityType = mongoQ.CollectionExpression.EntityType;
@@ -423,54 +423,17 @@ internal static class NativeSelectManyBinder
             return false;
 
         Expression guarded;
-        if (IsNullConstant(notEqual.Right)) guarded = notEqual.Left;
-        else if (IsNullConstant(notEqual.Left)) guarded = notEqual.Right;
+        if (NativeCorrelationMatcher.IsNullConstant(notEqual.Right)) guarded = notEqual.Left;
+        else if (NativeCorrelationMatcher.IsNullConstant(notEqual.Left)) guarded = notEqual.Right;
         else return false;
 
         // A guard on anything not rooted at the OUTER parameter is by definition an inner-element user filter.
-        if (!ReferencesParameter(guarded, outerParam))
+        if (!guarded.ReferencesParameter(outerParam))
             return false;
 
         // ...and even an outer-rooted guard only counts when it guards the key the FK equality itself uses.
-        return TryGetEqualitySides(fkConjunct, out var left, out var right)
+        return NativeCorrelationMatcher.TryExtractEqualitySides(fkConjunct, out var left, out var right)
                && (IsSameMemberAccess(guarded, left) || IsSameMemberAccess(guarded, right));
-    }
-
-    private static bool IsNullConstant(Expression node)
-        => node.RemoveConvert() is ConstantExpression { Value: null };
-
-    /// <summary>
-    /// Extracts the two compared sides of the FK-equality conjunct, in the same three spellings
-    /// <see cref="NativeCorrelationMatcher"/> accepts (<c>==</c>, <c>object.Equals(x, y)</c>, <c>x.Equals(y)</c>).
-    /// Deliberately a local copy: the shared matcher's own contract is not widened for this caller.
-    /// </summary>
-    private static bool TryGetEqualitySides(Expression conjunct, out Expression left, out Expression right)
-    {
-        switch (conjunct.RemoveConvert())
-        {
-            case BinaryExpression { NodeType: ExpressionType.Equal } equal:
-                left = equal.Left;
-                right = equal.Right;
-                return true;
-
-            case MethodCallExpression
-            {
-                Method: { Name: nameof(Equals), IsStatic: true, DeclaringType: var declaringType },
-                Arguments: [var arg0, var arg1]
-            } when declaringType == typeof(object):
-                left = arg0;
-                right = arg1;
-                return true;
-
-            case MethodCallExpression { Method.Name: nameof(Equals), Object: { } instance, Arguments: [var arg] }:
-                left = instance;
-                right = arg;
-                return true;
-
-            default:
-                left = right = null!;
-                return false;
-        }
     }
 
     /// <summary>
@@ -480,8 +443,8 @@ internal static class NativeSelectManyBinder
     private static bool IsSameMemberAccess(Expression a, Expression b)
         => a.RemoveConvert() is { } strippedA
            && b.RemoveConvert() is { } strippedB
-           && TryGetMemberAccess(strippedA, out var rootA, out var nameA)
-           && TryGetMemberAccess(strippedB, out var rootB, out var nameB)
+           && strippedA.TryGetMemberOrEFProperty(out var rootA, out var nameA)
+           && strippedB.TryGetMemberOrEFProperty(out var rootB, out var nameB)
            && nameA == nameB
            && ReferenceEquals(rootA.RemoveConvert(), rootB.RemoveConvert());
 
@@ -499,20 +462,6 @@ internal static class NativeSelectManyBinder
     }
 
     /// <summary>
-    /// Scans <paramref name="expression"/> for any reference to <paramref name="parameter"/> — used by
-    /// <see cref="TryTranslateReferenceFilterLayer"/> to detect a user filter correlated beyond the FK equality
-    /// already isolated by <see cref="TrySplitCorrelation"/>, and route it to the two-scope translator instead
-    /// of the single-scope one (which resolves member access by name, not parameter identity, and would
-    /// otherwise silently mistranslate an outer-scoped member sharing a name with the inner entity).
-    /// </summary>
-    private static bool ReferencesParameter(Expression expression, ParameterExpression parameter)
-    {
-        var visitor = new ParameterReferenceVisitor(parameter);
-        visitor.Visit(expression);
-        return visitor.Found;
-    }
-
-    /// <summary>
     /// Translates one peeled reference-<c>SelectMany</c> inner-filter <c>Where</c> layer into a filter conjunct.
     /// A layer referencing the outer <c>SelectMany</c> parameter (correlated beyond the FK) is translated with
     /// the two-scope translator — inner field refs prefixed with <paramref name="scope"/>, outer field refs at
@@ -526,7 +475,7 @@ internal static class NativeSelectManyBinder
     {
         conjunct = null;
 
-        if (ReferencesParameter(body, outerParam))
+        if (body.ReferencesParameter(outerParam))
         {
             var twoScope = new MongoExpressionTranslator(innerEntityType, outerParam, outerEntityType, scope);
             if (!twoScope.TryTranslate(body, out var correlated))
@@ -537,21 +486,10 @@ internal static class NativeSelectManyBinder
 
         if (!innerTranslator.TryTranslate(body, out var innerExpr))
             return false;
-        conjunct = MongoFieldPrefixRewriter.Rewrite(innerExpr, scope);
-        return true;
+
+        return MongoFieldPrefixRewriter.TryRewrite(innerExpr, scope, out conjunct);
     }
 
-    private sealed class ParameterReferenceVisitor(ParameterExpression parameter) : ExpressionVisitor
-    {
-        public bool Found { get; private set; }
-
-        protected override Expression VisitParameter(ParameterExpression node)
-        {
-            if (ReferenceEquals(node, parameter))
-                Found = true;
-            return base.VisitParameter(node);
-        }
-    }
 
     /// <summary>
     /// Binds the DEFERRED explicit-result-selector / query-syntax form of an owned-collection
@@ -587,7 +525,7 @@ internal static class NativeSelectManyBinder
             return false;
         var ti = selector.Parameters[0];
 
-        var isBareBody = !TryReadProjection(selector.Body, out var members);
+        var isBareBody = !selector.Body.TryGetProjectionMembers(out var members);
         if (isBareBody)
         {
             // Deliberately narrow: ONLY an arithmetic computed body is admitted bare. A bare member access
@@ -668,7 +606,7 @@ internal static class NativeSelectManyBinder
         foreach (var p in projections)
             mongoQ.Select.AddProjection(p);
         if (isBareBody)
-            bareLeafAlias = members[0].Alias;
+            bareLeafAlias = members[0].MemberName;
         return true;
     }
 
@@ -847,10 +785,13 @@ internal static class NativeSelectManyBinder
         if (!translators[scope].TryTranslateValue(rerooted, out var computed))
             return false;
 
-        result = scope > 0
-            ? MongoFieldPrefixRewriter.Rewrite(computed, sources[scope - 1].InnerScopePath)
-            : computed;
-        return true;
+        if (scope == 0)
+        {
+            result = computed;
+            return true;
+        }
+
+        return MongoFieldPrefixRewriter.TryRewrite(computed, sources[scope - 1].InnerScopePath, out result);
     }
 
     /// <summary>
@@ -893,7 +834,7 @@ internal static class NativeSelectManyBinder
     /// Owned collections nav-expand to a bare member access (<c>o.Items</c>), not an FK-correlated subquery, so
     /// every <c>Where</c> here is an inner-element user filter (unlike <see cref="TryBindReferenceNavUnwind"/>,
     /// there is no FK-correlation <c>Where</c> to stop at). Returns the source with all <c>Where</c> layers
-    /// removed; the caller validates it via <see cref="TryGetMemberAccess"/>.
+    /// removed; the caller validates it via <see cref="ExpressionExtensionMethods.TryGetMemberOrEFProperty"/>.
     /// </summary>
     private static Expression PeelOwnedInnerWhere(Expression source, List<LambdaExpression> userPredicates)
     {
@@ -918,7 +859,7 @@ internal static class NativeSelectManyBinder
     /// the unwound owned element sits before <c>$replaceRoot</c>/<c>$project</c>). A layer referencing the
     /// outer parameter (e.g. <c>i.Name == o.Name</c>) is instead routed to the two-scope
     /// <see cref="MongoExpressionTranslator"/> — routing is by parameter identity (see
-    /// <see cref="ReferencesParameter"/>), never by member name, so a name shared between the outer and inner
+    /// <see cref="ExpressionExtensionMethods.ReferencesParameter"/>), never by member name, so a name shared between the outer and inner
     /// entity types never mis-scopes; the result renders as <c>$expr</c>. Returns <see langword="true"/> with
     /// <paramref name="filter"/> <see langword="null"/> when there are no predicates, so callers can invoke it
     /// unconditionally. Declines (<see langword="false"/>, no mutation) only if a translator rejects the layer
@@ -939,7 +880,7 @@ internal static class NativeSelectManyBinder
                 return false;
 
             MongoExpression conjunct;
-            if (ReferencesParameter(userPredicate.Body, outerParam))
+            if (userPredicate.Body.ReferencesParameter(outerParam))
             {
                 // Correlated-beyond-outer: translate with the two-scope translator (inner fields prefixed with
                 // the unwind path, outer fields at document root, routed by parameter identity), used directly
@@ -952,9 +893,11 @@ internal static class NativeSelectManyBinder
             }
             else
             {
-                if (!innerTranslator.TryTranslate(userPredicate.Body, out var expr))
+                if (!innerTranslator.TryTranslate(userPredicate.Body, out var expr)
+                    || !MongoFieldPrefixRewriter.TryRewrite(expr, unwindPath, out var prefixed))
                     return false;
-                conjunct = MongoFieldPrefixRewriter.Rewrite(expr!, unwindPath);
+
+                conjunct = prefixed;
             }
 
             filter = filter == null
@@ -968,56 +911,4 @@ internal static class NativeSelectManyBinder
         => e is MethodCallExpression { Method.Name: nameof(System.Linq.Queryable.AsQueryable), Arguments: [var inner] }
             ? inner : e;
 
-    /// <summary>
-    /// Matches a member/navigation access in either of the two shapes EF Core produces: a plain
-    /// <see cref="MemberExpression"/> (ordinary scalar property access) or an <c>EF.Property(root, "Name")</c>
-    /// call (the shadow-nav-safe form EF's nav-expansion rewrites navigation access into, e.g. <c>o.Items</c>
-    /// becoming <c>EF.Property(o, "Items")</c>). Returns the accessed root expression and member name.
-    /// </summary>
-    private static bool TryGetMemberAccess(Expression expression, out Expression root, out string name)
-    {
-        switch (expression)
-        {
-            case MemberExpression { Expression: { } inner } member:
-                root = inner;
-                name = member.Member.Name;
-                return true;
-
-            case MethodCallExpression call
-                when call.Method.IsEFPropertyMethod()
-                     && call.Arguments is [var rootArg, ConstantExpression { Value: string propName }]:
-                root = rootArg;
-                name = propName;
-                return true;
-
-            default:
-                root = null!;
-                name = null!;
-                return false;
-        }
-    }
-
-    // new {...} (NewExpression with Members) or a parameterless MemberInit — mirrors NativeProjectionBinder.
-    private static bool TryReadProjection(Expression body, out IReadOnlyList<(string Alias, Expression Arg)> members)
-    {
-        members = null!;
-        var list = new List<(string, Expression)>();
-        switch (body)
-        {
-            case NewExpression ne when ne.Members != null && ne.Members.Count == ne.Arguments.Count && ne.Arguments.Count > 0:
-                for (var i = 0; i < ne.Arguments.Count; i++) list.Add((ne.Members[i].Name, ne.Arguments[i]));
-                break;
-            case MemberInitExpression mi when mi.NewExpression.Arguments.Count == 0 && mi.Bindings.Count > 0:
-                foreach (var b in mi.Bindings)
-                {
-                    if (b is not MemberAssignment ma) return false;
-                    list.Add((b.Member.Name, ma.Expression));
-                }
-                break;
-            default:
-                return false;
-        }
-        members = list;
-        return true;
-    }
 }

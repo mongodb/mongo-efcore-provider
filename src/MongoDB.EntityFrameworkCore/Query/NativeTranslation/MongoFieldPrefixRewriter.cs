@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
@@ -25,9 +26,45 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// (<c>Total</c>) into one that matches the unwound-and-prefixed document (<c>_lookup_Refs.Total</c>).
 /// Generalizes the single-field prefixing <c>NativeSelectManyBinder.TryTranslateScopedField</c> performs.
 /// </summary>
+/// <remarks>
+/// <para>
+/// <b>Declines, never throws, for an unhandled node kind.</b> This used to be a <c>Rewrite</c> that threw from
+/// its own <c>switch</c> default, which meant a node kind added to <c>TryTranslateValue</c> without a matching
+/// arm here silently converted a shape that had been declining cleanly (and falling back to driver-LINQ) into a
+/// hard failure in every <c>MongoQueryMode</c>. Returning <see langword="false"/> makes the miss a
+/// fallback instead of a crash; every caller already has a decline path, because they all sit in
+/// <see cref="bool"/>-returning <c>Try*</c> methods. <c>MongoExpressionNodeCoverageTests</c> pins which node
+/// kinds currently reach the decline.
+/// </para>
+/// </remarks>
 internal static class MongoFieldPrefixRewriter
 {
-    public static MongoExpression Rewrite(MongoExpression expr, string prefix)
+    /// <summary>
+    /// Prefixes every document path in <paramref name="expr"/> with <paramref name="prefix"/>, or returns
+    /// <see langword="false"/> if the tree contains a node kind with no prefixing rule.
+    /// </summary>
+    /// <remarks>
+    /// The recursive walk keeps using the throw as its internal decline channel and this method catches it,
+    /// rather than threading a <see cref="bool"/> through all seventeen arms — deliberately contained, since the
+    /// throw never escapes this class. (The recursion is slated to be replaced by a
+    /// <c>MongoExpression.VisitChildren</c>-based structural rewriter, at which point the default arm, and this
+    /// bridge with it, disappear.)
+    /// </remarks>
+    public static bool TryRewrite(MongoExpression expr, string prefix, [NotNullWhen(true)] out MongoExpression? result)
+    {
+        try
+        {
+            result = Rewrite(expr, prefix);
+            return true;
+        }
+        catch (NativeTranslationNotSupportedException)
+        {
+            result = null;
+            return false;
+        }
+    }
+
+    private static MongoExpression Rewrite(MongoExpression expr, string prefix)
         => expr switch
         {
             MongoFieldExpression f => new MongoFieldExpression(f.Property, prefix + "." + f.ElementName),
@@ -77,7 +114,18 @@ internal static class MongoFieldPrefixRewriter
             MongoDatePartExpression dp => new MongoDatePartExpression(Rewrite(dp.Operand, prefix), dp.Part),
             MongoDateTimeOffsetLocalExpression l => new MongoDateTimeOffsetLocalExpression(
                 (MongoFieldExpression)Rewrite(l.Operand, prefix)),
-            MongoElementRefExpression er => new MongoElementRefExpression(prefix + "." + er.Path, er.Type),
+            // NullSafe MUST be carried across — dropping it (as this arm used to) silently removed the $ifNull
+            // wrapper the aggregation renderer keys off, so a MISSING element stopped comparing equal to null
+            // and an owned-nav null check (`d.Ship == null`) inside a prefixed scope quietly lost rows. The
+            // sibling MongoSizeExpression arm above threads its own NullSafe for the same reason.
+            MongoElementRefExpression er => new MongoElementRefExpression(
+                prefix + "." + er.Path, er.Type, er.NullSafe),
+            // Root-anchored BY DEFINITION — it renders at the document root regardless of any enclosing element
+            // scope (see the node's own remarks and the aggregation renderer's elementVariable: null arm), so
+            // prefixing it would be actively wrong. Pass through unchanged. This arm previously did not exist,
+            // which meant an outer-scoped field inside a rewritten subtree hit the throwing default and turned a
+            // clean fallback into a hard failure in every MongoQueryMode.
+            MongoOuterFieldExpression => expr,
             MongoConcatExpression concat => new MongoConcatExpression(
                 concat.Operands.Select(o => Rewrite(o, prefix)).ToList()),
             MongoConstantExpression or MongoParameterExpression => expr,

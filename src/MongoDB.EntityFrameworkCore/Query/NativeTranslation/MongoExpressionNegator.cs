@@ -74,6 +74,43 @@ internal static class MongoExpressionNegator
     /// <paramref name="node"/> has no exact query-dialect complement (the caller must then decline, so the
     /// query falls back to driver-LINQ).
     /// </returns>
+    /// <summary>
+    /// Flips the <c>Negated</c> flag of a node that carries one, i.e. negates a node whose rendered
+    /// negated/un-negated pair is an exact complement of each other.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Five node kinds are self-negating in this way, each for its own dialect reason: <c>$nin</c> is defined as
+    /// the complement of <c>$in</c>; <c>{$not: [{$in: …}]}</c> likewise complements the computed-needle
+    /// <c>$in</c>; <c>{field: {$ne: value}}</c> is the exact complement of the implicit array-element match
+    /// <c>{field: value}</c>; a regex negates via an enclosing <c>$not</c>; and <c>$elemMatch</c> negates via an
+    /// enclosing <c>$not</c> (the bare <c>Any()</c> form flipping <c>$exists</c> instead), which is what lets a
+    /// nested quantifier compose in either order.
+    /// </para>
+    /// <para>
+    /// <b>Shared deliberately.</b> This exists as its own method because
+    /// <see cref="MongoExpressionTranslator"/>'s <c>Not</c> case needs the same five flips, one level shallower
+    /// — it cannot simply call <see cref="TryNegate"/>, because <see cref="TryNegate"/>'s outer
+    /// query-dialect gate declines some of these nodes in positions the translator legitimately reaches. The two
+    /// used to hold byte-identical copies of all five flips, which is exactly the drift risk the area's
+    /// "negator / classifier / renderer must change together" invariant warns about.
+    /// </para>
+    /// </remarks>
+    internal static bool TryFlipNegatedFlag(MongoExpression node, [NotNullWhen(true)] out MongoExpression? flipped)
+    {
+        flipped = node switch
+        {
+            MongoInExpression e => new MongoInExpression(e.Field, e.Values, !e.Negated),
+            MongoComputedInExpression e => new MongoComputedInExpression(e.Needle, e.Values, !e.Negated),
+            MongoArrayContainsExpression e => new MongoArrayContainsExpression(e.Field, e.Value, !e.Negated),
+            MongoRegexExpression e => new MongoRegexExpression(e.Field, e.Kind, e.Term, !e.Negated),
+            MongoElemMatchExpression e => new MongoElemMatchExpression(e.ArrayPath, e.ElementPredicate, !e.Negated),
+            _ => null
+        };
+
+        return flipped is not null;
+    }
+
     public static bool TryNegate(MongoExpression node, [NotNullWhen(true)] out MongoExpression? negated)
     {
         negated = null;
@@ -248,33 +285,11 @@ internal static class MongoExpressionNegator
                 }
             }
 
-            case MongoInExpression inExpr:
-                // $nin is defined as the complement of $in.
-                negated = new MongoInExpression(inExpr.Field, inExpr.Values, !inExpr.Negated);
-                return true;
-
-            case MongoComputedInExpression computedIn:
-                // The computed-needle sibling of MongoInExpression above — same exact-complement reasoning
-                // ($not: [{$in: [...]}]} is the exact complement of {$in: [...]}).
-                negated = new MongoComputedInExpression(computedIn.Needle, computedIn.Values, !computedIn.Negated);
-                return true;
-
-            case MongoArrayContainsExpression arrayContains:
-                // { field: { $ne: value } } is the exact complement of { field: value } — see
-                // RenderArrayContains's remarks.
-                negated = new MongoArrayContainsExpression(arrayContains.Field, arrayContains.Value, !arrayContains.Negated);
-                return true;
-
-            case MongoRegexExpression regex:
-                // The renderer negates via an enclosing $not, an exact complement.
-                negated = new MongoRegexExpression(regex.Field, regex.Kind, regex.Term, !regex.Negated);
-                return true;
-
-            case MongoElemMatchExpression elemMatch:
-                // $not complements the $elemMatch; the bare Any() form flips $exists. This is what makes a
-                // nested quantifier compose in either order (All-in-Any, Any-in-All, All-in-All).
-                negated = new MongoElemMatchExpression(
-                    elemMatch.ArrayPath, elemMatch.ElementPredicate, !elemMatch.Negated);
+            // The five self-negating node kinds — each carries its own Negated flag whose rendered pair is an
+            // exact complement, so negating one is just flipping that flag. Shared with
+            // MongoExpressionTranslator's own Not case via TryFlipNegatedFlag; see its remarks.
+            case var selfNegating when TryFlipNegatedFlag(selfNegating, out var flipped):
+                negated = flipped;
                 return true;
 
             // De Morgan over a CORRELATED quantifier: !Any(pred) ≡ All(!pred), !All(pred) ≡ Any(!pred).

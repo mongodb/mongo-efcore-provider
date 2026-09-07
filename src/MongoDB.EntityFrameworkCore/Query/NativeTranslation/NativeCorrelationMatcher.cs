@@ -114,7 +114,18 @@ internal static class NativeCorrelationMatcher
         return false;
     }
 
-    private static bool TryExtractEqualitySides(Expression node, out Expression left, out Expression right)
+    /// <summary>
+    /// Extracts the two compared sides of an equality conjunct, in all three spellings EF Core's nav-expansion
+    /// can produce: <c>==</c>, the static <c>object.Equals(x, y)</c> it uses for a null-safe key comparison, and
+    /// the instance <c>x.Equals(y)</c>.
+    /// </summary>
+    /// <remarks>
+    /// <b>internal, not private</b>: <c>NativeSelectManyBinder</c> needs the identical structural match and used
+    /// to hold its own byte-identical copy, on the stated grounds that "the shared matcher's own contract is not
+    /// widened for this caller" — which is true of <see cref="TryMatchCorrelatedCollection"/> but says nothing
+    /// about a pure structural helper, so the copy bought a drift risk for nothing.
+    /// </remarks>
+    internal static bool TryExtractEqualitySides(Expression node, out Expression left, out Expression right)
     {
         switch (node.RemoveConvert())
         {
@@ -155,7 +166,7 @@ internal static class NativeCorrelationMatcher
         => node.RemoveConvert() is BinaryExpression { NodeType: ExpressionType.NotEqual } bin
            && (IsNullConstant(bin.Left) || IsNullConstant(bin.Right));
 
-    private static bool IsNullConstant(Expression node)
+    internal static bool IsNullConstant(Expression node)
         => node.RemoveConvert() is ConstantExpression { Value: null };
 
     private static ParameterExpression? GetRootParameter(Expression expression)

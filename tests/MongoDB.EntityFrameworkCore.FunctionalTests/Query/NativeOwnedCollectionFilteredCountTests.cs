@@ -73,9 +73,6 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             });
     }
 
-    private static void AssertMql(SpyLoggerProvider spyLogger, string expected)
-        => Assert.Contains(expected, spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery));
-
     /// <summary>
     /// Whether the reserved <c>ProjectionAliasTier</c> <c>Synthetic</c> alias <c>_v</c> appears in the
     /// emitted <c>$project</c> stage AS A FIELD NAME.

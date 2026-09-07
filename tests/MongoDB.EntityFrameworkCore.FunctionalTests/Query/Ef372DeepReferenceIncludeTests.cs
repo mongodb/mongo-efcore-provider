@@ -107,7 +107,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(3, results.Count);
 
-        AssertMql(spyLogger, "\"localField\" : \"_lookup_Leaf.TipId\"");
+        spyLogger.AssertExecutedMqlContains("\"localField\" : \"_lookup_Leaf.TipId\"");
     }
 
     // ---- T3: the second doorway — a user-authored chained Join of 3 levels ----
@@ -129,7 +129,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Equal(3, results.Count);
         Assert.Equal(["R1|T1", "R2|T2", "R3|T3"], results.OrderBy(x => x));
 
-        AssertMql(spyLogger, "\"localField\" : \"_lookup_Leaf.TipId\"");
+        spyLogger.AssertExecutedMqlContains("\"localField\" : \"_lookup_Leaf.TipId\"");
     }
 
     // ---- T4: no over-prefixing at depth 1 and 2 ----
@@ -143,7 +143,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         var results = db.Roots.Include(r => r.Mid).ToList();
 
         Assert.Equal(3, results.Count);
-        AssertMql(spyLogger, "\"localField\" : \"MidId\"");
+        spyLogger.AssertExecutedMqlContains("\"localField\" : \"MidId\"");
         Assert.DoesNotContain("\"localField\" : \"_lookup_Mid.MidId\"",
             spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery));
     }
@@ -250,7 +250,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.NotNull(results[0].PrimaryMid.Leaf);
         Assert.Equal("A", results[0].PrimaryMid.Leaf.Label);
 
-        AssertMql(spyLogger, "\"localField\" : \"_lookup_PrimaryMid.LeafId\"");
+        spyLogger.AssertExecutedMqlContains("\"localField\" : \"_lookup_PrimaryMid.LeafId\"");
     }
 
     [Theory]
@@ -716,9 +716,6 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         return new OptionalAmbiguousChainDbContext(database, roots, mids, leaves, mode, loggerFactory);
     }
 #endif
-
-    private static void AssertMql(SpyLoggerProvider spyLogger, string expected)
-        => Assert.Contains(expected, spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery));
 
     private class Nub
     {

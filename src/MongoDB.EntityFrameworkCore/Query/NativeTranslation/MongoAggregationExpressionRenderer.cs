@@ -166,8 +166,7 @@ internal static class MongoAggregationExpressionRenderer
             // truthiness hazard as an ordinary bare field.
             MongoUnaryExpression { Operator: MongoUnaryOperator.Not } unary
                 => CanRender(unary.Operand)
-                    && (!MongoExpressionTranslator.TryGetBareFieldProperty(unary.Operand, out _)
-                        || MongoExpressionTranslator.AllFieldsDefaultSerialized(unary.Operand)),
+                    && !MongoExpressionTranslator.IsUnsafeTruthinessRoot(unary.Operand, out _),
             MongoConvertExpression convert
                 => MongoConvertExpression.ToOperatorFor(convert.Type) is not null && CanRender(convert.Operand),
             MongoConditionalExpression conditional
@@ -192,7 +191,7 @@ internal static class MongoAggregationExpressionRenderer
             // tested exactly the same way an ordinary bare field is; missing the outer-scoped sibling here
             // was the CRITICAL finding from EF-421's final review.
             MongoFieldExpression or MongoOuterFieldExpression
-                => MongoExpressionTranslator.AllFieldsDefaultSerialized(node),
+                => !MongoExpressionTranslator.IsUnsafeTruthinessRoot(node, out _),
             MongoBinaryExpression { Operator: MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse } nested
                 => CanRenderLogicalOperand(nested.Left) && CanRenderLogicalOperand(nested.Right),
             _ => CanRender(node)
@@ -333,8 +332,7 @@ internal static class MongoAggregationExpressionRenderer
     // own operands using the identical TryGetBareFieldProperty rule.
     private static void CheckBooleanRootSerialization(MongoExpression node)
     {
-        if (MongoExpressionTranslator.TryGetBareFieldProperty(node, out var property)
-            && !MongoExpressionTranslator.AllFieldsDefaultSerialized(node))
+        if (MongoExpressionTranslator.IsUnsafeTruthinessRoot(node, out var property))
         {
             throw new NativeTranslationNotSupportedException(
                 $"Cannot render '{property.Name}' as a bare boolean predicate root: it does not use default "
@@ -428,8 +426,7 @@ internal static class MongoAggregationExpressionRenderer
         // MongoOuterFieldExpression — a bare OUTER-scoped bool under Not has the exact same truthiness hazard
         // as an ordinary bare field; missing that sibling here was one of the three (really four) sites the
         // EF-421 final review found checking MongoFieldExpression alone.
-        if (MongoExpressionTranslator.TryGetBareFieldProperty(unary.Operand, out var notProperty)
-            && !MongoExpressionTranslator.AllFieldsDefaultSerialized(unary.Operand))
+        if (MongoExpressionTranslator.IsUnsafeTruthinessRoot(unary.Operand, out var notProperty))
         {
             throw new NativeTranslationNotSupportedException(
                 $"Cannot render 'Not' over '{notProperty.Name}': it does not use default BSON "
@@ -496,8 +493,7 @@ internal static class MongoAggregationExpressionRenderer
     {
         // TryGetBareFieldProperty (final-review fix) matches BOTH MongoFieldExpression and
         // MongoOuterFieldExpression — see RenderUnary's and CanRenderLogicalOperand's matching comments above.
-        if (MongoExpressionTranslator.TryGetBareFieldProperty(operand, out var logicalProperty)
-            && !MongoExpressionTranslator.AllFieldsDefaultSerialized(operand))
+        if (MongoExpressionTranslator.IsUnsafeTruthinessRoot(operand, out var logicalProperty))
         {
             throw new NativeTranslationNotSupportedException(
                 $"Cannot render '{logicalProperty.Name}' as a bare logical (&&/||) operand: it does not use "

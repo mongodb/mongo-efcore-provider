@@ -109,8 +109,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Equal(3, results.Count);
         Assert.All(results, o => Assert.NotNull(o.Buyer));
 
-        AssertMql(spyLogger,
-            "{ \"$lookup\" : { \"from\" : \"" + db.BuyersCollectionName +
+        spyLogger.AssertExecutedMqlContains("{ \"$lookup\" : { \"from\" : \"" + db.BuyersCollectionName +
             "\", \"localField\" : \"BuyerId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Buyer\" } }, " +
             "{ \"$unwind\" : { \"path\" : \"$_lookup_Buyer\", \"preserveNullAndEmptyArrays\" : false } }");
     }
@@ -135,8 +134,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.All(results, o => Assert.NotNull(o.Buyer));
         Assert.All(results, o => Assert.Equal("Springfield", o.Buyer.Address.City));
 
-        AssertMql(spyLogger,
-            "{ \"$lookup\" : { \"from\" : \"" + db.BuyersCollectionName +
+        spyLogger.AssertExecutedMqlContains("{ \"$lookup\" : { \"from\" : \"" + db.BuyersCollectionName +
             "\", \"localField\" : \"BuyerId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Buyer\" } }, " +
             "{ \"$unwind\" : { \"path\" : \"$_lookup_Buyer\", \"preserveNullAndEmptyArrays\" : false } }");
     }
@@ -813,8 +811,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
 
         Assert.NotEmpty(results);
         // $match BEFORE $lookup: filter/sort/paging push ahead of the join (design §6).
-        AssertMql(spyLogger,
-            "{ \"$match\" : { \"Total\" : { \"$gt\" : { \"$numberDecimal\" : \"10\" } } } }, " +
+        spyLogger.AssertExecutedMqlContains("{ \"$match\" : { \"Total\" : { \"$gt\" : { \"$numberDecimal\" : \"10\" } } } }, " +
             "{ \"$lookup\" : { \"from\" : \"" + db.BuyersCollectionName +
             "\", \"localField\" : \"BuyerId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Buyer\" } }, " +
             "{ \"$unwind\" : { \"path\" : \"$_lookup_Buyer\", \"preserveNullAndEmptyArrays\" : false } }");
@@ -882,8 +879,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         // pair is exactly what IsStreamableReference computes (IsReference && !HasPipeline &&
         // !LocalField.StartsWith(_lookup_ prefix)) - the same AssertMql idiom this file already uses
         // elsewhere to pin lookup shape.
-        AssertMql(spyLogger,
-            "{ \"$lookup\" : { \"from\" : \"" + db.CustomersCollectionName +
+        spyLogger.AssertExecutedMqlContains("{ \"$lookup\" : { \"from\" : \"" + db.CustomersCollectionName +
             "\", \"localField\" : \"UniCustomerId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_UniCustomer\" } }, " +
             "{ \"$unwind\" : { \"path\" : \"$_lookup_UniCustomer\", \"preserveNullAndEmptyArrays\" : false } }");
     }
@@ -952,8 +948,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Equal(4, results.Count);
         Assert.Contains(results, o => o.Carrier == null);
 
-        AssertMql(spyLogger,
-            "{ \"$lookup\" : { \"from\" : \"" + db.CarriersCollectionName +
+        spyLogger.AssertExecutedMqlContains("{ \"$lookup\" : { \"from\" : \"" + db.CarriersCollectionName +
             "\", \"localField\" : \"CarrierId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Carrier\" } }, " +
             "{ \"$unwind\" : { \"path\" : \"$_lookup_Carrier\", \"preserveNullAndEmptyArrays\" : true } }");
     }
@@ -1042,8 +1037,7 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         var result = db.Orders.Include(o => o.Carrier).First(o => o.Carrier == null);
 
         Assert.Null(result.Carrier);
-        AssertMql(spyLogger,
-            "{ \"$lookup\" : { \"from\" : \"" + db.CarriersCollectionName +
+        spyLogger.AssertExecutedMqlContains("{ \"$lookup\" : { \"from\" : \"" + db.CarriersCollectionName +
             "\", \"localField\" : \"CarrierId\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Carrier\" } }, " +
             "{ \"$unwind\" : { \"path\" : \"$_lookup_Carrier\", \"preserveNullAndEmptyArrays\" : true } }, " +
             "{ \"$match\" : { \"_lookup_Carrier\" : null } }, " +
@@ -1194,9 +1188,6 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     // Full-message equality would also have to match the "Executed MQL query\n<namespace>.aggregate([...])"
     // wrapper — Assert.Contains against the captured pipeline fragment pins the pipeline shape without
     // coupling to that wrapper (idiom copied from NativeOwnedCollectionCountTests.cs).
-    private static void AssertMql(SpyLoggerProvider spyLogger, string expected)
-        => Assert.Contains(expected, spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery));
-
     private class Order
     {
         public ObjectId Id { get; set; }

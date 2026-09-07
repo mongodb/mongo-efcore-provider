@@ -133,7 +133,7 @@ internal static class NativeGroupByBinder
         if (select.PendingGroupPredicate != null)
             return false;
 
-        if (!TryGetProjectionBindings(resultSelector.Body, out var bindings))
+        if (!resultSelector.Body.TryGetProjectionMembers(out var bindings))
             return false;
 
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
@@ -215,35 +215,6 @@ internal static class NativeGroupByBinder
     }
 
     // Flatten a NewExpression (anonymous type) or MemberInitExpression (DTO) into (memberName, valueExpr) pairs.
-    private static bool TryGetProjectionBindings(
-        Expression body, [NotNullWhen(true)] out List<(string MemberName, Expression Value)>? bindings)
-    {
-        bindings = null;
-
-        switch (body)
-        {
-            case NewExpression { Members: { } members } newExpr:
-                bindings = [];
-                for (var i = 0; i < newExpr.Arguments.Count; i++)
-                    bindings.Add((members[i].Name, newExpr.Arguments[i]));
-                return true;
-
-            case MemberInitExpression memberInit:
-                bindings = [];
-                foreach (var binding in memberInit.Bindings)
-                {
-                    if (binding is not MemberAssignment assignment)
-                        return false; // list/nested member bindings are not supported
-                    bindings.Add((assignment.Member.Name, assignment.Expression));
-                }
-
-                // The MemberInit's own NewExpression must be a parameterless ctor (no positional args to bind).
-                return memberInit.NewExpression.Arguments.Count == 0;
-
-            default:
-                return false;
-        }
-    }
 
     // Match g.Count()/g.LongCount() → ("$sum", null); g.Sum/Average/Min/Max(x => x.Field) over a plain member
     // selector → the matching operator + field-ref operand. Any other shape (computed operand, unknown method)
@@ -335,10 +306,9 @@ internal static class NativeGroupByBinder
     }
 
     // Strip redundant Convert/ConvertChecked wrappers (a projection member typed `object` boxes its value).
+    // Delegates to the shared peeler — this used to be a fourth byte-identical copy of it.
     private static Expression Unwrap(Expression e)
-        => e is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } u
-            ? Unwrap(u.Operand)
-            : e;
+        => e.RemoveConvert();
 
     /// <summary>
     /// Attempts to bind a scalar aggregate terminal operator (<c>Count</c>/<c>LongCount</c>/<c>Any</c>/

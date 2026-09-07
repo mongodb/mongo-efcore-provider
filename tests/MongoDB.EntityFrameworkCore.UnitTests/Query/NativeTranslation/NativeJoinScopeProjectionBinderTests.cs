@@ -82,6 +82,73 @@ public class NativeJoinScopeProjectionBinderTests
         return Assert.IsType<MongoQueryExpression>(shaped.QueryExpression);
     }
 
+    // Deliberately SEPARATE fixture types for the chained (Task 6) test below, rather than adding a "Lines"
+    // navigation onto the Order class above and sharing it: MEASURED — adding a List<OrderLine> navigation to
+    // the SAME Order class the depth-1 tests above share, while TranslateJoinQuery's own two-source model only
+    // ever registers Order (never OrderLine) via mb.Entity<Order>(), makes the MongoDB provider's conventions
+    // treat that unregistered-target collection navigation as OWNED (embedded) rather than a cross-collection
+    // reference — which then makes EF's nav-expansion auto-include it into ANY whole-Order-entity access,
+    // wrapping what used to be a bare `MemberExpression` leaf in an `IncludeExpression` and breaking EVERY
+    // depth-1 whole-entity-leaf test above (`Binds_a_whole_inner_entity_leaf_mixed_with_a_scalar`,
+    // `Binds_both_whole_entity_leaves_with_no_scalars`, `Binds_a_duplicated_inner_leaf_without_crashing`) even
+    // though none of them ever reference the new nav — confirmed by reverting only this file's source changes
+    // and observing the exact same four failures purely from the fixture edit. Fully separate types for the
+    // chain test side-step this entirely, since ChainOrder never coexists with an unregistered-OrderLine model.
+    private class ChainOwner
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public List<ChainOrder> Orders { get; set; } = [];
+    }
+
+    private class ChainOrder
+    {
+        public int Id { get; set; }
+        public int OwnerId { get; set; }
+        public ChainOwner? Owner { get; set; }
+        public decimal Total { get; set; }
+        public List<ChainOrderLine> Lines { get; set; } = [];
+    }
+
+    private class ChainOrderLine
+    {
+        public int Id { get; set; }
+        public int OrderId { get; set; }
+        public ChainOrder? Order { get; set; }
+        public string Sku { get; set; } = "";
+    }
+
+    /// <summary>
+    /// Three-source variant of <see cref="TranslateJoinQuery"/>, for the chained (depth-2) projection-binder
+    /// test below — same pipeline/rationale, just with a second <c>Join</c> source added, over the dedicated
+    /// <c>Chain*</c> fixture types (see their own remarks for why they're separate from Owner/Order above).
+    /// Mirrors <c>JoinScopeWhereSlotPopulationTests.TranslateThreeSourceJoinQuery</c>.
+    /// </summary>
+    private static MongoQueryExpression TranslateThreeSourceJoinQuery(
+        Func<IQueryable<ChainOwner>, IQueryable<ChainOrder>, IQueryable<ChainOrderLine>, IQueryable> buildQuery)
+    {
+        using var db = SingleEntityDbContext.Create<ChainOwner>(mb =>
+        {
+            mb.Entity<ChainOrder>();
+            mb.Entity<ChainOrderLine>();
+        });
+
+        var query = buildQuery(db.Set<ChainOwner>(), db.Set<ChainOrder>(), db.Set<ChainOrderLine>());
+
+        var ccFactory = db.GetService<IQueryCompilationContextFactory>();
+        var compilationContext = ccFactory.Create(async: false);
+
+        var preprocessor = db.GetService<IQueryTranslationPreprocessorFactory>().Create(compilationContext);
+        var preprocessed = preprocessor.Process(query.Expression);
+
+        var visitor = db.GetService<IQueryableMethodTranslatingExpressionVisitorFactory>().Create(compilationContext);
+        var result = visitor.Visit(preprocessed);
+
+        Assert.NotNull(result);
+        var shaped = Assert.IsAssignableFrom<ShapedQueryExpression>(result);
+        return Assert.IsType<MongoQueryExpression>(shaped.QueryExpression);
+    }
+
     [Fact]
     public void Binds_a_scalar_only_wrapped_projection_from_both_sides()
     {
@@ -98,7 +165,7 @@ public class NativeJoinScopeProjectionBinderTests
 
         // The Inner leaf resolves through the join's $lookup alias; the Outer leaf reads the root document.
         var innerLeaf = Assert.IsType<MongoFieldExpression>(mongoQ.Select.Projection[1].Expression);
-        Assert.StartsWith(mongoQ.Select.JoinScope!.InnerPrefix + ".", innerLeaf.ElementName);
+        Assert.StartsWith(mongoQ.Select.JoinScope!.Levels[0].InnerPrefix + ".", innerLeaf.ElementName);
         // MongoOuterFieldExpression, not MongoFieldExpression — see NativeJoinScopeTranslatorTests'
         // Translates_outer_side_member_access_unprefixed for why (same TranslateOperand call site).
         var outerLeaf = Assert.IsType<MongoOuterFieldExpression>(mongoQ.Select.Projection[0].Expression);
@@ -121,7 +188,7 @@ public class NativeJoinScopeProjectionBinderTests
             owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o.Name, r }));
 
         Assert.NotNull(mongoQ.Select.JoinScope);
-        var innerPrefix = mongoQ.Select.JoinScope!.InnerPrefix;
+        var innerPrefix = mongoQ.Select.JoinScope!.Levels[0].InnerPrefix;
 
         // The emitted alias is the join's own $lookup prefix, NOT the member name "r".
         Assert.Equal(["Name", innerPrefix], mongoQ.Select.Projection.Select(p => p.Alias).ToArray());
@@ -150,7 +217,7 @@ public class NativeJoinScopeProjectionBinderTests
             owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r }));
 
         Assert.NotNull(mongoQ.Select.JoinScope);
-        var innerPrefix = mongoQ.Select.JoinScope!.InnerPrefix;
+        var innerPrefix = mongoQ.Select.JoinScope!.Levels[0].InnerPrefix;
 
         Assert.Equal(["o", innerPrefix], mongoQ.Select.Projection.Select(p => p.Alias).ToArray());
 
@@ -180,7 +247,7 @@ public class NativeJoinScopeProjectionBinderTests
             owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { a = r, b = r }));
 
         Assert.NotNull(mongoQ.Select.JoinScope);
-        var innerPrefix = mongoQ.Select.JoinScope!.InnerPrefix;
+        var innerPrefix = mongoQ.Select.JoinScope!.Levels[0].InnerPrefix;
 
         // Exactly ONE staged entry for the fixed alias, not two — that is precisely what the guard prevents.
         var projection = Assert.Single(mongoQ.Select.Projection);
@@ -285,7 +352,7 @@ public class NativeJoinScopeProjectionBinderTests
         Assert.Equal(MongoElementRefExpression.WholeRootDocumentPath, outerLeaf.Path);
 
         var innerLeaf = Assert.IsType<MongoFieldExpression>(mongoQ.Select.Projection[1].Expression);
-        Assert.StartsWith(mongoQ.Select.JoinScope!.InnerPrefix + ".", innerLeaf.ElementName);
+        Assert.StartsWith(mongoQ.Select.JoinScope!.Levels[0].InnerPrefix + ".", innerLeaf.ElementName);
 
         Assert.Single(mongoQ.Lookups);
         Assert.False(mongoQ.Select.HasUnconfirmedCandidateJoin);
@@ -358,12 +425,20 @@ public class NativeJoinScopeProjectionBinderTests
     [Fact]
     public void Declines_a_second_chained_join_rather_than_reusing_the_first_joins_scope()
     {
-        // The structural closure of NativeJoinScopeTranslator's documented RESIDUAL GAP. A JoinScope is
-        // recorded only for the FIRST join on a select, so a chained second join would otherwise be resolved
-        // against the FIRST join's InnerPrefix ($lookup alias) — silently wrong data. The call-site gate's
-        // `Joins.Count == 1` conjunct declines it instead. Both joins here target the SAME entity type in the
-        // SAME positions, which is precisely the coincidence the translator's own CLR-type-shape guard cannot
-        // detect on its own.
+        // The structural closure of NativeJoinScopeTranslator's documented RESIDUAL GAP, re-verified after
+        // the native-chained-join-scope plan's Task 6 widening. A JoinScope built from a chained second join
+        // whose OWN flat TransparentIdentifier<TOuter,TInner> coincidentally matches the FIRST join's
+        // Outer/Inner CLR types (both joins here target the SAME entity type in the SAME positions) would
+        // otherwise be resolved against the FIRST join's InnerPrefix ($lookup alias) — silently wrong data.
+        // Before Task 6 the call-site gate's `Joins.Count == 1` conjunct declined this outright; Task 6
+        // widens that gate to `scope.Levels.Count == Joins.Count`, which THIS shape now satisfies (both joins
+        // are individually eligible, so JoinScope IS rebuilt to a 2-level chain) — but the trailing selector's
+        // leaves (`o.Name`, `r2.Total`) are plain scalars, not whole-entity references, so
+        // NativeJoinScopeProjectionBinder's own chain restriction (Levels.Count > 1 admits ONLY whole-entity
+        // leaves, never falling through to the flat, type-comparing NativeJoinScopeTranslator.TryTranslateValue
+        // this gap warns about) declines the whole projection one layer down instead. Same net Route/Lookups
+        // outcome as before Task 6, different mechanism — see NativeJoinScopeProjectionBinder's own "RESIDUAL
+        // GAP (updated for Task 6)" remarks.
         var mongoQ = TranslateJoinQuery((owners, orders) =>
             owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
                 .Select(x => x.o)
@@ -385,5 +460,53 @@ public class NativeJoinScopeProjectionBinderTests
         Assert.Equal(2, mongoQ.Lookups.Count);
         Assert.Empty(mongoQ.Select.Projection);
         Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
+    }
+
+    [Fact]
+    public void Binds_a_two_level_chain_projection_naming_every_scope_as_a_whole_entity()
+    {
+        // The native-chained-join-scope plan's own motivating shape (Task 1's end-to-end test, and
+        // NorthwindMiscellaneousQueryMongoTest.Multiple_joins_Where_Order_Any): a genuine two-join chain whose
+        // trailing selector is a THREE-leaf, ALL-WHOLE-ENTITY projection naming every scope in the chain — the
+        // root (`cr`, scope index 0), the first join's Inner side (`or`, scope index 1), and the second join's
+        // Inner side (`od`, scope index 2). Mirrors this file's own depth-1
+        // `Binds_both_whole_entity_leaves_with_no_scalars` coverage, just resolved against a real two-level
+        // chain instead of one level.
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { cr = e.o, or = e.r, od = l }));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        var scope = mongoQ.Select.JoinScope!;
+        Assert.Equal(2, scope.Levels.Count);
+        Assert.Equal(2, mongoQ.Joins.Count);
+
+        // "cr" (root) is emitted under its OWN alias; "or"/"od" (Inner leaves at levels 1/2) are emitted
+        // under their own LEVEL's fixed, self-referential InnerPrefix alias instead — NOT the member's own
+        // alias — exactly like the depth-1 Inner-leaf tests above.
+        Assert.Equal(["cr", scope.Levels[0].InnerPrefix, scope.Levels[1].InnerPrefix],
+            mongoQ.Select.Projection.Select(p => p.Alias).ToArray());
+        Assert.Equal(3, mongoQ.Select.Projection.Count);
+
+        // cr (root) reads $$ROOT under its own alias.
+        var rootLeaf = Assert.IsType<MongoElementRefExpression>(mongoQ.Select.Projection[0].Expression);
+        Assert.Equal(MongoElementRefExpression.WholeRootDocumentPath, rootLeaf.Path);
+
+        // or (level 1's Inner) and od (level 2's Inner) each read their own level's fixed, self-referential
+        // InnerPrefix alias — NOT the member's own alias ("or"/"od").
+        var level1Leaf = Assert.IsType<MongoElementRefExpression>(mongoQ.Select.Projection[1].Expression);
+        Assert.Equal(scope.Levels[0].InnerPrefix, level1Leaf.Path);
+        Assert.NotEqual("or", level1Leaf.Path);
+
+        var level2Leaf = Assert.IsType<MongoElementRefExpression>(mongoQ.Select.Projection[2].Expression);
+        Assert.Equal(scope.Levels[1].InnerPrefix, level2Leaf.Path);
+        Assert.NotEqual("od", level2Leaf.Path);
+        Assert.NotEqual(level1Leaf.Path, level2Leaf.Path);
+
+        // Every level's own $lookup is registered, and every level's candidate join is confirmed exactly
+        // once, so the chain routes fully natively.
+        Assert.Equal(2, mongoQ.Lookups.Count);
+        Assert.False(mongoQ.Select.HasUnconfirmedCandidateJoin);
+        Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
     }
 }

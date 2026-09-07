@@ -122,15 +122,17 @@ internal static class NativeProjectionBinder
 
         switch (selector.Body)
         {
-            case NewExpression newExpression
-                when newExpression.Members != null
-                     && newExpression.Members.Count == newExpression.Arguments.Count
-                     && newExpression.Arguments.Count > 0:
-                for (var i = 0; i < newExpression.Arguments.Count; i++)
+            // A WRAPPED body — an anonymous type / DTO, in either the NewExpression-with-Members or the
+            // MemberInit-over-a-parameterless-ctor spelling. Both used to have their own arm here with a
+            // ~30-line identical body; the only real difference was how the (memberName, value) pairs are
+            // extracted, which TryGetProjectionMembers now owns. A construction that does not meet its
+            // guards declines there and falls through to the bare-body case below, exactly as before.
+            case NewExpression or MemberInitExpression
+                when selector.Body.TryGetProjectionMembers(out var wrappedMembers):
+                foreach (var (memberName, memberValue) in wrappedMembers)
                 {
-                    var memberName = newExpression.Members[i].Name;
-                    var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], newExpression.Arguments[i], memberName);
-                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], newExpression.Arguments[i], alias, pendingLookups, pendingReducerLeaves, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
+                    var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], memberValue, memberName);
+                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
                         return false;
                     if (!seenAliases.Add(alias))
                         return false;
@@ -147,32 +149,7 @@ internal static class NativeProjectionBinder
                     leafIsOwnedNavEntity.Add(isOwnedNavEntityLeaf);
                     hasOwnedNavEntityLeaf |= isOwnedNavEntityLeaf;
                 }
-                break;
 
-            case MemberInitExpression memberInit
-                when memberInit.NewExpression.Arguments.Count == 0
-                     && memberInit.Bindings.Count > 0:
-                foreach (var binding in memberInit.Bindings)
-                {
-                    if (binding is not MemberAssignment assignment)
-                        return false;
-
-                    var memberName = binding.Member.Name;
-                    var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], assignment.Expression, memberName);
-                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], assignment.Expression, alias, pendingLookups, pendingReducerLeaves, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
-                        return false;
-                    if (!seenAliases.Add(alias))
-                        return false;
-                    projections.Add(new MongoProjection(alias, leaf));
-                    // See the matching comment in the NewExpression arm above for why the nav-entity leaf
-                    // registers unconditionally.
-                    if (alias != memberName || isOwnedNavEntityLeaf)
-                        namedAliasOverrides.Add((memberName, alias));
-                    leafIsArray.Add(isArrayLeaf);
-                    hasArrayLeaf |= isArrayLeaf;
-                    leafIsOwnedNavEntity.Add(isOwnedNavEntityLeaf);
-                    hasOwnedNavEntityLeaf |= isOwnedNavEntityLeaf;
-                }
                 break;
 
             // A BARE selector body — `b => b.Title`, `b => b.Posts`, `o => o.OrderID` — as opposed to the two
@@ -475,48 +452,21 @@ internal static class NativeProjectionBinder
     {
         result = null;
 
-        IReadOnlyList<MemberInfo> members;
-        IReadOnlyList<Expression> values;
-        switch (leafExpression)
-        {
-            case NewExpression { Members: not null } newExpression
-                when newExpression.Members.Count == newExpression.Arguments.Count && newExpression.Arguments.Count > 0:
-                members = newExpression.Members;
-                values = newExpression.Arguments;
-                break;
-
-            case MemberInitExpression { NewExpression.Arguments.Count: 0 } memberInit when memberInit.Bindings.Count > 0:
-                var boundMembers = new List<MemberInfo>();
-                var boundValues = new List<Expression>();
-                foreach (var binding in memberInit.Bindings)
-                {
-                    if (binding is not MemberAssignment assignment)
-                        return false;
-
-                    boundMembers.Add(assignment.Member);
-                    boundValues.Add(assignment.Expression);
-                }
-
-                members = boundMembers;
-                values = boundValues;
-                break;
-
-            default:
-                return false;
-        }
+        if (!leafExpression.TryGetProjectionMembers(out var members))
+            return false;
 
         var translatedMembers = new List<(string, MongoExpression)>();
         var seenMembers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        for (var i = 0; i < members.Count; i++)
+        foreach (var (memberName, value) in members)
         {
-            if ((values[i] is MemberExpression
-                    || (values[i] is MethodCallExpression efPropertyCall && efPropertyCall.Method.IsEFPropertyMethod()))
-                && translator.TryTranslateField(values[i], out var field)
+            if ((value is MemberExpression
+                    || (value is MethodCallExpression efPropertyCall && efPropertyCall.Method.IsEFPropertyMethod()))
+                && translator.TryTranslateField(value, out var field)
                 && !field.ElementName.Contains('.')
                 && NativeGroupByBinder.HasDefaultKeySerialization(field.Property)
-                && seenMembers.Add(members[i].Name))
+                && seenMembers.Add(memberName))
             {
-                translatedMembers.Add((members[i].Name, field));
+                translatedMembers.Add((memberName, field));
                 continue;
             }
 
@@ -2355,9 +2305,9 @@ internal static class NativeProjectionBinder
         }
 
         // ── Nothing in the sub-pipeline may reach back out to the enclosing document. ─────────────────────────
-        if (ReferencesOuterParameter(memberBody, outerParameter)
-            || (predicate is not null && ReferencesOuterParameter(predicate.Body, outerParameter))
-            || (sortKeySelector is not null && ReferencesOuterParameter(sortKeySelector.Body, outerParameter)))
+        if (memberBody.ReferencesParameter(outerParameter)
+            || (predicate is not null && predicate.Body.ReferencesParameter(outerParameter))
+            || (sortKeySelector is not null && sortKeySelector.Body.ReferencesParameter(outerParameter)))
         {
             return false;
         }
@@ -2512,32 +2462,4 @@ internal static class NativeProjectionBinder
             // Everything else, MongoParameterExpression included, is declined by this catch-all — see the remarks.
             _ => false
         };
-
-    /// <summary>
-    /// Whether <paramref name="expression"/> anywhere references <paramref name="outerParameter"/> — the
-    /// enclosing selector's own lambda parameter. Scope is decided by parameter IDENTITY, per this area's
-    /// standing invariant; a name-based test would conflate a member the outer and the looked-up entity type
-    /// happen to share (both typically have an <c>Id</c>).
-    /// </summary>
-    private static bool ReferencesOuterParameter(Expression expression, ParameterExpression outerParameter)
-    {
-        var visitor = new OuterParameterReferenceVisitor(outerParameter);
-        visitor.Visit(expression);
-        return visitor.Found;
-    }
-
-    private sealed class OuterParameterReferenceVisitor(ParameterExpression parameter) : ExpressionVisitor
-    {
-        public bool Found { get; private set; }
-
-        protected override Expression VisitParameter(ParameterExpression node)
-        {
-            if (ReferenceEquals(node, parameter))
-            {
-                Found = true;
-            }
-
-            return node;
-        }
-    }
 }

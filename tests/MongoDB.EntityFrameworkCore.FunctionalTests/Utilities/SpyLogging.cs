@@ -17,6 +17,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Extensions.Logging;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
@@ -44,6 +45,20 @@ internal class SpyLoggerProvider : ILoggerProvider
         var key = eventId.Name[..eventId.Name.LastIndexOf('.')];
         var logger = Assert.Single(Loggers, s => s.Key == key).Value;
         return Assert.Single(logger.Records, log => log.EventId == eventId && log.Exception == null).Message;
+    }
+
+    /// <summary>
+    /// Asserts the executed MQL contains <paramref name="expected"/>, reporting the ACTUAL pipeline on failure.
+    /// </summary>
+    /// <remarks>
+    /// Nine test classes each held a private <c>AssertMql</c> doing this; eight were a bare
+    /// <c>Assert.Contains</c>, whose failure message shows only the needle and not the pipeline that was
+    /// actually emitted. This is the one copy that reported both, promoted so every caller gets it.
+    /// </remarks>
+    public void AssertExecutedMqlContains(string expected)
+    {
+        var actual = GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.True(actual.Contains(expected), $"Expected to find '{expected}' in:\n{actual}");
     }
 
     /// <summary>

@@ -69,9 +69,6 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
             });
     }
 
-    private static void AssertMql(SpyLoggerProvider spyLogger, string expected)
-        => Assert.Contains(expected, spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery));
-
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
@@ -144,8 +141,7 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
             .Select(b => new { Copy = new BookCopy { Id = b.Id, Title = b.Title, Author = b.Author }, b.Rank })
             .ToList();
 
-        AssertMql(
-            spyLogger,
+        spyLogger.AssertExecutedMqlContains(
             "{ \"$project\" : { \"Copy\" : { \"Id\" : \"$_id\", \"Title\" : \"$Title\", \"Author\" : \"$Author\" }, "
             + "\"Rank\" : \"$Rank\", \"_id\" : 0 } }");
     }

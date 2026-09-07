@@ -398,7 +398,7 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
         Assert.Equal(3, results.Count);
         Assert.Equal(["F2", "F3", "F1"], results.Select(n => n.Parent.Label));
 
-        AssertMql(spyLogger, "\"localField\" : \"ParentId\"");
+        spyLogger.AssertExecutedMqlContains("\"localField\" : \"ParentId\"");
     }
 
     // ---- fixture ----
@@ -623,9 +623,6 @@ public class Ef379RootNavigationMisroutingTests(TemporaryDatabaseFixture databas
 
         return new OwnedJoinDbContext(database, orders, products, mode);
     }
-
-    private static void AssertMql(SpyLoggerProvider spyLogger, string expected)
-        => Assert.Contains(expected, spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery));
 
     private static DbContextOptions<TContext> Configure<TContext>(
         TemporaryDatabaseFixture database, MongoQueryMode mode, ILoggerFactory? loggerFactory)

@@ -59,12 +59,6 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
             });
     }
 
-    private static void AssertMql(SpyLoggerProvider spyLogger, string expected)
-    {
-        var actual = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
-        Assert.True(actual.Contains(expected), $"Expected to find '{expected}' in:\n{actual}");
-    }
-
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
@@ -101,7 +95,7 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
 #pragma warning restore CS1718
 
         Assert.Equal(2, results.Count);
-        AssertMql(spyLogger, "\"$eq\" : [\"$$ROOT\", \"$$ROOT\"]");
+        spyLogger.AssertExecutedMqlContains("\"$eq\" : [\"$$ROOT\", \"$$ROOT\"]");
     }
 
     [Fact]
@@ -115,7 +109,7 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
 #pragma warning restore CS1718
 
         Assert.Empty(results);
-        AssertMql(spyLogger, "\"$ne\" : [\"$$ROOT\", \"$$ROOT\"]");
+        spyLogger.AssertExecutedMqlContains("\"$ne\" : [\"$$ROOT\", \"$$ROOT\"]");
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -164,7 +158,7 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
 
         var blog = Assert.Single(results);
         Assert.Equal("NoAddress", blog.Title);
-        AssertMql(spyLogger, "\"$eq\" : [{ \"$ifNull\" : [\"$Address\", null] }, null]");
+        spyLogger.AssertExecutedMqlContains("\"$eq\" : [{ \"$ifNull\" : [\"$Address\", null] }, null]");
     }
 
     [Fact]
@@ -177,7 +171,7 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
 
         var blog = Assert.Single(results);
         Assert.Equal("HasAddress", blog.Title);
-        AssertMql(spyLogger, "\"$ne\" : [{ \"$ifNull\" : [\"$Address\", null] }, null]");
+        spyLogger.AssertExecutedMqlContains("\"$ne\" : [{ \"$ifNull\" : [\"$Address\", null] }, null]");
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════
@@ -206,7 +200,7 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
 
         var found = Assert.Single(results);
         Assert.Equal("Alpha", found.Name);
-        AssertMql(spyLogger, "\"_id\" :");
+        spyLogger.AssertExecutedMqlContains("\"_id\" :");
         Assert.DoesNotContain("$$ROOT", spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery));
     }
 

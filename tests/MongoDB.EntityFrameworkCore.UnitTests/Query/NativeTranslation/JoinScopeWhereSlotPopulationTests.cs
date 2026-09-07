@@ -60,6 +60,18 @@ public class JoinScopeWhereSlotPopulationTests
         public int OwnerId { get; set; }
         public Owner? Owner { get; set; }
         public decimal Total { get; set; }
+        public List<OrderLine> Lines { get; set; } = [];
+    }
+
+    // Third source for the chained-join (Task 3) test below - same navigation-property requirement as
+    // Owner/Order above (TranslateJoinCore's eligibility check needs a real CLR navigation property to
+    // resolve, not a shadow/convention-only FK).
+    private class OrderLine
+    {
+        public int Id { get; set; }
+        public int OrderId { get; set; }
+        public Order? Order { get; set; }
+        public string Sku { get; set; } = "";
     }
 
     /// <summary>
@@ -96,6 +108,157 @@ public class JoinScopeWhereSlotPopulationTests
         Assert.NotNull(result);
         var shaped = Assert.IsAssignableFrom<ShapedQueryExpression>(result);
         return Assert.IsType<MongoQueryExpression>(shaped.QueryExpression);
+    }
+
+    /// <summary>
+    /// Three-source variant of <see cref="TranslateJoinQuery"/>, for Task 3's chained-join metadata test —
+    /// same pipeline, same rationale (real preprocessing is required to get EF's normalized
+    /// <c>TransparentIdentifier</c> shape), just with a second <c>Join</c> source added.
+    /// </summary>
+    private static MongoQueryExpression TranslateThreeSourceJoinQuery(
+        Func<IQueryable<Owner>, IQueryable<Order>, IQueryable<OrderLine>, IQueryable> buildQuery)
+    {
+        using var db = SingleEntityDbContext.Create<Owner>(mb =>
+        {
+            mb.Entity<Order>();
+            mb.Entity<OrderLine>();
+        });
+
+        var query = buildQuery(db.Set<Owner>(), db.Set<Order>(), db.Set<OrderLine>());
+
+        var ccFactory = db.GetService<IQueryCompilationContextFactory>();
+        var compilationContext = ccFactory.Create(async: false);
+
+        var preprocessor = db.GetService<IQueryTranslationPreprocessorFactory>().Create(compilationContext);
+        var preprocessed = preprocessor.Process(query.Expression);
+
+        var visitor = db.GetService<IQueryableMethodTranslatingExpressionVisitorFactory>().Create(compilationContext);
+        var result = visitor.Visit(preprocessed);
+
+        Assert.NotNull(result);
+        var shaped = Assert.IsAssignableFrom<ShapedQueryExpression>(result);
+        return Assert.IsType<MongoQueryExpression>(shaped.QueryExpression);
+    }
+
+    // Fixture for the embedded-outer-key-selector regression test below (EF-380 shape, depth 1, NO prior
+    // join). Deliberately separate from Owner/Order: EmbeddedAddress needs a REAL navigation of its own
+    // (LinkedTarget, FK LinkedTargetId) to JoinTarget so RebindInnerShaperToOuterQuery's navigation
+    // resolution — which walks the embedded segment via the navigation graph and then searches for a
+    // navigation ON THE EMBEDDED TYPE, not the root — actually finds one; reusing Owner/Order would leave
+    // that resolution returning null (no navigation on Address-shaped types pointing at Order), which
+    // exercises a completely different (and uninteresting) decline path.
+    private class RootWithEmbeddedKey
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public EmbeddedAddress? Address { get; set; }
+    }
+
+    private class EmbeddedAddress
+    {
+        public int LinkedTargetId { get; set; }
+        public JoinTarget? LinkedTarget { get; set; }
+    }
+
+    private class JoinTarget
+    {
+        public int Id { get; set; }
+        public string Label { get; set; } = "";
+    }
+
+    /// <summary>
+    /// Regression test for a task-review finding on the Task 3 <c>JoinLookupImplementsKeySelectors</c> fix
+    /// (see <c>.superpowers/sdd/2026-09-07-native-chained-join-scope/task-3-report.md</c>, "Fix round 1"):
+    /// the fix's own comment claims the new <c>EndsWith</c> branch "never fires without a transitive hop",
+    /// but it ALSO fires for a depth-1 (no prior join) join whose OUTER key selector reaches through an
+    /// owned/embedded navigation (the pre-existing EF-380 shape, <c>o.Address.LinkedTargetId</c>) — because
+    /// <c>RebindInnerShaperToOuterQuery</c> walks <c>searchEntityType</c> forward through the embedded
+    /// segment BEFORE resolving the navigation, so <c>joinInfo.Navigation.DeclaringEntityType</c> ends up
+    /// being the OWNED type (<c>EmbeddedAddress</c>), not the root, and the existing (pre-Task-3)
+    /// <c>embeddedPath</c> prefixing (<c>lookup.LocalField = $"{embeddedPath}.{lookup.LocalField}"</c>)
+    /// means <c>lookup.LocalField</c> ("Address.LinkedTargetId") never equals the bare element name
+    /// ("LinkedTargetId") either — only the new <c>EndsWith</c> branch can agree here.
+    /// </summary>
+    /// <remarks>
+    /// This IS safe, and the join genuinely becomes (correctly) eligible where it previously declined for
+    /// an unrelated-to-embedding reason (the same exact-match brittleness the transitive-hop fix targets).
+    /// Walking the proof through <c>JoinLookupImplementsKeySelectors</c>: <c>joinInfo.Navigation</c> is
+    /// resolved by <c>RebindInnerShaperToOuterQuery</c> by walking the SAME embedded segment
+    /// (<c>"Address"</c>) that produced the lookup's own <c>LocalField</c> prefix — so
+    /// <c>outerAnchorEntityType</c> (<c>Navigation.DeclaringEntityType</c> == <c>EmbeddedAddress</c>) is
+    /// exactly the type <c>outerKeyName</c> ("LinkedTargetId") must be looked up against to get the RIGHT
+    /// property (the one actually reached by <c>o.Address.LinkedTargetId</c>), and
+    /// <c>lookup.LocalField</c> ("Address.LinkedTargetId") is that SAME property's element name
+    /// ("LinkedTargetId") prefixed by that SAME embedded path ("Address") — so the <c>EndsWith</c> check is
+    /// comparing two values built from the identical structural fact, not coincidentally agreeing. The
+    /// resulting <c>$lookup</c>'s <c>localField: "Address.LinkedTargetId"</c> is also literally correct: on
+    /// the outer document, <c>LinkedTargetId</c> really does live nested under the embedded <c>Address</c>
+    /// sub-document, so a dotted <c>localField</c> is exactly how Mongo addresses it. Reading
+    /// <c>mongoQ.Select.JoinScope</c> afterward is equally sound: <c>MongoJoinScope</c>/<c>MongoJoinScopeLevel</c>
+    /// only record the join's INNER entity type/alias/left-outer-ness — nothing about how the OUTER side's
+    /// own key was reached — so an embedded vs. root-property outer key makes no difference to what a
+    /// consuming <c>Where</c>/<c>Select</c> arm resolves "Outer" to (still the query's own root entity).
+    /// </remarks>
+    [Fact]
+    public void Depth_one_join_through_owned_navigation_key_selector_is_natively_eligible()
+    {
+        using var db = SingleEntityDbContext.Create<RootWithEmbeddedKey>(mb =>
+        {
+            mb.Entity<JoinTarget>();
+            mb.Entity<RootWithEmbeddedKey>().OwnsOne(o => o.Address, ab =>
+            {
+                ab.HasOne(a => a.LinkedTarget).WithMany().HasForeignKey(a => a.LinkedTargetId);
+            });
+        });
+
+        var query = db.Set<RootWithEmbeddedKey>()
+            .Join(db.Set<JoinTarget>(), o => o.Address!.LinkedTargetId, t => t.Id, (o, t) => new { o, t })
+            .Where(x => x.o.Name == "Alice");
+
+        var ccFactory = db.GetService<IQueryCompilationContextFactory>();
+        var compilationContext = ccFactory.Create(async: false);
+
+        var preprocessor = db.GetService<IQueryTranslationPreprocessorFactory>().Create(compilationContext);
+        var preprocessed = preprocessor.Process(query.Expression);
+
+        var visitor = db.GetService<IQueryableMethodTranslatingExpressionVisitorFactory>().Create(compilationContext);
+        var result = visitor.Visit(preprocessed);
+
+        Assert.NotNull(result);
+        var shaped = Assert.IsAssignableFrom<ShapedQueryExpression>(result);
+        var mongoQ = Assert.IsType<MongoQueryExpression>(shaped.QueryExpression);
+
+        var joinInfo = Assert.Single(mongoQ.Joins);
+        Assert.True(joinInfo.IsNativelyEligible);
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.Single(mongoQ.Select.JoinScope!.Levels);
+    }
+
+    [Fact]
+    public void Two_eligible_chained_joins_build_a_two_level_scope_metadata_only()
+    {
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r, l })
+                .Where(x => x.o.Name == "Alice"));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.Equal(2, mongoQ.Select.JoinScope!.Levels.Count);
+
+        // UPDATED for the native-chained-join-scope plan's Task 6 (the confirming Select-side widening this
+        // task's own comment above deferred to): EF's nav-expansion always applies the join's pending result
+        // selector `new { e.o, e.r, l }` LAST — an implicit trailing Select whose three leaves are ALL
+        // whole-entity references spanning every scope in this chain (o at scope 0, e.r at scope 1, l at
+        // scope 2) — which NativeJoinScopeProjectionBinder now (Task 6) confirms fully, so both signals flip
+        // from this task's own original (deliberately temporary) pinned state.
+        Assert.False(mongoQ.Select.HasUnconfirmedCandidateJoin);
+        Assert.Equal(2, mongoQ.Lookups.Count);
+        Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
+
+        // The Where predicate itself (`x.o.Name == "Alice"`, root-scope-only) still populates a native
+        // $match — Task 4's TryTranslateRootScopeOnly arm, unaffected by Task 6's Select-side widening.
+        var matchOp = Assert.IsType<MongoMatchOp>(Assert.Single(mongoQ.Select.PipelineOps));
+        Assert.IsType<MongoBinaryExpression>(matchOp.Predicate);
     }
 
     [Fact]
@@ -136,6 +299,84 @@ public class JoinScopeWhereSlotPopulationTests
         // The PipelineOps assertion above is the correct, unambiguous signal either way: it's empty when the
         // Where arm declines (see the companion Inner-side test below) and populated only when
         // AddPredicateConjunct actually ran.
+    }
+
+    /// <summary>
+    /// Task 5's own real green signal for the chained (depth &gt;= 2) case: drives a genuine two-join chain
+    /// (<c>Owner.Join(Order).Join(OrderLine)</c>) through the real EF pipeline and proves the generalized
+    /// <c>Where</c> arm's new <c>Levels.Count: &gt; 1</c> branch — <see cref="NativeJoinScopeTranslator.TryTranslateRootScopeOnly"/>
+    /// — actually resolves a predicate reading the ROOT (outermost, "o") scope against the real,
+    /// EF-generated nested <c>TransparentIdentifier&lt;TransparentIdentifier&lt;Owner,Order&gt;,OrderLine&gt;</c>
+    /// shape, exactly as <see cref="Where_reading_outer_scope_after_join_populates_predicate_natively"/> does
+    /// for depth 1. A populated <see cref="MongoMatchOp"/> on <c>PipelineOps</c> is the direct, unambiguous
+    /// signal — Task 1's end-to-end functional test can't distinguish this from an unrelated Select-side
+    /// decline (Task 6, not yet landed), so this narrower assertion is what actually proves this task's own
+    /// code path ran and succeeded.
+    /// </summary>
+    [Fact]
+    public void Where_reading_root_scope_after_chained_join_populates_predicate_natively()
+    {
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r, l })
+                .Where(x => x.o.Name == "Alice"));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.Equal(2, mongoQ.Select.JoinScope!.Levels.Count);
+
+        var matchOp = Assert.IsType<MongoMatchOp>(Assert.Single(mongoQ.Select.PipelineOps));
+        Assert.IsType<MongoBinaryExpression>(matchOp.Predicate);
+    }
+
+    /// <summary>
+    /// Companion to the above for the <c>OrderBy</c> arm's new chained-scope branch — same two-join chain,
+    /// same root-scope-only key selector, but asserting a <see cref="MongoSortOp"/> lands on
+    /// <c>PipelineOps</c> instead of a <see cref="MongoMatchOp"/>. Proves
+    /// <c>NativeSlotPopulator</c>'s <c>OrderBy</c>/<c>OrderByDescending</c> arm's new
+    /// <c>Levels.Count: &gt; 1</c> fallback (added by this task; previously OrderBy had NO join-scope arm at
+    /// all, even for depth 1) actually populates the sort slot for a chained scope.
+    /// </summary>
+    [Fact]
+    public void OrderBy_reading_root_scope_after_chained_join_populates_sort_natively()
+    {
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r, l })
+                .OrderBy(x => x.o.Name));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.Equal(2, mongoQ.Select.JoinScope!.Levels.Count);
+
+        var sortOp = Assert.IsType<MongoSortOp>(Assert.Single(mongoQ.Select.PipelineOps));
+        var ordering = Assert.Single(sortOp.Orderings);
+        Assert.True(ordering.Ascending);
+    }
+
+    /// <summary>
+    /// Final-review fix (M9a) — the chained <c>Where</c> and <c>OrderBy</c> arms above both have dedicated
+    /// coverage; <c>ThenBy</c> (added by the same Task 5 five-branch structure — plain field, computed key,
+    /// depth-1 join scope, chained join scope, decline) did not. Same two-join chain and root-scope-only key
+    /// selectors as <see cref="OrderBy_reading_root_scope_after_chained_join_populates_sort_natively"/>, just
+    /// with a second ordering key appended via <c>ThenBy</c> — proves <c>NativeSlotPopulator</c>'s
+    /// <c>ThenBy</c>/<c>ThenByDescending</c> arm's <c>Levels.Count: &gt; 1</c> branch actually appends to the
+    /// existing sort instead of declining or overwriting it.
+    /// </summary>
+    [Fact]
+    public void ThenBy_reading_root_scope_after_chained_join_populates_sort_natively()
+    {
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r, l })
+                .OrderBy(x => x.o.Name)
+                .ThenBy(x => x.o.Id));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.Equal(2, mongoQ.Select.JoinScope!.Levels.Count);
+
+        var sortOp = Assert.IsType<MongoSortOp>(Assert.Single(mongoQ.Select.PipelineOps));
+        Assert.Equal(2, sortOp.Orderings.Count);
+        Assert.True(sortOp.Orderings[0].Ascending);
+        Assert.True(sortOp.Orderings[1].Ascending);
     }
 
     [Fact]

@@ -381,6 +381,32 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
+    /// Whether <paramref name="node"/> is a BARE stored field whose serialization makes a truthiness test
+    /// unsafe — i.e. a value-converted or non-default-<c>BsonRepresentation</c> field sitting in a position
+    /// (<c>$not</c>, an <c>$and</c>/<c>$or</c> operand, a bare boolean predicate root) that MongoDB evaluates
+    /// by truthiness rather than through the property's own serializer.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the whole hazard in one predicate: only <c>false</c>/<c>null</c>/<c>0</c>/<c>undefined</c> are
+    /// falsy in MQL, so a <c>bool</c> stored via <c>HasConversion&lt;string&gt;()</c> is the non-empty string
+    /// <c>"True"</c> OR <c>"False"</c> — both truthy — and the position answers the WRONG boolean rather than
+    /// failing. It must therefore decline (at classify time) or throw (at render time).
+    /// </para>
+    /// <para>
+    /// <b>Six sites</b> restated this same conjunction — three classifying (<c>CanRender</c>'s <c>Not</c> arm,
+    /// <c>CanRenderLogicalOperand</c>, <c>MongoQueryLanguageRenderer.RenderUnary</c>'s fall-to-<c>$expr</c>
+    /// branch) and three throwing (<c>RenderUnary</c>, <c>CheckBooleanRootSerialization</c>,
+    /// <c>CheckLogicalOperandSerialization</c>) — and a previous review had to sweep all of them at once when
+    /// <see cref="MongoOuterFieldExpression"/> was found missing from several. Naming it once means the next
+    /// such widening happens in one place. <paramref name="property"/> is reported so the throwing callers can
+    /// name the offending property in their (position-specific) messages.
+    /// </para>
+    /// </remarks>
+    internal static bool IsUnsafeTruthinessRoot(MongoExpression node, [NotNullWhen(true)] out IProperty? property)
+        => TryGetBareFieldProperty(node, out property) && !AllFieldsDefaultSerialized(node);
+
+    /// <summary>
     /// Returns whether every field reachable from <paramref name="expr"/> uses its property's DEFAULT BSON
     /// serialization (no value converter, no non-default <c>BsonRepresentation</c>).
     /// </summary>
@@ -464,10 +490,12 @@ internal sealed partial class MongoExpressionTranslator
         };
 
     // Strip redundant Convert/ConvertChecked wrappers (EF sometimes adds a nullable-widening convert).
+    // Delegates to the shared peeler rather than reimplementing it — this used to be a third byte-identical
+    // copy of ExpressionExtensionMethods.RemoveConvert. The local name is kept because it is the vocabulary the
+    // ~20 call sites in this file read in, and because the SIBLING peelers here are deliberately NOT the same
+    // thing (see UnwrapOrderPreserving's remarks below for why they must not be collapsed into this one).
     private static Expression Unwrap(Expression e)
-        => e is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } u
-            ? Unwrap(u.Operand)
-            : e;
+        => e.RemoveConvert();
 
     /// <summary>
     /// Strips only the <see cref="ExpressionType.Convert"/> layers that PRESERVE ORDER, for a sort key.
@@ -602,34 +630,17 @@ internal sealed partial class MongoExpressionTranslator
             {
                 var operand = TranslateNode(Unwrap(not.Operand));
                 if (operand is null) return null;
-                // !list.Contains(x.Field) → flip Negated on the MongoInExpression rather than
-                // wrapping it in a generic Not node (there is no query-dialect "not $in" wrapper).
-                if (operand is MongoInExpression inExpr)
-                    return new MongoInExpression(inExpr.Field, inExpr.Values, negated: !inExpr.Negated);
-                // !data.Contains(computed) → flip Negated on the MongoComputedInExpression, mirroring the
-                // MongoInExpression case immediately above — same "no query-dialect not-$in wrapper" reason.
-                if (operand is MongoComputedInExpression computedInExpr)
-                    return new MongoComputedInExpression(
-                        computedInExpr.Needle, computedInExpr.Values, negated: !computedInExpr.Negated);
-                // !arrayField.Contains(constant) → flip Negated on the MongoArrayContainsExpression rather
-                // than wrapping in a generic Not node — mirrors the MongoInExpression case immediately above;
-                // { field: { $ne: value } } is the exact complement (see RenderArrayContains's remarks).
-                if (operand is MongoArrayContainsExpression arrayContainsExpr)
-                    return new MongoArrayContainsExpression(
-                        arrayContainsExpr.Field, arrayContainsExpr.Value, negated: !arrayContainsExpr.Negated);
-                // !s.StartsWith(...)/!s.EndsWith(...)/!s.Contains(...) → flip Negated on the
-                // MongoRegexExpression rather than wrapping in a generic Not node (there is no
-                // query-dialect "not $regularExpression" wrapper other than an enclosing $not,
-                // which the renderer applies based on this flag).
-                if (operand is MongoRegexExpression regexExpr)
-                    return new MongoRegexExpression(regexExpr.Field, regexExpr.Kind, regexExpr.Term, negated: !regexExpr.Negated);
-                // !collection.Any(...)/!collection.All(...) → flip Negated rather than wrapping in a generic
-                // Not node: RenderUnary supports Not over a bare field only, and $elemMatch has direct
-                // query-dialect negations ({ path: { $not: { $elemMatch: ... } } }, and $exists: false for the
-                // bare Any() form).
-                if (operand is MongoElemMatchExpression elemMatchExpr)
-                    return new MongoElemMatchExpression(
-                        elemMatchExpr.ArrayPath, elemMatchExpr.ElementPredicate, negated: !elemMatchExpr.Negated);
+                // A self-negating node (`!list.Contains(x.Field)`, `!arrayField.Contains(c)`,
+                // `!s.StartsWith(…)`, `!collection.Any(…)`/`.All(…)`, `!data.Contains(computed)`) negates by
+                // flipping its own Negated flag rather than by being wrapped in a generic Not node — none of
+                // these has a query-dialect "not" WRAPPER, the negation is part of how each one renders.
+                //
+                // Shared with MongoExpressionNegator, which needs the identical five flips; see
+                // TryFlipNegatedFlag's remarks for why this cannot just call TryNegate (its outer
+                // query-dialect gate declines some of these in positions reachable here) and why the flips are
+                // one method rather than two copies.
+                if (MongoExpressionNegator.TryFlipNegatedFlag(operand, out var selfNegated))
+                    return selfNegated;
                 // !collection.Any(pred)/.All(pred) where pred is CORRELATED (translated to a
                 // MongoQuantifierExpression rather than a MongoElemMatchExpression, since $elemMatch cannot
                 // reference the enclosing document) → recurse into MongoExpressionNegator's own quantifier

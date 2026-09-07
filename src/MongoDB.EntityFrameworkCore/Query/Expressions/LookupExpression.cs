@@ -151,7 +151,14 @@ internal sealed class LookupExpression
     /// Get the full MongoDB field path for a property, accounting for composite keys
     /// stored under the _id document.
     /// </summary>
-    private static string GetFieldPath(IReadOnlyProperty property)
+    /// <remarks>
+    /// Made <c>internal</c> (native-chained-join-scope plan, Task 6 fix round, Finding 2) so
+    /// <c>JoinLookupImplementsKeySelectors</c> in <c>MongoQueryableMethodTranslatingExpressionVisitor</c> can
+    /// compare against the SAME composite-key-aware path this lookup's own <see cref="ForeignField"/>/
+    /// <see cref="LocalField"/> were built from, rather than a plain <c>GetElementName()</c> that disagrees
+    /// for a property that is one component of a multi-property primary key.
+    /// </remarks>
+    internal static string GetFieldPath(IReadOnlyProperty property)
     {
         var elementName = property.GetElementName();
 
@@ -301,4 +308,35 @@ internal sealed class LookupExpression
             { "as", As }
         });
     }
+
+    /// <summary>
+    /// Builds the <c>$unwind</c> stage document that flattens this lookup's output array.
+    /// </summary>
+    /// <remarks>
+    /// The companion to <see cref="ToLookupStageDocument"/>, shared for the same reason — the
+    /// <c>$lookup</c> builder was centralized while its co-emitted <c>$unwind</c> partner stayed
+    /// hand-written at four separate sites.
+    /// <para>
+    /// <paramref name="preserveNullAndEmptyArrays"/> is deliberately a PARAMETER rather than read from
+    /// <see cref="PreserveNullAndEmptyArrays"/>: the callers legitimately disagree on the value, and that
+    /// disagreement is load-bearing. The flat-lookup path follows the LINQ operator (so a required reference
+    /// navigation gets an inner <c>$unwind</c>), while an <c>$unwind</c> nested INSIDE a parent collection
+    /// lookup's sub-pipeline is unconditionally preserving — there, a non-preserving one would drop collection
+    /// ELEMENTS rather than principals, and an <c>Include</c> must never change the result set of the query it
+    /// decorates. Only the document SHAPE is shared here; each caller keeps its own policy.
+    /// </para>
+    /// </remarks>
+    public BsonDocument ToUnwindStageDocument(bool preserveNullAndEmptyArrays)
+        => UnwindStageDocument(As, preserveNullAndEmptyArrays);
+
+    /// <summary>
+    /// Builds an <c>$unwind</c> stage document for an arbitrary array path — for the driver-LINQ bridge's
+    /// fixed <c>_inner</c> shape, which has no <see cref="LookupExpression"/> behind it.
+    /// </summary>
+    public static BsonDocument UnwindStageDocument(string path, bool preserveNullAndEmptyArrays)
+        => new("$unwind", new BsonDocument
+        {
+            { "path", "$" + path },
+            { "preserveNullAndEmptyArrays", preserveNullAndEmptyArrays }
+        });
 }

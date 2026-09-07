@@ -230,24 +230,18 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
 
     // Runs the query under NativeOnly (routing proof) and under DriverLinq (value oracle), asserts the two
     // agree on the matched set, and returns the matched titles.
+    // Runs `query` in one mode and reduces it to the comparable Title list every assertion below compares on.
+    // The MODE ORCHESTRATION lives in NativeModeAssert; this is just this class's own plumbing.
+    private List<string> RunTitles(
+        IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query, MongoQueryMode mode)
+    {
+        using var db = CreateContext(collection, mode, BlogModel);
+        return query(db.Entities.AsNoTracking()).ToList().Select(b => b.Title).OrderBy(t => t).ToList();
+    }
+
     private List<string> AssertNativeAndParity(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
-    {
-        List<string> nativeOnly;
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
-        {
-            nativeOnly = query(db.Entities.AsNoTracking()).ToList().Select(b => b.Title).OrderBy(t => t).ToList();
-        }
-
-        List<string> driver;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
-        {
-            driver = query(db.Entities.AsNoTracking()).ToList().Select(b => b.Title).OrderBy(t => t).ToList();
-        }
-
-        Assert.Equal(driver, nativeOnly);
-        return nativeOnly;
-    }
+        => NativeModeAssert.NativeAndParity(mode => RunTitles(collection, query, mode));
 
     // Asserts a shape is NOT native: it throws NativeTranslationNotSupportedException under NativeOnly
     // (a clean decline, not a crash), AND that the fallback it relies on actually delivers correct,
@@ -259,28 +253,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     // trustworthy by an independent oracle."
     private List<string> AssertDeclinesCleanly(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
-    {
-        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
-        {
-            Assert.Throws<NativeTranslationNotSupportedException>(
-                () => query(db.Entities.AsNoTracking()).ToList());
-        }
-
-        List<string> native;
-        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
-        {
-            native = query(db.Entities.AsNoTracking()).ToList().Select(b => b.Title).OrderBy(t => t).ToList();
-        }
-
-        List<string> driver;
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
-        {
-            driver = query(db.Entities.AsNoTracking()).ToList().Select(b => b.Title).OrderBy(t => t).ToList();
-        }
-
-        Assert.Equal(driver, native);
-        return native;
-    }
+        => NativeModeAssert.DeclinesCleanly(mode => RunTitles(collection, query, mode));
 
     // EMPIRICAL FINDING (Task 4, confirmed via isolated single-document probes, not assumed): the MongoDB C#
     // driver's own LINQ v3 translation of Any()/Count() over a collection navigation renders as an
@@ -304,12 +277,10 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     // Query/AGENTS.md — "proven via NativeOnly succeeding plus an expected-in-memory-result-set assertion, not
     // Native == DriverLinq parity"), these are proven via NativeOnly (the routing proof) plus the
     // hand-verified expected titles each test already asserts.
+    // NativeOnly forbids the fallback, so a result here is proof the shape went native.
     private List<string> AssertNativeOnlyMatches(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
-    {
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
-        return query(db.Entities.AsNoTracking()).ToList().Select(b => b.Title).OrderBy(t => t).ToList();
-    }
+        => RunTitles(collection, query, MongoQueryMode.NativeOnly);
 
     // Same root cause as AssertNativeOnlyMatches above, applied to a shape that correctly DECLINES native
     // translation: NativeOnly still proves the clean, intended decline (NativeTranslationNotSupportedException

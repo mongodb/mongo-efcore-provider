@@ -482,7 +482,26 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // ordinary whole-entity/reducer shaping path reads the entity (the outer one straight off the root
         // document, the inner one out of the $lookup's unwound alias field) exactly as the generic shaper fold at
         // the bottom of this method builds it.
+        //
+        // DEPTH-1 ONLY, BY DESIGN, FOR NOW (final-review fix, I2 — corrects a prior fix round's wrong
+        // explanation of why this is safe). IsTransparentIdentifierMemberAccessSelector recognizes ANY flat
+        // one-hop `x.Outer`/`x.Inner` member access off the selector's own parameter — and over a chain, a
+        // one-hop access off the OUTERMOST parameter (e.g. `x.Inner` for the last join, or `x.Outer` reaching
+        // the whole nested TransparentIdentifier built by every join but the last) DOES structurally match this
+        // recognizer. The recognizer itself does NOT decline a chain — a prior fix round's comment here claimed
+        // it did, which was false. The reason this arm still only ever confirms a DEPTH-1 scope is not the
+        // recognizer at all: it calls MarkReferenceIncludeConfirmed() exactly ONCE regardless of chain depth,
+        // so for a 2+-level chain the confirmation COUNT (1) never matches the candidate-join COUNT
+        // (Joins.Count >= 2), and HasUnconfirmedCandidateJoin's strict count-equality check is what actually
+        // blocks the query from ever reaching Route != Fallback — an accidental, not a structural, guard. The
+        // explicit `Levels.Count: 1` conjunct below makes this arm structurally depth-1-only, matching what the
+        // old comment incorrectly claimed the recognizer already did, rather than relying on that
+        // confirmation-count accident to keep it safe. Widening this arm to call
+        // NativeJoinScopeProjectionBinder.ConfirmEntireChain for a bare leaf resolving to any chain scope index
+        // (reusing MongoTransparentScopeResolver the same way the wrapped arm does) is a reasonable follow-up,
+        // deliberately left out of this fix round to keep it narrowly scoped.
         else if (IsTransparentIdentifierMemberAccessSelector(selector)
+                 && mongoQueryExpression.Select.JoinScope is { Levels.Count: 1 }
                  && IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var bareLeafJoin))
         {
             mongoQueryExpression.AddLookup(bareLeafJoin.Lookup!);
@@ -675,34 +694,20 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// </summary>
     private static Expression? TryBuildGroupResultShaper(MongoQueryExpression mongoQueryExpression, LambdaExpression selector)
     {
-        switch (selector.Body)
+        // Admissibility is decided in full BEFORE any BindGroupMember call. That ordering is load-bearing:
+        // the previous inline version returned null part-way through the MemberInit loop for a non-assignment
+        // binding, by which point it had already registered projections for the earlier members — a
+        // mutate-then-decline that left the query expression half-populated.
+        if (!selector.Body.TryGetProjectionMembers(out var members))
+            return null;
+
+        var boundValues = new Expression[members.Count];
+        for (var i = 0; i < boundValues.Length; i++)
         {
-            case NewExpression newExpression
-                when newExpression.Members != null
-                     && newExpression.Members.Count == newExpression.Arguments.Count
-                     && newExpression.Arguments.Count > 0:
-                var arguments = new Expression[newExpression.Arguments.Count];
-                for (var i = 0; i < arguments.Length; i++)
-                    arguments[i] = BindGroupMember(mongoQueryExpression, newExpression.Members[i].Name, newExpression.Arguments[i]);
-                return newExpression.Update(arguments);
-
-            case MemberInitExpression memberInit
-                when memberInit.NewExpression.Arguments.Count == 0
-                     && memberInit.Bindings.Count > 0:
-                var bindings = new MemberBinding[memberInit.Bindings.Count];
-                for (var i = 0; i < bindings.Length; i++)
-                {
-                    if (memberInit.Bindings[i] is not MemberAssignment assignment)
-                        return null;
-                    bindings[i] = assignment.Update(
-                        BindGroupMember(mongoQueryExpression, assignment.Member.Name, assignment.Expression));
-                }
-
-                return memberInit.Update((NewExpression)memberInit.NewExpression, bindings);
-
-            default:
-                return null;
+            boundValues[i] = BindGroupMember(mongoQueryExpression, members[i].MemberName, members[i].Value);
         }
+
+        return selector.Body.RebuildProjectionMembers(boundValues);
     }
 
     // Registers a projection for one grouped-result member and returns a ProjectionBindingExpression reading
@@ -717,28 +722,44 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     /// <summary>
     /// The single admissibility gate shared by both join-scope <c>Select</c> arms in
-    /// <see cref="TranslateSelect"/> (EF-392, Task 5): the bare whole-entity leaf and
-    /// <see cref="NativeJoinScopeProjectionBinder"/>'s wrapped scalar-only projection. On success,
-    /// <paramref name="joinInfo"/> is the ONE join this select's <see cref="MongoSelectDefinition.JoinScope"/>
-    /// belongs to, with a non-null <see cref="JoinInfo.Lookup"/> the lowerer can actually emit.
+    /// <see cref="TranslateSelect"/> (EF-392, Task 5; widened to a CHAIN by the native-chained-join-scope plan,
+    /// Task 6): the bare whole-entity leaf and <see cref="NativeJoinScopeProjectionBinder"/>'s wrapped
+    /// whole-entity-leaves-only projection. On success, <paramref name="joinInfo"/> is the LAST join in the
+    /// chain this select's <see cref="MongoSelectDefinition.JoinScope"/> describes (<c>Joins[^1]</c>) — for a
+    /// depth-1 scope that is, as before, the only join; the bare-leaf arm's own single <c>AddLookup</c> call
+    /// stays correct for a chain because <c>TranslateJoinCore</c> already unconditionally registers every
+    /// join's own <c>$lookup</c> the moment <c>Joins.Count &gt; 1</c> (the fallback-shape registration — see
+    /// that method's own remarks), so re-adding just the last one here is redundant-but-harmless (<c>AddLookup</c>
+    /// dedupes by alias), not a silent omission of the earlier levels. The wrapped-leaf arm's own per-level
+    /// <c>AddLookup</c>/confirm bookkeeping is done inside <see cref="NativeJoinScopeProjectionBinder"/> itself,
+    /// which reads <see cref="MongoSelectDefinition.JoinScope"/>/<c>.Levels</c> directly rather than through
+    /// <paramref name="joinInfo"/>.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <b><c>Joins.Count == 1</c> is the conjunct that closes <c>NativeJoinScopeTranslator</c>'s documented
-    /// RESIDUAL GAP</b> (read that file's comment first). That gap is: two DIFFERENT flat joins whose
-    /// Outer/Inner CLR types coincide cannot be told apart by the translator's type-shape check, so a scope
-    /// recorded for join #1 could be used to resolve join #2's Inner side against join #1's
-    /// <c>InnerPrefix</c> ($lookup alias) — silent wrong data. Task 4 neutralized it for the <c>Where</c> arm
-    /// by blocking ALL Inner access there; these Select arms legitimately need Inner access, so they close it
-    /// structurally instead. <c>TranslateJoinCore</c> records a <c>JoinScope</c> only for the FIRST join on a
-    /// select (<c>Select.JoinScope == null</c>) and <c>AddJoin</c> appends to the SAME <c>Joins</c> list on the
-    /// SAME <c>MongoQueryExpression</c> — a trailing <c>Select</c> never forks a new one (every
-    /// <c>Translate*</c> here returns <c>source.UpdateShaperExpression(...)</c>). So "exactly one join has ever
-    /// been recorded on this select" and "the recorded scope describes that join" are the same fact, and
-    /// <c>scope.InnerPrefix == Joins[0].Alias</c> holds by construction. The gap's own example —
-    /// <c>Join(a, b, …).Select(x =&gt; x.Outer).Join(c, d, …)</c> — reaches this gate with
-    /// <c>Joins.Count == 2</c> at the trailing Select and is declined here, unconfirmed, exactly as it was
-    /// before this slice (pinned by <c>NativeJoinTests.Chained_second_join_still_declines_cleanly_in_NativeOnly</c>).
+    /// <b><c>scope.Levels.Count == Joins.Count</c> is the conjunct that closes <c>NativeJoinScopeTranslator</c>'s
+    /// documented RESIDUAL GAP, generalized from the old <c>Joins.Count == 1</c> check.</b> That gap is: two
+    /// DIFFERENT flat joins whose Outer/Inner CLR types coincide cannot be told apart by the translator's
+    /// type-shape check, so a scope recorded for join #1 could be used to resolve join #2's Inner side against
+    /// join #1's <c>InnerPrefix</c> ($lookup alias) — silent wrong data. Task 4 neutralized it for the
+    /// <c>Where</c> arm by blocking ALL Inner access there; these Select arms legitimately need Inner access,
+    /// so they close it structurally instead. <c>TranslateJoinCore</c> now (re)builds <c>JoinScope</c> as a
+    /// chain covering every join so far, but ONLY while every one of them is individually eligible
+    /// (<c>JoinInfo.IsNativelyEligible</c>) — the moment any join in the chain is ineligible, <c>JoinScope</c>
+    /// stops being extended past it, so <c>scope.Levels.Count == Joins.Count</c> failing is exactly "this
+    /// select's join chain is not (yet, or ever) fully eligible." <b>The gap's own worked example — a chained
+    /// second join whose OWN flat <c>TransparentIdentifier&lt;TOuter,TInner&gt;</c> coincidentally matches the
+    /// FIRST join's recorded scope types (<c>Join(a, b, …).Select(x =&gt; x.Outer).Join(c, d, …)</c>) — now
+    /// PASSES this gate</b> (both joins individually eligible, so the chain is rebuilt to 2 levels covering
+    /// both) but is still closed safely one layer down, in <see cref="NativeJoinScopeProjectionBinder"/>: a
+    /// chain (<c>Levels.Count &gt; 1</c>) admits ONLY whole-entity leaves, resolved structurally via
+    /// <c>MongoTransparentScopeResolver.TryResolveScopeDepth</c> — never falls through to the flat depth-1
+    /// <c>NativeJoinScopeTranslator.TryTranslateValue</c> path that gap warns about, which is the only call
+    /// path that could actually misresolve a scalar/computed leaf against the wrong join's <c>InnerPrefix</c>.
+    /// See that binder's own remarks, and <c>NativeJoinScopeProjectionBinderTests
+    /// .Declines_a_second_chained_join_rather_than_reusing_the_first_joins_scope</c>, which still declines (its
+    /// trailing selector's leaves are scalar, not whole-entity) — pinning that this gate's widening alone does
+    /// not resurrect the gap.
     /// </para>
     /// <para>
     /// <b>The left-outer conjunct is a lowerer constraint, not a scope statement.</b>
@@ -777,25 +798,64 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// already excluded upstream by <c>TranslateJoinCore</c>'s own <c>JoinScope</c> eligibility.
     /// </para>
     /// </remarks>
-    private static bool IsSingleEligibleNativeJoinScope(
+    /// <remarks>
+    /// <b>Made <c>internal</c> (native-chained-join-scope plan, Task 6 final round) so
+    /// <see cref="NativeTranslation.NativeCardinalityBinder.TryBindAggregate"/> can reuse the identical
+    /// eligibility check.</b> A scalar aggregate with no selector-bearing operand (a bare
+    /// <c>Any()</c>/<c>Count()</c>) can reach that binder with NO trailing Select in the tree AT ALL: EF's
+    /// nav-expansion only synthesizes a join's pending wrap Select when something downstream needs ROW
+    /// SHAPE, and a presence/count-only aggregate doesn't — MEASURED via <c>LambdaExpression.Print()</c> on
+    /// the preprocessed tree for <c>Join(…).Join(…).Where(…).OrderBy(…).Any()</c>: no <c>Select</c> node
+    /// exists between the last <c>Join</c> and <c>Where</c>/<c>OrderBy</c>/<c>Any</c>. So the two Select-side
+    /// confirming arms in <see cref="TranslateSelect"/> never run for that shape, and without a second
+    /// confirming site the chain's candidate joins stay unconfirmed forever — <c>Route</c> stuck at
+    /// <c>Fallback</c> — even though every join in the chain is individually eligible and the aggregate
+    /// itself binds fine. <c>TryBindAggregate</c> calls this SAME method (not a looser copy) immediately
+    /// before its own unconditional success return, and on success confirms via
+    /// <see cref="NativeTranslation.NativeJoinScopeProjectionBinder.ConfirmEntireChain"/> — the identical
+    /// per-level commit <see cref="NativeTranslation.NativeJoinScopeProjectionBinder.TryBindProjection"/>
+    /// itself now delegates to, so there is exactly one place that performs this side effect.
+    /// </remarks>
+    internal static bool IsSingleEligibleNativeJoinScope(
         MongoQueryExpression mongoQueryExpression, [NotNullWhen(true)] out JoinInfo? joinInfo)
     {
         joinInfo = null;
 
-        if (mongoQueryExpression.Select.JoinScope is null
+        if (mongoQueryExpression.Select.JoinScope is not { } scope
+            || scope.Levels.Count != mongoQueryExpression.Joins.Count
             || mongoQueryExpression.Select.HasUnsupportedOperator
             || mongoQueryExpression.Select.HasTerminalOperator
-            || mongoQueryExpression.Select.UnwindSource != null
-            || mongoQueryExpression.Joins.Count != 1)
+            || mongoQueryExpression.Select.UnwindSource != null)
         {
             return false;
         }
 
-        var candidate = mongoQueryExpression.Joins[0];
-        if (candidate.Lookup is not { } lookup
-            || (candidate.IsLeftOuter && lookup.Navigation is { IsCollection: true }))
+        // Task 3's IsNativelyEligible already re-checked navigation/left-outer-collection/key-selector-implements
+        // per join before JoinScope was (re)built to cover Joins.Count levels — scope.Levels.Count ==
+        // Joins.Count above is proof every join already passed those conjuncts, so this method's OWN copy of the
+        // left-outer/collection re-check (previously duplicated here) is removed rather than left to drift.
+        var candidate = mongoQueryExpression.Joins[^1];
+        if (candidate.Lookup is not { } lookup)
         {
             return false;
+        }
+
+        // Final-review fix (I1): EVERY join in the chain must have a resolved Lookup, not just the last one.
+        // NativeJoinScopeProjectionBinder.ConfirmEntireChain loops over every scope.Levels entry and calls
+        // MarkReferenceIncludeConfirmed() for that level UNCONDITIONALLY, even when that level's own
+        // mongoQ.Joins[i].Lookup is null (it only conditionally calls AddLookup, but always confirms) — so a
+        // last-only Lookup check here would let a chain with a null-Lookup EARLIER level through this gate,
+        // producing a pipeline missing that level's own $lookup stage while the projection still expects to
+        // read from its alias. Not known-reachable today (eligibility requires a resolved Navigation, and
+        // Lookup is built whenever a navigation resolves), but this is the exact "check only the last join"
+        // pattern that was already a real Critical bug elsewhere in this same plan's fix round — close it
+        // structurally here too, rather than relying on it never coming up.
+        foreach (var chainJoin in mongoQueryExpression.Joins)
+        {
+            if (chainJoin.Lookup is null)
+            {
+                return false;
+            }
         }
 
         // PAGING/REDUCING RECORDED BEFORE THIS ARM CONFIRMS (EF-392 final review, Critical 1). A $skip/$limit
@@ -811,9 +871,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // with the $limit already recorded. (The mirror ordering — an operator composed AFTER this arm
         // confirms, which a reducer genuinely does take — is closed at the other end by
         // MongoSelectDefinition.HasConfirmedJoinLookup.) A $match/$sort needs no conjunct here: an outer-side
-        // filter commutes with the join, and no sort can have been recorded, since an OrderBy over a join scope
-        // isn't translatable by the single-scope slot arms and so marks the query non-native (caught by
-        // HasUnsupportedOperator above).
+        // filter commutes with the join regardless of ordering, and a recorded sort is likewise safe — an
+        // OrderBy over a join scope only ever translates against the ROOT scope (NativeJoinScopeTranslator.
+        // TryTranslateRootScopeOnly, native-chained-join-scope plan, Component 4), so it too commutes with
+        // the join the same way an outer-side $match does; it is not rejected by HasUnsupportedOperator (that
+        // premise predates the native-chained-join-scope plan and no longer holds — see
+        // JoinScopeWhereSlotPopulationTests / Chained_join_Where_OrderBy_Any_goes_native_under_NativeOnly for
+        // the pinned proof that a recorded sort reaches this gate and still confirms correctly).
         //
         // The carve-out is deliberately narrow, and NOT tidiness: a left-outer REFERENCE navigation lowers to
         // an $unwind with preserveNullAndEmptyArrays: true (MongoSelectLowerer's reference arm threads
@@ -826,10 +890,22 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // Everything else declines: a COLLECTION navigation (1:N, and its ForceUnwind arm hard-codes
         // preserveNullAndEmptyArrays: false), and an INNER join over a reference navigation (preserve: false,
         // so an unmatched FK drops the row and the count is not preserved either).
-        if ((mongoQueryExpression.Select.HasPaging || mongoQueryExpression.Select.Cardinality?.Reducer != null)
-            && !(candidate.IsLeftOuter && lookup.Navigation is { IsCollection: false }))
+        // Widened to a CHAIN (fix round 1, Finding 1): the paging/reducing hazard above is not specific to
+        // the LAST join — a $skip/$limit recorded ahead of the WHOLE $lookup block is emitted ahead of EVERY
+        // level's $unwind, so ALL of them must individually be 1:1-safe, not just Joins[^1]. Checking only
+        // the last level is unsound for depth > 1: a chain whose EARLIER level is a 1:N collection-nav join
+        // (whose $unwind is NOT 1:1) but whose LAST level happens to be a left-outer reference join (which IS
+        // 1:1) would pass a last-only check while the earlier level still mis-pages. Loop over every join.
+        if (mongoQueryExpression.Select.HasPaging || mongoQueryExpression.Select.Cardinality?.Reducer != null)
         {
-            return false;
+            foreach (var level in mongoQueryExpression.Joins)
+            {
+                if (level.Lookup is not { } levelLookup
+                    || !(level.IsLeftOuter && levelLookup.Navigation is { IsCollection: false }))
+                {
+                    return false;
+                }
+            }
         }
 
         joinInfo = candidate;
@@ -2183,26 +2259,29 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var reboundInnerShaper = RebindInnerShaperToOuterQuery(
             inner.ShaperExpression, innerQueryExpression, outerQueryExpression, outerKeySelector, innerKeySelector, joinInfo);
 
-        // Record join-scope metadata for a single-level, eligible join, so a subsequent Where/Select can
-        // resolve x.Outer.Foo / x.Inner.Foo member access natively (Tasks 3-5). This does NOT call AddLookup
-        // or MarkReferenceIncludeConfirmed — registering the $lookup here, unconditionally, would flip
-        // UsesDriverJoinFields for every single-join query (including ones that never go native), changing
-        // the driver-LINQ fallback's own document shape. That registration is deferred to the point a
-        // Where/Select actually succeeds translating against the scope (Tasks 4/5).
-        //
-        // Eligibility mirrors what reference-Include already requires: a resolved model navigation, a
-        // bare-collection-scan inner, not GroupBy/Distinct-sourced, and not already chained onto a prior
-        // join on this select (chained/nested joins are out of scope for this chunk — see the design doc).
-        if (joinInfo.Navigation is { } eligibleNavigation
+        // Per-join eligibility, computed unconditionally (no longer gated on "is this the first join") —
+        // every join records its own verdict so a later join can find out whether EVERY join so far, itself
+        // included, qualifies. See docs/superpowers/specs/2026-09-07-native-chained-join-scope-design.md,
+        // Component 2 — this builds ONLY the JoinScope metadata; confirming the join ($lookup registration,
+        // Route) stays deferred to the consuming Select arm (Task 6), exactly as depth-1 already works today.
+        joinInfo.IsNativelyEligible =
+            joinInfo.Navigation is { } eligibleNavigation
             && innerQueryExpression.Select.IsBareCollectionScan
             && !outerQueryExpression.Select.IsGroupBy && !innerQueryExpression.Select.IsGroupBy
             && !outerQueryExpression.Select.IsDistinct && !innerQueryExpression.Select.IsDistinct
-            && outerQueryExpression.Select.JoinScope == null
-            && JoinLookupImplementsKeySelectors(joinInfo, outerQueryExpression, outerKeySelector, innerKeySelector))
+            && !(joinInfo.IsLeftOuter && eligibleNavigation.IsCollection)
+            && JoinLookupImplementsKeySelectors(joinInfo, outerQueryExpression, outerKeySelector, innerKeySelector);
+
+        // Rebuild the chain from scratch each time: it covers exactly the LEADING run of eligible joins, so the
+        // moment any join is ineligible, JoinScope stops being extended past it (a "chain with a hole" is not
+        // attempted — see the spec's Component 2 note on partial eligibility).
+        if (outerQueryExpression.Joins.All(j => j.IsNativelyEligible))
         {
             outerQueryExpression.Select.JoinScope = new MongoJoinScope(
-                outerQueryExpression.CollectionExpression.EntityType, eligibleNavigation.TargetEntityType,
-                joinInfo.Alias, joinInfo.IsLeftOuter);
+                outerQueryExpression.CollectionExpression.EntityType,
+                outerQueryExpression.Joins
+                    .Select(j => new MongoJoinScopeLevel(j.InnerEntityType, j.Alias, j.IsLeftOuter))
+                    .ToList());
         }
 
         var newResultSelector = ReplacingExpressionVisitor.Replace(
@@ -2261,13 +2340,38 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return false;
         }
 
-        var outerProperty = outerQueryExpression.CollectionExpression.EntityType.FindProperty(outerKeyName);
+        // The outer property's OWNING entity type is the join's own resolved navigation's declaring type,
+        // not unconditionally the outermost root: for a single-level join those are the same type, but for
+        // a join CHAINED onto a prior one (outer key selector reaching through a prior join's Inner side,
+        // e.g. `e.r.Id`) the navigation was resolved against that prior hop's inner entity type
+        // (RebindInnerShaperToOuterQuery's `anchorEntityType`/`searchEntityType`), not the root - reading
+        // the root type here would look up the wrong property (or, coincidentally, a same-named one on the
+        // wrong entity) and can never agree with the lookup's own (correctly prefixed) LocalField.
+        var outerAnchorEntityType = joinInfo.Navigation!.DeclaringEntityType;
+        var outerProperty = outerAnchorEntityType.FindProperty(outerKeyName);
         var innerProperty = joinInfo.InnerEntityType.FindProperty(innerKeyName);
+        if (outerProperty == null || innerProperty == null)
+        {
+            return false;
+        }
 
-        return outerProperty != null
-               && innerProperty != null
-               && lookup.LocalField == outerProperty.GetElementName()
-               && lookup.ForeignField == innerProperty.GetElementName();
+        // For a transitive hop the emitted LocalField is prefixed with the prior join's own alias
+        // (`"{throughJoin.Alias}.{element}"`, see the LookupExpression construction just above), so an
+        // exact match is only ever correct at depth 1; a transitive hop's own key equality is confirmed by
+        // the prefixed field ENDING in the resolved property's element name.
+        //
+        // Both sides compare against LookupExpression.GetFieldPath (Task 6 fix round, Finding 2) rather than
+        // a plain GetElementName() — for a property that is one component of a multi-property primary key
+        // (e.g. OrderDetail's composite _id.OrderID/_id.ProductID), the emitted lookup field is
+        // "_id.<ElementName>", not the bare element name, and comparing against GetElementName() alone
+        // always disagreed, declining every join keyed on a composite-PK component regardless of chain
+        // depth. Reusing the SAME helper the lookup's own LocalField/ForeignField were built from (rather
+        // than restating a looser copy) is what keeps this comparison correct by construction.
+        var outerElementPath = LookupExpression.GetFieldPath(outerProperty);
+        var outerFieldMatches = lookup.LocalField == outerElementPath
+            || lookup.LocalField.EndsWith("." + outerElementPath, StringComparison.Ordinal);
+
+        return outerFieldMatches && lookup.ForeignField == LookupExpression.GetFieldPath(innerProperty);
     }
 
     /// <summary>
@@ -2804,44 +2908,33 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     private static Expression BuildSelectManyResultShaper(
         MongoQueryExpression mongoQueryExpression, Expression projectionBody, Expression? foldedBody = null)
     {
-        switch (projectionBody)
+        // NativeSelectManyBinder.TryBind already validated this shape through the SAME reader, so a decline
+        // here is unreachable in practice — thrown rather than allowed to silently mis-shape the result.
+        if (!projectionBody.TryGetProjectionMembers(out var members))
         {
-            case NewExpression newExpression
-                when newExpression.Members != null
-                     && newExpression.Members.Count == newExpression.Arguments.Count
-                     && newExpression.Arguments.Count > 0:
-                var foldedNew = foldedBody as NewExpression;
-                var arguments = new Expression[newExpression.Arguments.Count];
-                for (var i = 0; i < arguments.Length; i++)
-                    arguments[i] = BindResultMember(
-                        mongoQueryExpression, newExpression.Members[i].Name, newExpression.Arguments[i],
-                        foldedNew?.Arguments[i]);
-                return newExpression.Update(arguments);
-
-            case MemberInitExpression memberInit
-                when memberInit.NewExpression.Arguments.Count == 0
-                     && memberInit.Bindings.Count > 0:
-                var foldedMemberInit = foldedBody as MemberInitExpression;
-                var bindings = new MemberBinding[memberInit.Bindings.Count];
-                for (var i = 0; i < bindings.Length; i++)
-                {
-                    var assignment = (MemberAssignment)memberInit.Bindings[i];
-                    var foldedAssignment = foldedMemberInit?.Bindings[i] as MemberAssignment;
-                    bindings[i] = assignment.Update(
-                        BindResultMember(
-                            mongoQueryExpression, assignment.Member.Name, assignment.Expression,
-                            foldedAssignment?.Expression));
-                }
-
-                return memberInit.Update((NewExpression)memberInit.NewExpression, bindings);
-
-            default:
-                // NativeSelectManyBinder.TryBind already validated this shape (TryReadProjection accepts only
-                // these two forms), so this is unreachable in practice — defensive rather than silently
-                // mis-shaping the result.
-                throw new InvalidOperationException(
-                    $"Unexpected SelectMany projection shape '{projectionBody.GetType().Name}' after successful native binding.");
+            throw new InvalidOperationException(
+                $"Unexpected SelectMany projection shape '{projectionBody.GetType().Name}' after successful native binding.");
         }
+
+        // The FOLDED body (EF-444: the same construction with the join's own shaper substituted in) is read
+        // through the same reader, so its members arrive in the same order and pair up by index — which is the
+        // alignment the previous per-spelling code assumed when it indexed foldedNew.Arguments/foldedMemberInit
+        // .Bindings directly.
+        IReadOnlyList<(string MemberName, Expression Value)>? foldedMembers = null;
+        if (foldedBody is not null && foldedBody.TryGetProjectionMembers(out var readFolded))
+        {
+            foldedMembers = readFolded;
+        }
+
+        var boundValues = new Expression[members.Count];
+        for (var i = 0; i < boundValues.Length; i++)
+        {
+            boundValues[i] = BindResultMember(
+                mongoQueryExpression, members[i].MemberName, members[i].Value,
+                foldedMembers is not null && i < foldedMembers.Count ? foldedMembers[i].Value : null);
+        }
+
+        return projectionBody.RebuildProjectionMembers(boundValues);
     }
 
     // Registers a projection for one SelectMany-result member and returns a ProjectionBindingExpression
@@ -2973,7 +3066,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            && mongo.Select.Projection.Count == 0
            && !mongo.IsJoinQuery
            && mongo.Lookups.Count == 0
-           && !ContainsVectorSearch(mongo.CapturedExpression);
+           && !mongo.CapturedExpression.ContainsVectorSearch();
 
     // A plain projected select: a terminal anonymous/DTO member-access Select is the SOLE thing done
     // (Projection populated, Route == Projection) — no grouping, scalar cardinality, its own set op,
@@ -3029,7 +3122,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            && mongo.Select.UnwindSource == null
            && !mongo.IsJoinQuery
            && mongo.Lookups.Count == 0
-           && !ContainsVectorSearch(mongo.CapturedExpression);
+           && !mongo.CapturedExpression.ContainsVectorSearch();
 
     // The two operands' projected shapes must have identical top-level alias SETS (same count, same alias names).
     // The output documents' fields are exactly these aliases, and Union dedup / Intersect-Except source-tagging
@@ -3062,26 +3155,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         }
 
         return true;
-    }
-
-    // Local, minimal duplicate of MongoShapedQueryCompilingExpressionVisitor.ContainsVectorSearch (that
-    // gate method is private and deliberately not made public — see the Query area AGENTS.md for the
-    // rationale on why VectorSearch must be checked via the captured chain rather than a select-tree flag).
-    // Walks the captured Queryable method chain looking for a VectorSearch call, descending through the
-    // source argument of each call (VectorSearch sits at the root, optionally under a single pre-Where).
-    private static bool ContainsVectorSearch(Expression? captured)
-    {
-        while (captured is MethodCallExpression call)
-        {
-            if (call.IsVectorSearch())
-            {
-                return true;
-            }
-
-            captured = call.Arguments.Count > 0 ? call.Arguments[0] : null;
-        }
-
-        return false;
     }
 
     protected override ShapedQueryExpression? TranslateWhere(ShapedQueryExpression source, LambdaExpression predicate)

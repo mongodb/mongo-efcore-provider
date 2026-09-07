@@ -13,30 +13,40 @@
  * limitations under the License.
  */
 
+using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// Records that a native single-level <c>Join</c>/<c>LeftJoin</c> was seen on this select whose subsequent
-/// <c>Where</c>/<c>Select</c> may resolve member access against either side (<c>x.Outer.Foo</c> /
-/// <c>x.Inner.Foo</c>) via the two-scope <see cref="NativeTranslation.MongoExpressionTranslator"/>. Recording
-/// this is pure metadata — it does NOT register the join's <c>$lookup</c> on
-/// <see cref="MongoQueryExpression"/> (see <c>AddLookup</c>); that stays deferred until a
-/// <c>Where</c>/<c>Select</c> actually succeeds translating against this scope, so a query that ends up
-/// falling back to driver-LINQ for an unrelated reason never has its <c>UsesDriverJoinFields</c> document
-/// shape perturbed. See <c>docs/superpowers/specs/2026-08-27-native-join-translation-v2-design.md</c>.
+/// Records that a native <c>Join</c>/<c>LeftJoin</c> chain was seen on this select whose subsequent
+/// <c>Where</c>/<c>OrderBy</c> may resolve member access against the outermost root scope only (any chain
+/// depth), or whose subsequent <c>Select</c> may resolve a whole-entity leaf against ANY level (root or any
+/// join's Inner side) — see <c>NativeTranslation.NativeJoinScopeTranslator.TryTranslateRootScopeOnly</c> and
+/// <c>NativeTranslation.NativeJoinScopeProjectionBinder</c> respectively. Recording this chain is pure
+/// metadata, built EAGERLY at join-registration time for every join (mirroring exactly how a single join's
+/// scope is built eagerly today) — see
+/// <c>MongoQueryableMethodTranslatingExpressionVisitor.TranslateJoinCore</c>'s per-join eligibility check.
+/// Confirming the join (registering its <c>$lookup</c>, flipping <c>Route</c> away from <c>Fallback</c>)
+/// stays a SEPARATE, later, deferred step at the consuming <c>Select</c> arm, unaffected by how eagerly this
+/// metadata itself is built. See <c>docs/superpowers/specs/2026-09-07-native-chained-join-scope-design.md</c>.
 /// </summary>
-internal sealed class MongoJoinScope(
-    IEntityType outerEntityType, IEntityType innerEntityType, string innerPrefix, bool isLeftOuter)
+internal sealed class MongoJoinScope(IEntityType outerEntityType, IReadOnlyList<MongoJoinScopeLevel> levels)
 {
     public IEntityType OuterEntityType { get; } = outerEntityType;
 
+    /// <summary>One entry per join, root-most first. <c>Levels.Count == 1</c> is today's single-join shape.</summary>
+    public IReadOnlyList<MongoJoinScopeLevel> Levels { get; } = levels;
+}
+
+/// <summary>One join level in a (possibly chained) native join scope.</summary>
+internal sealed class MongoJoinScopeLevel(IEntityType innerEntityType, string innerPrefix, bool isLeftOuter)
+{
     public IEntityType InnerEntityType { get; } = innerEntityType;
 
-    /// <summary>The <c>$lookup</c> alias (<c>joinInfo.Alias</c>) inner-scope field refs are prefixed with.</summary>
+    /// <summary>The <c>$lookup</c> alias (<c>joinInfo.Alias</c>) this level's inner-scope field refs are prefixed with.</summary>
     public string InnerPrefix { get; } = innerPrefix;
 
-    /// <summary>Whether this join is left-outer (<c>LeftJoin</c>) or inner (<c>Join</c>).</summary>
+    /// <summary>Whether this level's join is left-outer (<c>LeftJoin</c>) or inner (<c>Join</c>).</summary>
     public bool IsLeftOuter { get; } = isLeftOuter;
 }

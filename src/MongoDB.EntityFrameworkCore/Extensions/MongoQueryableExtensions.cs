@@ -43,6 +43,34 @@ public static class MongoQueryableExtensions
         && genericMethod == VectorSearchMethodInfo;
 
     /// <summary>
+    /// Walks a captured <see cref="System.Linq.Queryable"/> method chain looking for a <c>VectorSearch</c> call,
+    /// descending through the source argument of each call — <c>VectorSearch</c> sits at the root, optionally
+    /// under a single pre-<c>Where</c>.
+    /// </summary>
+    /// <remarks>
+    /// Lives here, next to <see cref="IsVectorSearch"/>, because BOTH the compile-time gate
+    /// (<c>MongoShapedQueryCompilingExpressionVisitor</c>, whose native-disposition classification reads it) and
+    /// the method translator (<c>MongoQueryableMethodTranslatingExpressionVisitor</c>, whose set-operation
+    /// eligibility checks read it) need it, and they used to hold byte-identical private copies. Note this must
+    /// be answered from the CAPTURED CHAIN, never from a flag on the select tree — see the Query area
+    /// <c>AGENTS.md</c>.
+    /// </remarks>
+    internal static bool ContainsVectorSearch(this Expression? captured)
+    {
+        while (captured is MethodCallExpression call)
+        {
+            if (call.IsVectorSearch())
+            {
+                return true;
+            }
+
+            captured = call.Arguments.Count > 0 ? call.Arguments[0] : null;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Adds a MongoDB Atlas Vector Search to this LINQ query. This method must be called at the root of an EF Core query
     /// against MongoDB, except that a <see cref="System.Linq.Queryable.Where{T}(IQueryable{T},Expression{Func{T,bool}})"/>
     /// clause can be used to add a pre-query filter.

@@ -511,7 +511,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     private static bool HasJoinScopeInnerEntityProjectionLeaf(MongoQueryExpression mongoQueryExpression)
         => mongoQueryExpression.Select.JoinScope is { } scope
            && mongoQueryExpression.Select.Projection.Any(
-               p => p.Alias == scope.InnerPrefix && p.Expression is MongoElementRefExpression);
+               p => p.Alias == scope.Levels[0].InnerPrefix && p.Expression is MongoElementRefExpression);
 
     /// <summary>
     /// A THIRD trigger (EF-447) for the same late-fallback problem <see cref="HasJoinScopeInnerEntityProjectionLeaf"/>
@@ -613,7 +613,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             var contextParameter = Expression.Parameter(typeof(BsonDeserializationContext), "__context");
             try
             {
-                var onePassBody = new MongoStreamingEntityMaterializerRewriter(rootEntityType, _bsonSerializerFactory)
+                var onePassBody = new MongoStreamingEntityMaterializerRewriter(rootEntityType)
                     .Rewrite(injectedBody, readerParameter, contextParameter);
 
                 var onePassLambda = Expression.Lambda(
@@ -933,23 +933,6 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         }
     }
 
-    // Walks the captured Queryable method chain looking for a VectorSearch call. VectorSearch sits at the root
-    // (optionally under a single pre-Where), so this descends through the source argument of each call.
-    private static bool ContainsVectorSearch(Expression? captured)
-    {
-        while (captured is MethodCallExpression call)
-        {
-            if (call.IsVectorSearch())
-            {
-                return true;
-            }
-
-            captured = call.Arguments.Count > 0 ? call.Arguments[0] : null;
-        }
-
-        return false;
-    }
-
     /// <summary>
     /// Classify a query's native disposition from the three authoritative is-native signals, read here in one
     /// place. This is the single source of truth for the is-native gate decision; all gate sites
@@ -1007,7 +990,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         => ClassifyNativeDisposition(
             q.Select.Route,
             q.Select.IsFallbackWrongData,
-            ContainsVectorSearch(q.CapturedExpression) && q.Select.VectorSearch is null,
+            q.CapturedExpression.ContainsVectorSearch() && q.Select.VectorSearch is null,
             mode);
 
     /// <summary>

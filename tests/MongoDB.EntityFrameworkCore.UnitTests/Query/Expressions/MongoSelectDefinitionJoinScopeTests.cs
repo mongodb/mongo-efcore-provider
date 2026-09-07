@@ -46,7 +46,8 @@ public class MongoSelectDefinitionJoinScopeTests
         Assert.False(select.HasTerminalOperator);
 
         var (outerEntityType, innerEntityType) = BuildTwoEntityTypes();
-        select.JoinScope = new MongoJoinScope(outerEntityType, innerEntityType, innerPrefix: "_lookup_Orders", isLeftOuter: false);
+        select.JoinScope = new MongoJoinScope(
+            outerEntityType, [new MongoJoinScopeLevel(innerEntityType, innerPrefix: "_lookup_Orders", isLeftOuter: false)]);
 
         Assert.False(select.HasTerminalOperator);
     }

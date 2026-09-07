@@ -194,8 +194,7 @@ internal sealed class MongoQueryLanguageRenderer
             // value-converted/non-default-represented outer bool under Not would otherwise render as
             // {$expr: {$not: [...]}}  raw truthiness on the stored value  instead of correctly declining.
             if (MongoAggregationExpressionRenderer.CanRender(unary.Operand)
-                && (!MongoExpressionTranslator.TryGetBareFieldProperty(unary.Operand, out _)
-                    || MongoExpressionTranslator.AllFieldsDefaultSerialized(unary.Operand)))
+                && !MongoExpressionTranslator.IsUnsafeTruthinessRoot(unary.Operand, out _))
             {
                 return new BsonDocument("$expr",
                     new BsonDocument("$not", new BsonArray { MongoAggregationExpressionRenderer.Render(unary.Operand, placeholders) }));

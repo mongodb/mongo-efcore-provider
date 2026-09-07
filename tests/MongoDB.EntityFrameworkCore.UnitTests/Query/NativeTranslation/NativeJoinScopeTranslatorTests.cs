@@ -70,7 +70,7 @@ public class NativeJoinScopeTranslatorTests
     private static MongoJoinScope NewScope(bool isLeftOuter = false)
     {
         var (outer, inner) = GetEntityTypes();
-        return new MongoJoinScope(outer, inner, InnerPrefix, isLeftOuter);
+        return new MongoJoinScope(outer, [new MongoJoinScopeLevel(inner, InnerPrefix, isLeftOuter)]);
     }
 
     /// <summary>The real EF-generated flat <c>TransparentIdentifier&lt;OuterEntity, InnerEntity&gt;</c> type.</summary>
@@ -280,5 +280,120 @@ public class NativeJoinScopeTranslatorTests
             Expression.PropertyOrField(Expression.PropertyOrField(x, "Inner"), "Name"));
 
         Assert.True(NativeJoinScopeTranslator.ReferencesInnerScope(x, body));
+    }
+
+    // ── TryTranslateRootScopeOnly: chained (2-level) join scope ──────────────────────────────────────────
+    // The chained shape is TransparentIdentifier<TransparentIdentifier<OuterEntity, InnerEntity>, OtherEntity>
+    // — i.e. the FIRST join's flat TransparentIdentifier becomes the SECOND join's own "Outer". A two-level
+    // MongoJoinScope describes this: Levels[0] is the first join (InnerEntity), Levels[1] is the second
+    // (OtherEntity).
+
+    private static MongoJoinScope NewTwoLevelScope()
+    {
+        var (outer, inner) = GetEntityTypes();
+        using var db = SingleEntityDbContext.Create<OuterEntity>(
+            mb =>
+            {
+                mb.Entity<InnerEntity>();
+                mb.Entity<OtherEntity>();
+            });
+        var other = db.Model.FindEntityType(typeof(OtherEntity))!;
+        return new MongoJoinScope(outer, [new MongoJoinScopeLevel(inner, InnerPrefix, false), new MongoJoinScopeLevel(other, "_lookup_Other", false)]);
+    }
+
+    /// <summary>
+    /// The real EF-generated nested <c>TransparentIdentifier&lt;TransparentIdentifier&lt;OuterEntity,
+    /// InnerEntity&gt;, OtherEntity&gt;</c> type a chained (two-join) query produces.
+    /// </summary>
+    private static ParameterExpression NewChainedRootParam()
+    {
+        var firstJoinType = TransparentIdentifierFactory.Create(typeof(OuterEntity), typeof(InnerEntity));
+        var nestedType = TransparentIdentifierFactory.Create(firstJoinType, typeof(OtherEntity));
+        return Expression.Parameter(nestedType, "x");
+    }
+
+    [Fact]
+    public void TryTranslateRootScopeOnly_translates_a_root_scoped_predicate_over_a_two_level_chain()
+    {
+        var scope = NewTwoLevelScope();
+        var x = NewChainedRootParam();
+
+        // x => x.Outer.Outer.Name == "Alice" — root-scoped: OuterEntity.Name.
+        Expression body = Expression.Equal(
+            Expression.PropertyOrField(Expression.PropertyOrField(Expression.PropertyOrField(x, "Outer"), "Outer"), "Name"),
+            Expression.Constant("Alice"));
+
+        var translated = NativeJoinScopeTranslator.TryTranslateRootScopeOnly(scope, x, body, valueMode: false, out var result);
+
+        Assert.True(translated);
+        Assert.NotNull(result);
+    }
+
+    [Fact]
+    public void TryTranslateRootScopeOnly_declines_a_predicate_touching_the_first_joins_inner_level()
+    {
+        var scope = NewTwoLevelScope();
+        var x = NewChainedRootParam();
+
+        // x => x.Outer.Inner.Total == 5 — touches the FIRST join's Inner side; must decline.
+        Expression body = Expression.Equal(
+            Expression.PropertyOrField(Expression.PropertyOrField(Expression.PropertyOrField(x, "Outer"), "Inner"), "Total"),
+            Expression.Constant(5));
+
+        var translated = NativeJoinScopeTranslator.TryTranslateRootScopeOnly(scope, x, body, valueMode: false, out var result);
+
+        Assert.False(translated);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void TryTranslateRootScopeOnly_declines_a_predicate_touching_the_second_joins_inner_level()
+    {
+        var scope = NewTwoLevelScope();
+        var x = NewChainedRootParam();
+
+        // x => x.Inner.Label == "foo" — touches the SECOND (outermost) join's Inner side; must decline too,
+        // not just the first level's.
+        Expression body = Expression.Equal(
+            Expression.PropertyOrField(Expression.PropertyOrField(x, "Inner"), "Label"),
+            Expression.Constant("foo"));
+
+        var translated = NativeJoinScopeTranslator.TryTranslateRootScopeOnly(scope, x, body, valueMode: false, out var result);
+
+        Assert.False(translated);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void TryTranslateRootScopeOnly_declines_a_predicate_mixing_root_and_inner_scopes()
+    {
+        var scope = NewTwoLevelScope();
+        var x = NewChainedRootParam();
+
+        // x => x.Outer.Outer.Name == x.Inner.Label — spans two distinct scope indices (0 and 2); CrossScope.
+        Expression body = Expression.Equal(
+            Expression.PropertyOrField(Expression.PropertyOrField(Expression.PropertyOrField(x, "Outer"), "Outer"), "Name"),
+            Expression.PropertyOrField(Expression.PropertyOrField(x, "Inner"), "Label"));
+
+        var translated = NativeJoinScopeTranslator.TryTranslateRootScopeOnly(scope, x, body, valueMode: false, out var result);
+
+        Assert.False(translated);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void TryTranslateRootScopeOnly_translates_a_root_scoped_value_over_a_two_level_chain()
+    {
+        var scope = NewTwoLevelScope();
+        var x = NewChainedRootParam();
+
+        // x => x.Outer.Outer.Name (value/sort-key mode, not a predicate).
+        Expression body = Expression.PropertyOrField(Expression.PropertyOrField(Expression.PropertyOrField(x, "Outer"), "Outer"), "Name");
+
+        var translated = NativeJoinScopeTranslator.TryTranslateRootScopeOnly(scope, x, body, valueMode: true, out var result);
+
+        Assert.True(translated);
+        var field = Assert.IsType<MongoFieldExpression>(result);
+        Assert.Equal("Name", field.ElementName);
     }
 }

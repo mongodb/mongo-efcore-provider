@@ -198,6 +198,31 @@ internal static class NativeCardinalityBinder
             _ => null
         };
 
+        // NATIVE-CHAINED-JOIN-SCOPE PLAN, TASK 6 FINAL ROUND. A scalar aggregate with no selector-bearing
+        // operand (a bare Any()/Count()) can reach this exact point with an eligible, chain-wide JoinScope
+        // that NOTHING has confirmed yet — MEASURED, not theoretical: for
+        // `Join(…).Join(…).Where(…).OrderBy(…).Any()`, EF's nav-expansion only synthesizes a join's pending
+        // wrap Select when something downstream needs ROW SHAPE, and a presence-only aggregate doesn't, so
+        // (confirmed via LambdaExpression.Print() on the preprocessed tree) NO Select node exists between the
+        // last Join and Where/OrderBy/Any at all. Both Select-side confirming arms in
+        // MongoQueryableMethodTranslatingExpressionVisitor.TranslateSelect therefore never run for this
+        // shape, and without a second confirming site here the chain's candidate joins would stay
+        // unconfirmed forever (Route stuck at Fallback) even though every join in the chain is individually
+        // eligible and this aggregate itself binds fine.
+        //
+        // Reuses the SAME eligibility check the Select-side arms gate on (not a looser copy — see that
+        // method's own remarks on why it was made internal for exactly this call), and confirms via the SAME
+        // shared commit helper NativeJoinScopeProjectionBinder.TryBindProjection itself delegates to. Placed
+        // immediately before the unconditional success return below (not earlier in this method) so it only
+        // ever fires once every other decline in this method has already been ruled out — confirming and
+        // then still failing for an unrelated reason would flip MongoSelectDefinition.HasConfirmedJoinLookup
+        // for a query that is about to fall back anyway, for no benefit.
+        if (!select.HasConfirmedJoinLookup
+            && Visitors.MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope(mongoQ, out _))
+        {
+            NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQ, select.JoinScope!);
+        }
+
         select.Cardinality = MongoCardinality.ForAggregate(
             op, operand, emptyBehavior, emptyValue, resultType, presenceOnly, presentValue);
         return true;
