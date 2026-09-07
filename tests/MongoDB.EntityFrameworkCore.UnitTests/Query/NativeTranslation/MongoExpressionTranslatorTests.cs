@@ -756,6 +756,108 @@ public class MongoExpressionTranslatorTests
     }
 
     // ------------------------------------------------------------------
+    // Test 16b: `args[i]`-shaped access into a query-parameter ARRAY (EF-322's Query_with_array_parameter
+    // gap) → MongoParameterExpression with ArrayElementIndex set. EF10 rewrites the C# indexer into an
+    // Enumerable.ElementAt(source, index) call (MEASURED against the real EF Core compiled-query pipeline,
+    // not assumed) rather than leaving a plain ArrayIndex node — both shapes are covered here since
+    // NativeQueryParameter.TryGetParameterArrayElementIndex recognizes both.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void ElementAt_over_query_parameter_array_translates_to_array_element_parameter()
+    {
+        var entityType = GetEntityType<Customer>();
+        var cParam = Expression.Parameter(typeof(Customer), "c");
+        var ageMember = Expression.MakeMemberAccess(cParam, typeof(Customer).GetProperty(nameof(Customer.Age))!);
+
+#if EF8 || EF9
+        const string paramName = QueryCompilationContext.QueryParameterPrefix + "args_0";
+        Expression efParam = Expression.Parameter(typeof(int[]), paramName);
+#else
+        const string paramName = "__args_0";
+        Expression efParam = new QueryParameterExpression(paramName, typeof(int[]));
+#endif
+        var elementAtMethod = typeof(Enumerable).GetMethods()
+            .First(m => m.Name == nameof(Enumerable.ElementAt) && m.GetParameters().Length == 2
+                        && m.GetParameters()[1].ParameterType == typeof(int))
+            .MakeGenericMethod(typeof(int));
+        var elementAt = Expression.Call(elementAtMethod, efParam, Expression.Constant(0));
+        var body = Expression.Equal(ageMember, elementAt);
+
+        var translator = NewTranslator(entityType);
+        var translated = translator.TryTranslate(body, out var result);
+
+        Assert.True(translated);
+        var bin = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, bin.Operator);
+        Assert.IsType<MongoFieldExpression>(bin.Left);
+        var parameter = Assert.IsType<MongoParameterExpression>(bin.Right);
+        Assert.Equal(paramName, parameter.Name);
+        Assert.Equal(0, parameter.ArrayElementIndex);
+    }
+
+    [Fact]
+    public void ArrayIndex_over_query_parameter_array_translates_to_array_element_parameter()
+    {
+        var entityType = GetEntityType<Customer>();
+        var cParam = Expression.Parameter(typeof(Customer), "c");
+        var ageMember = Expression.MakeMemberAccess(cParam, typeof(Customer).GetProperty(nameof(Customer.Age))!);
+
+#if EF8 || EF9
+        const string paramName = QueryCompilationContext.QueryParameterPrefix + "args_0";
+        Expression efParam = Expression.Parameter(typeof(int[]), paramName);
+#else
+        const string paramName = "__args_0";
+        Expression efParam = new QueryParameterExpression(paramName, typeof(int[]));
+#endif
+        var arrayIndex = Expression.ArrayIndex(efParam, Expression.Constant(1));
+        var body = Expression.Equal(ageMember, arrayIndex);
+
+        var translator = NewTranslator(entityType);
+        var translated = translator.TryTranslate(body, out var result);
+
+        Assert.True(translated);
+        var bin = Assert.IsType<MongoBinaryExpression>(result);
+        var parameter = Assert.IsType<MongoParameterExpression>(bin.Right);
+        Assert.Equal(paramName, parameter.Name);
+        Assert.Equal(1, parameter.ArrayElementIndex);
+    }
+
+    [Fact]
+    public void ElementAt_over_query_parameter_array_on_the_left_side_still_translates()
+    {
+        var entityType = GetEntityType<Customer>();
+        var cParam = Expression.Parameter(typeof(Customer), "c");
+        var ageMember = Expression.MakeMemberAccess(cParam, typeof(Customer).GetProperty(nameof(Customer.Age))!);
+
+#if EF8 || EF9
+        const string paramName = QueryCompilationContext.QueryParameterPrefix + "args_0";
+        Expression efParam = Expression.Parameter(typeof(int[]), paramName);
+#else
+        const string paramName = "__args_0";
+        Expression efParam = new QueryParameterExpression(paramName, typeof(int[]));
+#endif
+        var elementAtMethod = typeof(Enumerable).GetMethods()
+            .First(m => m.Name == nameof(Enumerable.ElementAt) && m.GetParameters().Length == 2
+                        && m.GetParameters()[1].ParameterType == typeof(int))
+            .MakeGenericMethod(typeof(int));
+        var elementAt = Expression.Call(elementAtMethod, efParam, Expression.Constant(0));
+        // The mirrored shape: value on the LEFT, member on the RIGHT.
+        var body = Expression.Equal(elementAt, ageMember);
+
+        var translator = NewTranslator(entityType);
+        var translated = translator.TryTranslate(body, out var result);
+
+        Assert.True(translated);
+        var bin = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, bin.Operator);
+        Assert.IsType<MongoFieldExpression>(bin.Left);
+        var parameter = Assert.IsType<MongoParameterExpression>(bin.Right);
+        Assert.Equal(paramName, parameter.Name);
+        Assert.Equal(0, parameter.ArrayElementIndex);
+    }
+
+    // ------------------------------------------------------------------
     // Test 17: negated Contains → MongoInExpression with Negated == true ($nin)
     // ------------------------------------------------------------------
 

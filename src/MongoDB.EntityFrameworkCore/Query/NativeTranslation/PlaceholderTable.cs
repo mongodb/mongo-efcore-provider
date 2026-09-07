@@ -46,12 +46,12 @@ internal sealed class PlaceholderTable
     /// </remarks>
     internal const string SentinelKey = "__mongoef_param__";
 
-    private readonly List<(string Name, IBsonSerializer? Serializer, bool IsArray, MongoRegexKind? RegexKind, IProperty? EntityMemberProperty)> _entries = [];
+    private readonly List<(string Name, IBsonSerializer? Serializer, bool IsArray, MongoRegexKind? RegexKind, IProperty? EntityMemberProperty, int? ArrayElementIndex)> _entries = [];
 
     /// <summary>
     /// A read-only view of all accumulated placeholder entries, in insertion order.
     /// </summary>
-    public IReadOnlyList<(string Name, IBsonSerializer? Serializer, bool IsArray, MongoRegexKind? RegexKind, IProperty? EntityMemberProperty)> Entries => _entries;
+    public IReadOnlyList<(string Name, IBsonSerializer? Serializer, bool IsArray, MongoRegexKind? RegexKind, IProperty? EntityMemberProperty, int? ArrayElementIndex)> Entries => _entries;
 
     /// <summary>
     /// Appends a placeholder entry and returns a sentinel <see cref="BsonValue"/> to embed
@@ -69,7 +69,7 @@ internal sealed class PlaceholderTable
     public BsonValue CreatePlaceholder(string parameterName, IBsonSerializer? serializer)
     {
         var index = _entries.Count;
-        _entries.Add((parameterName, serializer, false, null, null));
+        _entries.Add((parameterName, serializer, false, null, null, null));
         return new BsonDocument(SentinelKey, new BsonInt32(index));
     }
 
@@ -93,7 +93,7 @@ internal sealed class PlaceholderTable
     public BsonValue CreateEntityMemberPlaceholder(string parameterName, IProperty entityMemberProperty, IBsonSerializer serializer)
     {
         var index = _entries.Count;
-        _entries.Add((parameterName, serializer, false, null, entityMemberProperty));
+        _entries.Add((parameterName, serializer, false, null, entityMemberProperty, null));
         return new BsonDocument(SentinelKey, new BsonInt32(index));
     }
 
@@ -114,7 +114,34 @@ internal sealed class PlaceholderTable
     public BsonValue CreateArrayPlaceholder(string parameterName, IBsonSerializer elementSerializer)
     {
         var index = _entries.Count;
-        _entries.Add((parameterName, elementSerializer, true, null, null));
+        _entries.Add((parameterName, elementSerializer, true, null, null, null));
+        return new BsonDocument(SentinelKey, new BsonInt32(index));
+    }
+
+    /// <summary>
+    /// Appends an <em>array-element-extraction</em> placeholder entry — used when a query parameter's runtime
+    /// value is an ARRAY and only ONE element of it (at a constant, compile-time-known index) is actually
+    /// compared, e.g. <c>args[0]</c> in a compiled query whose lambda takes <c>args</c> as a top-level array
+    /// parameter. Unlike an ordinary value placeholder, at
+    /// <see cref="MongoPipelineFactory.Build(IReadOnlyDictionary{string, object})"/> time the raw parameter
+    /// value has element <paramref name="elementIndex"/> extracted from it first, per execution, before it is
+    /// serialized with <paramref name="serializer"/> — mirroring the deferred-computation pattern
+    /// <see cref="CreateEntityMemberPlaceholder"/> uses for the entity-equality rewrite.
+    /// </summary>
+    /// <param name="parameterName">The EF query-parameter name (e.g. <c>__args_0</c>), bound to an array.</param>
+    /// <param name="elementIndex">The constant index of the element to extract from that array.</param>
+    /// <param name="serializer">
+    /// The <see cref="IBsonSerializer"/> that will serialize the extracted element, or <see langword="null"/>
+    /// for a property-less primitive that is serialized via <c>BsonValue.Create</c>.
+    /// </param>
+    /// <returns>
+    /// A sentinel <see cref="BsonDocument"/> of the form <c>{ __mongoef_param__: &lt;index&gt; }</c>
+    /// where <c>index</c> is the zero-based position in <see cref="Entries"/>.
+    /// </returns>
+    public BsonValue CreateArrayElementPlaceholder(string parameterName, int elementIndex, IBsonSerializer? serializer)
+    {
+        var index = _entries.Count;
+        _entries.Add((parameterName, serializer, false, null, null, elementIndex));
         return new BsonDocument(SentinelKey, new BsonInt32(index));
     }
 
@@ -138,7 +165,7 @@ internal sealed class PlaceholderTable
     public BsonValue CreateRegexPlaceholder(string parameterName, MongoRegexKind kind)
     {
         var index = _entries.Count;
-        _entries.Add((parameterName, null, false, kind, null));
+        _entries.Add((parameterName, null, false, kind, null, null));
         return new BsonDocument(SentinelKey, new BsonInt32(index));
     }
 

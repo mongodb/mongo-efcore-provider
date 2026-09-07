@@ -42,11 +42,15 @@ internal sealed class MongoParameterExpression : MongoExpression
     /// instance, per execution, to obtain the actual value before serialization. See the entity-equality
     /// rewrite in <c>MongoExpressionTranslator.EntityEquality.cs</c>.
     /// </param>
-    public MongoParameterExpression(string name, IProperty? forSerialization, bool extractFromEntityValue = false)
+    /// <param name="arrayElementIndex">See <see cref="ArrayElementIndex"/>. Mutually exclusive with
+    /// <paramref name="extractFromEntityValue"/> — no node needs both.</param>
+    public MongoParameterExpression(
+        string name, IProperty? forSerialization, bool extractFromEntityValue = false, int? arrayElementIndex = null)
     {
         Name = name;
         ForSerialization = forSerialization;
         ExtractFromEntityValue = extractFromEntityValue;
+        ArrayElementIndex = arrayElementIndex;
     }
 
     /// <summary>The parameter name.</summary>
@@ -61,6 +65,15 @@ internal sealed class MongoParameterExpression : MongoExpression
     /// See the constructor parameter of the same name.
     /// </summary>
     public bool ExtractFromEntityValue { get; }
+
+    /// <summary>
+    /// When set, the runtime value bound to <see cref="Name"/> is an ARRAY, and this is the constant index
+    /// of the element actually compared (e.g. <c>args[0]</c> where <c>args</c> is a compiled query's own
+    /// array-typed parameter) — the element at this index must be extracted from the array, per execution,
+    /// before it is serialized with <see cref="ForSerialization"/>'s serializer. See
+    /// <see cref="NativeTranslation.NativeQueryParameter.TryGetParameterArrayElementIndex"/>.
+    /// </summary>
+    public int? ArrayElementIndex { get; }
 
     /// <inheritdoc />
     public override Type Type

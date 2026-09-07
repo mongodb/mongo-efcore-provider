@@ -84,6 +84,7 @@ internal sealed class MongoQueryLanguageRenderer
                 when TryRenderSizeComparison(sizeComparison) is { } arrayIndexForm => arrayIndexForm,
             MongoUnaryExpression unary => RenderUnary(unary, placeholders),
             MongoFieldExpression field => RenderBareField(field, placeholders),
+            MongoLookupNullCheckExpression lookupNullCheck => RenderLookupNullCheck(lookupNullCheck),
             MongoInExpression inExpr => RenderIn(inExpr, placeholders),
             MongoArrayContainsExpression arrayContains => RenderArrayContains(arrayContains, placeholders),
             MongoRegexExpression regex => RenderRegex(regex, placeholders),
@@ -134,6 +135,17 @@ internal sealed class MongoQueryLanguageRenderer
             ? new BsonDocument(elementName, value)
             : new BsonDocument(elementName, new BsonDocument(op, value));
     }
+
+    /// <summary>
+    /// Renders a reference-Include null check (<c>e.Manager == null</c>/<c>!= null</c>) as a plain
+    /// query-dialect field-presence test on the <c>$lookup</c>'s flattened alias — <c>{ alias: null }</c> or
+    /// <c>{ alias: { $ne: null } }</c>. Correct because <c>preserveNullAndEmptyArrays: true</c> materializes
+    /// that field as an explicit BSON null on the outer row when the join found no match.
+    /// </summary>
+    private static BsonDocument RenderLookupNullCheck(MongoLookupNullCheckExpression node)
+        => node.IsNotNull
+            ? new BsonDocument(node.LookupAlias, new BsonDocument("$ne", BsonNull.Value))
+            : new BsonDocument(node.LookupAlias, BsonNull.Value);
 
     // ------------------------------------------------------------------
     // Unary nodes (Not)

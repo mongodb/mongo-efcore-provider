@@ -199,10 +199,72 @@ public class ReferenceIncludeRecognizerTests
     [Fact]
     public void Rejects_a_collection_ThenInclude()
     {
+        // A collection ThenInclude is a MIXED (reference-chain + trailing collection) shape now, not a pure
+        // reference chain — TryGetReferenceIncludeChain still (correctly) declines it; the shape itself is
+        // recognized by Mixed_recognizer_accepts_a_reference_chain_with_a_trailing_collection_ThenInclude below.
         var selector = ReferenceIncludeTestTrees.BuildThenIncludeChain(
             embeddedHopInBetween: false, thenIncludeIsCollection: true);
 
         Assert.Null(MongoQueryableMethodTranslatingExpressionVisitor.TryGetReferenceIncludeChain(selector));
+    }
+
+    [Fact]
+    public void Mixed_recognizer_accepts_a_reference_chain_with_a_trailing_collection_ThenInclude()
+    {
+        // Orders.Include(o => o.Customer.Orders) / Orders.Include(o => o.Customer).ThenInclude(c => c.Orders)
+        // — a reference Include whose ThenInclude is a collection navigation, i.e. Include_multi_level_
+        // reference_and_collection_predicate's shape. Mirrors the already-recognized SIBLING reference +
+        // collection combo, but the collection is reached transitively via NavigationExpression instead.
+        var selector = ReferenceIncludeTestTrees.BuildThenIncludeChain(
+            embeddedHopInBetween: false, thenIncludeIsCollection: true);
+
+        var matched = MongoQueryableMethodTranslatingExpressionVisitor.TryGetMixedReferenceAndCollectionIncludeChain(
+            selector, out var referenceLevels, out _, out var collectionLevel);
+
+        Assert.True(matched);
+        Assert.Single(referenceLevels);
+        Assert.NotNull(collectionLevel);
+        Assert.True(((INavigation)collectionLevel.Navigation!).IsCollection);
+    }
+
+    [Fact]
+    public void Mixed_recognizer_rejects_a_further_ThenInclude_past_a_collection_ThenInclude()
+    {
+        // A collection ThenInclude must be the TERMINAL hop of its chain — a further ThenInclude nested
+        // past it (e.g. Include(o => o.Customer).ThenInclude(c => c.Orders).ThenInclude(o => o.Next)) has
+        // no recognized lowering shape and must decline the whole chain, not just silently drop the extra hop.
+        var selector = ReferenceIncludeTestTrees.BuildThenIncludeChain(
+            embeddedHopInBetween: false, thenIncludeIsCollection: true, collectionThenIncludeHasFurtherHop: true);
+
+        Assert.Null(MongoQueryableMethodTranslatingExpressionVisitor.TryGetReferenceIncludeChain(selector));
+
+        var matched = MongoQueryableMethodTranslatingExpressionVisitor.TryGetMixedReferenceAndCollectionIncludeChain(
+            selector, out var referenceLevels, out _, out var collectionLevel);
+
+        Assert.False(matched);
+        Assert.Empty(referenceLevels);
+        Assert.Null(collectionLevel);
+    }
+
+    [Fact]
+    public void Mixed_recognizer_rejects_a_second_collection_reached_via_two_different_ThenInclude_levels()
+    {
+        // At most ONE collection across the whole chain. TryWalkIncludeChain's collectionLevel != null guard
+        // already covers sibling-vs-sibling (Mixed_recognizer... combo tests above); this pins the SAME guard
+        // firing when the SECOND collection is reached transitively, off a DIFFERENT sibling reference level's
+        // own ThenInclude chain, rather than off the sibling axis directly — e.g.
+        // Orders.Include(o => o.Customer.Orders).Include(o => o.SecondCustomer.Orders) (both reference
+        // siblings target Customer, each carrying its own collection ThenInclude to the SAME nav).
+        var selector = ReferenceIncludeTestTrees.BuildTwoSiblingReferencesEachWithOwnCollectionThenInclude();
+
+        Assert.Null(MongoQueryableMethodTranslatingExpressionVisitor.TryGetReferenceIncludeChain(selector));
+
+        var matched = MongoQueryableMethodTranslatingExpressionVisitor.TryGetMixedReferenceAndCollectionIncludeChain(
+            selector, out var referenceLevels, out _, out var collectionLevel);
+
+        Assert.False(matched);
+        Assert.Empty(referenceLevels);
+        Assert.Null(collectionLevel);
     }
 }
 
@@ -218,6 +280,7 @@ internal static class ReferenceIncludeTestTrees
     private class Customer
     {
         public int Id { get; set; }
+        public List<Order>? Orders { get; set; }
     }
 
     private class Vendor
@@ -230,6 +293,7 @@ internal static class ReferenceIncludeTestTrees
         public int Id { get; set; }
         public int CustomerId { get; set; }
         public int VendorId { get; set; }
+        public int OwnerCustomerId { get; set; }
         public Customer? Customer { get; set; }
         public Vendor? Vendor { get; set; }
         public Customer? SecondCustomer { get; set; }
@@ -243,6 +307,8 @@ internal static class ReferenceIncludeTestTrees
     private class Leaf
     {
         public int Id { get; set; }
+        public int? NextLeafId { get; set; }
+        public Leaf? Next { get; set; }
     }
 
     private class OwnedHop
@@ -376,6 +442,49 @@ internal static class ReferenceIncludeTestTrees
     }
 
     /// <summary>
+    /// Builds two sibling reference levels (both targeting <see cref="Customer"/>, via <c>Customer</c> and
+    /// <c>SecondCustomer</c>) EACH carrying its own collection <c>ThenInclude</c> of <see cref="Customer.Orders"/>
+    /// — mirrors <c>Orders.Include(o =&gt; o.Customer.Orders).Include(o =&gt; o.SecondCustomer.Orders)</c>. Pins
+    /// that <c>collectionLevel</c>'s "at most one across the whole chain" guard also fires across TWO
+    /// DIFFERENT sibling levels' own transitive (<c>ThenInclude</c>) axes, not just the sibling axis itself.
+    /// </summary>
+    public static LambdaExpression BuildTwoSiblingReferencesEachWithOwnCollectionThenInclude()
+    {
+        using var db = SingleEntityDbContext.Create<Order>(mb =>
+        {
+            mb.Entity<Order>().HasOne(o => o.Customer).WithMany().HasForeignKey(o => o.CustomerId);
+            mb.Entity<Order>().HasOne(o => o.Vendor).WithMany().HasForeignKey(o => o.VendorId);
+            mb.Entity<Order>().HasOne(o => o.SecondCustomer).WithMany().HasForeignKey(o => o.CustomerId);
+            mb.Entity<Customer>().HasMany(c => c.Orders!).WithOne().HasForeignKey(o => o.OwnerCustomerId);
+        });
+        var model = db.Model;
+
+        var orderEntityType = model.FindEntityType(typeof(Order))!;
+        var customerEntityType = model.FindEntityType(typeof(Customer))!;
+        var navigationA = orderEntityType.FindNavigation(nameof(Order.Customer))!;
+        var navigationB = orderEntityType.FindNavigation(nameof(Order.SecondCustomer))!;
+        var customerOrdersNavigation = customerEntityType.FindNavigation(nameof(Customer.Orders))!;
+
+        var ti1Type = typeof(TransparentIdentifier<Order, Customer>);
+        var ti2Type = typeof(TransparentIdentifier<,>).MakeGenericType(ti1Type, typeof(Customer));
+
+        var ti2Param = Expression.Parameter(ti2Type, "ti2");
+        var ti2Outer = Expression.MakeMemberAccess(ti2Param, ti2Type.GetProperty("Outer")!); // ti1
+        var ti2Inner = Expression.MakeMemberAccess(ti2Param, ti2Type.GetProperty("Inner")!); // Customer (via SecondCustomer)
+
+        var ti1OuterViaTi2 = Expression.MakeMemberAccess(ti2Outer, ti1Type.GetProperty("Outer")!); // Order
+        var ti1InnerViaTi2 = Expression.MakeMemberAccess(ti2Outer, ti1Type.GetProperty("Inner")!); // Customer (via Customer)
+
+        var innerThenInclude = new IncludeExpression(ti1InnerViaTi2, ti1InnerViaTi2, customerOrdersNavigation);
+        var innerInclude = new IncludeExpression(ti1OuterViaTi2, innerThenInclude, navigationA);
+
+        var outerThenInclude = new IncludeExpression(ti2Inner, ti2Inner, customerOrdersNavigation);
+        var outerInclude = new IncludeExpression(innerInclude, outerThenInclude, navigationB);
+
+        return Expression.Lambda(outerInclude, ti2Param);
+    }
+
+    /// <summary>
     /// Builds <c>ti =&gt; Include(ti.Outer, Root.Mid, NavigationExpression)</c> — a single top-level
     /// <c>Include</c> whose <c>NavigationExpression</c> carries a further nested chain, mirroring
     /// nav-expansion's <c>ThenInclude</c> shape (nested via <c>NavigationExpression</c>, not
@@ -393,11 +502,12 @@ internal static class ReferenceIncludeTestTrees
     /// </list>
     /// </summary>
     public static LambdaExpression BuildThenIncludeChain(
-        bool embeddedHopInBetween, bool thenIncludeIsCollection = false, bool stopAtEmbeddedHop = false)
+        bool embeddedHopInBetween, bool thenIncludeIsCollection = false, bool stopAtEmbeddedHop = false,
+        bool collectionThenIncludeHasFurtherHop = false)
     {
         using var db = SingleEntityDbContext.Create<ThenIncludeRoot>(mb =>
         {
-            mb.Entity<Leaf>();
+            mb.Entity<Leaf>().HasOne(l => l.Next).WithMany().HasForeignKey(l => l.NextLeafId);
             mb.Entity<Mid>().HasOne(m => m.Leaf).WithMany().HasForeignKey(m => m.LeafId);
             mb.Entity<Mid>().HasMany(m => m.Leaves!).WithOne().HasForeignKey("MidId");
             mb.Entity<Mid>().OwnsOne(m => m.Owned, o => o.HasOne(x => x.Leaf).WithMany().HasForeignKey(x => x.LeafId));
@@ -429,7 +539,15 @@ internal static class ReferenceIncludeTestTrees
         {
             var leafOrLeavesNavigation = midEntityType.FindNavigation(
                 thenIncludeIsCollection ? nameof(Mid.Leaves) : nameof(Mid.Leaf))!;
-            navigationExpression = new IncludeExpression(innerAccess, innerAccess, leafOrLeavesNavigation);
+
+            Expression leafNavigationExpression = innerAccess;
+            if (collectionThenIncludeHasFurtherHop)
+            {
+                var nextNavigation = leafOrLeavesNavigation.TargetEntityType.FindNavigation(nameof(Leaf.Next))!;
+                leafNavigationExpression = new IncludeExpression(innerAccess, innerAccess, nextNavigation);
+            }
+
+            navigationExpression = new IncludeExpression(innerAccess, leafNavigationExpression, leafOrLeavesNavigation);
         }
 
         var rootInclude = new IncludeExpression(outerAccess, navigationExpression, midNavigation);

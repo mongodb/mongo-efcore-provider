@@ -97,6 +97,13 @@ internal sealed class MongoSelectLowerer
         if (select.SetOperation == null)
         {
             AppendLookupStages(query, stages);
+
+            // 2b. A reference-Include null check (e.g. `Include(e => e.Manager).First(e => e.Manager ==
+            // null)`) confirmed this select's join from a bare Where, with no confirming Select reaching it —
+            // see MongoSelectDefinition.PostJoinOps's own remarks for why the $match (and, for a reducer, the
+            // trailing $limit) must land HERE, after the $lookup/$unwind, rather than in PipelineOps above.
+            // Empty (a no-op append) for every query that never took that path.
+            AppendSelectOpStages(select.PostJoinOps, stages, sortFields);
         }
 
         // Set operation terminal ($unionWith [+ dedup] or a set-difference shape for Intersect/Except).
@@ -399,7 +406,8 @@ internal sealed class MongoSelectLowerer
                      || (lookup.Navigation is { IsCollection: true } pipelinedNav
                          && lookup.PipelineKind == LookupPipelineKind.NestedInclude
                          && !lookup.ForceUnwind
-                         && lookup.As == LookupExpression.GetLookupAlias(pipelinedNav)))
+                         && lookup.As == LookupExpression.GetLookupAlias(pipelinedNav))
+                     || lookup.IsTransitiveCollectionLookup)
             {
                 // Collection Include: keep the joined documents as an array under _lookup_<Nav>
                 // (no $unwind). The DOM collection materializer reads the array back and runs the
@@ -420,6 +428,14 @@ internal sealed class MongoSelectLowerer
                 // kind needs its own dedicated branch below (a mandatory left-outer $unwind + a DIFFERENT
                 // localField/foreignField+pipeline BSON shape), and would otherwise be silently
                 // mis-rendered here with no $unwind at all.
+                //
+                // The third disjunct (IsTransitiveCollectionLookup) admits a collection Include reached via
+                // a ThenInclude off a REFERENCE Include (Orders.Include(o => o.Customer.Orders)) — distinct
+                // from the second disjunct's collection-then-collection nesting, which carries its own
+                // sub-pipeline (HasPipeline). Here the collection lookup carries NO pipeline at all; it is
+                // still a plain localField/foreignField $lookup, just with LocalField/As PREFIXED by the
+                // already-confirmed reference lookup's own alias, so ToLookupStageDocument()'s bare (no
+                // "let"/"pipeline") form already renders correctly with no further change.
                 stages.Add(new MongoLookupStage(lookup));
             }
             else if (lookup.Navigation is { IsCollection: true } && lookup.ForceUnwind)

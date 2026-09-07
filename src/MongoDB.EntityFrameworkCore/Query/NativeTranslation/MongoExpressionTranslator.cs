@@ -1226,10 +1226,13 @@ internal sealed partial class MongoExpressionTranslator
                 ? null
                 : property;
 
-    // A "simple value" comparison operand — a bare constant or query parameter, not a member and not an
-    // arithmetic sub-expression. Used to detect the query-native (member vs. value) shape.
+    // A "simple value" comparison operand — a bare constant or query parameter (including an `args[0]`-shaped
+    // constant-index access into a query-parameter ARRAY — see TryGetParameterArrayElementIndex), not a member
+    // and not an arithmetic sub-expression. Used to detect the query-native (member vs. value) shape.
     private static bool IsSimpleValue(Expression node)
-        => node is ConstantExpression || NativeQueryParameter.TryGetQueryParameterName(node, out _);
+        => node is ConstantExpression
+           || NativeQueryParameter.TryGetQueryParameterName(node, out _)
+           || NativeQueryParameter.TryGetParameterArrayElementIndex(node, out _, out _);
 
     private static MongoBinaryOperator? MapComparisonOperator(ExpressionType nodeType)
         => nodeType switch
@@ -1634,6 +1637,9 @@ internal sealed partial class MongoExpressionTranslator
 
         if (NativeQueryParameter.TryGetQueryParameterName(node, out var parameterName))
             return new MongoParameterExpression(parameterName, forSerialization);
+
+        if (NativeQueryParameter.TryGetParameterArrayElementIndex(node, out var arrayParameterName, out var index))
+            return new MongoParameterExpression(arrayParameterName, forSerialization, arrayElementIndex: index);
 
         return null; // any other node shape (method call, sub-expression, etc.) is not supported
     }

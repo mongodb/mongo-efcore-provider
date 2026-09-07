@@ -149,6 +149,51 @@ internal static class NativeJoinScopeTranslator
         }
     }
 
+    /// <summary>
+    /// Recognizes the EXACT shape <c>rootParam.Inner == null</c> / <c>rootParam.Inner != null</c> (either
+    /// operand order) at the TOP of a <c>Where</c> predicate — a reference-<c>Include</c>'s own null check on
+    /// its included navigation (e.g. <c>Include(e =&gt; e.Manager).First(e =&gt; e.Manager == null)</c>, whose
+    /// nav-expansion produces exactly this shape over the Include-generated <c>LeftJoin</c>'s
+    /// <c>TransparentIdentifier</c> — see <see cref="MongoJoinScope"/>'s remarks on that indistinguishable-at
+    /// -bind-time provenance).
+    /// </summary>
+    /// <remarks>
+    /// Structural recognition ONLY: this does not decide whether the join may actually be confirmed here
+    /// (paging/reducer/terminal-operator safety, whether a navigation resolved at all) — that is
+    /// <c>NativeSlotPopulator</c>'s own responsibility, mirroring <see cref="ReferencesInnerScope"/>'s
+    /// identical division of labor. Never matches a body nested under <c>Not</c>, a quantifier, or anything
+    /// other than the bare top-level comparison — <see cref="MongoLookupNullCheckExpression"/>'s own remarks
+    /// explain why that narrowness is safe (the negator/<c>$elemMatch</c> classifier never need to recognize a
+    /// node this recognizer never produces in those positions).
+    /// </remarks>
+    public static bool TryMatchInnerNullCheck(ParameterExpression rootParam, Expression body, out bool isNotNull)
+    {
+        isNotNull = false;
+
+        if (body is not BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } binary)
+            return false;
+
+        var leftIsInner = IsBareInnerAccess(rootParam, binary.Left);
+        var rightIsInner = IsBareInnerAccess(rootParam, binary.Right);
+
+        // Exactly one side must be the bare Inner access — neither side (not this shape) or both sides
+        // (a degenerate `ti.Inner == ti.Inner`, which is a self-compare with no null involved) decline alike.
+        if (leftIsInner == rightIsInner)
+            return false;
+
+        var otherSide = leftIsInner ? binary.Right : binary.Left;
+        if (otherSide is not ConstantExpression { Value: null })
+            return false;
+
+        isNotNull = binary.NodeType == ExpressionType.NotEqual;
+        return true;
+    }
+
+    private static bool IsBareInnerAccess(ParameterExpression rootParam, Expression node)
+        => node is MemberExpression { Member.Name: "Inner" } member
+           && ReferenceEquals(member.Expression, rootParam)
+           && member.IsTransparentIdentifierOuterOrInnerAccess();
+
     private static bool TryTranslateCore(
         MongoJoinScope scope, ParameterExpression rootParam, Expression body, bool valueMode,
         [NotNullWhen(true)] out MongoExpression? result)

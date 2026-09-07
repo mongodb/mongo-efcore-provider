@@ -1045,19 +1045,6 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void Reducer_with_navigation_null_predicate_still_declines_cleanly_under_NativeOnly()
-    {
-        // The shape's own predicate (comparing the whole navigation, not a member of it) is out of scope
-        // for the native $match translator — this must keep declining cleanly under NativeOnly, unchanged
-        // by the C1 fix, which is a fallback-path-only fix.
-        using var db = CreateContext(MongoQueryMode.NativeOnly,
-            nameof(Reducer_with_navigation_null_predicate_still_declines_cleanly_under_NativeOnly));
-
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.Orders.Include(o => o.Carrier).First(o => o.Carrier == null));
-    }
-
-    [Fact]
     public void Native_and_DriverLinq_agree_on_reference_Include_with_a_reducer_and_a_navigation_null_predicate()
     {
         // Same shape as the NativeOnly test above, but asserting Native agrees with DriverLinq — each mode

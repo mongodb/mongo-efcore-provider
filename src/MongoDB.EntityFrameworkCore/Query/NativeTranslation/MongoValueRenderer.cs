@@ -49,6 +49,14 @@ internal static class MongoValueRenderer
                     : ToBsonValue(constant.ForSerialization, constant.Value);
 
             case MongoParameterExpression parameter:
+                if (parameter.ArrayElementIndex is int elementIndex)
+                    return placeholders.CreateArrayElementPlaceholder(
+                        parameter.Name,
+                        elementIndex,
+                        parameter.ForSerialization is null
+                            ? null
+                            : BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization).Serializer);
+
                 if (parameter.ForSerialization is null)
                     return placeholders.CreatePlaceholder(parameter.Name, serializer: null);
                 var info = BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization);

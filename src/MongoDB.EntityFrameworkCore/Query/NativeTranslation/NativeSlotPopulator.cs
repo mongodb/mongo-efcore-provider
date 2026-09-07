@@ -172,6 +172,38 @@ internal static class NativeSlotPopulator
                      && NativeJoinScopeTranslator.TryTranslateRootScopeOnly(
                          chainedScope, predicate.Parameters[0], predicate.Body, valueMode: false, out var chainedPredicateNode))
                 mongoQ.Select.AddPredicateConjunct(chainedPredicateNode);
+            // A reference-Include's own null check (`Include(e => e.Manager).First(e => e.Manager == null)`,
+            // EF's nav-expansion producing `ti.Inner == null` over the Include-generated LeftJoin). DELIBERATELY
+            // does NOT call AddLookup/MarkReferenceIncludeConfirmed itself: EF's nav-expansion ALWAYS inserts a
+            // mandatory `Select(ti => ti.Outer)` unwrap AFTER a join's result — as the very NEXT operator here,
+            // since this Where's predicate is the pending selector's OWN precursor, not a user operator composed
+            // after the unwrap — and that unwrap's existing arm (IsTransparentIdentifierMemberAccessSelector +
+            // IsSingleEligibleNativeJoinScope, above in TranslateSelect) is what actually confirms/registers a
+            // reference-Include's join, whether or not a Where preceded it. Registering here TOO would double-
+            // count MarkReferenceIncludeConfirmed against the single candidate MarkSawCandidateReferenceIncludeJoin
+            // recorded, permanently tripping HasUnconfirmedCandidateJoin (measured; a first attempt at this arm
+            // did exactly that). This arm's only two jobs are (1) translate the predicate instead of declining,
+            // and (2) flip ActiveOps to PostJoinOps so this predicate — and the trailing First()'s own $limit,
+            // since the reducer is bound only after the confirming Select runs — land after the $lookup/$unwind
+            // once lowered, which is required for correctness: the null check IS the filter that decides
+            // "first", so it must run before, never after, the reducer's $limit. Joins.Count == 1 makes
+            // `mongoQ.Joins[0]` safe to read directly (JoinScope is recorded only for the first join, so "one
+            // join recorded" and "the scope describes it" are the same fact). The IsLeftOuter/non-collection
+            // conjunct is the one place this null check is even meaningful: an INNER join's $unwind drops an
+            // unmatched row entirely (preserveNullAndEmptyArrays: false), so `Inner == null` can never be true
+            // and `!= null` always is — a degenerate shape this declines rather than "succeeding" with a vacuous
+            // $match; a COLLECTION navigation's $unwind is 1:N, so "the joined field is null" doesn't mean what
+            // it means for a 1:1 reference.
+            else if (mongoQ.Select.JoinScope != null
+                     && mongoQ.Joins.Count == 1
+                     && mongoQ.Joins[0] is { IsLeftOuter: true, Lookup: { Navigation.IsCollection: false } lookup }
+                     && NativeJoinScopeTranslator.TryMatchInnerNullCheck(
+                         predicate.Parameters[0], predicate.Body, out var isNotNull))
+            {
+                // Flip BEFORE AddPredicateConjunct: see this arm's remarks above.
+                mongoQ.Select.MarkReferenceIncludeNullCheckConfirmed();
+                mongoQ.Select.AddPredicateConjunct(new MongoLookupNullCheckExpression(lookup.As, isNotNull));
+            }
             else
                 mongoQ.Select.MarkNotNativelyRepresentable();
         }

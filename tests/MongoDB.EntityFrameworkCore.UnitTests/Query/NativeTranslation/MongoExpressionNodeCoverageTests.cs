@@ -145,6 +145,7 @@ public class MongoExpressionNodeCoverageTests
             rankField,
             new MongoOuterFieldExpression(rank, "Rank"),
             new MongoElementRefExpression("Total", typeof(int)),
+            new MongoLookupNullCheckExpression("_lookup_Manager", isNotNull: false),
             rankConstant,
             new MongoParameterExpression("p0", rank),
             new MongoBinaryExpression(MongoBinaryOperator.Equal, rankField, rankConstant),
@@ -517,6 +518,19 @@ public class MongoExpressionNodeCoverageTests
         ["MongoInExpression|PrefixRewriter.Rewrite"] = "rendered",
         ["MongoInExpression|QL.IsQueryDialectRenderable"] = "true",
         ["MongoInExpression|QL.Render"] = "rendered",
+
+        // Query-dialect-only by design (see the node's own remarks): it is produced only for the exact
+        // `ti.Inner == null`/`!= null` top-level Where shape, never nested under Not/a quantifier/$elemMatch,
+        // so none of the other six dispatchers need an arm for it — each fails closed/open exactly the way an
+        // unrecognized node already does, safely, because this recognizer never hands them one.
+        ["MongoLookupNullCheckExpression|Agg.CanRender"] = "false",
+        ["MongoLookupNullCheckExpression|Agg.Render"] = "declined",
+        ["MongoLookupNullCheckExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoLookupNullCheckExpression|AllFieldsDefaultSerialized(converted)"] = "true",
+        ["MongoLookupNullCheckExpression|Negator.TryNegate"] = "false",
+        ["MongoLookupNullCheckExpression|PrefixRewriter.Rewrite"] = "declined",
+        ["MongoLookupNullCheckExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoLookupNullCheckExpression|QL.Render"] = "rendered",
 
         ["MongoOuterFieldExpression|Agg.CanRender"] = "true",
         ["MongoOuterFieldExpression|Agg.Render"] = "rendered",

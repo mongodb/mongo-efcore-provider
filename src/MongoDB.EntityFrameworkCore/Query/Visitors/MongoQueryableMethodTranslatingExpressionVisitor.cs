@@ -1154,14 +1154,15 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// <c>Include</c> on its own (the N=1 case, e.g. <c>Orders.Include(o =&gt; o.Customer)</c>). The two
     /// nesting axes freely combine (a sibling can carry its own <c>ThenInclude</c> chain).
     /// <para>
-    /// PURE reference chains only — a collection navigation at ANY level (e.g. the "reference + collection"
-    /// combo, <c>Orders.Include(o =&gt; o.Buyer).Include(o =&gt; o.Lines)</c>, or a collection
-    /// <c>ThenInclude</c>) returns <see langword="null"/> for the WHOLE chain here; the sibling combo is
-    /// recognized separately by <see cref="TryGetMixedReferenceAndCollectionIncludeChain"/>, which this
-    /// method defers to via the shared <see cref="TryWalkIncludeChain"/> walker so the two recognizers can
-    /// never disagree on the underlying structure, only on which shape (pure vs. mixed) they each admit. A
-    /// collection <c>ThenInclude</c>, and a sibling hanging off a <c>ThenInclude</c>, are declined outright
-    /// by neither recognizer admitting them — out of scope for both.
+    /// PURE reference chains only — a collection navigation at ANY level (the sibling "reference +
+    /// collection" combo, <c>Orders.Include(o =&gt; o.Buyer).Include(o =&gt; o.Lines)</c>, or a TRANSITIVE
+    /// one, a collection <c>ThenInclude</c> off a reference level, e.g.
+    /// <c>Orders.Include(o =&gt; o.Customer.Orders)</c>) returns <see langword="null"/> for the WHOLE chain
+    /// here; both combos are recognized separately by <see cref="TryGetMixedReferenceAndCollectionIncludeChain"/>,
+    /// which this method defers to via the shared <see cref="TryWalkIncludeChain"/> walker so the two
+    /// recognizers can never disagree on the underlying structure, only on which shape (pure vs. mixed) they
+    /// each admit. A sibling hanging off a <c>ThenInclude</c>, and a further <c>ThenInclude</c> nested past a
+    /// collection one, are declined outright by neither recognizer admitting them — out of scope for both.
     /// </para>
     /// <para>
     /// The walk bottoms out at a pure <c>.Outer</c>* member-access chain reaching the selector's own
@@ -1209,9 +1210,14 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// <summary>
     /// Recognizes <paramref name="selector"/> as a reference-Include chain (structurally identical to
     /// <see cref="TryGetReferenceIncludeChain(LambdaExpression)"/>'s shape) with exactly one additional single-level,
-    /// non-embedded COLLECTION <c>Include</c> mixed in anywhere among the <c>EntityExpression</c>-nested
-    /// levels — the "reference + collection" combo, e.g.
-    /// <c>Orders.Include(o =&gt; o.Buyer).Include(o =&gt; o.Lines)</c>. Returns <see langword="false"/> (with
+    /// non-embedded COLLECTION <c>Include</c> mixed in — either a SIBLING, anywhere among the
+    /// <c>EntityExpression</c>-nested levels (the "reference + collection" combo, e.g.
+    /// <c>Orders.Include(o =&gt; o.Buyer).Include(o =&gt; o.Lines)</c>), or a TRANSITIVE one, terminating some
+    /// level's own <c>ThenInclude</c> chain (e.g. <c>Orders.Include(o =&gt; o.Customer.Orders)</c> /
+    /// <c>Orders.Include(o =&gt; o.Customer).ThenInclude(c =&gt; c.Orders)</c>) — <see cref="TryWalkIncludeChain"/>
+    /// itself doesn't distinguish which axis produced <paramref name="collectionLevel"/>, since both are
+    /// staged identically downstream (an unconfirmed collection <c>Include</c> whose own <c>$lookup</c>
+    /// registers later during projection binding). Returns <see langword="false"/> (with
     /// empty/null outputs) for a PURE reference-only chain (handled by
     /// <see cref="TryGetReferenceIncludeChain(LambdaExpression)"/> instead) or a bare single collection <c>Include</c> with no
     /// reference sibling (handled by <see cref="IsSingleLevelCollectionIncludeSelector"/> instead) — the
@@ -1338,14 +1344,31 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     break;
                 }
 
-                if (thenNav.IsCollection
-                    || thenInclude.EntityExpression is IncludeExpression
+                if (thenInclude.EntityExpression is IncludeExpression
                     || thenNav.DeclaringEntityType != thenIncludeTargetType)
                 {
-                    // A collection ThenInclude, a sibling hanging off a ThenInclude, or a structural
-                    // mismatch (this hop doesn't declare on the previous hop's target) — out of scope
-                    // for this recognizer; decline the whole chain rather than mishandle it.
+                    // A sibling hanging off a ThenInclude, or a structural mismatch (this hop doesn't
+                    // declare on the previous hop's target) — out of scope for this recognizer; decline
+                    // the whole chain rather than mishandle it.
                     return false;
+                }
+
+                if (thenNav.IsCollection)
+                {
+                    // A collection ThenInclude off a reference level — e.g. Include(o => o.Customer.Orders)
+                    // / Include(o => o.Customer).ThenInclude(c => c.Orders) — is admitted as the chain's
+                    // trailing collection level, exactly like the sibling "reference + collection" combo
+                    // (TryGetMixedReferenceAndCollectionIncludeChain), just reached via NavigationExpression
+                    // instead of EntityExpression. Only as a TERMINAL hop: further ThenInclude nesting past
+                    // a collection is out of scope, and at most one collection across the whole chain is
+                    // admitted (mirrors the sibling axis's own "at most ONE" rule below).
+                    if (collectionLevel != null || thenInclude.NavigationExpression is IncludeExpression)
+                    {
+                        return false;
+                    }
+
+                    collectionLevel = thenInclude;
+                    break;
                 }
 
                 referenceLevels.Add(thenInclude);

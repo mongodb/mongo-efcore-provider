@@ -628,6 +628,89 @@ public class MongoSelectLowererTests
             });
     }
 
+    // A reference Include whose target carries a trailing COLLECTION ThenInclude (e.g.
+    // Orders.Include(o => o.Customer.Orders)) — the "flat multi-lookup" shape
+    // MongoProjectionBindingExpressionVisitor's collection-Include handling already prefixes the
+    // collection lookup's LocalField/As with the confirmed reference lookup's own alias
+    // ("_lookup_Mid.Something"/"_lookup_Mid._lookup_Leaves"). AppendLookupStages must accept this
+    // TRANSITIVE collection lookup as a plain $lookup (no $unwind, array kept nested under the
+    // reference's own alias) rather than falling through to the final else's
+    // NativeTranslationNotSupportedException — the same disposition IsNativeCollectionLookup already
+    // gets for a ROOT-level collection Include, just reached through an intermediate reference.
+
+    private class TransitiveLeaf
+    {
+        public ObjectId Id { get; set; }
+        public ObjectId MidId { get; set; }
+    }
+
+    private class TransitiveMid
+    {
+        public ObjectId Id { get; set; }
+        public List<TransitiveLeaf> Leaves { get; set; } = [];
+    }
+
+    private class TransitiveRoot
+    {
+        public ObjectId Id { get; set; }
+        public ObjectId MidId { get; set; }
+        public TransitiveMid? Mid { get; set; }
+    }
+
+    private static (MongoQueryExpression Query, LookupExpression ReferenceLookup, LookupExpression CollectionLookup)
+        TestTransitiveCollectionSelect()
+    {
+        using var db = SingleEntityDbContext.Create<TransitiveRoot>(mb =>
+        {
+            mb.Entity<TransitiveLeaf>();
+            mb.Entity<TransitiveMid>().HasMany(m => m.Leaves).WithOne().HasForeignKey(l => l.MidId);
+            mb.Entity<TransitiveRoot>().HasOne(r => r.Mid).WithMany().HasForeignKey(r => r.MidId);
+        });
+        var rootType = db.Model.FindEntityType(typeof(TransitiveRoot))!;
+        var midType = db.Model.FindEntityType(typeof(TransitiveMid))!;
+        var referenceNavigation = rootType.FindNavigation(nameof(TransitiveRoot.Mid))!;
+        var collectionNavigation = midType.FindNavigation(nameof(TransitiveMid.Leaves))!;
+
+        var referenceLookup = new LookupExpression(referenceNavigation, forceUnwind: true) { PreserveNullAndEmptyArrays = true };
+        var collectionLookup = new LookupExpression(collectionNavigation)
+        {
+            LocalField = $"{referenceLookup.As}.{new LookupExpression(collectionNavigation).LocalField}",
+            As = $"{referenceLookup.As}.{LookupExpression.GetLookupAlias(collectionNavigation)}"
+        };
+
+        var query = new MongoQueryExpression(rootType);
+        query.AddLookup(referenceLookup);
+        query.AddLookup(collectionLookup);
+
+        return (query, referenceLookup, collectionLookup);
+    }
+
+    [Fact]
+    public void AppendLookupStages_emits_a_plain_lookup_for_a_collection_ThenIncluded_off_a_reference()
+    {
+        var (query, referenceLookup, collectionLookup) = TestTransitiveCollectionSelect();
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.Collection(stages,
+            s =>
+            {
+                Assert.Same(referenceLookup, Assert.IsType<MongoLookupStage>(s).Lookup);
+            },
+            s =>
+            {
+                var unwind = Assert.IsType<MongoUnwindStage>(s);
+                Assert.Same(referenceLookup, unwind.Lookup);
+            },
+            s =>
+            {
+                Assert.Same(collectionLookup, Assert.IsType<MongoLookupStage>(s).Lookup);
+            });
+
+        // No $unwind for the collection lookup itself — it stays a nested array.
+        Assert.Single(stages.OfType<MongoUnwindStage>());
+    }
+
     // Task 4 fix round (review finding C1): AddLookup's dedup-by-alias must MERGE a later, pipeline-bearing
     // registration INTO the existing entry, never swap the list slot for the incoming object outright. A
     // swap silently discards every attribute the two-argument (As/HasPipeline) dedup check doesn't look at

@@ -709,7 +709,7 @@ internal sealed class MongoPipelineFactory
         int index,
         IReadOnlyDictionary<string, object?> parameterValues)
     {
-        var (name, serializer, isArray, regexKind, entityMemberProperty) = _placeholders.Entries[index];
+        var (name, serializer, isArray, regexKind, entityMemberProperty, arrayElementIndex) = _placeholders.Entries[index];
 
         if (!parameterValues.TryGetValue(name, out var rawValue))
             throw new InvalidOperationException(
@@ -722,6 +722,19 @@ internal sealed class MongoPipelineFactory
         // branches so the extracted value flows through the ordinary serialization path unchanged.
         if (entityMemberProperty is not null && rawValue is not null)
             rawValue = entityMemberProperty.GetGetter().GetClrValue(rawValue);
+
+        // `args[0]`-shaped access into a query-parameter ARRAY (a compiled query's own array-typed lambda
+        // parameter, see NativeQueryParameter.TryGetParameterArrayElementIndex): the raw parameter value is the
+        // WHOLE ARRAY, not the element to compare — extract that element now, per execution, since its value
+        // (and even whether the index is in range) can't be known until the array's runtime value is known.
+        if (arrayElementIndex is int elementIndex)
+        {
+            rawValue = rawValue is System.Collections.IList list
+                ? list[elementIndex]
+                : throw new InvalidOperationException(
+                    $"MongoPipelineFactory.Build: parameter '{name}' (placeholder index {index}) "
+                    + $"was expected to be an array/list but was '{rawValue?.GetType().Name ?? "null"}'.");
+        }
 
         // A parameterized string.StartsWith/EndsWith/Contains term: the escape+anchor transform can only
         // run now, per execution, since render (compile) time had no value to escape. Mirrors

@@ -49,6 +49,24 @@ public class MongoValueRendererTests
     }
 
     [Fact]
+    public void RenderValue_property_less_array_element_parameter_creates_array_element_placeholder()
+    {
+        var placeholders = new PlaceholderTable();
+        var node = new MongoParameterExpression("args_0", forSerialization: null, arrayElementIndex: 2);
+
+        var result = MongoValueRenderer.RenderValue(node, placeholders);
+
+        Assert.True(PlaceholderTable.TryGetPlaceholderIndex(result, out var index));
+        Assert.Equal(0, index);
+        Assert.Single(placeholders.Entries);
+        var entry = placeholders.Entries[0];
+        Assert.Equal("args_0", entry.Name);
+        Assert.Null(entry.Serializer);
+        Assert.False(entry.IsArray);
+        Assert.Equal(2, entry.ArrayElementIndex);
+    }
+
+    [Fact]
     public void RenderValue_unsupported_node_throws_native_not_supported()
     {
         var placeholders = new PlaceholderTable();

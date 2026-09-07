@@ -241,6 +241,32 @@ internal sealed class LookupExpression
     }
 
     /// <summary>
+    /// A collection Include reached via a <c>ThenInclude</c> off a REFERENCE Include (e.g.
+    /// <c>Orders.Include(o =&gt; o.Customer.Orders)</c>) rather than off the query root: the collection nav's
+    /// declaring type is the reference's own target, so
+    /// <c>MongoProjectionBindingExpressionVisitor</c>'s "flat multi-lookup mode" prefixes both
+    /// <see cref="LocalField"/> and <see cref="As"/> with the confirmed
+    /// reference lookup's own alias ("_lookup_Mid.Something"/"_lookup_Mid._lookup_Leaves") so the shaper reads
+    /// the array nested under the unwound intermediate document rather than at the document root. Otherwise
+    /// identical to <see cref="IsNativeCollectionLookup"/> — no pipeline, not force-unwound — just with a
+    /// PREFIXED <see cref="As"/> instead of the bare alias.
+    /// </summary>
+    public bool IsTransitiveCollectionLookup
+    {
+        get
+        {
+            if (Navigation is not { IsCollection: true } navigation)
+            {
+                return false;
+            }
+
+            var plainAlias = GetLookupAlias(navigation);
+            return !HasPipeline && !ForceUnwind && As != plainAlias
+                && As.EndsWith("." + plainAlias, System.StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
     /// Whether the <c>$unwind</c> following this <c>$lookup</c> uses <c>preserveNullAndEmptyArrays: true</c>
     /// — LEFT-OUTER (principal survives an unmatched join) vs INNER (it is dropped).
     /// <para>

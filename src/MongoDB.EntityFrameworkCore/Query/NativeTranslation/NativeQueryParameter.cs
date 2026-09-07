@@ -15,6 +15,7 @@
 
 using System;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
 
@@ -52,6 +53,51 @@ internal static class NativeQueryParameter
 #endif
 
         name = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Recognizes an <c>args[i]</c>-shaped access into a query-parameter ARRAY, whose left/receiver operand is
+    /// itself an EF query parameter (<see cref="TryGetQueryParameterName"/>) and whose index operand is a
+    /// constant <see langword="int"/>. This arises from a compiled query whose lambda takes an array parameter
+    /// directly (e.g. <c>EF.CompileQuery((Ctx ctx, string[] args) =&gt; ctx.Set.Where(c =&gt; c.Id ==
+    /// args[0]))</c>) — the index cannot be resolved until the array's runtime value is known, so unlike an
+    /// ordinary closure-captured array index (which EF's own parameter extraction pre-evaluates to a single
+    /// constant/parameter before the provider ever sees it), this shape reaches the native translator as a
+    /// genuine two-part expression tree that must be resolved at Build (per-execution) time — see
+    /// <see cref="Expressions.MongoParameterExpression.ArrayElementIndex"/>.
+    /// <para>
+    /// Matches TWO tree shapes, both observed to arise from the identical C# <c>args[0]</c> source depending on
+    /// how far EF Core's own preprocessing rewrites the indexer before the provider's translator ever sees it:
+    /// a plain <see cref="ExpressionType.ArrayIndex"/> node, and (MEASURED — the shape EF10 actually produces
+    /// for this ticket's motivating case) a rewritten <c>Enumerable.ElementAt&lt;T&gt;(source, index)</c> call.
+    /// </para>
+    /// </summary>
+    /// <param name="expr">The candidate expression.</param>
+    /// <param name="name">The query-parameter name carrying the array, when recognized.</param>
+    /// <param name="index">The constant element index, when recognized.</param>
+    /// <returns><see langword="true"/> if <paramref name="expr"/> is a query-parameter array index access.</returns>
+    public static bool TryGetParameterArrayElementIndex(Expression expr, [NotNullWhen(true)] out string? name, out int index)
+    {
+        if (expr is BinaryExpression { NodeType: ExpressionType.ArrayIndex } arrayIndex
+            && TryGetQueryParameterName(arrayIndex.Left, out name)
+            && arrayIndex.Right is ConstantExpression { Value: int constantArrayIndex })
+        {
+            index = constantArrayIndex;
+            return true;
+        }
+
+        if (expr is MethodCallExpression { Method.Name: nameof(Enumerable.ElementAt) } call
+            && call.Method.IsStatic && call.Method.DeclaringType == typeof(Enumerable) && call.Arguments.Count == 2
+            && TryGetQueryParameterName(call.Arguments[0], out name)
+            && call.Arguments[1] is ConstantExpression { Value: int constantElementAtIndex })
+        {
+            index = constantElementAtIndex;
+            return true;
+        }
+
+        name = null;
+        index = 0;
         return false;
     }
 }
