@@ -66,16 +66,10 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
     public override async Task GroupBy_Property_Select_Average_with_group_enumerable_projected(bool async)
     {
-#if EF8 || EF9
-        await base.GroupBy_Property_Select_Average_with_group_enumerable_projected(async);
-
-        AssertMql();
-#else
         await Assert.ThrowsAnyAsync<Exception>(() => base.GroupBy_Property_Select_Average_with_group_enumerable_projected(async));
 
         AssertMql(
         );
-#endif
     }
 
     public override async Task GroupBy_Property_Select_Count(bool async)
@@ -993,19 +987,8 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.GroupJoin_GroupBy_Aggregate(async));
 
-#if EF8 || EF9
-        // EF-436: on EF8/EF9 this reaches the driver-LINQ bridge's single-join LeftJoin-recognition
-        // gap (same as NorthwindJoinQueryMongoTest.GroupJoin_DefaultIfEmpty) before the GroupBy issue
-        // above is ever reached, logging a partial pipeline; EF10 declines earlier, at the GroupBy
-        // stage, with none captured.
-        AssertMql(
-    """
-Customers.
-""");
-#else
         AssertMql(
         );
-#endif
     }
 
     public override async Task GroupJoin_GroupBy_Aggregate_2(bool async)
@@ -1013,19 +996,8 @@ Customers.
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.GroupJoin_GroupBy_Aggregate_2(async));
 
-#if EF8 || EF9
-        // EF-436: on EF8/EF9 this reaches the driver-LINQ bridge's single-join LeftJoin-recognition
-        // gap (same as NorthwindJoinQueryMongoTest.GroupJoin_DefaultIfEmpty) before the GroupBy issue
-        // above is ever reached, logging a partial pipeline; EF10 declines earlier, at the GroupBy
-        // stage, with none captured.
-        AssertMql(
-    """
-Customers.
-""");
-#else
         AssertMql(
         );
-#endif
     }
 
     public override async Task GroupJoin_GroupBy_Aggregate_3(bool async)
@@ -1033,19 +1005,8 @@ Customers.
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.GroupJoin_GroupBy_Aggregate_3(async));
 
-#if EF8 || EF9
-        // EF-436: on EF8/EF9 this reaches the driver-LINQ bridge's single-join LeftJoin-recognition
-        // gap (same as NorthwindJoinQueryMongoTest.GroupJoin_DefaultIfEmpty) before the GroupBy issue
-        // above is ever reached, logging a partial pipeline; EF10 declines earlier, at the GroupBy
-        // stage, with none captured.
-        AssertMql(
-    """
-Orders.
-""");
-#else
         AssertMql(
         );
-#endif
     }
 
     public override async Task GroupJoin_GroupBy_Aggregate_4(bool async)
@@ -1053,19 +1014,8 @@ Orders.
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.GroupJoin_GroupBy_Aggregate_4(async));
 
-#if EF8 || EF9
-        // EF-436: on EF8/EF9 this reaches the driver-LINQ bridge's single-join LeftJoin-recognition
-        // gap (same as NorthwindJoinQueryMongoTest.GroupJoin_DefaultIfEmpty) before the GroupBy issue
-        // above is ever reached, logging a partial pipeline; EF10 declines earlier, at the GroupBy
-        // stage, with none captured.
-        AssertMql(
-    """
-Customers.
-""");
-#else
         AssertMql(
         );
-#endif
     }
 
     public override async Task GroupJoin_GroupBy_Aggregate_5(bool async)
@@ -1073,19 +1023,8 @@ Customers.
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.GroupJoin_GroupBy_Aggregate_5(async));
 
-#if EF8 || EF9
-        // EF-436: on EF8/EF9 this reaches the driver-LINQ bridge's single-join LeftJoin-recognition
-        // gap (same as NorthwindJoinQueryMongoTest.GroupJoin_DefaultIfEmpty) before the GroupBy issue
-        // above is ever reached, logging a partial pipeline; EF10 declines earlier, at the GroupBy
-        // stage, with none captured.
-        AssertMql(
-    """
-Orders.
-""");
-#else
         AssertMql(
         );
-#endif
     }
 
     public override async Task GroupBy_optional_navigation_member_Aggregate(bool async)
@@ -2368,19 +2307,8 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 } } }, { "$
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.Key_plus_key_in_projection(async));
 
-#if EF8 || EF9
-        // EF-436: on EF8/EF9 this reaches the driver-LINQ bridge's single-join LeftJoin-recognition
-        // gap (same as NorthwindJoinQueryMongoTest.GroupJoin_DefaultIfEmpty) before the GroupBy issue
-        // above is ever reached, logging a partial pipeline; EF10 declines earlier, at the GroupBy
-        // stage, with none captured.
-        AssertMql(
-    """
-Orders.
-""");
-#else
         AssertMql(
         );
-#endif
     }
 
     public override async Task Group_by_with_arithmetic_operation_inside_aggregate(bool async)

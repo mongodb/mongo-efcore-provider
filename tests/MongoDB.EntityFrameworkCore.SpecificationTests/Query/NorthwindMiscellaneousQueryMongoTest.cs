@@ -2368,32 +2368,20 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "I
 
     public override async Task String_concat_with_navigation1(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.String_concat_with_navigation1(async));
-        AssertMql();
-#else
         await base.String_concat_with_navigation1(async);
         AssertMql(
             """
 Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : { "$concat" : ["$_v._outer.CustomerID", " ", "$_v._inner.City"] }, "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task String_concat_with_navigation2(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.String_concat_with_navigation2(async));
-        AssertMql();
-#else
         await base.String_concat_with_navigation2(async);
         AssertMql(
             """
 Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : { "$concat" : ["$_v._inner.City", " ", "$_v._inner.City"] }, "_id" : 0 } }
 """);
-#endif
     }
 
 #if EF8 || EF9
@@ -2987,22 +2975,12 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task No_orderby_added_for_fully_translated_manually_constructed_LOJ(bool async)
     {
-#if EF8 || EF9
-        // Fails: single-join driver-LINQ-bridge LeftJoin-recognition gap (same as
-        // NorthwindJoinQueryMongoTest.GroupJoin_DefaultIfEmpty - see its comment) - out of scope for EF-436.
-        await AssertTranslationFailed(() => base.No_orderby_added_for_fully_translated_manually_constructed_LOJ(async));
-        AssertMql(
-    """
-Employees.
-""");
-#else
         // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.No_orderby_added_for_fully_translated_manually_constructed_LOJ(async);
         AssertMql(
             """
 Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Employees", "localField" : "_outer._id", "foreignField" : "ReportsTo", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "City1" : "$_v._outer.City", "City2" : "$_v._inner.City", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task No_orderby_added_for_client_side_GroupJoin_dependent_to_principal_LOJ(bool async)
@@ -3606,13 +3584,6 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
     public override async Task Comparing_collection_navigation_to_null_complex(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Comparing_collection_navigation_to_null_complex(async));
-
-        AssertMql(
-        );
-#else
         await Assert.ThrowsAnyAsync<Exception>(() => base.Comparing_collection_navigation_to_null_complex(async));
 
         if (MongoSpecTestHelpers.IsNativeOnly)
@@ -3626,7 +3597,6 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 OrderDetails.
 """);
         }
-#endif
     }
 
     public override async Task Compare_collection_navigation_with_itself(bool async)
@@ -3757,17 +3727,11 @@ Customers.{ "$set" : { "__sort0" : { "$not" : [{ "$in" : ["$_id", []] }] } } }, 
 
     public override async Task Manual_expression_tree_typed_null_equality(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.Manual_expression_tree_typed_null_equality(async));
-        AssertMql();
-#else
         await base.Manual_expression_tree_typed_null_equality(async);
         AssertMql(
             """
 Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : "$_v._inner.City", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task Let_subquery_with_multiple_occurrences(bool async)
@@ -3828,13 +3792,6 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$project" : { "_outer" :
 
     public override async Task Navigation_inside_interpolated_string_is_expanded(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Navigation_inside_interpolated_string_is_expanded(async));
-
-        AssertMql(
-        );
-#else
         await AssertTranslationFailed(() =>
             base.Navigation_inside_interpolated_string_is_expanded(async));
 
@@ -3849,22 +3806,15 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$project" : { "_outer" :
 Orders.
 """);
         }
-#endif
     }
 
     public override async Task OrderBy_object_type_server_evals(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.OrderBy_object_type_server_evals(async));
-        AssertMql();
-#else
         await base.OrderBy_object_type_server_evals(async);
         AssertMql(
             """
 Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : "$_outer.OrderDate" } }, { "$sort" : { "_document._outer._id" : 1, "_key1" : 1, "_document._inner._id" : 1, "_document._inner.City" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$skip" : 0 }, { "$limit" : 20 }
 """);
-#endif
     }
 
     public override async Task AsQueryable_in_query_server_evals(bool async)
@@ -3906,10 +3856,12 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
     public override async Task Projection_skip_projection(bool async)
     {
 #if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.Projection_skip_projection(async));
-        AssertMql();
-#else
+        await base.Projection_skip_projection(async);
+        AssertMql(
+            """
+Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 5 }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "City" : "$_v._inner.City", "_id" : 0 } }
+""");
+    #else
         await base.Projection_skip_projection(async);
         AssertMql(
             """
@@ -3921,10 +3873,12 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }
     public override async Task Projection_take_projection(bool async)
     {
 #if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.Projection_take_projection(async));
-        AssertMql();
-#else
+        await base.Projection_take_projection(async);
+        AssertMql(
+            """
+Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }, { "$limit" : 10 }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "City" : "$_v._inner.City", "_id" : 0 } }
+""");
+    #else
         await base.Projection_take_projection(async);
         AssertMql(
             """
@@ -3936,10 +3890,12 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }
     public override async Task Projection_skip_take_projection(bool async)
     {
 #if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.Projection_skip_take_projection(async));
-        AssertMql();
-#else
+        await base.Projection_skip_take_projection(async);
+        AssertMql(
+            """
+Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$sort" : { "_id" : 1 } }, { "$skip" : 5 }, { "$limit" : 10 }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "City" : "$_v._inner.City", "_id" : 0 } }
+""");
+    #else
         await base.Projection_skip_take_projection(async);
         AssertMql(
             """
@@ -4533,17 +4489,11 @@ Employees.{ "$project" : { "Title" : "$Title", "_id" : 0 } }
 
     public override async Task Perform_identity_resolution_reuses_same_instances_across_joins(bool async, bool useAsTracking)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.Perform_identity_resolution_reuses_same_instances_across_joins(async, useAsTracking));
-        AssertMql();
-#else
         await base.Perform_identity_resolution_reuses_same_instances_across_joins(async, useAsTracking);
         AssertMql(
             """
 Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Orders.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }
 """);
-#endif
     }
 
     public override async Task OrderBy_scalar_primitive(bool async)
@@ -5423,11 +5373,6 @@ Customers.
 
     public override async Task Contains_over_concatenated_columns_both_fixed_length(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.Contains_over_concatenated_columns_both_fixed_length(async));
-        AssertMql();
-#else
         // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.Contains_over_concatenated_columns_both_fixed_length(async);
 
@@ -5435,7 +5380,6 @@ Customers.
             """
 Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "$expr" : { "$in" : [{ "$concat" : ["$_outer.CustomerID", "$_inner._id"] }, ["ALFKIALFKI", "ALFKI", "ANATRAna Trujillo Emparedados y helados", "ANATRANATR"]] } } }
 """);
-#endif
     }
 
     public override async Task Contains_over_concatenated_column_and_parameter(bool async)

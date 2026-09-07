@@ -169,12 +169,13 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
     }
 
     // ---------------------------------------------------------------------------------------------------
-    // Optional navigations: LEFT-OUTER semantics, EF10 only — EF lowers these to Queryable.LeftJoin, whose
-    // dispatch case is `#if !EF8 && !EF9`, so on EF8/EF9 EF Core itself throws "could not be translated"
-    // (EF-X020), asserted below rather than left implicit.
+    // Optional navigations: LEFT-OUTER semantics, run on ALL THREE EF majors — EF lowers these to
+    // Queryable.LeftJoin on EF10, and onto EF Core's own internal LeftJoin dispatch shim on EF8/EF9 (which
+    // MongoQueryableMethodTranslatingExpressionVisitor.IsEf8Ef9LeftJoinShim now admits unconditionally, the
+    // same way as the real BCL method). Only a genuinely EF10-only surface — a USER LINQ query calling
+    // Queryable.LeftJoin directly, which doesn't exist as a callable method before .NET 10 — stays gated.
     // ---------------------------------------------------------------------------------------------------
 
-#if !EF8 && !EF9
     [Fact]
     public void Optional_reference_Include_still_preserves_principals()
     {
@@ -210,9 +211,6 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
     [Fact]
     public void User_authored_GroupJoin_is_left_outer()
     {
-        // EF10-only for the same EF-X020 reason as the cases above, not because of FK requiredness: on
-        // EF8/EF9 GroupJoin + DefaultIfEmpty does not translate at all (see the EF8/EF9 arm of
-        // NorthwindJoinQueryMongoTest.GroupJoin_DefaultIfEmpty).
         using var db = Setup();
 
         var pairs = db.Lines
@@ -227,9 +225,14 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
         Assert.Equal("O1", pairs.Single(p => p.LineName == "L1").Order.OrderName);
     }
 
+#if !EF8 && !EF9
     [Fact]
     public void User_authored_LeftJoin_is_left_outer()
     {
+        // Genuinely EF10-only: Queryable.LeftJoin is a BCL method added in .NET 10, so pre-.NET10 there is
+        // no such method for user LINQ to call directly at all (a compile-time surface, not a translation
+        // gap) - unlike the cases above, which reach the LeftJoin shape via EF's OWN nav-expansion/
+        // GroupJoin-flattening and so also run on EF8/EF9.
         using var db = Setup();
 
         var pairs = db.Lines
@@ -241,21 +244,6 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
         Assert.Equal(["L1", "L2", "L3", "L4", "L5", "L6"], pairs.Select(p => p.LineName).ToArray());
         Assert.Null(pairs.Single(p => p.LineName == "L4").OrderName);
         Assert.Equal("O1", pairs.Single(p => p.LineName == "L1").OrderName);
-    }
-#endif
-
-#if EF8 || EF9
-    [Fact]
-    public void Optional_reference_Include_is_not_translated_on_EF8_EF9()
-    {
-        // The counterpart of the three `#if !EF8 && !EF9` cases above, asserted so the asymmetry is a
-        // recorded fact rather than an unexplained absence. EF lowers the optional navigation to
-        // Queryable.LeftJoin, which has no dispatch case before EF10, so EF Core rejects the whole query
-        // (EF-X020). The REQUIRED cases in this class run on all three majors precisely because a required
-        // navigation lowers to Queryable.Join instead.
-        using var db = Setup();
-
-        Assert.Throws<InvalidOperationException>(() => db.Lines.Include(l => l.Carrier).ToList());
     }
 #endif
 

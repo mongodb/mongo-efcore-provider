@@ -206,22 +206,6 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
             .ThenInclude(m => m.Leaf)
             .ThenInclude(l => l.Tip);
 
-#if EF8 || EF9
-        // PRE-EXISTING, unrelated to EF-372 and unchanged by it: EF's nav-expansion lowers an OPTIONAL
-        // reference navigation to Queryable.LeftJoin, which has no dispatch case at all before EF10, so EF
-        // Core rejects the whole query before any $lookup is built.
-        // The gap is BLANKET and DEPTH-INDEPENDENT, not specific to a deep chain: MEASURED, a ONE-hop
-        // `OptRoots.Include(r => r.Mid)` fails identically on both EF8 and EF9. The precedent for pinning
-        // this disposition rather than compiling the test out is
-        // RequiredNavigationUnwindTests.Optional_reference_Include_is_not_translated_on_EF8_EF9.
-        var ex = Assert.Throws<InvalidOperationException>(() => query.ToList());
-
-        // Pin the message, not the bare type: InvalidOperationException is also what a materialization
-        // failure throws, so the type alone cannot tell "declined to translate" from "translated and then
-        // broke".
-        Assert.Contains("could not be translated", ex.Message);
-        Assert.Contains("ThenInclude", ex.Message);
-#else
         var results = query.ToList();
 
         Assert.Equal(3, results.Count);
@@ -234,7 +218,6 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Contains("\"localField\" : \"_lookup_Mid.LeafId\"", mql);
         Assert.Contains("\"localField\" : \"_lookup_Leaf.TipId\"", mql);
         Assert.Contains("\"preserveNullAndEmptyArrays\" : true", mql);
-#endif
     }
 
     // ---- T6: two same-typed navigations (Order.Buyer / Order.Approver, both Person) is an ORDINARY

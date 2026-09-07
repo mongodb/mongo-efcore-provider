@@ -134,10 +134,6 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
         // $lookup target makes the join inner a filtered sub-query, which is not supported EF-X022
         await Assert.ThrowsAnyAsync<Exception>(() => base.Included_many_to_one_query(async));
 
-#if EF8 || EF9
-        AssertMql(
-        );
-#else
         if (MongoSpecTestHelpers.IsNativeOnly)
         {
             AssertMql();
@@ -149,24 +145,15 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 Orders.
 """);
         }
-#endif
     }
 
     public override async Task Project_reference_that_itself_has_query_filter_with_another_reference(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Project_reference_that_itself_has_query_filter_with_another_reference(async));
-
-        AssertMql(
-);
-#else
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.Project_reference_that_itself_has_query_filter_with_another_reference(async), typeof(ArgumentException));
 
         AssertMql(
         );
-#endif
     }
 
     public override async Task Navs_query(bool async)
@@ -198,10 +185,6 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
         // makes the join inner a filtered sub-query, which is not supported EF-X022
         await Assert.ThrowsAnyAsync<Exception>(() => base.Entity_Equality(async));
 
-#if EF8 || EF9
-        AssertMql(
-        );
-#else
         if (MongoSpecTestHelpers.IsNativeOnly)
         {
             AssertMql();
@@ -213,7 +196,6 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
 Orders.
 """);
         }
-#endif
     }
 
     public override async Task Client_eval(bool async)
@@ -241,10 +223,6 @@ Products.
         // $lookup target makes the join inner a filtered sub-query, which is not supported EF-X022
         await Assert.ThrowsAnyAsync<Exception>(() => base.Included_many_to_one_query2(async));
 
-#if EF8 || EF9
-        AssertMql(
-        );
-#else
         if (MongoSpecTestHelpers.IsNativeOnly)
         {
             AssertMql();
@@ -256,7 +234,6 @@ Products.
 Orders.
 """);
         }
-#endif
     }
 
     public override async Task Included_one_to_many_query_with_client_eval(bool async)

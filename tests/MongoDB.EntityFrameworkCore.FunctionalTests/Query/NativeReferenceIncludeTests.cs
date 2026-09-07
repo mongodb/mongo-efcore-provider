@@ -330,17 +330,12 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         // decline-under-NativeOnly assertion above (which only proves a clean decline, not correct fallback
         // data).
         //
-        // EF8/EF9 only (measured, full-suite regression on 2026-08-26): this exact shape does not reach
-        // this provider's fallback at all — EF Core's own translation visitor throws
-        // InvalidOperationException ("could not be translated") upstream, in EVERY MongoQueryMode, matching
-        // the disposition already documented on A_real_ThenInclude_nested_underneath_an_embedded_hop_still_declines
-        // above. Only EF10 reaches this provider's fallback bridge and returns correct data.
-#if EF8 || EF9
-        using var nativeDb = CreateContext(MongoQueryMode.Native,
-            nameof(Deep_ThenInclude_through_embedded_hop_returns_correct_data_via_fallback) + "_Native");
-        Assert.ThrowsAny<Exception>(
-            () => nativeDb.Orders.Include(o => o.Buyer).ThenInclude(b => b.Address).ThenInclude(a => a.Region).ToList());
-#else
+        // Now reaches this provider's fallback bridge and returns correct data on every EF version: EF8/EF9
+        // used to hard-fail upstream instead, because EF's nav-expansion lowers the (optional-FK) Buyer
+        // navigation to EF Core's own internal LeftJoin dispatch shim, which
+        // MongoQueryableMethodTranslatingExpressionVisitor now admits unconditionally (see
+        // IsEf8Ef9LeftJoinShim's remarks) - previously this whole query was rejected before ever reaching
+        // this provider's own translator, in EVERY MongoQueryMode.
         using var nativeDb = CreateContext(MongoQueryMode.Native,
             nameof(Deep_ThenInclude_through_embedded_hop_returns_correct_data_via_fallback) + "_Native");
         var nativeResults = nativeDb.Orders.Include(o => o.Buyer).ThenInclude(b => b.Address).ThenInclude(a => a.Region)
@@ -356,7 +351,6 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Equal(3, driverResults.Count);
         Assert.All(nativeResults, o => Assert.Equal("Midwest", o.Buyer.Address.Region?.Name));
         Assert.All(driverResults, o => Assert.Equal("Midwest", o.Buyer.Address.Region?.Name));
-#endif
     }
 
     /// <summary>

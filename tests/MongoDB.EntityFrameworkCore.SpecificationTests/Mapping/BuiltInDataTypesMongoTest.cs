@@ -32,14 +32,8 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
     public override async Task Can_insert_and_read_back_with_string_key()
         => await base.Can_insert_and_read_back_with_string_key();
 
-#if EF9
-    // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-    public override Task Can_read_back_bool_mapped_as_int_through_navigation()
-        => AssertTranslationFailed(() => base.Can_read_back_bool_mapped_as_int_through_navigation());
-#else
     public override Task Can_read_back_bool_mapped_as_int_through_navigation()
         => base.Can_read_back_bool_mapped_as_int_through_navigation();
-#endif
 
     // EF-449: a reference-collection-nav FirstOrDefault() reduced to a non-nullable value-type member (here an
     // enum) is now natively translated, so this no longer fails to translate.
@@ -59,9 +53,8 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
     public override void Can_insert_and_read_back_with_string_key()
         => base.Can_insert_and_read_back_with_string_key();
 
-    // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
     public override void Can_read_back_bool_mapped_as_int_through_navigation()
-        => AssertTranslationFailed(() => base.Can_read_back_bool_mapped_as_int_through_navigation());
+        => base.Can_read_back_bool_mapped_as_int_through_navigation();
 
     // EF-449: a reference-collection-nav FirstOrDefault() reduced to a non-nullable value-type member (here an
     // enum) is now natively translated. The fix carries no `#if`, so it applies on EF8 too — verified by running

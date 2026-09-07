@@ -1078,18 +1078,12 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
     public override async Task Where_expression_invoke_2(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.Where_expression_invoke_2(async));
-        AssertMql();
-#else
         // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.Where_expression_invoke_2(async);
         AssertMql(
             """
 Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner._id" : "ALFKI" } }
 """);
-#endif
     }
 
     public override async Task Where_expression_invoke_3(bool async)

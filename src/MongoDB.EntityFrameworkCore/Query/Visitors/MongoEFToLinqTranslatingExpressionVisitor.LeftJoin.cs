@@ -121,7 +121,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// </summary>
     private Expression RewriteLeftJoins(Expression expression, bool convertExplicitJoins)
     {
-        if (expression is not MethodCallExpression call || call.Method.DeclaringType != typeof(Queryable))
+        if (expression is not MethodCallExpression call
+            || (call.Method.DeclaringType != typeof(Queryable)
+                && !MongoQueryableMethodTranslatingExpressionVisitor.IsEf8Ef9LeftJoinShim(call.Method)))
         {
             return expression;
         }
@@ -602,7 +604,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         var chain = new List<MethodCallExpression>();
         var node = (Expression)outerCall;
         while (node is MethodCallExpression call
-               && call.Method.DeclaringType == typeof(Queryable)
+               && (call.Method.DeclaringType == typeof(Queryable)
+                   || MongoQueryableMethodTranslatingExpressionVisitor.IsEf8Ef9LeftJoinShim(call.Method))
                && call.Arguments.Count > 0)
         {
             chain.Add(call);

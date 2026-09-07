@@ -208,17 +208,11 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$regularExpress
 
     public override async Task Projection_of_multiple_entity_types_into_object_array(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.Projection_of_multiple_entity_types_into_object_array(async));
-        AssertMql();
-#else
         await base.Projection_of_multiple_entity_types_into_object_array(async);
         AssertMql(
             """
 Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task Projection_of_entity_type_into_object_list(bool async)
@@ -939,10 +933,12 @@ Orders.{ "$project" : { "OrderDate" : "$OrderDate", "_id" : 0 } }
     public override async Task Anonymous_projection_with_repeated_property_being_ordered_2(bool async)
     {
 #if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.Anonymous_projection_with_repeated_property_being_ordered_2(async));
-        AssertMql();
-#else
+        await base.Anonymous_projection_with_repeated_property_being_ordered_2(async);
+        AssertMql(
+            """
+Orders.{ "$sort" : { "CustomerID" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "A" : "$_v._inner._id", "B" : "$_v._outer.CustomerID", "_id" : 0 } }
+""");
+    #else
         await base.Anonymous_projection_with_repeated_property_being_ordered_2(async);
         AssertMql(
             """
@@ -1213,17 +1209,11 @@ Customers.
 
     public override async Task Select_entity_compared_to_null(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.Select_entity_compared_to_null(async));
-        AssertMql();
-#else
         await base.Select_entity_compared_to_null(async);
         AssertMql(
             """
 Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task Explicit_cast_in_arithmetic_operation_is_preserved(bool async)
