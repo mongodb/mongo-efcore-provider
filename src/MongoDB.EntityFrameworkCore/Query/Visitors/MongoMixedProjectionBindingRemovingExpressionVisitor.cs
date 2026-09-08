@@ -363,6 +363,27 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
             docExpr = CreateGetValueExpression(_docParameter, "_outer", true, typeof(BsonDocument));
         }
 
+        // A join-scope-sourced member (native-join-scope-nested-projection ticket): field.ElementName is a
+        // dotted path relative to docExpr (e.g. "_lookup_Customer.CustomerID"), not a root property of the
+        // outer entity — CreateGetValueExpression(docExpr, field.Property, memberType) would incorrectly
+        // look up field.Property's OWN element name directly on docExpr. Walk the dotted path instead via
+        // the same multi-segment helper the ordinary (native) read side uses for its own [alias, memberName]
+        // path — it already treats an absent INTERMEDIATE segment (an unmatched left-outer join row) as
+        // null rather than a missing-leaf error, which is exactly what an Inner-side member needs here.
+        //
+        // Dispatching on "is the ElementName dotted" rather than on provenance is SAFE, not merely convenient
+        // (final-review Finding 7): a root-relative EF-447 member — the other recognizer that builds this node
+        // — can never present a dotted ElementName, because NativeProjectionBinder
+        // .TryGetDocumentConstructionLeaf explicitly declines any member whose field.ElementName contains a
+        // dot (see its `!field.ElementName.Contains('.')` conjunct and the remarks giving the reason). So the
+        // two provenances partition cleanly on this test, and the undotted branch below cannot be reached by a
+        // join-scope member nor the dotted branch by a root-relative one. If that decline is ever relaxed,
+        // this dispatch must become provenance-carrying data instead of a string test.
+        if (field.ElementName.Contains('.'))
+        {
+            return BsonBinding.CreateGetPropertyValueAtPath(docExpr, field.ElementName.Split('.'), field.Property, memberType);
+        }
+
         return CreateGetValueExpression(docExpr, field.Property, memberType);
     }
 

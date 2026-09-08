@@ -136,13 +136,15 @@ public class ExpressionExtensionMethodsTests
     {
         var repoRoot = RepoRoot();
 
-        // The 3 family-A call sites this ticket's design doc calls out as load-bearing: NativeProjectionBinder's
-        // WRAPPED arm, its document-construction leaf, and NativeJoinScopeProjectionBinder.TryBindProjection.
-        // Listed with their expected call count so a call site silently added or removed doesn't go unnoticed.
+        // The family-A call sites this ticket's design doc calls out as load-bearing: NativeProjectionBinder's
+        // WRAPPED arm, its document-construction leaf, and NativeJoinScopeProjectionBinder.TryBindProjection's
+        // top-level member walk PLUS (native-join-scope-nested-projection ticket) its new NESTED wrapped-leaf
+        // arm, which reuses the same primitive to recognize the inner `new {...}` body one level down. Listed
+        // with their expected call count so a call site silently added or removed doesn't go unnoticed.
         var familyASources = new (string RelativePath, int ExpectedCallCount)[]
         {
             ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeProjectionBinder.cs", 2),
-            ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeJoinScopeProjectionBinder.cs", 1),
+            ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeJoinScopeProjectionBinder.cs", 2),
         };
 
         foreach (var (relativePath, expectedCallCount) in familyASources)

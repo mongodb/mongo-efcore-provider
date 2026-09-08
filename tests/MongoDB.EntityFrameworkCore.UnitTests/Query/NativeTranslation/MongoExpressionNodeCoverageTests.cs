@@ -157,6 +157,7 @@ public class MongoExpressionNodeCoverageTests
                 headingField, new MongoConstantExpression(new[] { "a", "b" }, heading), negated: false),
             new MongoArrayContainsExpression(
                 new MongoFieldExpression(tags, "Tags"), new MongoConstantExpression("a", null), negated: false),
+            new MongoArrayReduceExpression("$avg", "Total", typeof(double)),
             new MongoRegexExpression(
                 headingField, MongoRegexKind.StartsWith, new MongoConstantExpression("a", heading), negated: false),
             new MongoElemMatchExpression("Posts", flagField, negated: false),
@@ -410,9 +411,11 @@ public class MongoExpressionNodeCoverageTests
     /// </item>
     /// <item>
     /// In the <c>(converted)</c> column, exactly the nine arm-bearing node kinds report <c>false</c>. The other
-    /// twelve fall open to <c>true</c>. Three of those are deliberate and documented in
-    /// <c>AllFieldsDefaultSerialized</c>'s own remarks (<c>In</c>, <c>Size</c>, <c>ArrayContains</c>) and three
-    /// carry no reachable property (<c>Constant</c>, <c>Parameter</c>, <c>ElementRef</c>). The remaining six —
+    /// thirteen fall open to <c>true</c>. Three of those are deliberate and documented in
+    /// <c>AllFieldsDefaultSerialized</c>'s own remarks (<c>In</c>, <c>Size</c>, <c>ArrayContains</c>) and four
+    /// carry no reachable property (<c>Constant</c>, <c>Parameter</c>, <c>ElementRef</c>, <c>ArrayReduce</c> —
+    /// the last's <c>FieldName</c> is a synthetic <c>$group</c>-stage alias with no backing
+    /// <see cref="Microsoft.EntityFrameworkCore.Metadata.IProperty"/>). The remaining six —
     /// <c>ComputedIn</c>, <c>FilteredSize</c>, <c>ElemMatch</c>, <c>Quantifier</c>, <c>Regex</c>,
     /// <c>DocumentConstruction</c> — are undocumented omissions in the one dispatcher that fails OPEN.
     /// </item>
@@ -428,6 +431,21 @@ public class MongoExpressionNodeCoverageTests
         ["MongoArrayContainsExpression|PrefixRewriter.Rewrite"] = "rendered",
         ["MongoArrayContainsExpression|QL.IsQueryDialectRenderable"] = "true",
         ["MongoArrayContainsExpression|QL.Render"] = "rendered",
+
+        // No query-dialect form at all (aggregation-expression-only, over a synthetic $group-stage alias —
+        // see the node's own remarks), so the negator declines and the query renderer falls through to
+        // $expr. Agg.CanRender has no arm for it (same missing-arm pattern as MongoDocumentConstructionExpression
+        // below — Agg.Render has an arm the classifier does not). The FieldName carries no backing IProperty,
+        // so both serialization columns read true for the same reason MongoConstantExpression/
+        // MongoParameterExpression/MongoElementRefExpression do (see remark 4 below).
+        ["MongoArrayReduceExpression|Agg.CanRender"] = "false",
+        ["MongoArrayReduceExpression|Agg.Render"] = "rendered",
+        ["MongoArrayReduceExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoArrayReduceExpression|AllFieldsDefaultSerialized(converted)"] = "true",
+        ["MongoArrayReduceExpression|Negator.TryNegate"] = "false",
+        ["MongoArrayReduceExpression|PrefixRewriter.Rewrite"] = "declined",
+        ["MongoArrayReduceExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoArrayReduceExpression|QL.Render"] = "rendered",
 
         ["MongoBinaryExpression|Agg.CanRender"] = "true",
         ["MongoBinaryExpression|Agg.Render"] = "rendered",

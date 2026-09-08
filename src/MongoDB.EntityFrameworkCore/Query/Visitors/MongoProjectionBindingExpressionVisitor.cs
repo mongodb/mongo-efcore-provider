@@ -356,35 +356,12 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     private bool TryGetNativeDocumentConstructionLeaf(
         Expression expression, out MongoDocumentConstructionExpression construction)
     {
-        construction = null;
-
-        if (_queryExpression.Select.Route != NativeRoute.Projection)
-        {
-            return false;
-        }
-
-        var memberName = GetCurrentProjectionMember().Last?.Name;
-        if (memberName is null)
-        {
-            return false;
-        }
-
-        var alias = _queryExpression.Select.TryGetProjectionAlias(memberName, out var overriddenAlias)
-            ? overriddenAlias
-            : memberName;
-
-        foreach (var projection in _queryExpression.Select.Projection)
-        {
-            if (projection.Alias == alias
-                && projection.Expression is MongoDocumentConstructionExpression candidate
-                && candidate.OriginalExpression.Type == expression.Type)
-            {
-                construction = candidate;
-                return true;
-            }
-        }
-
-        return false;
+        // The lookup itself lives on MongoSelectDefinition so this and BindResultMember (the join-scope
+        // nested leaf's own bind site) cannot drift apart — see that method's remarks.
+        var found = _queryExpression.Select.TryGetDocumentConstructionProjection(
+            GetCurrentProjectionMember().Last?.Name, expression.Type, out var candidate);
+        construction = candidate!;
+        return found;
     }
 
     /// <summary>

@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
@@ -350,6 +351,66 @@ internal sealed class MongoSelectDefinition
         }
 
         alias = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Looks up the <see cref="MongoDocumentConstructionExpression"/> (EF-447) an emit-side recognizer already
+    /// staged into <see cref="Projection"/> for <paramref name="memberName"/>, if any.
+    /// </summary>
+    /// <param name="memberName">
+    /// The projection member's own name — NOT the emitted alias. The alias override registered for the member
+    /// (<see cref="TryGetProjectionAlias"/>) is applied here, so callers never have to remember to do it.
+    /// </param>
+    /// <param name="expectedType">
+    /// The CLR type the READ side expects this leaf to produce. Matched against
+    /// <see cref="MongoDocumentConstructionExpression.OriginalExpression"/>'s type.
+    /// </param>
+    /// <param name="construction">The staged node, when one is found.</param>
+    /// <remarks>
+    /// <para>
+    /// ONE lookup for BOTH bind-side consumers — <c>MongoProjectionBindingExpressionVisitor
+    /// .TryGetNativeDocumentConstructionLeaf</c> (the plain-root EF-447 leaf) and
+    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.BindResultMember</c> (the join-scope nested leaf).
+    /// They were two near-identical alias scans with DIFFERENT admission rules — the second omitted the
+    /// <see cref="NativeRoute.Projection"/> check, the CLR-type check, and the alias-override mapping — which
+    /// is precisely the shape a future silent-wrong-data bug takes: the looser scan matching a staged node the
+    /// stricter one would have refused, and reading it back under a member it does not describe. Unified here
+    /// (final-review Finding 3) on the STRICTER rule set; the join-scope caller is only ever reached after
+    /// <c>NativeJoinScopeProjectionBinder.TryBindProjection</c> has returned true, which sets
+    /// <see cref="Route"/> to <see cref="NativeRoute.Projection"/> and stages the node under the member's own
+    /// name, so tightening it is behavior-preserving there.
+    /// </para>
+    /// <para>
+    /// Deliberately looks the answer up in <see cref="Projection"/> (the emit side's own committed result)
+    /// rather than re-deriving admissibility, so the bind side can never admit a shape the emit side declined.
+    /// The recognition predicates themselves live in <c>NativeProjectionBinder.TryGetDocumentConstructionLeaf</c>
+    /// and <c>NativeJoinScopeProjectionBinder</c>'s nested arm.
+    /// </para>
+    /// </remarks>
+    internal bool TryGetDocumentConstructionProjection(
+        string? memberName, Type expectedType, [NotNullWhen(true)] out MongoDocumentConstructionExpression? construction)
+    {
+        construction = null;
+
+        if (Route != NativeRoute.Projection || memberName is null)
+        {
+            return false;
+        }
+
+        var alias = TryGetProjectionAlias(memberName, out var overriddenAlias) ? overriddenAlias : memberName;
+
+        foreach (var projection in Projection)
+        {
+            if (projection.Alias == alias
+                && projection.Expression is MongoDocumentConstructionExpression candidate
+                && candidate.OriginalExpression.Type == expectedType)
+            {
+                construction = candidate;
+                return true;
+            }
+        }
+
         return false;
     }
 

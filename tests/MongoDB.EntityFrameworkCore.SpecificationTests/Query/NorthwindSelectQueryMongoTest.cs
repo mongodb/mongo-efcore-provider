@@ -1582,10 +1582,17 @@ Customers.
 
         AssertMql();
 #else
-        await AssertTranslationFailed(() => base.Custom_projection_reference_navigation_PK_to_FK_optimization(async));
+        // native-join-scope-nested-projection ticket: this shape (`new Order { OrderID, Customer = new
+        // Customer { CustomerID = o.Customer.CustomerID, City = o.Customer.City }, OrderDate }`) is exactly
+        // the design's in-scope case — a nested MemberInit leaf sourced from a join scope, mixed with
+        // top-level scalar siblings off the query root — and now goes native with correct data instead of
+        // declining.
+        await base.Custom_projection_reference_navigation_PK_to_FK_optimization(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "OrderID" : "$_id", "Customer" : { "CustomerID" : "$_lookup_Customer._id", "City" : "$_lookup_Customer.City" }, "OrderDate" : "$OrderDate", "_id" : 0 } }
+""");
 #endif
     }
 
