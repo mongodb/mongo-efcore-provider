@@ -766,7 +766,7 @@ internal static class NativeProjectionBinder
         if (translator.TryTranslateValue(leafExpression, out var value)
             && (value is MongoSizeExpression or MongoFilteredSizeExpression or MongoConvertExpression
                     or MongoConditionalExpression or MongoDatePartExpression or MongoDateTimeOffsetLocalExpression
-                    or MongoElementRefExpression
+                    or MongoElementRefExpression or MongoDateAddExpression
                 || (leafExpression is UnaryExpression { NodeType: ExpressionType.Convert } && value is MongoFieldExpression)))
         {
             result = value;

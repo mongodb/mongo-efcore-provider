@@ -449,6 +449,44 @@ internal sealed class MongoSelectDefinition
     }
 
     /// <summary>
+    /// The projected Distinct's OWN grouping ($group), snapshotted out of <see cref="Grouping"/> by
+    /// <see cref="SnapshotDistinctGroupingForNestedGroupBy"/> the moment a <c>GroupBy(key).Select(aggregate)</c>
+    /// composes directly on top of it (EF-322: <c>Distinct().GroupBy(...)</c>). <see langword="null"/> for
+    /// every other query — including an ORDINARY (non-nested) <c>GroupBy(key).Select(aggregate)</c>, where
+    /// <see cref="Grouping"/> alone still describes the one and only <c>$group</c>. Read by
+    /// <c>MongoSelectLowerer</c> to emit a SECOND <c>$group</c> (the Distinct's own) BEFORE the one
+    /// <see cref="Grouping"/> now describes (the outer GroupBy's), and by <c>NativeGroupByBinder</c> to resolve
+    /// the outer GroupBy's key/accumulator selectors against the Distinct's flattened alias schema
+    /// (<see cref="NativeTranslation.MongoExpressionTranslator.DistinctAliasScope"/>) instead of the entity.
+    /// </summary>
+    internal MongoGrouping? PriorGrouping { get; private set; }
+
+    /// <summary>
+    /// The projected Distinct's OWN flattening <c>$project</c> (out of <see cref="Projection"/>), snapshotted
+    /// alongside <see cref="PriorGrouping"/>. Emitted by <c>MongoSelectLowerer</c> immediately after
+    /// <see cref="PriorGrouping"/>'s own <c>$group</c>, before <see cref="PostGroupOps"/> and the outer
+    /// GroupBy's own <c>$group</c>/<see cref="Projection"/>.
+    /// </summary>
+    internal IReadOnlyList<MongoProjection> PriorGroupingProjection { get; private set; } = [];
+
+    /// <summary>
+    /// Moves the projected Distinct's own <see cref="Grouping"/>/<see cref="Projection"/> aside into
+    /// <see cref="PriorGrouping"/>/<see cref="PriorGroupingProjection"/> so a <c>GroupBy(key).Select(aggregate)</c>
+    /// composing directly on top of it (EF-322) can bind a SECOND, genuinely independent grouping into
+    /// <see cref="Grouping"/>/<see cref="Projection"/> without silently overwriting (and thereby dropping) the
+    /// Distinct's own dedup. Called by the QMTEV's <c>TranslateGroupBy</c> exactly once, before
+    /// <c>NativeGroupByBinder.TryBindGroupKey</c> runs, and only when the post-terminal guard there has
+    /// confirmed this is a pure projected-Distinct terminal (<c>IsDistinct &amp;&amp; !IsGroupBy</c>) — never a
+    /// second GroupBy-on-GroupBy, which stays declined exactly as before.
+    /// </summary>
+    internal void SnapshotDistinctGroupingForNestedGroupBy()
+    {
+        PriorGrouping = _grouping;
+        PriorGroupingProjection = [.. _projections];
+        ClearProjections();
+    }
+
+    /// <summary>
     /// Group key parts parsed by <c>NativeGroupByBinder.TryBindGroupKey</c> and consumed by
     /// <c>NativeGroupByBinder.TryBindGroupProjection</c> to build <see cref="Grouping"/>. This is transient
     /// binder-owned state, not itself part of <see cref="Route"/> — <see cref="Route"/> only turns to

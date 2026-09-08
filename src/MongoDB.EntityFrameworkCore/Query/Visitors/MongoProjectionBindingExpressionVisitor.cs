@@ -267,6 +267,25 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
                 return new ProjectionBindingExpression(_queryExpression, reducerMember, expression.Type);
 
+            // A DateTime/DateTimeOffset .AddXxx(amount) projection leaf (`new DateTime(1900, 1, 1).AddMinutes(
+            // o.OrderID % 25)`), NativeProjectionBinder having already translated it to a MongoDateAddExpression
+            // at emit time. Register the WHOLE call as ONE projection member, exactly like the arithmetic/cast/
+            // conditional leaves above: the default walk below would otherwise recurse into Object (the start
+            // date) and Arguments[0] (the amount) independently, both writing the SAME current ProjectionMember
+            // slot — the amount visited last would silently clobber the start-date binding, mapping this leaf's
+            // alias to the AMOUNT's type (e.g. double) instead of the call's own DateTime/DateTimeOffset result.
+            // MongoExpressionTranslator.IsDateAddMethod is the SAME predicate the emit side gates on, so this
+            // case only ever fires for a leaf NativeProjectionBinder already accepted.
+            // The Route == Projection guard mirrors the arithmetic/cast/conditional cases above, for the
+            // identical reason: confine this mapping to a projection accepted in full, so a mixed/fallback
+            // shape still falls through to the ordinary default walk.
+            case MethodCallExpression dateAddCandidate
+                when _queryExpression.Select.Route == NativeRoute.Projection
+                     && MongoExpressionTranslator.IsDateAddMethod(dateAddCandidate):
+                var dateAddMember = GetCurrentProjectionMember();
+                _projectionMapping[dateAddMember] = dateAddCandidate;
+                return new ProjectionBindingExpression(_queryExpression, dateAddMember, expression.Type);
+
             case MethodCallExpression methodCallExpression
                 when IsScalarMethodPropertyAccess(methodCallExpression):
                 var projMember = GetCurrentProjectionMember();

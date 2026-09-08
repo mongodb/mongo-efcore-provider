@@ -167,6 +167,8 @@ public class MongoExpressionNodeCoverageTests
             new MongoConvertExpression(rankField, typeof(long)),
             new MongoConditionalExpression(flagField, rankField, rankConstant),
             new MongoDatePartExpression(new MongoFieldExpression(when, "When"), MongoDatePart.Year),
+            new MongoDateAddExpression(
+                new MongoFieldExpression(when, "When"), MongoDateAddUnit.Minute, new MongoConstantExpression(5, null)),
             new MongoDateTimeOffsetLocalExpression(new MongoFieldExpression(stamp, "Stamp")),
             new MongoConcatExpression([headingField, new MongoConstantExpression("x", heading)]),
             new MongoDocumentConstructionExpression(
@@ -445,6 +447,17 @@ public class MongoExpressionNodeCoverageTests
         ["MongoConvertExpression|PrefixRewriter.Rewrite"] = "rendered",
         ["MongoConvertExpression|QL.IsQueryDialectRenderable"] = "false",
         ["MongoConvertExpression|QL.Render"] = "rendered",
+
+        // Same treatment as MongoDatePartExpression below throughout: a $dateAdd renders directly against
+        // StartDate's raw BSON representation, has no query-dialect form, and needs no negator arm.
+        ["MongoDateAddExpression|Agg.CanRender"] = "true",
+        ["MongoDateAddExpression|Agg.Render"] = "rendered",
+        ["MongoDateAddExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoDateAddExpression|AllFieldsDefaultSerialized(converted)"] = "false",
+        ["MongoDateAddExpression|Negator.TryNegate"] = "false",
+        ["MongoDateAddExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoDateAddExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoDateAddExpression|QL.Render"] = "rendered",
 
         ["MongoDatePartExpression|Agg.CanRender"] = "true",
         ["MongoDatePartExpression|Agg.Render"] = "rendered",

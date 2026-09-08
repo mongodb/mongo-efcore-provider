@@ -112,6 +112,22 @@ internal sealed partial class MongoExpressionTranslator
     internal ParameterExpression? SelfParam { get; set; }
 
     /// <summary>
+    /// EF-322: when set, a single-hop member access on <see cref="SelfParam"/> resolves against THESE grouping
+    /// key parts — a projected <c>Distinct()</c>'s own flattened output schema — instead of against
+    /// <see cref="_entityType"/>. Set by <see cref="NativeSlotPopulator.PopulateNativeSlots"/>'s <c>Where</c>
+    /// arm only when <c>Select.IsDistinct &amp;&amp; !Select.IsGroupBy &amp;&amp; Select.Grouping != null</c> (a
+    /// pure projected-Distinct terminal, never a genuine <c>GroupBy</c>). Required because a Distinct's
+    /// anonymous/DTO member name is independent of, but can coincide with, a real entity property of the same
+    /// name (<c>Select(o => new { Country = o.City }).Distinct().Where(x => x.Country == "...")</c> names its
+    /// member "Country" while sourcing it from <c>City</c>) — resolving by entity-property name, this
+    /// translator's ordinary behavior, would silently filter on the WRONG (untouched) field. See
+    /// <see cref="MongoExpressionTranslator.TryResolveMember"/>'s use of this scope: a member name that does
+    /// NOT match one of these key parts declines outright rather than falling through to the entity, so a
+    /// computed/out-of-scope predicate still falls back to driver-LINQ instead of silently mistranslating.
+    /// </summary>
+    internal MongoGrouping? DistinctAliasScope { get; set; }
+
+    /// <summary>
     /// Attempts to translate an EF Core expression body into a <see cref="MongoExpression"/>.
     /// </summary>
     /// <param name="efBody">The expression body (from a predicate or key-selector lambda).</param>
@@ -300,6 +316,136 @@ internal sealed partial class MongoExpressionTranslator
         return false;
     }
 
+    /// <summary>
+    /// Resolves a <c>DateTime</c>/<c>DateTimeOffset</c> <c>.AddXxx(amount)</c> call
+    /// (<c>new DateTime(1900, 1, 1).AddMinutes(o.OrderID % 25)</c>) to a <see cref="MongoDateAddExpression"/>.
+    /// </summary>
+    /// <remarks>
+    /// Only the seven <c>AddXxx</c> overloads in <see cref="DateAddUnitsByMethodName"/> map 1:1 onto a
+    /// <c>$dateAdd</c> <c>unit</c> string; <c>AddTicks</c> and <c>Add(TimeSpan)</c> have none and are left
+    /// unmatched here, falling through to the driver-LINQ bridge. Both the receiver and the amount recurse
+    /// through <see cref="TranslateOperand"/> — the receiver so a chained <c>.AddDays(...).AddMinutes(...)</c>
+    /// or a plain field/constant/date-part-derived value all work, the amount so an arithmetic expression
+    /// (like the modulo in the motivating example) translates the same way any other numeric operand does.
+    /// </remarks>
+    private bool TryTranslateDateAdd(Expression node, bool allowNumericWidening, [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+
+        if (node is not MethodCallExpression { Object: { } receiver } call
+            || call.Arguments.Count != 1
+            || (call.Method.DeclaringType != typeof(DateTime) && call.Method.DeclaringType != typeof(DateTimeOffset))
+            || !DateAddUnitsByMethodName.TryGetValue(call.Method.Name, out var unit))
+        {
+            return false;
+        }
+
+        // The receiver is not always something TranslateOperand already resolves: `new DateTime(1900, 1, 1)`
+        // (a `NewExpression`, not a member/field/constant) reaches here UN-evaluated whenever EF's own
+        // parameter-extraction pass declined to fold it — which it does for exactly this shape, since the
+        // enclosing `.AddMinutes(o.OrderID % 25)` call as a WHOLE is not evaluatable (it depends on `o`), and
+        // EF's evaluatable-subtree search does not descend into a NOT-evaluatable node's children looking for a
+        // smaller evaluatable one. TryEvaluateClosedSubtree covers exactly this residual case.
+        var startDate = TranslateOperand(receiver, allowNumericWidening);
+        if (startDate is null && !TryEvaluateClosedSubtree(receiver, out startDate))
+            return false;
+
+        if (startDate is null)
+            return false;
+
+        var amount = TranslateOperand(call.Arguments[0], allowNumericWidening: true);
+        if (amount is null)
+            return false;
+
+        result = new MongoDateAddExpression(startDate, unit, amount);
+        return true;
+    }
+
+    /// <summary>
+    /// Evaluates a CLOSED subtree — one with no lambda parameter and no EF query-parameter node anywhere in
+    /// it — to a <see cref="MongoConstantExpression"/>. Exists for a shape EF's own parameter-extraction pass
+    /// leaves un-folded: a fully-literal sub-expression (<c>new DateTime(1900, 1, 1)</c>) nested inside a
+    /// LARGER expression that, as a whole, is not evaluatable (because a SIBLING operand references the query
+    /// source), so EF's evaluatable-subtree search — which only ever folds a MAXIMAL evaluatable node, never
+    /// descends into a non-evaluatable one looking for a smaller evaluatable child — never gets a chance to
+    /// fold this one either. Declines (rather than risking a wrong evaluation) for anything containing a
+    /// lambda parameter, an EF query parameter, or any other <see cref="ExpressionType.Extension"/> node — a
+    /// subtree containing any of those cannot be compiled and invoked in isolation.
+    /// </summary>
+    private static bool TryEvaluateClosedSubtree(Expression node, out MongoExpression? result)
+    {
+        result = null;
+
+        if (ContainsParameterOrExtensionNode(node))
+            return false;
+
+        object? value;
+        try
+        {
+            value = Expression.Lambda<Func<object>>(Expression.Convert(node, typeof(object))).Compile().Invoke();
+        }
+        catch
+        {
+            return false; // the subtree throws when evaluated (e.g. an invalid DateTime) — decline, don't crash translation
+        }
+
+        result = new MongoConstantExpression(value, forSerialization: null);
+        return true;
+    }
+
+    private static bool ContainsParameterOrExtensionNode(Expression node)
+    {
+        var finder = new ParameterOrExtensionNodeFinder();
+        finder.Visit(node);
+        return finder.Found;
+    }
+
+    private sealed class ParameterOrExtensionNodeFinder : ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        [return: NotNullIfNotNull(nameof(node))]
+        public override Expression? Visit(Expression? node)
+        {
+            if (node is null || Found)
+                return node;
+
+            if (node is ParameterExpression || node.NodeType == ExpressionType.Extension)
+            {
+                Found = true;
+                return node;
+            }
+
+            return base.Visit(node);
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="call"/> is a <c>DateTime</c>/<c>DateTimeOffset</c> <c>.AddXxx(amount)</c> call
+    /// <see cref="TryTranslateDateAdd"/> can translate — exposed so
+    /// <see cref="Visitors.MongoProjectionBindingExpressionVisitor"/> can register the whole call as ONE
+    /// projection leaf using the SAME predicate this translator's own emit side gates on, rather than
+    /// restating the method-name set and risking the two drifting apart.
+    /// </summary>
+    public static bool IsDateAddMethod(MethodCallExpression call)
+        => (call.Method.DeclaringType == typeof(DateTime) || call.Method.DeclaringType == typeof(DateTimeOffset))
+            && call.Arguments.Count == 1
+            && DateAddUnitsByMethodName.ContainsKey(call.Method.Name);
+
+    // Exactly the AddXxx overloads that map 1:1 onto a $dateAdd unit string — see MongoDateAddUnit's own
+    // remarks for why AddTicks/Add(TimeSpan) are absent. Shared by DateTime and DateTimeOffset: both types
+    // declare identically-named/-shaped members.
+    private static readonly Dictionary<string, MongoDateAddUnit> DateAddUnitsByMethodName = new()
+    {
+        [nameof(DateTime.AddYears)] = MongoDateAddUnit.Year,
+        [nameof(DateTime.AddMonths)] = MongoDateAddUnit.Month,
+        [nameof(DateTime.AddDays)] = MongoDateAddUnit.Day,
+        [nameof(DateTime.AddHours)] = MongoDateAddUnit.Hour,
+        [nameof(DateTime.AddMinutes)] = MongoDateAddUnit.Minute,
+        [nameof(DateTime.AddSeconds)] = MongoDateAddUnit.Second,
+        [nameof(DateTime.AddMilliseconds)] = MongoDateAddUnit.Millisecond
+    };
+
     // Mirrors MongoEFToLinqTranslatingExpressionVisitor.DateTimeOffsetComponentMembers' member set, minus
     // TimeOfDay (see MongoDatePart's own remarks for why that one is excluded), and applies identically to a
     // plain DateTime receiver, which needs none of that visitor's offset-reconstruction dance.
@@ -471,6 +617,11 @@ internal sealed partial class MongoExpressionTranslator
             // way MongoConvertExpression's arm above does for an explicit cast.
             MongoDatePartExpression datePart => AllFieldsDefaultSerialized(datePart.Operand),
             MongoDateTimeOffsetLocalExpression local => AllFieldsDefaultSerialized(local.Operand),
+            // Same reasoning as MongoDatePartExpression above, over both operands: $dateAdd runs directly
+            // against StartDate's raw BSON representation, and Amount is a genuine numeric operand like any
+            // arithmetic operand elsewhere in this method.
+            MongoDateAddExpression dateAdd
+                => AllFieldsDefaultSerialized(dateAdd.StartDate) && AllFieldsDefaultSerialized(dateAdd.Amount),
             // A MongoInExpression is deliberately NOT given its own arm — it is correct via the catch-all
             // below: RenderIn/RenderInValues serialize every candidate value through the field's own property
             // serializer (MongoConstantExpression.ForSerialization / the parameter's serializer), so a
@@ -1273,9 +1424,9 @@ internal sealed partial class MongoExpressionTranslator
     internal static MongoBinaryOperator? MapArithmeticOperator(BinaryExpression node)
         => node.NodeType switch
         {
-            ExpressionType.Add => MongoBinaryOperator.Add,
-            ExpressionType.Subtract => MongoBinaryOperator.Subtract,
-            ExpressionType.Multiply => MongoBinaryOperator.Multiply,
+            ExpressionType.Add or ExpressionType.AddChecked => MongoBinaryOperator.Add,
+            ExpressionType.Subtract or ExpressionType.SubtractChecked => MongoBinaryOperator.Subtract,
+            ExpressionType.Multiply or ExpressionType.MultiplyChecked => MongoBinaryOperator.Multiply,
             ExpressionType.Divide => IsIntegerType(node.Type)
                 ? MongoBinaryOperator.IntegerDivide
                 : MongoBinaryOperator.Divide,
@@ -1367,6 +1518,12 @@ internal sealed partial class MongoExpressionTranslator
         // but this is placed here to keep it visually adjacent to the ConditionalExpression case above.
         if (TryTranslateDateTimeMember(node, out var dateTimeMember))
             return dateTimeMember;
+
+        // A DateTime/DateTimeOffset .AddXxx(amount) call (`new DateTime(1900, 1, 1).AddMinutes(o.OrderID % 25)`).
+        // Placed here, alongside TryTranslateDateTimeMember above, for the same reason: neither shape is ever
+        // matched by TryResolveMember below (a MethodCallExpression is not a member-access chain).
+        if (TryTranslateDateAdd(node, allowNumericWidening, out var dateAdd))
+            return dateAdd;
 
         if (TryResolveMember(node, out var property, out var fieldPath, out var operandIsOuter))
         {

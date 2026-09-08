@@ -44,7 +44,17 @@ internal static class NativeCardinalityBinder
         // the reducer's own $limit (below) would truncate the grouped rows instead of reducing over them.
         // A set-op-only terminal is exempt: a reducer composed after a set op goes native, recording its
         // $limit into TrailingOps (after the set-op stage) instead of PipelineOps.
-        if (select.HasTerminalOperator && !select.IsSetOpTerminalOnly)
+        //
+        // EF-322 carve-out: a reducer (First/FirstOrDefault/Single/SingleOrDefault, Last/LastOrDefault via the
+        // sort-flip below) composed after a projected Distinct (IsDistinct, never a genuine IsGroupBy) is NOT
+        // the KeyNotFoundException hazard above — same rationale as NativeCardinalityBinder.TryBindAggregate's
+        // own EF-322 carve-out (the lowerer's Grouping block now ALWAYS emits PostGroupOps, and a reducer has
+        // no field reference of its own to resolve, so no DistinctAliasScope wiring is needed here at all —
+        // the synthesized $limit below routes into PostGroupOps via the SAME ActiveOps mechanism Where/OrderBy/
+        // Skip/Take already use).
+        var isPostDistinctReducer = select.IsDistinct && !select.IsGroupBy && select.Grouping != null;
+
+        if (select.HasTerminalOperator && !select.IsSetOpTerminalOnly && !isPostDistinctReducer)
             return false;
 
         // A reducer composed after a CONFIRMED genuine two-sided join must fall back too (EF-392). The $limit
@@ -80,7 +90,15 @@ internal static class NativeCardinalityBinder
 
         var limit = kind is MongoReducerKind.Single or MongoReducerKind.SingleOrDefault ? 2 : 1;
         select.AppendLimit(new MongoConstantExpression(limit, forSerialization: null));
-        select.Cardinality = MongoCardinality.ForReducer(kind, resultType);
+        var cardinality = MongoCardinality.ForReducer(kind, resultType);
+
+        // EF-322: Cardinality and Grouping are ordinarily mutually exclusive (see the Cardinality setter's own
+        // remarks), but a reducer composed after a projected Distinct is the SAME sanctioned exception
+        // TryBindAggregate's own EF-322 carve-out already uses.
+        if (isPostDistinctReducer)
+            select.SetGroupedTerminalAggregate(select.Grouping!, cardinality, postGroupPredicate: null);
+        else
+            select.Cardinality = cardinality;
         return true;
     }
 
@@ -134,13 +152,40 @@ internal static class NativeCardinalityBinder
         // with KeyNotFoundException instead of falling back cleanly.
         // A set-op-only terminal is exempt: an aggregate composed after a set op goes native, recording its
         // injected predicate/$limit into TrailingOps (after the set-op stage) instead of PipelineOps.
-        if (select.HasTerminalOperator && !select.IsSetOpTerminalOnly)
+        //
+        // EF-322 carve-out: Count/LongCount/Any/All composed after a projected Distinct (IsDistinct, never a
+        // genuine IsGroupBy) are NOT the KeyNotFoundException hazard above — the lowerer now ALWAYS emits
+        // PostGroupOps before falling through to this aggregate's own terminal stage (see MongoSelectLowerer's
+        // Grouping block), so a terminal $count/$limit stage IS emitted right after it, same as for the direct
+        // (no-Select) Sum/Min/Max/Average carve-out above. A selector-bearing Sum/Min/Max/Average is admitted
+        // too — its selector resolves against the Distinct's OWN flattened output alias via
+        // MongoExpressionTranslator.DistinctAliasScope below (same as Count(pred)/Any(pred)/All(pred)), reusing
+        // the ordinary operand-resolution arm just below rather than reducing some OTHER, unflattened value. A
+        // selector-LESS Sum/Min/Max/Average (only reachable over a genuinely scalar-projected Distinct) is
+        // deliberately excluded here — that shape is the DIRECT TryBindDistinctTerminalAggregate carve-out
+        // above, which requires no Select ever intervened; requiring a selector here keeps the two mutually
+        // exclusive rather than double-deciding the bare-scalar case.
+        var isPostDistinctAggregate = select.IsDistinct && !select.IsGroupBy && select.Grouping != null
+            && select.Cardinality == null
+            && (op is MongoAggregateOperator.Count or MongoAggregateOperator.LongCount
+                or MongoAggregateOperator.Any or MongoAggregateOperator.All
+                || (op is MongoAggregateOperator.Sum or MongoAggregateOperator.Min
+                    or MongoAggregateOperator.Max or MongoAggregateOperator.Average && selector != null));
+
+        if (select.HasTerminalOperator && !select.IsSetOpTerminalOnly && !isPostDistinctAggregate)
             return false;
 
         // predicate is null for Sum/Min/Max/Average (which take a selector instead) and for a bare Any()/Count()
         // with no predicate — SelfParam stays null in those cases, which is fine: there is no predicate lambda
         // for a nested Count(pred)/Any/All to correlate against anyway.
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType, predicate?.Parameters[0]);
+
+        // EF-322: a Count(pred)/Any(pred)/All(pred)/Sum(selector)/Min(selector)/Max(selector)/Average(selector)
+        // composed after a projected Distinct resolves its predicate/selector against the Distinct's own
+        // flattened output alias, never the entity — same rationale and mechanism as NativeSlotPopulator's
+        // Where arm (MongoExpressionTranslator.DistinctAliasScope's own remarks).
+        if (isPostDistinctAggregate)
+            translator.DistinctAliasScope = select.Grouping;
 
         MongoFieldExpression? operand = null;
         if (op is MongoAggregateOperator.Sum or MongoAggregateOperator.Min
@@ -223,8 +268,22 @@ internal static class NativeCardinalityBinder
             NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQ, select.JoinScope!);
         }
 
-        select.Cardinality = MongoCardinality.ForAggregate(
+        var cardinality = MongoCardinality.ForAggregate(
             op, operand, emptyBehavior, emptyValue, resultType, presenceOnly, presentValue);
+
+        // EF-322: Cardinality and Grouping are ordinarily mutually exclusive (see the Cardinality setter's own
+        // remarks), but a Count/LongCount/Any/All composed after a projected Distinct is the SAME sanctioned
+        // exception as the bare-GroupBy-terminal-aggregate shape above (EF-449) — the lowerer's Grouping block
+        // now unconditionally emits PostGroupOps before falling through to this aggregate's own terminal
+        // stage, so both a $group AND a terminal $count/$limit are genuinely needed. postGroupPredicate is
+        // deliberately null here (unlike the EF-449 call): any predicate this method built above was already
+        // routed into PostGroupOps via AddPredicateConjunct (ActiveOps targets _postGroupOps for this exact
+        // IsDistinct-and-Grouping-set condition), not the separate single-slot PostGroupPredicate field the
+        // EF-449 HAVING shape uses.
+        if (isPostDistinctAggregate)
+            select.SetGroupedTerminalAggregate(select.Grouping!, cardinality, postGroupPredicate: null);
+        else
+            select.Cardinality = cardinality;
         return true;
     }
 

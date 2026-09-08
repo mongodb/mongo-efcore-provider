@@ -2652,169 +2652,90 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Ship
     public override async Task Select_expression_other_to_string(bool async)
         => await base.Select_expression_other_to_string(async);
 
-    // The driver translates DateAdd/Sub but the resulting Bson DateTime loses the .NET
-    // DateTimeKind (returned as UTC) so the base test's exact-value comparison fails. The
-    // assertions below pin the failure type and a stable message portion so unrelated
-    // regressions surface as a different exception rather than silently passing.
+    // EF-322: these used to be driver-LINQ-only (the native translator had no DateTime.AddXxx support at
+    // all), and the driver-LINQ shaper lost the .NET DateTimeKind on the round trip (BSON dates always
+    // deserialize as UTC), so the base test's exact-value comparison used to fail. Now that AddXxx goes
+    // native, our OWN shaper (not the driver's) reads the result back, and it agrees with .NET — no
+    // divergence to work around.
 
     public override async Task Select_expression_date_add_year(bool async)
     {
-        // Fails: Unsupported by driver EF-X003 (driver-LINQ mode, which executes and returns wrong
-        // data). Native-only mode rejects the shape outright.
-        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
-            () => base.Select_expression_date_add_year(async), typeof(EqualException));
+        await base.Select_expression_date_add_year(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-                """
-Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "year", "amount" : 1 } }, "_id" : 0 } }
-""");
-        }
+        AssertMql(
+            """
+            Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "year", "amount" : 1 } }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_expression_datetime_add_month(bool async)
     {
-        // Fails: Unsupported by driver EF-X003 (driver-LINQ mode, which executes and returns wrong
-        // data). Native-only mode rejects the shape outright.
-        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
-            () => base.Select_expression_datetime_add_month(async), typeof(EqualException));
+        await base.Select_expression_datetime_add_month(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-                """
-Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "month", "amount" : 1 } }, "_id" : 0 } }
-""");
-        }
+        AssertMql(
+            """
+            Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "month", "amount" : 1 } }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_expression_datetime_add_hour(bool async)
     {
-        // Fails: Unsupported by driver EF-X003 (driver-LINQ mode, which executes and returns wrong
-        // data). Native-only mode rejects the shape outright.
-        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
-            () => base.Select_expression_datetime_add_hour(async), typeof(EqualException));
+        await base.Select_expression_datetime_add_hour(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-                """
-Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "hour", "amount" : 1.0 } }, "_id" : 0 } }
-""");
-        }
+        AssertMql(
+            """
+            Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "hour", "amount" : 1.0 } }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_expression_datetime_add_minute(bool async)
     {
-        // Fails: Unsupported by driver EF-X003 (driver-LINQ mode, which executes and returns wrong
-        // data). Native-only mode rejects the shape outright.
-        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
-            () => base.Select_expression_datetime_add_minute(async), typeof(EqualException));
+        await base.Select_expression_datetime_add_minute(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-                """
-Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "minute", "amount" : 1.0 } }, "_id" : 0 } }
-""");
-        }
+        AssertMql(
+            """
+            Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "minute", "amount" : 1.0 } }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_expression_datetime_add_second(bool async)
     {
-        // Fails: Unsupported by driver EF-X003 (driver-LINQ mode, which executes and returns wrong
-        // data). Native-only mode rejects the shape outright.
-        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
-            () => base.Select_expression_datetime_add_second(async), typeof(EqualException));
+        await base.Select_expression_datetime_add_second(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-                """
-Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "second", "amount" : 1.0 } }, "_id" : 0 } }
-""");
-        }
+        AssertMql(
+            """
+            Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "second", "amount" : 1.0 } }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_expression_date_add_milliseconds_above_the_range(bool async)
     {
-        // Fails: Unsupported by driver EF-X003 (driver-LINQ mode, which executes and returns wrong
-        // data). Native-only mode rejects the shape outright.
-        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
-            () => base.Select_expression_date_add_milliseconds_above_the_range(async), typeof(EqualException));
+        await base.Select_expression_date_add_milliseconds_above_the_range(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-                """
-Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "millisecond", "amount" : 1000000000000.0 } }, "_id" : 0 } }
-""");
-        }
+        AssertMql(
+            """
+            Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "millisecond", "amount" : 1000000000000.0 } }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_expression_date_add_milliseconds_below_the_range(bool async)
     {
-        // Fails: Unsupported by driver EF-X003 (driver-LINQ mode, which executes and returns wrong
-        // data). Native-only mode rejects the shape outright.
-        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
-            () => base.Select_expression_date_add_milliseconds_below_the_range(async), typeof(EqualException));
+        await base.Select_expression_date_add_milliseconds_below_the_range(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-                """
-Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "millisecond", "amount" : -1000000000000.0 } }, "_id" : 0 } }
-""");
-        }
+        AssertMql(
+            """
+            Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "millisecond", "amount" : -1000000000000.0 } }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_expression_date_add_milliseconds_large_number_divided(bool async)
     {
-        // Fails: Unsupported by driver EF-X003 (driver-LINQ mode, which executes and fails deserializing the
-        // result). Native-only mode rejects the shape outright, before anything is logged.
-        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
-            () => base.Select_expression_date_add_milliseconds_large_number_divided(async), typeof(FormatException));
+        await base.Select_expression_date_add_milliseconds_large_number_divided(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-                """
-Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "day", "amount" : { "$divide" : [{ "$millisecond" : "$OrderDate" }, 86400000] } } }, "unit" : "millisecond", "amount" : { "$mod" : [{ "$millisecond" : "$OrderDate" }, 86400000] } } }, "_id" : 0 } }
-""");
-        }
+        AssertMql(
+            """
+            Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "day", "amount" : { "$trunc" : { "$divide" : [{ "$millisecond" : "$OrderDate" }, 86400000] } } } }, "unit" : "millisecond", "amount" : { "$mod" : [{ "$millisecond" : "$OrderDate" }, 86400000] } } }, "_id" : 0 } }
+            """);
     }
 
     public override async Task Add_minutes_on_constant_value(bool async)
@@ -3094,7 +3015,7 @@ Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
         AssertMql(
             """
-            Customers.{ "$project" : { "CustomerID" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$match" : { "CustomerID" : "ALFKI" } }
+            Customers.{ "$group" : { "_id" : { "CustomerID" : "$_id" } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "_id" : 0 } }, { "$match" : { "CustomerID" : "ALFKI" } }
             """);
     }
 
@@ -3114,7 +3035,7 @@ Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
         AssertMql(
             """
-            Customers.{ "$project" : { "CustomerID" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$count" : "_v" }
+            Customers.{ "$group" : { "_id" : { "CustomerID" : "$_id" } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "_id" : 0 } }, { "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$count" : "v" }
             """);
     }
 
@@ -3173,7 +3094,7 @@ Customers.{ "$set" : { "__sort0" : { "$concat" : ["$_id", "$City"] } } }, { "$so
 
         AssertMql(
             """
-            Customers.{ "$project" : { "Property" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$match" : { "Property" : "ALFKI" } }
+            Customers.{ "$group" : { "_id" : { "Property" : "$_id" } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$match" : { "Property" : "ALFKI" } }
             """);
     }
 
@@ -3193,7 +3114,7 @@ Customers.{ "$set" : { "__sort0" : { "$concat" : ["$_id", "$City"] } } }, { "$so
 
         AssertMql(
             """
-            Customers.{ "$project" : { "Property" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$match" : { "Property" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$count" : "_v" }
+            Customers.{ "$group" : { "_id" : { "Property" : "$_id" } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$match" : { "Property" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$count" : "v" }
             """);
     }
 

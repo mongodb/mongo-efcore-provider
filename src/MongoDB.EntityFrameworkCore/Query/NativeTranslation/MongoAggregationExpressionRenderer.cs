@@ -93,6 +93,7 @@ internal static class MongoAggregationExpressionRenderer
                     { "amount", FieldRef(local.Operand.ElementName + ".Offset", elementVariable) }
                 }),
             MongoDatePartExpression datePart => RenderDatePart(datePart, placeholders, elementVariable),
+            MongoDateAddExpression dateAdd => RenderDateAdd(dateAdd, placeholders, elementVariable),
             MongoQuantifierExpression quantifier => RenderQuantifier(quantifier, placeholders, elementVariable),
             // A constructed nested sub-document leaf (EF-447, `new Book { Id = e.Id, Title = e.Title }`).
             // Each member renders through this SAME Render call, recursively, so a nested field ref renders as
@@ -173,6 +174,7 @@ internal static class MongoAggregationExpressionRenderer
                 => CanRender(conditional.Test) && CanRender(conditional.IfTrue) && CanRender(conditional.IfFalse),
             MongoDateTimeOffsetLocalExpression local => CanRender(local.Operand),
             MongoDatePartExpression datePart => CanRender(datePart.Operand),
+            MongoDateAddExpression dateAdd => CanRender(dateAdd.StartDate) && CanRender(dateAdd.Amount),
             MongoQuantifierExpression quantifier => CanRender(quantifier.ArrayPath) && CanRender(quantifier.ElementPredicate),
             MongoConcatExpression concat => concat.Operands.All(CanRender),
             _ => false
@@ -246,6 +248,27 @@ internal static class MongoAggregationExpressionRenderer
             _ => throw new NativeTranslationNotSupportedException($"Unhandled {nameof(MongoDatePart)} '{node.Part}'.")
         };
     }
+
+    private static BsonValue RenderDateAdd(MongoDateAddExpression node, PlaceholderTable placeholders, string? elementVariable)
+        => new BsonDocument("$dateAdd", new BsonDocument
+        {
+            { "startDate", Render(node.StartDate, placeholders, elementVariable) },
+            { "unit", UnitName(node.Unit) },
+            { "amount", Render(node.Amount, placeholders, elementVariable) }
+        });
+
+    private static string UnitName(MongoDateAddUnit unit)
+        => unit switch
+        {
+            MongoDateAddUnit.Year => "year",
+            MongoDateAddUnit.Month => "month",
+            MongoDateAddUnit.Day => "day",
+            MongoDateAddUnit.Hour => "hour",
+            MongoDateAddUnit.Minute => "minute",
+            MongoDateAddUnit.Second => "second",
+            MongoDateAddUnit.Millisecond => "millisecond",
+            _ => throw new NativeTranslationNotSupportedException($"Unhandled {nameof(MongoDateAddUnit)} '{unit}'.")
+        };
 
     // A missing or explicitly-null array makes $size a hard server error that aborts the whole aggregate, so an
     // EMBEDDED array path is wrapped in $ifNull (count 0 — what LINQ answers for a missing embedded array). A

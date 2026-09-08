@@ -926,7 +926,7 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
         AssertMql(
             """
-            Orders.{ "$project" : { "OrderID" : "$_id", "EmployeeID" : "$EmployeeID", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$group" : { "_id" : "$EmployeeID", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "c" : "$__agg0", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "OrderID" : "$_id", "EmployeeID" : "$EmployeeID" } } }, { "$project" : { "OrderID" : "$_id.OrderID", "EmployeeID" : "$_id.EmployeeID", "_id" : 0 } }, { "$group" : { "_id" : "$EmployeeID", "c" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "c" : "$c", "_id" : 0 } }
             """);
     }
 
@@ -1114,7 +1114,7 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
         AssertMql(
             """
-            Orders.{ "$project" : { "CustomerID" : "$CustomerID", "OrderID" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "__agg0" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id.CustomerID", "Count" : "$__agg0", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "OrderID" : "$_id" } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "OrderID" : "$_id.OrderID", "_id" : 0 } }, { "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id.CustomerID", "Count" : "$Count", "_id" : 0 } }
             """);
     }
 
@@ -1950,7 +1950,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 } } }, { "$
 
         AssertMql(
             """
-            Customers.{ "$project" : { "Renamed" : "$City", "CustomerID" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$group" : { "_id" : "$Renamed", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$__agg0", "_id" : 0 } }
+            Customers.{ "$group" : { "_id" : { "Renamed" : "$City", "CustomerID" : "$_id" } } }, { "$project" : { "Renamed" : "$_id.Renamed", "CustomerID" : "$_id.CustomerID", "_id" : 0 } }, { "$group" : { "_id" : "$Renamed", "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
             """);
     }
 

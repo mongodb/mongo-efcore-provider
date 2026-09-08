@@ -112,6 +112,8 @@ internal static class MongoFieldPrefixRewriter
             MongoConditionalExpression c2 => new MongoConditionalExpression(
                 Rewrite(c2.Test, prefix), Rewrite(c2.IfTrue, prefix), Rewrite(c2.IfFalse, prefix)),
             MongoDatePartExpression dp => new MongoDatePartExpression(Rewrite(dp.Operand, prefix), dp.Part),
+            MongoDateAddExpression da => new MongoDateAddExpression(
+                Rewrite(da.StartDate, prefix), da.Unit, Rewrite(da.Amount, prefix)),
             MongoDateTimeOffsetLocalExpression l => new MongoDateTimeOffsetLocalExpression(
                 (MongoFieldExpression)Rewrite(l.Operand, prefix)),
             // NullSafe MUST be carried across — dropping it (as this arm used to) silently removed the $ifNull

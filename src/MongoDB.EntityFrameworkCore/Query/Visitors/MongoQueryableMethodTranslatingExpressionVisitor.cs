@@ -2152,30 +2152,43 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         // Guard: a GroupBy applied on top of a query that ALREADY terminates in a native grouping/distinct —
         // a projected Distinct (IsDistinct, which set a key-only Grouping), a prior GroupBy (IsGroupBy), or any
-        // finalized Grouping — must NOT rebind. TryBindGroupKey would OVERWRITE the existing Grouping with this
-        // GroupBy's own key, silently DROPPING the Distinct/prior-grouping (e.g.
+        // finalized Grouping — must NOT rebind by DEFAULT. TryBindGroupKey would OVERWRITE the existing
+        // Grouping with this GroupBy's own key, silently DROPPING the Distinct/prior-grouping (e.g.
         // Select(new{a,b}).Distinct().GroupBy(x=>x.k) would emit $group{_id:$k, $sum:1} counting ALL rows, not
         // distinct rows). GroupBy has its own Translate override, so it bypasses the IsGroupBy||IsDistinct
-        // post-group guards in NativeSlotPopulator/NativeCardinalityBinder — hence this dedicated guard. Mark
-        // the query non-native (so it falls back to driver-LINQ under Native, throws under NativeOnly, matching
-        // the correct driver-LINQ result) and return a valid grouped shaped query WITHOUT rebinding.
+        // post-group guards in NativeSlotPopulator/NativeCardinalityBinder — hence this dedicated guard.
         // The guard must read state as it stood BEFORE this GroupBy call — captured here, before the
         // unconditional IsGroupBy assignment below (both the guard branch and the normal-binding branch set
         // IsGroupBy, so it is hoisted above the if/else; reading Select.HasTerminalOperator AFTER that
         // assignment would always be true and defeat the guard).
         var hadTerminalGrouping = mongoQueryExpression.Select.HasTerminalOperator;
 
+        // EF-322: a GroupBy(key).Select(aggregate) composed directly on top of a PURE projected Distinct
+        // (IsDistinct, never a genuine prior IsGroupBy/SetOp/Unwind — the SAME narrow predicate every other
+        // EF-322 post-Distinct carve-out uses) is NOT the overwrite hazard the guard above exists for: rather
+        // than rebinding INTO the Distinct's own Grouping, MongoSelectDefinition
+        // .SnapshotDistinctGroupingForNestedGroupBy moves it aside into PriorGrouping first, so TryBindGroupKey
+        // below builds a genuinely SECOND, independent grouping — the Distinct's own dedup still applies
+        // (MongoSelectLowerer emits PriorGrouping's $group + flatten $project, then PostGroupOps, THEN this
+        // grouping's own $group + flatten $project). A second GroupBy directly on a GroupBy (IsGroupBy already
+        // true) is NOT this shape and stays declined exactly as before.
+        var isPostDistinctGroupBy = mongoQueryExpression.Select.IsDistinct && !mongoQueryExpression.Select.IsGroupBy
+            && mongoQueryExpression.Select.Grouping != null;
+
         // Record GroupBy provenance unconditionally (both the guard branch below and the normal-binding branch
         // need it — see TranslateJoinCore) so a later Join/GroupJoin/LeftJoin over this grouped source can be
         // recognized as the wrong-data-on-fallback shape.
         mongoQueryExpression.Select.IsGroupBy = true;
 
-        if (hadTerminalGrouping)
+        if (hadTerminalGrouping && !isPostDistinctGroupBy)
         {
             mongoQueryExpression.Select.MarkNotNativelyRepresentable();
         }
         else
         {
+            if (isPostDistinctGroupBy)
+                mongoQueryExpression.Select.SnapshotDistinctGroupingForNestedGroupBy();
+
             if (elementSelector != null || resultSelector != null
                 || !NativeGroupByBinder.TryBindGroupKey(mongoQueryExpression, keySelector))
             {

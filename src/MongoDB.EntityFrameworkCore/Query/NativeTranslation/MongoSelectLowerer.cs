@@ -207,6 +207,22 @@ internal sealed class MongoSelectLowerer
             return stages;
         }
 
+        // EF-322: a GroupBy(key).Select(aggregate) composed directly on a projected Distinct snapshotted the
+        // Distinct's OWN $group/flatten-$project aside into PriorGrouping/PriorGroupingProjection
+        // (MongoSelectDefinition.SnapshotDistinctGroupingForNestedGroupBy) so it can emit here FIRST — the
+        // Distinct's dedup must apply before the outer GroupBy's own $group runs, or the two would collapse
+        // into one (silently counting pre-dedup rows). PostGroupOps (a Where/OrderBy/etc. composed BETWEEN the
+        // Distinct and this GroupBy) lands here too, immediately after — nothing can route into PostGroupOps
+        // once IsGroupBy flips true, so this is the ONLY place it can belong for this shape. Null for every
+        // other query, including an ordinary (non-nested) GroupBy(key).Select(aggregate).
+        if (select.PriorGrouping is { } priorGrouping)
+        {
+            stages.Add(new MongoGroupStage(priorGrouping));
+            if (select.PriorGroupingProjection.Count > 0)
+                stages.Add(new MongoProjectStage(select.PriorGroupingProjection));
+            AppendSelectOpStages(select.PostGroupOps, stages, sortFields);
+        }
+
         // 6b. Keyed $group terminal (GroupBy(key).Select(aggregate)). A GroupBy-route query has only
         // $match + $group by construction — the binder rejects orderings/paging alongside a grouping —
         // so no $sort/$skip/$limit precede it here. The $group is followed by a flattening $project
@@ -237,12 +253,23 @@ internal sealed class MongoSelectLowerer
                 stages.Add(new MongoProjectStage(select.Projection));
             }
 
+            // EF-322: a Where/OrderBy/ThenBy/Skip/Take composed after a projected Distinct (never a genuine
+            // GroupBy — NativeSlotPopulator's carve-out only routes here for IsDistinct) lands past the
+            // flatten $project, filtering/sorting/paging the Distinct's OWN output rather than the pre-group
+            // documents. Emitted UNCONDITIONALLY w.r.t. Cardinality (not only in the no-aggregate branch
+            // below): a trailing Count/LongCount/Any/All composed after those ops (NativeCardinalityBinder's
+            // own EF-322 carve-out) ALSO finalizes Cardinality and falls through past this block to the
+            // aggregate-terminal switch further down — PostGroupOps must still land before that terminal
+            // stage, or a preceding Where's $match would be silently dropped.
+            // Guarded on PriorGrouping == null: when a GroupBy nests on a projected Distinct, PostGroupOps
+            // belongs BETWEEN the Distinct's own $group (PriorGrouping, emitted above) and THIS $group — it
+            // was already emitted there, and nothing can route into PostGroupOps again once IsGroupBy is
+            // true, so emitting it here too would be a harmless-looking but WRONG double-emission.
+            if (select.PriorGrouping == null)
+                AppendSelectOpStages(select.PostGroupOps, stages, sortFields);
+
             if (select.Cardinality?.Aggregate is null)
             {
-                // EF-322: an OrderBy/ThenBy composed after a projected Distinct (never a genuine GroupBy —
-                // NativeSlotPopulator's carve-out only routes here for IsDistinct) lands past the flatten
-                // $project, sorting the Distinct's OWN output rather than the pre-group documents.
-                AppendSelectOpStages(select.PostGroupOps, stages, sortFields);
                 return stages;
             }
         }

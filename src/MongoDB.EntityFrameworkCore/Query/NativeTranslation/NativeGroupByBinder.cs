@@ -56,6 +56,14 @@ internal static class NativeGroupByBinder
             return false;
 
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
+
+        // EF-322: a GroupBy composed directly on top of a projected Distinct (Select.PriorGrouping, set by
+        // SnapshotDistinctGroupingForNestedGroupBy just before this call) resolves its key selector against
+        // the Distinct's own flattened output alias, never the entity — same rationale and mechanism as
+        // NativeSlotPopulator's Where arm (MongoExpressionTranslator.DistinctAliasScope's own remarks).
+        if (select.PriorGrouping is { } priorGrouping)
+            translator.DistinctAliasScope = priorGrouping;
+
         var parts = new List<MongoGroupingKeyPart>();
 
         switch (keySelector.Body)
@@ -137,6 +145,13 @@ internal static class NativeGroupByBinder
             return false;
 
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
+
+        // EF-322: an accumulator's operand selector (g.Sum(x => x.Field) etc.) over a GroupBy nested on a
+        // projected Distinct resolves against the Distinct's own flattened alias, never the entity — see
+        // TryBindGroupKey's own carve-out above for the identical rationale.
+        if (select.PriorGrouping is { } priorGrouping)
+            translator.DistinctAliasScope = priorGrouping;
+
         var groupingParameter = resultSelector.Parameters[0];
         var accumulators = new List<MongoGroupAccumulator>();
         var isComposite = keyParts.Count > 1 || keyParts[0].Name != null;

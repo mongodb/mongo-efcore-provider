@@ -115,6 +115,27 @@ internal sealed partial class MongoExpressionTranslator
         // root; every other member is inner-scoped. Identity (ReferenceEquals), never name — so a member name
         // shared between the two scopes cannot be mis-routed.
         isOuter = _outerParam is not null && ReferenceEquals(param, _outerParam);
+
+        // EF-322: a post-Distinct predicate/sort-key member resolves against the Distinct's OWN flattened
+        // output schema (DistinctAliasScope), never the entity — see DistinctAliasScope's remarks. A member
+        // name that is not one of the Distinct's own key parts declines outright (does NOT fall through to
+        // the entity below): the whole point is that a projected member's name is independent of any
+        // real entity property of the same name, so falling through would silently resolve the wrong field.
+        if (!isOuter && DistinctAliasScope is { } distinctScope)
+        {
+            foreach (var part in distinctScope.Key)
+            {
+                if (part.Name == memberName && part.FieldRef is MongoFieldExpression aliasField)
+                {
+                    property = aliasField.Property;
+                    fieldPath = part.Name;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         var scopeType = isOuter ? _outerEntityType! : _entityType;
 
         var resolved = scopeType.FindProperty(memberName);

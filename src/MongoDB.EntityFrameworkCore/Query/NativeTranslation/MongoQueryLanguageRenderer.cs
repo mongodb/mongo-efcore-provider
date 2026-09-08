@@ -512,6 +512,7 @@ internal sealed class MongoQueryLanguageRenderer
             // hard server error.
             MongoConditionalExpression => false,
             MongoDatePartExpression => false,
+            MongoDateAddExpression => false,
             MongoDateTimeOffsetLocalExpression => false,
             // No query-dialect form at all — see the node's own remarks. Explicit rather than left to the
             // catch-all, matching the style of MongoConditionalExpression/MongoDatePartExpression above.
