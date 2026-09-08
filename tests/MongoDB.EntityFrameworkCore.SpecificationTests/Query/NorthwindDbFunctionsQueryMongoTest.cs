@@ -40,66 +40,96 @@ public class NorthwindDbFunctionsQueryMongoTest
     public override async Task Like_literal(bool async)
     {
         // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "Expression not supported: value(Microsoft.EntityFrameworkCore.DbFunctions).Like",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Like_literal(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Like_literal(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task Like_identity(bool async)
     {
         // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "Expression not supported: value(Microsoft.EntityFrameworkCore.DbFunctions).Like",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Like_identity(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Like_identity(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task Like_literal_with_escape(bool async)
     {
         // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "Expression not supported: value(Microsoft.EntityFrameworkCore.DbFunctions).Like",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Like_literal_with_escape(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Like_literal_with_escape(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task Like_all_literals(bool async)
     {
         // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "The 'Like' method is not supported because the query has switched to client-evaluation.",
-            (await Assert.ThrowsAsync<TargetInvocationException>(() => base.Like_all_literals(async))).InnerException.Message);
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Like_all_literals(async), typeof(TargetInvocationException));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task Like_all_literals_with_escape(bool async)
     {
         // Fails: translation of Like issue EF-222
-        Assert.Contains(
-            "The 'Like' method is not supported because the query has switched to client-evaluation.",
-            (await Assert.ThrowsAsync<TargetInvocationException>(() => base.Like_all_literals_with_escape(async))).InnerException.Message);
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Like_all_literals_with_escape(async), typeof(TargetInvocationException));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
 #if EF8 || EF9
@@ -134,4 +164,7 @@ Orders.
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);
+
+    protected new static Task AssertTranslationFailed(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 }

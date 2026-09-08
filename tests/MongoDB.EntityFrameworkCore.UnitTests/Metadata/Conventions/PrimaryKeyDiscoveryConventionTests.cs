@@ -49,6 +49,20 @@ public static class PrimaryKeyDiscoveryConventionTests
         Assert.Single(keys[0].Properties, p => p.PropertyInfo.Equals(expectedProperty));
     }
 
+    [Fact]
+    public static void Many_to_many_join_entity_gets_composite_primary_key_without_extra_shadow_property()
+    {
+        using var db = new ManyToManyDbContext();
+
+        var joinEntityType = db.Model.GetEntityTypes().Single(e => e.ClrType == typeof(Dictionary<string, object>));
+
+        var primaryKey = joinEntityType.FindPrimaryKey();
+        Assert.NotNull(primaryKey);
+        Assert.Equal(["FruitsId", "JamsId"], primaryKey.Properties.Select(p => p.Name).OrderBy(n => n));
+
+        Assert.Equal(["FruitsId", "JamsId"], joinEntityType.GetProperties().Select(p => p.Name).OrderBy(n => n));
+    }
+
     class Vendor
     {
         public string _id { get; set; }
@@ -59,6 +73,20 @@ public static class PrimaryKeyDiscoveryConventionTests
     {
         public ObjectId _id { get; set; }
         public string name { get; set; }
+    }
+
+    class Fruit
+    {
+        public Guid Id { get; set; }
+        public string Name { get; set; }
+        public List<Jam> Jams { get; } = new();
+    }
+
+    class Jam
+    {
+        public Guid Id { get; set; }
+        public string Name { get; set; }
+        public List<Fruit> Fruits { get; } = new();
     }
 
     abstract class BaseDbContext : DbContext
@@ -73,5 +101,19 @@ public static class PrimaryKeyDiscoveryConventionTests
             => optionsBuilder
                 .UseMongoDB("mongodb://localhost:27017", "UnitTests")
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+    }
+
+    class ManyToManyDbContext : DbContext
+    {
+        public DbSet<Fruit> Fruits { get; set; }
+        public DbSet<Jam> Jams { get; set; }
+
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+            => optionsBuilder
+                .UseMongoDB("mongodb://localhost:27017", "UnitTests")
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+            => modelBuilder.Entity<Fruit>().HasMany(f => f.Jams).WithMany(j => j.Fruits);
     }
 }

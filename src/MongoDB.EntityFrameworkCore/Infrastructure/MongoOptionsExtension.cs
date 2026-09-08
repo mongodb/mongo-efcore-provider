@@ -21,6 +21,7 @@ using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 
 // ReSharper disable once CheckNamespace (extensions should be in the EF namespace for discovery)
 namespace Microsoft.EntityFrameworkCore;
@@ -55,6 +56,7 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
         KeyVaultNamespace = copyFrom.KeyVaultNamespace;
         KmsProviders = copyFrom.KmsProviders;
         QueryableEncryptionSchemaMode = copyFrom.QueryableEncryptionSchemaMode;
+        QueryMode = copyFrom.QueryMode;
         _loggableConnectionString = SanitizeConnectionStringForLogging(ConnectionString);
     }
 
@@ -228,6 +230,25 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
     }
 
     /// <summary>
+    /// Gets the <see cref="MongoQueryMode"/> that controls how LINQ queries are translated.
+    /// </summary>
+    public MongoQueryMode QueryMode { get; private set; } = MongoQueryMode.Native;
+
+    /// <summary>
+    /// Specifies the <see cref="MongoQueryMode"/> to use when translating LINQ queries.
+    /// </summary>
+    /// <param name="queryMode">The <see cref="MongoQueryMode"/> to use.</param>
+    /// <returns>The <see cref="MongoOptionsExtension"/> to continue chaining configuration.</returns>
+    public virtual MongoOptionsExtension WithQueryMode(MongoQueryMode queryMode)
+    {
+        Check.IsDefinedOrNull<MongoQueryMode>(queryMode);
+
+        var clone = Clone();
+        clone.QueryMode = queryMode;
+        return clone;
+    }
+
+    /// <summary>
     /// Clones the current <see cref="MongoOptionsExtension"/>.
     /// </summary>
     /// <returns>A new clone.</returns>
@@ -285,7 +306,7 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
         /// <inheritdoc/>
         public override int GetServiceProviderHashCode()
         {
-            _serviceProviderHash ??= HashCode.Combine(Extension.ConnectionString, Extension.DatabaseName);
+            _serviceProviderHash ??= HashCode.Combine(Extension.ConnectionString, Extension.DatabaseName, Extension.QueryMode);
             return _serviceProviderHash.Value;
         }
 
@@ -296,7 +317,8 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
                && Extension.MongoClient == otherInfo.Extension.MongoClient
                && (Extension.ClientSettings == otherInfo.Extension.ClientSettings ||
                    Extension.ClientSettings != null && Extension.ClientSettings.Equals(otherInfo.Extension.ClientSettings))
-               && Extension.DatabaseName == otherInfo.Extension.DatabaseName;
+               && Extension.DatabaseName == otherInfo.Extension.DatabaseName
+               && Extension.QueryMode == otherInfo.Extension.QueryMode;
 
         /// <inheritdoc/>
         public override void PopulateDebugInfo(IDictionary<string, string> debugInfo)
@@ -305,6 +327,7 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
             AddDebugInfo(debugInfo, nameof(MongoClient), Extension.MongoClient);
             AddDebugInfo(debugInfo, nameof(ClientSettings), Extension.ClientSettings);
             AddDebugInfo(debugInfo, nameof(DatabaseName), Extension.DatabaseName);
+            AddDebugInfo(debugInfo, nameof(QueryMode), Extension.QueryMode);
         }
 
         /// <inheritdoc/>
@@ -337,6 +360,12 @@ public class MongoOptionsExtension : IDbContextOptionsExtension
             }
 
             builder.Append("DatabaseName=").Append(Extension.DatabaseName).Append(' ');
+
+            if (Extension.QueryMode != MongoQueryMode.Native)
+            {
+                builder.Append("QueryMode=").Append(Extension.QueryMode).Append(' ');
+            }
+
             return builder.ToString();
         }
     }

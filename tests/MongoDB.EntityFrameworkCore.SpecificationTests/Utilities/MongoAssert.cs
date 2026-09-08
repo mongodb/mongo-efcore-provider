@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 using Xunit.Sdk;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Utilities;
@@ -21,11 +22,19 @@ internal static class MongoAssert
 {
     /// <summary>
     /// Assert that the query fails because it involves a correlated subquery
-    /// across collections that cannot be translated by the MongoDB provider.
+    /// across collections that cannot be translated by the MongoDB provider. Driver-LINQ mode raises this
+    /// via a Mongo-specific guard with a message reporting "Unsupported cross-DbSet query"; native-only mode
+    /// rejects the same shape earlier, as <see cref="NativeTranslationNotSupportedException"/>. Both signal
+    /// the identical unsupported-shape condition, so either is accepted.
     /// </summary>
     public static async Task AssertUnsupportedCrossDbSetQuery(Func<Task> query)
     {
         var exception = await Assert.ThrowsAnyAsync<Exception>(query);
+        if (exception is NativeTranslationNotSupportedException)
+        {
+            return;
+        }
+
         var message = GetInnermostException(exception).Message;
         Assert.Contains("Unsupported cross-DbSet query", message);
     }

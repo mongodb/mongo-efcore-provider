@@ -13,7 +13,10 @@
  * limitations under the License.
  */
 
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.Query.Factories;
 
@@ -22,14 +25,35 @@ namespace MongoDB.EntityFrameworkCore.Query.Factories;
 /// </summary>
 public class MongoQueryCompilationContextFactory : IQueryCompilationContextFactory
 {
+    private readonly MongoQueryMode _queryMode;
+
     /// <summary>
-    /// Create a <see cref="MongoQueryContextFactory"/>.
+    /// Create a <see cref="MongoQueryCompilationContextFactory"/> using the default <see cref="MongoQueryMode.Native"/> query mode.
     /// </summary>
+    /// <remarks>
+    /// Retained for binary/source compatibility with v10.0.2, which shipped this single-argument public
+    /// constructor. DI does not select it (the two-argument overload is greedier), but a consumer that does
+    /// <c>ReplaceService&lt;IQueryCompilationContextFactory&gt;</c> and subclasses this type binds to it, so
+    /// removing it is a breaking change. Do not delete — this is intentionally not "dead code".
+    /// </remarks>
     /// <param name="dependencies">The <see cref="QueryCompilationContextDependencies"/> passed to each created <see cref="MongoQueryCompilationContext" /> instance.</param>
-    public MongoQueryCompilationContextFactory(
-        QueryCompilationContextDependencies dependencies)
+    public MongoQueryCompilationContextFactory(QueryCompilationContextDependencies dependencies)
     {
         Dependencies = dependencies;
+        _queryMode = MongoQueryMode.Native;
+    }
+
+    /// <summary>
+    /// Create a <see cref="MongoQueryCompilationContextFactory"/>.
+    /// </summary>
+    /// <param name="dependencies">The <see cref="QueryCompilationContextDependencies"/> passed to each created <see cref="MongoQueryCompilationContext" /> instance.</param>
+    /// <param name="dbContextOptions">The <see cref="IDbContextOptions"/> used to resolve the configured <see cref="MongoQueryMode"/>.</param>
+    public MongoQueryCompilationContextFactory(
+        QueryCompilationContextDependencies dependencies,
+        IDbContextOptions dbContextOptions)
+    {
+        Dependencies = dependencies;
+        _queryMode = dbContextOptions.FindExtension<MongoOptionsExtension>()?.QueryMode ?? MongoQueryMode.Native;
     }
 
     /// <summary>
@@ -43,5 +67,5 @@ public class MongoQueryCompilationContextFactory : IQueryCompilationContextFacto
     /// <param name="async"><see langword="true"/> if the query to process is asynchronous, <see langword="false"/> if it is synchronous.</param>
     /// <returns>The newly created <see cref="MongoQueryCompilationContext"/>.</returns>
     public virtual QueryCompilationContext Create(bool async)
-        => new MongoQueryCompilationContext(Dependencies, async);
+        => new MongoQueryCompilationContext(Dependencies, async, _queryMode);
 }

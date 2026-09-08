@@ -12,7 +12,8 @@ using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
-internal sealed class ObjectArrayProjectionExpression : Expression, IPrintableExpression, IAccessExpression
+internal sealed class ObjectArrayProjectionExpression
+    : Expression, IPrintableExpression, IAccessExpression, IArrayProjectionExpression
 {
     /// <summary>
     /// Create an <see cref="ObjectArrayProjectionExpression"/>. When <paramref name="name"/> is
@@ -46,6 +47,10 @@ internal sealed class ObjectArrayProjectionExpression : Expression, IPrintableEx
     public override Type Type { get; }
 
     public string? Name { get; }
+
+    /// <inheritdoc />
+    /// <remarks>This node addresses its array by document path, so the field name is its <see cref="Name"/>.</remarks>
+    public string? ArrayFieldName => Name;
 
     public INavigation Navigation { get; }
 

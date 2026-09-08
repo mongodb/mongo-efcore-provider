@@ -43,8 +43,11 @@ Customers.{ "$match" : { "City" : "London" } }
 
     public override async Task KeylessEntity_by_database_view(bool async)
     {
-        // Fails: Views are not supported, so this returns all entities from mapped collection. EF-X007
-        await Assert.ThrowsAsync<EqualException>(() => base.KeylessEntity_by_database_view(async));
+        // Fails: Views are not supported, so this returns all entities from mapped collection (driver-LINQ
+        // mode, which executes and returns wrong data). EF-X007. Native-only mode also rejects the query as
+        // a translation failure, but only after logging the same bare collection scan.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.KeylessEntity_by_database_view(async), typeof(EqualException));
 
         AssertMql(
             """
@@ -54,11 +57,6 @@ Customers.{ "$match" : { "City" : "London" } }
 
     public override async Task Entity_mapped_to_view_on_right_side_of_join(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.Entity_mapped_to_view_on_right_side_of_join(async));
-        AssertMql();
-#else
         // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.Entity_mapped_to_view_on_right_side_of_join(async);
 
@@ -66,13 +64,15 @@ Customers.{ "$match" : { "City" : "London" } }
             """
 Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Products", "localField" : "_outer.CustomerID", "foreignField" : "CategoryName", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task KeylessEntity_with_nav_defining_query(bool async)
     {
-        // Fails: Defining queries are not supported. EF-X007
-        await Assert.ThrowsAsync<EqualException>(() => base.KeylessEntity_with_nav_defining_query(async));
+        // Fails: Defining queries are not supported (driver-LINQ mode, which executes and returns wrong
+        // data). EF-X007. Native-only mode also rejects the query as a translation failure, but only after
+        // logging the same pipeline.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.KeylessEntity_with_nav_defining_query(async), typeof(EqualException));
 
         AssertMql(
             """
@@ -116,18 +116,12 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
 
     public override async Task KeylessEntity_select_where_navigation(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.KeylessEntity_select_where_navigation(async));
-        AssertMql();
-#else
         await base.KeylessEntity_select_where_navigation(async);
 
         AssertMql(
             """
-Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner.City" : "Seattle" } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer.City" : "Seattle" } }
 """);
-#endif
     }
 
     public override async Task KeylessEntity_select_where_navigation_multi_level(bool async)
@@ -138,10 +132,7 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
         AssertMql();
 #else
-        Assert.Contains(
-            "Unsupported cross-DbSet query",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.KeylessEntity_select_where_navigation_multi_level(async))).Message);
+        await AssertNoMultiCollectionQuerySupport(() => base.KeylessEntity_select_where_navigation_multi_level(async));
 
         AssertMql(
         );
@@ -158,10 +149,12 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
     public override async Task KeylessEntity_groupby(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.KeylessEntity_groupby(async));
+        await base.KeylessEntity_groupby(async);
 
-        AssertMql();
+        AssertMql(
+            """
+Customers.{ "$group" : { "_id" : "$City", "__agg0" : { "$sum" : 1 }, "__agg1" : { "$sum" : { "$strLenCP" : "$Address" } } } }, { "$project" : { "Key" : "$_id", "Count" : "$__agg0", "Sum" : "$__agg1", "_id" : 0 } }
+""");
     }
 
     public override async Task Collection_correlated_with_keyless_entity_in_predicate_works(bool async)
@@ -185,8 +178,8 @@ Customers.
 
         AssertMql(
             """
-            Customers.{ "$count" : "_v" }
-            """);
+Customers.{ "$count" : "v" }
+""");
     }
 
     public override async Task Count_over_keyless_entity_with_pushdown(bool async)
@@ -195,7 +188,7 @@ Customers.
 
         AssertMql(
             """
-Customers.{ "$sort" : { "ContactTitle" : 1 } }, { "$limit" : 10 }, { "$count" : "_v" }
+Customers.{ "$sort" : { "ContactTitle" : 1 } }, { "$limit" : 10 }, { "$count" : "v" }
 """);
     }
 
@@ -205,7 +198,7 @@ Customers.{ "$sort" : { "ContactTitle" : 1 } }, { "$limit" : 10 }, { "$count" : 
 
         AssertMql(
             """
-Customers.{ "$limit" : 10 }, { "$count" : "_v" }
+Customers.{ "$limit" : 10 }, { "$count" : "v" }
 """);
     }
 
@@ -216,7 +209,9 @@ Customers.{ "$limit" : 10 }, { "$count" : "_v" }
         => Fixture.TestMqlLoggerFactory.Clear();
 
     // Fails: Cross-document navigation access issue EF-216
-    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
-        =>  Assert.Contains("Unsupported cross-DbSet query between",
-            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+    private static Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNoMultiCollectionQuerySupportAsync(query);
+
+    protected new static Task AssertTranslationFailed(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 }

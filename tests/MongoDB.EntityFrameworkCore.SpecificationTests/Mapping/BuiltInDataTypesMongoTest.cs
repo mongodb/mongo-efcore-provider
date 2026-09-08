@@ -19,7 +19,6 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Driver;
 using MongoDB.Driver.Core.Misc;
-using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using Xunit.Sdk;
@@ -33,18 +32,13 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
     public override async Task Can_insert_and_read_back_with_string_key()
         => await base.Can_insert_and_read_back_with_string_key();
 
-#if EF9
-    // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-    public override Task Can_read_back_bool_mapped_as_int_through_navigation()
-        => AssertTranslationFailed(() => base.Can_read_back_bool_mapped_as_int_through_navigation());
-#else
     public override Task Can_read_back_bool_mapped_as_int_through_navigation()
         => base.Can_read_back_bool_mapped_as_int_through_navigation();
-#endif
 
-    // Fails: Cross-document navigation access issue EF-216
+    // EF-449: a reference-collection-nav FirstOrDefault() reduced to a non-nullable value-type member (here an
+    // enum) is now natively translated, so this no longer fails to translate.
     public override Task Can_read_back_mapped_enum_from_collection_first_or_default()
-        => AssertTranslationFailed(() => base.Can_read_back_mapped_enum_from_collection_first_or_default());
+        => base.Can_read_back_mapped_enum_from_collection_first_or_default();
 
     // Fails: Call ToString on DateTimeOffset EF-217
     [ConditionalFact (Skip = "Failing sometimes on latest server.")]
@@ -53,23 +47,20 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
             "Actual:   \"97\"",
             (await Assert.ThrowsAsync<EqualException>(() => base.Object_to_string_conversion())).Message);
 
-    // Fails: Projecting DateTimeOffset members EF-218
-    public override async Task Optional_datetime_reading_null_from_database()
-        => Assert.Contains(
-            "d.DateTimeOffset.Value.DateTime",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Optional_datetime_reading_null_from_database()))
-            .Message);
+    public override Task Optional_datetime_reading_null_from_database()
+        => base.Optional_datetime_reading_null_from_database();
     #else
     public override void Can_insert_and_read_back_with_string_key()
         => base.Can_insert_and_read_back_with_string_key();
 
-    // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
     public override void Can_read_back_bool_mapped_as_int_through_navigation()
-        => AssertTranslationFailed(() => base.Can_read_back_bool_mapped_as_int_through_navigation());
+        => base.Can_read_back_bool_mapped_as_int_through_navigation();
 
-    // Fails: Cross-document navigation access issue EF-216
+    // EF-449: a reference-collection-nav FirstOrDefault() reduced to a non-nullable value-type member (here an
+    // enum) is now natively translated. The fix carries no `#if`, so it applies on EF8 too — verified by running
+    // this override under `-c "Debug EF8"`, not inferred from the EF9/EF10 result.
     public override void Can_read_back_mapped_enum_from_collection_first_or_default()
-        => AssertTranslationFailed(() => base.Can_read_back_mapped_enum_from_collection_first_or_default());
+        => base.Can_read_back_mapped_enum_from_collection_first_or_default();
 
     // Fails: Call ToString on DateTimeOffset EF-217
     [ConditionalFact (Skip = "Failing sometimes on latest server.")]
@@ -78,11 +69,8 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
             "Unsupported conversion from object to string in $convert with no onError value.",
             Assert.Throws<MongoCommandException>(() => base.Object_to_string_conversion()).Message);
 
-    // Fails: Projecting DateTimeOffset members EF-218
     public override void Optional_datetime_reading_null_from_database()
-        => Assert.Contains(
-            "d.DateTimeOffset.Value.DateTime.Date",
-            Assert.Throws<ExpressionNotSupportedException>(() => base.Optional_datetime_reading_null_from_database()).Message);
+        => base.Optional_datetime_reading_null_from_database();
     #endif
 
     private static void AssertTranslationFailed(Action query)

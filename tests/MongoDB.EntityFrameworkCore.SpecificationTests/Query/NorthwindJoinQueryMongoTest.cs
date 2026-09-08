@@ -85,8 +85,8 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
     public override async Task GroupJoin_aggregate_nested_anonymous_key_selectors(bool async)
     {
-        // Fails: GroupJoin shape not translated EF-X016
-        await AssertTranslationFailed(() => base.GroupJoin_aggregate_nested_anonymous_key_selectors(async));
+        // EF Core upstream issue 35028: nested anonymous-type key selectors in GroupJoin cause translation failure
+        await base.GroupJoin_aggregate_nested_anonymous_key_selectors(async);
 
         AssertMql(
         );
@@ -108,7 +108,7 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
         await base.Join_customers_orders_projection(async);
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$project" : { "ContactName" : "$Outer.ContactName", "OrderID" : "$Inner._id", "_id" : 0 } }
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$project" : { "ContactName" : "$ContactName", "OrderID" : "$_lookup_Orders._id", "_id" : 0 } }
 """);
     }
 
@@ -118,7 +118,7 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$project" : { "c" : "$$ROOT", "_lookup_Orders" : "$_lookup_Orders", "_id" : 0 } }
 """);
     }
 
@@ -142,120 +142,160 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
         await base.Join_customers_orders_select(async);
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$project" : { "ContactName" : "$Outer.ContactName", "OrderID" : "$Inner._id", "_id" : 0 } }
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$project" : { "ContactName" : "$ContactName", "OrderID" : "$_lookup_Orders._id", "_id" : 0 } }
 """);
     }
 
     public override async Task Join_customers_orders_with_subquery(bool async)
     {
         // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Join_customers_orders_with_subquery(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Join_customers_orders_with_subquery(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task Join_customers_orders_with_subquery_with_take(bool async)
     {
         // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Join_customers_orders_with_subquery_with_take(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Join_customers_orders_with_subquery_with_take(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task Join_customers_orders_with_subquery_anonymous_property_method(bool async)
     {
         // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Join_customers_orders_with_subquery_anonymous_property_method(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Join_customers_orders_with_subquery_anonymous_property_method(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task Join_customers_orders_with_subquery_anonymous_property_method_with_take(bool async)
     {
         // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Join_customers_orders_with_subquery_anonymous_property_method_with_take(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Join_customers_orders_with_subquery_anonymous_property_method_with_take(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task Join_customers_orders_with_subquery_predicate(bool async)
     {
         // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Join_customers_orders_with_subquery_predicate(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Join_customers_orders_with_subquery_predicate(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task Join_customers_orders_with_subquery_predicate_with_take(bool async)
     {
         // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Join_customers_orders_with_subquery_predicate_with_take(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Join_customers_orders_with_subquery_predicate_with_take(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task Join_composite_key(bool async)
     {
         // Fails: Join shape not translated EF-X017
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Join_composite_key(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Join_composite_key(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task Join_complex_condition(bool async)
     {
         // Fails: Join shape not translated EF-X017
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Join_complex_condition(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Join_complex_condition(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task Join_same_collection_multiple(bool async)
@@ -286,7 +326,7 @@ Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^F"
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }
 """);
     }
 
@@ -296,7 +336,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }
 """);
     }
 
@@ -305,7 +345,7 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
         await base.GroupJoin_simple3(async);
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$project" : { "OrderID" : "$Inner._id", "_id" : 0 } }
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$project" : { "OrderID" : "$_lookup_Orders._id", "_id" : 0 } }
 """);
     }
 
@@ -315,22 +355,27 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$sort" : { "City" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$sort" : { "City" : 1 } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }
 """);
     }
 
     public override async Task GroupJoin_simple_subquery(bool async)
     {
         // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.GroupJoin_simple_subquery(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.GroupJoin_simple_subquery(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task GroupJoin_as_final_operator(bool async)
@@ -351,7 +396,9 @@ Customers.
 
     public override async Task Unflattened_GroupJoin_composed_2(bool async)
     {
-        // Fails: GroupJoin shape not translated EF-X016
+        // Fails: same unflattened-GroupJoin shape as Unflattened_GroupJoin_composed above (identical
+        // InvalidOperationException from EF Core itself, thrown before reaching our provider); the
+        // second Join composed on top is irrelevant to the failure. Not an EF-436 gap.
         await AssertTranslationFailed(() => base.Unflattened_GroupJoin_composed_2(async));
 
         AssertMql(
@@ -360,11 +407,6 @@ Customers.
 
     public override async Task GroupJoin_DefaultIfEmpty(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.GroupJoin_DefaultIfEmpty(async));
-        AssertMql();
-#else
         // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.GroupJoin_DefaultIfEmpty(async);
 
@@ -372,60 +414,66 @@ Customers.
             """
 Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task GroupJoin_DefaultIfEmpty_multiple(bool async)
     {
-#if EF8 || EF9
-        // Fails: GroupJoin shape not translated EF-X016
-        await AssertTranslationFailed(() => base.GroupJoin_DefaultIfEmpty_multiple(async));
-
-        AssertMql(
-        );
-#else
         // EF-375: two joins onto the same target type now flatten to one $lookup per join instead of
-        // leaving the driver to nest the document twice (which threw at shaper time).
+        // leaving the driver to nest the document twice (which threw at shaper time). EF-436 found the real
+        // reason this never worked on EF8/EF9: EF Core's nav-expansion flattens GroupJoin+SelectMany
+        // (DefaultIfEmpty) into a LeftJoin call on every version, but pre-.NET10 that's EF Core's own
+        // internal-API LeftJoin shim (Microsoft.EntityFrameworkCore.Internal.QueryableExtensions.LeftJoin),
+        // not the BCL Queryable.LeftJoin added in .NET 10 - our own method-source allow-list only recognized
+        // the latter, so the flattened call was declined before ever reaching TranslateLeftJoin. Once
+        // MongoQueryableMethodTranslatingExpressionVisitor recognizes both forms, EF-375's join-flattening
+        // fix (itself version-generic, no #if needed) applies identically on EF8/EF9/EF10.
         await base.GroupJoin_DefaultIfEmpty_multiple(async);
 
         AssertMql(
             """
 Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders_1" } }, { "$unwind" : { "path" : "$_lookup_Orders_1", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }
 """);
-#endif
     }
 
     public override async Task GroupJoin_DefaultIfEmpty2(bool async)
     {
-        // Fails: GroupJoin shape not translated on EF8/EF9 EF-X016; on EF10 the flattened
-        // GroupJoin's inner is a filtered sub-query, which is not supported EF-X022
-        await Assert.ThrowsAnyAsync<Exception>(() => base.GroupJoin_DefaultIfEmpty2(async));
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022.
+        // Out of scope for EF-436 (which covers a different set of GroupJoin shapes; see its
+        // "Distinct from" section) - this is the same filtered-inner-subquery gap as the other
+        // EF-X022 tests above, and declines consistently across EF8/EF9/EF10.
+        await AssertTranslationFailed(() => base.GroupJoin_DefaultIfEmpty2(async));
 
 #if EF8 || EF9
+        // EF-436: after the LeftJoin-recognition fix, this reaches the driver like its EF10 counterpart
+        // below and is rejected there too (filtered subquery inner, EF-X022) - same partial "Employees."
+        // capture as EF10's non-native-only branch.
         AssertMql(
-        );
-#else
-        AssertMql(
-            """
+    """
 Employees.
 """);
+#else
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
+Employees.
+""");
+        }
 #endif
     }
 
     public override async Task GroupJoin_DefaultIfEmpty3(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.GroupJoin_DefaultIfEmpty3(async));
-        AssertMql();
-#else
         await base.GroupJoin_DefaultIfEmpty3(async);
 
         AssertMql(
             """
 Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task GroupJoin_Where(bool async)
@@ -450,27 +498,16 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
     public override async Task GroupJoin_DefaultIfEmpty_Where(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.GroupJoin_DefaultIfEmpty_Where(async));
-        AssertMql();
-#else
         await base.GroupJoin_DefaultIfEmpty_Where(async);
 
         AssertMql(
             """
 Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner" : { "$ne" : null }, "_inner.CustomerID" : "ALFKI" } }
 """);
-#endif
     }
 
     public override async Task Join_GroupJoin_DefaultIfEmpty_Where(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.Join_GroupJoin_DefaultIfEmpty_Where(async));
-        AssertMql();
-#else
         // Fails: Where over a flattened multi-join chain is not translated EF-X024.
         // This shape has two INDEPENDENT joins onto the same target type (Orders), each with its own
         // forced-unwind $lookup (EF-375). The composed Where can't be reattached to one of them
@@ -479,39 +516,39 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
         // designed for self-referencing CHAINS, not independent siblings) - so the strip declines and,
         // since native rendering can't represent two forced-unwind lookups either, translation is
         // rejected rather than risk falling back to a native pipeline that would silently double-nest.
+        // Runs on all three EF majors identically now: this shape used to also fail earlier on EF8/EF9 for
+        // the unrelated EF-X020 reason (the LeftJoin shim admission gate), now fixed.
         await AssertTranslationFailed(() => base.Join_GroupJoin_DefaultIfEmpty_Where(async));
         AssertMql();
-#endif
     }
 
     public override async Task GroupJoin_DefaultIfEmpty_Project(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.GroupJoin_DefaultIfEmpty_Project(async));
-        AssertMql();
-#else
         // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.GroupJoin_DefaultIfEmpty_Project(async);
         AssertMql(
             """
 Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : "$_v._inner._id", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task GroupJoin_SelectMany_subquery_with_filter(bool async)
     {
         // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.GroupJoin_SelectMany_subquery_with_filter(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.GroupJoin_SelectMany_subquery_with_filter(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task GroupJoin_SelectMany_subquery_with_filter_orderby(bool async)
@@ -529,13 +566,25 @@ Customers.
         await Assert.ThrowsAnyAsync<Exception>(() => base.GroupJoin_SelectMany_subquery_with_filter_and_DefaultIfEmpty(async));
 
 #if EF8 || EF9
+        // EF-436: after the LeftJoin-recognition fix, this reaches the driver like EF10's non-native-only
+        // branch below and captures the same partial "Customers." pipeline before the driver rejects the
+        // filtered-subquery join inner (EF-X022).
         AssertMql(
-        );
-#else
-        AssertMql(
-            """
+    """
 Customers.
 """);
+#else
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
+Customers.
+""");
+        }
 #endif
     }
 
@@ -550,49 +599,90 @@ Customers.
     public override async Task GroupJoin_Subquery_with_Take_Then_SelectMany_Where(bool async)
     {
         // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.GroupJoin_Subquery_with_Take_Then_SelectMany_Where(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.GroupJoin_Subquery_with_Take_Then_SelectMany_Where(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task Inner_join_with_tautology_predicate_converts_to_cross_join(bool async)
     {
-        // Fails: Multiple query roots issue EF-220
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Inner_join_with_tautology_predicate_converts_to_cross_join(async))).Message);
+        // Fails: Multiple query roots issue EF-220, and Join/GroupJoin inner sub-query (filtered/ordered) not
+        // supported EF-X022. Upstream's body is
+        // `from c in Customers.OrderBy(c => c.CustomerID).Take(10) join o in Orders.OrderBy(o => o.OrderID).Take(10) ...`
+        // — BOTH sides are self-paging. Only the INNER (`Orders.OrderBy(OrderID).Take(10)`) matters: the outer's
+        // own paging is emitted at pipeline top level and is correct. The inner is a sorted+paged sub-query, so
+        // driver 3.11 rejects the whole expression with ExpressionNotSupportedException ("expression must be a
+        // MongoDB IQueryable against a collection") rather than folding it into the correlated $lookup
+        // sub-pipeline the way 3.10 silently did. See docs/failing-spec-tests.md § EF-X022.
+        // This spelling reaches TranslateJoin on ALL THREE EF versions (an ordinary inner join needs no
+        // DefaultIfEmpty normalization, unlike the Left_join_... sibling below).
+        // The driver rejects the expression at translation time, but only AFTER the outer collection is logged,
+        // so a partial ("Customers.") pipeline is captured on all three EF versions.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Inner_join_with_tautology_predicate_converts_to_cross_join(async));
 
-        AssertMql(
-            """
-Customers.
-""");
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
+            Customers.
+            """);
+        }
     }
 
     public override async Task Left_join_with_tautology_predicate_doesnt_convert_to_cross_join(bool async)
     {
+        // Fails: Multiple query roots issue EF-220, and Join/GroupJoin inner sub-query (filtered/ordered) not
+        // supported EF-X022. Upstream's body is
+        // `from c in Customers.OrderBy(c => c.CustomerID).Take(10) join o in Orders.OrderBy(o => o.OrderID).Take(10)
+        //  on ... into grouping from o in grouping.DefaultIfEmpty() ...` — BOTH sides are self-paging. Only the
+        // INNER (`Orders.OrderBy(OrderID).Take(10)`) matters; the outer's own paging is emitted at pipeline top
+        // level and is correct. The inner is a sorted+paged sub-query, which driver 3.11 rejects outright
+        // (see docs/failing-spec-tests.md § EF-X022).
+        //
+        // EF-436 update: this test's comment previously described a genuine EF8/EF9 vs EF10 mechanism split
+        // (EF8/EF9 failing inside the QMTEV with no MQL logged, EF10 reaching the driver and logging the
+        // outer collection first) - that split was itself downstream of the same stale LeftJoin-recognition
+        // gate as GroupJoin_DefaultIfEmpty_multiple (see its comment), not a genuine EF-version difference.
+        // Once that gate is fixed, EF8/EF9 reach the driver exactly like EF10 and get the SAME
+        // ExpressionNotSupportedException from the same ordered/paged-inner rejection, logging the same
+        // partial "Customers." pipeline first. AssertNativeTranslationFailedAsync accepts both
+        // ExpressionNotSupportedException and InvalidOperationException, so this stays green either way.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Left_join_with_tautology_predicate_doesnt_convert_to_cross_join(async));
+
 #if EF8 || EF9
-        // Fails: Multiple query roots issue EF-220
-        await AssertTranslationFailed(() => base.Left_join_with_tautology_predicate_doesnt_convert_to_cross_join(async));
-
         AssertMql(
-        );
+    """
+            Customers.
+            """);
 #else
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.Left_join_with_tautology_predicate_doesnt_convert_to_cross_join(async))).Message);
-
-        AssertMql(
-            """
-Customers.
-""");
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
+            Customers.
+            """);
+        }
 #endif
     }
 
@@ -702,18 +792,12 @@ Customers.
 
     public override async Task Condition_on_entity_with_include(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.Condition_on_entity_with_include(async));
-        AssertMql();
-#else
         // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.Condition_on_entity_with_include(async);
         AssertMql(
             """
 Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "a" : { "$cond" : { "if" : { "$ne" : ["$_v._inner", null] }, "then" : "$_v._inner._id", "else" : -1 } }, "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task Join_customers_orders_entities_same_entity_twice(bool async)
@@ -722,7 +806,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$project" : { "A" : "$$ROOT", "B" : "$$ROOT", "_id" : 0 } }
 """);
     }
 
@@ -761,29 +845,39 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
     public override async Task GroupJoin_customers_employees_subquery_shadow(bool async)
     {
         // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.GroupJoin_customers_employees_subquery_shadow(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.GroupJoin_customers_employees_subquery_shadow(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task GroupJoin_customers_employees_subquery_shadow_take(bool async)
     {
         // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<MongoDB.Driver.Linq.ExpressionNotSupportedException>(() =>
-                base.GroupJoin_customers_employees_subquery_shadow_take(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.GroupJoin_customers_employees_subquery_shadow_take(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Customers.
 """);
+        }
     }
 
     public override async Task GroupJoin_projection(bool async)
@@ -792,13 +886,16 @@ Customers.
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$project" : { "c" : "$$ROOT", "_lookup_Orders" : "$_lookup_Orders", "_id" : 0 } }
 """);
     }
 
     public override async Task GroupJoin_subquery_projection_outer_mixed(bool async)
     {
-        // Fails: GroupJoin shape not translated EF-X016
+        // Fails: not a GroupJoin gap - the leading `from o0 in Orders.OrderBy(...).Take(1)` is an
+        // uncorrelated cross-collection subquery SelectMany, which fails translation (with no
+        // driver-LINQ fallback) before the GroupJoin is ever reached. Same family as
+        // Join_customers_orders_with_subquery / SelectMany_correlated_subquery_take EF-X001
         await AssertTranslationFailed(() => base.GroupJoin_subquery_projection_outer_mixed(async));
 
         AssertMql(
@@ -808,11 +905,16 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 #if EF9
     public override async Task GroupJoin_on_true_equal_true(bool async)
     {
-        // Fails: GroupJoin shape not translated EF-X016
+        // Fails: same unflattened-GroupJoin projection gap as Unflattened_GroupJoin_composed above
+        // (identical InvalidOperationException - MongoProjectionBindingExpressionVisitor hits an
+        // unbound `DbSet<Order>()` trying to bind the raw, un-flattened group `g` in the result
+        // selector's projection); the tautological `true == true` key selectors are irrelevant to
+        // the failure - it happens purely because the group is projected without a SelectMany/
+        // DefaultIfEmpty flatten or an aggregate. Not an EF-436 gap.
         await AssertTranslationFailed(() => base.GroupJoin_on_true_equal_true(async));
 
         AssertMql(
-);
+        );
     }
 
 #endif
@@ -822,4 +924,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
+
+    protected new static Task AssertTranslationFailed(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 }

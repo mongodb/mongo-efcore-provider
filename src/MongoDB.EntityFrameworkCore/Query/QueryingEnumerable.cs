@@ -163,6 +163,14 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
                 EntityFrameworkEventSource.Log.QueryExecuting();
 #endif
 
+                // Initialize the state manager BEFORE creating the cursor. On the one-pass streaming path the
+                // driver eagerly deserializes (and materializes) the first cursor batch DURING
+                // MongoClient.Execute — the custom output serializer's Deserialize runs while the cursor is
+                // being created — so a tracked query would otherwise see a null StateManager and NRE. Doing
+                // this first is harmless for the DOM / driver-LINQ paths: they return lazy enumerables and
+                // materialize later, per row, inside the shaper (which runs after this point regardless).
+                _queryContext.InitializeStateManager(_standAloneStateManager);
+
                 try
                 {
                     _enumerator = _queryContext.MongoClient.Execute<TSource>(_executableQuery, out logAction).GetEnumerator();
@@ -173,8 +181,6 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
                     logAction?.Invoke();
                     throw;
                 }
-
-                _queryContext.InitializeStateManager(_standAloneStateManager);
             }
 
             var hasNext = _enumerator.MoveNext();
@@ -187,7 +193,8 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
                 // single null by the scalar path) must not be passed to the entity shaper, which would
                 // dereference a null BsonDocument. Yield default(TTarget); a projected identity shaper
                 // would produce the same null, so scalar/aggregate results are unaffected.
-                Current = _enumerator.Current is null ? default! : _shaper(_queryContext, _enumerator.Current);
+                var row = _enumerator.Current;
+                Current = row is null ? default! : _shaper(_queryContext, row);
 
                 if (!_gotResults)
                 {

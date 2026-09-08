@@ -63,6 +63,33 @@ public class SkipTakeOrderingTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
+    public void Take_with_zero_constant()
+    {
+        var results = _db.Planets.Take(0).ToArray();
+
+        Assert.Empty(results);
+    }
+
+    [Fact]
+    public void Take_with_zero_parameter()
+    {
+        var size = 0;
+        var results = _db.Planets.Take(size).ToArray();
+
+        Assert.Empty(results);
+    }
+
+    [Fact]
+    public void SkipTake_with_zero_take_parameter()
+    {
+        var page = 0;
+        var size = 0;
+        var results = _db.Planets.OrderBy(p => p.orderFromSun).Skip(page).Take(size).ToArray();
+
+        Assert.Empty(results);
+    }
+
+    [Fact]
     public void SkipTake_with_constant_integer()
     {
         // If this test is flaky due to non-deterministic ordering
