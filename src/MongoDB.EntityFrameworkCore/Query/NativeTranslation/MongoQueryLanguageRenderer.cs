@@ -89,6 +89,13 @@ internal sealed class MongoQueryLanguageRenderer
             MongoArrayContainsExpression arrayContains => RenderArrayContains(arrayContains, placeholders),
             MongoRegexExpression regex => RenderRegex(regex, placeholders),
             MongoElemMatchExpression elemMatch => RenderElemMatch(elemMatch, placeholders),
+            // A literal boolean predicate root. `true` imposes no constraint (an empty $match body matches
+            // every document); `false` uses the same impossible-BSON-type idiom MongoPipelineFactory's own
+            // $limit:0 rewrite uses for an always-false filter — matches no document regardless of its _id's
+            // actual type, and (unlike $expr: false) is legal inside $elemMatch too.
+            MongoConstantExpression { Value: bool boolValue } => boolValue
+                ? new BsonDocument()
+                : new BsonDocument("_id", new BsonDocument("$type", -1)),
             _ => RenderAsExpr(node, placeholders)
         };
 
@@ -524,6 +531,10 @@ internal sealed class MongoQueryLanguageRenderer
             MongoRegexExpression { Term: MongoConstantExpression { Value: string } or MongoParameterExpression }
                 => true,
             MongoElemMatchExpression elemMatch => IsQueryDialectRenderable(elemMatch.ElementPredicate),
+            // A literal boolean predicate root (e.g. `x => true`, or the negated complement of one) has a
+            // genuine query-dialect form — see RenderNode's own case — so it is safely nestable inside an
+            // $elemMatch, unlike the generic $expr catch-all every other unlisted node falls to.
+            MongoConstantExpression { Value: bool } => true,
             _ => false
         };
 
@@ -606,6 +617,13 @@ internal sealed class MongoQueryLanguageRenderer
 
     private static void AddAndOperand(List<BsonDocument> clauses, BsonDocument doc)
     {
+        // An empty document is the rendering of a literal `true` predicate (see RenderNode's own case) — the
+        // AND identity. Dropping it here keeps `id == "ALFKI" && true` merging down to the same
+        // `{ _id: "ALFKI" }` a single comparison alone would render, instead of forcing the needless
+        // `{ $and: [{ _id: "ALFKI" }, {}] }` array form CombineAnd's element-count check would otherwise pick.
+        if (doc.ElementCount == 0)
+            return;
+
         if (doc.ElementCount == 1 && doc.GetElement(0).Name == "$and" && doc[0] is BsonArray array)
         {
             foreach (var item in array)

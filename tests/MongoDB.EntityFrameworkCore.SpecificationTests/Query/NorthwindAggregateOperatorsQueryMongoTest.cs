@@ -1169,7 +1169,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         AssertMql(
             """
-            Customers.{ "$project" : { "CustomerID" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$sort" : { "CustomerID" : 1 } }
+            Customers.{ "$group" : { "_id" : { "CustomerID" : "$_id" } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "_id" : 0 } }, { "$sort" : { "CustomerID" : 1 } }
             """);
     }
 
@@ -2229,7 +2229,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$type" : -1 } } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Customers.{ "$match" : { "_id" : { "$type" : -1 } } }, { "$limit" : 1 }
             """);
     }
 

@@ -85,8 +85,20 @@ internal static class NativeSlotPopulator
         // their arms below and record into TrailingOps (MongoSelectDefinition.ActiveOps flips once
         // SetOperation is attached), filtering/sorting/paging the combined result and emitting after the
         // set-op stage. A GroupBy/Distinct/SelectMany terminal (or a mixed one) still trips this guard.
+        // EF-322 carve-out: an OrderBy/ThenBy composed directly after a projected Distinct (IsDistinct, never a
+        // genuine IsGroupBy) is NOT the aggregate-alias hazard this guard exists for — TryBindDistinctFromProjection's
+        // key parts are the Distinct's own flattened output schema, so PopulateSortSlot below resolves the key
+        // selector against THAT (NativeGroupByBinder.TryResolveDistinctOrderingKey), never against the entity,
+        // and declines (falling through to MarkNotNativelyRepresentable there) for anything else. Where/Skip/Take
+        // after a projected Distinct are deliberately NOT included here — a predicate needs the same alias-aware
+        // treatment Where does not yet have, and Skip/Take have no field reference to get wrong but are left
+        // alone to keep this change scoped to what EF-322 needed.
+        var isPostDistinctOrdering = mongoQ.Select.IsDistinct && !mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping != null
+            && (methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.OrderByDescending
+                || methodDefinition == QueryableMethods.ThenBy || methodDefinition == QueryableMethods.ThenByDescending);
+
         if (mongoQ.Select.HasTerminalOperator && !mongoQ.Select.IsSetOpTerminalOnly
-            && IsSevenSlotOperator(methodDefinition))
+            && IsSevenSlotOperator(methodDefinition) && !isPostDistinctOrdering)
         {
             mongoQ.Select.MarkNotNativelyRepresentable();
             return;
@@ -318,6 +330,20 @@ internal static class NativeSlotPopulator
         var keySelector = call.Arguments[1].UnwrapLambdaFromQuote();
         translator.SelfParam = keySelector.Parameters[0];
 
+        // Post-Distinct ordering (EF-322): resolve against the Distinct's OWN flattened output alias, never
+        // the entity-scoped translator below — see NativeGroupByBinder.TryResolveDistinctOrderingKey's remarks
+        // for why the entity-scoped arms must not even be attempted for this shape (a renamed projection member
+        // can share a name with a real, unrelated entity property).
+        if (mongoQ.Select.IsDistinct && !mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping is { } distinctGrouping)
+        {
+            if (NativeGroupByBinder.TryResolveDistinctOrderingKey(
+                    distinctGrouping, keySelector.Parameters[0], keySelector.Body, out var distinctKey))
+                record(new MongoOrdering(distinctKey, ascending));
+            else
+                mongoQ.Select.MarkNotNativelyRepresentable();
+            return;
+        }
+
         if (translator.TryTranslateField(keySelector.Body, out var keyNode))
             record(new MongoOrdering(keyNode, ascending));
         else if (TryTranslateComputedSortKey(translator, keySelector.Body, out var computedKey))
@@ -532,11 +558,28 @@ internal static class NativeSlotPopulator
         if (!MongoAggregationExpressionRenderer.CanRender(translated))
             return false;
 
-        if (!TryProbeBareValueRenders(translated, keySelectorBody.Type))
+        if (!TryProbeBareValueRenders(translated, UnwrapBoxingToObjectType(keySelectorBody)))
             return false;
 
         result = translated;
         return true;
+    }
+
+    /// <summary>
+    /// Strips top-level boxing-to-<see cref="object"/> <c>Convert</c> layers (e.g. <c>(object)i</c> over a
+    /// captured <c>int</c>) to recover the actual declared type of a bare value/parameter sort key, matching
+    /// what <c>MongoExpressionTranslator.TranslateOperand</c> itself unwraps unconditionally. Without this, a
+    /// boxed key's <c>Type</c> stays <see cref="object"/> and <see cref="TryProbeBareValueRenders"/> would
+    /// reject a <see cref="MongoParameterExpression"/> under its reference-type allowlist even though the
+    /// value underneath boxes cleanly.
+    /// </summary>
+    private static Type UnwrapBoxingToObjectType(Expression e)
+    {
+        while (e is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked, Type: var t } u
+               && t == typeof(object))
+            e = u.Operand;
+
+        return e.Type;
     }
 
     /// <summary>

@@ -418,6 +418,62 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     [Fact]
+    public void Distinct_then_OrderBy_goes_native_and_dedups()
+    {
+        // EF-322: OrderBy composed AFTER a projected Distinct now resolves its key selector against the
+        // Distinct's OWN flattened output alias (NativeGroupByBinder.TryResolveDistinctOrderingKey), not the
+        // root entity — succeeding under NativeOnly is the "went native" signal.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(Distinct_then_OrderBy_goes_native_and_dedups));
+
+        var result = db.Entities.Select(o => new { o.Country }).Distinct().OrderBy(r => r.Country).ToList();
+
+        Assert.Equal(new[] { "FR", "UK", "US" }, result.Select(r => r.Country).ToArray());
+    }
+
+    [Fact]
+    public void Distinct_then_OrderBy_matches_driver_linq()
+    {
+        var seed = SeedOrders();
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(Distinct_then_OrderBy_matches_driver_linq) + "N");
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(Distinct_then_OrderBy_matches_driver_linq) + "D");
+
+        string[] Run(SingleEntityDbContext<Order> db) =>
+            db.Entities.Select(o => new { o.Country }).Distinct().OrderBy(r => r.Country)
+                .AsEnumerable().Select(r => r.Country).ToArray();
+
+        var native = Run(nativeDb);
+        Assert.Equal(new[] { "FR", "UK", "US" }, native);
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    [Fact]
+    public void Distinct_then_OrderBy_on_renamed_member_sorts_by_the_projected_source_not_the_colliding_entity_property()
+    {
+        // Select(o => new { Country = o.City }) deliberately reuses the entity's real "Country" property name
+        // for a DIFFERENT source field (City). If OrderBy(x => x.Country) resolved by name against the root
+        // entity (as the ordinary MongoExpressionTranslator does), it would silently sort by the entity's real
+        // Country field instead of the projected City value — wrong data. It must sort by City's value instead.
+        var seed = SeedOrders();
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(Distinct_then_OrderBy_on_renamed_member_sorts_by_the_projected_source_not_the_colliding_entity_property) + "N");
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(Distinct_then_OrderBy_on_renamed_member_sorts_by_the_projected_source_not_the_colliding_entity_property) + "D");
+
+        string[] Run(SingleEntityDbContext<Order> db) =>
+            db.Entities.Select(o => new { Country = o.City }).Distinct().OrderBy(r => r.Country)
+                .AsEnumerable().Select(r => r.Country).ToArray();
+
+        var native = Run(nativeDb);
+        Assert.Equal(new[] { "London", "NYC", "Paris" }, native); // ordered by City, not by the real Country field
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    [Fact]
     public void OrderBy_before_Distinct_goes_native_and_dedups()
     {
         // Ordering the SOURCE before the projection/Distinct (as opposed to Operator_after_Distinct_*, which

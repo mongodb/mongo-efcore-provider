@@ -307,8 +307,8 @@ Customers.{ "$sort" : { "_id" : -1 } }, { "$project" : { "_id" : "$_id" } }
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }
-            """);
+Orders.{ "$set" : { "__sort0" : { "$literal" : 8 } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }
+""");
     }
 
 #endif
@@ -325,12 +325,12 @@ Customers.{ "$sort" : { "_id" : -1 } }, { "$project" : { "_id" : "$_id" } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$count" : "_v" }
-            """,
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$count" : "v" }
+""",
             //
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$count" : "_v" }
-            """);
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$count" : "v" }
+""");
     }
 
     public override async Task Can_convert_manually_build_expression_with_default(bool async)
@@ -2561,12 +2561,12 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
         AssertMql(
             """
-            Orders.{ "$match" : { "$and" : [{ "_id" : { "$lt" : 10400 } }, { "OrderDate" : { "$ne" : null } }, { "$expr" : { "$eq" : [{ "$month" : "$OrderDate" }, 7] } }, { "$expr" : { "$eq" : [{ "$year" : "$OrderDate" }, 1996] } }] } }
-            """,
+Orders.{ "$match" : { "$and" : [{ "_id" : { "$lt" : 10400 } }, { "$or" : [{ "_id" : { "$type" : -1 } }, { "$and" : [{ "OrderDate" : { "$ne" : null } }, { "$expr" : { "$eq" : [{ "$month" : "$OrderDate" }, 7] } }, { "$expr" : { "$eq" : [{ "$year" : "$OrderDate" }, 1996] } }] }] }] } }
+""",
             //
             """
-            Orders.{ "$match" : { "_id" : { "$lt" : 10400 } } }
-            """);
+Orders.{ "$match" : { "_id" : { "$lt" : 10400 } } }
+""");
     }
 
     public override async Task Parameter_extraction_short_circuits_2(bool async)
@@ -2589,12 +2589,12 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
         AssertMql(
             """
-            Orders.{ "$match" : { "$or" : [{ "_id" : { "$lt" : 10400 } }, { "$and" : [{ "OrderDate" : { "$ne" : null } }, { "$expr" : { "$eq" : [{ "$month" : "$OrderDate" }, 7] } }, { "$expr" : { "$eq" : [{ "$year" : "$OrderDate" }, 1996] } }] }] } }
-            """,
+Orders.{ "$match" : { "$or" : [{ "_id" : { "$lt" : 10400 } }, { "$and" : [{ "OrderDate" : { "$ne" : null } }, { "$expr" : { "$eq" : [{ "$month" : "$OrderDate" }, 7] } }, { "$expr" : { "$eq" : [{ "$year" : "$OrderDate" }, 1996] } }] }] } }
+""",
             //
             """
-            Orders.
-            """);
+Orders.{ "$match" : { } }
+""");
     }
 
     public override async Task Subquery_member_pushdown_does_not_change_original_subquery_model(bool async)
@@ -3104,7 +3104,7 @@ Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
         AssertMql(
             """
-            Customers.{ "$project" : { "CustomerID" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$sort" : { "CustomerID" : 1 } }
+            Customers.{ "$group" : { "_id" : { "CustomerID" : "$_id" } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "_id" : 0 } }, { "$sort" : { "CustomerID" : 1 } }
             """);
     }
 
@@ -3183,7 +3183,7 @@ Customers.{ "$set" : { "__sort0" : { "$concat" : ["$_id", "$City"] } } }, { "$so
 
         AssertMql(
             """
-            Customers.{ "$project" : { "Property" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$sort" : { "Property" : 1 } }
+            Customers.{ "$group" : { "_id" : { "Property" : "$_id" } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$sort" : { "Property" : 1 } }
             """);
     }
 
@@ -4015,8 +4015,8 @@ OrderDetails.{ "$match" : { "$and" : [{ "$expr" : { "$eq" : [{ "$add" : [{ "$toI
 
         AssertMql(
             """
-            Customers.
-            """);
+Customers.{ "$match" : { } }
+""");
     }
 
 #endif
@@ -5460,7 +5460,7 @@ Customers.{ "$sort" : { "_id" : -1 } }, { "$project" : { "_id" : "$_id" } }
 
         AssertMql(
             """
-Orders.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 8 } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }
+Orders.{ "$set" : { "__sort0" : { "$literal" : 8 } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }
 """);
     }
 

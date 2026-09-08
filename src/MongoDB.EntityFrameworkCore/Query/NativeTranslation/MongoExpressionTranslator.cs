@@ -902,6 +902,17 @@ internal sealed partial class MongoExpressionTranslator
                     new MongoConstantExpression(null, nullableProperty));
             }
 
+            // --- Literal boolean predicate root (e.g. `x => true`, typically reached only after a
+            // constant-folded lambda body such as `All(x => true)`/`Where(_ => false)`) ---
+            //
+            // Renders through the generic MongoConstantExpression value path: with no query-dialect case of
+            // its own, RenderNode's catch-all wraps it as `{ $expr: true }`/`{ $expr: false }`, both of which
+            // are valid, unconditionally-true/false MQL filters. Must sit BEFORE the bare-boolean-member
+            // default below: a ConstantExpression is never a member access, so the default would reach
+            // TryResolveMember, fail to resolve a property from a constant node, and decline.
+            case ConstantExpression { Value: bool literalBool }:
+                return new MongoConstantExpression(literalBool, forSerialization: null);
+
             // --- Bare boolean member access (c.Active) ---
 
             default:
@@ -1297,7 +1308,13 @@ internal sealed partial class MongoExpressionTranslator
         {
             var fromType = Nullable.GetUnderlyingType(unary.Operand.Type) ?? unary.Operand.Type;
             var toType = Nullable.GetUnderlyingType(unary.Type) ?? unary.Type;
-            if (fromType != toType && !(allowNumericWidening && IsWideningNumericConvert(fromType, toType)))
+
+            // Boxing to object (e.g. `(object)i` over a captured int) never changes the underlying value —
+            // same accepted-benign-convert precedent as UnwrapOrderPreserving/TranslateConcatOperand — so it
+            // is unwrapped unconditionally rather than routed through the $toX branch below, which has no
+            // "convert to object" operator and would otherwise decline the whole operand.
+            if (fromType != toType && toType != typeof(object)
+                && !(allowNumericWidening && IsWideningNumericConvert(fromType, toType)))
             {
                 // A type-changing cast MQL can express becomes an explicit $toX over the translated operand,
                 // matching what the driver's own LINQ provider emits here. An unrenderable target still

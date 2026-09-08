@@ -25,11 +25,12 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// <summary>
 /// Distinguishes WHY this lookup carries a non-empty <see cref="LookupExpression.PipelineStages"/> sub-pipeline, since
 /// each reason has a different native-eligibility answer. <see cref="None"/>: no pipeline stages.
-/// <see cref="FallbackOnly"/>: TPH discriminator narrowing or a filtered Include (OrderBy/Skip/Take on the
-/// Include target, EF-440) — both remain fallback/mixed-visitor-only (see
-/// <c>MongoSelectLowerer.AppendLookupStages</c>'s exhaustive pipeline-kind dispatch).
-/// <see cref="NestedInclude"/>: a collection-then-collection/reference <c>ThenInclude</c> (EF-450) — its
-/// nested <c>$lookup</c>(s), staged by <c>MongoProjectionBindingExpressionVisitor</c>'s
+/// <see cref="FallbackOnly"/>: TPH discriminator narrowing — remains fallback/mixed-visitor-only (see
+/// <c>MongoSelectLowerer.AppendLookupStages</c>'s exhaustive pipeline-kind dispatch). <see cref="FilteredInclude"/>:
+/// a filtered Include (OrderBy/Skip/Take on the Include target, EF-440) — its sub-pipeline is the same
+/// <c>let</c>+<c>pipeline</c> <c>$lookup</c> shape as <see cref="NestedInclude"/> and is native-eligible for the
+/// same reason (EF-322). <see cref="NestedInclude"/>: a collection-then-collection/reference <c>ThenInclude</c>
+/// (EF-450) — its nested <c>$lookup</c>(s), staged by <c>MongoProjectionBindingExpressionVisitor</c>'s
 /// <c>ExtractNestedIncludePipeline</c>/<c>ExtractThenIncludesFromSubquery</c>/<c>AddReferenceLookupStages</c>,
 /// render via the same <c>let</c>+<c>pipeline</c> shape (<see cref="LookupExpression.ToLookupStageDocument"/>)
 /// the driver-LINQ fallback bridge already used. <see cref="CorrelatedReducer"/>: a reference-collection-nav
@@ -41,6 +42,7 @@ internal enum LookupPipelineKind
 {
     None,
     FallbackOnly,
+    FilteredInclude,
     NestedInclude,
     CorrelatedReducer
 }

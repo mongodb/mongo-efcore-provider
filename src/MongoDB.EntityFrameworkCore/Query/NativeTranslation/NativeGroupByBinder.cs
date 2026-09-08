@@ -627,6 +627,41 @@ internal static class NativeGroupByBinder
     }
 
     /// <summary>
+    /// Resolves an <c>OrderBy</c>/<c>ThenBy</c> key selector composed AFTER a projected <c>Distinct()</c>
+    /// against the Distinct's OWN flattened output schema — its grouping key part ALIASES — rather than the
+    /// root entity. A projected Distinct's anonymous/DTO member names are independent of, but can coincide
+    /// with, real entity property names (<c>Select(o => new { Country = o.City }).Distinct()</c> names its
+    /// member "Country" while sourcing it from <c>City</c>), so resolving by entity-property name — what the
+    /// ordinary <see cref="MongoExpressionTranslator"/> does — would silently sort by the WRONG field
+    /// (the entity's real <c>Country</c>, never touched by this query). Only a bare single-hop member access
+    /// on the key selector's OWN parameter (identity, not name — same discipline as
+    /// <see cref="MongoExpressionTranslator.SelfParam"/> elsewhere in this file), naming one of the Distinct's
+    /// key parts, is accepted. Anything else — a computed key, a member not among the key parts — declines so
+    /// the caller (<c>NativeSlotPopulator.PopulateSortSlot</c>) marks the query non-native and falls back to
+    /// driver-LINQ, exactly as it already does for every other post-terminal shape it can't represent.
+    /// </summary>
+    internal static bool TryResolveDistinctOrderingKey(
+        MongoGrouping grouping, ParameterExpression selfParam, Expression keySelectorBody,
+        [NotNullWhen(true)] out MongoFieldExpression? result)
+    {
+        result = null;
+        if (keySelectorBody is not MemberExpression { Expression: ParameterExpression param } member
+            || !ReferenceEquals(param, selfParam))
+            return false;
+
+        foreach (var part in grouping.Key)
+        {
+            if (part.Name == member.Member.Name && part.FieldRef is MongoFieldExpression field)
+            {
+                result = new MongoFieldExpression(field.Property, part.Name);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// A scalar aggregate (Sum/Min/Max/Average) terminating DIRECTLY on a bare-scalar-projected
     /// <c>Distinct()</c> — no intervening Select — e.g. <c>Select(o => o.OrderID).Distinct().Max()</c>
     /// (EF-453). Mirrors <see cref="TryBindGroupTerminalAggregate"/>'s role for a bare <c>GroupBy(key)</c>,

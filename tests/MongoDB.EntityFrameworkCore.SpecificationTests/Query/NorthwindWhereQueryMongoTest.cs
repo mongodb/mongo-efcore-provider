@@ -685,7 +685,7 @@ Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { 
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { } }
             """);
     }
 
@@ -725,7 +725,7 @@ Employees.{ "$match" : { "Title" : "Sales Representative" } }, { "$project" : { 
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { } }
             """);
     }
 
@@ -1009,8 +1009,8 @@ Customers.{ "$match" : { "$expr" : { "$let" : { "vars" : { "start" : { "$subtrac
         await base.Where_true(async);
         AssertMql(
             """
-            Customers.
-            """);
+Customers.{ "$match" : { } }
+""");
     }
 
     public override async Task Where_false(bool async)
@@ -1039,20 +1039,20 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 #else
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
-            """,
+Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
+""",
             //
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }
-            """,
+Customers.{ "$match" : { "_id" : "ALFKI" } }
+""",
             //
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }
-            """,
+Customers.{ "$match" : { "_id" : "ALFKI" } }
+""",
             //
             """
-            Customers.
-            """);
+Customers.{ "$match" : { } }
+""");
 #endif
     }
 

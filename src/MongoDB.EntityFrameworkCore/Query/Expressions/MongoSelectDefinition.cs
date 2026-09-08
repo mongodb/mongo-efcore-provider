@@ -79,6 +79,22 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     public IReadOnlyList<MongoSelectOp> PostJoinOps => _postJoinOps;
 
+    // ── Post-group ops (post-Distinct ordering/paging) ─────────────────────────────
+    // A FOURTH ordered filter/sort/page list, emitted by the lowerer immediately after a projected Distinct's
+    // $group + flattening $project. Targeted only for an OrderBy/ThenBy/Skip/Take composed after a projected
+    // Distinct (IsDistinct, never a genuine IsGroupBy — see NativeSlotPopulator's post-terminal guard carve-
+    // out), whose key selector resolved against the Distinct's OWN flattened output alias via
+    // NativeGroupByBinder.TryResolveDistinctOrderingKey — never against the root entity, which could collide
+    // with a differently-sourced projection member of the same name.
+    private readonly List<MongoSelectOp> _postGroupOps = [];
+
+    /// <summary>
+    /// The ordered sort/page operations recorded AFTER a projected Distinct's degenerate <c>$group</c>. The
+    /// lowerer emits these verbatim immediately after the flattening <c>$project</c> that follows the
+    /// <c>$group</c>. Empty for every query that never took this path.
+    /// </summary>
+    public IReadOnlyList<MongoSelectOp> PostGroupOps => _postGroupOps;
+
     private bool _referenceIncludeNullCheckConfirmed;
 
     /// <summary>
@@ -99,14 +115,16 @@ internal sealed class MongoSelectDefinition
     /// The op list the five merge methods currently target: <see cref="TrailingOps"/> once a set op has been
     /// attached (so post-set-op ops are trailing); <see cref="PostJoinOps"/> once a reference-Include null
     /// check has confirmed the join from a bare <c>Where</c> (so the null check itself, and anything recorded
-    /// after it, land past the <c>$lookup</c>/<c>$unwind</c> block); otherwise <see cref="PipelineOps"/>
-    /// (source1's own / pre-terminal ops). The two flips are mutually exclusive in practice — a set op never
-    /// composes with a bare-Where-confirmed reference-Include null check — so checking <c>SetOperation</c>
-    /// first is an arbitrary but harmless tie-break, not a considered precedence.
+    /// after it, land past the <c>$lookup</c>/<c>$unwind</c> block); <see cref="PostGroupOps"/> once a
+    /// projected Distinct's degenerate <c>$group</c> has finalized (so a following OrderBy/ThenBy/Skip/Take
+    /// lands past the <c>$group</c> + flattening <c>$project</c>); otherwise <see cref="PipelineOps"/>
+    /// (source1's own / pre-terminal ops). The flips are mutually exclusive in practice — see each list's own
+    /// remarks — so the check order here is an arbitrary but harmless tie-break, not a considered precedence.
     /// </summary>
     private List<MongoSelectOp> ActiveOps
         => SetOperation != null ? _trailingOps
             : _referenceIncludeNullCheckConfirmed ? _postJoinOps
+            : IsDistinct && !IsGroupBy && Grouping != null ? _postGroupOps
             : _pipelineOps;
 
     /// <summary>

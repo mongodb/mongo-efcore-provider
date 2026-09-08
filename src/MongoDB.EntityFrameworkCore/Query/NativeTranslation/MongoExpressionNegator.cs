@@ -332,6 +332,12 @@ internal static class MongoExpressionNegator
                 negated = new MongoUnaryExpression(MongoUnaryOperator.Not, field);
                 return true;
 
+            case MongoConstantExpression { Value: bool literalBool }:
+                // Complement of a literal boolean predicate root (see MongoExpressionTranslator's own case)
+                // is simply the other literal — exact by construction, no query-dialect involvement needed.
+                negated = new MongoConstantExpression(!literalBool, forSerialization: null);
+                return true;
+
             default:
                 return false;
         }
