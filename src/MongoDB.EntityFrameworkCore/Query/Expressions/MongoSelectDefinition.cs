@@ -637,6 +637,32 @@ internal sealed class MongoSelectDefinition
     /// </remarks>
     internal bool HasArrayProjectionLeaf { get; set; }
 
+    /// <summary>
+    /// <see langword="true"/> when <see cref="Projection"/> contains a STRING-TO-CHAR-SEQUENCE materialization
+    /// leaf — <c>Select(e =&gt; new { P = e.City.AsEnumerable() })</c> and its <c>.ToList()</c>/<c>.ToArray()</c>
+    /// spellings (see <c>NativeProjectionBinder.IsStringSequenceMaterializationCall</c>). Such a leaf pushes down
+    /// only the raw string field and defers the char-sequence materialization to the shaper, so its
+    /// <see cref="Route"/> is <see cref="NativeRoute.Projection"/> like any other bare-field leaf — but unlike
+    /// every other one, it is only correct when a shaper THIS PROVIDER built reads it back.
+    /// </summary>
+    /// <remarks>
+    /// The distinction this flag draws is "every leaf resolved to a bare field" (what
+    /// <see cref="NativeRoute.Projection"/> means) versus "…and every leaf is also safe for the driver's own LINQ
+    /// v3 provider to project" (what the push-down path additionally needs). An <c>Enumerable.*</c> operator over
+    /// a string treats the string as its own <c>IEnumerable&lt;char&gt;</c>, which the driver cannot translate at
+    /// all (<c>StringSerializer</c> is not an <c>IBsonArraySerializer</c>) — EF-250/EF-231 exist precisely to keep
+    /// this shape off that path, via <c>ProjectionAnalyzer</c>'s <c>UntranslatableProjectionFinder</c>. That
+    /// finder looks for the <see cref="System.Linq.Expressions.MethodCallExpression"/> in the SHAPER, and
+    /// registering this leaf as one projection member ERASES it from the shaper — so the finder can no longer
+    /// see it and this flag is what carries the same answer in its place. Read by
+    /// <c>MongoShapedQueryCompilingExpressionVisitor.VisitProjectedQuery</c> beside
+    /// <c>ProjectionAnalyzer.CanPushDown</c>: with it set, an explicit
+    /// <see cref="Infrastructure.MongoQueryMode.DriverLinq"/> (or any other route that reaches that gate) goes to
+    /// the client/mixed shaper, which evaluates the operator on the materialized value exactly as it did before
+    /// this leaf went native.
+    /// </remarks>
+    internal bool HasStringSequenceProjectionLeaf { get; set; }
+
     /// <summary>The native join scope chain recorded by <c>TranslateJoinCore</c>, or <see
     /// langword="null"/> if this select has no eligible native join.</summary>
     internal MongoJoinScope? JoinScope { get; set; }

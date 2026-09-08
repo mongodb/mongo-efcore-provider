@@ -2587,6 +2587,16 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10400 } } }
     {
         await base.Parameter_extraction_short_circuits_3(async);
 
+#if EF8
+        AssertMql(
+            """
+Orders.{ "$match" : { "$or" : [{ "_id" : { "$lt" : 10400 } }, { "_id" : { "$type" : -1 } }, { "$and" : [{ "OrderDate" : { "$ne" : null } }, { "$expr" : { "$eq" : [{ "$month" : "$OrderDate" }, 7] } }, { "$expr" : { "$eq" : [{ "$year" : "$OrderDate" }, 1996] } }] }] } }
+""",
+            //
+            """
+Orders.{ "$match" : { } }
+""");
+    #else
         AssertMql(
             """
 Orders.{ "$match" : { "$or" : [{ "_id" : { "$lt" : 10400 } }, { "$and" : [{ "OrderDate" : { "$ne" : null } }, { "$expr" : { "$eq" : [{ "$month" : "$OrderDate" }, 7] } }, { "$expr" : { "$eq" : [{ "$year" : "$OrderDate" }, 1996] } }] }] } }
@@ -2595,6 +2605,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : { "$lt" : 10400 } }, { "$and" : [{ "Ord
             """
 Orders.{ "$match" : { } }
 """);
+#endif
     }
 
     public override async Task Subquery_member_pushdown_does_not_change_original_subquery_model(bool async)
@@ -3966,7 +3977,7 @@ Customers.{ "$match" : { } }
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "Property" : "$City", "_id" : 0 } }
             """);
     }
 
@@ -3976,7 +3987,7 @@ Customers.{ "$match" : { } }
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "Property" : "$City", "_id" : 0 } }
             """);
     }
 
@@ -3986,7 +3997,7 @@ Customers.{ "$match" : { } }
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "Property" : "$City", "_id" : 0 } }
             """);
     }
 
@@ -5294,6 +5305,15 @@ Customers.
 
     public override async Task Contains_over_concatenated_columns_both_fixed_length(bool async)
     {
+#if EF8 || EF9
+        // Failed: Throws ExpressionNotSupportedException (query not translated)
+        await base.Contains_over_concatenated_columns_both_fixed_length(async);
+
+        AssertMql(
+            """
+Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "$expr" : { "$in" : [{ "$concat" : ["$_outer.CustomerID", "$_inner._id"] }, ["ALFKIALFKI", "ALFKI", "ANATRAna Trujillo Emparedados y helados", "ANATRANATR"]] } } }
+""");
+    #else
         // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.Contains_over_concatenated_columns_both_fixed_length(async);
 
@@ -5301,6 +5321,7 @@ Customers.
             """
 Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "$expr" : { "$in" : [{ "$concat" : ["$CustomerID", "$_lookup_Customer._id"] }, ["ALFKIALFKI", "ALFKI", "ANATRAna Trujillo Emparedados y helados", "ANATRANATR"]] } } }
 """);
+#endif
     }
 
     public override async Task Contains_over_concatenated_column_and_parameter(bool async)

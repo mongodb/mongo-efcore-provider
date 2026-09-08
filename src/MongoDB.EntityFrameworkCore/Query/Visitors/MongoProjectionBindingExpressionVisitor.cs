@@ -230,6 +230,24 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 _projectionMapping[castProjectionMember] = castExpression;
                 return new ProjectionBindingExpression(_queryExpression, castProjectionMember, expression.Type);
 
+            // Native string-to-char-sequence projection leaf (`new { Property = e.City.AsEnumerable() }`, or
+            // the `.ToList()`/`.ToArray()` spellings): register the WHOLE MethodCallExpression as ONE
+            // projection member, exactly like the arithmetic/cast cases above. Without this the default
+            // recursive walk would visit only the call's Arguments[0] (the raw member access), dropping the
+            // AsEnumerable()/ToList()/ToArray() wrapper from _projectionMapping entirely — the read side
+            // (MongoProjectionBindingRemovingExpressionVisitor) would then have no way to know a char-sequence
+            // materialization was projected under this alias, and would hand the shaper a bare string where an
+            // IEnumerable<char>/List<char>/char[] was expected.
+            // The Route == Projection guard mirrors the cast/arithmetic cases: NativeProjectionBinder sets
+            // Route = Projection only when EVERY leaf (including this one) is natively representable, so a
+            // mixed/fallback shape still falls through to the ordinary default walk untouched.
+            case MethodCallExpression stringSequenceCall
+                when _queryExpression.Select.Route == NativeRoute.Projection
+                     && NativeProjectionBinder.IsStringSequenceMaterializationCall(stringSequenceCall):
+                var stringSequenceMember = GetCurrentProjectionMember();
+                _projectionMapping[stringSequenceMember] = stringSequenceCall;
+                return new ProjectionBindingExpression(_queryExpression, stringSequenceMember, expression.Type);
+
             // Native conditional projection leaf: register the WHOLE ConditionalExpression node as ONE
             // projection member, exactly like the arithmetic and cast cases above (NOT caught by the earlier
             // unconditional `case MemberExpression memberExpression:` -- a ConditionalExpression is not a

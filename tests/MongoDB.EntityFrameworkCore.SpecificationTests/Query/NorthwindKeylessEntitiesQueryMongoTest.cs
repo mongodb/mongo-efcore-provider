@@ -116,12 +116,21 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }
 
     public override async Task KeylessEntity_select_where_navigation(bool async)
     {
+#if EF8 || EF9
+        await base.KeylessEntity_select_where_navigation(async);
+
+        AssertMql(
+            """
+Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "_inner.City" : "Seattle" } }
+""");
+    #else
         await base.KeylessEntity_select_where_navigation(async);
 
         AssertMql(
             """
 Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer.City" : "Seattle" } }
 """);
+#endif
     }
 
     public override async Task KeylessEntity_select_where_navigation_multi_level(bool async)

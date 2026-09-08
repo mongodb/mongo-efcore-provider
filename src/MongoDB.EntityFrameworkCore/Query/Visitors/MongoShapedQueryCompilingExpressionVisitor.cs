@@ -371,7 +371,22 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // projection" — so this projected-path gate keys off routing here, not a separate representable flag.)
         ThrowIfNativeOnlyForbidsFallback(queryMode, "Query projects a non-entity result");
 
-        if (ProjectionAnalyzer.CanPushDown(shapedQueryExpression.ShaperExpression))
+        // The HasStringSequenceProjectionLeaf conjunct restores what ProjectionAnalyzer.CanPushDown can no longer
+        // see for itself. Its UntranslatableProjectionFinder exists specifically to keep an Enumerable.* operator
+        // applied to a STRING (the string treated as its own IEnumerable<char>, which the driver cannot translate
+        // — StringSerializer is not an IBsonArraySerializer) off the driver's push-down path and on the
+        // client/mixed shaper instead (EF-250, EF-231). It finds that shape by looking for the
+        // MethodCallExpression in the SHAPER — and the native string-sequence projection leaf registers that
+        // whole call as ONE projection member, which ERASES it from the shaper (see
+        // MongoProjectionBindingExpressionVisitor.Visit's own case). NativeProjectionBinder runs regardless of
+        // MongoQueryMode, so that erasure happens even under an explicit DriverLinq; without this conjunct
+        // CanPushDown flips from false to true for exactly the shape EF-250 was fixed to route away, and the
+        // driver throws (MEASURED: "unable to determine which serializer to use" for AsEnumerable(),
+        // "StringSerializer must implement IBsonArraySerializer" for ToList()/ToArray()). The flag carries the
+        // finder's answer in the erased call's place; the mixed shaper below re-applies the operator to the
+        // materialized value, which is what this shape did before it ever went native.
+        if (!mongoQueryExpression.Select.HasStringSequenceProjectionLeaf
+            && ProjectionAnalyzer.CanPushDown(shapedQueryExpression.ShaperExpression))
         {
             // Push-down path: scalar/anonymous projections handled entirely by LINQ V3
             return Expression.Call(null,
