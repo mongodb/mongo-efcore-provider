@@ -60,22 +60,23 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     public IReadOnlyList<MongoSelectOp> TrailingOps => _trailingOps;
 
-    // ── Post-join ops (deferred past a confirmed reference-Include null check) ─────
+    // ── Post-join ops (deferred past a confirmed Where over a join's Inner scope) ──
     // A THIRD ordered filter/sort/page list, emitted by the lowerer immediately after the (single) reference-
     // Include's $lookup/$unwind block — never reached via SetOperation, which is mutually exclusive with this
-    // (a query either confirms a reference-Include null check from a bare Where, or attaches a set op; nothing
-    // here supports both at once). Populated only once ReferenceIncludeNullCheckConfirmed flips ActiveOps for
-    // every op recorded from that point on, so the Where predicate itself (via AddPredicateConjunct) AND any
-    // later slot operator (notably a reducer's First()/FirstOrDefault() $limit) land here instead of
-    // _pipelineOps — which is required for correctness, not just tidiness: the null check IS the filter that
-    // decides "first", so it must run before, never after, the reducer's own $limit.
+    // (a query either confirms a join's Inner access from a bare Where, or attaches a set op; nothing here
+    // supports both at once). Populated only once JoinInnerAccessConfirmedFromWhere flips ActiveOps for every
+    // op recorded from that point on, so the Where predicate itself (via AddPredicateConjunct) AND any later
+    // slot operator (notably a reducer's First()/FirstOrDefault() $limit) land here instead of _pipelineOps —
+    // which is required for correctness, not just tidiness: the Where predicate IS the filter that decides
+    // "first", so it must run before, never after, the reducer's own $limit.
     private readonly List<MongoSelectOp> _postJoinOps = [];
 
     /// <summary>
-    /// The ordered filter/sort/page operations recorded AFTER a reference-Include null check
-    /// (<c>e.Manager == null</c>) confirmed the Include's <c>$lookup</c> from a bare <c>Where</c>. The lowerer
-    /// emits these verbatim immediately after that <c>$lookup</c>/<c>$unwind</c> block. Empty for every query
-    /// that never took this path.
+    /// The ordered filter/sort/page operations recorded AFTER a <c>Where</c> predicate reaching a single-level
+    /// join's Inner side (a null check, e.g. <c>e.Manager == null</c>, or a general comparison, e.g.
+    /// <c>o.Customer.City != "London"</c>) confirmed that join's <c>$lookup</c> from a bare <c>Where</c>. The
+    /// lowerer emits these verbatim immediately after that <c>$lookup</c>/<c>$unwind</c> block. Empty for every
+    /// query that never took this path.
     /// </summary>
     public IReadOnlyList<MongoSelectOp> PostJoinOps => _postJoinOps;
 
@@ -95,35 +96,39 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     public IReadOnlyList<MongoSelectOp> PostGroupOps => _postGroupOps;
 
-    private bool _referenceIncludeNullCheckConfirmed;
+    private bool _joinInnerAccessConfirmedFromWhere;
 
     /// <summary>
-    /// <see langword="true"/> once <c>NativeSlotPopulator</c>'s <c>Where</c> arm has confirmed a reference-
-    /// Include's <c>$lookup</c> via <see cref="NativeTranslation.NativeJoinScopeTranslator.TryMatchInnerNullCheck"/>.
+    /// <see langword="true"/> once <c>NativeSlotPopulator</c>'s <c>Where</c> arm has resolved a predicate
+    /// reaching a single-level join's Inner side — either
+    /// <see cref="NativeTranslation.NativeJoinScopeTranslator.TryMatchInnerNullCheck"/>'s null-check shape, or
+    /// a general comparison via <see cref="NativeTranslation.NativeJoinScopeTranslator.TryTranslatePredicate"/>.
     /// Flips <see cref="ActiveOps"/> to <see cref="PostJoinOps"/> for every op recorded from this point on —
     /// see that list's own remarks for why the ordering matters.
     /// </summary>
-    internal bool ReferenceIncludeNullCheckConfirmed => _referenceIncludeNullCheckConfirmed;
+    internal bool JoinInnerAccessConfirmedFromWhere => _joinInnerAccessConfirmedFromWhere;
 
     /// <summary>
-    /// Records that a reference-Include null check confirmed this select's join from a bare <c>Where</c> (no
-    /// confirming <c>Select</c> reached it). See <see cref="ReferenceIncludeNullCheckConfirmed"/>.
+    /// Records that a bare <c>Where</c> predicate reaching a single-level join's Inner side confirmed this
+    /// select's join (no confirming <c>Select</c> reached it yet). See
+    /// <see cref="JoinInnerAccessConfirmedFromWhere"/>.
     /// </summary>
-    internal void MarkReferenceIncludeNullCheckConfirmed() => _referenceIncludeNullCheckConfirmed = true;
+    internal void MarkJoinInnerAccessConfirmedFromWhere() => _joinInnerAccessConfirmedFromWhere = true;
 
     /// <summary>
     /// The op list the five merge methods currently target: <see cref="TrailingOps"/> once a set op has been
-    /// attached (so post-set-op ops are trailing); <see cref="PostJoinOps"/> once a reference-Include null
-    /// check has confirmed the join from a bare <c>Where</c> (so the null check itself, and anything recorded
-    /// after it, land past the <c>$lookup</c>/<c>$unwind</c> block); <see cref="PostGroupOps"/> once a
-    /// projected Distinct's degenerate <c>$group</c> has finalized (so a following OrderBy/ThenBy/Skip/Take
-    /// lands past the <c>$group</c> + flattening <c>$project</c>); otherwise <see cref="PipelineOps"/>
-    /// (source1's own / pre-terminal ops). The flips are mutually exclusive in practice — see each list's own
-    /// remarks — so the check order here is an arbitrary but harmless tie-break, not a considered precedence.
+    /// attached (so post-set-op ops are trailing); <see cref="PostJoinOps"/> once a bare <c>Where</c> has
+    /// confirmed a join's Inner access (a null check or a general comparison — so the predicate itself, and
+    /// anything recorded after it, land past the <c>$lookup</c>/<c>$unwind</c> block); <see cref="PostGroupOps"/>
+    /// once a projected Distinct's degenerate <c>$group</c> has finalized (so a following
+    /// OrderBy/ThenBy/Skip/Take lands past the <c>$group</c> + flattening <c>$project</c>); otherwise
+    /// <see cref="PipelineOps"/> (source1's own / pre-terminal ops). The flips are mutually exclusive in
+    /// practice — see each list's own remarks — so the check order here is an arbitrary but harmless
+    /// tie-break, not a considered precedence.
     /// </summary>
     private List<MongoSelectOp> ActiveOps
         => SetOperation != null ? _trailingOps
-            : _referenceIncludeNullCheckConfirmed ? _postJoinOps
+            : _joinInnerAccessConfirmedFromWhere ? _postJoinOps
             : IsDistinct && !IsGroupBy && Grouping != null ? _postGroupOps
             : _pipelineOps;
 

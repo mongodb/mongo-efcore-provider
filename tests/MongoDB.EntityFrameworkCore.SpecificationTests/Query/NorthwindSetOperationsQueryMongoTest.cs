@@ -686,8 +686,8 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
         await base.Concat_with_one_side_being_GroupBy_aggregate(async);
         AssertMql(
             """
-            Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$match" : { "_v._inner.City" : "Seatte" } }, { "$project" : { "OrderDate" : "$_v._outer.OrderDate", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$CustomerID", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "OrderDate" : { "$max" : "$_elements.OrderDate" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
-            """);
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer.City" : "Seatte" } }, { "$project" : { "OrderDate" : "$OrderDate", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$CustomerID", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "OrderDate" : { "$max" : "$_elements.OrderDate" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+""");
     }
 
     public override async Task Union_on_entity_with_correlated_collection(bool async)

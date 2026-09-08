@@ -213,8 +213,35 @@ internal static class NativeSlotPopulator
                          predicate.Parameters[0], predicate.Body, out var isNotNull))
             {
                 // Flip BEFORE AddPredicateConjunct: see this arm's remarks above.
-                mongoQ.Select.MarkReferenceIncludeNullCheckConfirmed();
+                mongoQ.Select.MarkJoinInnerAccessConfirmedFromWhere();
                 mongoQ.Select.AddPredicateConjunct(new MongoLookupNullCheckExpression(lookup.As, isNotNull));
+            }
+            // A GENERAL predicate reaching a single-level join's Inner side (`o.Customer.City != "London"`,
+            // EF's nav-expansion producing this over a LeftJoin the same way the null-check shape above does).
+            // TryTranslatePredicate is the SAME two-scope translator the Outer-only arm above already calls
+            // (guarded there by !ReferencesInnerScope) — its own remarks state mixed Outer/Inner predicates
+            // translate fine structurally, resolving an Inner member through JoinScope.Levels[0].InnerPrefix,
+            // the alias the $lookup this arm defers to will actually produce. So the only new work here is
+            // ROUTING: try the narrower null-check recognizer first (a bare entity-vs-null comparison is not a
+            // property path TryTranslatePredicate can represent, so it correctly declines that shape, but
+            // trying it first avoids wasting a translation attempt on the common null-check case), then this
+            // general arm for everything else. Same non-collection restriction as the null-check arm (a
+            // COLLECTION navigation's 1:N $unwind is a different, unexamined post-join filtering shape) but,
+            // unlike the null-check arm, no IsLeftOuter requirement: an inner join's $unwind already drops
+            // unmatched rows before this $match runs, which is correct for a general comparison (unlike the
+            // null-check's degenerate always-true/never-true concern, which does not apply here). Mirrors the
+            // null-check arm's own division of labor: does NOT call AddLookup/MarkReferenceIncludeConfirmed/
+            // MarkJoinLookupConfirmed — that stays owned by the trailing Select(ti => ti.Outer) EF's
+            // nav-expansion always synthesizes next, to avoid double-counting MongoSelectDefinition's
+            // confirmed/candidate join counters. See docs/superpowers/specs/2026-09-08-native-join-where-inner-scope-design.md.
+            else if (mongoQ.Select.JoinScope is { Levels.Count: 1 } innerScope
+                     && mongoQ.Joins.Count == 1
+                     && mongoQ.Joins[0].Lookup is { Navigation.IsCollection: false }
+                     && NativeJoinScopeTranslator.TryTranslatePredicate(
+                         innerScope, predicate.Parameters[0], predicate.Body, out var innerPredicateNode))
+            {
+                mongoQ.Select.MarkJoinInnerAccessConfirmedFromWhere();
+                mongoQ.Select.AddPredicateConjunct(innerPredicateNode);
             }
             else
                 mongoQ.Select.MarkNotNativelyRepresentable();
