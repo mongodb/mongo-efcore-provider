@@ -327,6 +327,41 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             // not be lowered/rendered. Continue below to the ordinary driver-LINQ push-down aggregate path.
         }
 
+        // Native whole-entity ctor-wrap (native-ctor-only-dto-projection ticket): a single-argument DTO
+        // constructor wrapping the whole entity (`x => new SomeDto(x)`) is left on NativeRoute.WholeEntity with
+        // no $project by NativeProjectionBinder's ctor-only-DTO recognizer — the identical native pipeline a
+        // plain entity query uses. It reaches THIS method (rather than the entity path just above, at line
+        // ~234) only because the shaper's outer CLR type is the DTO, not a registered entity type, so
+        // projectedEntityType was null. allowStreaming: false, matching the Projection branch above — the
+        // shaper here is also a NewExpression wrapping the entity shaper, not a bare entity shaper, so the
+        // same conservative choice applies (this can be revisited separately if streaming eligibility for this
+        // specific shape is ever measured and found safe). Placed before the NativeOnly guard so a
+        // representable whole-entity ctor-wrap succeeds natively instead of being rejected.
+        //
+        // Unlike its GroupBy/Projection/ScalarAggregate siblings above — each set ONLY by an affirmative
+        // binding — NativeRoute.WholeEntity is MongoSelectDefinition.Route's FALLTHROUGH answer: it is what
+        // Route resolves to whenever nothing else applied, so a bare `mongoQueryExpression.Select.Route ==
+        // NativeRoute.WholeEntity` check alone is a catch-all, not a check that this is actually the ctor-wrap
+        // shape. It happens to be safe today only because every OTHER way to reach WholeEntity here (a plain
+        // `Set<T>()` with no Select, an entity reducer) resolves to a registered entity type and takes the
+        // entity path above instead, never reaching this method at all — so requiring the ctor-wrap SHAPE here
+        // too, not just the route, is what keeps this branch self-limiting rather than relying on that being
+        // true forever. The expected arrival shape is a `NewExpression` with `Members == null` whose sole
+        // argument is the entity shaper (a `StructuralTypeShaperExpression`, possibly wrapped in one or more
+        // `IncludeExpression` auto-include layers per `IsSelectorParameter`'s own unwrap) — exactly what
+        // `TranslateSelect`'s shaper-replace produces for `x => new SomeDto(x)` once `x` is substituted by the
+        // source shaper. A route that reaches WholeEntity with some OTHER non-entity shaper shape falls through
+        // to the projected-path handling below instead of being silently mis-shaped here.
+        if (queryMode != MongoQueryMode.DriverLinq
+            && mongoQueryExpression.Select.Route == NativeRoute.WholeEntity
+            && IsCtorWrappedEntityShaper(shapedQueryExpression.ShaperExpression))
+        {
+            return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
+                (bsonDoc, behavior) => new MongoProjectionBindingRemovingExpressionVisitor(
+                    rootEntityType, mongoQueryExpression, bsonDoc, behavior),
+                allowStreaming: false);
+        }
+
         // A projected query (anonymous/scalar projection, scalar aggregate, or a mixed projection containing
         // entity references) is never shaped from a full native document — it runs through the driver-LINQ
         // push-down path or the mixed client-side shaper. The native pipeline only covers full-entity results,
@@ -361,6 +396,33 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
             (bsonDoc, behavior) => new MongoMixedProjectionBindingRemovingExpressionVisitor(
                 rootEntityType, mongoQueryExpression, bsonDoc, behavior));
+    }
+
+    /// <summary>
+    /// True when <paramref name="shaperExpression"/> is the exact shape the native-ctor-only-dto-projection
+    /// ticket's whole-entity ctor-wrap produces: a <see cref="NewExpression"/> with <c>Members == null</c> (a
+    /// ctor-only DTO, not an anonymous type / member-init) whose single constructor argument is the entity
+    /// shaper itself — a <see cref="StructuralTypeShaperExpression"/>, possibly wrapped in one or more
+    /// <see cref="IncludeExpression"/> auto-include layers (the same wrapping <c>IsSelectorParameter</c> in
+    /// <c>NativeProjectionBinder</c> unwraps at bind time, before the shaper-replace substitutes the source
+    /// shaper for the selector's own parameter). Used only to narrow <see cref="VisitProjectedQuery"/>'s
+    /// <see cref="NativeRoute.WholeEntity"/> branch to the shape it actually means, since that route is
+    /// otherwise a fallthrough answer rather than an affirmative one — see that branch's own remarks.
+    /// </summary>
+    private static bool IsCtorWrappedEntityShaper(Expression shaperExpression)
+    {
+        if (shaperExpression is not NewExpression { Members: null, Arguments: [var ctorArgument] })
+        {
+            return false;
+        }
+
+        var inner = ctorArgument;
+        while (inner is IncludeExpression include)
+        {
+            inner = include.EntityExpression;
+        }
+
+        return inner is StructuralTypeShaperExpression;
     }
 
     /// <summary>

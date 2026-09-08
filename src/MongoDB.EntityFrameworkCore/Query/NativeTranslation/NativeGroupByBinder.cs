@@ -141,7 +141,7 @@ internal static class NativeGroupByBinder
         if (select.PendingGroupPredicate != null)
             return false;
 
-        if (!resultSelector.Body.TryGetProjectionMembers(out var bindings))
+        if (!resultSelector.Body.TryGetProjectionMembers(out var bindings, allowPositionalConstructorArguments: true))
             return false;
 
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);

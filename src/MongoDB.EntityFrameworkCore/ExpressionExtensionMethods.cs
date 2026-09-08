@@ -109,6 +109,24 @@ internal static class ExpressionExtensionMethods
     /// positional constructors) or a <see cref="MemberInitExpression"/> over a parameterless constructor
     /// (object-initializer syntax).
     /// </summary>
+    /// <param name="body">The projection body to read — a <see cref="NewExpression"/> or a <see cref="MemberInitExpression"/>.</param>
+    /// <param name="members">The (member name, value) pairs the body was read into, or empty when this returns <see langword="false"/>.</param>
+    /// <param name="allowPositionalConstructorArguments">
+    /// When <see langword="true"/>, additionally admits a <see cref="NewExpression"/> whose
+    /// <see cref="NewExpression.Members"/> is <see langword="null"/> (a constructor-only DTO). The compiler only
+    /// populates <c>Members</c> for an anonymous-type object-creation expression (and similarly
+    /// compiler-synthesized positional constructs); for <c>new SomeNamedClass(args)</c> it is ALWAYS
+    /// <see langword="null"/>, regardless of whether the constructor's parameters happen to map 1:1 by name to
+    /// same-named properties. This admits that ordinary-named-type shape, yielding synthetic positional
+    /// pseudo-names (<see cref="PositionalConstructorArgumentAliasPrefix"/> + index) instead of real member
+    /// names. Defaults to <see langword="false"/> — every pre-existing call site keeps its exact prior behavior
+    /// unless it opts in. ONLY the <c>GroupBy</c>/<c>SelectMany</c> result-selector family (which addresses each
+    /// bound value by array index, not by EF Core's <c>ProjectionMember</c>/<c>MemberInfo</c>-keyed dictionary)
+    /// may pass <see langword="true"/> — see Query's own <c>NativeProjectionBinder</c>/
+    /// <c>NativeJoinScopeProjectionBinder</c>, which must NOT, because their read side resolves a wrapped
+    /// member's alias through that dictionary, keyed by a REAL <c>MemberInfo</c>; a synthetic name registered
+    /// there is never found by that read.
+    /// </param>
     /// <returns>
     /// <see langword="false"/> — leaving <paramref name="members"/> empty — for a body that is not a wrapped
     /// construction, has no members, or uses a member binding this cannot express (a nested or list binding,
@@ -128,7 +146,8 @@ internal static class ExpressionExtensionMethods
     /// </para>
     /// </remarks>
     internal static bool TryGetProjectionMembers(
-        this Expression body, out IReadOnlyList<(string MemberName, Expression Value)> members)
+        this Expression body, out IReadOnlyList<(string MemberName, Expression Value)> members,
+        bool allowPositionalConstructorArguments = false)
     {
         switch (body)
         {
@@ -141,6 +160,25 @@ internal static class ExpressionExtensionMethods
                 for (var i = 0; i < arguments.Count; i++)
                 {
                     pairs.Add((newMembers[i].Name, arguments[i]));
+                }
+
+                members = pairs;
+                return true;
+            }
+
+            // A CTOR-ONLY DTO — Members is null because this is an ordinary named-type object creation, and the
+            // compiler only populates Members for an anonymous-type (or similarly compiler-synthesized
+            // positional) construction; it is null here regardless of parameter naming. Admitted only when the
+            // caller opts in; see the allowPositionalConstructorArguments parameter doc for who may.
+            case NewExpression
+            {
+                Members: null, Arguments: { Count: > 0 } positionalArguments
+            } when allowPositionalConstructorArguments:
+            {
+                var pairs = new List<(string, Expression)>(positionalArguments.Count);
+                for (var i = 0; i < positionalArguments.Count; i++)
+                {
+                    pairs.Add((PositionalConstructorArgumentAlias(i), positionalArguments[i]));
                 }
 
                 members = pairs;
@@ -170,6 +208,18 @@ internal static class ExpressionExtensionMethods
                 return false;
         }
     }
+
+    /// <summary>
+    /// The reserved pseudo-member-name prefix for a ctor-only DTO's positional constructor arguments (see
+    /// <see cref="TryGetProjectionMembers"/>'s <c>allowPositionalConstructorArguments</c> parameter) — argument
+    /// index <c>i</c> becomes <c>"_ctorArg" + i</c>. Underscore-prefixed and self-documenting, consistent with
+    /// this codebase's other synthetic-alias conventions (<c>NativeProjectionBinder.SyntheticBareProjectionAlias</c>
+    /// = <c>"_v"</c>, <c>MongoSelectDefinition.BareProjectionMemberKey</c>).
+    /// </summary>
+    internal const string PositionalConstructorArgumentAliasPrefix = "_ctorArg";
+
+    private static string PositionalConstructorArgumentAlias(int index)
+        => PositionalConstructorArgumentAliasPrefix + index;
 
     /// <summary>
     /// Rebuilds a wrapped projection body — the counterpart of <see cref="TryGetProjectionMembers"/> — with each

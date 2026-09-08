@@ -152,6 +152,59 @@ internal static class NativeProjectionBinder
 
                 break;
 
+            // A CTOR-ONLY DTO — `x => new CustomerDtoWithEntityInCtor(x)` — as opposed to the WRAPPED case
+            // above (which requires TryGetProjectionMembers to succeed, i.e. NewExpression.Members non-null).
+            // Members is null here because this is an ordinary named-type object creation, and the compiler only
+            // populates Members for an anonymous-type (or similarly compiler-synthesized positional)
+            // construction — it is null regardless of whether the constructor's parameters happen to map 1:1 by
+            // name to same-named properties. Capped at exactly one constructor argument — see this ticket's
+            // design doc for why:
+            // the read side (MongoProjectionBindingExpressionVisitor.VisitNew) resolves a Members-null body's
+            // arguments through EF Core's ProjectionMember/MemberInfo-keyed dictionary with no Enter/Exit at
+            // all, so a SECOND unnamed argument would collide under the same ambient key with no safe way to
+            // distinguish them (ProjectionMember.Append accepts only a real MemberInfo — no synthetic key).
+            case NewExpression { Members: null, Arguments: { Count: 1 } ctorArguments }:
+            {
+                var ctorArgument = ctorArguments[0];
+
+                // Sub-case 1: the sole argument literally IS the selector's own root parameter (possibly
+                // wrapped in EF auto-include layers, per IsSelectorParameter) — the whole entity, unchanged.
+                // No server-side reshaping is needed at all: leaving Select.Projection untouched lets
+                // MongoSelectDefinition.Route resolve to the pre-existing NativeRoute.WholeEntity, exactly as
+                // it would for a plain Set<Customer>() with no Select — every existing entity-materialization
+                // concern (discriminator narrowing, key handling, Include fix-up) applies unchanged.
+                //
+                // This must be checked BEFORE falling through to sub-case 2's TryBindAsBareProjection: were
+                // this leaf run through TryTranslateLeaf's whole-root-entity-leaf arm instead, it would
+                // translate to a MongoElementRefExpression whose Path is the "$ROOT" sentinel
+                // (MongoElementRefExpression.WholeRootDocumentPath) — and TryDeriveDocumentPathAlias's
+                // MongoElementRefExpression case (it matches any UNDOTTED path, "$ROOT" included) would then
+                // hand that back as the $project output field's ALIAS, which is not a valid emitted field name
+                // and has no matching read-side wiring for a bare projection (the existing whole-root-entity
+                // read machinery, MongoProjectionBindingRemovingExpressionVisitor's IsWholeRootEntityAlias, is
+                // reachable only via the WRAPPED path). Confirmed empirically against the live code during
+                // this ticket's design — do not remove this branch or reorder it after sub-case 2.
+                if (IsWholeRootEntityLeaf(mongoQ, ctorArgument, selector.Parameters[0]))
+                {
+                    break;
+                }
+
+                // Sub-case 2: any other single-argument shape TryTranslateLeaf recognizes as a bare-admissible
+                // leaf — a scalar/computed field, or an owned single-reference navigation entity
+                // (allowWholeRootEntityLeafForThis: true admits the latter here; a TRUE bare body still
+                // declines it — see TryBindAsBareProjection's own remarks). Reuses the exact same tier-1/
+                // tier-2 alias derivation and bareProjectionAlias/bareProjectionTier registration the bare-body
+                // arm uses, so the read side (VisitNew's ambient/root-member, null-keyed lookup) resolves it
+                // identically — VisitNew already visits a Members-null NewExpression's sole argument under
+                // whatever ProjectionMember is ambient, unconditionally, today.
+                if (!TryBindAsBareProjection(ctorArgument, BareLeafProvisionalAlias, allowWholeRootEntityLeafForThis: true))
+                {
+                    return false;
+                }
+
+                break;
+            }
+
             // A BARE selector body — `b => b.Title`, `b => b.Posts`, `o => o.OrderID` — as opposed to the two
             // wrapped (anonymous-type / DTO) constructions above. It has no member name, so the alias cannot
             // come from the syntax the way a wrapped leaf's does; it is derived from the TRANSLATED LEAF and
@@ -213,49 +266,72 @@ internal static class NativeProjectionBinder
                       ?? BareLeafProvisionalAlias
                     : BareLeafProvisionalAlias;
 
-                // allowWholeRootEntityLeaf defaults to false here, so the owned-nav-entity leaf arm (gated on
-                // that same flag, for the same reason as the whole-root-entity leaf) never fires for a bare
-                // body — a bare `b => b.Address` keeps declining exactly as before this ticket.
-                if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], selector.Body, provisionalAlias,
-                        pendingLookups, pendingReducerLeaves, out var bareLeaf, out var bareIsArrayLeaf, out _))
+                // allowWholeRootEntityLeaf is false here, so the owned-nav-entity leaf arm (gated on that same
+                // flag, for the same reason as the whole-root-entity leaf) never fires for a TRUE bare body —
+                // a bare `b => b.Address` keeps declining exactly as before this ticket. The ctor-wrap arm
+                // below (added by the native-ctor-only-dto-projection ticket) passes true instead, deliberately
+                // — see its own remarks.
+                if (!TryBindAsBareProjection(selector.Body, provisionalAlias, allowWholeRootEntityLeafForThis: false))
                 {
                     return false;
                 }
 
-                // Derive the FINAL alias from the translated leaf rather than from the syntax.
-                //
-                // Tier 1 is tried first, and the ordering is load-bearing: a leaf with a root-relative document
-                // path must take it, since that's what makes the alias-addressed read and the document-path
-                // read the same read, letting the late-fallback strip work for it. Tier 2 answers only for a
-                // leaf tier 1 cannot — a computed leaf backed by no document element — by choosing the alias the
-                // driver would emit for a bare body, so leaving the driver's push-down in place is the correct
-                // fallback (hence Synthetic, and hence the strip not firing).
-                string derivedAlias;
-                if (TryDeriveDocumentPathAlias(bareLeaf, out var documentPathAlias))
-                {
-                    derivedAlias = documentPathAlias;
-                    bareProjectionTier = ProjectionAliasTier.DocumentPath;
-                }
-                else if (TryDeriveSyntheticAlias(bareLeaf, selector, pendingLookups, out var syntheticAlias))
-                {
-                    derivedAlias = syntheticAlias;
-                    bareProjectionTier = ProjectionAliasTier.Synthetic;
-                }
-                else
-                {
-                    return false;
-                }
-
-                bareProjectionAlias = derivedAlias;
-                seenAliases.Add(derivedAlias);
-                projections.Add(new MongoProjection(derivedAlias, bareLeaf));
-                leafIsArray.Add(bareIsArrayLeaf);
-                hasArrayLeaf |= bareIsArrayLeaf;
-                // A bare body never admits the owned-nav-entity leaf (see the comment at the call site above) —
-                // always false here, kept only so leafIsOwnedNavEntity stays index-parallel with projections.
-                leafIsOwnedNavEntity.Add(false);
                 break;
             }
+        }
+
+        // Extracted from the bare-body arm above so the native-ctor-only-dto-projection ticket's new switch
+        // arm (a single-argument ctor-only DTO's sole constructor argument, treated the same way a true bare
+        // selector body is) can reuse the identical leaf-translation/alias-derivation/registration logic
+        // without duplicating it. Closes over this method's own locals rather than taking them as parameters —
+        // they are mutated here exactly as the original inline code mutated them.
+        //
+        // Derive the FINAL alias from the translated leaf rather than from the syntax.
+        //
+        // Tier 1 is tried first, and the ordering is load-bearing: a leaf with a root-relative document path
+        // must take it, since that's what makes the alias-addressed read and the document-path read the same
+        // read, letting the late-fallback strip work for it. Tier 2 answers only for a leaf tier 1 cannot — a
+        // computed leaf backed by no document element — by choosing the alias the driver would emit for a bare
+        // body, so leaving the driver's push-down in place is the correct fallback (hence Synthetic, and hence
+        // the strip not firing).
+        bool TryBindAsBareProjection(Expression bareLikeExpr, string provisionalAlias, bool allowWholeRootEntityLeafForThis)
+        {
+            if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], bareLikeExpr, provisionalAlias,
+                    pendingLookups, pendingReducerLeaves, out var bareLeaf, out var bareIsArrayLeaf, out _,
+                    allowWholeRootEntityLeafForThis))
+            {
+                return false;
+            }
+
+            string derivedAlias;
+            if (TryDeriveDocumentPathAlias(bareLeaf, out var documentPathAlias))
+            {
+                derivedAlias = documentPathAlias;
+                bareProjectionTier = ProjectionAliasTier.DocumentPath;
+            }
+            else if (TryDeriveSyntheticAlias(bareLeaf, selector, pendingLookups, out var syntheticAlias))
+            {
+                derivedAlias = syntheticAlias;
+                bareProjectionTier = ProjectionAliasTier.Synthetic;
+            }
+            else
+            {
+                return false;
+            }
+
+            bareProjectionAlias = derivedAlias;
+            seenAliases.Add(derivedAlias);
+            projections.Add(new MongoProjection(derivedAlias, bareLeaf));
+            leafIsArray.Add(bareIsArrayLeaf);
+            hasArrayLeaf |= bareIsArrayLeaf;
+            // A bare body never admits the owned-nav-entity leaf when allowWholeRootEntityLeafForThis is false
+            // (see the comment at the true-bare-body call site); the ctor-wrap arm passes true and CAN admit
+            // one, but that leaf is never THIS one — the owned-nav-entity leaf's own isOwnedNavEntityLeaf out
+            // parameter is discarded here (`out _`) because it can only ever be produced through the WRAPPED
+            // arm's own alias-must-equal-member-name path (see TryTranslateLeaf's remarks on that leaf kind),
+            // never through this bare/positional path, so it is always false for any leaf this function admits.
+            leafIsOwnedNavEntity.Add(false);
+            return true;
         }
 
         // An array leaf's own alias-agreement conjunct (see IsNativeArrayProjectionLeaf) proves ITS
@@ -565,8 +641,7 @@ internal static class NativeProjectionBinder
         // selector bodies only (allowWholeRootEntityLeaf), never the bare-body arm — a bare
         // `c => c` must keep taking the pre-existing WholeEntity route, not this one.
         if (allowWholeRootEntityLeaf
-            && IsSelectorParameter(leafExpression, outerParameter)
-            && leafExpression.Type == mongoQ.CollectionExpression.EntityType.ClrType)
+            && IsWholeRootEntityLeaf(mongoQ, leafExpression, outerParameter))
         {
             result = new MongoElementRefExpression(
                 MongoElementRefExpression.WholeRootDocumentPath, mongoQ.CollectionExpression.EntityType.ClrType);
@@ -892,6 +967,23 @@ internal static class NativeProjectionBinder
 
         return ReferenceEquals(current, outerParameter);
     }
+
+    /// <summary>
+    /// True when <paramref name="leafExpression"/> IS the selector's own root parameter (possibly wrapped in EF
+    /// auto-include layers, per <see cref="IsSelectorParameter"/>) typed as the query's own root entity CLR type
+    /// — i.e. "the whole entity, unchanged", with no server-side reshaping needed. Shared by two call sites that
+    /// must stay byte-identical: the ctor-only-DTO switch arm's sub-case 1 in
+    /// <see cref="TryPopulateNativeProjection"/> (which takes the pre-existing <c>NativeRoute.WholeEntity</c>
+    /// route for this shape rather than reaching this method) and this file's own whole-root-entity-leaf arm in
+    /// <see cref="TryTranslateLeaf"/> (which instead renders it as a <c>$$ROOT</c>
+    /// <see cref="MongoElementRefExpression"/>). The identity between the two conditions is exactly what makes
+    /// the <c>$ROOT</c>-as-<c>$project</c>-alias hazard documented at sub-case 1 unreachable from the
+    /// <see cref="TryTranslateLeaf"/> leg — extracting one predicate keeps that true even if either call site is
+    /// edited later.
+    /// </summary>
+    private static bool IsWholeRootEntityLeaf(MongoQueryExpression mongoQ, Expression leafExpression, ParameterExpression outerParameter)
+        => IsSelectorParameter(leafExpression, outerParameter)
+           && leafExpression.Type == mongoQ.CollectionExpression.EntityType.ClrType;
 
     /// <summary>
     /// The open generic definition of <c>Mql.Field&lt;TDocument, TField&gt;(TDocument, string, IBsonSerializer&lt;TField&gt;)</c>.

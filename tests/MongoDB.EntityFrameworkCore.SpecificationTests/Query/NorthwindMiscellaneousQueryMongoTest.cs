@@ -1969,7 +1969,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$project" : { "_id" : "$CustomerID" } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "CustomerID" : "$CustomerID" } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "_id" : 0 } }
             """);
     }
 

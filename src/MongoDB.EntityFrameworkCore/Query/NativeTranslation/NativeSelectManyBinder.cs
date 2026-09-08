@@ -87,7 +87,7 @@ internal static class NativeSelectManyBinder
             return false;
         var innerParam = innerLambda.Parameters[0];
 
-        if (!innerLambda.Body.TryGetProjectionMembers(out var members))
+        if (!innerLambda.Body.TryGetProjectionMembers(out var members, allowPositionalConstructorArguments: true))
             return false;
 
         var outerTranslator = new MongoExpressionTranslator(outerEntityType);
@@ -525,7 +525,7 @@ internal static class NativeSelectManyBinder
             return false;
         var ti = selector.Parameters[0];
 
-        var isBareBody = !selector.Body.TryGetProjectionMembers(out var members);
+        var isBareBody = !selector.Body.TryGetProjectionMembers(out var members, allowPositionalConstructorArguments: true);
         if (isBareBody)
         {
             // Deliberately narrow: ONLY an arithmetic computed body is admitted bare. A bare member access
