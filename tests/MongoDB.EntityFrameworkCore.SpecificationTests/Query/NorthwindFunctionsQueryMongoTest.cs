@@ -2264,7 +2264,7 @@ Customers.{ "$project" : { "_id" : "$_id", "Value" : { "$gte" : [{ "$indexOfCP" 
 
         AssertMql(
             """
-Customers.{ "$match" : { "$nor" : [{ "$expr" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName", "$ContactName"] }, 0] } }] } }
+Customers.{ "$match" : { "$expr" : { "$not" : [{ "$gte" : [{ "$indexOfCP" : ["$CompanyName", "$ContactName"] }, 0] }] } } }
 """);
     }
 

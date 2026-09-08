@@ -113,18 +113,28 @@ internal static class NativeGroupByBinder
 
     /// <summary>
     /// Parses the <c>Select</c> result selector against the pending key from <see cref="TryBindGroupKey"/>,
-    /// finalizing <see cref="MongoSelectDefinition.Grouping"/>. The body must be a <see cref="NewExpression"/>
-    /// (anonymous type) or <see cref="MemberInitExpression"/> (DTO) where every member is either a grouping-key
-    /// access (<c>g.Key</c> / <c>g.Key.&lt;Sub&gt;</c>) or a supported aggregate over the grouping
-    /// (<c>g.Count()</c>/<c>g.LongCount()</c> → <c>$sum:1</c>; <c>g.Sum/Min/Max/Average(x =&gt; x.Field)</c>
-    /// over a plain member selector). Returns <see langword="false"/> for any other shape, or when no
-    /// accumulator is produced, so the caller falls back.
+    /// finalizing <see cref="MongoSelectDefinition.Grouping"/>. The body is either a <see cref="NewExpression"/>
+    /// (anonymous type) or <see cref="MemberInitExpression"/> (DTO) whose members, or (when the body carries no
+    /// member name at all, e.g. <c>g.Sum(...)</c> with no wrapping <c>new {}</c>) the bare body itself, must
+    /// each be either a grouping-key access (<c>g.Key</c> / <c>g.Key.&lt;Sub&gt;</c>) or a supported aggregate
+    /// over the grouping (<c>g.Count()</c>/<c>g.LongCount()</c> → <c>$sum:1</c>;
+    /// <c>g.Sum/Min/Max/Average(x =&gt; x.Field)</c> over a plain member selector). Returns
+    /// <see langword="false"/> for any other shape, or when no accumulator is produced, so the caller falls
+    /// back.
     /// </summary>
     /// <param name="mongoQ">The query whose <see cref="MongoSelectDefinition"/> is being populated.</param>
     /// <param name="resultSelector">The <c>Select</c> result selector lambda over the grouping.</param>
+    /// <param name="bareLeafAlias">
+    /// On success, the reserved alias (<see cref="NativeProjectionBinder.SyntheticBareProjectionAlias"/>) the
+    /// bare-body case was bound under, so the caller can build a single-member shaper instead of walking
+    /// <c>resultSelector.Body</c>'s (nonexistent) constructor members; <see langword="null"/> when the body was
+    /// a wrapped anonymous/DTO projection (the caller's ordinary member-by-member shaper applies instead), and
+    /// undefined when this method returns <see langword="false"/>.
+    /// </param>
     internal static bool TryBindGroupProjection(
-        MongoQueryExpression mongoQ, LambdaExpression resultSelector)
+        MongoQueryExpression mongoQ, LambdaExpression resultSelector, out string? bareLeafAlias)
     {
+        bareLeafAlias = null;
         var select = mongoQ.Select;
         if (select.PendingGroupKey is not { } keyParts)
             return false;
@@ -141,8 +151,22 @@ internal static class NativeGroupByBinder
         if (select.PendingGroupPredicate != null)
             return false;
 
-        if (!resultSelector.Body.TryGetProjectionMembers(out var bindings, allowPositionalConstructorArguments: true))
-            return false;
+        var isBareBody = !resultSelector.Body.TryGetProjectionMembers(out var bindings, allowPositionalConstructorArguments: true);
+        if (isBareBody)
+        {
+            // A BARE (non-`new {}`/DTO) result selector — e.g. `GroupBy(o => o.CustomerID)
+            // .Select(g => g.Sum(o => o.OrderID))` — carries no member name, so it is projected under the
+            // reserved `_v` alias, the SAME tier-2 (ProjectionAliasTier.Synthetic) convention
+            // NativeProjectionBinder/NativeSelectManyBinder use for a bare computed/aggregate body: `_v` is
+            // what the driver itself names a bare projection, so a late fallback (which leaves this query's
+            // captured chain un-stripped) has the driver's own push-down write the very element the
+            // alias-addressed shaper already reads by. The single-entry list is then walked by the SAME
+            // key/accumulator loop below, so a bare body that is neither a key access nor a recognized
+            // accumulator shape (e.g. a computed expression) still declines exactly as before — bareLeafAlias
+            // is set only once every guard below has actually admitted this body (mirrors the "commit once
+            // every gate has passed" discipline TryBuildGroupResultShaper's own remarks require).
+            bindings = [(NativeProjectionBinder.SyntheticBareProjectionAlias, resultSelector.Body)];
+        }
 
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
 
@@ -173,10 +197,10 @@ internal static class NativeGroupByBinder
                 continue;
             }
 
-            if (!TryBindAccumulator(valueExpr, memberName, groupingParameter, translator, out var acc))
+            if (!TryBindAccumulator(valueExpr, memberName, groupingParameter, translator, out var acc, out var flattenRead))
                 return false;
             accumulators.Add(acc);
-            flatten.Add(new MongoProjection(memberName, new MongoElementRefExpression(acc.OutputField, Unwrap(valueExpr).Type)));
+            flatten.Add(new MongoProjection(memberName, flattenRead));
         }
 
         if (accumulators.Count == 0)
@@ -185,6 +209,8 @@ internal static class NativeGroupByBinder
         select.Grouping = new MongoGrouping(keyParts, accumulators);
         foreach (var projection in flatten)
             select.AddProjection(projection);
+        if (isBareBody)
+            bareLeafAlias = NativeProjectionBinder.SyntheticBareProjectionAlias;
         return true;
     }
 
@@ -244,9 +270,11 @@ internal static class NativeGroupByBinder
         string outputField,
         ParameterExpression groupingParameter,
         MongoExpressionTranslator translator,
-        [NotNullWhen(true)] out MongoGroupAccumulator? accumulator)
+        [NotNullWhen(true)] out MongoGroupAccumulator? accumulator,
+        [NotNullWhen(true)] out MongoExpression? flattenRead)
     {
         accumulator = null;
+        flattenRead = null;
 
         // The $group document already carries the grouping key under the reserved "_id" field
         // (MongoPipelineFactory.RenderKeyedGroup). An accumulator whose output field is literally "_id"
@@ -258,12 +286,21 @@ internal static class NativeGroupByBinder
         if (outputField == GroupIdFieldName)
             return false;
 
-        if (Unwrap(expr) is not MethodCallExpression { Method.IsGenericMethod: true } call
-            || call.Arguments.Count == 0
-            || !IsGroupingSource(call.Arguments[0], groupingParameter))
+        if (Unwrap(expr) is not MethodCallExpression call)
             return false;
 
-        var definition = call.Method.GetGenericMethodDefinition();
+        // EF-322: g.Select(e => e.Field).Distinct().<Op>() — Count/LongCount/Average/Max/Min/Sum over the
+        // DISTINCT projected values within the group, not every row. A completely separate shape from the
+        // ordinary accumulators below (its own source is g.Select(...).Distinct(), never g directly), so it
+        // is tried FIRST, before the IsGroupingSource(call.Arguments[0], ...) guard below that would
+        // otherwise reject it outright.
+        if (TryBindDistinctAccumulator(call, outputField, groupingParameter, translator, out accumulator, out flattenRead))
+            return true;
+
+        if (call.Arguments.Count == 0 || !IsGroupingSource(call.Arguments[0], groupingParameter))
+            return false;
+
+        var definition = call.Method.IsGenericMethod ? call.Method.GetGenericMethodDefinition() : null;
 
         // Count / LongCount — g.Count() / g.LongCount() with no selector argument → $sum: 1. EF Core lowers a
         // grouped aggregate to the Queryable form over `g.AsQueryable()` (e.g. Queryable.Count(g.AsQueryable()));
@@ -275,6 +312,7 @@ internal static class NativeGroupByBinder
             && call.Arguments.Count == 1)
         {
             accumulator = new MongoGroupAccumulator(outputField, "$sum", null);
+            flattenRead = new MongoElementRefExpression(outputField, call.Method.ReturnType);
             return true;
         }
 
@@ -298,6 +336,75 @@ internal static class NativeGroupByBinder
             return false; // computed / non-member selector — fall back
 
         accumulator = new MongoGroupAccumulator(outputField, op, operand);
+        flattenRead = new MongoElementRefExpression(outputField, call.Method.ReturnType);
+        return true;
+    }
+
+    /// <summary>
+    /// EF-322: <c>g.Select(e =&gt; e.Field).Distinct().&lt;Op&gt;()</c> — Count/LongCount/Average/Max/Min/Sum
+    /// over the DISTINCT projected values within the group, not every row. Binds the <c>$group</c> accumulator
+    /// as <c>$addToSet</c> (collecting the group's distinct values into an array) and produces a
+    /// <see cref="MongoSizeExpression"/> (Count/LongCount) or <see cref="MongoArrayReduceExpression"/>
+    /// (Average/Max/Min/Sum) to reduce that array back to a scalar in the flattening <c>$project</c> — see
+    /// those two types' own remarks. Only the QUERYABLE form is recognized (EF Core's own nav-expansion
+    /// normalizes a grouped aggregate to <c>Queryable.X(g.AsQueryable())</c>, so — unlike the ordinary
+    /// accumulators above — there is no hand-authored-Enumerable-form unit-test path to support here).
+    /// </summary>
+    private static bool TryBindDistinctAccumulator(
+        MethodCallExpression call,
+        string outputField,
+        ParameterExpression groupingParameter,
+        MongoExpressionTranslator translator,
+        [NotNullWhen(true)] out MongoGroupAccumulator? accumulator,
+        [NotNullWhen(true)] out MongoExpression? flattenRead)
+    {
+        accumulator = null;
+        flattenRead = null;
+
+        if (call.Arguments.Count != 1)
+            return false;
+
+        // Min/Max/Count/LongCount are true open generics (<TSource>); Average/Sum's without-selector
+        // overloads are NOT generic — the numeric type is baked into the overload (e.g.
+        // Average(IQueryable<int>)) — so only Min/Max/Count/LongCount can be compared via
+        // GetGenericMethodDefinition(). Average/Sum must be matched directly against call.Method.
+        var isSize = call.Method.IsGenericMethod
+            && (call.Method.GetGenericMethodDefinition() == QueryableMethods.CountWithoutPredicate
+                || call.Method.GetGenericMethodDefinition() == QueryableMethods.LongCountWithoutPredicate);
+        var reduceOp = isSize ? null
+            : QueryableMethods.IsAverageWithoutSelector(call.Method) ? "$avg"
+            : call.Method.IsGenericMethod && call.Method.GetGenericMethodDefinition() == QueryableMethods.MinWithoutSelector ? "$min"
+            : call.Method.IsGenericMethod && call.Method.GetGenericMethodDefinition() == QueryableMethods.MaxWithoutSelector ? "$max"
+            : QueryableMethods.IsSumWithoutSelector(call.Method) ? "$sum"
+            : null;
+
+        if (!isSize && reduceOp is null)
+            return false;
+
+        // The source must be g.Select(selector).Distinct() — a Distinct() call whose OWN source is a Select
+        // over the grouping parameter (never g directly, which is the ordinary-accumulator shape above).
+        if (Unwrap(call.Arguments[0]) is not MethodCallExpression { Method.IsGenericMethod: true } distinctCall
+            || distinctCall.Method.GetGenericMethodDefinition() != QueryableMethods.Distinct
+            || distinctCall.Arguments.Count != 1)
+            return false;
+
+        if (Unwrap(distinctCall.Arguments[0]) is not MethodCallExpression { Method.IsGenericMethod: true } selectCall
+            || selectCall.Method.GetGenericMethodDefinition() != QueryableMethods.Select
+            || selectCall.Arguments.Count != 2
+            || !IsGroupingSource(selectCall.Arguments[0], groupingParameter))
+            return false;
+
+        // The selector is a bare lambda (Enumerable form) or a quoted lambda (Queryable form) — same
+        // plain-member-access-only restriction as the ordinary Sum/Average/Min/Max accumulators above; a
+        // computed selector falls back.
+        if (selectCall.Arguments[1].UnwrapLambdaFromQuote() is not { Body: MemberExpression } selector
+            || !translator.TryTranslateField(selector.Body, out var operand))
+            return false;
+
+        accumulator = new MongoGroupAccumulator(outputField, "$addToSet", operand);
+        flattenRead = isSize
+            ? new MongoSizeExpression(outputField, call.Method.ReturnType)
+            : new MongoArrayReduceExpression(reduceOp!, outputField, call.Method.ReturnType);
         return true;
     }
 
@@ -479,7 +586,7 @@ internal static class NativeGroupByBinder
             return false;
         }
 
-        if (TryBindAccumulator(bin.Left, outputField, groupingParameter, translator, out var acc)
+        if (TryBindAccumulator(bin.Left, outputField, groupingParameter, translator, out var acc, out _)
             && TryTranslateComparisonConstant(bin.Right, out var rightNode))
         {
             accumulator = acc;
@@ -490,7 +597,7 @@ internal static class NativeGroupByBinder
             return true;
         }
 
-        if (TryBindAccumulator(bin.Right, outputField, groupingParameter, translator, out acc)
+        if (TryBindAccumulator(bin.Right, outputField, groupingParameter, translator, out acc, out _)
             && TryTranslateComparisonConstant(bin.Left, out var leftNode))
         {
             accumulator = acc;
@@ -660,6 +767,17 @@ internal static class NativeGroupByBinder
         [NotNullWhen(true)] out MongoFieldExpression? result)
     {
         result = null;
+
+        // A bare-scalar Distinct's own OrderBy key selector is necessarily the IDENTITY function
+        // (Select(o => o.Country).Distinct().OrderBy(c => c)): the projected result IS the scalar directly,
+        // so there is no member to access at all — the key selector body is exactly the parameter itself.
+        // Matches the sole key part unconditionally (a bare-scalar Distinct always has exactly one).
+        if (ReferenceEquals(keySelectorBody, selfParam) && grouping.Key is [{ FieldRef: MongoFieldExpression soleField } soleKeyPart])
+        {
+            result = new MongoFieldExpression(soleField.Property, soleKeyPart.Name!);
+            return true;
+        }
+
         if (keySelectorBody is not MemberExpression { Expression: ParameterExpression param } member
             || !ReferenceEquals(param, selfParam))
             return false;

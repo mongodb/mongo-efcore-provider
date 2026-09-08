@@ -372,7 +372,8 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         // Reference_and_collection_Include_combo_goes_native_with_correct_data below.
         // "ThenInclude / transitive" REMOVED (EF-392): a genuine reference ThenInclude chain now goes
         // native — see Reference_ThenInclude_chain_goes_native_with_correct_data below.
-        "after a terminal",
+        // "after a terminal" REMOVED (EF-322): a whole-entity Distinct() before an Include now goes native
+        // too — see Distinct_then_Include_goes_native_with_correct_data above.
         // THE LOAD-BEARING ROW. A user-authored join with a downstream Include produces a trailing
         // IncludeExpression whose EntityExpression is ti.Outer.Outer - a DOUBLE hop, confirmed by direct
         // instrumentation (see the GetDeclinedShapeBuilder comment on this row below and task-6-report.md's
@@ -389,7 +390,6 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     private static Func<ReferenceIncludeDbContext, IQueryable> GetDeclinedShapeBuilder(string description)
         => description switch
         {
-            "after a terminal" => db => db.Orders.Distinct().Include(o => o.Buyer),
             // NO trailing .Select here — fix round 1 review (2026-08-04) measured that a trailing scalar
             // Select on this shape produced a DEAD test: EF Core's own nav-expansion drops the pending
             // Include entirely once a trailing scalar Select doesn't reference it, so the row threw the
@@ -413,6 +413,42 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
                 db => db.Orders.Join(db.Buyers, o => o.BuyerId, b => b.Id, (o, b) => o).Include(o => o.Buyer),
             _ => throw new ArgumentOutOfRangeException(nameof(description), description, "Unknown declined shape.")
         };
+
+    [Fact]
+    public void Distinct_then_Include_goes_native_with_correct_data()
+    {
+        // EF-322: a whole-entity Distinct() composed BEFORE a reference Include now goes native too — it is
+        // just another op in the ordinary PipelineOps list (MongoDistinctOp), so it lowers to a $group/
+        // $replaceRoot dedup pass BEFORE the Include's own $lookup/$unwind, and the reference-Include
+        // recognizer/confirmation machinery (TryConfirmReferenceIncludeChain, IsBareCollectionScan on the
+        // INNER side) is completely unaffected — none of it inspects the OUTER side's own PipelineOps.
+        // Previously the "after a terminal" row in DeclinedShapeDescriptions asserted this threw under
+        // NativeOnly (whole-entity Distinct itself always declined); moved out and given its own test here,
+        // matching the pattern of the other EF-392 rows above that were later found to go native.
+        using var nativeOnly = CreateContext(MongoQueryMode.NativeOnly,
+            nameof(Distinct_then_Include_goes_native_with_correct_data) + "_NativeOnly");
+        var nativeOnlyResults = nativeOnly.Orders.Distinct().Include(o => o.Buyer).ToList();
+
+        // Buyer is a required FK, so O3 (dangling BuyerId) is dropped: 3 of the 4 seeded orders survive.
+        // Every order's Id (hence whole-document identity) is already unique, so Distinct() is a genuine
+        // no-op here — this proves the composition goes native and returns the right rows, not that it
+        // collapses duplicates (impossible with a unique key).
+        Assert.Equal(3, nativeOnlyResults.Count);
+        Assert.All(nativeOnlyResults, o => Assert.NotNull(o.Buyer));
+
+        using var nativeDb = CreateContext(MongoQueryMode.Native,
+            nameof(Distinct_then_Include_goes_native_with_correct_data) + "_Native");
+        var nativeResults = nativeDb.Orders.Distinct().Include(o => o.Buyer).ToList();
+
+        using var driverDb = CreateContext(MongoQueryMode.DriverLinq,
+            nameof(Distinct_then_Include_goes_native_with_correct_data) + "_DriverLinq");
+        var driverResults = driverDb.Orders.Distinct().Include(o => o.Buyer).ToList();
+
+        var nativeCanonical = nativeResults.Select(o => (o.Total, o.Buyer?.Name)).OrderBy(x => x.Total).ToList();
+        var driverCanonical = driverResults.Select(o => (o.Total, o.Buyer?.Name)).OrderBy(x => x.Total).ToList();
+        Assert.Equal(driverCanonical, nativeCanonical);
+        Assert.NotEmpty(nativeCanonical);
+    }
 
     [Theory]
     [MemberData(nameof(DeclinedShapeDescriptions))]

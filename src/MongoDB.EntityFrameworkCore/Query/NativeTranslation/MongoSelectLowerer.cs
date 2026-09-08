@@ -118,8 +118,16 @@ internal sealed class MongoSelectLowerer
             // documents (correct: dedup/compare the projected values). Contrast a trailing projection over
             // the combined result, where OperandsProjected is false and select.Projection is emitted after
             // the set-op stage by the fall-through Projection block below.
+            //
+            // EF-322: a PROJECTED-DISTINCT operand (IsPlainDistinctSelect) additionally carries its own
+            // $group (Grouping) ahead of its flattening $project — emitted here, immediately before that
+            // $project, on whichever side(s) are Distinct-shaped. A plain projected operand's Grouping is
+            // always null, so this is a no-op for it; the two operand kinds may be mixed freely (one
+            // Distinct-shaped, the other a plain projected Select).
             if (setOp.OperandsProjected)
             {
+                if (select.Grouping is { } outerGrouping)
+                    stages.Add(new MongoGroupStage(outerGrouping));
                 stages.Add(new MongoProjectStage(select.Projection));
             }
 
@@ -127,6 +135,8 @@ internal sealed class MongoSelectLowerer
             AppendSelectOpStages(setOp.OperandSelect.PipelineOps, operandStages, sortFields);
             if (setOp.OperandsProjected)
             {
+                if (setOp.OperandSelect.Grouping is { } operandGrouping)
+                    operandStages.Add(new MongoGroupStage(operandGrouping));
                 operandStages.Add(new MongoProjectStage(setOp.OperandSelect.Projection));
             }
 
@@ -230,7 +240,15 @@ internal sealed class MongoSelectLowerer
         // composite sub-key, and each accumulator output field — up to top-level result aliases the DOM
         // shaper reads by name (see NativeGroupByBinder / MongoQueryLanguageRenderer). Returning here is
         // safe: no further stages follow a grouping.
-        if (select.Grouping is { } grouping)
+        //
+        // EF-322: SetOperation == null guards against DOUBLE-emitting a projected-Distinct-operand set op's
+        // own Grouping. That shape's Select.Grouping is STILL set here (TryTranslateSetOperation never
+        // clears it — it is source1's OWN Distinct, unrelated to the set-op machinery), and the SetOperation
+        // block above the UnwindSource check falls through to here rather than returning — it already
+        // emitted this exact $group + flattening $project itself, immediately before the set-op stage, once
+        // per the OperandsProjected branch. Re-emitting it here would produce a spurious SECOND $group over
+        // the already-combined/deduped result.
+        if (select.Grouping is { } grouping && select.SetOperation == null)
         {
             stages.Add(new MongoGroupStage(grouping));
 
@@ -332,6 +350,16 @@ internal sealed class MongoSelectLowerer
             if (op is MongoSortOp sortOp)
             {
                 AppendSortStages(sortOp, stages, sortFields);
+                continue;
+            }
+
+            // EF-322: a whole-entity Distinct() lowers to TWO stages (the $group{_id:"$$ROOT"} dedup, then
+            // the $replaceRoot reading "$_id" back out to restore the plain document) — every other op in
+            // this list is exactly one stage, so this needs its own arm rather than a `switch` expression arm.
+            if (op is MongoDistinctOp)
+            {
+                stages.Add(new MongoGroupByRootStage());
+                stages.Add(new MongoReplaceRootStage("_id", mergeOwnerKeySentinels: false));
                 continue;
             }
 

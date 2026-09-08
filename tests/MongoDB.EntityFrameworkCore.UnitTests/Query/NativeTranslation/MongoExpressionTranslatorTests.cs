@@ -60,6 +60,7 @@ public class MongoExpressionTranslatorTests
         public int Score { get; set; }
         public double DoubleScore { get; set; }
         public string Name { get; set; } = "";
+        public string Nickname { get; set; } = "";
         public bool Active { get; set; }
         public Tier Level { get; set; }
         public ShortTier ShortLevel { get; set; }
@@ -1155,6 +1156,75 @@ public class MongoExpressionTranslatorTests
         var regex = Assert.IsType<MongoRegexExpression>(result);
         var parameter = Assert.IsType<MongoParameterExpression>(regex.Term);
         Assert.Equal(paramName, parameter.Name);
+    }
+
+    [Fact]
+    public void StartsWith_with_column_term_translates_to_field_to_field_regex_expression()
+    {
+        var entityType = GetEntityType<Customer>();
+        var translator = NewTranslator(entityType);
+        Expression<Func<Customer, bool>> predicate = c => c.Name.StartsWith(c.Nickname);
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+        var regex = Assert.IsType<MongoRegexExpression>(result);
+        Assert.Equal("Name", regex.Field.ElementName);
+        Assert.Equal(MongoRegexKind.StartsWith, regex.Kind);
+        Assert.False(regex.Negated);
+        var term = Assert.IsType<MongoFieldExpression>(regex.Term);
+        Assert.Equal("Nickname", term.ElementName);
+    }
+
+    [Fact]
+    public void StartsWith_with_same_column_on_both_sides_translates_to_field_to_field_regex_expression()
+    {
+        // The exact shape EF's `All(c => c.ContactName.StartsWith(c.ContactName))` produces (All_top_level_column).
+        var entityType = GetEntityType<Customer>();
+        var translator = NewTranslator(entityType);
+        Expression<Func<Customer, bool>> predicate = c => c.Name.StartsWith(c.Name);
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+        var regex = Assert.IsType<MongoRegexExpression>(result);
+        var term = Assert.IsType<MongoFieldExpression>(regex.Term);
+        Assert.Equal("Name", term.ElementName);
+    }
+
+    [Fact]
+    public void Contains_with_column_term_translates_to_field_to_field_regex_expression()
+    {
+        var entityType = GetEntityType<Customer>();
+        var translator = NewTranslator(entityType);
+        Expression<Func<Customer, bool>> predicate = c => c.Name.Contains(c.Nickname);
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+        var regex = Assert.IsType<MongoRegexExpression>(result);
+        Assert.Equal(MongoRegexKind.Contains, regex.Kind);
+        Assert.IsType<MongoFieldExpression>(regex.Term);
+    }
+
+    [Fact]
+    public void EndsWith_with_column_term_translates_to_field_to_field_regex_expression()
+    {
+        var entityType = GetEntityType<Customer>();
+        var translator = NewTranslator(entityType);
+        Expression<Func<Customer, bool>> predicate = c => c.Name.EndsWith(c.Nickname);
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+        var regex = Assert.IsType<MongoRegexExpression>(result);
+        Assert.Equal(MongoRegexKind.EndsWith, regex.Kind);
+        Assert.IsType<MongoFieldExpression>(regex.Term);
+    }
+
+    [Fact]
+    public void Negated_starts_with_column_term_translates_to_negated_field_to_field_regex_expression()
+    {
+        var entityType = GetEntityType<Customer>();
+        var translator = NewTranslator(entityType);
+        Expression<Func<Customer, bool>> predicate = c => !c.Name.StartsWith(c.Nickname);
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+        var regex = Assert.IsType<MongoRegexExpression>(result);
+        Assert.True(regex.Negated);
+        Assert.IsType<MongoFieldExpression>(regex.Term);
     }
 
     [Fact]

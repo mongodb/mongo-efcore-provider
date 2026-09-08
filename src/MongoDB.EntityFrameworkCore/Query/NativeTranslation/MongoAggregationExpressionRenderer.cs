@@ -67,6 +67,10 @@ internal static class MongoAggregationExpressionRenderer
             MongoConstantExpression or MongoParameterExpression => MongoValueRenderer.RenderValue(node, placeholders),
             MongoBinaryExpression binary => RenderBinary(binary, placeholders, elementVariable),
             MongoSizeExpression size => RenderSize(size, elementVariable),
+            // EF-322: $avg/$max/$min/$sum as an ARRAY-expression operator (over the $addToSet accumulator's
+            // own output field), not a $group accumulator — see the node's own remarks.
+            MongoArrayReduceExpression arrayReduce
+                => new BsonDocument(arrayReduce.OperatorName, FieldRef(arrayReduce.FieldName, elementVariable)),
             MongoFilteredSizeExpression filtered => RenderFilteredSize(filtered, placeholders, elementVariable),
             MongoInExpression inExpr => RenderIn(inExpr, placeholders, elementVariable),
             MongoComputedInExpression computedIn => RenderComputedIn(computedIn, placeholders, elementVariable),
@@ -105,6 +109,12 @@ internal static class MongoAggregationExpressionRenderer
             MongoConcatExpression concat
                 => new BsonDocument("$concat",
                     new BsonArray(concat.Operands.Select(o => Render(o, placeholders, elementVariable)))),
+            // Scoped to a FIELD-to-field term only (EF-322 Task 2 review fix): a constant/parameter-term regex
+            // already has a perfectly good query-dialect form via $regularExpression and must keep declining
+            // here, so callers that rely on that decline (a computed sort key, a filtered-count element
+            // predicate) keep falling back exactly as before. Only c.A.StartsWith(c.B) — no query-dialect form
+            // at all — needs this arm.
+            MongoRegexExpression { Term: MongoFieldExpression } regex => RenderRegexAsExpr(regex, placeholders, elementVariable),
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoAggregationExpressionRenderer does not support node type '{node.GetType().Name}'.")
         };
@@ -177,6 +187,12 @@ internal static class MongoAggregationExpressionRenderer
             MongoDateAddExpression dateAdd => CanRender(dateAdd.StartDate) && CanRender(dateAdd.Amount),
             MongoQuantifierExpression quantifier => CanRender(quantifier.ArrayPath) && CanRender(quantifier.ElementPredicate),
             MongoConcatExpression concat => concat.Operands.All(CanRender),
+            // Answers true unconditionally for any regex.Kind — this relies on RenderRegexAsExpr's switch over
+            // MongoRegexKind staying exhaustive (all 3 current members handled; its `_` arm throws and is
+            // presently unreachable). Adding a new MongoRegexKind member requires adding it to BOTH that switch
+            // and (implicitly) here at the same time, or this would wrongly admit a Kind that Render then throws
+            // on.
+            MongoRegexExpression { Term: MongoFieldExpression } regex => CanRender(regex.Field) && CanRender(regex.Term),
             _ => false
         };
 
@@ -342,6 +358,66 @@ internal static class MongoAggregationExpressionRenderer
 
         var op = node.Kind == MongoExpressionTranslator.MongoQuantifierKind.All ? "$allElementsTrue" : "$anyElementTrue";
         return new BsonDocument(op, map);
+    }
+
+    // Mirrors the C# driver's own LINQ v3 aggregation-expression translation for string.StartsWith/Contains/
+    // EndsWith (StartsWithContainsOrEndsWithMethodToAggregationExpressionTranslator.CreateAst) exactly, so a
+    // field-to-field term (no query-dialect form — MongoDB's $regularExpression pattern must be a literal, not
+    // another field) renders byte-identically to the pre-existing driver-LINQ fallback for this shape. No
+    // $ifNull guarding: the driver's own translation has none either, so matching it is parity, not a new
+    // behavior — see this feature's own design notes. (This byte-identity claim is for the UN-negated test only:
+    // the negated case still diverges in SHAPE from the fallback — native emits `$expr:{"$not":[...]}}` where
+    // the old fallback emitted `$nor:[{"$expr":...}]` — logically identical but not byte-for-byte, which per this
+    // project's AGENTS.md is not a contract concern since MQL shape is not contract.)
+    private static BsonValue RenderRegexAsExpr(MongoRegexExpression regex, PlaceholderTable placeholders, string? elementVariable)
+    {
+        var field = Render(regex.Field, placeholders, elementVariable);
+        var term = Render(regex.Term, placeholders, elementVariable);
+
+        BsonValue test = regex.Kind switch
+        {
+            MongoRegexKind.StartsWith
+                => new BsonDocument("$eq", new BsonArray { new BsonDocument("$indexOfCP", new BsonArray { field, term }), 0 }),
+            MongoRegexKind.Contains
+                => new BsonDocument("$gte", new BsonArray { new BsonDocument("$indexOfCP", new BsonArray { field, term }), 0 }),
+            MongoRegexKind.EndsWith => RenderEndsWithAsExpr(field, term),
+            _ => throw new NativeTranslationNotSupportedException($"Unsupported {nameof(MongoRegexKind)} '{regex.Kind}'.")
+        };
+
+        return regex.Negated ? new BsonDocument("$not", new BsonArray { test }) : test;
+    }
+
+    // start = strLenCP(field) - strLenCP(term); true iff start >= 0 AND indexOfCP(field, term, start) == start.
+    // Bound ONCE via $let (EF-322 Task 2 review fix — the driver's own CreateAst binds it via
+    // AstExpression.Let/UseVarIfNotSimple, not by re-rendering it twice), so this is byte-identical to the
+    // pre-existing driver-LINQ fallback's own MQL for this shape rather than merely logically equivalent to
+    // it. The driver's OUTER $let (which would bind the string/substring operands themselves) always collapses
+    // away for this call site specifically: UseVarIfNotSimple only introduces a variable for a NON-simple
+    // operand, and `field`/`term` here are always simple field paths — never a computed sub-expression — so
+    // only the inner "start" $let ever survives to be rendered.
+    private static BsonValue RenderEndsWithAsExpr(BsonValue field, BsonValue term)
+    {
+        var start = new BsonDocument("$subtract", new BsonArray
+        {
+            new BsonDocument("$strLenCP", field),
+            new BsonDocument("$strLenCP", term)
+        });
+
+        var test = new BsonDocument("$and", new BsonArray
+        {
+            new BsonDocument("$gte", new BsonArray { "$$start", 0 }),
+            new BsonDocument("$eq", new BsonArray
+            {
+                new BsonDocument("$indexOfCP", new BsonArray { field, term, "$$start" }),
+                "$$start"
+            })
+        });
+
+        return new BsonDocument("$let", new BsonDocument
+        {
+            { "vars", new BsonDocument("start", start) },
+            { "in", test }
+        });
     }
 
     // Shared render-time guard for any position where MongoDB evaluates a WHOLE sub-expression's result by

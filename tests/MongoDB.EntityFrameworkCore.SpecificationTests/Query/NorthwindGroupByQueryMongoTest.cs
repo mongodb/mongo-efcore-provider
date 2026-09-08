@@ -52,11 +52,12 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
     public override async Task GroupBy_Property_Select_Average(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Property_Select_Average(async));
+        await base.GroupBy_Property_Select_Average(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$avg" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
 
         // Validating that we don't generate warning when translating GroupBy. See Issue#11157
         Assert.DoesNotContain(
@@ -74,20 +75,22 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
     public override async Task GroupBy_Property_Select_Count(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Property_Select_Count(async));
+        await base.GroupBy_Property_Select_Count(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Property_Select_LongCount(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Property_Select_LongCount(async));
+        await base.GroupBy_Property_Select_LongCount(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Property_Select_Count_with_nulls(bool async)
@@ -111,20 +114,22 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
     public override async Task GroupBy_Property_Select_Max(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Property_Select_Max(async));
+        await base.GroupBy_Property_Select_Max(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$max" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Property_Select_Min(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Property_Select_Min(async));
+        await base.GroupBy_Property_Select_Min(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$min" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Property_Select_Sum(bool async)
@@ -275,56 +280,62 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
     public override async Task GroupBy_anonymous_Select_Average(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_anonymous_Select_Average(async));
+        await base.GroupBy_anonymous_Select_Average(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$avg" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_anonymous_Select_Count(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_anonymous_Select_Count(async));
+        await base.GroupBy_anonymous_Select_Count(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_anonymous_Select_LongCount(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_anonymous_Select_LongCount(async));
+        await base.GroupBy_anonymous_Select_LongCount(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_anonymous_Select_Max(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_anonymous_Select_Max(async));
+        await base.GroupBy_anonymous_Select_Max(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$max" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_anonymous_Select_Min(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_anonymous_Select_Min(async));
+        await base.GroupBy_anonymous_Select_Min(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$min" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_anonymous_Select_Sum(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_anonymous_Select_Sum(async));
+        await base.GroupBy_anonymous_Select_Sum(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID" }, "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_anonymous_Select_Sum_Min_Max_Avg(bool async)
@@ -349,56 +360,62 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
     public override async Task GroupBy_Composite_Select_Average(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Composite_Select_Average(async));
+        await base.GroupBy_Composite_Select_Average(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "_v" : { "$avg" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Composite_Select_Count(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Composite_Select_Count(async));
+        await base.GroupBy_Composite_Select_Count(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Composite_Select_LongCount(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Composite_Select_LongCount(async));
+        await base.GroupBy_Composite_Select_LongCount(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Composite_Select_Max(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Composite_Select_Max(async));
+        await base.GroupBy_Composite_Select_Max(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "_v" : { "$max" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Composite_Select_Min(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Composite_Select_Min(async));
+        await base.GroupBy_Composite_Select_Min(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "_v" : { "$min" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Composite_Select_Sum(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Composite_Select_Sum(async));
+        await base.GroupBy_Composite_Select_Sum(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "EmployeeID" : "$EmployeeID" }, "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Composite_Select_Sum_Min_Max_Avg(bool async)
@@ -682,20 +699,22 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
     public override async Task GroupBy_Property_scalar_element_selector_Count(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Property_scalar_element_selector_Count(async));
+        await base.GroupBy_Property_scalar_element_selector_Count(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Property_scalar_element_selector_LongCount(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Property_scalar_element_selector_LongCount(async));
+        await base.GroupBy_Property_scalar_element_selector_LongCount(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Property_scalar_element_selector_Max(bool async)
@@ -737,56 +756,62 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
     public override async Task GroupBy_Property_anonymous_element_selector_Average(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Property_anonymous_element_selector_Average(async));
+        await base.GroupBy_Property_anonymous_element_selector_Average(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$avg" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Property_anonymous_element_selector_Count(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Property_anonymous_element_selector_Count(async));
+        await base.GroupBy_Property_anonymous_element_selector_Count(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Property_anonymous_element_selector_LongCount(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Property_anonymous_element_selector_LongCount(async));
+        await base.GroupBy_Property_anonymous_element_selector_LongCount(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Property_anonymous_element_selector_Max(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Property_anonymous_element_selector_Max(async));
+        await base.GroupBy_Property_anonymous_element_selector_Max(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$max" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Property_anonymous_element_selector_Min(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Property_anonymous_element_selector_Min(async));
+        await base.GroupBy_Property_anonymous_element_selector_Min(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$min" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Property_anonymous_element_selector_Sum(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_Property_anonymous_element_selector_Sum(async));
+        await base.GroupBy_Property_anonymous_element_selector_Sum(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_Property_anonymous_element_selector_Sum_Min_Max_Avg(bool async)
@@ -916,7 +941,7 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "c" : "$__agg0", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$group" : { "_id" : "$CustomerID", "c" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "c" : "$c", "_id" : 0 } }
             """);
     }
 
@@ -1739,8 +1764,8 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$__agg0", "_id" : 0 } }, { "$count" : "_v" }
-            """);
+Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }, { "$count" : "v" }
+""");
     }
 
     public override async Task LongCount_after_GroupBy_aggregate(bool async)
@@ -1759,7 +1784,7 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$addToSet" : "$_id" }, "__agg1" : { "$addToSet" : "$EmployeeID" }, "__agg2" : { "$addToSet" : "$OrderDate" } } }, { "$project" : { "Key" : "$_id", "Average" : { "$avg" : "$__agg0" }, "Count" : { "$size" : "$__agg1" }, "LongCount" : { "$size" : "$__agg1" }, "Max" : { "$max" : "$__agg2" }, "Min" : { "$min" : "$__agg2" }, "Sum" : { "$sum" : "$__agg0" }, "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : "$CustomerID", "Average" : { "$addToSet" : "$_id" }, "Count" : { "$addToSet" : "$EmployeeID" }, "LongCount" : { "$addToSet" : "$EmployeeID" }, "Max" : { "$addToSet" : "$OrderDate" }, "Min" : { "$addToSet" : "$OrderDate" }, "Sum" : { "$addToSet" : "$_id" } } }, { "$project" : { "Key" : "$_id", "Average" : { "$avg" : "$Average" }, "Count" : { "$size" : "$Count" }, "LongCount" : { "$size" : "$LongCount" }, "Max" : { "$max" : "$Max" }, "Min" : { "$min" : "$Min" }, "Sum" : { "$sum" : "$Sum" }, "_id" : 0 } }
             """);
     }
 
@@ -1803,7 +1828,7 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$__agg0", "_id" : 0 } }, { "$match" : { "_id" : { "$type" : -1 } } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }, { "$match" : { "_id" : { "$type" : -1 } } }, { "$limit" : 1 }
             """);
     }
 
@@ -1823,7 +1848,7 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$__agg0", "_id" : 0 } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }, { "$limit" : 1 }
             """);
     }
 

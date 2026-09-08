@@ -1188,7 +1188,7 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
         AssertMql(
             """
-            Orders.{ "$limit" : 5 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$count" : "_v" }
+            Orders.{ "$limit" : 5 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$count" : "v" }
             """);
     }
 
@@ -1198,7 +1198,7 @@ Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "fro
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "FRANK" } }, { "$limit" : 5 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$count" : "_v" }
+            Orders.{ "$match" : { "CustomerID" : "FRANK" } }, { "$limit" : 5 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$count" : "v" }
             """);
     }
 
@@ -1404,7 +1404,7 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 2 }, { "$project" : { "City"
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$nor" : [{ "$expr" : { "$eq" : [{ "$indexOfCP" : ["$ContactName", "$ContactName"] }, 0] } }] } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Customers.{ "$match" : { "$expr" : { "$not" : [{ "$eq" : [{ "$indexOfCP" : ["$ContactName", "$ContactName"] }, 0] }] } } }, { "$limit" : 1 }
             """);
     }
 
@@ -1876,7 +1876,7 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "c" : "$$ROOT", "_id" : 
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$limit" : 5 }, { "$count" : "_v" }
+            Orders.{ "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$limit" : 5 }, { "$count" : "v" }
             """);
     }
 
@@ -3372,7 +3372,7 @@ Orders.{ "$group" : { "_id" : { "_id" : "$_id" } } }, { "$project" : { "_id" : "
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$count" : "_v" }
+            Customers.{ "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$count" : "v" }
             """);
     }
 
@@ -3382,7 +3382,7 @@ Orders.{ "$group" : { "_id" : { "_id" : "$_id" } } }, { "$project" : { "_id" : "
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$count" : "_v" }
+            Customers.{ "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$count" : "v" }
             """);
     }
 
@@ -3895,8 +3895,8 @@ OrderDetails.{ "$match" : { "$and" : [{ "$expr" : { "$eq" : [{ "$add" : [{ "$toI
 
         AssertMql(
             """
-            OrderDetails.{ "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : "$Quantity" } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
-            """);
+OrderDetails.{ "$group" : { "_id" : null, "v" : { "$max" : "$Quantity" } } }
+""");
     }
 
     public override async Task Entity_equality_with_null_coalesce_client_side(bool async)

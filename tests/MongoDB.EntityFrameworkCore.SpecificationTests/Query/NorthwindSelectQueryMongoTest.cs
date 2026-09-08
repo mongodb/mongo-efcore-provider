@@ -1391,21 +1391,14 @@ Employees.{ "$sort" : { "_id" : -1, "City" : 1 } }, { "$project" : { "_id" : "$_
 
     public override async Task Reverse_in_subquery_via_pushdown(bool async)
     {
-        // Fails: Reverse not supported CSHARP-5836
-        await AssertTranslationFailed(() =>
-            base.Reverse_in_subquery_via_pushdown(async));
+        // EF-322: a whole-entity Distinct() now goes native, so this whole chain (OrderBy/Reverse/Take/
+        // Distinct/Select) no longer needs the driver-LINQ pushdown that used to hit CSHARP-5836.
+        await base.Reverse_in_subquery_via_pushdown(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-    """
-            Employees.
+        AssertMql(
+            """
+            Employees.{ "$sort" : { "_id" : -1 } }, { "$limit" : 5 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$project" : { "EmployeeID" : "$_id", "City" : "$City", "_id" : 0 } }
             """);
-        }
     }
 
     public override async Task Reverse_after_orderBy_and_take(bool async)

@@ -148,7 +148,7 @@ public class NativeGroupByBinderTests
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { Count = g.Count() };
 
-        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj));
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
 
         var grouping = mongoQ.Select.Grouping!;
         Assert.Single(grouping.Key);
@@ -169,7 +169,7 @@ public class NativeGroupByBinderTests
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { Total = g.Sum(x => x.Amount) };
 
-        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj));
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
 
         var acc = Assert.Single(mongoQ.Select.Grouping!.Accumulators);
         Assert.Equal("Total", acc.OutputField);
@@ -184,7 +184,7 @@ public class NativeGroupByBinderTests
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { Lo = g.Min(x => x.Amount), Hi = g.Max(x => x.Amount), Av = g.Average(x => x.Amount) };
 
-        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj));
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
 
         var accs = mongoQ.Select.Grouping!.Accumulators;
         Assert.Equal("$min", accs.Single(a => a.OutputField == "Lo").Operator);
@@ -199,7 +199,7 @@ public class NativeGroupByBinderTests
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { g.Key, Count = g.Count() };
 
-        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj));
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
 
         // Only the Count accumulator; the key member is not an accumulator.
         var acc = Assert.Single(mongoQ.Select.Grouping!.Accumulators);
@@ -213,7 +213,7 @@ public class NativeGroupByBinderTests
         Expression<Func<IGrouping<string, Order>, OrderGroup>> proj =
             g => new OrderGroup { Key = g.Key, Count = g.Count(), Total = g.Sum(x => x.Amount) };
 
-        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj));
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
 
         var accs = mongoQ.Select.Grouping!.Accumulators;
         Assert.Equal(2, accs.Count);
@@ -228,7 +228,7 @@ public class NativeGroupByBinderTests
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { Total = g.Sum(x => x.Amount * x.Quantity) };
 
-        Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj));
+        Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
         Assert.Null(mongoQ.Select.Grouping);
     }
 
@@ -239,7 +239,7 @@ public class NativeGroupByBinderTests
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { g.Key };
 
-        Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj));
+        Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
         Assert.Null(mongoQ.Select.Grouping);
     }
 
@@ -254,7 +254,7 @@ public class NativeGroupByBinderTests
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { Count = others.Count() };
 
-        Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj));
+        Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
         Assert.Null(mongoQ.Select.Grouping);
     }
 
@@ -266,7 +266,7 @@ public class NativeGroupByBinderTests
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { Total = others.Sum(x => x.Amount) };
 
-        Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj));
+        Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
         Assert.Null(mongoQ.Select.Grouping);
     }
 
@@ -281,7 +281,7 @@ public class NativeGroupByBinderTests
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { _id = g.Count() };
 
-        Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj));
+        Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
         Assert.Null(mongoQ.Select.Grouping);
     }
 
@@ -294,7 +294,7 @@ public class NativeGroupByBinderTests
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { _id = g.Key, Count = g.Count() };
 
-        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj));
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
 
         var acc = Assert.Single(mongoQ.Select.Grouping!.Accumulators);
         Assert.Equal("Count", acc.OutputField);
@@ -307,7 +307,7 @@ public class NativeGroupByBinderTests
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { Count = g.Count() };
 
-        Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj));
+        Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
         Assert.Null(mongoQ.Select.Grouping);
     }
 
@@ -436,7 +436,7 @@ public class NativeGroupByBinderTests
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { Count = g.Count() };
-        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj));
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
 
         Assert.False(NativeGroupByBinder.TryBindGroupTerminalAggregate(
             mongoQ, MongoAggregateOperator.Count, null, typeof(int)));

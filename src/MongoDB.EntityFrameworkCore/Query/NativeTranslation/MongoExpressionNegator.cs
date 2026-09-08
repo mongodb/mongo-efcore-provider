@@ -49,19 +49,20 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// under inversion.
 /// </para>
 /// <para>
-/// <b>The output is query-dialect renderable — with one deliberate, narrow exception: the
-/// <see cref="MongoQuantifierExpression"/> family.</b> For every OTHER input, the admitted set is a subset of
-/// <see cref="MongoQueryLanguageRenderer.IsQueryDialectRenderable"/>'s (enforced by gating on it directly),
-/// and the node produced is itself query-dialect renderable — it never routes to the <c>$expr</c> catch-all,
-/// which is a hard server error inside <c>$elemMatch</c>. <see cref="MongoQuantifierExpression"/> is exempt
-/// from both halves of that rule on both sides — <see cref="TryNegate"/> admits it even though
-/// <c>IsQueryDialectRenderable</c> rejects it, and the negated result it produces (like the un-negated node)
-/// DOES route to the <c>$expr</c> catch-all — because a quantifier's negation-consuming caller
+/// <b>The output is query-dialect renderable — with two deliberate, narrow exceptions: the
+/// <see cref="MongoQuantifierExpression"/> family, and a field-to-field <see cref="MongoRegexExpression"/>
+/// (<c>Term</c> is a <see cref="MongoFieldExpression"/>).</b> For every OTHER input, the admitted set is a
+/// subset of <see cref="MongoQueryLanguageRenderer.IsQueryDialectRenderable"/>'s (enforced by gating on it
+/// directly), and the node produced is itself query-dialect renderable — it never routes to the <c>$expr</c>
+/// catch-all, which is a hard server error inside <c>$elemMatch</c>. Both exceptions are exempt from both
+/// halves of that rule on both sides — <see cref="TryNegate"/> admits them even though
+/// <c>IsQueryDialectRenderable</c> rejects them, and the negated result each produces (like the un-negated
+/// node) DOES route to the <c>$expr</c> catch-all — because their shared negation-consuming caller
 /// (<c>NativeCardinalityBinder</c>'s root-level <c>All(pred)</c> arm) places the result at a TOP-LEVEL
 /// <c>$match</c> conjunct, where <c>$expr</c> is legal, and never inside <c>$elemMatch</c>, where it is not.
-/// Any FUTURE <c>TryNegate</c>/<c>TryNegateCore</c> caller that might place a quantifier's negation inside an
-/// <c>$elemMatch</c> would violate this exception's own precondition — check placement, not just result type,
-/// before adding one.
+/// Any FUTURE <c>TryNegate</c>/<c>TryNegateCore</c> caller that might place either exception's negation inside
+/// an <c>$elemMatch</c> would violate the exception's own precondition — check placement, not just result
+/// type, before adding one.
 /// </para>
 /// </remarks>
 internal static class MongoExpressionNegator
@@ -126,6 +127,28 @@ internal static class MongoExpressionNegator
         // quantifier with a query-dialect clause still declines, since De Morgan'ing just the query-dialect
         // half would drop the quantifier leaf) is safe.
         if (node is MongoQuantifierExpression)
+            return TryNegateCore(node, out negated, inAggregationContext: false);
+
+        // A field-to-field MongoRegexExpression (Term is a MongoFieldExpression, e.g.
+        // c.ContactName.StartsWith(c.ContactName)) is a second DELIBERATE, NARROW exception, for exactly the
+        // same reason as MongoQuantifierExpression above: it is aggregation-expression-ONLY by design (Mongo's
+        // $regularExpression pattern must be a literal, so a field-to-field term has no query-dialect form at
+        // all — MongoQueryLanguageRenderer.IsQueryDialectRenderable declines it unconditionally). Unlike the
+        // quantifier, this exception has TWO negation call sites, not one — check placement, not just result
+        // type, before assuming either is safe on its own:
+        //   1. NativeCardinalityBinder's root-level All(pred) arm (via MongoExpressionTranslator's
+        //      All_top_level_column shape), which places the negated node as a top-level $match CONJUNCT, never
+        //      nested inside $elemMatch — safe with no re-gating needed, same as the quantifier's case.
+        //   2. MongoExpressionTranslator's $elemMatch quantifier `All(pred)` arm, which DOES place the negated
+        //      result inside an $elemMatch. Safety there does NOT come from "only one call site" — it comes
+        //      from that call site re-checking MongoQueryLanguageRenderer.IsQueryDialectRenderable on the
+        //      negated result AFTER calling TryNegate, which still declines a field-to-field regex there and
+        //      falls back to driver-LINQ instead of nesting $expr inside $elemMatch.
+        // The negation itself is just TryFlipNegatedFlag's regex arm (flip Negated, Term unchanged) — exact
+        // regardless of Term's shape, so no separate TryNegateCore case is needed. A constant/parameter-term
+        // regex does NOT need this exception (and is NOT matched by the pattern below): it already renders and
+        // negates via the ordinary query dialect.
+        if (node is MongoRegexExpression { Term: MongoFieldExpression })
             return TryNegateCore(node, out negated, inAggregationContext: false);
 
         // A node with no query-dialect rendering has no query-dialect COMPLEMENT either. Gating here makes

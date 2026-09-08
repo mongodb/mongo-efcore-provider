@@ -36,6 +36,7 @@ public class MongoQueryLanguageRendererTests
         public bool Active { get; set; }
         public int Score { get; set; }
         public string Name { get; set; } = null!;
+        public string Nickname { get; set; } = null!;
 
         // Final-review fix 3 (EF-421 round 2): a value-converted (non-default-serialized) bool, so a bare
         // outer-scoped reference to it under Not can exercise RenderUnary's fall-to-$expr branch's own
@@ -528,6 +529,22 @@ public class MongoQueryLanguageRendererTests
         Assert.True(
             PlaceholderTable.TryGetPlaceholderIndex(rendered["Name"].AsBsonDocument["$not"], out var index));
         Assert.Equal(0, index);
+    }
+
+    [Fact]
+    public void Field_to_field_regex_falls_through_to_expr()
+    {
+        var name = GetProperty<Customer>("Name");
+        var nickname = GetProperty<Customer>("Nickname");
+        var expr = new MongoRegexExpression(
+            new MongoFieldExpression(name, "Name"), MongoRegexKind.StartsWith,
+            new MongoFieldExpression(nickname, "Nickname"), negated: false);
+
+        var result = new MongoQueryLanguageRenderer().Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$expr" : { "$eq" : [{ "$indexOfCP" : ["$Name", "$Nickname"] }, 0] } }""",
+            result.ToJson());
     }
 
     // ------------------------------------------------------------------

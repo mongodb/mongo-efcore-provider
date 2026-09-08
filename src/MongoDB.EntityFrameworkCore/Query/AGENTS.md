@@ -106,7 +106,12 @@ failure.
   renderer refuses is a hard failure at execution time, not a decline. This is now **enforced**, not
   conventional: `MongoExpressionNodeCoverageTests` reflection-discovers every `MongoExpression` subtype and
   characterizes it against all seven dispatchers, so adding a node type or changing any dispatcher's answer
-  reddens with the exact cell.
+  reddens with the exact cell. That matrix is keyed by node **type** (`GetType()`), so it is structurally blind
+  to a dispatcher's answer depending on a node's internal **shape** rather than its type — e.g.
+  `MongoRegexExpression`'s behavior across four dispatchers differs for a constant/parameter `Term` vs. a
+  field-to-field `Term`, and only one shape has a matrix row. A shape-conditional dispatch needs its own
+  dedicated test (see `Field_to_field_regex_term_shape_is_pinned_across_all_four_dispatchers` alongside that
+  file) — don't assume the matrix already covers it.
 - **`$expr` inside `$elemMatch` is a hard server error, not a slow path.** Anything that can nest inside an
   `$elemMatch` (a quantifier's element predicate, a negated one) must be rejected at `IsQueryDialectRenderable`
   rather than falling through to the aggregation renderer.

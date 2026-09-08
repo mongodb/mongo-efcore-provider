@@ -1221,6 +1221,94 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal(new[] { "Five", "Four", "One", "Three", "Two" }, result);
     }
 
+    // EF-322: a projected Distinct() AS a Union operand (not a trailing Distinct after the set op — see
+    // Trailing_distinct_after_whole_entity_union_still_goes_native above for that shape) now goes native too.
+    // Operand1's own $group + flattening $project become part of ITS pre-combine pipeline (mirroring how a
+    // plain projected operand's own $project already does), so the Union's dedup ($group{_id:"$$ROOT"})
+    // runs over the ALREADY-flattened projected values from both operands — correct even when only one side
+    // is Distinct-shaped and the other is a plain projected Select, as long as their projected shapes match.
+    [Fact]
+    public void Distinct_operand_union_goes_native()
+    {
+        var collection = SeedCollection(nameof(Distinct_operand_union_goes_native));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+
+        var result = db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name }).Distinct()
+            .Union(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
+            .ToList().Select(x => x.Name).OrderBy(n => n).ToList();
+
+        Assert.Equal(new[] { "Five", "Four", "One", "Three", "Two" }, result); // {1,2,3} U {3,4,5} by Name, deduped
+    }
+
+    [Fact]
+    public void Distinct_operand_union_matches_driver_linq()
+    {
+        var collection = SeedCollection(nameof(Distinct_operand_union_matches_driver_linq));
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        List<string> Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name }).Distinct()
+                .Union(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
+                .ToList().Select(x => x.Name).OrderBy(n => n).ToList();
+
+        var native = Run(nativeDb);
+        Assert.Equal(new[] { "Five", "Four", "One", "Three", "Two" }, native);
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    [Fact]
+    public void Both_operands_distinct_union_goes_native()
+    {
+        var collection = SeedCollection(nameof(Both_operands_distinct_union_goes_native));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+
+        var result = db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name }).Distinct()
+            .Union(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }).Distinct())
+            .ToList().Select(x => x.Name).OrderBy(n => n).ToList();
+
+        Assert.Equal(new[] { "Five", "Four", "One", "Three", "Two" }, result);
+    }
+
+    [Fact]
+    public void Distinct_operand_concat_goes_native()
+    {
+        // Concat does NOT dedup the combined result, but operand1's OWN Distinct still applies (it is part
+        // of operand1's own pre-combine pipeline, unaffected by Concat vs Union).
+        var collection = SeedCollection(nameof(Distinct_operand_concat_goes_native));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+
+        var result = db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name }).Distinct()
+            .Concat(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
+            .ToList().Select(x => x.Name).OrderBy(n => n).ToList();
+
+        // operand1 distinct over {1,2,3} = 3 rows (no dupes to collapse here); operand2 = {3,4,5}, 3 rows;
+        // Concat keeps both — 6 rows total, "Three" appearing twice.
+        Assert.Equal(new[] { "Five", "Four", "One", "Three", "Three", "Two" }, result);
+    }
+
+    [Fact]
+    public void Distinct_operand_union_on_renamed_member_dedups_by_projected_source_not_colliding_entity_property()
+    {
+        // Select(i => new { Value = i.Name }) deliberately reuses the entity's real "Value" property name
+        // (an int) for a DIFFERENT source field (Name, a string). If the Distinct operand's flatten-$project
+        // — or the Union's own dedup — resolved by name against the entity, it would either crash (type
+        // mismatch) or silently dedup/compare the wrong field.
+        var collection = SeedCollection(
+            nameof(Distinct_operand_union_on_renamed_member_dedups_by_projected_source_not_colliding_entity_property));
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        List<string> Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).Select(i => new { Value = i.Name }).Distinct()
+                .Union(db.Entities.Where(i => i.Value >= 3).Select(i => new { Value = i.Name }))
+                .ToList().Select(x => x.Value).OrderBy(n => n).ToList();
+
+        var native = Run(nativeDb);
+        Assert.Equal(new[] { "Five", "Four", "One", "Three", "Two" }, native); // by Name's value, not the real int Value
+        Assert.Equal(Run(driverDb), native);
+    }
+
     // EF-347 slice C2: a trailing projection after Intersect now goes native (was a hard-fail in slice B).
     [Fact]
     public void Select_after_intersect_goes_native_result_set()

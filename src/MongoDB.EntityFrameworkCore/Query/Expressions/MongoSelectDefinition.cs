@@ -120,16 +120,24 @@ internal sealed class MongoSelectDefinition
     /// attached (so post-set-op ops are trailing); <see cref="PostJoinOps"/> once a bare <c>Where</c> has
     /// confirmed a join's Inner access (a null check or a general comparison — so the predicate itself, and
     /// anything recorded after it, land past the <c>$lookup</c>/<c>$unwind</c> block); <see cref="PostGroupOps"/>
-    /// once a projected Distinct's degenerate <c>$group</c> has finalized (so a following
-    /// OrderBy/ThenBy/Skip/Take lands past the <c>$group</c> + flattening <c>$project</c>); otherwise
-    /// <see cref="PipelineOps"/> (source1's own / pre-terminal ops). The flips are mutually exclusive in
-    /// practice — see each list's own remarks — so the check order here is an arbitrary but harmless
-    /// tie-break, not a considered precedence.
+    /// once a projected Distinct's OR an ordinary <c>GroupBy(key).Select(aggregate)</c>'s degenerate/keyed
+    /// <c>$group</c> has finalized (so a following OrderBy/ThenBy/Skip/Take/aggregate-predicate lands past the
+    /// <c>$group</c> + flattening <c>$project</c>); otherwise <see cref="PipelineOps"/> (source1's own /
+    /// pre-terminal ops). The flips are mutually exclusive in practice — see each list's own remarks — so the
+    /// check order here is an arbitrary but harmless tie-break, not a considered precedence. The two
+    /// <see cref="Grouping"/> branches are deliberately kept exclusive of each other (<c>IsDistinct &amp;&amp;
+    /// !IsGroupBy</c> / <c>IsGroupBy &amp;&amp; !IsDistinct</c>) rather than merged into one <c>Grouping != null</c>
+    /// check: a GroupBy nested directly on a projected Distinct (EF-322, both flags true — see
+    /// <see cref="PriorGrouping"/>) must keep falling through to <see cref="PipelineOps"/> here, unchanged from
+    /// before this GroupBy branch existed — that shape's PostGroupOps placement (between the Distinct's own
+    /// $group and the outer GroupBy's) is decided once, structurally, by <c>MongoSelectLowerer</c>, not by this
+    /// property.
     /// </summary>
     private List<MongoSelectOp> ActiveOps
         => SetOperation != null ? _trailingOps
             : _joinInnerAccessConfirmedFromWhere ? _postJoinOps
             : IsDistinct && !IsGroupBy && Grouping != null ? _postGroupOps
+            : IsGroupBy && !IsDistinct && Grouping != null ? _postGroupOps
             : _pipelineOps;
 
     /// <summary>
@@ -202,6 +210,14 @@ internal sealed class MongoSelectDefinition
     /// <summary>Take (and the synthesized reducer limit) → append a <see cref="MongoLimitOp"/> to
     /// <see cref="ActiveOps"/>.</summary>
     public void AppendLimit(MongoExpression count) => ActiveOps.Add(new MongoLimitOp(count));
+
+    /// <summary>
+    /// EF-322: a whole-entity <c>Distinct()</c> (no preceding <c>Select</c>) → append a
+    /// <see cref="MongoDistinctOp"/> to <see cref="ActiveOps"/>, exactly like any other filter/sort/page
+    /// operator. See <see cref="MongoDistinctOp"/>'s own remarks for why this needs none of the
+    /// <see cref="Grouping"/>/<see cref="PostGroupOps"/> machinery a PROJECTED Distinct requires.
+    /// </summary>
+    public void AppendDistinct() => ActiveOps.Add(new MongoDistinctOp());
 
     // HasPaging/HasOrdering/HasLimit deliberately scan _pipelineOps only: they gate a PRE-terminal GroupBy
     // (NativeGroupByBinder), which is unreachable after a set op (a trailing GroupBy is rejected by

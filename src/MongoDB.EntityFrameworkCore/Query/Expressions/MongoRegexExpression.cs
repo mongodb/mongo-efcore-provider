@@ -36,7 +36,12 @@ internal sealed class MongoRegexExpression : MongoExpression
     /// </summary>
     /// <param name="field">The document field being tested.</param>
     /// <param name="kind">The kind of regex test to perform (StartsWith, EndsWith, or Contains).</param>
-    /// <param name="term">The search term: a <c>MongoConstantExpression</c> or <c>MongoParameterExpression</c> of string.</param>
+    /// <param name="term">
+    /// The search term: a <c>MongoConstantExpression</c> or <c>MongoParameterExpression</c> of string, or a
+    /// <c>MongoFieldExpression</c> for a field-to-field test (e.g. <c>c.A.StartsWith(c.B)</c>) — the latter has
+    /// no query-dialect form and is rendered only via <c>MongoAggregationExpressionRenderer</c>'s <c>$indexOfCP</c>
+    /// form inside <c>$expr</c>.
+    /// </param>
     /// <param name="negated"><see langword="true"/> for a negated match (<c>!s.StartsWith(...)</c>).</param>
     public MongoRegexExpression(MongoFieldExpression field, MongoRegexKind kind, MongoExpression term, bool negated)
     {
@@ -53,7 +58,12 @@ internal sealed class MongoRegexExpression : MongoExpression
     /// <summary>The kind of regex test to perform (StartsWith, EndsWith, or Contains).</summary>
     public MongoRegexKind Kind { get; }
 
-    /// <summary>The search term: a <c>MongoConstantExpression</c> or <c>MongoParameterExpression</c> of string.</summary>
+    /// <summary>
+    /// The search term: a <c>MongoConstantExpression</c> or <c>MongoParameterExpression</c> of string, or a
+    /// <c>MongoFieldExpression</c> for a field-to-field test (e.g. <c>c.A.StartsWith(c.B)</c>) — the latter has
+    /// no query-dialect form and is rendered only via <c>MongoAggregationExpressionRenderer</c>'s <c>$indexOfCP</c>
+    /// form inside <c>$expr</c>.
+    /// </summary>
     public MongoExpression Term { get; }
 
     /// <summary><see langword="true"/> for a negated match (<c>!s.StartsWith(...)</c>).</summary>

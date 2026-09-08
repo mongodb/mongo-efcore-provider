@@ -345,6 +345,40 @@ public class MongoExpressionNodeCoverageTests
         }
     }
 
+    /// <summary>
+    /// Pins the four dispatcher answers for a field-to-field <see cref="MongoRegexExpression"/> (Term is a
+    /// <see cref="MongoFieldExpression"/>, e.g. <c>c.ContactName.StartsWith(c.ContactName)</c>) — a shape the
+    /// type-keyed matrix above cannot see. <see cref="BuildSamples"/> keys its one-sample-per-node-TYPE
+    /// dictionary by <c>GetType()</c>, but <see cref="MongoRegexExpression"/> is the first node type whose
+    /// behavior in all four of these dispatchers depends on the SHAPE of its <c>Term</c> (constant/parameter vs.
+    /// field), not just its type: the single sample the matrix carries is constant-term, so a regression in any
+    /// of these four arms for the field-term variant specifically would go undetected by
+    /// <see cref="Dispatcher_coverage_matrix_is_unchanged"/>. This is a dedicated, hand-written test rather than
+    /// a second matrix row on purpose — see <c>Query/AGENTS.md</c>'s note on this gap.
+    /// </summary>
+    [Fact]
+    public void Field_to_field_regex_term_shape_is_pinned_across_all_four_dispatchers()
+    {
+        var heading = PostProperty(nameof(Post.Heading), valueConverted: false);
+        var headingField = new MongoFieldExpression(heading, "Heading");
+        var fieldToFieldRegex = new MongoRegexExpression(
+            headingField, MongoRegexKind.StartsWith, new MongoFieldExpression(heading, "Heading"), negated: false);
+
+        // No query-dialect form exists for a field-to-field term ($regularExpression's pattern must be a
+        // literal), but QL.Render still succeeds — it falls through to the $expr catch-all rather than throwing.
+        Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(fieldToFieldRegex));
+        Assert.Equal("rendered", Probe(QueryRenderer, fieldToFieldRegex));
+
+        // The aggregation-expression dialect is exactly where a field-to-field term DOES have a form
+        // ($indexOfCP/$strLenCP), so both the classifier and the renderer must agree it's supported.
+        Assert.True(MongoAggregationExpressionRenderer.CanRender(fieldToFieldRegex));
+        Assert.Equal("rendered", Probe(AggRenderer, fieldToFieldRegex));
+
+        // The negator's field-to-field-regex exemption (MongoExpressionNegator's own remarks): admitted past the
+        // query-dialect gate ungated, because it is aggregation-expression-only by design.
+        Assert.Equal("true", Probe(Negator, fieldToFieldRegex));
+    }
+
     // ------------------------------------------------------------------
     // The baked-in matrix.
 

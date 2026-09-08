@@ -924,7 +924,27 @@ internal sealed partial class MongoExpressionTranslator
 
                 var termNode = TranslateValue(Unwrap(termExpr), property);
                 if (termNode is null)
-                    return null;
+                {
+                    // Field-to-field: the term is itself a column (e.g. `c.ContactName.StartsWith(c.ContactName)`,
+                    // the exact shape EF's `All(predicate)` produces for All_top_level_column). This has NO
+                    // query-dialect form at all — Mongo's $regularExpression pattern must be a literal, never
+                    // another field — so it is only representable via the aggregation-expression dialect
+                    // ($indexOfCP/$strLenCP). MongoRegexExpression's Term may hold a MongoFieldExpression for
+                    // exactly this shape: MongoQueryLanguageRenderer declines it for the query dialect (falling
+                    // through to $expr) and MongoAggregationExpressionRenderer renders it there. Scoped
+                    // conservatively to a NON-outer term at a NON-outer receiver scope — a cross-scope
+                    // field-to-field pair (e.g. one side reached through a join) is a separate, not-yet-supported
+                    // shape and declines here, same as an ordinary unsupported term shape would.
+                    if (receiverIsOuter
+                        || !TryResolveMember(Unwrap(termExpr), out var termProperty, out var termFieldPath, out var termIsOuter)
+                        || termIsOuter
+                        || termProperty.ClrType != typeof(string))
+                    {
+                        return null;
+                    }
+
+                    termNode = new MongoFieldExpression(termProperty, termFieldPath);
+                }
 
                 var fieldExpr3 = new MongoFieldExpression(property, fieldPath!);
                 return new MongoRegexExpression(fieldExpr3, kind, termNode, negated: false);
@@ -1023,8 +1043,14 @@ internal sealed partial class MongoExpressionTranslator
 
                 // $expr is not usable inside $elemMatch, and RenderNode's catch-all would silently wrap a
                 // non-query-dialect child in $expr. Decline here (translate time) so the query falls back to
-                // driver-LINQ instead. For All this is belt-and-braces — the negator gates on the same
-                // classifier — but it stays because it is the invariant the renderer's contract depends on.
+                // driver-LINQ instead. This check is LOAD-BEARING, not belt-and-braces: MongoExpressionNegator
+                // .TryNegate admits two shapes here WITHOUT gating on IsQueryDialectRenderable — a
+                // MongoQuantifierExpression and a field-to-field MongoRegexExpression (Term: MongoFieldExpression)
+                // — precisely because those are aggregation-expression-only and have no query-dialect complement
+                // to gate on. For the un-negated All(pred) arm above (`negated == false`), and for whichever of
+                // those two shapes TryNegate hands back when it IS invoked, this is the ONLY check standing
+                // between them and RenderElemMatch's $expr catch-all, which the server rejects unconditionally
+                // inside $elemMatch. Removing or weakening this would let either shape reach that hazard.
                 if (!MongoQueryLanguageRenderer.IsQueryDialectRenderable(child))
                     return null;
 

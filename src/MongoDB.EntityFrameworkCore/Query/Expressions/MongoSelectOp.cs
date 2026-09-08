@@ -37,3 +37,16 @@ internal sealed record MongoSkipOp(MongoExpression Count) : MongoSelectOp;
 
 /// <summary>A <c>$limit</c> cap.</summary>
 internal sealed record MongoLimitOp(MongoExpression Count) : MongoSelectOp;
+
+/// <summary>
+/// A whole-document <c>Distinct()</c> over a NON-projected source (EF-322: no preceding <c>Select</c> has
+/// populated <see cref="MongoSelectDefinition.Projection"/>). Unlike a projected <c>Distinct()</c>
+/// (<see cref="MongoSelectDefinition.Grouping"/>/<see cref="MongoSelectDefinition.PostGroupOps"/>, which need
+/// field-by-field key extraction because the row shape has already been narrowed to specific aliases), a
+/// whole-entity row's shape never changes, so this needs no special post-terminal handling at all — it is
+/// just another entry in the ordinary ordered op list (<see cref="MongoSelectDefinition.PipelineOps"/> /
+/// <see cref="MongoSelectDefinition.TrailingOps"/>), lowering to the generic <c>$group{_id:"$$ROOT"}</c> +
+/// <c>$replaceRoot</c> dedup pattern already used for <c>Union</c>'s own dedup
+/// (<c>MongoPipelineFactory.RenderUnionWith</c>). A marker record — carries no data of its own.
+/// </summary>
+internal sealed record MongoDistinctOp : MongoSelectOp;

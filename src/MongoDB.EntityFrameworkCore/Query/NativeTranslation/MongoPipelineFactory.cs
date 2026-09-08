@@ -191,6 +191,10 @@ internal sealed class MongoPipelineFactory
                     new BsonDocument("$meta", "vectorSearchScore"))),
             MongoGroupAccumulatorStage group => RenderGroup(group, placeholders),
             MongoGroupStage keyedGroup => RenderKeyedGroup(keyedGroup, placeholders),
+            // EF-322: the first half of the whole-entity Distinct() dedup pattern — mirrors the literal BSON
+            // RenderUnionWith already emits for Union's own dedup, just via a dedicated marker stage instead
+            // of a MongoGrouping (which models a NAMED key plus accumulators, neither of which apply here).
+            MongoGroupByRootStage => new BsonDocument("$group", new BsonDocument("_id", "$$ROOT")),
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoPipelineFactory does not support stage type '{stage.GetType().Name}'.")
         };

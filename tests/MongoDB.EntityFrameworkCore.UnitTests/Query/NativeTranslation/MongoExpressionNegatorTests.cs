@@ -221,6 +221,29 @@ public class MongoExpressionNegatorTests
         Assert.True(Assert.IsType<MongoRegexExpression>(negated).Negated);
     }
 
+    // EF-322 Task 1 fix round: a field-to-field MongoRegexExpression (Term is itself a MongoFieldExpression,
+    // e.g. `c.ContactName.StartsWith(c.ContactName)` — the shape All_top_level_column produces) fails
+    // IsQueryDialectRenderable by design (Mongo's $regularExpression pattern must be a literal, never another
+    // field). TryNegate special-cases it, mirroring the MongoQuantifierExpression exception below, because its
+    // one negation call site (NativeCardinalityBinder's root-level All(pred) arm) places the negated node in a
+    // top-level $match conjunct, where $expr is legal. The negation itself is unaffected by Term's shape — it's
+    // still just TryFlipNegatedFlag's regex arm (flip Negated, Term unchanged).
+    [Fact]
+    public void Regex_with_field_to_field_term_negates_despite_not_being_query_dialect_renderable()
+    {
+        var heading = GetPostProperty(nameof(Post.Heading));
+        var regex = new MongoRegexExpression(
+            new MongoFieldExpression(heading, "Heading"),
+            MongoRegexKind.StartsWith,
+            new MongoFieldExpression(heading, "Heading"),
+            negated: false);
+
+        Assert.True(MongoExpressionNegator.TryNegate(regex, out var negated));
+        var negatedRegex = Assert.IsType<MongoRegexExpression>(negated);
+        Assert.True(negatedRegex.Negated);
+        Assert.IsType<MongoFieldExpression>(negatedRegex.Term);
+    }
+
     [Fact]
     public void ElemMatch_flips_negated_so_a_nested_quantifier_composes()
     {

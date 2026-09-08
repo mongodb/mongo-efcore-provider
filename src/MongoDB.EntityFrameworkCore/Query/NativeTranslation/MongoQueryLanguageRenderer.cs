@@ -87,7 +87,8 @@ internal sealed class MongoQueryLanguageRenderer
             MongoLookupNullCheckExpression lookupNullCheck => RenderLookupNullCheck(lookupNullCheck),
             MongoInExpression inExpr => RenderIn(inExpr, placeholders),
             MongoArrayContainsExpression arrayContains => RenderArrayContains(arrayContains, placeholders),
-            MongoRegexExpression regex => RenderRegex(regex, placeholders),
+            MongoRegexExpression { Term: MongoConstantExpression { Value: string } or MongoParameterExpression } regex
+                => RenderRegex(regex, placeholders),
             MongoElemMatchExpression elemMatch => RenderElemMatch(elemMatch, placeholders),
             // A literal boolean predicate root. `true` imposes no constraint (an empty $match body matches
             // every document); `false` uses the same impossible-BSON-type idiom MongoPipelineFactory's own

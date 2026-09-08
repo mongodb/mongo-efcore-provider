@@ -370,12 +370,21 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // the query is marked non-native and this same anonymous-shaper (no GroupByShaperExpression left)
             // lets the driver-LINQ push-down path run the GroupBy server-side and pass its objects straight
             // through — CanPushDown succeeds because there is no entity reference in the shaper.
-            if (!NativeGroupByBinder.TryBindGroupProjection(mongoQueryExpression, selector))
+            if (!NativeGroupByBinder.TryBindGroupProjection(mongoQueryExpression, selector, out var bareGroupLeafAlias))
             {
                 mongoQueryExpression.Select.MarkNotNativelyRepresentable();
             }
 
-            var groupShaper = TryBuildGroupResultShaper(mongoQueryExpression, selector);
+            // A BARE (non-`new {}`/DTO) result selector — e.g. `g => g.Sum(o => o.OrderID)` — was bound under
+            // the reserved alias the binder chose and handed back; anything else is the wrapped anonymous/DTO
+            // shape TryBuildGroupResultShaper walks member by member (including the case just above where
+            // binding declined but the body was still a wrapped construction — bareGroupLeafAlias stays null
+            // on any decline, so this falls through to that method exactly as before). Keyed on the binder's
+            // OWN answer (not a restatement of "which bodies are bare" here), same split as the SelectMany
+            // bare/wrapped branch just above, so the shaper can never disagree with what was actually bound.
+            var groupShaper = bareGroupLeafAlias != null
+                ? BindGroupMember(mongoQueryExpression, bareGroupLeafAlias, selector.Body)
+                : TryBuildGroupResultShaper(mongoQueryExpression, selector);
 
             // A projection shape we cannot rewrite (not an anonymous/DTO construction) keeps the placeholder
             // GroupByShaperExpression; the gate rejects it under NativeOnly and the driver reports it under
@@ -697,7 +706,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // Admissibility is decided in full BEFORE any BindGroupMember call. That ordering is load-bearing:
         // the previous inline version returned null part-way through the MemberInit loop for a non-assignment
         // binding, by which point it had already registered projections for the earlier members — a
-        // mutate-then-decline that left the query expression half-populated.
+        // mutate-then-decline that left the query expression half-populated. A bare (non-`new {}`/DTO) body —
+        // e.g. `g.Sum(...)` — is NOT handled here: it is bound (if at all) via the caller's own
+        // bareGroupLeafAlias branch, mirroring the SelectMany bare/wrapped split just above.
         if (!selector.Body.TryGetProjectionMembers(out var members, allowPositionalConstructorArguments: true))
             return null;
 
@@ -2043,15 +2054,40 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// translates to a degenerate <c>$group</c> — group by the projected value(s), zero accumulators — via
     /// <see cref="NativeGroupByBinder.TryBindDistinctFromProjection"/>. The shaper is unchanged: it was
     /// already built by the preceding <c>Select</c> to read the top-level result aliases, and those same
-    /// aliases survive as the flattening <c>$project</c> that follows the <c>$group</c>. A bare-scalar
-    /// projection (no native <c>Projection</c> populated) or a whole-entity source falls back to driver-LINQ.
+    /// aliases survive as the flattening <c>$project</c> that follows the <c>$group</c>.
+    /// EF-322: a WHOLE-ENTITY source (no projection to flatten) is handled by a second, much simpler path —
+    /// <see cref="MongoSelectDefinition.AppendDistinct"/> records a plain <see cref="MongoDistinctOp"/>, which
+    /// needs none of the Grouping/DistinctAliasScope/PostGroupOps machinery the projected form requires
+    /// because the row shape never changes (see <see cref="MongoDistinctOp"/>'s own remarks). Only when
+    /// NEITHER path applies (e.g. a bare-scalar projection with no native <c>Projection</c> populated) does
+    /// this fall back to driver-LINQ.
     /// </summary>
     protected override ShapedQueryExpression? TranslateDistinct(ShapedQueryExpression source)
     {
         var mongoQ = (MongoQueryExpression)source.QueryExpression;
-        if (!NativeGroupByBinder.TryBindDistinctFromProjection(mongoQ))
+        if (!NativeGroupByBinder.TryBindDistinctFromProjection(mongoQ) && !TryBindWholeEntityDistinct(mongoQ))
             mongoQ.Select.MarkNotNativelyRepresentable();
-        return source; // shaper unchanged: the Select's projection shaper reads the flatten aliases
+        return source; // shaper unchanged: either path leaves the existing shaper (projection or entity) valid
+    }
+
+    /// <summary>
+    /// EF-322: a whole-entity <c>Distinct()</c> — no preceding <c>Select</c> has populated
+    /// <see cref="MongoSelectDefinition.Projection"/> — records a plain <see cref="MongoDistinctOp"/> in the
+    /// ordinary ordered op list instead of building a <see cref="MongoSelectDefinition.Grouping"/>. Declines
+    /// (returns <see langword="false"/>) whenever a projection, grouping, cardinality, or unwind source is
+    /// already present — those are either the DIFFERENT projected-Distinct shape (handled by
+    /// <see cref="NativeGroupByBinder.TryBindDistinctFromProjection"/>, tried first) or a terminal this method
+    /// has no business touching.
+    /// </summary>
+    private static bool TryBindWholeEntityDistinct(MongoQueryExpression mongoQ)
+    {
+        var select = mongoQ.Select;
+        if (select.Projection.Count > 0 || select.Grouping != null || select.Cardinality != null
+            || select.UnwindSource != null)
+            return false;
+
+        select.AppendDistinct();
+        return true;
     }
 
     #region Methods that just require shaper reshaping
@@ -3061,12 +3097,17 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         }
 
         // Projected operands. Both operands are plain projected selects (a Select-projection is the SOLE
-        // terminal on each). The EntityType-equality gate above does NOT apply — projected operands may be
-        // different collections that project to the same shape; ProjectionShapesMatch guards the shape
-        // compatibility instead (a correctness guard, not just an optimization: the dedup / source-tagging
-        // compare whole projected documents by value, so mismatched alias sets would mis-compare). EF Core
-        // rejects incompatible operand shapes upstream, so a mismatch is defense-in-depth.
-        if (IsPlainProjectedSelect(mongo1) && IsPlainProjectedSelect(mongo2)
+        // terminal on each) OR a plain projected Distinct (EF-322: IsPlainDistinctSelect — its own $group +
+        // flattening $project is exactly as much "this operand's own pre-combine pipeline" as a plain
+        // Select's $project is; either kind may appear on either side, independently, since the Union/
+        // Concat dedup only ever compares the FLATTENED projected values by alias, never how they got that
+        // shape). The EntityType-equality gate above does NOT apply — projected operands may be different
+        // collections that project to the same shape; ProjectionShapesMatch guards the shape compatibility
+        // instead (a correctness guard, not just an optimization: the dedup / source-tagging compare whole
+        // projected documents by value, so mismatched alias sets would mis-compare). EF Core rejects
+        // incompatible operand shapes upstream, so a mismatch is defense-in-depth.
+        if ((IsPlainProjectedSelect(mongo1) || IsPlainDistinctSelect(mongo1))
+            && (IsPlainProjectedSelect(mongo2) || IsPlainDistinctSelect(mongo2))
             && ProjectionShapesMatch(mongo1.Select.Projection, mongo2.Select.Projection))
         {
             mongo1.Select.SetOperation = new MongoSetOperation(
@@ -3154,6 +3195,30 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            && mongo.Select.SetOperation == null
            && !mongo.Select.IsSetOp
            && mongo.Select.Grouping == null
+           && mongo.Select.Cardinality == null
+           && mongo.Select.UnwindSource == null
+           && !mongo.IsJoinQuery
+           && mongo.Lookups.Count == 0
+           && !mongo.CapturedExpression.ContainsVectorSearch();
+
+    // EF-322: a plain PROJECTED Distinct() (Select(new {...}).Distinct(), route == GroupBy via
+    // NativeGroupByBinder.TryBindDistinctFromProjection) as a set-op operand — the Distinct-projected analogue
+    // of IsPlainProjectedSelect. Its own $group + flattening $project (Select.Grouping / Select.Projection)
+    // become part of ITS pre-combine pipeline in MongoSelectLowerer, exactly where a plain projected operand's
+    // own $project already goes — so the Union/Concat dedup still ends up comparing the SAME flattened
+    // projected values either way. IsGroupBy excludes a genuine GroupBy(key).Select(aggregate) (a completely
+    // different — and, combined with a set op, wrong-data-unsafe — shape; see MarkGroupByFallbackUnsafe
+    // elsewhere). PriorGrouping excludes a GroupBy nested ON this Distinct (EF-322's own nested-GroupBy
+    // feature) — that shape's OWN Grouping now describes the outer GroupBy, not the Distinct, so it is simply
+    // not a Distinct-shaped operand at all here. A whole-entity Distinct (MongoDistinctOp in PipelineOps,
+    // Grouping stays null) is UNAFFECTED by this predicate — it is already covered by IsPlainWholeEntitySelect,
+    // no different from any other ordinary op in PipelineOps.
+    private static bool IsPlainDistinctSelect(MongoQueryExpression mongo)
+        => mongo.Select.Route == NativeRoute.GroupBy
+           && mongo.Select.IsDistinct
+           && !mongo.Select.IsGroupBy
+           && mongo.Select.Grouping != null
+           && mongo.Select.PriorGrouping == null
            && mongo.Select.Cardinality == null
            && mongo.Select.UnwindSource == null
            && !mongo.IsJoinQuery

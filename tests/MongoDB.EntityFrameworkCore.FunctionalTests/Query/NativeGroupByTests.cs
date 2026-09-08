@@ -785,18 +785,21 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     }
 
     [Fact]
-    public void GroupBy_then_scalar_aggregate_throws_clean_decline_under_native_only()
+    public void GroupBy_then_scalar_aggregate_goes_native()
     {
-        // Under NativeOnly a post-group scalar aggregate must decline cleanly with
-        // NativeTranslationNotSupportedException — NOT crash with KeyNotFoundException (the pre-guard bug).
+        // EF-149 generalized the post-group terminal-aggregate carve-out (previously bare-scalar-Select-only)
+        // to any ordinary GroupBy(key).Select(aggregate), so this now goes native rather than declining — see
+        // that commit's NativeCardinalityBinder changes. Still must not crash with KeyNotFoundException (the
+        // original pre-guard bug) or return the wrong count.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
-            nameof(GroupBy_then_scalar_aggregate_throws_clean_decline_under_native_only));
+            nameof(GroupBy_then_scalar_aggregate_goes_native));
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() =>
-            db.Entities
-                .GroupBy(o => o.Country)
-                .Select(g => new { Country = g.Key, Total = g.Sum(o => o.Amount) })
-                .Count());
+        var count = db.Entities
+            .GroupBy(o => o.Country)
+            .Select(g => new { Country = g.Key, Total = g.Sum(o => o.Amount) })
+            .Count();
+
+        Assert.Equal(3, count);
     }
 
     [Fact]
@@ -994,5 +997,99 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
             .ToList();
 
         Assert.Equal([("FR", 1), ("UK", 2), ("US", 2)], result.Select(r => (r.Key, r.Count)).ToArray());
+    }
+
+    // EF-322: g.Select(e => e.Field).Distinct().<Op>() as a GroupBy accumulator — Count/LongCount/Average/Max
+    // over the DISTINCT projected values within each group, not every row. $addToSet collects the distinct
+    // values per group; the flatten projection reduces the resulting array ($size for Count/LongCount, $avg/
+    // $max as an array-expression operator for the others). Seed: UK has TWO rows both with Year=2020 (a
+    // genuine duplicate), so distinct Years for UK = {2020} (count 1, not 2) — this is load-bearing: it would
+    // be WRONG (count 2) if Distinct were silently dropped and this fell through to an ordinary $sum:1/$avg/
+    // $max over every row instead of the distinct set.
+    [Fact]
+    public void GroupBy_Select_with_distinct_aggregate_goes_native_and_dedups()
+    {
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_Select_with_distinct_aggregate_goes_native_and_dedups));
+
+        var result = db.Entities
+            .GroupBy(o => o.Country)
+            .Select(g => new
+            {
+                g.Key,
+                Count = g.Select(o => o.Year).Distinct().Count(),
+                LongCount = g.Select(o => o.Year).Distinct().LongCount(),
+                Average = g.Select(o => o.Year).Distinct().Average(),
+                Max = g.Select(o => o.Year).Distinct().Max()
+            })
+            .AsEnumerable()
+            .OrderBy(r => r.Key)
+            .ToList();
+
+        Assert.Equal(
+            [("FR", 1, 1L, 2021.0, 2021), ("UK", 1, 1L, 2020.0, 2020), ("US", 2, 2L, 2020.5, 2021)],
+            result.Select(r => (r.Key, r.Count, r.LongCount, r.Average, r.Max)).ToArray());
+    }
+
+    [Fact]
+    public void GroupBy_Select_with_distinct_aggregate_matches_driver_linq()
+    {
+        var seed = SeedOrders();
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(GroupBy_Select_with_distinct_aggregate_matches_driver_linq) + "N");
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(GroupBy_Select_with_distinct_aggregate_matches_driver_linq) + "D");
+
+        (string Key, int Count, long LongCount, double Average, int Max)[] Run(SingleEntityDbContext<Order> db) =>
+            db.Entities
+                .GroupBy(o => o.Country)
+                .Select(g => new
+                {
+                    g.Key,
+                    Count = g.Select(o => o.Year).Distinct().Count(),
+                    LongCount = g.Select(o => o.Year).Distinct().LongCount(),
+                    Average = g.Select(o => o.Year).Distinct().Average(),
+                    Max = g.Select(o => o.Year).Distinct().Max()
+                })
+                .AsEnumerable()
+                .OrderBy(r => r.Key)
+                .Select(r => (r.Key, r.Count, r.LongCount, r.Average, r.Max))
+                .ToArray();
+
+        var native = Run(nativeDb);
+        Assert.Equal([("FR", 1, 1L, 2021.0, 2021), ("UK", 1, 1L, 2020.0, 2020), ("US", 2, 2L, 2020.5, 2021)], native);
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    [Fact]
+    public void GroupBy_Select_with_distinct_min_goes_native()
+    {
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_Select_with_distinct_min_goes_native));
+
+        var result = db.Entities
+            .GroupBy(o => o.Country)
+            .Select(g => new { g.Key, Min = g.Select(o => o.Year).Distinct().Min() })
+            .AsEnumerable()
+            .OrderBy(r => r.Key)
+            .ToList();
+
+        Assert.Equal([("FR", 2021), ("UK", 2020), ("US", 2020)], result.Select(r => (r.Key, r.Min)).ToArray());
+    }
+
+    [Fact]
+    public void GroupBy_Select_with_distinct_aggregate_over_computed_selector_falls_back_under_native_only()
+    {
+        // A computed selector (not a bare member access) inside the Distinct is out of scope, matching the
+        // pre-existing ordinary-accumulator guard for a computed Sum/Min/Max/Average operand.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_Select_with_distinct_aggregate_over_computed_selector_falls_back_under_native_only));
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() =>
+            db.Entities
+                .GroupBy(o => o.Country)
+                .Select(g => new { g.Key, Count = g.Select(o => o.Year * 2).Distinct().Count() })
+                .ToList());
     }
 }
