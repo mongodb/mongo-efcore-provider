@@ -512,6 +512,8 @@ internal sealed class MongoQueryLanguageRenderer
             // has a query-dialect form, so admitting any of them here would put $expr inside $elemMatch, a
             // hard server error.
             MongoConditionalExpression => false,
+            // No query-dialect form at all, matching MongoConditionalExpression above.
+            MongoCoalesceExpression => false,
             MongoDatePartExpression => false,
             MongoDateAddExpression => false,
             MongoDateTimeOffsetLocalExpression => false,

@@ -910,7 +910,7 @@ internal static class NativeProjectionBinder
         if (translator.TryTranslateValue(leafExpression, out var value)
             && (value is MongoSizeExpression or MongoFilteredSizeExpression or MongoConvertExpression
                     or MongoConditionalExpression or MongoDatePartExpression or MongoDateTimeOffsetLocalExpression
-                    or MongoElementRefExpression or MongoDateAddExpression
+                    or MongoElementRefExpression or MongoDateAddExpression or MongoCoalesceExpression
                 || (leafExpression is UnaryExpression { NodeType: ExpressionType.Convert } && value is MongoFieldExpression)))
         {
             result = value;
@@ -1790,6 +1790,13 @@ internal static class NativeProjectionBinder
                 when IsArrayFreeComputedSubtree(leaf):
                 break;
 
+            // Gate 1d — a coalesce (`??`) top node, rendered as $ifNull. Same subtree-safety story as gates 1b/
+            // 1c: either operand of a chained coalesce (`a ?? b ?? c` nests on the right — see
+            // MongoCoalesceExpression's own remarks) could itself contain a nested size node, so
+            // IsArrayFreeComputedSubtree's recursion into MongoCoalesceExpression covers the whole chain.
+            case MongoCoalesceExpression when IsArrayFreeComputedSubtree(leaf):
+                break;
+
             default:
                 return false;
         }
@@ -1932,6 +1939,8 @@ internal static class NativeProjectionBinder
                 => IsArrayFreeComputedSubtree(conditional.Test)
                     && IsArrayFreeComputedSubtree(conditional.IfTrue)
                     && IsArrayFreeComputedSubtree(conditional.IfFalse),
+            MongoCoalesceExpression coalesce
+                => IsArrayFreeComputedSubtree(coalesce.Left) && IsArrayFreeComputedSubtree(coalesce.Right),
             MongoDatePartExpression datePart => IsArrayFreeComputedSubtree(datePart.Operand),
             MongoDateTimeOffsetLocalExpression local => IsArrayFreeComputedSubtree(local.Operand),
             MongoFieldExpression or MongoConstantExpression or MongoParameterExpression => true,

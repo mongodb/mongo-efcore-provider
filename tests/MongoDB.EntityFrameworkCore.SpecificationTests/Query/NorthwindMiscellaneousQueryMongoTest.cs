@@ -88,8 +88,8 @@ public class NorthwindMiscellaneousQueryMongoTest
 
         AssertMql(
             """
-            Employees.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$ifNull" : [{ "$add" : [{ "$toLong" : "$ReportsTo" }, 1] }, { "$ifNull" : [{ "$add" : [{ "$toLong" : "$ReportsTo" }, 2] }, { "$add" : [{ "$toLong" : "$ReportsTo" }, 3] }] }] }, "_id" : 0 } }
-            """);
+Employees.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$ifNull" : [{ "$add" : ["$ReportsTo", 1] }, { "$ifNull" : [{ "$add" : ["$ReportsTo", 2] }, { "$add" : ["$ReportsTo", 3] }] }] }, "_id" : 0 } }
+""");
     }
 
     public override async Task DefaultIfEmpty_top_level_followed_by_constant_Select(bool async)
@@ -2106,8 +2106,8 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "I
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "_key1" : 1, "_document._id" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }
-            """);
+Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "__sort0" : 1, "_id" : 1 } }, { "$unset" : ["__sort0"] }
+""");
     }
 
     public override async Task Select_null_coalesce_operator(bool async)
@@ -2116,8 +2116,8 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "I
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "_key1" : 1, "_document._id" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName", "Region" : { "$ifNull" : ["$Region", "ZZ"] }, "_id" : 0 } }
-            """);
+Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "__sort0" : 1, "_id" : 1 } }, { "$unset" : ["__sort0"] }, { "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName", "Region" : { "$ifNull" : ["$Region", "ZZ"] }, "_id" : 0 } }
+""");
     }
 
     // issue #16038
@@ -2208,8 +2208,8 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "I
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$limit" : 10 }, { "$skip" : 5 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
-            """);
+Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 10 }, { "$skip" : 5 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+""");
     }
 
     public override async Task Select_take_null_coalesce_operator(bool async)
@@ -2218,8 +2218,8 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "I
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$limit" : 5 }, { "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName", "Region" : { "$ifNull" : ["$Region", "ZZ"] }, "_id" : 0 } }
-            """);
+Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 5 }, { "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName", "Region" : { "$ifNull" : ["$Region", "ZZ"] }, "_id" : 0 } }
+""");
     }
 
     // issue #16038
@@ -2234,8 +2234,8 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "I
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$limit" : 10 }, { "$skip" : 5 }, { "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName", "Region" : { "$ifNull" : ["$Region", "ZZ"] }, "_id" : 0 } }
-            """);
+Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 10 }, { "$skip" : 5 }, { "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName", "Region" : { "$ifNull" : ["$Region", "ZZ"] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_take_skip_null_coalesce_operator2(bool async)
@@ -2244,8 +2244,8 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "I
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$limit" : 10 }, { "$skip" : 5 }, { "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName", "Region" : "$Region", "_id" : 0 } }
-            """);
+Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 10 }, { "$skip" : 5 }, { "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName", "Region" : "$Region", "_id" : 0 } }
+""");
     }
 
     public override async Task Select_take_skip_null_coalesce_operator3(bool async)
@@ -2254,8 +2254,8 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "I
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$limit" : 10 }, { "$skip" : 5 }
-            """);
+Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 10 }, { "$skip" : 5 }
+""");
     }
 
     public override async Task Selected_column_can_coalesce(bool async)
@@ -2264,8 +2264,8 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "I
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }
-            """);
+Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }
+""");
     }
 
 #if EF8 || EF9
@@ -2871,8 +2871,8 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Ship
 
         AssertMql(
             """
-            Products.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$limit" : 15 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
-            """);
+Products.{ "$set" : { "__sort0" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 15 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+""");
     }
 
     public override async Task OrderBy_coalesce_skip_take_distinct(bool async)
@@ -2881,8 +2881,8 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Ship
 
         AssertMql(
             """
-            Products.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$skip" : 5 }, { "$limit" : 15 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
-            """);
+Products.{ "$set" : { "__sort0" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$skip" : 5 }, { "$limit" : 15 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+""");
     }
 
     public override async Task OrderBy_coalesce_skip_take_distinct_take(bool async)
@@ -2891,8 +2891,8 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Ship
 
         AssertMql(
             """
-            Products.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$skip" : 5 }, { "$limit" : 15 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$limit" : 5 }
-            """);
+Products.{ "$set" : { "__sort0" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$skip" : 5 }, { "$limit" : 15 }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$limit" : 5 }
+""");
     }
 
     public override async Task OrderBy_skip_take_distinct_orderby_take(bool async)

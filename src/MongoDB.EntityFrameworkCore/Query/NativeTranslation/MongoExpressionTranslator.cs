@@ -609,6 +609,10 @@ internal sealed partial class MongoExpressionTranslator
             MongoConditionalExpression cond => AllFieldsDefaultSerialized(cond.Test)
                 && AllFieldsDefaultSerialized(cond.IfTrue)
                 && AllFieldsDefaultSerialized(cond.IfFalse),
+            // An $ifNull's operands can each independently reach a non-default-serialized field, same rule and
+            // same reason as MongoConditionalExpression's arm immediately above.
+            MongoCoalesceExpression coalesce
+                => AllFieldsDefaultSerialized(coalesce.Left) && AllFieldsDefaultSerialized(coalesce.Right),
             // A date-part extraction or DateTimeOffset local-time reconstruction renders a raw MQL date
             // operator directly against its operand's BSON representation — a non-default BsonRepresentation
             // or ValueConverter on the underlying field would make that operator run against a value that
@@ -1536,6 +1540,25 @@ internal sealed partial class MongoExpressionTranslator
                 return null;
 
             return new MongoConditionalExpression(test, ifTrue, ifFalse);
+        }
+
+        // A null-coalescing operator (`left ?? right`), rendered as $ifNull. Both operands recurse through this
+        // SAME method — exactly like a conditional's branches above — so either side may itself be a cast,
+        // arithmetic, or (for the right operand, matching BinaryExpression's own left-associative Coalesce
+        // shape for a chained `a ?? b ?? c`) a nested Coalesce. Either operand declining declines the whole
+        // Coalesce — there is no partial/fallback rendering for one side of an $ifNull, same rule the
+        // conditional above follows for its branches.
+        if (node is BinaryExpression { NodeType: ExpressionType.Coalesce } coalesce)
+        {
+            var left = TranslateOperand(coalesce.Left, allowNumericWidening);
+            if (left is null)
+                return null;
+
+            var right = TranslateOperand(coalesce.Right, allowNumericWidening);
+            if (right is null)
+                return null;
+
+            return new MongoCoalesceExpression(left, right);
         }
 
         // A DateTime/DateTimeOffset member-access or date-part chain (.Year, .Date, .DateTime, etc.). Must run

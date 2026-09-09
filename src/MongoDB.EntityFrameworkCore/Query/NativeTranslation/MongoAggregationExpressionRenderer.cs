@@ -89,6 +89,12 @@ internal static class MongoAggregationExpressionRenderer
                     { "then", Render(conditional.IfTrue, placeholders, elementVariable) },
                     { "else", Render(conditional.IfFalse, placeholders, elementVariable) }
                 }),
+            MongoCoalesceExpression coalesce
+                => new BsonDocument("$ifNull", new BsonArray
+                {
+                    Render(coalesce.Left, placeholders, elementVariable),
+                    Render(coalesce.Right, placeholders, elementVariable)
+                }),
             MongoDateTimeOffsetLocalExpression local
                 => new BsonDocument("$dateAdd", new BsonDocument
                 {
@@ -182,6 +188,7 @@ internal static class MongoAggregationExpressionRenderer
                 => MongoConvertExpression.ToOperatorFor(convert.Type) is not null && CanRender(convert.Operand),
             MongoConditionalExpression conditional
                 => CanRender(conditional.Test) && CanRender(conditional.IfTrue) && CanRender(conditional.IfFalse),
+            MongoCoalesceExpression coalesce => CanRender(coalesce.Left) && CanRender(coalesce.Right),
             MongoDateTimeOffsetLocalExpression local => CanRender(local.Operand),
             MongoDatePartExpression datePart => CanRender(datePart.Operand),
             MongoDateAddExpression dateAdd => CanRender(dateAdd.StartDate) && CanRender(dateAdd.Amount),

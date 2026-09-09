@@ -166,6 +166,7 @@ public class MongoExpressionNodeCoverageTests
                 MongoExpressionTranslator.MongoQuantifierKind.Any),
             new MongoConvertExpression(rankField, typeof(long)),
             new MongoConditionalExpression(flagField, rankField, rankConstant),
+            new MongoCoalesceExpression(rankField, rankConstant),
             new MongoDatePartExpression(new MongoFieldExpression(when, "When"), MongoDatePart.Year),
             new MongoDateAddExpression(
                 new MongoFieldExpression(when, "When"), MongoDateAddUnit.Minute, new MongoConstantExpression(5, null)),
@@ -463,6 +464,15 @@ public class MongoExpressionNodeCoverageTests
         ["MongoConditionalExpression|PrefixRewriter.Rewrite"] = "rendered",
         ["MongoConditionalExpression|QL.IsQueryDialectRenderable"] = "false",
         ["MongoConditionalExpression|QL.Render"] = "rendered",
+
+        ["MongoCoalesceExpression|Agg.CanRender"] = "true",
+        ["MongoCoalesceExpression|Agg.Render"] = "rendered",
+        ["MongoCoalesceExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoCoalesceExpression|AllFieldsDefaultSerialized(converted)"] = "false",
+        ["MongoCoalesceExpression|Negator.TryNegate"] = "false",
+        ["MongoCoalesceExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoCoalesceExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoCoalesceExpression|QL.Render"] = "rendered",
 
         ["MongoConstantExpression|Agg.CanRender"] = "true",
         ["MongoConstantExpression|Agg.Render"] = "rendered",
