@@ -78,6 +78,23 @@ internal sealed partial class MongoExpressionTranslator
             node = nullableReceiver;
         }
 
+        // EF-322 gap-3: a BARE-scalar Distinct's own key selector parameter (never a member access — the
+        // projected result IS the scalar directly, e.g. Select(o => o.Country).Distinct().OrderBy(x =>
+        // x.IndexOf(term))) resolves to the Distinct's sole flattened key part directly, by parameter IDENTITY
+        // against SelfParam — same discipline as every other SelfParam use in this file, never by name. Scoped
+        // to a SINGLE-key, FIELD-backed grouping (list-pattern match): a composite/named projection has real
+        // members to access instead (handled by the ordinary DistinctAliasScope branch below), and a computed
+        // sole key part has no IProperty this method could hand back (that shape, if it arises, still declines
+        // here and falls back to driver-LINQ, exactly like any other unsupported member access).
+        if (SelfParam is not null && ReferenceEquals(node, SelfParam)
+            && DistinctAliasScope is { Key: [{ FieldRef: MongoFieldExpression soleField } soleKeyPart] })
+        {
+            property = soleField.Property;
+            fieldPath = soleKeyPart.Name!;
+            isOuter = false;
+            return true;
+        }
+
         // Fast path: a top-level scalar access on the query parameter, in either spelling EF produces — a
         // bare member (p.Foo) or the shadow-safe EF.Property<T>(p, "Foo") call. Both name one hop off the
         // parameter and must resolve identically.

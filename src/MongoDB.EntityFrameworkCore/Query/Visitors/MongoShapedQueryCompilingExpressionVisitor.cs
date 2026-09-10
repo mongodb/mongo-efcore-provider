@@ -414,30 +414,66 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     }
 
     /// <summary>
-    /// True when <paramref name="shaperExpression"/> is the exact shape the native-ctor-only-dto-projection
-    /// ticket's whole-entity ctor-wrap produces: a <see cref="NewExpression"/> with <c>Members == null</c> (a
-    /// ctor-only DTO, not an anonymous type / member-init) whose single constructor argument is the entity
-    /// shaper itself — a <see cref="StructuralTypeShaperExpression"/>, possibly wrapped in one or more
-    /// <see cref="IncludeExpression"/> auto-include layers (the same wrapping <c>IsSelectorParameter</c> in
-    /// <c>NativeProjectionBinder</c> unwraps at bind time, before the shaper-replace substitutes the source
-    /// shaper for the selector's own parameter). Used only to narrow <see cref="VisitProjectedQuery"/>'s
-    /// <see cref="NativeRoute.WholeEntity"/> branch to the shape it actually means, since that route is
-    /// otherwise a fallthrough answer rather than an affirmative one — see that branch's own remarks.
+    /// True when <paramref name="shaperExpression"/> is one of the two shapes the whole-entity-wrap arms
+    /// (native-ctor-only-dto-projection ticket, and its client-method-call sibling in
+    /// <c>NativeProjectionBinder</c>) produce: either
+    /// <list type="bullet">
+    /// <item>a <see cref="NewExpression"/> with <c>Members == null</c> (a ctor-only DTO, not an anonymous type
+    /// / member-init) whose single constructor argument is the entity shaper, or</item>
+    /// <item>a <see cref="MethodCallExpression"/> (an opaque client method call, e.g.
+    /// <c>context.ClientMethod(x)</c>) exactly one of whose operands (its <c>Object</c> receiver, if any, plus
+    /// every argument) is the entity shaper,</item>
+    /// </list>
+    /// in both cases the entity shaper being a <see cref="StructuralTypeShaperExpression"/>, possibly wrapped
+    /// in one or more <see cref="IncludeExpression"/> auto-include layers (the same wrapping
+    /// <c>IsSelectorParameter</c> in <c>NativeProjectionBinder</c> unwraps at bind time, before the
+    /// shaper-replace substitutes the source shaper for the selector's own parameter). Used only to narrow
+    /// <see cref="VisitProjectedQuery"/>'s <see cref="NativeRoute.WholeEntity"/> branch to the shape it
+    /// actually means, since that route is otherwise a fallthrough answer rather than an affirmative one — see
+    /// that branch's own remarks.
     /// </summary>
     private static bool IsCtorWrappedEntityShaper(Expression shaperExpression)
-    {
-        if (shaperExpression is not NewExpression { Members: null, Arguments: [var ctorArgument] })
+        => shaperExpression switch
         {
-            return false;
-        }
+            NewExpression { Members: null, Arguments: [var ctorArgument] } => IsEntityShaperOperand(ctorArgument),
+            MethodCallExpression methodCall => HasExactlyOneEntityShaperOperand(methodCall),
+            _ => false
+        };
 
-        var inner = ctorArgument;
+    private static bool IsEntityShaperOperand(Expression operand)
+    {
+        var inner = operand;
         while (inner is IncludeExpression include)
         {
             inner = include.EntityExpression;
         }
 
         return inner is StructuralTypeShaperExpression;
+    }
+
+    private static bool HasExactlyOneEntityShaperOperand(MethodCallExpression methodCall)
+    {
+        var sawEntityShaper = false;
+
+        if (methodCall.Object != null && IsEntityShaperOperand(methodCall.Object))
+        {
+            sawEntityShaper = true;
+        }
+
+        foreach (var argument in methodCall.Arguments)
+        {
+            if (IsEntityShaperOperand(argument))
+            {
+                if (sawEntityShaper)
+                {
+                    return false;
+                }
+
+                sawEntityShaper = true;
+            }
+        }
+
+        return sawEntityShaper;
     }
 
     /// <summary>

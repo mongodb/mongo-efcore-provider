@@ -3066,7 +3066,7 @@ Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
         AssertMql(
             """
-            Customers.{ "$project" : { "A" : { "$concat" : ["$_id", "$City"] }, "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$sort" : { "A" : 1 } }
+            Customers.{ "$group" : { "_id" : { "A" : { "$concat" : ["$_id", "$City"] } } } }, { "$project" : { "A" : "$_id.A", "_id" : 0 } }, { "$sort" : { "A" : 1 } }
             """);
     }
 
@@ -3145,7 +3145,7 @@ Customers.{ "$set" : { "__sort0" : { "$concat" : ["$_id", "$City"] } } }, { "$so
 
         AssertMql(
             """
-            Customers.{ "$project" : { "Property" : { "$concat" : ["$_id", "$City"] }, "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$sort" : { "Property" : 1 } }
+            Customers.{ "$group" : { "_id" : { "Property" : { "$concat" : ["$_id", "$City"] } } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$sort" : { "Property" : 1 } }
             """);
     }
 
@@ -4018,7 +4018,7 @@ Customers.{ "$match" : { } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { "$ne" : "DRACD" } }] } }, { "$project" : { "_v" : "$City", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$indexOfCP" : ["$_v", "c"] } } }, { "$sort" : { "_key1" : 1, "_document._v" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$limit" : 5 }
+            Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { "$ne" : "DRACD" } }] } }, { "$group" : { "_id" : { "City" : "$City" } } }, { "$project" : { "City" : "$_id.City", "_id" : 0 } }, { "$set" : { "__sort0" : { "$indexOfCP" : ["$City", "c"] } } }, { "$sort" : { "__sort0" : 1, "City" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 5 }
             """);
     }
 
@@ -4154,27 +4154,26 @@ Customers.{ "$match" : { } }
 
     public override async Task Throws_on_concurrent_query_first(bool async)
     {
-        // Fails: Concurrency detector tests broken EF-252
-        await Assert.ThrowsAsync<ThrowsException>(() =>
-            base.Throws_on_concurrent_query_first(async));
+        // EF-252 is fixed for this shape (measured during EF-322): the blocking query is
+        // context.Customers.Select(c => Process(c, ...)), which the native client-method-wrap arm now routes
+        // through the native pipeline instead of the driver-LINQ fallback; the native path's per-row
+        // concurrency-detector guard (QueryingEnumerable) correctly holds for the duration of Process()'s
+        // block, so the concurrent second query now genuinely throws ConcurrentMethodInvocation as expected.
+        await base.Throws_on_concurrent_query_first(async);
 
         if (MongoSpecTestHelpers.IsNativeOnly)
         {
             AssertMql(
                 """
-Customers.{ "$limit" : 1 }
+Customers.
 """);
         }
         else
         {
             AssertMql(
                 """
-                Customers.
-                """,
-                //
-                """
-                Customers.{ "$limit" : 1 }
-                """);
+Customers.
+""");
         }
     }
 
@@ -4326,9 +4325,8 @@ Customers.
 
     public override async Task Throws_on_concurrent_query_list(bool async)
     {
-        // Fails: Concurrency detector tests broken EF-252
-        await Assert.ThrowsAsync<ThrowsException>(() =>
-            base.Throws_on_concurrent_query_list(async));
+        // EF-252 is fixed for this shape — see Throws_on_concurrent_query_first's own remarks.
+        await base.Throws_on_concurrent_query_list(async);
 
         if (MongoSpecTestHelpers.IsNativeOnly)
         {
@@ -4340,13 +4338,9 @@ Customers.
         else
         {
             AssertMql(
-    """
-            Customers.
-            """,
-    //
-    """
-            Customers.
-            """);
+                """
+Customers.
+""");
         }
     }
 

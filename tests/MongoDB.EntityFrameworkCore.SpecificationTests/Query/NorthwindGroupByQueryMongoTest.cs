@@ -1177,8 +1177,8 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : "$_id" } } }, { "
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$CustomerID", "c" : { "$sum" : 1 } } }, { "$set" : { "__sort0" : "$_id" } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$project" : { "Key" : "$_id", "c" : "$c", "_id" : 0 } }
-""");
+            Orders.{ "$group" : { "_id" : "$CustomerID", "c" : { "$sum" : 1 } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "Key" : "$_id", "c" : "$c", "_id" : 0 } }
+            """);
     }
 
     public override async Task GroupBy_OrderBy_count(bool async)
@@ -1187,8 +1187,8 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "c" : { "$sum" : 1 } } }, { "$set" 
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$CustomerID", "_orderAgg0" : { "$sum" : 1 }, "Count" : { "$sum" : 1 } } }, { "$set" : { "__sort0" : "$_orderAgg0", "__sort1" : "$_id" } }, { "$sort" : { "__sort0" : 1, "__sort1" : 1 } }, { "$unset" : ["__sort0", "__sort1"] }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
-""");
+            Orders.{ "$group" : { "_id" : "$CustomerID", "_orderAgg0" : { "$sum" : 1 }, "Count" : { "$sum" : 1 } } }, { "$sort" : { "_orderAgg0" : 1, "_id" : 1 } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
+            """);
     }
 
     public override async Task GroupBy_OrderBy_count_Select_sum(bool async)
@@ -1197,8 +1197,8 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_orderAgg0" : { "$sum" : 1 }, "Cou
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$CustomerID", "_orderAgg0" : { "$sum" : 1 }, "Sum" : { "$sum" : "$_id" } } }, { "$set" : { "__sort0" : "$_orderAgg0", "__sort1" : "$_id" } }, { "$sort" : { "__sort0" : 1, "__sort1" : 1 } }, { "$unset" : ["__sort0", "__sort1"] }, { "$project" : { "Key" : "$_id", "Sum" : "$Sum", "_id" : 0 } }
-""");
+            Orders.{ "$group" : { "_id" : "$CustomerID", "_orderAgg0" : { "$sum" : 1 }, "Sum" : { "$sum" : "$_id" } } }, { "$sort" : { "_orderAgg0" : 1, "_id" : 1 } }, { "$project" : { "Key" : "$_id", "Sum" : "$Sum", "_id" : 0 } }
+            """);
     }
 
     public override async Task GroupBy_aggregate_Contains(bool async)
@@ -1432,8 +1432,8 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_orderAgg0" : { "$sum" : 1 }, "Sum
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$group" : { "_id" : "$CustomerID", "c" : { "$sum" : 1 } } }, { "$set" : { "__sort0" : "$_id" } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$project" : { "Key" : "$_id", "c" : "$c", "_id" : 0 } }
-""");
+            Orders.{ "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$group" : { "_id" : "$CustomerID", "c" : { "$sum" : 1 } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "Key" : "$_id", "c" : "$c", "_id" : 0 } }
+            """);
     }
 
     public override async Task Select_nested_collection_with_groupby(bool async)

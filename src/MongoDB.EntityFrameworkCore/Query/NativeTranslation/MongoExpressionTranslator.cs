@@ -626,6 +626,10 @@ internal sealed partial class MongoExpressionTranslator
             // arithmetic operand elsewhere in this method.
             MongoDateAddExpression dateAdd
                 => AllFieldsDefaultSerialized(dateAdd.StartDate) && AllFieldsDefaultSerialized(dateAdd.Amount),
+            // $indexOfCP runs directly against both operands' raw BSON representation, same reasoning as
+            // MongoDateAddExpression immediately above.
+            MongoStringIndexOfExpression indexOf
+                => AllFieldsDefaultSerialized(indexOf.Haystack) && AllFieldsDefaultSerialized(indexOf.Needle),
             // A MongoInExpression is deliberately NOT given its own arm — it is correct via the catch-all
             // below: RenderIn/RenderInValues serialize every candidate value through the field's own property
             // serializer (MongoConstantExpression.ForSerialization / the parameter's serializer), so a
@@ -1606,6 +1610,20 @@ internal sealed partial class MongoExpressionTranslator
         // matched by TryResolveMember below (a MethodCallExpression is not a member-access chain).
         if (TryTranslateDateAdd(node, allowNumericWidening, out var dateAdd))
             return dateAdd;
+
+        // string.IndexOf(term) (`x.IndexOf(searchTerm)`). Placed here for the same reason as the two date
+        // arms above: a MethodCallExpression is never matched by TryResolveMember below. Both operands recurse
+        // through THIS method, so either may itself be a field, a constant/parameter, or another computed
+        // expression — same shape discipline as TryTranslateDateAdd's StartDate/Amount.
+        if (TryMatchIndexOfMethod(node, out var indexOfReceiver, out var indexOfTerm))
+        {
+            var haystack = TranslateOperand(indexOfReceiver, allowNumericWidening);
+            var needle = haystack is null ? null : TranslateOperand(indexOfTerm, allowNumericWidening);
+            if (haystack is not null && needle is not null)
+                return new MongoStringIndexOfExpression(haystack, needle);
+
+            return null;
+        }
 
         if (TryResolveMember(node, out var property, out var fieldPath, out var operandIsOuter))
         {

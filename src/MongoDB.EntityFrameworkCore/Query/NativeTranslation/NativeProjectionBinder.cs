@@ -198,6 +198,15 @@ internal static class NativeProjectionBinder
                 // this ticket's design — do not remove this branch or reorder it after sub-case 2.
                 if (IsWholeRootEntityLeaf(mongoQ, ctorArgument, selector.Parameters[0]))
                 {
+                    // See MongoSelectDefinition.HasClientWrappedWholeEntityShaper's remarks: this ctor-wrap
+                    // reaches WholeEntity with no Projection entries, structurally indistinguishable from a
+                    // plain bare entity fetch to TranslateUnion/Concat's own IsPlainWholeEntitySelect check —
+                    // but the shaper wraps the entity in the DTO's constructor, so a native $unionWith combine
+                    // of two such operands would compare/dedupe raw documents while the actual per-row RESULT
+                    // is the DTO, not the entity. Measured unsafe (Client_eval_Union_FirstOrDefault) for this
+                    // arm's MethodCallExpression sibling below; flagged here too, defensively, since nothing
+                    // distinguishes the two shapes at the set-op call site.
+                    mongoQ.Select.HasClientWrappedWholeEntityShaper = true;
                     break;
                 }
 
@@ -216,6 +225,40 @@ internal static class NativeProjectionBinder
 
                 break;
             }
+
+            // A CLIENT-METHOD CALL wrapping the whole entity as its only meaningful operand —
+            // `x => context.ClientMethod(x)` (an instance method on a captured `DbContext`, or any other
+            // method whose sole entity-referencing operand IS the selector's own root parameter). Symmetric
+            // to the ctor-only-DTO arm above, generalized from `NewExpression` to `MethodCallExpression`: the
+            // method itself is never translatable (it's arbitrary user code), but nothing here needs
+            // server-side reshaping — the whole document is fetched and EF's own generic shaper-compilation
+            // invokes the method client-side against the materialized entity, exactly as it does for the
+            // ctor-wrap case. Registering NOTHING to Select.Projection lets Route fall through to the
+            // pre-existing NativeRoute.WholeEntity, unchanged from a plain `Set<Customer>()`.
+            //
+            // Capped at exactly one entity-referencing operand (across Object + Arguments), mirroring the
+            // ctor-only-DTO arm's one-argument cap: any OTHER operand that also references the outer parameter
+            // (e.g. `context.ClientMethod(x, x.CustomerID)`) declines here and falls through to the bare-body
+            // default arm below, which will itself decline (TryTranslateLeaf has no case for an opaque method
+            // call) — same fallback behavior as before this arm existed, not a regression.
+            case MethodCallExpression methodCall
+                // EF.Property(x, "Name") is itself a MethodCallExpression whose sole argument IS the whole
+                // entity — structurally identical to the client-method-wrap shape below — but it is NOT an
+                // opaque client call: it's EF's own shadow/indexer-property accessor, already translated as
+                // a plain field leaf by TryTranslateLeaf's bare-body arm (further down this switch). Excluding
+                // it here is load-bearing, not just an optimization — admitting it here instead would leave
+                // Select.Projection EMPTY (this arm adds no $project) while a bare EF.Property selector body
+                // needs its value read back from a top-level PROJECTED field the driver/native $project
+                // writes; measured (Select_Property_when_shadow/non_shadow, Where_simple_shadow_projection)
+                // to silently mis-shape rather than merely decline.
+                when !methodCall.Method.IsEFPropertyMethod()
+                     && TryGetSoleWholeRootEntityOperand(mongoQ, methodCall, selector.Parameters[0]):
+                // See MongoSelectDefinition.HasClientWrappedWholeEntityShaper's remarks — measured unsafe as
+                // a set-op operand (Client_eval_Union_FirstOrDefault): flag it so TranslateUnion/Concat's
+                // IsPlainWholeEntitySelect declines to combine it via a native $unionWith, falling back
+                // gracefully instead (the same decline this exact query had before this arm existed).
+                mongoQ.Select.HasClientWrappedWholeEntityShaper = true;
+                break;
 
             // A BARE selector body — `b => b.Title`, `b => b.Posts`, `o => o.OrderID` — as opposed to the two
             // wrapped (anonymous-type / DTO) constructions above. It has no member name, so the alias cannot
@@ -1053,6 +1096,59 @@ internal static class NativeProjectionBinder
     private static bool IsWholeRootEntityLeaf(MongoQueryExpression mongoQ, Expression leafExpression, ParameterExpression outerParameter)
         => IsSelectorParameter(leafExpression, outerParameter)
            && leafExpression.Type == mongoQ.CollectionExpression.EntityType.ClrType;
+
+    /// <summary>
+    /// True when exactly one of <paramref name="methodCall"/>'s operands (its <c>Object</c> receiver, if any,
+    /// plus every argument) is <see cref="IsWholeRootEntityLeaf"/>, and no OTHER operand references
+    /// <paramref name="outerParameter"/> at all. This is the client-method-call sibling of the ctor-only-DTO
+    /// arm's sub-case 1: the method itself is opaque (arbitrary user code), but if the whole entity is its
+    /// only entity-referencing operand, nothing needs server-side translation — the whole document is
+    /// fetched and the method runs client-side against the materialized entity.
+    /// </summary>
+    /// <remarks>
+    /// A second operand that also references the parameter (e.g. <c>context.ClientMethod(x, x.CustomerID)</c>)
+    /// declines here rather than being admitted — <c>x.CustomerID</c> is technically available on the same
+    /// materialized entity, but supporting it would require the generic shaper fold to correctly recurse
+    /// through an opaque method call's non-whole-entity operand, which is untested and out of scope. Declining
+    /// falls through to the bare-body default arm, which itself declines (no regression from before this arm
+    /// existed).
+    /// </remarks>
+    private static bool TryGetSoleWholeRootEntityOperand(
+        MongoQueryExpression mongoQ, MethodCallExpression methodCall, ParameterExpression outerParameter)
+    {
+        var sawWholeRootEntityOperand = false;
+
+        if (methodCall.Object != null)
+        {
+            if (IsWholeRootEntityLeaf(mongoQ, methodCall.Object, outerParameter))
+            {
+                sawWholeRootEntityOperand = true;
+            }
+            else if (methodCall.Object.ReferencesParameter(outerParameter))
+            {
+                return false;
+            }
+        }
+
+        foreach (var argument in methodCall.Arguments)
+        {
+            if (IsWholeRootEntityLeaf(mongoQ, argument, outerParameter))
+            {
+                if (sawWholeRootEntityOperand)
+                {
+                    return false;
+                }
+
+                sawWholeRootEntityOperand = true;
+            }
+            else if (argument.ReferencesParameter(outerParameter))
+            {
+                return false;
+            }
+        }
+
+        return sawWholeRootEntityOperand;
+    }
 
     /// <summary>
     /// The open generic definition of <c>Mql.Field&lt;TDocument, TField&gt;(TDocument, string, IBsonSerializer&lt;TField&gt;)</c>.

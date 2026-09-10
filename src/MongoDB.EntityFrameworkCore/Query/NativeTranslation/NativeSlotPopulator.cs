@@ -119,8 +119,9 @@ internal static class NativeSlotPopulator
         // (IsDistinct, never a genuine IsGroupBy) is NOT the aggregate-alias hazard this guard exists for —
         // TryBindDistinctFromProjection's key parts are the Distinct's own flattened output schema, so each arm
         // below resolves against THAT instead of the entity (OrderBy/ThenBy via
-        // NativeGroupByBinder.TryResolveDistinctOrderingKey; Where via
-        // MongoExpressionTranslator.DistinctAliasScope), declining (falling through to
+        // NativeGroupByBinder.TryResolveDistinctOrderingKey, falling through to
+        // MongoExpressionTranslator.DistinctAliasScope for a genuinely computed key; Where via
+        // MongoExpressionTranslator.DistinctAliasScope directly), declining (falling through to
         // MarkNotNativelyRepresentable there) for anything else. Skip/Take have no field reference to get
         // wrong at all, so they need no alias-aware treatment — just letting them through here is enough.
         var isPostDistinctSlot = mongoQ.Select.IsDistinct && !mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping != null
@@ -395,17 +396,26 @@ internal static class NativeSlotPopulator
         translator.SelfParam = keySelector.Parameters[0];
 
         // Post-Distinct ordering (EF-322): resolve against the Distinct's OWN flattened output alias, never
-        // the entity-scoped translator below — see NativeGroupByBinder.TryResolveDistinctOrderingKey's remarks
-        // for why the entity-scoped arms must not even be attempted for this shape (a renamed projection member
-        // can share a name with a real, unrelated entity property).
+        // the entity. NativeGroupByBinder.TryResolveDistinctOrderingKey handles the identity key (bare-scalar
+        // Distinct's OrderBy(c => c)) and a bare member naming one of the Distinct's own key parts — including
+        // a COMPUTED key part (EF-322 gap-2, e.g. Select(c => new { A = c.CustomerID + c.City })), which it
+        // resolves via a MongoElementRefExpression onto that part's flattened alias rather than an IProperty.
+        // Anything ELSE it declines — most notably a genuinely COMPUTED expression built from the key selector's
+        // own parameter (EF-322 gap-3, e.g. a bare-scalar Distinct's OrderBy(x => x.IndexOf(term))) — falls
+        // through to the SAME MongoExpressionTranslator.DistinctAliasScope mechanism Where/Count(pred) already
+        // use, letting TryTranslateComputedSortKey resolve it exactly like the non-Distinct case does. Either
+        // way, a member name that is not one of the Distinct's own key parts never falls through to the entity
+        // below, so a renamed projection member can never resolve against a colliding, unrelated entity property.
         if (mongoQ.Select.IsDistinct && !mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping is { } distinctGrouping)
         {
             if (NativeGroupByBinder.TryResolveDistinctOrderingKey(
                     distinctGrouping, keySelector.Parameters[0], keySelector.Body, out var distinctKey))
+            {
                 record(new MongoOrdering(distinctKey, ascending));
-            else
-                mongoQ.Select.MarkNotNativelyRepresentable();
-            return;
+                return;
+            }
+
+            translator.DistinctAliasScope = distinctGrouping;
         }
 
         if (translator.TryTranslateField(keySelector.Body, out var keyNode))

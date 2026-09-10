@@ -3258,6 +3258,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            && mongo.Select.Projection.Count == 0
            && !mongo.IsJoinQuery
            && mongo.Lookups.Count == 0
+           && !mongo.Select.HasClientWrappedWholeEntityShaper
            && !mongo.CapturedExpression.ContainsVectorSearch();
 
     // A plain projected select: a terminal anonymous/DTO member-access Select is the SOLE thing done

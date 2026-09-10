@@ -158,6 +158,43 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     [Fact]
+    public void Anonymous_computed_projection_Distinct_then_OrderBy_on_member_goes_native()
+    {
+        // EF-322 gap: TryResolveDistinctOrderingKey only matched a key part whose FieldRef was a
+        // MongoFieldExpression, so an OrderBy composed after a Distinct over a COMPUTED projection member
+        // (A = o.Country + o.City, a concat — no backing IProperty) declined and fell back to driver-LINQ.
+        // Mirrors the Where-side fix (MongoExpressionTranslator.TryResolveDistinctAliasComputedField) by
+        // resolving the ordering key against the Distinct's own flattened alias via a MongoElementRefExpression
+        // instead of requiring an IProperty-backed field.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(Anonymous_computed_projection_Distinct_then_OrderBy_on_member_goes_native));
+
+        var result = db.Entities.Select(o => new { A = o.Country + o.City }).Distinct()
+            .OrderBy(n => n.A).ToList();
+
+        Assert.Equal(["FRParis", "UKLondon", "USNYC"], result.Select(r => r.A).ToArray());
+    }
+
+    [Fact]
+    public void Anonymous_computed_projection_Distinct_then_OrderBy_on_member_matches_driver_linq()
+    {
+        var seed = SeedOrders();
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(Anonymous_computed_projection_Distinct_then_OrderBy_on_member_matches_driver_linq) + "N");
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(Anonymous_computed_projection_Distinct_then_OrderBy_on_member_matches_driver_linq) + "D");
+
+        string[] Run(SingleEntityDbContext<Order> db) =>
+            db.Entities.Select(o => new { A = o.Country + o.City }).Distinct()
+                .OrderBy(n => n.A).AsEnumerable().Select(n => n.A).ToArray();
+
+        var native = Run(nativeDb);
+        Assert.Equal(["FRParis", "UKLondon", "USNYC"], native);
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    [Fact]
     public void Whole_entity_Distinct_goes_native()
     {
         // EF-322: a whole-entity Distinct() (no preceding Select) now goes native too — a new MongoDistinctOp
@@ -1029,6 +1066,45 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
 
         var native = Run(nativeDb);
         Assert.Equal(new[] { "FR", "UK", "US" }, native);
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    [Fact]
+    public void Distinct_then_OrderBy_with_computed_key_over_bare_scalar_goes_native()
+    {
+        // EF-322: OrderBy composed after a BARE-scalar projected Distinct with a COMPUTED key selector
+        // (x.IndexOf(term)) — not the identity (c => c) or a named member — previously declined outright in
+        // NativeGroupByBinder.TryResolveDistinctOrderingKey/NativeSlotPopulator.PopulateSortSlot rather than
+        // falling through to the same computed-sort-key translator the non-Distinct path already has. Mirrors
+        // the upstream EF spec shape (NorthwindMiscellaneousQueryTestBase.Distinct_followed_by_ordering_on_condition):
+        // Select(e => e.City).Distinct().OrderBy(x => x.IndexOf(searchTerm)).ThenBy(x => x).
+        // Distinct countries: FR, UK, US; "FR".IndexOf("U") = -1, "UK".IndexOf("U") = 0, "US".IndexOf("U") = 0 —
+        // ordered by that index ascending, ties broken by the ThenBy(x => x) identity key: FR, UK, US.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(Distinct_then_OrderBy_with_computed_key_over_bare_scalar_goes_native));
+
+        var result = db.Entities.Select(o => o.Country).Distinct()
+            .OrderBy(x => x.IndexOf("U")).ThenBy(x => x).ToList();
+
+        Assert.Equal(["FR", "UK", "US"], result);
+    }
+
+    [Fact]
+    public void Distinct_then_OrderBy_with_computed_key_over_bare_scalar_matches_driver_linq()
+    {
+        var seed = SeedOrders();
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(Distinct_then_OrderBy_with_computed_key_over_bare_scalar_matches_driver_linq) + "N");
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(Distinct_then_OrderBy_with_computed_key_over_bare_scalar_matches_driver_linq) + "D");
+
+        string[] Run(SingleEntityDbContext<Order> db) =>
+            db.Entities.Select(o => o.Country).Distinct()
+                .OrderBy(x => x.IndexOf("U")).ThenBy(x => x).ToArray();
+
+        var native = Run(nativeDb);
+        Assert.Equal(["FR", "UK", "US"], native);
         Assert.Equal(Run(driverDb), native);
     }
 

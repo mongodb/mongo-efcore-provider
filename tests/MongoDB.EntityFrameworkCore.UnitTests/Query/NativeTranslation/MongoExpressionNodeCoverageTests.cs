@@ -173,6 +173,7 @@ public class MongoExpressionNodeCoverageTests
                 new MongoFieldExpression(when, "When"), MongoDateAddUnit.Minute, new MongoConstantExpression(5, null)),
             new MongoDateTimeOffsetLocalExpression(new MongoFieldExpression(stamp, "Stamp")),
             new MongoConcatExpression([headingField, new MongoConstantExpression("x", heading)]),
+            new MongoStringIndexOfExpression(headingField, new MongoConstantExpression("x", heading)),
             new MongoDocumentConstructionExpression(
                 Expression.New(typeof(object)), [(nameof(Post.Rank), rankField)])
         };
@@ -652,6 +653,17 @@ public class MongoExpressionNodeCoverageTests
         ["MongoSizeExpression|PrefixRewriter.Rewrite"] = "rendered",
         ["MongoSizeExpression|QL.IsQueryDialectRenderable"] = "false",
         ["MongoSizeExpression|QL.Render"] = "rendered",
+
+        // No query-dialect form (it produces an integer VALUE, not a predicate) and needs no negator arm —
+        // same treatment as MongoDateAddExpression/MongoDatePartExpression throughout.
+        ["MongoStringIndexOfExpression|Agg.CanRender"] = "true",
+        ["MongoStringIndexOfExpression|Agg.Render"] = "rendered",
+        ["MongoStringIndexOfExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoStringIndexOfExpression|AllFieldsDefaultSerialized(converted)"] = "false",
+        ["MongoStringIndexOfExpression|Negator.TryNegate"] = "false",
+        ["MongoStringIndexOfExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoStringIndexOfExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoStringIndexOfExpression|QL.Render"] = "rendered",
 
         ["MongoUnaryExpression|Agg.CanRender"] = "true",
         ["MongoUnaryExpression|Agg.Render"] = "rendered",

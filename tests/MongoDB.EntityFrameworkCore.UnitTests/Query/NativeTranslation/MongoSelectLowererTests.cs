@@ -345,15 +345,13 @@ public class MongoSelectLowererTests
 
         var stages = new MongoSelectLowerer().Lower(query);
 
-        // GroupOrderOp's key is a MongoElementRefExpression, not a MongoFieldExpression, so AppendSortStages
-        // treats it as computed and brackets it with $addFields/$unset (same as any other computed sort key
-        // elsewhere in this file) — verified here so a future AppendSortStages change that special-cased
-        // MongoFieldExpression differently doesn't silently break this composition.
+        // GroupOrderOp's key ("Count") is a MongoElementRefExpression naming the $group stage's OWN accumulator
+        // output field — already a top-level field the instant $group runs, not a value that needs computing —
+        // so AppendSortStages emits a bare $sort directly on it, same as it would for a MongoFieldExpression.
+        // No $addFields/$unset bracket is needed (or emitted).
         Assert.Collection(stages,
             s => Assert.IsType<MongoGroupStage>(s),
-            s => Assert.IsType<MongoAddFieldsStage>(s),
             s => Assert.IsType<MongoSortStage>(s),
-            s => Assert.IsType<MongoUnsetStage>(s),
             s => Assert.IsType<MongoProjectStage>(s));
     }
 

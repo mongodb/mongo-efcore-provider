@@ -440,6 +440,32 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
+    /// Recognizes the single-argument, ordinal overload of <c>string.IndexOf(string)</c> — the only overload
+    /// the driver-LINQ v3 provider translates (empirically: it renders <c>$indexOfCP</c> for exactly this
+    /// shape). Matching only this overload keeps native and fallback behavior identical; a
+    /// <c>StringComparison</c>/<c>startIndex</c>-taking overload, or a receiver that isn't <see cref="string"/>,
+    /// is left unmatched and falls through to the driver-LINQ path unchanged. Mirrors
+    /// <see cref="TryMatchRegexMethod"/>'s own overload-matching discipline.
+    /// </summary>
+    private static bool TryMatchIndexOfMethod(
+        Expression node, [NotNullWhen(true)] out Expression? receiver, [NotNullWhen(true)] out Expression? term)
+    {
+        receiver = null;
+        term = null;
+
+        if (node is not MethodCallExpression call || call.Method.IsStatic || call.Object is null
+            || call.Object.Type != typeof(string) || call.Method.Name != nameof(string.IndexOf))
+            return false;
+
+        if (call.Arguments.Count != 1 || call.Arguments[0].Type != typeof(string))
+            return false;
+
+        receiver = call.Object;
+        term = call.Arguments[0];
+        return true;
+    }
+
+    /// <summary>
     /// Translates the collection side of a <c>Contains</c> call into a <see cref="MongoConstantExpression"/>
     /// (a captured/inline collection) or <see cref="MongoParameterExpression"/> (a query-parameter
     /// collection), using <paramref name="property"/> as the element serialization context. Returns

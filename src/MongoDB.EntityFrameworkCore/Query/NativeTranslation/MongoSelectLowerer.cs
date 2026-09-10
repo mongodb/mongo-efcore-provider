@@ -387,9 +387,11 @@ internal sealed class MongoSelectLowerer
     }
 
     /// <summary>
-    /// Emits one <see cref="MongoSortOp"/>. A key that is already a field path is emitted as-is; a computed
-    /// key is materialized into a synthetic field by a preceding <c>$set</c> and removed again by a following
-    /// <c>$unset</c>, because MQL <c>$sort</c> accepts field paths only.
+    /// Emits one <see cref="MongoSortOp"/>. A key that is already a field path — a <see cref="MongoFieldExpression"/>
+    /// or a <see cref="MongoElementRefExpression"/>, both of which name an ALREADY-STORED document path rather
+    /// than compute a new value — is emitted as-is; a genuinely computed key is materialized into a synthetic
+    /// field by a preceding <c>$set</c> and removed again by a following <c>$unset</c>, because MQL <c>$sort</c>
+    /// accepts field paths only.
     /// </summary>
     /// <remarks>
     /// One <c>$set</c> and one <c>$unset</c> per sort stage, carrying every computed key of that stage — a
@@ -411,7 +413,7 @@ internal sealed class MongoSelectLowerer
 
         foreach (var ordering in sortOp.Orderings)
         {
-            if (ordering.KeySelector is MongoFieldExpression)
+            if (ordering.KeySelector is MongoFieldExpression or MongoElementRefExpression)
             {
                 orderings.Add(ordering);
                 continue;

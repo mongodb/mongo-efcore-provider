@@ -803,13 +803,20 @@ internal static class NativeGroupByBinder
     /// (the entity's real <c>Country</c>, never touched by this query). Only a bare single-hop member access
     /// on the key selector's OWN parameter (identity, not name — same discipline as
     /// <see cref="MongoExpressionTranslator.SelfParam"/> elsewhere in this file), naming one of the Distinct's
-    /// key parts, is accepted. Anything else — a computed key, a member not among the key parts — declines so
-    /// the caller (<c>NativeSlotPopulator.PopulateSortSlot</c>) marks the query non-native and falls back to
-    /// driver-LINQ, exactly as it already does for every other post-terminal shape it can't represent.
+    /// key parts, is accepted. A key part backed by a real <see cref="MongoFieldExpression"/> resolves as one;
+    /// a COMPUTED key part (e.g. <c>A = c.CustomerID + c.City</c>, EF-322 gap-2 — no backing
+    /// <see cref="Microsoft.EntityFrameworkCore.Metadata.IProperty"/>) resolves against its own flattened
+    /// output alias via a <see cref="MongoElementRefExpression"/> instead, mirroring
+    /// <see cref="MongoExpressionTranslator.TryResolveDistinctAliasComputedField"/> on the Where side. Anything
+    /// else — a member not among the key parts, or a genuinely COMPUTED expression over the key selector's own
+    /// parameter (e.g. EF-322 gap-3's <c>x.IndexOf(term)</c> over a bare-scalar Distinct) — declines so the
+    /// caller (<c>NativeSlotPopulator.PopulateSortSlot</c>) falls through to the general
+    /// <see cref="MongoExpressionTranslator.DistinctAliasScope"/>-scoped translator instead, which that gap-3
+    /// shape needs (a computed expression is not "a member naming a key part").
     /// </summary>
     internal static bool TryResolveDistinctOrderingKey(
         MongoGrouping grouping, ParameterExpression selfParam, Expression keySelectorBody,
-        [NotNullWhen(true)] out MongoFieldExpression? result)
+        [NotNullWhen(true)] out MongoExpression? result)
     {
         result = null;
 
@@ -817,9 +824,11 @@ internal static class NativeGroupByBinder
         // (Select(o => o.Country).Distinct().OrderBy(c => c)): the projected result IS the scalar directly,
         // so there is no member to access at all — the key selector body is exactly the parameter itself.
         // Matches the sole key part unconditionally (a bare-scalar Distinct always has exactly one).
-        if (ReferenceEquals(keySelectorBody, selfParam) && grouping.Key is [{ FieldRef: MongoFieldExpression soleField } soleKeyPart])
+        if (ReferenceEquals(keySelectorBody, selfParam) && grouping.Key is [var soleKeyPart])
         {
-            result = new MongoFieldExpression(soleField.Property, soleKeyPart.Name!);
+            result = soleKeyPart.FieldRef is MongoFieldExpression soleField
+                ? new MongoFieldExpression(soleField.Property, soleKeyPart.Name!)
+                : new MongoElementRefExpression(soleKeyPart.Name!, soleKeyPart.FieldRef.Type);
             return true;
         }
 
@@ -829,11 +838,13 @@ internal static class NativeGroupByBinder
 
         foreach (var part in grouping.Key)
         {
-            if (part.Name == member.Member.Name && part.FieldRef is MongoFieldExpression field)
-            {
-                result = new MongoFieldExpression(field.Property, part.Name);
-                return true;
-            }
+            if (part.Name != member.Member.Name)
+                continue;
+
+            result = part.FieldRef is MongoFieldExpression field
+                ? new MongoFieldExpression(field.Property, part.Name)
+                : new MongoElementRefExpression(part.Name!, part.FieldRef.Type);
+            return true;
         }
 
         return false;

@@ -1784,12 +1784,12 @@ OrderDetails.
 #if EF9
         AssertMql(
             """
-Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", "options" : "s" } } } }
-""");
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$Region", ""] }, 0] } } }
+            """);
 #else
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "$", "options" : "s" } } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$ContactName", ""] }, 0] } } }
             """);
 #endif
     }
@@ -1800,7 +1800,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "^.{1}a", "options" : "s" } } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$ContactName", "a"] }, 1] } } }
             """);
     }
 
@@ -1810,7 +1810,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "^.{1}a", "options" : "s" } } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$ContactName", "a"] }, 1] } } }
             """);
     }
 
