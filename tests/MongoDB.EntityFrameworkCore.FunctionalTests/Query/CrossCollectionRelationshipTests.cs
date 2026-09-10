@@ -572,6 +572,47 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
                 .Include(l => l.SecondaryOrder)
                 .ToList());
     }
+
+    [Fact]
+    public void Include_sibling_then_includes_through_same_target_type_do_not_collapse()
+    {
+        // EF-376 repro: two sibling reference navigations (PrimaryMid, SecondaryMid) targeting the SAME
+        // entity type, each further ThenInclude'd through the SAME navigation name (Leaf). Both branches
+        // must produce their own $lookup rather than colliding on a shared "_lookup_Leaf" alias.
+        var rootsName = TemporaryDatabaseFixtureBase.CreateCollectionName("SibRoots") + Guid.NewGuid().ToString("N")[..8];
+        var midsName = TemporaryDatabaseFixtureBase.CreateCollectionName("SibMids") + Guid.NewGuid().ToString("N")[..8];
+        var leavesName = TemporaryDatabaseFixtureBase.CreateCollectionName("SibLeaves") + Guid.NewGuid().ToString("N")[..8];
+
+        var primaryLeafId = ObjectId.GenerateNewId();
+        var secondaryLeafId = ObjectId.GenerateNewId();
+        var primaryMidId = ObjectId.GenerateNewId();
+        var secondaryMidId = ObjectId.GenerateNewId();
+        var rootId = ObjectId.GenerateNewId();
+
+        database.MongoDatabase.GetCollection<BsonDocument>(leavesName).InsertMany([
+            new BsonDocument { { "_id", primaryLeafId }, { "value", "PrimaryLeaf" } },
+            new BsonDocument { { "_id", secondaryLeafId }, { "value", "SecondaryLeaf" } }
+        ]);
+        database.MongoDatabase.GetCollection<BsonDocument>(midsName).InsertMany([
+            new BsonDocument { { "_id", primaryMidId }, { "leaf_id", primaryLeafId } },
+            new BsonDocument { { "_id", secondaryMidId }, { "leaf_id", secondaryLeafId } }
+        ]);
+        database.MongoDatabase.GetCollection<BsonDocument>(rootsName).InsertOne(
+            new BsonDocument { { "_id", rootId }, { "pmid_id", primaryMidId }, { "smid_id", secondaryMidId } });
+
+        using var db = new SiblingDbContext(database, rootsName, midsName, leavesName);
+        var root = db.Roots
+            .Include(r => r.PrimaryMid).ThenInclude(m => m.Leaf)
+            .Include(r => r.SecondaryMid).ThenInclude(m => m.Leaf)
+            .Single();
+
+        Assert.NotNull(root.PrimaryMid);
+        Assert.NotNull(root.PrimaryMid.Leaf);
+        Assert.NotNull(root.SecondaryMid);
+        Assert.NotNull(root.SecondaryMid.Leaf);
+        Assert.Equal("PrimaryLeaf", root.PrimaryMid.Leaf.Value);
+        Assert.Equal("SecondaryLeaf", root.SecondaryMid.Leaf.Value);
+    }
 #endif
 
     // ---------------------------------------------------------------------------------------------
@@ -1292,6 +1333,65 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
             {
                 b.ToCollection(ordersCollection);
                 b.Property(o => o.OrderName).HasElementName("name");
+            });
+        }
+    }
+
+    // Sibling reference navigations targeting the SAME entity type, each ThenInclude'd through the
+    // same navigation name (EF-376 repro): Root -(ref)-> PrimaryMid / SecondaryMid -(ref)-> Leaf.
+    class SiblingRoot
+    {
+        public ObjectId _id { get; set; }
+        public ObjectId? PrimaryMidId { get; set; }
+        public SiblingMid PrimaryMid { get; set; }
+        public ObjectId? SecondaryMidId { get; set; }
+        public SiblingMid SecondaryMid { get; set; }
+    }
+
+    class SiblingMid
+    {
+        public ObjectId _id { get; set; }
+        public ObjectId? LeafId { get; set; }
+        public SiblingLeaf Leaf { get; set; }
+    }
+
+    class SiblingLeaf
+    {
+        public ObjectId _id { get; set; }
+        public string Value { get; set; }
+    }
+
+    class SiblingDbContext(TemporaryDatabaseFixture database, string rootsCollection, string midsCollection, string leavesCollection)
+        : CrossCollectionDbContextBase<SiblingDbContext>(database)
+    {
+        public DbSet<SiblingRoot> Roots { get; set; }
+        public DbSet<SiblingMid> Mids { get; set; }
+        public DbSet<SiblingLeaf> Leaves { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<SiblingRoot>(b =>
+            {
+                b.ToCollection(rootsCollection);
+                b.Property(r => r.PrimaryMidId).HasElementName("pmid_id");
+                b.Property(r => r.SecondaryMidId).HasElementName("smid_id");
+                b.HasOne(r => r.PrimaryMid).WithMany().HasForeignKey(r => r.PrimaryMidId);
+                b.HasOne(r => r.SecondaryMid).WithMany().HasForeignKey(r => r.SecondaryMidId);
+            });
+
+            modelBuilder.Entity<SiblingMid>(b =>
+            {
+                b.ToCollection(midsCollection);
+                b.Property(m => m.LeafId).HasElementName("leaf_id");
+                b.HasOne(m => m.Leaf).WithMany().HasForeignKey(m => m.LeafId);
+            });
+
+            modelBuilder.Entity<SiblingLeaf>(b =>
+            {
+                b.ToCollection(leavesCollection);
+                b.Property(l => l.Value).HasElementName("value");
             });
         }
     }
