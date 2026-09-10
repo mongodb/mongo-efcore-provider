@@ -311,6 +311,121 @@ public class NativeGroupByBinderTests
         Assert.Null(mongoQ.Select.Grouping);
     }
 
+    // ── TryBindGroupProjection: pending OrderBy/ThenBy (composed before the Select) ─────────────
+
+    [Fact]
+    public void Pending_order_by_key_resolves_to_id_reference()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, string>> orderKey = g => g.Key;
+        mongoQ.Select.PendingGroupOrderings = [(true, orderKey)];
+
+        Expression<Func<IGrouping<string, Order>, object>> proj =
+            g => new { g.Key, Count = g.Count() };
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+
+        var order = Assert.Single(mongoQ.Select.GroupOrderOp!.Orderings);
+        Assert.True(order.Ascending);
+        Assert.Equal("_id", Assert.IsType<MongoElementRefExpression>(order.KeySelector).Path);
+        Assert.Null(mongoQ.Select.PendingGroupOrderings);
+    }
+
+    [Fact]
+    public void Pending_order_by_aggregate_adds_its_own_accumulator_alongside_the_projected_one()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, int>> orderKey = g => g.Count();
+        mongoQ.Select.PendingGroupOrderings = [(true, orderKey)];
+
+        Expression<Func<IGrouping<string, Order>, object>> proj =
+            g => new { g.Key, Count = g.Count() };
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+
+        // Two SEPARATE $sum:1 accumulators — one for the ordering, one for the projection. Deliberately not
+        // de-duplicated (see this task's Architecture note).
+        Assert.Equal(2, mongoQ.Select.Grouping!.Accumulators.Count);
+        Assert.Contains(mongoQ.Select.Grouping.Accumulators, a => a.OutputField == "Count" && a.Operator == "$sum" && a.Operand == null);
+        Assert.Contains(mongoQ.Select.Grouping.Accumulators, a => a.OutputField == "_orderAgg0" && a.Operator == "$sum" && a.Operand == null);
+
+        var order = Assert.Single(mongoQ.Select.GroupOrderOp!.Orderings);
+        Assert.Equal("_orderAgg0", Assert.IsType<MongoElementRefExpression>(order.KeySelector).Path);
+    }
+
+    [Fact]
+    public void Pending_order_by_aggregate_not_projected_still_adds_accumulator_but_not_flattened()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, int>> orderKey = g => g.Count();
+        mongoQ.Select.PendingGroupOrderings = [(true, orderKey)];
+
+        // Projects Sum, not Count — but the ordering still needs Count computed in the SAME $group.
+        Expression<Func<IGrouping<string, Order>, object>> proj =
+            g => new { g.Key, Total = g.Sum(x => x.Amount) };
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+
+        Assert.Equal(2, mongoQ.Select.Grouping!.Accumulators.Count);
+        Assert.Contains(mongoQ.Select.Grouping.Accumulators, a => a.OutputField == "_orderAgg0" && a.Operator == "$sum" && a.Operand == null);
+        Assert.Contains(mongoQ.Select.Grouping.Accumulators, a => a.OutputField == "Total" && a.Operator == "$sum");
+
+        // The flatten projection (what the final $project keeps) only has the user-requested members.
+        Assert.DoesNotContain(mongoQ.Select.Projection, p => p.Alias == "_orderAgg0");
+        Assert.Contains(mongoQ.Select.Projection, p => p.Alias == "Total");
+    }
+
+    [Fact]
+    public void Pending_order_by_key_then_by_aggregate_resolves_both_in_order()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, string>> byKey = g => g.Key;
+        Expression<Func<IGrouping<string, Order>, int>> byCount = g => g.Count();
+        mongoQ.Select.PendingGroupOrderings = [(true, byKey), (false, byCount)];
+
+        Expression<Func<IGrouping<string, Order>, object>> proj =
+            g => new { g.Key, Count = g.Count() };
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+
+        Assert.Collection(mongoQ.Select.GroupOrderOp!.Orderings,
+            o =>
+            {
+                Assert.True(o.Ascending);
+                Assert.Equal("_id", Assert.IsType<MongoElementRefExpression>(o.KeySelector).Path);
+            },
+            o =>
+            {
+                Assert.False(o.Ascending);
+                Assert.Equal("_orderAgg0", Assert.IsType<MongoElementRefExpression>(o.KeySelector).Path);
+            });
+    }
+
+    [Fact]
+    public void Pending_order_by_computed_expression_declines()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, int>> orderKey = g => g.Count() * 2;
+        mongoQ.Select.PendingGroupOrderings = [(true, orderKey)];
+
+        Expression<Func<IGrouping<string, Order>, object>> proj =
+            g => new { g.Key, Count = g.Count() };
+
+        Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+    }
+
+    [Fact]
+    public void Pending_order_by_bare_key_over_composite_key_declines()
+    {
+        var mongoQ = TestQuery();
+        Expression<Func<Order, object>> key = x => new { x.Country, x.Region };
+        Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
+
+        Expression<Func<IGrouping<object, Order>, object>> orderKey = g => g.Key;
+        mongoQ.Select.PendingGroupOrderings = [(true, orderKey)];
+
+        Expression<Func<IGrouping<object, Order>, object>> proj =
+            g => new { Count = g.Count() };
+
+        Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+    }
+
     // ── TryBindGroupTerminalAggregate ──────────────────────────────────────────────
     // GroupBy(key).{Count()|LongCount()|Any()|Any(pred)|All(pred)|Count(pred)|LongCount(pred)} with NO
     // intervening Select — the "GroupBy_without_aggregate" family (EF-449).

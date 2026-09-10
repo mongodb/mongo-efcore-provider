@@ -69,6 +69,36 @@ internal static class NativeSlotPopulator
             return;
         }
 
+        // EF-TBD: OrderBy/OrderByDescending/ThenBy/ThenByDescending composed DIRECTLY on the still-ungrouped
+        // GroupBy(key) result — e.g. GroupBy(o => o.CustomerID).OrderBy(o => o.Count()).ThenBy(o => o.Key) —
+        // cannot be resolved here: an ordering aggregate (g.Count() etc.) needs a $group accumulator that does
+        // not exist yet (the $group is only built once the terminal Select runs). Defer the raw key selector
+        // onto MongoSelectDefinition.PendingGroupOrderings instead of declining; NativeGroupByBinder
+        // .TryBindGroupProjection resolves it once the Select arrives, and marks the query non-native itself
+        // (via its ordinary `return false` contract) if the ordering shape turns out to be unsupported.
+        // Scoped to Grouping == null (not yet finalized) so this can never fire for the OPPOSITE composition
+        // order (OrderBy composed AFTER the Select, over a projected alias) — that shape must keep falling
+        // through to the general guard below unchanged (see GroupBy_post_group_OrderBy_by_aggregate_matches_
+        // driver_linq in NativeGroupByTests). A GroupBy nested on a projected Distinct (PriorGrouping set) is
+        // naturally excluded too, since Grouping stays non-null in that shape (set by
+        // SnapshotDistinctGroupingForNestedGroupBy's sibling machinery) even before this carve-out's own
+        // Select runs — so this Grouping == null condition should not be loosened to "fix" that case; it is
+        // already excluded on purpose.
+        if (mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping == null && mongoQ.Select.PendingGroupKey != null
+            && (methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.OrderByDescending
+                || methodDefinition == QueryableMethods.ThenBy || methodDefinition == QueryableMethods.ThenByDescending))
+        {
+            var orderKeySelector = call.Arguments[1].UnwrapLambdaFromQuote();
+            var ascending = methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.ThenBy;
+            var isThenBy = methodDefinition == QueryableMethods.ThenBy || methodDefinition == QueryableMethods.ThenByDescending;
+
+            if (isThenBy && mongoQ.Select.PendingGroupOrderings is { } existingOrderings)
+                existingOrderings.Add((ascending, orderKeySelector));
+            else
+                mongoQ.Select.PendingGroupOrderings = [(ascending, orderKeySelector)];
+            return;
+        }
+
         // Post-group slot-operator guard. Once a GroupBy or projected Distinct has been seen on this query
         // (IsGroupBy / IsDistinct — both bind the same degenerate-$group machinery), a slot operator applied
         // after it — a Where (HAVING) / OrderBy / ThenBy / Skip / Take — operates over the grouped result,

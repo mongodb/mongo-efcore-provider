@@ -331,6 +331,48 @@ public class MongoSelectLowererTests
             s => Assert.IsType<MongoGroupStage>(s));
     }
 
+    [Fact]
+    public void Lowers_group_order_op_between_group_stage_and_flatten_project()
+    {
+        var query = TestSelect();
+        query.Select.Grouping = new MongoGrouping(
+            [new MongoGroupingKeyPart(null, new MongoFieldExpression(property: null!, elementName: "country"))],
+            [new MongoGroupAccumulator("Count", "$sum", null)]);
+        query.Select.AddProjection(new MongoProjection("Key", new MongoElementRefExpression("_id", typeof(string))));
+        query.Select.AddProjection(new MongoProjection("Count", new MongoElementRefExpression("Count", typeof(int))));
+        query.Select.GroupOrderOp = new MongoSortOp(
+            [new MongoOrdering(new MongoElementRefExpression("Count", typeof(int)), Ascending: true)]);
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        // GroupOrderOp's key is a MongoElementRefExpression, not a MongoFieldExpression, so AppendSortStages
+        // treats it as computed and brackets it with $addFields/$unset (same as any other computed sort key
+        // elsewhere in this file) — verified here so a future AppendSortStages change that special-cased
+        // MongoFieldExpression differently doesn't silently break this composition.
+        Assert.Collection(stages,
+            s => Assert.IsType<MongoGroupStage>(s),
+            s => Assert.IsType<MongoAddFieldsStage>(s),
+            s => Assert.IsType<MongoSortStage>(s),
+            s => Assert.IsType<MongoUnsetStage>(s),
+            s => Assert.IsType<MongoProjectStage>(s));
+    }
+
+    [Fact]
+    public void No_group_order_op_lowers_group_then_project_only()
+    {
+        var query = TestSelect();
+        query.Select.Grouping = new MongoGrouping(
+            [new MongoGroupingKeyPart(null, new MongoFieldExpression(property: null!, elementName: "country"))],
+            [new MongoGroupAccumulator("Count", "$sum", null)]);
+        query.Select.AddProjection(new MongoProjection("Key", new MongoElementRefExpression("_id", typeof(string))));
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        Assert.Collection(stages,
+            s => Assert.IsType<MongoGroupStage>(s),
+            s => Assert.IsType<MongoProjectStage>(s));
+    }
+
     // ── Test 12: Set-op select lowers to a single MongoUnionWithStage ───────────
 
     [Fact]

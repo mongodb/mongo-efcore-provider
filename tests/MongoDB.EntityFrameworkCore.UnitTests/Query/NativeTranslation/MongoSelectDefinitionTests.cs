@@ -13,6 +13,8 @@
  * limitations under the License.
  */
 
+using System;
+using System.Linq.Expressions;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.UnitTests.TestUtilities;
@@ -375,5 +377,29 @@ public class MongoSelectDefinitionTests
 
         Assert.True(select.HasUnconfirmedCandidateJoin);
         Assert.Equal(NativeRoute.Fallback, select.Route);
+    }
+
+    [Fact]
+    public void PendingGroupOrderings_and_GroupOrderOp_default_to_null()
+    {
+        var select = TestSelect();
+
+        Assert.Null(select.PendingGroupOrderings);
+        Assert.Null(select.GroupOrderOp);
+    }
+
+    [Fact]
+    public void PendingGroupOrderings_and_GroupOrderOp_are_settable()
+    {
+        var select = TestSelect();
+        Expression<Func<int, int>> keySelector = x => x;
+
+        select.PendingGroupOrderings = [(true, keySelector)];
+        select.GroupOrderOp = new MongoSortOp([new MongoOrdering(Const(1), Ascending: true)]);
+
+        Assert.Single(select.PendingGroupOrderings);
+        Assert.True(select.PendingGroupOrderings[0].Ascending);
+        Assert.Same(keySelector, select.PendingGroupOrderings[0].KeySelector);
+        Assert.NotNull(select.GroupOrderOp);
     }
 }

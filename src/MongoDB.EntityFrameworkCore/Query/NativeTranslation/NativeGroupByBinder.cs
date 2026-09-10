@@ -151,20 +151,20 @@ internal static class NativeGroupByBinder
         if (select.PendingGroupPredicate != null)
             return false;
 
+        // A BARE (non-`new {}`/DTO) result selector — e.g. `GroupBy(o => o.CustomerID)
+        // .Select(g => g.Sum(o => o.OrderID))` — carries no member name, so it is projected under the
+        // reserved `_v` alias, the SAME tier-2 (ProjectionAliasTier.Synthetic) convention
+        // NativeProjectionBinder/NativeSelectManyBinder use for a bare computed/aggregate body: `_v` is
+        // what the driver itself names a bare projection, so a late fallback (which leaves this query's
+        // captured chain un-stripped) has the driver's own push-down write the very element the
+        // alias-addressed shaper already reads by. The single-entry list is then walked by the SAME
+        // key/accumulator loop below, so a bare body that is neither a key access nor a recognized
+        // accumulator shape (e.g. a computed expression) still declines exactly as before — bareLeafAlias
+        // is set only once every guard below has actually admitted this body (mirrors the "commit once
+        // every gate has passed" discipline TryBuildGroupResultShaper's own remarks require).
         var isBareBody = !resultSelector.Body.TryGetProjectionMembers(out var bindings, allowPositionalConstructorArguments: true);
         if (isBareBody)
         {
-            // A BARE (non-`new {}`/DTO) result selector — e.g. `GroupBy(o => o.CustomerID)
-            // .Select(g => g.Sum(o => o.OrderID))` — carries no member name, so it is projected under the
-            // reserved `_v` alias, the SAME tier-2 (ProjectionAliasTier.Synthetic) convention
-            // NativeProjectionBinder/NativeSelectManyBinder use for a bare computed/aggregate body: `_v` is
-            // what the driver itself names a bare projection, so a late fallback (which leaves this query's
-            // captured chain un-stripped) has the driver's own push-down write the very element the
-            // alias-addressed shaper already reads by. The single-entry list is then walked by the SAME
-            // key/accumulator loop below, so a bare body that is neither a key access nor a recognized
-            // accumulator shape (e.g. a computed expression) still declines exactly as before — bareLeafAlias
-            // is set only once every guard below has actually admitted this body (mirrors the "commit once
-            // every gate has passed" discipline TryBuildGroupResultShaper's own remarks require).
             bindings = [(NativeProjectionBinder.SyntheticBareProjectionAlias, resultSelector.Body)];
         }
 
@@ -176,16 +176,52 @@ internal static class NativeGroupByBinder
         if (select.PriorGrouping is { } priorGrouping)
             translator.DistinctAliasScope = priorGrouping;
 
-        var groupingParameter = resultSelector.Parameters[0];
-        var accumulators = new List<MongoGroupAccumulator>();
         var isComposite = keyParts.Count > 1 || keyParts[0].Name != null;
+
+        // Resolve any OrderBy/ThenBy composed directly on the ungrouped GroupBy result (recorded by
+        // NativeSlotPopulator's pending-ordering carve-out) BEFORE processing the Select's own bindings below,
+        // so an ordering aggregate that the Select does NOT project (e.g. orders by Count() but projects
+        // Sum(...)) still gets its own $group accumulator. Always allocates a FRESH accumulator field for an
+        // ordering aggregate rather than detecting and reusing an identical one the Select also projects — a
+        // harmless redundant $group field, not a correctness issue, and far simpler than structural
+        // de-duplication.
+        var orderAccumulators = new List<MongoGroupAccumulator>();
+        var resolvedOrderings = new List<MongoOrdering>();
+        if (select.PendingGroupOrderings is { } pendingOrderings)
+        {
+            var orderIndex = 0;
+            foreach (var (ascending, keySelector) in pendingOrderings)
+            {
+                var groupParam = keySelector.Parameters[0];
+                var body = keySelector.Body;
+
+                if (TryGetKeyMemberPath(body, groupParam, keyParts, isComposite, out var keyPath))
+                {
+                    if (keyPath == null)
+                        return false; // bare g.Key over a composite key — no single field to sort by
+
+                    resolvedOrderings.Add(new MongoOrdering(
+                        new MongoElementRefExpression(keyPath, Unwrap(body).Type), ascending));
+                    continue;
+                }
+
+                var syntheticField = $"_orderAgg{orderIndex++}";
+                if (!TryBindAccumulator(body, syntheticField, groupParam, translator, out var acc, out var flattenRead))
+                    return false; // unsupported ordering shape — fall back to driver-LINQ
+
+                orderAccumulators.Add(acc);
+                resolvedOrderings.Add(new MongoOrdering(flattenRead, ascending));
+            }
+        }
+
+        var groupingParameter = resultSelector.Parameters[0];
 
         // Flatten projection: each result member maps to a top-level output alias read back by the DOM
         // shaper. Key members read from the group _id (scalar → "_id", composite sub → "_id.<Name>");
         // accumulator members read from their own top-level output field. Emitted as a trailing $project
         // after the $group (MongoSelectLowerer) so the shaper never needs a nested-_id read.
+        var accumulators = new List<MongoGroupAccumulator>();
         var flatten = new List<MongoProjection>();
-
         foreach (var (memberName, valueExpr) in bindings)
         {
             if (TryGetKeyMemberPath(valueExpr, groupingParameter, keyParts, isComposite, out var keyPath))
@@ -206,7 +242,9 @@ internal static class NativeGroupByBinder
         if (accumulators.Count == 0)
             return false; // pure key regroup with no aggregate — unsupported here, falls back
 
-        select.Grouping = new MongoGrouping(keyParts, accumulators);
+        select.Grouping = new MongoGrouping(keyParts, [..orderAccumulators, ..accumulators]);
+        select.GroupOrderOp = resolvedOrderings.Count > 0 ? new MongoSortOp(resolvedOrderings) : null;
+        select.PendingGroupOrderings = null;
         foreach (var projection in flatten)
             select.AddProjection(projection);
         if (isBareBody)

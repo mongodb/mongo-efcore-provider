@@ -561,6 +561,187 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     }
 
     [Fact]
+    public void GroupBy_OrderBy_key_before_select_goes_native()
+    {
+        // OrderBy composed BEFORE the terminal Select, over g.Key — the opposite composition order from
+        // GroupBy_post_group_OrderBy_by_aggregate_matches_driver_linq above (which orders AFTER Select, over a
+        // projected alias, and must keep falling back).
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_OrderBy_key_before_select_goes_native));
+
+        var result = db.Entities
+            .GroupBy(o => o.Country)
+            .OrderBy(g => g.Key)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToList();
+
+        Assert.Equal(
+            [("FR", 1), ("UK", 2), ("US", 2)],
+            result.Select(r => (r.Key, r.Count)).ToArray());
+    }
+
+    [Fact]
+    public void GroupBy_OrderBy_aggregate_before_select_goes_native()
+    {
+        // Orders by the SAME aggregate the Select projects (Count) — the two accumulators are deliberately
+        // NOT de-duplicated (see NativeGroupByBinder.TryBindGroupProjection's remarks); this proves that's
+        // still correct, not just cheap.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_OrderBy_aggregate_before_select_goes_native));
+
+        var result = db.Entities
+            .GroupBy(o => o.Country)
+            .OrderBy(g => g.Count())
+            .ThenBy(g => g.Key)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToList();
+
+        // Ordered by Count ascending, then Country ascending as the tie-break: FR(1), UK(2), US(2).
+        Assert.Equal(
+            [("FR", 1), ("UK", 2), ("US", 2)],
+            result.Select(r => (r.Key, r.Count)).ToArray());
+    }
+
+    [Fact]
+    public void GroupBy_OrderBy_different_aggregate_before_select_goes_native()
+    {
+        // Orders by Count() but projects Sum() — Count must still get its own $group accumulator even though
+        // it is never flattened into the output.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_OrderBy_different_aggregate_before_select_goes_native));
+
+        var result = db.Entities
+            .GroupBy(o => o.Country)
+            .OrderBy(g => g.Count())
+            .ThenBy(g => g.Key)
+            .Select(g => new { g.Key, Total = g.Sum(o => o.Amount) })
+            .ToList();
+
+        Assert.Equal(
+            [("FR", 300m), ("UK", 75m), ("US", 300m)],
+            result.Select(r => (r.Key, r.Total)).ToArray());
+    }
+
+    [Fact]
+    public void GroupBy_OrderByDescending_aggregate_before_select_goes_native()
+    {
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_OrderByDescending_aggregate_before_select_goes_native));
+
+        var result = db.Entities
+            .GroupBy(o => o.Country)
+            .OrderByDescending(g => g.Count())
+            .ThenBy(g => g.Key)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToList();
+
+        // Descending by Count: UK/US (2) before FR (1); ties broken ascending by Country.
+        Assert.Equal(
+            [("UK", 2), ("US", 2), ("FR", 1)],
+            result.Select(r => (r.Key, r.Count)).ToArray());
+    }
+
+    [Fact]
+    public void GroupBy_OrderBy_before_select_matches_driver_linq()
+    {
+        var seed = SeedOrders();
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(GroupBy_OrderBy_before_select_matches_driver_linq) + "N");
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(GroupBy_OrderBy_before_select_matches_driver_linq) + "D");
+
+        (string Country, int Count, decimal Total)[] Run(SingleEntityDbContext<Order> db) =>
+            db.Entities
+                .GroupBy(o => o.Country)
+                .OrderBy(g => g.Count())
+                .ThenBy(g => g.Key)
+                .Select(g => new { g.Key, Count = g.Count(), Total = g.Sum(o => o.Amount) })
+                .AsEnumerable()
+                .Select(x => (x.Key, x.Count, x.Total)).ToArray();
+
+        var native = Run(nativeDb);
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    [Fact]
+    public void GroupBy_OrderBy_computed_expression_before_select_falls_back_under_native_only()
+    {
+        // A computed ordering expression (not a bare g.Key or a plain accumulator) is out of
+        // NativeGroupByBinder.TryBindAccumulator's scope — must decline cleanly, not crash or silently drop
+        // the ordering.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_OrderBy_computed_expression_before_select_falls_back_under_native_only));
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() =>
+            db.Entities.GroupBy(o => o.Country)
+                .OrderBy(g => g.Count() * 2)
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToList());
+    }
+
+    [Fact]
+    public void GroupBy_Skip_before_select_falls_back_under_native_only()
+    {
+        // Skip/Take composed DIRECTLY on the ungrouped GroupBy result (before the terminal Select) are
+        // explicitly out of this feature's scope — only OrderBy/ThenBy are supported there. Must decline
+        // cleanly, not crash or silently drop the paging.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_Skip_before_select_falls_back_under_native_only));
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() =>
+            db.Entities.GroupBy(o => o.Country)
+                .Skip(1)
+                .Select(g => new { g.Key, Count = g.Count() })
+                .ToList());
+    }
+
+    [Fact]
+    public void GroupBy_OrderBy_replacing_prior_OrderBy_before_select_uses_only_the_second()
+    {
+        // A second OrderBy (not ThenBy) composed on the ungrouped GroupBy result REPLACES the first sort key
+        // entirely — matches ordinary (non-GroupBy) OrderBy.OrderBy semantics elsewhere in this provider.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_OrderBy_replacing_prior_OrderBy_before_select_uses_only_the_second));
+
+        var result = db.Entities
+            .GroupBy(o => o.Country)
+            .OrderBy(g => g.Key)       // would sort FR, UK, US if not replaced
+            .OrderBy(g => g.Count())   // REPLACES the above — sorts by Count instead
+            .ThenBy(g => g.Key)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToList();
+
+        // If the first OrderBy leaked through, FR/UK/US (Country-ascending) would come first regardless of
+        // Count. Correct (replaced) behavior sorts by Count first: FR(1), then UK(2)/US(2) tie-broken by
+        // Country.
+        Assert.Equal(
+            [("FR", 1), ("UK", 2), ("US", 2)],
+            result.Select(r => (r.Key, r.Count)).ToArray());
+    }
+
+    [Fact]
+    public void GroupBy_OrderBy_computed_expression_before_select_matches_driver_linq_under_native()
+    {
+        var seed = SeedOrders();
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(GroupBy_OrderBy_computed_expression_before_select_matches_driver_linq_under_native) + "N");
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(GroupBy_OrderBy_computed_expression_before_select_matches_driver_linq_under_native) + "D");
+
+        (string Country, int Count)[] Run(SingleEntityDbContext<Order> db) =>
+            db.Entities.GroupBy(o => o.Country)
+                .OrderBy(g => g.Count() * 2)
+                .Select(g => new { g.Key, Count = g.Count() })
+                .AsEnumerable()
+                .Select(x => (x.Key, x.Count)).ToArray();
+
+        var native = Run(nativeDb);
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    [Fact]
     public void GroupBy_results_match_driver_linq()
     {
         var seed = SeedOrders();

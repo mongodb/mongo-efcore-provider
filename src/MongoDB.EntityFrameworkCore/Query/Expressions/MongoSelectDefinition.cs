@@ -18,6 +18,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Linq.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
@@ -593,6 +594,33 @@ internal sealed class MongoSelectDefinition
     /// Mirrors <see cref="PendingGroupKey"/>'s pattern: not itself part of <see cref="Route"/>.
     /// </summary>
     internal (MongoGroupAccumulator Accumulator, MongoExpression Comparison)? PendingGroupPredicate { get; set; }
+
+    /// <summary>
+    /// Raw, unresolved <c>OrderBy</c>/<c>ThenBy</c> key selectors composed directly on the still-ungrouped
+    /// <c>GroupBy(key)</c> result (before the terminal <c>Select</c> that finalizes <see cref="Grouping"/>) —
+    /// e.g. <c>GroupBy(o =&gt; o.CustomerID).OrderBy(o =&gt; o.Count()).ThenBy(o =&gt; o.Key)</c>. Recorded by
+    /// <c>NativeSlotPopulator.PopulateNativeSlots</c>'s pending-ordering carve-out (each entry's own lambda
+    /// parameter is that specific <c>OrderBy</c>/<c>ThenBy</c> call's <c>IGrouping</c> parameter — never the
+    /// terminal Select's, and never shared across entries). Cannot be resolved at record time: an ordering
+    /// aggregate (<c>g.Count()</c> etc.) needs a <c>$group</c> accumulator that does not exist yet — the
+    /// <c>$group</c> is only built once the terminal Select runs. Consumed and cleared by
+    /// <c>NativeGroupByBinder.TryBindGroupProjection</c>, which resolves each entry into <see cref="GroupOrderOp"/>.
+    /// <see langword="null"/> for every query that never took this path. Mirrors <see cref="PendingGroupKey"/>'s
+    /// pattern: transient binder-owned state, not itself part of <see cref="Route"/>.
+    /// </summary>
+    internal List<(bool Ascending, LambdaExpression KeySelector)>? PendingGroupOrderings { get; set; }
+
+    /// <summary>
+    /// The sort to run immediately AFTER the <c>$group</c> stage and BEFORE its flattening <c>$project</c> —
+    /// resolved from <see cref="PendingGroupOrderings"/> by <c>NativeGroupByBinder.TryBindGroupProjection</c>.
+    /// Deliberately a SEPARATE insertion point from <see cref="PostGroupOps"/>, which runs AFTER the flattening
+    /// <c>$project</c> for the opposite composition order (ordering composed AFTER the terminal Select, over a
+    /// projected alias) — an ordering aggregate recorded here may reference a <c>$group</c> accumulator field
+    /// that was never flattened into the final projection at all (e.g. sorting by <c>Count()</c> while only
+    /// projecting <c>Sum(...)</c>), so it must be readable before the flatten strips it away.
+    /// <see langword="null"/> for every query that never took this path.
+    /// </summary>
+    internal MongoSortOp? GroupOrderOp { get; set; }
 
     // ── GroupBy provenance / fallback safety ──────────────────────────────────────
 
