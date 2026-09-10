@@ -331,10 +331,28 @@ internal sealed class MongoQueryLanguageRenderer
                     "Only constant or parameterized string regex terms are natively representable.");
         }
 
+        var fieldPath = GetRegexFieldPath(regex.Field);
         return regex.Negated
-            ? new BsonDocument(regex.Field.ElementName, new BsonDocument("$not", body))
-            : new BsonDocument(regex.Field.ElementName, body);
+            ? new BsonDocument(fieldPath, new BsonDocument("$not", body))
+            : new BsonDocument(fieldPath, body);
     }
+
+    /// <summary>
+    /// The document path <see cref="RenderRegex"/> matches against: a <see cref="MongoFieldExpression"/>'s
+    /// own element name, or — for a projected <c>Distinct()</c>'s COMPUTED alias (EF-322 gap-2, no backing
+    /// <c>IProperty</c>) — a <see cref="MongoElementRefExpression"/>'s already-flattened path. Both are plain
+    /// top-level (or dotted) document paths at this point, so <c>$match</c> addresses either one identically;
+    /// no other <see cref="MongoRegexExpression.Field"/> shape is ever constructed (see the translator's own
+    /// gating), so anything else is an internal invariant violation, not a query shape to decline.
+    /// </summary>
+    private static string GetRegexFieldPath(MongoExpression field)
+        => field switch
+        {
+            MongoFieldExpression f => f.ElementName,
+            MongoElementRefExpression e => e.Path,
+            _ => throw new NativeTranslationNotSupportedException(
+                $"Unsupported regex field expression: {field.GetType().Name}.")
+        };
 
     // ------------------------------------------------------------------
     // Existential quantifier over an embedded array ($elemMatch)

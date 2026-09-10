@@ -266,6 +266,47 @@ public class ReferenceIncludeRecognizerTests
         Assert.Empty(referenceLevels);
         Assert.Null(collectionLevel);
     }
+
+    // EF-322 (collection Include over a plain join scope): Customers.Include(c => c.Orders)
+    // .Join(Orders, ...).Where(...).OrderBy(...).Select(c => c) — nav-expansion's trailing selector is
+    // ti => Include(ti.Outer, Orders), a PURE collection Include (no reference sibling) sitting directly over
+    // the join's TransparentIdentifier, rather than over the bare parameter IsSingleLevelCollectionIncludeSelector
+    // expects. This is the fourth partition none of the three existing recognizers admit: IsSingleLevelCollection
+    // IncludeSelector requires EntityExpression == the bare parameter (no join); TryGetReferenceIncludeChain
+    // declines outright on any collection level; TryGetMixedReferenceAndCollectionIncludeChain requires at least
+    // one reference level alongside the collection one.
+    [Fact]
+    public void Collection_include_recognizer_accepts_a_bare_collection_include_over_a_join_scope()
+    {
+        var selector = ReferenceIncludeTestTrees.Build(doubleHop: false, collectionNavigation: true);
+
+        var include = MongoQueryableMethodTranslatingExpressionVisitor.TryGetCollectionIncludeOverJoinScope(selector);
+
+        Assert.NotNull(include);
+        Assert.True(((INavigation)include.Navigation!).IsCollection);
+    }
+
+    [Fact]
+    public void Collection_include_recognizer_rejects_a_bare_parameter_collection_include()
+    {
+        // IsSingleLevelCollectionIncludeSelector's own shape (no join at all) — must stay partitioned away.
+        var navigation = ReferenceIncludeTestTrees.GetCollectionNavigation();
+        var param = Expression.Parameter(navigation.DeclaringEntityType.ClrType, "c");
+        var include = new IncludeExpression(param, param, navigation);
+        var selector = Expression.Lambda(include, param);
+
+        Assert.Null(MongoQueryableMethodTranslatingExpressionVisitor.TryGetCollectionIncludeOverJoinScope(selector));
+    }
+
+    [Fact]
+    public void Collection_include_recognizer_rejects_a_reference_include_over_a_join_scope()
+    {
+        // A reference (non-collection) Include over the same join-scope shape belongs to
+        // TryGetReferenceIncludeChain instead.
+        var selector = ReferenceIncludeTestTrees.Build(doubleHop: false, collectionNavigation: false);
+
+        Assert.Null(MongoQueryableMethodTranslatingExpressionVisitor.TryGetCollectionIncludeOverJoinScope(selector));
+    }
 }
 
 /// <summary>
@@ -369,6 +410,11 @@ internal static class ReferenceIncludeTestTrees
         var navigationName = collectionNavigation ? nameof(Order.RelatedOrders) : nameof(Order.Customer);
         return model.FindEntityType(typeof(Order))!.FindNavigation(navigationName)!;
     }
+
+    /// <summary>Standalone collection navigation, for building an <see cref="IncludeExpression"/> directly over
+    /// a bare parameter (no join scope) — the shape <see cref="GetNavigation"/>'s own model doesn't need to share
+    /// with the join-scope trees above.</summary>
+    public static INavigation GetCollectionNavigation() => GetNavigation(collectionNavigation: true);
 
     /// <summary>
     /// Builds <c>ti =&gt; Include(ti.Outer, Nav, ti.Inner)</c> (single hop, <paramref name="doubleHop"/> false)

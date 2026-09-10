@@ -145,7 +145,7 @@ Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : true } }
             """);
     }
 
@@ -931,7 +931,7 @@ Products.{ "$match" : { "$expr" : { "$eq" : [{ "$not" : [{ "$gt" : ["$_id", 50] 
 
         AssertMql(
             """
-            Products.
+            Products.{ "$match" : { "$expr" : true } }
             """);
     }
 
@@ -1361,7 +1361,7 @@ OrderDetails.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : 
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : { "$type" : -1 } } }
+            Orders.{ "$match" : { "$expr" : false } }
             """);
     }
 

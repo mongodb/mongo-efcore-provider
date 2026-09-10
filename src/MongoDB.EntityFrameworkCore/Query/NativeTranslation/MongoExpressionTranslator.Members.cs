@@ -156,6 +156,43 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
+    /// EF-322 gap-2: resolves a single-hop member access on a Distinct alias whose flattened key part is a
+    /// COMPUTED expression (e.g. <c>Select(c =&gt; new { A = c.CustomerID + c.City }).Distinct()</c>'s own
+    /// <c>A</c>), which <see cref="TryResolveMember"/> cannot express — that method hands back an
+    /// <see cref="IProperty"/>, and a computed key part has none. Used only by the small set of callers that
+    /// need nothing but the flattened document path (currently the StartsWith/EndsWith/Contains regex case in
+    /// <see cref="TryTranslate"/>'s main switch) — every other operator (equality, ordering, date/array
+    /// functions, …) still resolves a computed alias member through <see cref="TryResolveMember"/> alone and
+    /// correctly declines, since widening THAT method's IProperty-based contract to admit a property-less field
+    /// would touch every one of its ~10 call sites for a single narrow shape.
+    /// </summary>
+    /// <remarks>
+    /// Declines whenever <see cref="DistinctAliasScope"/> is unset, the node is not a single-hop member access,
+    /// or the matched key part IS a plain field (that shape is already handled — and pinned — by
+    /// <see cref="TryResolveMember"/>'s own <see cref="DistinctAliasScope"/> branch, so the two must never both
+    /// claim the same member).
+    /// </remarks>
+    private bool TryResolveDistinctAliasComputedField(
+        Expression node, [NotNullWhen(true)] out MongoElementRefExpression? fieldRef)
+    {
+        fieldRef = null;
+
+        if (DistinctAliasScope is not { } scope || node is not MemberExpression { Expression: ParameterExpression } me)
+            return false;
+
+        foreach (var part in scope.Key)
+        {
+            if (part.Name == me.Member.Name && part.FieldRef is not MongoFieldExpression)
+            {
+                fieldRef = new MongoElementRefExpression(part.Name!, part.FieldRef.Type);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Resolves a nested member/navigation access chain into an owned single-reference (OwnsOne) dotted
     /// document path, e.g. <c>p.Address.City</c> → element path <c>"Address.City"</c> and the <c>City</c>
     /// property. Each hop may be a <see cref="MemberExpression"/> (scalar access) or an

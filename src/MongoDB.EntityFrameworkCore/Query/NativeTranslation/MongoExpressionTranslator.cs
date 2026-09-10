@@ -907,24 +907,45 @@ internal sealed partial class MongoExpressionTranslator
 
             case MethodCallExpression call when TryMatchRegexMethod(call, out var kind, out var receiver, out var termExpr):
             {
-                if (!TryResolveMember(Unwrap(receiver), out var property, out var fieldPath, out var receiverIsOuter))
-                    return null; // receiver must resolve to a bare string field
+                MongoExpression fieldNode;
+                IProperty? property = null;
+                var receiverIsOuter = false;
 
-                // An outer-scoped receiver reached from the NEW element-scope translators (Count(pred)/
-                // quantifier, both built with innerPrefix: null) is still out of EF-421's scope — MongoRegexExpression
-                // is strictly typed to MongoFieldExpression, and this shape would need MongoOuterFieldExpression's
-                // document-root-regardless-of-elementVariable rendering to be correct inside a $filter/$map.
-                // But an outer-scoped receiver reached from a PRE-EXISTING two-scope translator (NativeSelectManyBinder,
-                // NativeJoinScopeTranslator — both built with a real non-null innerPrefix) is NOT a new shape this
-                // plan needs to gate at all: TryResolveMember already resolves it to the correct, unprefixed
-                // OUTER-relative path, exactly as it did before this plan ever touched this method, so it renders
-                // correctly as a plain MongoFieldExpression (query-dialect $regularExpression, not $expr). Declining
-                // it here regressed x.Outer.Name.StartsWith(...) inside a join-scope Where predicate.
-                if (receiverIsOuter && _innerPrefix is null)
-                    return null;
+                if (TryResolveMember(Unwrap(receiver), out var receiverProperty, out var fieldPath, out receiverIsOuter))
+                {
+                    // An outer-scoped receiver reached from the NEW element-scope translators (Count(pred)/
+                    // quantifier, both built with innerPrefix: null) is still out of EF-421's scope — MongoRegexExpression
+                    // is strictly typed to MongoFieldExpression, and this shape would need MongoOuterFieldExpression's
+                    // document-root-regardless-of-elementVariable rendering to be correct inside a $filter/$map.
+                    // But an outer-scoped receiver reached from a PRE-EXISTING two-scope translator (NativeSelectManyBinder,
+                    // NativeJoinScopeTranslator — both built with a real non-null innerPrefix) is NOT a new shape this
+                    // plan needs to gate at all: TryResolveMember already resolves it to the correct, unprefixed
+                    // OUTER-relative path, exactly as it did before this plan ever touched this method, so it renders
+                    // correctly as a plain MongoFieldExpression (query-dialect $regularExpression, not $expr). Declining
+                    // it here regressed x.Outer.Name.StartsWith(...) inside a join-scope Where predicate.
+                    if (receiverIsOuter && _innerPrefix is null)
+                        return null;
 
-                if (property!.ClrType != typeof(string))
-                    return null;
+                    if (receiverProperty.ClrType != typeof(string))
+                        return null;
+
+                    property = receiverProperty;
+                    fieldNode = new MongoFieldExpression(receiverProperty, fieldPath!);
+                }
+                else if (TryResolveDistinctAliasComputedField(Unwrap(receiver), out var aliasFieldRef)
+                         && aliasFieldRef.Type == typeof(string))
+                {
+                    // EF-322 gap-2: the receiver is a Distinct alias whose flattened key part is a COMPUTED
+                    // expression (e.g. a string concatenation), so TryResolveMember above declined it (no
+                    // backing IProperty to hand back). RenderRegex only ever reads the field's document path,
+                    // never its property metadata, so the already-flattened alias reads back the same way any
+                    // other document field does. See TryResolveDistinctAliasComputedField's own remarks.
+                    fieldNode = aliasFieldRef;
+                }
+                else
+                {
+                    return null; // receiver must resolve to a bare string field or a computed Distinct alias
+                }
 
                 var termNode = TranslateValue(Unwrap(termExpr), property);
                 if (termNode is null)
@@ -939,7 +960,7 @@ internal sealed partial class MongoExpressionTranslator
                     // conservatively to a NON-outer term at a NON-outer receiver scope — a cross-scope
                     // field-to-field pair (e.g. one side reached through a join) is a separate, not-yet-supported
                     // shape and declines here, same as an ordinary unsupported term shape would.
-                    if (receiverIsOuter
+                    if (property is null || receiverIsOuter
                         || !TryResolveMember(Unwrap(termExpr), out var termProperty, out var termFieldPath, out var termIsOuter)
                         || termIsOuter
                         || termProperty.ClrType != typeof(string))
@@ -950,8 +971,7 @@ internal sealed partial class MongoExpressionTranslator
                     termNode = new MongoFieldExpression(termProperty, termFieldPath);
                 }
 
-                var fieldExpr3 = new MongoFieldExpression(property, fieldPath!);
-                return new MongoRegexExpression(fieldExpr3, kind, termNode, negated: false);
+                return new MongoRegexExpression(fieldNode, kind, termNode, negated: false);
             }
 
             // --- Quantifiers over an owned (embedded) collection: source.Any() / Any(pred) / All(pred) ---
@@ -1093,6 +1113,19 @@ internal sealed partial class MongoExpressionTranslator
             // TryResolveMember, fail to resolve a property from a constant node, and decline.
             case ConstantExpression { Value: bool literalBool }:
                 return new MongoConstantExpression(literalBool, forSerialization: null);
+
+            // --- Bare boolean query-parameter predicate root (e.g. `data.Contains(p + "Const")` inside a
+            // `Where` whose lambda parameter it never references) ---
+            //
+            // EF Core's own parameter extraction hoists a predicate subtree that doesn't reference the query
+            // source out to a single query parameter BEFORE this translator ever sees it — so a predicate like
+            // `c => data.Contains(someVariable + "SomeConstant")` (no reference to `c`) arrives here as a bare
+            // bool-typed parameter node, not a MethodCallExpression. Must sit alongside the literal-bool case
+            // above rather than fall through to the bare-boolean-MEMBER default below (which only tries
+            // TryResolveMember and would decline a non-member node) — same query-dialect fate as a literal
+            // bool: RenderNode's catch-all wraps it as `{ $expr: <placeholder> }`.
+            case var parameterNode when node.Type == typeof(bool) && NativeQueryParameter.TryGetQueryParameterName(parameterNode, out var boolParamName):
+                return new MongoParameterExpression(boolParamName, forSerialization: null);
 
             // --- Bare boolean member access (c.Active) ---
 

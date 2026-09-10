@@ -34,7 +34,12 @@ internal sealed class MongoRegexExpression : MongoExpression
     /// <summary>
     /// Creates a <see cref="MongoRegexExpression"/>.
     /// </summary>
-    /// <param name="field">The document field being tested.</param>
+    /// <param name="field">
+    /// The document field being tested: a <c>MongoFieldExpression</c> for an ordinary property, or a
+    /// <c>MongoElementRefExpression</c> for a value with no backing <c>IProperty</c> — e.g. a projected
+    /// <c>Distinct()</c>'s own COMPUTED alias (EF-322 gap-2). Both render identically here: only the document
+    /// path is ever read (see <c>MongoQueryLanguageRenderer.RenderRegex</c>), never property metadata.
+    /// </param>
     /// <param name="kind">The kind of regex test to perform (StartsWith, EndsWith, or Contains).</param>
     /// <param name="term">
     /// The search term: a <c>MongoConstantExpression</c> or <c>MongoParameterExpression</c> of string, or a
@@ -43,7 +48,7 @@ internal sealed class MongoRegexExpression : MongoExpression
     /// form inside <c>$expr</c>.
     /// </param>
     /// <param name="negated"><see langword="true"/> for a negated match (<c>!s.StartsWith(...)</c>).</param>
-    public MongoRegexExpression(MongoFieldExpression field, MongoRegexKind kind, MongoExpression term, bool negated)
+    public MongoRegexExpression(MongoExpression field, MongoRegexKind kind, MongoExpression term, bool negated)
     {
         Field = field;
         Kind = kind;
@@ -51,9 +56,12 @@ internal sealed class MongoRegexExpression : MongoExpression
         Negated = negated;
     }
 
-    /// <summary>The document field being tested.</summary>
+    /// <summary>
+    /// The document field being tested — a <c>MongoFieldExpression</c> or a <c>MongoElementRefExpression</c>;
+    /// see the constructor's own remarks.
+    /// </summary>
     // 'new' hides the inherited Expression.Field(...) method; used for semantic clarity.
-    public new MongoFieldExpression Field { get; }
+    public new MongoExpression Field { get; }
 
     /// <summary>The kind of regex test to perform (StartsWith, EndsWith, or Contains).</summary>
     public MongoRegexKind Kind { get; }

@@ -367,6 +367,39 @@ public class MongoExpressionTranslatorTests
     }
 
     // ------------------------------------------------------------------
+    // Test 4b: bare boolean query PARAMETER predicate root → MongoParameterExpression
+    //
+    // EF Core's own parameter extraction hoists a WHOLE predicate subtree that never references the
+    // query source parameter into a single query parameter — e.g.
+    // `data.Contains(someVariable + "SomeConstant")` inside `c => ...` doesn't reference `c` at all, so by
+    // the time this translator sees it, the predicate body is just a bare bool-typed parameter reference
+    // (SQL Server renders this as `WHERE @Contains = CAST(1 AS bit)`). This must translate the same way a
+    // literal `true`/`false` predicate root does (the ConstantExpression{bool} case a few lines below) —
+    // not decline — so the query stays native instead of falling back to driver-LINQ.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Bare_boolean_query_parameter_predicate_root_translates_to_parameter_expression()
+    {
+        var entityType = GetEntityType<Customer>();
+
+#if EF8 || EF9
+        const string paramName = QueryCompilationContext.QueryParameterPrefix + "Contains_0";
+        Expression body = Expression.Parameter(typeof(bool), paramName);
+#else
+        const string paramName = "__Contains_0";
+        Expression body = new Microsoft.EntityFrameworkCore.Query.QueryParameterExpression(paramName, typeof(bool));
+#endif
+
+        var translator = NewTranslator(entityType);
+        var translated = translator.TryTranslate(body, out var result);
+
+        Assert.True(translated);
+        var mongoParam = Assert.IsType<MongoParameterExpression>(result);
+        Assert.Equal(paramName, mongoParam.Name);
+    }
+
+    // ------------------------------------------------------------------
     // Test 5: bare boolean field → MongoFieldExpression (bool)
     // ------------------------------------------------------------------
 
@@ -1084,7 +1117,8 @@ public class MongoExpressionTranslatorTests
 
         Assert.True(translator.TryTranslate(predicate.Body, out var result));
         var regex = Assert.IsType<MongoRegexExpression>(result);
-        Assert.Equal("Name", regex.Field.ElementName);
+        var field = Assert.IsType<MongoFieldExpression>(regex.Field);
+        Assert.Equal("Name", field.ElementName);
         Assert.Equal(MongoRegexKind.StartsWith, regex.Kind);
         Assert.False(regex.Negated);
         var constant = Assert.IsType<MongoConstantExpression>(regex.Term);
@@ -1167,7 +1201,8 @@ public class MongoExpressionTranslatorTests
 
         Assert.True(translator.TryTranslate(predicate.Body, out var result));
         var regex = Assert.IsType<MongoRegexExpression>(result);
-        Assert.Equal("Name", regex.Field.ElementName);
+        var field = Assert.IsType<MongoFieldExpression>(regex.Field);
+        Assert.Equal("Name", field.ElementName);
         Assert.Equal(MongoRegexKind.StartsWith, regex.Kind);
         Assert.False(regex.Negated);
         var term = Assert.IsType<MongoFieldExpression>(regex.Term);

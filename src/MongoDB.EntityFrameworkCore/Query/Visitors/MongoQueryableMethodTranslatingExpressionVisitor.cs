@@ -468,6 +468,54 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // TryConfirmReferenceIncludeChain's own post-terminal check, which this does not touch.
             mongoQueryExpression.Select.MarkNotNativelyRepresentable();
         }
+        // A pure collection Include sitting directly over a join scope (EF-322) — e.g.
+        // Customers.Include(c => c.Orders).Join(Orders, ...).Where(...).OrderBy(...).Select(c => c). The
+        // recognizer alone can't tell whether the underlying join scope is native-eligible, so this arm gates
+        // through the same IsSingleEligibleNativeJoinScope check the bare ti.Outer/ti.Inner pass-through arm
+        // below uses, and confirms/registers the join's own $lookup the same way (AddLookup +
+        // MarkReferenceIncludeConfirmed + MarkJoinLookupConfirmed). On success, do NOT mark non-representable —
+        // mirroring IsSingleLevelCollectionIncludeSelector, the collection Include's own $lookup is not touched
+        // here at all; it registers unconditionally, later, during native shaper/projection-binding compilation.
+        // An ineligible join scope (composite key, chained/ineligible join, …) marks non-representable
+        // explicitly, matching the reference-Include-chain arm's own "recognized but declined" disposition.
+        //
+        // OUTER-ROOTED ONLY, BY DESIGN. When the join's key selectors structurally resolve to the SAME
+        // navigation the Include targets (measured: the common case — Customers.Include(c => c.Orders)
+        // .Join(Orders, c => c.CustomerID, o => o.CustomerID, ...) resolves the join to Customer.Orders,
+        // exactly the navigation being Included), collectionJoin.Lookup's alias (GetLookupAlias(navigation))
+        // collides with the alias the Include's OWN registration will claim later in
+        // MongoProjectionBindingExpressionVisitor. AddLookup dedupes by alias, so registering both under the
+        // same name would collapse them into ONE $lookup — but the join needs it $unwind-ed (ForceUnwind, for
+        // row multiplication) while the Include needs the bare array (for the nested collection field); one
+        // $lookup cannot be both. Renaming the join's own output field to a distinct alias resolves the
+        // collision, and is safe ONLY because nothing downstream reads the join's Inner side for THIS shape
+        // (the selector reaches Outer only, wrapped in Include) — the Outer entity shapes straight off the
+        // root document regardless of this join's alias (see the bare pass-through arm's own remark below).
+        // A ti.Inner-rooted Include (mirror shape, an Include on the JOINED-IN side) is declined here rather
+        // than renamed: RebindInnerShaperToOuterQuery already baked the ORIGINAL alias into Inner's own
+        // entity-reading shaper at join-processing time, before this arm ever runs, so renaming here would
+        // silently strand that shaper reading a field that's no longer there.
+        else if (TryGetCollectionIncludeOverJoinScope(selector) is { EntityExpression: MemberExpression { Member.Name: "Outer" } } collectionInclude)
+        {
+            if (IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var collectionJoin))
+            {
+                var includeNavigation = (INavigation)collectionInclude.Navigation!;
+                if (collectionJoin.Lookup!.As == LookupExpression.GetLookupAlias(includeNavigation))
+                {
+                    var renamedAlias = $"{collectionJoin.Lookup.As}_join";
+                    collectionJoin.Alias = renamedAlias;
+                    collectionJoin.Lookup.As = renamedAlias;
+                }
+
+                mongoQueryExpression.AddLookup(collectionJoin.Lookup);
+                mongoQueryExpression.Select.MarkReferenceIncludeConfirmed();
+                mongoQueryExpression.Select.MarkJoinLookupConfirmed();
+            }
+            else
+            {
+                mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+            }
+        }
         // A BARE `x.Outer`/`x.Inner` selector over an eligible single-level native join (EF-392, Task 5).
         //
         // What happens WITHOUT this branch (measured before adding it): IsTransparentIdentifierMemberAccessSelector
@@ -1154,6 +1202,46 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            && includeExpression.EntityExpression == selector.Parameters[0]
            && navigation.IsCollection
            && !navigation.IsEmbedded();
+
+    /// <summary>
+    /// Recognizes <paramref name="selector"/> as the synthetic <c>Select(ti =&gt; IncludeExpression(ti.Outer,
+    /// nav, ti.Inner))</c> (or the <c>ti.Inner</c>-rooted mirror) EF's nav-expansion generates for a single-level
+    /// COLLECTION <c>Include</c> whose owner is one side of a user-authored <c>Join</c>/<c>GroupJoin</c>/
+    /// <c>LeftJoin</c> — e.g. <c>Customers.Include(c =&gt; c.Orders).Join(Orders, ...).Where(...).Select(c =&gt;
+    /// c)</c>. This is the fourth partition none of the three sibling recognizers admit: unlike
+    /// <see cref="IsSingleLevelCollectionIncludeSelector"/> the <c>EntityExpression</c> is not the bare
+    /// parameter but a one-hop <c>.Outer</c>/<c>.Inner</c> member access off a <c>TransparentIdentifier</c>
+    /// parameter; unlike <see cref="TryGetReferenceIncludeChain(LambdaExpression)"/> and
+    /// <see cref="TryGetMixedReferenceAndCollectionIncludeChain"/> there is no reference Include anywhere in the
+    /// chain — <see cref="TryWalkIncludeChain"/> is deliberately NOT reused here, since both of those recognizers
+    /// require at least one reference level (<c>TryGetReferenceIncludeChain</c> requires ONLY reference levels;
+    /// the mixed one requires at least one alongside the collection).
+    /// <para>
+    /// Like <see cref="IsSingleLevelCollectionIncludeSelector"/>, the collection's own <c>$lookup</c> is NOT
+    /// registered here — it registers later, unconditionally, during projection binding
+    /// (<see cref="MongoProjectionBindingExpressionVisitor"/>'s <c>IncludeExpression</c> case). What this
+    /// recognizer alone cannot do is confirm the JOIN scope's own <c>$lookup</c> (the user's <c>Join</c> call,
+    /// recorded as an unconfirmed candidate by <see cref="NativeTranslation.NativeSlotPopulator"/>) — the caller
+    /// must still gate that through <see cref="IsSingleEligibleNativeJoinScope"/> before confirming, exactly as
+    /// the bare <c>ti.Outer</c>/<c>ti.Inner</c> pass-through arm does.
+    /// </para>
+    /// </summary>
+    internal static IncludeExpression? TryGetCollectionIncludeOverJoinScope(LambdaExpression selector)
+    {
+        if (selector.Parameters.Count != 1
+            || !selector.Parameters[0].Type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return selector.Body is IncludeExpression { Navigation: INavigation navigation } includeExpression
+               && navigation.IsCollection
+               && !navigation.IsEmbedded()
+               && includeExpression.EntityExpression is MemberExpression { Member.Name: "Outer" or "Inner" } member
+               && member.Expression == selector.Parameters[0]
+            ? includeExpression
+            : null;
+    }
 
     /// <summary>
     /// Recognizes <paramref name="selector"/> as a chain of one or more single-level reference

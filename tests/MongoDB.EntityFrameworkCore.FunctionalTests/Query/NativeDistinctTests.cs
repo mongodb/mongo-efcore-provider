@@ -509,6 +509,22 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     [Fact]
+    public void Distinct_then_Count_with_predicate_over_computed_projection_key_goes_native()
+    {
+        // The Distinct's own projected key is a COMPUTED expression (a string concatenation), not a bare
+        // field — e.g. Select(c => new { A = c.CustomerID + c.City }).Distinct().Count(n => n.A.StartsWith(...)).
+        // Distinct groups by {Country, City} in SeedOrders, so Country+City collapses to the same 3 distinct
+        // combinations as the plain-field tests above: "USNYC", "UKLondon", "FRParis" — 2 of which start with "U".
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(Distinct_then_Count_with_predicate_over_computed_projection_key_goes_native));
+
+        var count = db.Entities.Select(o => new { Combined = o.Country + o.City }).Distinct()
+            .Count(r => r.Combined.StartsWith("U"));
+
+        Assert.Equal(2, count);
+    }
+
+    [Fact]
     public void Distinct_then_Where_then_Count_goes_native()
     {
         // A Where composed before a bare Count() both land natively after the $group: the Where's $match into

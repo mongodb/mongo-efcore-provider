@@ -727,11 +727,18 @@ internal static class NativeGroupByBinder
         var flatten = new List<MongoProjection>();
         foreach (var projection in select.Projection)
         {
-            if (projection.Expression is not MongoFieldExpression field || !HasDefaultKeySerialization(field.Property))
+            // A bare field ref needs the default-key-serialization guard (its readback has no backing
+            // IProperty — see the method's own remarks). A COMPUTED key part (e.g. c.CustomerID + c.City)
+            // has no IProperty at all, so no value converter/BsonRepresentation can apply to it; it is
+            // exactly as safe to read back via MongoElementRefExpression as any other computed projection
+            // member already is on the ordinary (non-Distinct) projection path — same renderer, same
+            // generic-CLR-type readback, just sourced from "_id.<alias>" instead of a top-level field.
+            if (projection.Expression is MongoFieldExpression field && !HasDefaultKeySerialization(field.Property))
                 return false;
-            keyParts.Add(new MongoGroupingKeyPart(projection.Alias, field));
+
+            keyParts.Add(new MongoGroupingKeyPart(projection.Alias, projection.Expression));
             flatten.Add(new MongoProjection(projection.Alias,
-                new MongoElementRefExpression("_id." + projection.Alias, field.Type)));
+                new MongoElementRefExpression("_id." + projection.Alias, projection.Expression.Type)));
         }
 
         select.ClearProjections();
