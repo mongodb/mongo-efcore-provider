@@ -15,7 +15,9 @@
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
@@ -686,11 +688,17 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         Assert.Empty(actual.children);
     }
 
+    // RENAMED (EF-358) from "..._is_null_when_null" / "..._is_null_when_missing". The old names asserted a
+    // provider contract that never existed: the old "null" was produced by EF Core's IncludeExpression fixup
+    // (in MongoProjectionBindingRemovingExpressionVisitor.IncludeCollection) being skipped because the
+    // provider's computed value was null, leaving `children` at the POCO's own default — not by any provider
+    // guarantee. EF-358 always materializes a real (possibly empty) collection, so the fixup always runs and
+    // every class reads back the same regardless of its field initializer.
     [Theory]
     [InlineData(QueryTrackingBehavior.TrackAll)]
     [InlineData(QueryTrackingBehavior.NoTracking)]
     [InlineData(QueryTrackingBehavior.NoTrackingWithIdentityResolution)]
-    public void OwnedEntity_non_nullable_collection_is_null_when_null(QueryTrackingBehavior queryTrackingBehavior)
+    public void OwnedEntity_non_nullable_collection_is_empty_when_null(QueryTrackingBehavior queryTrackingBehavior)
     {
         var collection = database.CreateCollection<SimpleNonNullableCollection>(values: queryTrackingBehavior);
         collection.WriteTestDocs([
@@ -701,14 +709,14 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: x => x.UseQueryTrackingBehavior(queryTrackingBehavior));
 
         var actual = db.Entities.First();
-        Assert.Null(actual.children);
+        Assert.Empty(actual.children);
     }
 
     [Theory]
     [InlineData(QueryTrackingBehavior.TrackAll)]
     [InlineData(QueryTrackingBehavior.NoTracking)]
     [InlineData(QueryTrackingBehavior.NoTrackingWithIdentityResolution)]
-    public void OwnedEntity_nullable_collection_is_null_when_null(QueryTrackingBehavior queryTrackingBehavior)
+    public void OwnedEntity_nullable_collection_is_empty_when_null(QueryTrackingBehavior queryTrackingBehavior)
     {
         var collection = database.CreateCollection<SimpleNullableCollection>(values: queryTrackingBehavior);
         collection.WriteTestDocs([
@@ -719,14 +727,15 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: x => x.UseQueryTrackingBehavior(queryTrackingBehavior));
 
         var actual = db.Entities.First();
-        Assert.Null(actual.children);
+        Assert.NotNull(actual.children);
+        Assert.Empty(actual.children);
     }
 
     [Theory]
     [InlineData(QueryTrackingBehavior.TrackAll)]
     [InlineData(QueryTrackingBehavior.NoTracking)]
     [InlineData(QueryTrackingBehavior.NoTrackingWithIdentityResolution)]
-    public void OwnedEntity_non_nullable_collection_is_null_when_missing(QueryTrackingBehavior queryTrackingBehavior)
+    public void OwnedEntity_non_nullable_collection_is_empty_when_missing(QueryTrackingBehavior queryTrackingBehavior)
     {
         var collection = database.CreateCollection<MissingNullableCollection>(values: queryTrackingBehavior);
         collection.WriteTestDocs([new MissingNullableCollection()]);
@@ -735,14 +744,14 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: x => x.UseQueryTrackingBehavior(queryTrackingBehavior));
 
         var actual = db.Entities.First();
-        Assert.Null(actual.children);
+        Assert.Empty(actual.children);
     }
 
     [Theory]
     [InlineData(QueryTrackingBehavior.TrackAll)]
     [InlineData(QueryTrackingBehavior.NoTracking)]
     [InlineData(QueryTrackingBehavior.NoTrackingWithIdentityResolution)]
-    public void OwnedEntity_nullable_collection_is_null_when_missing(QueryTrackingBehavior queryTrackingBehavior)
+    public void OwnedEntity_nullable_collection_is_empty_when_missing(QueryTrackingBehavior queryTrackingBehavior)
     {
         var collection = database.CreateCollection<MissingNullableCollection>(values: queryTrackingBehavior);
         collection.WriteTestDocs([new MissingNullableCollection()]);
@@ -751,7 +760,84 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             optionsBuilderAction: x => x.UseQueryTrackingBehavior(queryTrackingBehavior));
 
         var actual = db.Entities.First();
-        Assert.Null(actual.children);
+        Assert.NotNull(actual.children);
+        Assert.Empty(actual.children);
+    }
+
+    // EF-358: the projection path (Select over a CollectionShaperExpression) used to disagree with whole-entity
+    // materialization for a missing or explicitly-null stored array — it produced a null CLR collection instead
+    // of an empty one. Owned-collection projections require AsNoTracking (EF Core cannot track an owned entity
+    // without its owner in the result), so this covers the same "missing"/"null" states as the whole-entity
+    // theories above, but through Select rather than whole-entity materialization.
+    [Fact]
+    public void OwnedEntity_collection_projection_is_empty_when_missing()
+    {
+        var collection = database.CreateCollection<MissingNullableCollection>();
+        collection.WriteTestDocs([new MissingNullableCollection()]);
+        using var db = SingleEntityDbContext.Create<MissingNullableCollection, SimpleNonNullableCollection>(collection);
+
+        var actual = db.Entities.AsNoTracking().Select(e => e.children).First();
+        Assert.NotNull(actual);
+        Assert.Empty(actual);
+    }
+
+    [Fact]
+    public void OwnedEntity_collection_projection_is_empty_when_null()
+    {
+        var collection = database.CreateCollection<SimpleNonNullableCollection>();
+        collection.WriteTestDocs([new SimpleNonNullableCollection { children = null! }]);
+        using var db = SingleEntityDbContext.Create(collection);
+
+        var actual = db.Entities.AsNoTracking().Select(e => e.children).First();
+        Assert.NotNull(actual);
+        Assert.Empty(actual);
+    }
+
+    // EF-358: a collection shaper nested inside another owned collection's item (FirstLevel.children[i].children)
+    // never gets a bound bsonArray variable — BsonDocumentInjectingExpressionVisitor doesn't recurse into a
+    // CollectionShaperExpression's InnerShaper — so it always takes the "else" branch that reads the BsonArray
+    // straight off the parent element via CreateGetBsonArray. That's a different code path from the root-level
+    // case above, so it needs its own missing/null coverage.
+    [Fact]
+    public void OwnedEntity_nested_collection_is_empty_when_grandchild_array_missing()
+    {
+        var collection = database.CreateCollection<FirstLevelWithMissingGrandchildren>();
+        collection.WriteTestDocs([
+            new FirstLevelWithMissingGrandchildren
+            {
+                _id = Guid.NewGuid(),
+                day = DayOfWeek.Monday,
+                reference = new() { name = "ref", day = DayOfWeek.Friday },
+                children = [new SecondLevelMissingChildren { day = DayOfWeek.Tuesday }]
+            }
+        ]);
+        using var db = SingleEntityDbContext.Create<FirstLevelWithMissingGrandchildren, FirstLevel>(collection);
+
+        var actual = db.Entities.First();
+        var secondLevel = Assert.Single(actual.children);
+        Assert.NotNull(secondLevel.children);
+        Assert.Empty(secondLevel.children);
+    }
+
+    [Fact]
+    public void OwnedEntity_nested_collection_is_empty_when_grandchild_array_null()
+    {
+        var collection = database.CreateCollection<FirstLevelWithNullGrandchildren>();
+        collection.WriteTestDocs([
+            new FirstLevelWithNullGrandchildren
+            {
+                _id = Guid.NewGuid(),
+                day = DayOfWeek.Monday,
+                reference = new() { name = "ref", day = DayOfWeek.Friday },
+                children = [new SecondLevelNullChildren { day = DayOfWeek.Tuesday, children = null! }]
+            }
+        ]);
+        using var db = SingleEntityDbContext.Create<FirstLevelWithNullGrandchildren, FirstLevel>(collection);
+
+        var actual = db.Entities.First();
+        var secondLevel = Assert.Single(actual.children);
+        Assert.NotNull(secondLevel.children);
+        Assert.Empty(secondLevel.children);
     }
 
     [Fact]
@@ -1350,12 +1436,17 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [Fact]
     public void OwnedEntity_collection_can_be_tested_for_null()
     {
+        // The predicate `e.children == null` is unaffected by EF-358 — only the materialized value of the
+        // matched row flips from `null` to `[]`. `inserted` and `expected` must stay separate objects: setting
+        // `children = []` on `inserted` would write an empty array to the document instead of leaving the
+        // field unset, changing what gets seeded rather than just what gets asserted.
         var collection = database.CreateCollection<A>();
-        var expected = new A { _id = "1" };
+        var inserted = new A { _id = "1" };
+        var expected = new A { _id = "1", children = [] };
 
         {
             using var db = SingleEntityDbContext.Create(collection);
-            db.Entities.AddRange(expected, new A { _id = "2", children = [new B { name = "child1" }, new B { name = "child2" }] });
+            db.Entities.AddRange(inserted, new A { _id = "2", children = [new B { name = "child1" }, new B { name = "child2" }] });
             db.SaveChanges();
         }
 
@@ -1369,12 +1460,17 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [Fact]
     public void OwnedEntity_collection_field_can_be_tested_for_null()
     {
+        // Same reasoning as OwnedEntity_collection_can_be_tested_for_null immediately above: the predicate
+        // `e.children == null` is unaffected (still matches row "1" by its missing stored field); only the
+        // MATERIALIZED value flips from `null` to `[]` post-EF-358. `inserted` (children left unset) is what
+        // gets written, unchanged; `expected` (children = []) is the separate comparison value.
         var collection = database.CreateCollection<AField>();
-        var expected = new AField { _id = "1" };
+        var inserted = new AField { _id = "1" };
+        var expected = new AField { _id = "1", children = [] };
 
         {
             using var db = SingleEntityDbContext.Create(collection, mb => mb.Entity<AField>().OwnsMany(f => f.children));
-            db.Entities.AddRange(expected,
+            db.Entities.AddRange(inserted,
                 new AField { _id = "2", children = [new B { name = "child1" }, new B { name = "child2" }] });
             db.SaveChanges();
         }
@@ -1477,6 +1573,174 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             var thirdLevel = Assert.Single(secondLevel.children);
             Assert.Equal(expectedReference.name, thirdLevel.reference.name);
         }
+    }
+
+    [Fact]
+    public void OwnedEntity_filtered_count_in_projection_translates()
+    {
+        var collection = database.CreateCollection<CountBlog>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(new CountBlog
+            {
+                _id = "1",
+                Title = "Blog1",
+                Posts = [new CountPost { Rank = 1 }, new CountPost { Rank = 0 }, new CountPost { Rank = 2 }]
+            });
+            db.SaveChanges();
+        }
+
+        {
+            // Assert the count is evaluated server-side (a $map/$sum over the array, equivalent to
+            // filter+size) rather than by materializing the owned CountPost entities and counting client-side.
+            var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
+            using var db = SingleEntityDbContext.Create(collection, loggerFactory,
+                optionsBuilderAction: o => o.EnableSensitiveDataLogging());
+            var result = Assert.Single(db.Entities.Select(b => new { b.Title, N = b.Posts.Count(p => p.Rank > 0) }));
+
+            Assert.Equal("Blog1", result.Title);
+            Assert.Equal(2, result.N);
+
+            var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+            Assert.Contains("$map", message);
+            Assert.Contains("$sum", message);
+        }
+    }
+
+    [Fact]
+    public void OwnedEntity_unfiltered_count_in_projection_translates()
+    {
+        var collection = database.CreateCollection<CountBlog>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.Add(new CountBlog
+            {
+                _id = "1",
+                Title = "Blog1",
+                Posts = [new CountPost { Rank = 1 }, new CountPost { Rank = 0 }]
+            });
+            db.SaveChanges();
+        }
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            var result = Assert.Single(db.Entities.Select(b => new { b.Title, N = b.Posts.Count() }));
+
+            Assert.Equal("Blog1", result.Title);
+            Assert.Equal(2, result.N);
+        }
+    }
+
+    [Fact]
+    public void OwnedEntity_collection_bare_count_projection_returns_element_count()
+    {
+        var collection = database.CreateCollection<A>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.AddRange(
+                new A { _id = "1", children = [new B { name = "child1" }, new B { name = "child2" }] },
+                new A { _id = "2", children = [] },
+                new A { _id = "3", children = null! });
+            db.SaveChanges();
+        }
+
+        // Deliberately a default *tracking* query (unlike EF-357's own tests, which required
+        // AsNoTracking): the bare Count must stay a server-side scalar, not a materialized owned-entity
+        // shaper, or EF Core's tracking-materializer rejects it ("owned entity without a corresponding
+        // owner").
+        var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
+        using var db2 = SingleEntityDbContext.Create(collection, loggerFactory,
+            optionsBuilderAction: o => o.EnableSensitiveDataLogging());
+
+        var counts = db2.Entities.OrderBy(e => e._id).Select(e => e.children.Count).ToList();
+        Assert.Equal([2, 0, 0], counts);
+
+        // A null stored array must report 0, not throw: the driver renders a bare Count as a server-side
+        // $size, which rejects a null array, so this needs an $ifNull normalization first.
+        var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        Assert.Contains("$ifNull", message);
+        Assert.Contains("$size", message);
+
+        var longCounts = db2.Entities.OrderBy(e => e._id).Select(e => e.children.LongCount()).ToList();
+        Assert.Equal([2L, 0L, 0L], longCounts);
+
+        var filteredLongCounts = db2.Entities.OrderBy(e => e._id)
+            .Select(e => e.children.LongCount(c => c.name == "child1"))
+            .ToList();
+        Assert.Equal([1L, 0L, 0L], filteredLongCounts);
+    }
+
+    [Fact]
+    public void OwnedEntity_collection_bare_count_projection_over_missing_element_returns_zero()
+    {
+        // A document where the array element is OMITTED entirely (not stored as BSON null) is a distinct
+        // case from an explicit null: in an aggregation expression a missing field is not equal to BSON
+        // null, so a plain null-equality guard does not catch it and $size still throws on "missing". Only
+        // $ifNull (which normalizes missing the same as null) handles both.
+        var collection = database.CreateCollection<A>();
+        database.GetCollection<BsonDocument>(collection.CollectionNamespace).InsertOne(new BsonDocument("_id", "1"));
+
+        using var db = SingleEntityDbContext.Create(collection);
+        var counts = db.Entities.Select(e => e.children.Count).ToList();
+
+        Assert.Equal([0], counts);
+    }
+
+    [Fact]
+    public void OwnedEntity_collection_count_projection_wrapped_in_arithmetic_returns_element_count()
+    {
+        var collection = database.CreateCollection<A>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.AddRange(
+                new A { _id = "1", children = [new B { name = "child1" }, new B { name = "child2" }] },
+                new A { _id = "2", children = null! });
+            db.SaveChanges();
+        }
+
+        using var db2 = SingleEntityDbContext.Create(collection);
+        var doubled = db2.Entities.OrderBy(e => e._id)
+            .Select(e => new { e._id, N = e.children.Count * 2 })
+            .ToList();
+
+        Assert.Equal([4, 0], doubled.Select(r => r.N).ToArray());
+    }
+
+    [Fact]
+    public void OwnedEntity_collection_filtered_count_projection_with_null_children_returns_zero()
+    {
+        var collection = database.CreateCollection<A>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.AddRange(
+                new A { _id = "1", children = [new B { name = "child1" }, new B { name = "child2" }] },
+                new A { _id = "2", children = null! });
+            db.SaveChanges();
+        }
+
+        using var db2 = SingleEntityDbContext.Create(collection);
+        var counts = db2.Entities.OrderBy(e => e._id)
+            .Select(e => e.children.Count(c => c.name == "child1"))
+            .ToList();
+
+        Assert.Equal([1, 0], counts);
+    }
+
+    record CountBlog
+    {
+        public string _id { get; set; }
+        public string Title { get; set; }
+        public List<CountPost> Posts { get; set; }
+    }
+
+    record CountPost
+    {
+        public int Rank { get; set; }
     }
 
     record A
@@ -1595,6 +1859,38 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     private record Reference
     {
         public string name { get; set; }
+        public DayOfWeek day { get; set; }
+    }
+
+    // Write-side shapes for OwnedEntity_nested_collection_is_empty_when_grandchild_array_missing/null: mirror
+    // FirstLevel/SecondLevel but the SecondLevel-equivalent either omits its `children` element entirely
+    // (SecondLevelMissingChildren) or is written with it explicitly null (SecondLevelNullChildren), so the
+    // stored document's grandchild array is absent/null exactly as MissingNullableCollection does for the
+    // root-level case above. Read back through FirstLevel/SecondLevel/ThirdLevel, unchanged.
+    private record FirstLevelWithMissingGrandchildren
+    {
+        public Guid _id { get; set; }
+        public List<SecondLevelMissingChildren> children { get; set; }
+        public DayOfWeek day { get; set; }
+        public Reference reference { get; set; }
+    }
+
+    private record SecondLevelMissingChildren
+    {
+        public DayOfWeek day { get; set; }
+    }
+
+    private record FirstLevelWithNullGrandchildren
+    {
+        public Guid _id { get; set; }
+        public List<SecondLevelNullChildren> children { get; set; }
+        public DayOfWeek day { get; set; }
+        public Reference reference { get; set; }
+    }
+
+    private record SecondLevelNullChildren
+    {
+        public List<ThirdLevel> children { get; set; }
         public DayOfWeek day { get; set; }
     }
 

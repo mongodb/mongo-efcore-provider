@@ -71,6 +71,124 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     private static readonly Type[] AllowedQueryableExtensions =
         [typeof(Queryable), typeof(MongoQueryableExtensions), typeof(Driver.Linq.MongoQueryable)];
 
+    private static readonly HashSet<string> OrderingMethodNames =
+    [
+        nameof(Queryable.OrderBy), nameof(Queryable.OrderByDescending),
+        nameof(Queryable.ThenBy), nameof(Queryable.ThenByDescending)
+    ];
+
+    /// <summary>
+    /// Elides a <c>ThenBy</c>/<c>ThenByDescending</c> ordering whose key selector matches an earlier ordering
+    /// already established in the same <c>OrderBy</c>/<c>ThenBy</c> chain (see <see cref="KeySelectorsMatch"/>
+    /// for what "matches" means here). Once a key fully determines the sort order, re-ordering by it again -
+    /// in either direction - is a no-op; left untouched, the driver's LINQ provider renders both orderings
+    /// into a single <c>$sort</c> stage and MongoDB rejects the resulting document for its duplicate field
+    /// name (EF-253 / CSHARP-5690). Relational EF providers already drop this kind of redundant ordering from
+    /// the generated SQL, so this mirrors their behavior rather than merely working around the driver
+    /// limitation. Orderings that supply an explicit <see cref="IComparer{T}"/> are left untouched (in either
+    /// role - as a candidate for elision, or as prior state a later ordering could match) since a custom
+    /// comparer can make an otherwise-identical key selector not actually redundant.
+    /// </summary>
+    internal static Expression ElideRedundantOrderings(Expression expression)
+    {
+        if (expression is not MethodCallExpression { Arguments.Count: > 0 } methodCall
+            || !AllowedQueryableExtensions.Contains(methodCall.Method.DeclaringType))
+        {
+            return expression;
+        }
+
+        if (!OrderingMethodNames.Contains(methodCall.Method.Name))
+        {
+            var visitedSource = ElideRedundantOrderings(methodCall.Arguments[0]);
+            if (ReferenceEquals(visitedSource, methodCall.Arguments[0]))
+            {
+                return methodCall;
+            }
+
+            var updatedArgs = methodCall.Arguments.ToArray();
+            updatedArgs[0] = visitedSource;
+            return methodCall.Update(methodCall.Object, updatedArgs);
+        }
+
+        // Collect the contiguous ordering chain, outer (last-applied) to inner (first-applied), then
+        // reverse it so it can be replayed in chronological order.
+        var chain = new List<MethodCallExpression>();
+        var node = methodCall;
+        while (AllowedQueryableExtensions.Contains(node.Method.DeclaringType) && OrderingMethodNames.Contains(node.Method.Name))
+        {
+            chain.Add(node);
+            if (node.Arguments[0] is not MethodCallExpression next)
+            {
+                break;
+            }
+
+            node = next;
+        }
+
+        chain.Reverse();
+
+        Expression current = ElideRedundantOrderings(chain[0].Arguments[0]);
+        var seenKeys = new List<LambdaExpression>();
+        foreach (var call in chain)
+        {
+            // OrderBy/OrderByDescending establish a brand new ordering - even mid-chain (e.g.
+            // .OrderBy(k).OrderByDescending(k)) - superseding whatever came before, so only ThenBy/
+            // ThenByDescending calls continue an existing chain for duplicate-detection purposes.
+            if (call.Method.Name is nameof(Queryable.OrderBy) or nameof(Queryable.OrderByDescending))
+            {
+                seenKeys.Clear();
+            }
+
+            var keySelector = call.Arguments.Count == 2 ? call.Arguments[1].UnwrapLambdaFromQuote() : null;
+            var isDuplicate = keySelector is not null && seenKeys.Any(seen => KeySelectorsMatch(seen, keySelector));
+
+            if (keySelector is not null)
+            {
+                seenKeys.Add(keySelector);
+            }
+
+            if (isDuplicate)
+            {
+                continue;
+            }
+
+            if (ReferenceEquals(current, call.Arguments[0]))
+            {
+                current = call;
+                continue;
+            }
+
+            var newArgs = call.Arguments.ToArray();
+            newArgs[0] = current;
+            current = call.Update(call.Object, newArgs);
+        }
+
+        return current;
+    }
+
+    /// <summary>
+    /// Whether two ordering key selectors are both a *direct*, single-hop access to the same member of the
+    /// lambda parameter (e.g. <c>x =&gt; x.CustomerId</c>), modulo the identity of their (distinct) lambda
+    /// parameters. Deliberately narrow to a single hop: the driver's LINQ provider renders a direct property
+    /// access as-is against its raw field path, so two orderings on the *same* directly-accessed member are
+    /// what collide into a single <c>$sort</c> document with a duplicate field name (EF-253 / CSHARP-5690).
+    /// Anything requiring computation - a further member hop off that property (<c>x.Name.Length</c>), a
+    /// method call (<c>Math.Truncate(x.Amount)</c>), etc. - instead gets materialized by EF into its own
+    /// uniquely-named projected field even when repeated, so it never collides and must not be elided here.
+    /// </summary>
+    internal static bool KeySelectorsMatch(LambdaExpression a, LambdaExpression b)
+    {
+        if (a.Parameters.Count != 1 || b.Parameters.Count != 1)
+        {
+            return false;
+        }
+
+        var membersA = a.Parameters[0].MatchMemberAccess<MemberInfo>(a.Body);
+        var membersB = b.Parameters[0].MatchMemberAccess<MemberInfo>(b.Body);
+
+        return membersA is [var memberA] && membersB is [var memberB] && memberA == memberB;
+    }
+
     /// <summary>
     /// Visit the <see cref="MethodCallExpression"/> to capture the cardinality and final expression
     /// when found on a <see cref="Queryable"/> method.
@@ -80,7 +198,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// otherwise <see cref="QueryCompilationContext.NotTranslatedExpression"/>.</returns>
     protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
     {
-        _finalExpression ??= methodCallExpression;
+        _finalExpression ??= ElideRedundantOrderings(methodCallExpression);
 
         var method = methodCallExpression.Method;
 #if !EF8
@@ -700,29 +818,24 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // Employee.Manager.Manager): a pure ".Outer"* chain reaches the root, one ending in ".Inner"
         // reaches a prior hop. Checking this structurally (not by comparing entity types) is required for
         // self-referencing chains, where the target and through entity types are the same.
+        //
+        // A key selector can also reach the FK property through an owned/embedded navigation nested
+        // inside the root or the through-hop (e.g. Buyer.Address.RegionId, EF-380): PeelEmbeddedSegments
+        // strips those leading member accesses (closest to the FK property) before the Outer/Inner walk
+        // runs, so the walk still sees a pure Outer/Inner chain.
+        var (outerInnerTarget, embeddedSegments) = PeelEmbeddedSegments(
+            GetKeySelectorTargetObject(outerKeySelector.Body), outerKeySelector.Parameters[0]);
         var (isDirectFromRoot, throughLevel) = AnalyzeKeySelectorTarget(
-            GetKeySelectorTargetObject(outerKeySelector.Body), outerKeySelector.Parameters[0], priorJoinCount);
+            outerInnerTarget, outerKeySelector.Parameters[0], priorJoinCount);
 
         INavigation? navigation = null;
         JoinInfo? throughJoin = null;
+        string? embeddedPath = null;
 
+        IEntityType? anchorEntityType = null;
         if (isDirectFromRoot)
         {
-            if (fkPropertyName != null)
-            {
-                // IsOnDependent disambiguates a self-referencing relationship declared with both a
-                // reference nav (e.g. Manager) and its inverse collection nav (e.g. DirectReports):
-                // both share the same IForeignKey, so matching on ForeignKey.Properties alone matches
-                // either one, and picking the collection nav flips the $lookup's join direction
-                // (LookupExpression branches on Navigation.IsOnDependent).
-                navigation = outerEntityType.GetNavigations()
-                    .FirstOrDefault(n => n.TargetEntityType == innerEntityType
-                                         && n.IsOnDependent
-                                         && n.ForeignKey.Properties.Any(p => p.Name == fkPropertyName));
-            }
-
-            navigation ??= outerEntityType.GetNavigations()
-                .FirstOrDefault(n => n.TargetEntityType == innerEntityType);
+            anchorEntityType = outerEntityType;
         }
         else if (throughLevel is { } level && level >= 1 && level <= priorJoinCount)
         {
@@ -730,19 +843,53 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // through (found by position, not by IEntityType — see above) and remember it so the
             // $lookup's localField can be prefixed with that intermediate's alias.
             throughJoin = outerQueryExpression.Joins[level - 1];
-            var throughEntityType = throughJoin.InnerEntityType;
+            anchorEntityType = throughJoin.InnerEntityType;
+        }
+
+        if (anchorEntityType != null)
+        {
+            // Walk any embedded segments via the navigation graph (not CLR type) so sibling owned
+            // navigations sharing a CLR type (e.g. ShippingAddress/BillingAddress) resolve to the right
+            // one, using each segment's mapped element name for the $lookup localField path.
+            var searchEntityType = anchorEntityType;
+            if (embeddedSegments.Count > 0)
+            {
+                var elementSegments = new List<string>();
+                foreach (var segment in embeddedSegments)
+                {
+                    if (searchEntityType.FindNavigation(segment) is not { } segmentNavigation)
+                    {
+                        // Can't resolve this embedded path — fall back to searching the anchor itself, as
+                        // if there were no embedded segments (matches pre-EF-380 behavior).
+                        searchEntityType = anchorEntityType;
+                        elementSegments = null;
+                        break;
+                    }
+
+                    searchEntityType = segmentNavigation.TargetEntityType;
+                    elementSegments.Add(searchEntityType.GetContainingElementName() ?? segment);
+                }
+
+                if (elementSegments is { Count: > 0 })
+                {
+                    embeddedPath = string.Join(".", elementSegments);
+                }
+            }
 
             if (fkPropertyName != null)
             {
-                // See the IsOnDependent comment in the isDirectFromRoot branch above — same ambiguity
-                // applies here.
-                navigation = throughEntityType.GetNavigations()
+                // IsOnDependent disambiguates a self-referencing relationship declared with both a
+                // reference nav (e.g. Manager) and its inverse collection nav (e.g. DirectReports):
+                // both share the same IForeignKey, so matching on ForeignKey.Properties alone matches
+                // either one, and picking the collection nav flips the $lookup's join direction
+                // (LookupExpression branches on Navigation.IsOnDependent).
+                navigation = searchEntityType.GetNavigations()
                     .FirstOrDefault(n => n.TargetEntityType == innerEntityType
                                          && n.IsOnDependent
                                          && n.ForeignKey.Properties.Any(p => p.Name == fkPropertyName));
             }
 
-            navigation ??= throughEntityType.GetNavigations()
+            navigation ??= searchEntityType.GetNavigations()
                 .FirstOrDefault(n => n.TargetEntityType == innerEntityType);
         }
 
@@ -775,8 +922,16 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             };
             if (throughJoin != null)
             {
-                // Transitive join: match against the already-unwound intermediate document.
-                lookup.LocalField = $"{throughJoin.Alias}.{lookup.LocalField}";
+                // Transitive join: match against the already-unwound intermediate document; an
+                // owned/embedded navigation (EF-380) inserts its path between the intermediate's alias
+                // and the field.
+                var throughAlias = embeddedPath != null ? $"{throughJoin.Alias}.{embeddedPath}" : throughJoin.Alias;
+                lookup.LocalField = $"{throughAlias}.{lookup.LocalField}";
+            }
+            else if (embeddedPath != null)
+            {
+                // Direct from root, but through an owned/embedded navigation (EF-380).
+                lookup.LocalField = $"{embeddedPath}.{lookup.LocalField}";
             }
 
             joinInfo.Lookup = lookup;
@@ -862,6 +1017,45 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             MethodCallExpression call when call.Method.IsEFPropertyMethod() && call.Arguments.Count == 2 => call.Arguments[0],
             _ => null
         };
+
+    /// <summary>
+    /// Strips leading member/<c>EF.Property</c> accesses off <paramref name="targetObject"/> that are
+    /// NOT part of the join chain's synthetic <c>Outer</c>/<c>Inner</c> transparent-identifier plumbing —
+    /// i.e. real navigation hops through an owned/embedded type nested inside the root or a prior join
+    /// (e.g. the "Address" in <c>x.Inner.Address.RegionId</c>, EF-380). Returns what's left (handed to
+    /// <see cref="AnalyzeKeySelectorTarget"/> to resolve against the root/prior-join chain) plus the
+    /// stripped segment names in root-to-leaf order.
+    /// </summary>
+    private static (Expression? RemainingTarget, List<string> EmbeddedSegments) PeelEmbeddedSegments(
+        Expression? targetObject, ParameterExpression parameter)
+    {
+        var embeddedSegments = new List<string>();
+        var current = targetObject;
+        while (current != null && !ReferenceEquals(current, parameter))
+        {
+            var (name, next) = current.RemoveConvert() switch
+            {
+                MemberExpression member when member.IsTransparentIdentifierOuterOrInnerAccess() => (null, null),
+                MemberExpression member => (member.Member.Name, member.Expression),
+                MethodCallExpression call when call.Method.IsEFPropertyMethod()
+                    && call.Arguments.Count == 2
+                    && call.Arguments[1] is ConstantExpression { Value: string propertyName } => (propertyName, call.Arguments[0]),
+                _ => (null, null)
+            };
+
+            if (name == null || next == null)
+            {
+                // Either we've reached the Outer/Inner chain plumbing, or an unrecognized shape — either
+                // way, hand off the rest to AnalyzeKeySelectorTarget as-is.
+                break;
+            }
+
+            embeddedSegments.Insert(0, name);
+            current = next;
+        }
+
+        return (current, embeddedSegments);
+    }
 
     /// <summary>
     /// Walks a chain of <c>.Outer</c>/<c>.Inner</c> member accesses from <paramref name="targetObject"/>

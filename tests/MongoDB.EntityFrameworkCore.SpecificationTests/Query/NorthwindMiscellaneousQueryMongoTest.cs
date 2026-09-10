@@ -3456,15 +3456,11 @@ OrderDetails.
 
     public override async Task OrderBy_ThenBy_same_column_different_direction(bool async)
     {
-        // Fails: Multiple ordering issue EF-253
-        Assert.Contains(
-            "Duplicate element name '_id'.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.OrderBy_ThenBy_same_column_different_direction(async)))
-            .Message);
+        await base.OrderBy_ThenBy_same_column_different_direction(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
             """);
     }
 
@@ -3963,14 +3959,15 @@ OrderDetails.{ "$match" : { "$and" : [{ "$expr" : { "$eq" : [{ "$add" : [{ "$toI
 
     public override async Task Skip_0_Take_0_works_when_parameter(bool async)
     {
-        // Fails: Take zero EF-254
-        Assert.Contains(
-            "Value is not greater than 0: 0",
-            (await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => base.Skip_0_Take_0_works_when_parameter(async))).Message);
+        await base.Skip_0_Take_0_works_when_parameter(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$skip" : 0 }, { "$match" : { "_id" : { "$type" : -1 } } }
+            """,
+            //
+            """
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$skip" : 1 }, { "$limit" : 1 }
             """);
     }
 

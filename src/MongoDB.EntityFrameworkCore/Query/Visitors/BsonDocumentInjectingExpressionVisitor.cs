@@ -77,6 +77,10 @@ internal sealed class BsonDocumentInjectingExpressionVisitor : ExpressionVisitor
 
                     AllVariables.Add(arrayVariable);
 
+                    // A missing/null array must become an empty collection, not null. That coalescing
+                    // happens in MongoProjectionBindingRemovingExpressionVisitor at point of use, not here:
+                    // its VisitBinary hard-casts this Assign's right-hand side to UnaryExpression, so it
+                    // must stay one (no Coalesce/Condition wrapper).
                     var expressions = new List<Expression>
                     {
                         Expression.Assign(
@@ -84,10 +88,7 @@ internal sealed class BsonDocumentInjectingExpressionVisitor : ExpressionVisitor
                             Expression.TypeAs(
                                 collectionShaperExpression.Projection,
                                 typeof(BsonArray))),
-                        Expression.Condition(
-                            Expression.Equal(arrayVariable, Expression.Constant(null, arrayVariable.Type)),
-                            Expression.Constant(null, collectionShaperExpression.Type),
-                            collectionShaperExpression)
+                        collectionShaperExpression
                     };
 
                     return Expression.Block(
