@@ -2111,7 +2111,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactTitle" : { "$regularExpression" : { "pattern" : "^[Ow]*(?=[^Ow])ner$", "options" : "s" } } } }
+            Customers.{ "$match" : { "ContactTitle" : { "$regularExpression" : { "pattern" : "^[Ow]*(?![Ow])ner$", "options" : "s" } } } }
             """);
     }
 
@@ -2149,7 +2149,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactTitle" : { "$regularExpression" : { "pattern" : "^Own(?<=[^er])[er]*$", "options" : "s" } } } }
+            Customers.{ "$match" : { "ContactTitle" : { "$regularExpression" : { "pattern" : "^Own(?<![er])[er]*$", "options" : "s" } } } }
             """);
     }
 
@@ -2159,7 +2159,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactTitle" : { "$regularExpression" : { "pattern" : "^\\s*(?!\\s)Owner(?<!\\s)\\s*$", "options" : "s" } } } }
+            Customers.{ "$match" : { "ContactTitle" : { "$regularExpression" : { "pattern" : "^(?:\\s*(?!\\s)|(?=\\s*$))Owner(?<!\\s)\\s*$", "options" : "s" } } } }
             """);
     }
 
