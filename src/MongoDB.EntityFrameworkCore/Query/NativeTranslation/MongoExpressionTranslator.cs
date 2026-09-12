@@ -1353,6 +1353,17 @@ internal sealed partial class MongoExpressionTranslator
             }
         }
 
+        // A constructed anonymous-type/DTO comparison (`new { x = c.City } == new { x = "London" }`) declines
+        // outright for NotEqual: EF's own NotEqual lowering for this shape is a documented upstream bug
+        // (dotnet/efcore#36412) independent of any provider — the driver-LINQ fallback already reproduces it
+        // (executes and returns wrong data, asserted via the EqualException accepted in
+        // Where_compare_constructed_multi_value_not_equal). Admitting NotEqual here would let native reach the
+        // SAME wrong answer instead of the clean translate-time decline it previously gave under NativeOnly, so
+        // this stays declined regardless of member count — only Equal is in this ticket's scope.
+        if (nodeType == ExpressionType.NotEqual
+            && leftUnwrapped.TryGetProjectionMembers(out _) && rightUnwrapped.TryGetProjectionMembers(out _))
+            return null;
+
         // --- Field-to-field / arithmetic-operand shape: always routes to $expr ---
 
         var generalOp = MapComparisonOperator(nodeType);
@@ -1855,6 +1866,36 @@ internal sealed partial class MongoExpressionTranslator
         // MongoAggregationExpressionRenderer.CanRender, not here.
         if (node is BinaryExpression comparisonOperand && IsComparison(comparisonOperand.NodeType))
             return TranslateNode(node);
+
+        // A constructed anonymous-type/DTO VALUE operand (`new { x = c.City } == new { x = "London" }`,
+        // EF's structural-equality lowering for `new { ... } == new { ... }`). Each member recurses through
+        // this SAME method, so a member may itself be a field, constant, parameter, or computed value — a
+        // member that declines declines the whole construction, same discipline as every other multi-operand
+        // shape in this method (Coalesce, the conditional branches, arithmetic).
+        //
+        // Every admitted member is additionally required to be default-serialized
+        // (AllFieldsDefaultSerialized): NativeProjectionBinder.TryGetDocumentConstructionLeaf's
+        // MongoDocumentConstructionExpression instances already carry that invariant (each member there is
+        // pre-filtered to a default-serialized field), which is exactly why
+        // MongoExpressionTranslator.AllFieldsDefaultSerialized's own dispatcher answers unconditionally "true"
+        // for this node type via its catch-all rather than recursing into Members. Admitting a non-default-
+        // serialized member here without the same check would silently violate that invariant — the member
+        // would render as a raw, un-converted value inside $expr while every other call site assumes it never
+        // can.
+        if (node.TryGetProjectionMembers(out var constructionMembers))
+        {
+            var translatedMembers = new List<(string, MongoExpression)>();
+            foreach (var (memberName, memberValue) in constructionMembers)
+            {
+                var translated = TranslateOperand(memberValue, allowNumericWidening);
+                if (translated is null || !AllFieldsDefaultSerialized(translated))
+                    return null;
+
+                translatedMembers.Add((memberName, translated));
+            }
+
+            return new MongoDocumentConstructionExpression(node, translatedMembers);
+        }
 
         // A bare constant/parameter operand has no associated property for serialization context — these
         // are pure numeric $expr operands, not stored field values, so they serialize via BsonValue.Create.
