@@ -2071,58 +2071,49 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── 34. C1 (EF-403 fix wave): a RELATIONAL cast comparison over a NULLABLE property must NOT leave ──
-    //        the TYPE-BRACKETED query dialect
+    // ── 34. C1 (EF-403 fix wave, revised): a RELATIONAL cast comparison over a NULLABLE property must NOT ──
+    //        leave the TYPE-BRACKETED query dialect
     //
-    // THE DEFECT. Task 7's site-B fall-through moved a `member <op> constant` comparison out of the
-    // type-bracketed query dialect and into $expr. MongoDB's query dialect TYPE-BRACKETS a relational operator:
-    // {Price: {$lt: 100}} matches neither a stored BSON null nor a MISSING element. The $expr form does not --
-    // $toInt/$toDouble map both of those to null, and BSON TOTAL ORDER puts Null BELOW every number, so a
-    // null/missing row satisfies $lt and $lte. MEASURED end to end on a live server, over the fixture below:
+    // THE ORIGINAL DEFECT. A `member <op> constant` comparison whose cast the query-native branch can't absorb
+    // falls through to $expr. MongoDB's query dialect TYPE-BRACKETS a relational operator: {Price: {$lt: 100}}
+    // matches neither a stored BSON null nor a MISSING element. A BARE $expr form does not -- $toInt/$toDouble
+    // map both of those to null, and BSON TOTAL ORDER puts Null BELOW every number, so a null/missing row would
+    // satisfy $lt and $lte. MEASURED end to end on a live server, over the fixture below:
     //
-    //   {Price: {$lt: 100}}                        -> [p1_50]                        <- released packages
-    //   {$expr: {$lt: [{$toInt: "$Price"}, 100]}}  -> [p1_50, p3_null, p4_missing]    <- the fall-through
+    //   {Price: {$lt: 100}}                        -> [p1_50]                        <- query dialect (bracketed)
+    //   {$expr: {$lt: [{$toInt: "$Price"}, 100]}}  -> [p1_50, p3_null, p4_missing]    <- bare $expr (NOT bracketed)
     //
     // This is the invariant MongoExpressionNegator's class remarks already record ("silent wrong data, under
     // default Native, on an extremely ordinary input"), re-opened from the other direction: there it is about
-    // NEGATING a type-bracketed comparison, here about a comparison that WAS bracketed and stopped being so.
+    // NEGATING a type-bracketed comparison, here about a comparison that WAS bracketed and would otherwise stop
+    // being so.
     //
-    // *** THE SPELLING MATTERS, AND THAT IS THE EXPENSIVE FACT TO RE-DERIVE. *** Whether the DRIVER (i.e. the
-    // released behaviour, since MongoQueryMode does not exist at v10.0.2/v9.1.2/v8.4.2) type-brackets this
-    // comparison depends on HOW THE CAST IS SPELLED, and it is not predictable from the property alone.
-    // MEASURED, same fixture, same server, driver-LINQ emission:
+    // THE FIX (this revision). Rather than declining the whole comparison whenever the property is nullable,
+    // MongoExpressionTranslator.NeedsNumericTypeBracket flags exactly this case and conjoins the $expr
+    // comparison with a MongoNumericTypeBracketExpression -- {Price: {$type: "number"}} -- reproducing the
+    // query dialect's own type bracket exactly:
     //
-    //   LIFTED   (int?)x.Price < 100   ->  {Price: {$lt: 100}}                      cast DROPPED, bracketed
-    //   UNLIFTED (int)x.Price  < 100   ->  {$expr: {$lt: [{$toInt: "$Price"}, 100]}} cast RENDERED, NOT bracketed
+    //   {$and: [{Price: {$type: "number"}}, {$expr: {$lt: [{$toInt: "$Price"}, 100]}}]}  -> [p1_50]
     //
-    // The LIFTED spelling is the one Northwind uses (its pre-slice baseline for Decimal_cast_to_double_works is
-    // {"UnitPrice": {"$gt": 100.0}}), and it is the only one on which this guard is OBSERVABLE at all: for the
-    // unlifted spelling the fallback the guard routes to emits the very $expr form the guard is avoiding, so
-    // rows are unchanged either way. A test written against the unlifted spelling would therefore be VACUOUS --
-    // it would pass with the guard deleted. Every legged assertion below is deliberately LIFTED.
+    // "number" (not {$ne: null}) is what makes this an EXACT complement rather than an approximation: {$ne:
+    // null} excludes a missing/null field but admits any OTHER foreign BSON type (e.g. a stray string) that a
+    // genuine query-dialect $lt would still type-bracket away. This codebase's recorded rule for exactly this
+    // family is MongoExpressionNegator's: EXACT COMPLEMENT OR DECLINE, NEVER AN APPROXIMATION -- {$type:
+    // "number"} is what lets this case satisfy "exact complement" instead of falling back to "decline".
     //
-    // The provider cannot key the guard on which spelling the driver happens to drop -- that is the driver's own
-    // per-shape behaviour, unknowable at translation time -- so it must instead never emit a form that admits
-    // null/missing for an operator whose query-dialect form excludes them. That is exactly what the guard does.
+    // ALL FOUR RELATIONAL OPERATORS get the SAME bracket, not just < and <=, which are the only ones that
+    // measurably differ WITHOUT it (Null sorts below every number, so $gt/$gte happen to exclude the ragged
+    // rows even from a bare $expr -- an ACCIDENT of collation order this fix does not rely on).
     //
-    // WHY ALL FOUR RELATIONAL OPERATORS AND NOT JUST < AND <=. Only < and <= measurably differ: because Null
-    // sorts below every number, $gt/$gte happen to exclude the ragged rows too, so they happen to agree. That
-    // agreement is an ACCIDENT of collation order, not a property of the rendering. The alternative fix --
-    // emitting a {Price: {$ne: null}} conjunct -- is NOT the exact complement either (type bracketing also
-    // excludes every foreign BSON type; $ne: null does not), and this codebase's recorded rule for exactly this
-    // family is MongoExpressionNegator's: EXACT COMPLEMENT OR DECLINE, NEVER AN APPROXIMATION. Declining is the
-    // only exact option available, so it is the one taken.
+    // WHAT THIS RESTORES: NorthwindWhereQueryMongoTest.Decimal_cast_to_double_works is exactly this shape over
+    // Product.UnitPrice (decimal?) with $gt, so it now goes NATIVE again, emitting the $and/$type form above
+    // instead of reverting to driver-LINQ.
     //
-    // WHAT IT COSTS, stated rather than hidden: NorthwindWhereQueryMongoTest.Decimal_cast_to_double_works is
-    // exactly this shape over Product.UnitPrice (decimal?), so the slice's ONLY specification conversion from
-    // the fall-through reverts to driver-LINQ and its baseline returns to {"UnitPrice": {"$gt": 100.0}}. It was
-    // NOT returning wrong rows (it uses $gt); it reverts because the guard is keyed on a property of the
-    // RENDERING, not on which operators luck out.
-    //
-    // TWO CONTROLS keep the guard from being satisfied by over-declining: EQUALITY over the same nullable
-    // property still goes native ($eq/$ne partition every BSON value including null and missing, so moving one
-    // into $expr changes nothing), and a RELATIONAL comparison over a NON-NULLABLE property still goes native
-    // (that is the owner-ruled CLR-correct divergence of case 27, which this guard must not revoke).
+    // TWO CONTROLS keep the fix from being read as "every relational cast now needs bracketing": EQUALITY over
+    // the same nullable property still goes native WITHOUT a bracket ($eq/$ne partition every BSON value
+    // including null and missing, so moving one into $expr changes nothing), and a RELATIONAL comparison over a
+    // NON-NULLABLE property still goes native WITHOUT a bracket (that is the owner-ruled CLR-correct divergence
+    // of case 27, which this fix must not touch -- see case 34b immediately below, unchanged by this revision).
 
     private class NullablePriceRow
     {
@@ -2134,27 +2125,28 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 
     [Fact]
-    public void Relational_cast_comparison_over_a_nullable_property_declines_instead_of_untype_bracketing()
+    public void Relational_cast_comparison_over_a_nullable_property_goes_native_with_a_numeric_type_bracket()
     {
         var collection = SeedNullablePrices(
-            nameof(Relational_cast_comparison_over_a_nullable_property_declines_instead_of_untype_bracketing));
+            nameof(Relational_cast_comparison_over_a_nullable_property_goes_native_with_a_numeric_type_bracket));
 
-        // All four relational operators DECLINE (NativeOnly throws) and fall back to the type-bracketed rows
-        // under Native -- identical to explicit DriverLinq. The expected sets are asserted PER OPERATOR, not
-        // just for parity: parity alone would pass if BOTH paths returned the ragged rows.
-        AssertRelationalCastDeclines(collection, x => (int?)x.Price < 100, "returned p1_50");
-        AssertRelationalCastDeclines(collection, x => (int?)x.Price <= 100, "returned p1_50");
-        AssertRelationalCastDeclines(collection, x => (int?)x.Price > 100, "returned p2_150");
-        AssertRelationalCastDeclines(collection, x => (int?)x.Price >= 100, "returned p2_150");
+        // All four relational operators now go NATIVE (NativeOnly succeeds) and agree with Native and
+        // DriverLinq -- all three answer the same, type-bracketed rows. The expected sets are asserted PER
+        // OPERATOR, not just for parity: parity alone would pass if all three paths returned the ragged rows.
+        AssertRelationalCastGoesNative(collection, x => (int?)x.Price < 100, ["p1_50"]);
+        AssertRelationalCastGoesNative(collection, x => (int?)x.Price <= 100, ["p1_50"]);
+        AssertRelationalCastGoesNative(collection, x => (int?)x.Price > 100, ["p2_150"]);
+        AssertRelationalCastGoesNative(collection, x => (int?)x.Price >= 100, ["p2_150"]);
 
-        // The mirrored branch (member on the RIGHT) has its own separate CanFallThroughToExpr call site.
-        AssertRelationalCastDeclines(collection, x => 100 > (int?)x.Price, "returned p1_50");
+        // The mirrored branch (member on the RIGHT) has its own separate NeedsNumericTypeBracket call site.
+        AssertRelationalCastGoesNative(collection, x => 100 > (int?)x.Price, ["p1_50"]);
 
         // decimal? -> double?, the exact Northwind Decimal_cast_to_double_works shape.
-        AssertRelationalCastDeclines(collection, x => (double?)x.Amount < 100, "returned p1_50");
-        AssertRelationalCastDeclines(collection, x => (double?)x.Amount > 100, "returned p2_150");
+        AssertRelationalCastGoesNative(collection, x => (double?)x.Amount < 100, ["p1_50"]);
+        AssertRelationalCastGoesNative(collection, x => (double?)x.Amount > 100, ["p2_150"]);
 
-        // CONTROL 1 -- equality over the SAME nullable property still falls through and goes native.
+        // CONTROL 1 -- equality over the SAME nullable property still falls through and goes native WITHOUT a
+        // bracket ($eq/$ne partition every BSON value including null and missing, so a bracket would be inert).
         using (var eqNativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly))
         {
             Assert.Equal(
@@ -2163,8 +2155,9 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                     .OrderBy(x => x.Label).Select(x => x.Label).ToList());
         }
 
-        // CONTROL 2 -- a relational cast comparison over a NON-NULLABLE property still goes native (case 27's
-        // owner-ruled shape). Weight: p1 = 1.6, p2 = 0.5, p3 = 2.5, p4 = MISSING -> (int) 1, 0, 2, null.
+        // CONTROL 2 -- a relational cast comparison over a NON-NULLABLE property still goes native WITHOUT a
+        // bracket (case 27's owner-ruled shape, untouched by NeedsNumericTypeBracket). Weight: p1 = 1.6,
+        // p2 = 0.5, p3 = 2.5, p4 = MISSING -> (int) 1, 0, 2, null.
         using (var relNativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly))
         {
             Assert.Equal(
@@ -2217,39 +2210,30 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Throws<InvalidOperationException>(() => oracle.Entities.AsNoTracking().ToList());
     }
 
-    private void AssertRelationalCastDeclines(
+    private void AssertRelationalCastGoesNative(
         IMongoCollection<NullablePriceRow> collection,
         Expression<Func<NullablePriceRow, bool>> predicate,
-        string expectedOutcome)
+        string[] expectedLabels)
     {
-        // Every leg -- including the routing one -- goes through DescribeOutcome and projects LABELS rather than
-        // whole entities, for two reasons that were both found the hard way. (a) Outcome STRINGS make a
-        // regression NAME the ragged rows it wrongly admitted ("returned p1_50,p3_null,p4_missing") instead of
-        // only reporting a missing exception, which is what an Assert.Throws routing leg would have said.
-        // (b) A WHOLE-ENTITY read of this fixture throws on its own, because p4_missing omits the non-nullable
-        // Weight -- so a .Where(predicate).ToList() routing leg fails with InvalidOperationException under the
+        // Every leg projects LABELS rather than whole entities, for the same reason case 34's original form
+        // did: a WHOLE-ENTITY read of this fixture throws on its own, because p4_missing omits the non-nullable
+        // Weight -- so a .Where(predicate).ToList() leg would fail with InvalidOperationException under the
         // very mutation it is meant to catch, hiding the rows. See case 34b, which asserts that materialization
         // throw as its own premise.
         using var nativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly);
-        var nativeOnlyOutcome = DescribeOutcome(
-            () => nativeOnly.Entities.AsNoTracking().Where(predicate).OrderBy(x => x.Label).Select(x => x.Label)
-                .ToList(),
-            l => l);
-        Assert.Equal("threw NativeTranslationNotSupportedException", nativeOnlyOutcome);
+        Assert.Equal(
+            expectedLabels,
+            nativeOnly.Entities.AsNoTracking().Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList());
 
         using var native = CreateNullablePriceContext(collection, MongoQueryMode.Native);
-        var nativeOutcome = DescribeOutcome(
-            () => native.Entities.AsNoTracking().Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList(),
-            l => l);
+        Assert.Equal(
+            expectedLabels,
+            native.Entities.AsNoTracking().Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList());
 
         using var driverLinq = CreateNullablePriceContext(collection, MongoQueryMode.DriverLinq);
-        var driverLinqOutcome = DescribeOutcome(
-            () => driverLinq.Entities.AsNoTracking().Where(predicate).OrderBy(x => x.Label).Select(x => x.Label)
-                .ToList(),
-            l => l);
-
-        Assert.Equal(expectedOutcome, nativeOutcome);
-        Assert.Equal(nativeOutcome, driverLinqOutcome);
+        Assert.Equal(
+            expectedLabels,
+            driverLinq.Entities.AsNoTracking().Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList());
     }
 
     // Four rows, three states for the nullable properties: a value (twice, so an assertion is never a one-row

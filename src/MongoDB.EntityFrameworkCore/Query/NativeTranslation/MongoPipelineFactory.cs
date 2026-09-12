@@ -399,9 +399,20 @@ internal sealed class MongoPipelineFactory
         var group = new BsonDocument { { "_id", id } };
         foreach (var acc in grouping.Accumulators)
         {
-            var operand = acc.Operand is null
-                ? (BsonValue)1
-                : MongoAggregationExpressionRenderer.Render(acc.Operand, placeholders);
+            BsonValue operand;
+            if (acc.Operand is null)
+            {
+                operand = 1;
+            }
+            else
+            {
+                operand = MongoAggregationExpressionRenderer.Render(acc.Operand, placeholders);
+                if (acc.Operand is MongoConstantExpression or MongoParameterExpression)
+                {
+                    operand = new BsonDocument("$literal", operand);
+                }
+            }
+
             group.Add(acc.OutputField, new BsonDocument(acc.Operator, operand));
         }
 

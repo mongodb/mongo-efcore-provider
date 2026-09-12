@@ -155,6 +155,36 @@ public class MongoExpressionNegatorTests
         Assert.Equal(BsonDocument.Parse("{ Rank: { $nin: [1, 2] } }"), RenderOf(negated));
     }
 
+    // EF-322: a MongoInExpression over a MongoValueListExpression (per-element independently-parameterized
+    // $in values) must flip Negated exactly like the constant-enumerable case above — TryFlipNegatedFlag
+    // passes Values through unchanged regardless of its shape, so this pins that the value-list shape is not
+    // silently dropped by the query-dialect gate TryNegate applies first.
+    [Fact]
+    public void In_over_value_list_flips_to_nin()
+    {
+        var rank = GetPostProperty(nameof(Post.Rank));
+        var inExpr = new MongoInExpression(
+            new MongoFieldExpression(rank, "Rank"),
+            new MongoValueListExpression(
+            [
+                new MongoParameterExpression("p0", rank),
+                new MongoParameterExpression("p1", rank)
+            ]),
+            negated: false);
+
+        Assert.True(MongoExpressionNegator.TryNegate(inExpr, out var negated));
+        var negatedIn = Assert.IsType<MongoInExpression>(negated);
+        Assert.True(negatedIn.Negated);
+
+        var placeholders = new PlaceholderTable();
+        var rendered = Assert.IsType<BsonDocument>(new MongoQueryLanguageRenderer().Render(negatedIn, placeholders));
+        var rankCond = Assert.IsType<BsonDocument>(rendered["Rank"]);
+        var ninArray = Assert.IsType<BsonArray>(rankCond["$nin"]);
+        Assert.Equal(2, ninArray.Count);
+        Assert.Equal("p0", placeholders.Entries[0].Name);
+        Assert.Equal("p1", placeholders.Entries[1].Name);
+    }
+
     // EF-382 review fix: MongoArrayContainsExpression's negator arm (MongoExpressionNegator.cs:174-178) had
     // zero test coverage — mutation-checked by the reviewer, deleting the arm or forgetting to flip Negated
     // left every suite green. Reached via All(p => p.ArrayField.Contains(c)), which negates the element

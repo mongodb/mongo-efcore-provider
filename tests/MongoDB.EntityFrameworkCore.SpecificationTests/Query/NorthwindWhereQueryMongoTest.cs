@@ -921,7 +921,7 @@ Products.{ "$match" : { "$expr" : { "$eq" : [{ "$not" : [{ "$gt" : ["$_id", 50] 
 
         AssertMql(
             """
-            Products.{ "$match" : { "$expr" : { "$eq" : [{ "$not" : "$Discontinued" }, { "$gt" : ["$_id", 50] }] } } }
+            Products.{ "$match" : { "$expr" : { "$eq" : [{ "$not" : ["$Discontinued"] }, { "$gt" : ["$_id", 50] }] } } }
             """);
     }
 
@@ -941,7 +941,7 @@ Products.{ "$match" : { "$expr" : { "$eq" : [{ "$not" : [{ "$gt" : ["$_id", 50] 
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$not" : { "$gt" : 50 } } } }
+            Products.{ "$match" : { "$expr" : { "$ne" : [{ "$gt" : ["$_id", 50] }, true] } } }
             """);
     }
 
@@ -1371,7 +1371,7 @@ OrderDetails.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : 
 
         AssertMql(
             """
-Products.{ "$match" : { "UnitPrice" : { "$gt" : 100.0 } } }
+Products.{ "$match" : { "$and" : [{ "UnitPrice" : { "$type" : "number" } }, { "$expr" : { "$gt" : [{ "$toDouble" : "$UnitPrice" }, 100.0] } }] } }
 """);
     }
 
@@ -1683,7 +1683,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : 10 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_t" : null } }
+            Customers.{ "$match" : { } }
             """);
     }
 
@@ -1693,48 +1693,28 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : 10 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_t" : { "$ne" : null } } }
+            Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
             """);
     }
 
     public override async Task GetType_on_non_hierarchy3(bool async)
     {
-        // Fails: Entity equality issue EF-202 (driver-LINQ mode, which executes and returns wrong data).
-        // Native-only mode rejects the shape outright.
-        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
-            () => base.GetType_on_non_hierarchy3(async), typeof(EqualException));
+        await base.GetType_on_non_hierarchy3(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-                """
-                Customers.{ "$match" : { "_t" : null } }
-                """);
-        }
+        AssertMql(
+            """
+            Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
+            """);
     }
 
     public override async Task GetType_on_non_hierarchy4(bool async)
     {
-        // Fails: Entity equality issue EF-202 (driver-LINQ mode, which executes and returns wrong data).
-        // Native-only mode rejects the shape outright.
-        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
-            () => base.GetType_on_non_hierarchy4(async), typeof(EqualException));
+        await base.GetType_on_non_hierarchy4(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-                """
-                Customers.{ "$match" : { "_t" : { "$ne" : null } } }
-                """);
-        }
+        AssertMql(
+            """
+            Customers.{ "$match" : { } }
+            """);
     }
 
     public override async Task Case_block_simplification_works_correctly(bool async)
@@ -2214,7 +2194,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : ["$_id", { "$concat" : ["ALF", "KI"
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "ContactTitle" : 1 } }, { "$limit" : 3 }, { "$project" : { "_v" : "$ContactTitle", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$sort" : { "ContactTitle" : 1 } }, { "$limit" : 3 }, { "$group" : { "_id" : { "ContactTitle" : "$ContactTitle" } } }, { "$project" : { "ContactTitle" : "$_id.ContactTitle", "_id" : 0 } }
             """);
     }
 #endif

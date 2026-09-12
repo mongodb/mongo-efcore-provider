@@ -331,6 +331,26 @@ internal static class ExpressionExtensionMethods
             ? unaryExpression.Operand
             : expression;
 
+    // Types whose Equals(object) requires an exact runtime-type match, i.e. no cross-type equality.
+    private static readonly HashSet<Type> ExactTypeEqualityTypes =
+    [
+        typeof(bool), typeof(byte), typeof(sbyte), typeof(short), typeof(ushort),
+        typeof(int), typeof(uint), typeof(long), typeof(ulong), typeof(float), typeof(double),
+        typeof(decimal), typeof(char), typeof(string), typeof(Guid), typeof(DateTime),
+        typeof(DateTimeOffset), typeof(TimeSpan)
+    ];
+
+    /// <summary>
+    /// True when <paramref name="left"/> and <paramref name="right"/> are different <see cref="ExactTypeEqualityTypes"/>
+    /// members, so an <c>Equals(object)</c> call between them is guaranteed <see langword="false"/> at runtime
+    /// (e.g. <c>((int?)1).Equals((uint)2)</c>). Scoped to that set rather than any mismatched types, since an
+    /// arbitrary type's <c>Equals(object)</c> override could compare across types. Shared by
+    /// <c>MongoEFToLinqTranslatingExpressionVisitor</c> (driver-LINQ fallback) and
+    /// <c>MongoExpressionTranslator</c> (native), which must fold this shape identically.
+    /// </summary>
+    internal static bool AreMismatchedExactEqualityTypes(Type left, Type right)
+        => left != right && ExactTypeEqualityTypes.Contains(left) && ExactTypeEqualityTypes.Contains(right);
+
     /// <summary>
     /// Whether <paramref name="type"/> is one of EF Core's compiler-generated
     /// <c>TransparentIdentifier&lt;TOuter, TInner&gt;</c> constructions — the anonymous result type a join's

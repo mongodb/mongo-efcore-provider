@@ -30,7 +30,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <summary>
 /// EF-344 native <c>GroupBy(key).Select(aggregate)</c> → <c>$group</c>. Proves that a supported grouped
 /// projection (scalar or composite key + Count/Sum) executes as a native aggregation pipeline and
-/// materializes correct rows, and that unsupported shapes (computed key, computed operand, bare IGrouping)
+/// materializes correct rows, and that unsupported shapes (computed key, bare IGrouping)
 /// fall back to driver-LINQ under <see cref="MongoQueryMode.Native"/> yet throw
 /// <see cref="NativeTranslationNotSupportedException"/> under <see cref="MongoQueryMode.NativeOnly"/>.
 /// <see cref="MongoQueryMode.NativeOnly"/> is the "went native" signal (the emitted MQL is otherwise
@@ -144,20 +144,10 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     }
 
     [Fact]
-    public void GroupBy_computed_operand_falls_back_under_native_only()
+    public void GroupBy_computed_operand_goes_native()
     {
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
-            nameof(GroupBy_computed_operand_falls_back_under_native_only));
-
-        Assert.Throws<NativeTranslationNotSupportedException>(() =>
-            db.Entities.GroupBy(o => o.Country).Select(g => new { g.Key, T = g.Sum(o => o.Amount * 2) }).ToList());
-    }
-
-    [Fact]
-    public void GroupBy_computed_operand_runs_under_native()
-    {
-        using var db = CreateContext(SeedOrders(), MongoQueryMode.Native,
-            nameof(GroupBy_computed_operand_runs_under_native));
+            nameof(GroupBy_computed_operand_goes_native));
 
         var result = db.Entities
             .GroupBy(o => o.Country)
@@ -167,6 +157,64 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
             .ToList();
 
         Assert.Equal([("FR", 600m), ("UK", 150m), ("US", 600m)], result.Select(r => (r.Key, r.T)).ToArray());
+    }
+
+    [Fact]
+    public void GroupBy_constant_operand_goes_native()
+    {
+        // g.Sum(o => 1) — a constant accumulator operand, mirroring EF Core's own GroupBy_Sum_constant.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_constant_operand_goes_native));
+
+        var result = db.Entities
+            .GroupBy(o => o.Country)
+            .Select(g => new { g.Key, Count = g.Sum(o => 1) })
+            .AsEnumerable()
+            .OrderBy(r => r.Key)
+            .ToList();
+
+        // FR: 1 order, UK: 2 orders, US: 2 orders.
+        Assert.Equal([("FR", 1), ("UK", 2), ("US", 2)], result.Select(r => (r.Key, r.Count)).ToArray());
+    }
+
+    [Fact]
+    public void GroupBy_accumulator_with_dollar_prefixed_string_constant_operand_goes_native()
+    {
+        // A bare string constant operand starting with "$" must be $literal-wrapped in the rendered $group
+        // accumulator — MongoDB otherwise reads an unwrapped leading-"$" string as a FIELD PATH, which would
+        // silently aggregate the wrong value instead of returning the literal string.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_accumulator_with_dollar_prefixed_string_constant_operand_goes_native));
+
+        var result = db.Entities
+            .GroupBy(o => o.Country)
+            .Select(g => new { g.Key, Marker = g.Max(o => "$CustomerID") })
+            .AsEnumerable()
+            .OrderBy(r => r.Key)
+            .ToList();
+
+        Assert.Equal(
+            [("FR", "$CustomerID"), ("UK", "$CustomerID"), ("US", "$CustomerID")],
+            result.Select(r => (r.Key, r.Marker)).ToArray());
+    }
+
+    [Fact]
+    public void GroupBy_cast_operand_goes_native()
+    {
+        // g.Sum(o => (long)o.Year) — a cast accumulator operand, mirroring EF Core's own
+        // GroupBy_Sum_constant_cast / GroupBy_with_cast_inside_grouping_aggregate.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_cast_operand_goes_native));
+
+        var result = db.Entities
+            .GroupBy(o => o.Country)
+            .Select(g => new { g.Key, YearSum = g.Sum(o => (long)o.Year) })
+            .AsEnumerable()
+            .OrderBy(r => r.Key)
+            .ToList();
+
+        // FR: 2021. UK: 2020 + 2020 = 4040. US: 2020 + 2021 = 4041.
+        Assert.Equal([("FR", 2021L), ("UK", 4040L), ("US", 4041L)], result.Select(r => (r.Key, r.YearSum)).ToArray());
     }
 
     [Fact]
@@ -581,6 +629,26 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     }
 
     [Fact]
+    public void GroupBy_OrderBy_key_before_select_with_wrapped_key_only_no_aggregate_goes_native()
+    {
+        // A pending ordering that resolves via a KEY access (not an aggregate) combined with a wrapped
+        // zero-accumulator projection — a newly-reachable shape (orderAccumulators stays empty here, so it
+        // isn't excluded by the guard's orderAccumulators.Count > 0 clause), confirmed correct by the final
+        // review: identical $sort-after-$group machinery to the already-shipped GroupBy_OrderBy_key_before_
+        // select_goes_native, just without an accumulator alongside the key.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_OrderBy_key_before_select_with_wrapped_key_only_no_aggregate_goes_native));
+
+        var result = db.Entities
+            .GroupBy(o => o.Country)
+            .OrderBy(g => g.Key)
+            .Select(g => new { g.Key })
+            .ToList();
+
+        Assert.Equal(["FR", "UK", "US"], result.Select(r => r.Key).ToArray());
+    }
+
+    [Fact]
     public void GroupBy_OrderBy_aggregate_before_select_goes_native()
     {
         // Orders by the SAME aggregate the Select projects (Count) — the two accumulators are deliberately
@@ -739,6 +807,110 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
 
         var native = Run(nativeDb);
         Assert.Equal(Run(driverDb), native);
+    }
+
+    [Fact]
+    public void GroupBy_after_source_side_OrderBy_goes_native()
+    {
+        // OrderBy composed on the SOURCE, before GroupBy — order doesn't affect a scalar aggregate's result,
+        // so this is a pure no-op ahead of the $group, but must still translate (not decline).
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_after_source_side_OrderBy_goes_native));
+
+        var result = db.Entities
+            .OrderBy(o => o.Amount)
+            .GroupBy(o => o.Country)
+            .Select(g => g.Sum(o => o.Amount))
+            .ToList();
+
+        // FR=300, UK=25+50=75, US=100+200=300.
+        Assert.Equal([75m, 300m, 300m], result.OrderBy(x => x).ToList());
+    }
+
+    [Fact]
+    public void GroupBy_after_source_side_OrderBy_Skip_goes_native()
+    {
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_after_source_side_OrderBy_Skip_goes_native));
+
+        var result = db.Entities
+            .OrderBy(o => o.Amount)
+            .Skip(1)
+            .GroupBy(o => o.Country)
+            .Select(g => g.Sum(o => o.Amount))
+            .ToList();
+
+        // Ascending by Amount: 25(UK), 50(UK), 100(US), 200(US), 300(FR). Skip(1) drops 25(UK).
+        // Remaining: UK=50, US=300, FR=300.
+        Assert.Equal([50m, 300m, 300m], result.OrderBy(x => x).ToList());
+    }
+
+    [Fact]
+    public void GroupBy_after_source_side_OrderBy_Take_goes_native()
+    {
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_after_source_side_OrderBy_Take_goes_native));
+
+        var result = db.Entities
+            .OrderBy(o => o.Amount)
+            .Take(3)
+            .GroupBy(o => o.Country)
+            .Select(g => g.Sum(o => o.Amount))
+            .ToList();
+
+        // Ascending by Amount: 25(UK), 50(UK), 100(US), 200(US), 300(FR). Take(3) keeps 25(UK), 50(UK), 100(US).
+        // FR has zero surviving rows, so it produces NO group at all (correct GroupBy semantics, not a bug).
+        Assert.Equal([75m, 100m], result.OrderBy(x => x).ToList());
+    }
+
+    [Fact]
+    public void GroupBy_after_source_side_OrderBy_reasserted_after_Skip_goes_native()
+    {
+        // Mirrors EF Core's own GroupBy_with_order_by_skip_and_another_order_by: an OrderBy/ThenBy, a Skip,
+        // then the SAME OrderBy/ThenBy re-asserted (a common EF Core pattern for stable pagination before
+        // further composition) — all still before the GroupBy.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_after_source_side_OrderBy_reasserted_after_Skip_goes_native));
+
+        var result = db.Entities
+            .OrderBy(o => o.Country)
+            .ThenBy(o => o.Amount)
+            .Skip(1)
+            .OrderBy(o => o.Country)
+            .ThenBy(o => o.Amount)
+            .GroupBy(o => o.Country)
+            .Select(g => g.Sum(o => o.Amount))
+            .ToList();
+
+        // Country then Amount ascending: FR/300, UK/25, UK/50, US/100, US/200. Skip(1) drops FR/300.
+        // Remaining: UK=75, US=300. FR has zero surviving rows — no group for it.
+        Assert.Equal([75m, 300m], result.OrderBy(x => x).ToList());
+    }
+
+    [Fact]
+    public void GroupBy_after_source_side_OrderBy_Skip_Take_matches_driver_linq()
+    {
+        var seed = SeedOrders();
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(GroupBy_after_source_side_OrderBy_Skip_Take_matches_driver_linq) + "N");
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(GroupBy_after_source_side_OrderBy_Skip_Take_matches_driver_linq) + "D");
+
+        (string Country, decimal Sum)[] Run(SingleEntityDbContext<Order> db) =>
+            db.Entities
+                .OrderBy(o => o.Amount)
+                .Skip(1)
+                .Take(2)
+                .GroupBy(o => o.Country)
+                .Select(g => new { g.Key, Sum = g.Sum(o => o.Amount) })
+                .AsEnumerable()
+                .Select(x => (x.Key, x.Sum)).ToArray();
+
+        var native = Run(nativeDb).OrderBy(x => x.Country).ToArray();
+        // Ascending by Amount: 25(UK), 50(UK), 100(US), 200(US), 300(FR). Skip(1).Take(2) keeps 50(UK), 100(US).
+        Assert.Equal([("UK", 50m), ("US", 100m)], native);
+        Assert.Equal(Run(driverDb).OrderBy(x => x.Country).ToArray(), native);
     }
 
     [Fact]
@@ -1272,5 +1444,129 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
                 .GroupBy(o => o.Country)
                 .Select(g => new { g.Key, Count = g.Select(o => o.Year * 2).Distinct().Count() })
                 .ToList());
+    }
+
+    [Fact]
+    public void GroupBy_empty_key_bare_aggregate_goes_native()
+    {
+        // GroupBy(o => new { }) groups every row into ONE group — a degenerate/zero-part key.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_empty_key_bare_aggregate_goes_native));
+
+        var result = db.Entities
+            .GroupBy(o => new { })
+            .Select(g => g.Sum(o => o.Amount))
+            .ToList();
+
+        // 100 + 200 + 50 + 25 + 300 = 675, one group.
+        Assert.Equal([675m], result);
+    }
+
+    [Fact]
+    public void GroupBy_empty_key_with_Key_readback_matches_driver_linq()
+    {
+        // Reading g.Key back off a zero-part key needs serializer support this provider doesn't have yet —
+        // must keep falling back to driver-LINQ (never a hard crash), on both Native and NativeOnly... no,
+        // NativeOnly forbids fallback, so this must THROW under NativeOnly and MATCH driver-LINQ under Native.
+        var seed = SeedOrders();
+
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(GroupBy_empty_key_with_Key_readback_matches_driver_linq) + "NO");
+        Assert.Throws<NativeTranslationNotSupportedException>(() =>
+            nativeOnlyDb.Entities
+                .GroupBy(o => new { })
+                .Select(g => new { g.Key, Sum = g.Sum(o => o.Amount) })
+                .ToList());
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(GroupBy_empty_key_with_Key_readback_matches_driver_linq) + "N");
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(GroupBy_empty_key_with_Key_readback_matches_driver_linq) + "D");
+
+        decimal[] Run(SingleEntityDbContext<Order> db) =>
+            db.Entities
+                .GroupBy(o => new { })
+                .Select(g => new { g.Key, Sum = g.Sum(o => o.Amount) })
+                .AsEnumerable()
+                .Select(x => x.Sum).ToArray();
+
+        var native = Run(nativeDb);
+        Assert.Equal([675m], native);
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    private class CountryYearKey
+    {
+        public string Country { get; }
+        public int Year { get; }
+        public CountryYearKey(string country, int year) { Country = country; Year = year; }
+        public override bool Equals(object? obj) => obj is CountryYearKey k && k.Country == Country && k.Year == Year;
+        public override int GetHashCode() => HashCode.Combine(Country, Year);
+    }
+
+    [Fact]
+    public void GroupBy_constructor_call_key_does_not_collapse_to_one_group()
+    {
+        // Regression guard for the final-review finding: a constructor-call key (Members == null, same as a
+        // zero-member new{}) must NOT be mistaken for a degenerate empty key. Differential test — asserts the
+        // native and driver-LINQ ROW COUNTS match, since a row-count-blind assertion wouldn't have caught this.
+        var seed = SeedOrders();
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(GroupBy_constructor_call_key_does_not_collapse_to_one_group) + "N");
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(GroupBy_constructor_call_key_does_not_collapse_to_one_group) + "D");
+
+        int[] RunCounts(SingleEntityDbContext<Order> db) =>
+            db.Entities
+                .GroupBy(o => new CountryYearKey(o.Country, o.Year))
+                .Select(g => new { Count = g.Count() })
+                .AsEnumerable()
+                .Select(x => x.Count)
+                .OrderBy(c => c)
+                .ToArray();
+
+        var native = RunCounts(nativeDb);
+        // 5 rows, grouped by (Country, Year): (US,2020)=1, (US,2021)=1, (UK,2020)=2, (FR,2021)=1 → 4 groups.
+        Assert.Equal(4, native.Length);
+        Assert.Equal(RunCounts(driverDb), native);
+    }
+
+    [Fact]
+    public void GroupBy_empty_key_then_Count_goes_native()
+    {
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_empty_key_then_Count_goes_native));
+
+        var result = db.Entities.GroupBy(o => new { }).Count();
+
+        Assert.Equal(1, result); // one group (the whole non-empty collection), so exactly one "group exists" row
+    }
+
+    [Fact]
+    public void GroupBy_empty_key_then_Count_over_empty_collection_goes_native()
+    {
+        using var db = CreateContext([], MongoQueryMode.NativeOnly,
+            nameof(GroupBy_empty_key_then_Count_over_empty_collection_goes_native));
+
+        var result = db.Entities.GroupBy(o => new { }).Count();
+
+        Assert.Equal(0, result); // no rows at all → no groups
+    }
+
+    [Fact]
+    public void GroupBy_anonymous_key_only_with_no_aggregate_goes_native()
+    {
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_anonymous_key_only_with_no_aggregate_goes_native));
+
+        var result = db.Entities
+            .GroupBy(o => o.Country)
+            .Select(g => new { g.Key })
+            .AsEnumerable()
+            .OrderBy(r => r.Key)
+            .ToList();
+
+        Assert.Equal(["FR", "UK", "US"], result.Select(r => r.Key).ToArray());
     }
 }

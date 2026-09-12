@@ -245,6 +245,34 @@ public class MongoAggregationExpressionRendererTests
     }
 
     [Fact]
+    public void CanRender_reports_true_for_MongoInExpression_over_value_list_of_parameters()
+    {
+        // EF-322: `new[] { prm1, prm2 }.Contains(c.Age)` where prm1/prm2 are separately-parameterized
+        // locals — the same MongoValueListExpression shape TranslateInValues now produces.
+        var status = GetProperty<Customer>("Status");
+        var field = new MongoFieldExpression(status, "Status");
+        var values = new MongoValueListExpression(
+        [
+            new MongoParameterExpression("p0", status),
+            new MongoParameterExpression("p1", status)
+        ]);
+        var node = new MongoInExpression(field, values, negated: false);
+
+        Assert.True(MongoAggregationExpressionRenderer.CanRender(node));
+
+        var placeholders = new PlaceholderTable();
+        var rendered = Assert.IsType<BsonDocument>(MongoAggregationExpressionRenderer.Render(node, placeholders));
+        var operands = Assert.IsType<BsonArray>(rendered["$in"]);
+        Assert.Equal("$Status", operands[0]);
+        var inArray = Assert.IsType<BsonArray>(operands[1]);
+        Assert.Equal(2, inArray.Count);
+        Assert.True(PlaceholderTable.TryGetPlaceholderIndex(inArray[0], out var index0));
+        Assert.Equal(0, index0);
+        Assert.True(PlaceholderTable.TryGetPlaceholderIndex(inArray[1], out var index1));
+        Assert.Equal(1, index1);
+    }
+
+    [Fact]
     public void CanRender_reports_false_for_MongoInExpression_over_unrenderable_values()
     {
         // Neither a constant enumerable nor a parameter — CanRenderInValues must decline this shape the same

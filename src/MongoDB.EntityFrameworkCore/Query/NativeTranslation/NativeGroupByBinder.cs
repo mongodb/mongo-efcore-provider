@@ -51,10 +51,6 @@ internal static class NativeGroupByBinder
     {
         var select = mongoQ.Select;
 
-        // Post-group paging / ordering on top of a pre-existing select is out of scope; fall back.
-        if (select.HasPaging || select.HasOrdering)
-            return false;
-
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
 
         // EF-322: a GroupBy composed directly on top of a projected Distinct (Select.PriorGrouping, set by
@@ -68,6 +64,16 @@ internal static class NativeGroupByBinder
 
         switch (keySelector.Body)
         {
+            // A zero-argument new{} key (GroupBy(o => new { })) groups every row into a single group. Matched
+            // on Arguments.Count, NOT Members: NewExpression.Members is null for EVERY non-anonymous-type
+            // constructor call (e.g. new OrderKey(o.Country, o.Year) also has Members == null), so matching on
+            // Members alone would ALSO bind a genuine multi-part constructor-based key as a zero-part one —
+            // silently collapsing every row into one group. Arguments.Count == 0 correctly admits only a
+            // true zero-member new{} (both presentations the compiler emits have zero constructor arguments)
+            // and excludes any real key, which always has one argument per key part.
+            case NewExpression { Arguments.Count: 0 }:
+                break;
+
             case NewExpression { Members: { Count: > 0 } members } newExpr:
                 for (var i = 0; i < newExpr.Arguments.Count; i++)
                 {
@@ -118,9 +124,12 @@ internal static class NativeGroupByBinder
     /// member name at all, e.g. <c>g.Sum(...)</c> with no wrapping <c>new {}</c>) the bare body itself, must
     /// each be either a grouping-key access (<c>g.Key</c> / <c>g.Key.&lt;Sub&gt;</c>) or a supported aggregate
     /// over the grouping (<c>g.Count()</c>/<c>g.LongCount()</c> → <c>$sum:1</c>;
-    /// <c>g.Sum/Min/Max/Average(x =&gt; x.Field)</c> over a plain member selector). Returns
-    /// <see langword="false"/> for any other shape, or when no accumulator is produced, so the caller falls
-    /// back.
+    /// <c>g.Sum/Min/Max/Average(x =&gt; ...)</c> over any translatable value — a plain member, constant,
+    /// cast, or computed arithmetic expression). A WRAPPED (non-bare) body with no accumulator at all — a
+    /// key-only ctor-DTO or anonymous-type projection — is also admitted, as a "distinct keys" $group. Returns
+    /// <see langword="false"/> for any other shape: a BARE key access with no wrapper (semantically a plain
+    /// Distinct, out of scope here), or a zero-accumulator projection combined with a pending-ordering
+    /// aggregate (an untested combination), so the caller falls back.
     /// </summary>
     /// <param name="mongoQ">The query whose <see cref="MongoSelectDefinition"/> is being populated.</param>
     /// <param name="resultSelector">The <c>Select</c> result selector lambda over the grouping.</param>
@@ -176,7 +185,7 @@ internal static class NativeGroupByBinder
         if (select.PriorGrouping is { } priorGrouping)
             translator.DistinctAliasScope = priorGrouping;
 
-        var isComposite = keyParts.Count > 1 || keyParts[0].Name != null;
+        var isComposite = keyParts.Count == 0 ? false : keyParts.Count > 1 || keyParts[0].Name != null;
 
         // Resolve any OrderBy/ThenBy composed directly on the ungrouped GroupBy result (recorded by
         // NativeSlotPopulator's pending-ordering carve-out) BEFORE processing the Select's own bindings below,
@@ -239,8 +248,17 @@ internal static class NativeGroupByBinder
             flatten.Add(new MongoProjection(memberName, flattenRead));
         }
 
-        if (accumulators.Count == 0)
-            return false; // pure key regroup with no aggregate — unsupported here, falls back
+        // A zero-accumulator Select still admits a WRAPPED (ctor-only DTO or anonymous-type) key-only
+        // projection — e.g. GroupBy(key).Select(g => new Result(g.Key)) — as a legitimate "distinct keys"
+        // $group (a $group with only _id and no other accumulator fields is ordinary, valid MQL). Two shapes
+        // still decline: a BARE g.Key projection (isBareBody — semantically a plain Distinct, out of scope
+        // here), and a zero-Select-accumulator projection combined with a pending-ordering aggregate
+        // (orderAccumulators.Count > 0 — an untested combination this plan does not attempt). A pending
+        // ordering that instead resolves via a KEY access (adding to resolvedOrderings, not
+        // orderAccumulators) is still admitted — only an ordering that resolves to its OWN $group
+        // accumulator excludes this shape.
+        if (accumulators.Count == 0 && (isBareBody || orderAccumulators.Count > 0))
+            return false;
 
         select.Grouping = new MongoGrouping(keyParts, [..orderAccumulators, ..accumulators]);
         select.GroupOrderOp = resolvedOrderings.Count > 0 ? new MongoSortOp(resolvedOrderings) : null;
@@ -269,10 +287,11 @@ internal static class NativeGroupByBinder
         if (expr is not MemberExpression member)
             return false;
 
-        // g.Key — the whole key. Only flattenable when the key is scalar (single unnamed part).
+        // g.Key — the whole key. Only flattenable when the key is scalar (single unnamed part); a
+        // composite key or a zero-part (empty new{}) key has no single field to read it back from.
         if (member.Member.Name == "Key" && member.Expression == groupingParameter)
         {
-            path = isComposite ? null : "_id";
+            path = (isComposite || keyParts.Count == 0) ? null : "_id";
             return true;
         }
 
@@ -295,9 +314,10 @@ internal static class NativeGroupByBinder
 
     // Flatten a NewExpression (anonymous type) or MemberInitExpression (DTO) into (memberName, valueExpr) pairs.
 
-    // Match g.Count()/g.LongCount() → ("$sum", null); g.Sum/Average/Min/Max(x => x.Field) over a plain member
-    // selector → the matching operator + field-ref operand. Any other shape (computed operand, unknown method)
-    // returns false. The aggregate's SOURCE (call.Arguments[0]) must be the grouping parameter itself — an
+    // Match g.Count()/g.LongCount() → ("$sum", null); g.Sum/Average/Min/Max(x => ...) over any translatable
+    // value (member access, constant, cast, or computed arithmetic) → the matching operator + translated
+    // operand. An untranslatable operand (e.g. a correlated method call) or unknown method returns false. The
+    // aggregate's SOURCE (call.Arguments[0]) must be the grouping parameter itself — an
     // aggregate whose source is a DIFFERENT sequence (a correlated cross-collection subquery such as
     // Customers.Where(c => c.CustomerID == g.Key).Count(), a navigation, another collection) is NOT a grouped
     // accumulator and must NOT be bound to a $group accumulator (that would silently drop the real subquery
@@ -368,10 +388,21 @@ internal static class NativeGroupByBinder
         if (op is null || call.Arguments.Count != 2)
             return false;
 
-        // The selector is a bare lambda (Enumerable form) or a quoted lambda (Queryable form).
-        if (call.Arguments[1].UnwrapLambdaFromQuote() is not { Body: MemberExpression } selector
-            || !translator.TryTranslateField(selector.Body, out var operand))
-            return false; // computed / non-member selector — fall back
+        // The selector is a bare lambda (Enumerable form) or a quoted lambda (Queryable form). Any
+        // translatable value — a bare member access, a constant, a cast, or ordinary arithmetic — is
+        // accepted via TryTranslateValue, which resolves a bare member exactly as TryTranslateField did (same
+        // underlying TryResolveMember), so no previously-working shape returns different data. TryTranslateValue
+        // additionally requires AllFieldsDefaultSerialized, which TryTranslateField never checked, so a bare
+        // member over a value-converted/non-default-represented property now falls back to driver-LINQ instead
+        // of going native — arguably a correctness improvement, not a loss, since summing a raw converted or
+        // represented value natively could otherwise silently aggregate the wrong representation. EF Core's own
+        // query compiler inlines a two-arg GroupBy(key, elementSelector)'s element selector directly into this
+        // aggregate's lambda before our translator ever runs, so `g.Sum(e => e.OrderID + 1)` composed from
+        // `.GroupBy(o => o.CustomerID, o => new { o.OrderID })` arrives here as an ordinary computed
+        // selector over the root entity — no separate two-arg handling is needed.
+        if (call.Arguments[1].UnwrapLambdaFromQuote() is not { } selector
+            || !translator.TryTranslateValue(selector.Body, out var operand))
+            return false; // untranslatable selector shape (e.g. a correlated method call) — fall back
 
         accumulator = new MongoGroupAccumulator(outputField, op, operand);
         flattenRead = new MongoElementRefExpression(outputField, call.Method.ReturnType);
@@ -757,7 +788,13 @@ internal static class NativeGroupByBinder
         // IsDistinct is set nowhere but here, immediately below, alongside the flatten that re-adds the exact
         // same alias(es) the override describes, so the override is provably still valid whenever IsDistinct
         // is true. Pinned by NativeBareProjectionTests.
-        if (select.Projection.Count == 0 || select.Grouping != null || select.Cardinality != null || select.HasPaging
+        //
+        // EF-TBD: no longer declines on select.HasPaging. A source-side OrderBy/Skip/Take composed before the
+        // Distinct call is recorded in PipelineOps and is emitted by the lowerer before the $group unconditionally
+        // (see MongoSelectLowerer's "6b" comment), so paging still restricts the correct input row set and a
+        // pre-existing ordering is otherwise a no-op ahead of a dedup — mirrors the identical guard removal in
+        // NativeGroupByBinder.TryBindGroupKey.
+        if (select.Projection.Count == 0 || select.Grouping != null || select.Cardinality != null
             || select.UnwindSource != null || select.SetOperation is { OperandsProjected: true })
             return false;
 

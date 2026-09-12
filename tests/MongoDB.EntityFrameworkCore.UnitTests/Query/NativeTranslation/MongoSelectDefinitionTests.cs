@@ -104,6 +104,7 @@ public class MongoSelectDefinitionTests
 
         var op = Assert.IsType<MongoSortOp>(Assert.Single(s.PipelineOps));
         Assert.Equal(2, op.Orderings.Count);
+        Assert.True(s.HasOrdering);
     }
 
     [Fact]

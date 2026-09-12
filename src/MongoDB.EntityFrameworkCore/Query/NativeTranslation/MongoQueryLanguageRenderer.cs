@@ -85,6 +85,7 @@ internal sealed class MongoQueryLanguageRenderer
             MongoUnaryExpression unary => RenderUnary(unary, placeholders),
             MongoFieldExpression field => RenderBareField(field, placeholders),
             MongoLookupNullCheckExpression lookupNullCheck => RenderLookupNullCheck(lookupNullCheck),
+            MongoNumericTypeBracketExpression bracket => RenderNumericTypeBracket(bracket),
             MongoInExpression inExpr => RenderIn(inExpr, placeholders),
             MongoArrayContainsExpression arrayContains => RenderArrayContains(arrayContains, placeholders),
             MongoRegexExpression { Term: MongoConstantExpression { Value: string } or MongoParameterExpression } regex
@@ -154,6 +155,13 @@ internal sealed class MongoQueryLanguageRenderer
         => node.IsNotNull
             ? new BsonDocument(node.LookupAlias, new BsonDocument("$ne", BsonNull.Value))
             : new BsonDocument(node.LookupAlias, BsonNull.Value);
+
+    /// <summary>
+    /// Renders <c>{ field: { $type: "number" } }</c> — see <see cref="MongoNumericTypeBracketExpression"/>'s
+    /// own remarks for why "number" (not <c>$ne: null</c>) is the exact query-dialect type bracket.
+    /// </summary>
+    private static BsonDocument RenderNumericTypeBracket(MongoNumericTypeBracketExpression bracket)
+        => new BsonDocument(bracket.Field.ElementName, new BsonDocument("$type", "number"));
 
     // ------------------------------------------------------------------
     // Unary nodes (Not)
@@ -271,6 +279,13 @@ internal sealed class MongoQueryLanguageRenderer
             {
                 var info = BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization!);
                 return placeholders.CreateArrayPlaceholder(parameter.Name, info.Serializer);
+            }
+            case MongoValueListExpression list:
+            {
+                var array = new BsonArray();
+                foreach (var element in list.Elements)
+                    array.Add(MongoValueRenderer.RenderValue(element, placeholders));
+                return array;
             }
             default:
                 throw new NativeTranslationNotSupportedException("Unsupported $in values node.");
@@ -521,6 +536,11 @@ internal sealed class MongoQueryLanguageRenderer
             MongoUnaryExpression { Operator: MongoUnaryOperator.Not, Operand: MongoBinaryExpression cmp }
                 => IsQueryNativeComparison(cmp),
             MongoFieldExpression => true,
+            // A genuine query-dialect form ({ field: { $type: "number" } }) — see the node's own remarks.
+            // Never actually reached standalone in $elemMatch (it is only ever produced paired with an
+            // un-renderable $expr sibling under the SAME AndAlso, which already answers false as a whole), but
+            // characterized here as true on its own merits rather than left to the catch-all.
+            MongoNumericTypeBracketExpression => true,
             // Explicit rather than left to the catch-all: a $toX conversion has no query-dialect form, so
             // admitting one here would put $expr inside $elemMatch, a hard server error. A comparison over a
             // convert is excluded separately by IsQueryNativeComparison's requirement that the left operand
@@ -540,10 +560,12 @@ internal sealed class MongoQueryLanguageRenderer
             // catch-all, matching the style of MongoConditionalExpression/MongoDatePartExpression above.
             MongoOuterFieldExpression => false,
             MongoQuantifierExpression => false,
-            // RenderInValues throws for any values node other than a constant enumerable or a parameter.
+            // RenderInValues throws for any values node other than a constant enumerable, a parameter, or a
+            // value list of per-element constants/parameters.
             MongoInExpression inExpr
                 => inExpr.Values is MongoConstantExpression { Value: System.Collections.IEnumerable }
-                    or MongoParameterExpression,
+                    or MongoParameterExpression
+                    or MongoValueListExpression,
             // RenderArrayContains always has a query-dialect form ({ field: value } / { field: { $ne: value } });
             // MongoExpressionTranslator only ever constructs this node with a Value it has already resolved
             // and rendered, so there is no unrenderable sub-shape to exclude here (unlike MongoInExpression's

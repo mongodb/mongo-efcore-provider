@@ -222,13 +222,26 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     public void AppendDistinct() => ActiveOps.Add(new MongoDistinctOp());
 
-    // HasPaging/HasOrdering/HasLimit deliberately scan _pipelineOps only: they gate a PRE-terminal GroupBy
+    // HasPaging/HasLimit deliberately scan _pipelineOps only: they gate a PRE-terminal GroupBy
     // (NativeGroupByBinder), which is unreachable after a set op (a trailing GroupBy is rejected by
     // HasTerminalOperator), so they must not see the post-set-op _trailingOps.
     /// <summary><see langword="true"/> when any $skip or $limit op is present.</summary>
     internal bool HasPaging => _pipelineOps.Exists(o => o is MongoSkipOp or MongoLimitOp);
 
-    /// <summary><see langword="true"/> when any $sort op is present.</summary>
+    /// <summary>
+    /// <see langword="true"/> when any $sort op is present.
+    /// <para>
+    /// No production call site as of EF-TBD (the pre-GroupBy ordering/paging native slice):
+    /// <c>NativeGroupByBinder.TryBindGroupKey</c> was the sole consumer and its guard was deleted — a
+    /// pre-<c>GroupBy</c> <c>$sort</c> is either a genuine no-op (no <c>Skip</c>/<c>Take</c> follows it, and
+    /// <c>GroupBy</c> + a scalar aggregate is row-order-invariant) or exists purely to give a following
+    /// <c>Skip</c>/<c>Take</c> a well-defined row set, which the pipeline already computes correctly
+    /// regardless of what happens after it. Kept as the sibling of <see cref="HasPaging"/>/
+    /// <see cref="HasLimit"/>, for the same reason <see cref="HasLimit"/> itself is kept post-EF-397 — do not
+    /// reintroduce it as an "ordering already exists, so decline" test without re-deriving why that would be
+    /// true, because as of this ticket it is not.
+    /// </para>
+    /// </summary>
     internal bool HasOrdering => _pipelineOps.Exists(o => o is MongoSortOp);
 
     /// <summary>

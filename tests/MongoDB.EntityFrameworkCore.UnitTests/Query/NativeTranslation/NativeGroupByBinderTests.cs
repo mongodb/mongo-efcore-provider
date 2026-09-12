@@ -47,6 +47,19 @@ public class NativeGroupByBinderTests
         public int Total { get; set; }
     }
 
+    private class OrderKeyDto
+    {
+        public string Country { get; }
+        public string Region { get; }
+        public OrderKeyDto(string country, string region) { Country = country; Region = region; }
+    }
+
+    private class KeyOnlyDto
+    {
+        public string CustomerId { get; }
+        public KeyOnlyDto(string customerId) { CustomerId = customerId; }
+    }
+
     private static MongoQueryExpression TestQuery()
     {
         using var db = SingleEntityDbContext.Create<Order>();
@@ -111,24 +124,79 @@ public class NativeGroupByBinderTests
     }
 
     [Fact]
-    public void Paging_present_returns_false()
+    public void Scalar_key_binds_even_with_pre_existing_source_side_ordering_and_paging()
     {
         var mongoQ = TestQuery();
-        mongoQ.Select.AppendLimit(new MongoConstantExpression(10, null));
+        mongoQ.Select.StartOrReplaceSort(new MongoOrdering(
+            new MongoFieldExpression(property: null!, elementName: "Amount"), Ascending: true));
+        mongoQ.Select.AppendSkip(new MongoConstantExpression(1, forSerialization: null));
+        mongoQ.Select.AppendLimit(new MongoConstantExpression(10, forSerialization: null));
+
         Expression<Func<Order, string>> key = x => x.Country;
+
+        Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
+        Assert.NotNull(mongoQ.Select.PendingGroupKey);
+        // The pre-existing sort/skip/limit ops are untouched — they stay in PipelineOps ahead of the eventual $group.
+        Assert.Equal(3, mongoQ.Select.PipelineOps.Count);
+    }
+
+    [Fact]
+    public void Empty_key_binds_zero_parts()
+    {
+        var mongoQ = TestQuery();
+        Expression<Func<Order, object>> key = x => new { };
+
+        Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
+
+        Assert.NotNull(mongoQ.Select.PendingGroupKey);
+        Assert.Empty(mongoQ.Select.PendingGroupKey!);
+        Assert.Null(mongoQ.Select.Grouping);
+    }
+
+    [Fact]
+    public void Constructor_call_key_with_two_arguments_does_not_bind_as_empty_key()
+    {
+        // NewExpression.Members is null for EVERY non-anonymous-type constructor call, not just new{} — this
+        // must NOT be mistaken for a zero-part key, or a genuine 2-part key silently collapses to one group.
+        var mongoQ = TestQuery();
+        Expression<Func<Order, OrderKeyDto>> key = x => new OrderKeyDto(x.Country, x.Region);
 
         Assert.False(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
         Assert.Null(mongoQ.Select.PendingGroupKey);
     }
 
     [Fact]
-    public void Orderings_present_returns_false()
+    public void Empty_key_with_bare_aggregate_binds_group()
     {
         var mongoQ = TestQuery();
-        mongoQ.Select.StartOrReplaceSort(new MongoOrdering(new MongoConstantExpression(0, null), true));
-        Expression<Func<Order, string>> key = x => x.Country;
+        Expression<Func<Order, object>> key = x => new { };
+        Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
 
-        Assert.False(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
+        Expression<Func<IGrouping<object, Order>, object>> proj =
+            g => g.Sum(o => o.Amount);
+
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out var bareLeafAlias));
+
+        Assert.Empty(mongoQ.Select.Grouping!.Key);
+        var acc = Assert.Single(mongoQ.Select.Grouping.Accumulators);
+        Assert.Equal("$sum", acc.Operator);
+        Assert.NotNull(bareLeafAlias);
+    }
+
+    [Fact]
+    public void Empty_key_with_bare_g_Key_readback_declines()
+    {
+        // g.Key over a zero-part key can't flatten to any field — reading it back would require a serializer
+        // for an empty anonymous type this provider doesn't have. Must decline (fall back), not crash.
+        var mongoQ = TestQuery();
+        Expression<Func<Order, object>> key = x => new { };
+        Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
+
+        Expression<Func<IGrouping<object, Order>, object>> proj =
+            g => new { g.Key, Sum = g.Sum(o => o.Amount) };
+
+        Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+        Assert.Null(mongoQ.Select.Grouping);
     }
 
     // ── TryBindGroupProjection ─────────────────────────────────────────────────────
@@ -178,6 +246,51 @@ public class NativeGroupByBinderTests
     }
 
     [Fact]
+    public void Sum_with_computed_selector_binds_computed_operand()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, object>> proj =
+            g => new { Total = g.Sum(x => x.Amount * 2) };
+
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+
+        var acc = Assert.Single(mongoQ.Select.Grouping!.Accumulators);
+        Assert.Equal("Total", acc.OutputField);
+        Assert.Equal("$sum", acc.Operator);
+        Assert.IsType<MongoBinaryExpression>(acc.Operand);
+    }
+
+    [Fact]
+    public void Sum_with_constant_selector_binds_constant_operand()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, object>> proj =
+            g => new { Total = g.Sum(x => 1) };
+
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+
+        var acc = Assert.Single(mongoQ.Select.Grouping!.Accumulators);
+        Assert.Equal("Total", acc.OutputField);
+        Assert.Equal("$sum", acc.Operator);
+        Assert.Equal(1, Assert.IsType<MongoConstantExpression>(acc.Operand).Value);
+    }
+
+    [Fact]
+    public void Sum_with_cast_selector_binds_cast_operand()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, object>> proj =
+            g => new { Total = g.Sum(x => (long)x.Amount) };
+
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+
+        var acc = Assert.Single(mongoQ.Select.Grouping!.Accumulators);
+        Assert.Equal("Total", acc.OutputField);
+        Assert.Equal("$sum", acc.Operator);
+        Assert.IsType<MongoFieldExpression>(acc.Operand);
+    }
+
+    [Fact]
     public void Min_max_average_map_to_operators()
     {
         var mongoQ = BoundScalarKeyQuery();
@@ -222,22 +335,118 @@ public class NativeGroupByBinderTests
     }
 
     [Fact]
-    public void Computed_operand_returns_false()
+    public void Computed_operand_with_two_fields_binds_computed_operand()
     {
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { Total = g.Sum(x => x.Amount * x.Quantity) };
+
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+
+        var acc = Assert.Single(mongoQ.Select.Grouping!.Accumulators);
+        Assert.Equal("Total", acc.OutputField);
+        Assert.Equal("$sum", acc.Operator);
+        Assert.IsType<MongoBinaryExpression>(acc.Operand);
+    }
+
+    [Fact]
+    public void Bare_projection_body_with_no_accumulator_returns_false()
+    {
+        // A bare (unwrapped) g.Key over a COMPOSITE key declines at a different site than the scalar-key case
+        // (Bare_g_Key_with_no_aggregate_still_declines, which covers a SCALAR key) — TryGetKeyMemberPath's
+        // "keyPath == null" branch for a composite key that can't flatten to one field, not the guard this plan
+        // touches.
+        var mongoQ = TestQuery();
+        Expression<Func<Order, object>> key = x => new { x.Country, x.Region };
+        Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
+
+        Expression<Func<IGrouping<object, Order>, object>> proj = g => g.Key;
 
         Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
         Assert.Null(mongoQ.Select.Grouping);
     }
 
     [Fact]
-    public void Projection_with_no_accumulators_returns_false()
+    public void Ctor_dto_composite_key_sub_member_with_no_aggregate_binds_group()
+    {
+        // A composite-key sub-member projected back through a ctor-wrapped DTO (g.Key.Country, not the whole
+        // g.Key) with no aggregate — resolves via TryGetKeyMemberPath's composite-sub-member branch, has zero
+        // accumulators, and is not bare (ctor-wrapped), so it now reaches the admitted branch. One row per
+        // distinct (Country, Region) pair, matching LINQ's own GroupBy semantics.
+        var mongoQ = TestQuery();
+
+        Assert.True(BindCompositeKeyAndProjection(mongoQ,
+            x => new { x.Country, x.Region },
+            g => new KeyOnlyDto(g.Key.Country),
+            out _));
+
+        Assert.Empty(mongoQ.Select.Grouping!.Accumulators);
+        var projection = Assert.Single(mongoQ.Select.Projection);
+        Assert.Equal("_id.Country", Assert.IsType<MongoElementRefExpression>(projection.Expression).Path);
+    }
+
+    // Binds a composite GroupBy key and its result projection with the SAME compiler-synthesized anonymous
+    // TKey shared across both lambdas via generic type inference — the only way to write `g.Key.<Sub>`
+    // against a composite key from a separately-declared projection lambda (IGrouping<TKey, TElement>'s TKey
+    // can't otherwise be named from outside the key-selector expression that created it).
+    private static bool BindCompositeKeyAndProjection<TKey>(
+        MongoQueryExpression mongoQ,
+        Expression<Func<Order, TKey>> keySelector,
+        Expression<Func<IGrouping<TKey, Order>, object>> resultSelector,
+        out string? bareLeafAlias)
+    {
+        Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, keySelector));
+        return NativeGroupByBinder.TryBindGroupProjection(mongoQ, resultSelector, out bareLeafAlias);
+    }
+
+    [Fact]
+    public void Ctor_dto_key_only_with_no_aggregate_binds_group()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, object>> proj =
+            g => new KeyOnlyDto(g.Key);
+
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+
+        Assert.Empty(mongoQ.Select.Grouping!.Accumulators);
+        var projection = Assert.Single(mongoQ.Select.Projection);
+        Assert.Equal("_id", Assert.IsType<MongoElementRefExpression>(projection.Expression).Path);
+    }
+
+    [Fact]
+    public void Anonymous_type_key_only_with_no_aggregate_binds_group()
     {
         var mongoQ = BoundScalarKeyQuery();
         Expression<Func<IGrouping<string, Order>, object>> proj =
             g => new { g.Key };
+
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+
+        Assert.Empty(mongoQ.Select.Grouping!.Accumulators);
+    }
+
+    [Fact]
+    public void Bare_g_Key_with_no_aggregate_still_declines()
+    {
+        // A bare (unwrapped) g.Key projection is a plain-Distinct-equivalent shape this plan does not attempt —
+        // must keep declining, unchanged.
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, object>> proj = g => g.Key;
+
+        Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+        Assert.Null(mongoQ.Select.Grouping);
+    }
+
+    [Fact]
+    public void Wrapped_key_only_combined_with_pending_ordering_aggregate_still_declines()
+    {
+        // A zero-Select-accumulator projection combined with a pending-ordering aggregate is an untested,
+        // explicitly out-of-scope combination — must keep declining, unchanged.
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, int>> orderKey = g => g.Count();
+        mongoQ.Select.PendingGroupOrderings = [(true, orderKey)];
+
+        Expression<Func<IGrouping<string, Order>, object>> proj = g => new KeyOnlyDto(g.Key);
 
         Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
         Assert.Null(mongoQ.Select.Grouping);
@@ -424,6 +633,25 @@ public class NativeGroupByBinderTests
             g => new { Count = g.Count() };
 
         Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+    }
+
+    [Fact]
+    public void Pending_order_by_g_Key_over_empty_key_declines()
+    {
+        // OrderBy(g => g.Key) composed BEFORE an empty-key GroupBy reaches TryGetKeyMemberPath through the
+        // PENDING-ORDERING call site (not the terminal Select's) — this must decline through the SAME fix as
+        // the terminal-Select path, not crash or silently drop the ordering.
+        var mongoQ = TestQuery();
+        Expression<Func<Order, object>> key = x => new { };
+        Assert.True(NativeGroupByBinder.TryBindGroupKey(mongoQ, key));
+
+        Expression<Func<IGrouping<object, Order>, object>> orderKey = g => g.Key;
+        mongoQ.Select.PendingGroupOrderings = [(true, orderKey)];
+
+        Expression<Func<IGrouping<object, Order>, object>> proj = g => g.Sum(o => o.Amount);
+
+        Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+        Assert.Null(mongoQ.Select.Grouping);
     }
 
     // ── TryBindGroupTerminalAggregate ──────────────────────────────────────────────

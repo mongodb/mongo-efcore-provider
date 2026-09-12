@@ -127,6 +127,14 @@ internal static class MongoAggregationExpressionRenderer
             // predicate) keep falling back exactly as before. Only c.A.StartsWith(c.B) — no query-dialect form
             // at all — needs this arm.
             MongoRegexExpression { Term: MongoFieldExpression } regex => RenderRegexAsExpr(regex, placeholders, elementVariable),
+            // A constructed-tuple comparison operand (EF-322 follow-up) — a literal MQL array of the tuple's
+            // per-member values, each rendered through this SAME Render call exactly like any other computed
+            // value (a field ref, a constant, a nested computation). Unlike MongoValueListExpression (which
+            // is deliberately NOT top-level-renderable — see its own remarks), this node exists ONLY as a
+            // top-level $eq/$ne operand, so it is wired into the ordinary dispatch rather than a dedicated
+            // $in-only helper.
+            MongoTupleExpression tuple
+                => new BsonArray(tuple.Elements.Select(e => Render(e, placeholders, elementVariable))),
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoAggregationExpressionRenderer does not support node type '{node.GetType().Name}'.")
         };
@@ -207,6 +215,7 @@ internal static class MongoAggregationExpressionRenderer
             // and (implicitly) here at the same time, or this would wrongly admit a Kind that Render then throws
             // on.
             MongoRegexExpression { Term: MongoFieldExpression } regex => CanRender(regex.Field) && CanRender(regex.Term),
+            MongoTupleExpression tuple => tuple.Elements.All(CanRender),
             _ => false
         };
 
@@ -230,7 +239,8 @@ internal static class MongoAggregationExpressionRenderer
         };
 
     private static bool CanRenderInValues(MongoExpression values)
-        => values is MongoConstantExpression { Value: System.Collections.IEnumerable } or MongoParameterExpression;
+        => values is MongoConstantExpression { Value: System.Collections.IEnumerable } or MongoParameterExpression
+            or MongoValueListExpression;
 
     // Exactly the operators RenderBinary's own switch maps below — every MongoBinaryOperator member, as it
     // happens (RenderBinary has no unmapped member today), but this must be re-checked against RenderBinary's
@@ -499,6 +509,13 @@ internal static class MongoAggregationExpressionRenderer
                     ? StringSerializer.Instance
                     : BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization).Serializer;
                 return placeholders.CreateArrayPlaceholder(parameter.Name, elementSerializer);
+            }
+            case MongoValueListExpression list:
+            {
+                var array = new BsonArray();
+                foreach (var element in list.Elements)
+                    array.Add(MongoValueRenderer.RenderValue(element, placeholders));
+                return array;
             }
             default:
                 throw new NativeTranslationNotSupportedException(
