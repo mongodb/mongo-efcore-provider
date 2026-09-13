@@ -177,7 +177,8 @@ public class MongoExpressionNodeCoverageTests
             new MongoConcatExpression([headingField, new MongoConstantExpression("x", heading)]),
             new MongoStringIndexOfExpression(headingField, new MongoConstantExpression("x", heading)),
             new MongoDocumentConstructionExpression(
-                Expression.New(typeof(object)), [(nameof(Post.Rank), rankField)])
+                Expression.New(typeof(object)), [(nameof(Post.Rank), rankField)]),
+            new MongoTupleExpression([rankField, rankConstant])
         };
 
         return samples.ToDictionary(s => s.GetType());
@@ -703,6 +704,24 @@ public class MongoExpressionNodeCoverageTests
         ["MongoValueListExpression|Negator.TryNegate"] = "false",
         ["MongoValueListExpression|PrefixRewriter.Rewrite"] = "rendered",
         ["MongoValueListExpression|QL.IsQueryDialectRenderable"] = "false",
-        ["MongoValueListExpression|QL.Render"] = "declined"
+        ["MongoValueListExpression|QL.Render"] = "declined",
+
+        // EF-322 follow-up: MongoTupleExpression is the OPPOSITE of MongoValueListExpression above — it is
+        // ONLY ever a top-level $eq/$ne operand (a constructed-tuple comparison's per-side array), never an
+        // $in haystack, so it IS wired into the ordinary Agg dispatch rather than a dedicated helper. It has
+        // no query-dialect form at all (an array-vs-array $eq only exists inside $expr), so
+        // QL.IsQueryDialectRenderable is false — which is also why Negator.TryNegate declines: its public
+        // entry gates on IsQueryDialectRenderable before ever reaching a switch case for this node's parent
+        // MongoBinaryExpression. QL.Render still "renders" a BARE tuple (never how one is actually reached)
+        // because RenderNode's catch-all wraps anything in $expr rather than throwing — harmless, since a
+        // bare array is never constructed as a whole predicate in practice.
+        ["MongoTupleExpression|Agg.CanRender"] = "true",
+        ["MongoTupleExpression|Agg.Render"] = "rendered",
+        ["MongoTupleExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoTupleExpression|AllFieldsDefaultSerialized(converted)"] = "false",
+        ["MongoTupleExpression|Negator.TryNegate"] = "false",
+        ["MongoTupleExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoTupleExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoTupleExpression|QL.Render"] = "rendered"
     };
 }

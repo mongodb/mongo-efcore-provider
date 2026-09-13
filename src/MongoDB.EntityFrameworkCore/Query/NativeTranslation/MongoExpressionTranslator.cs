@@ -630,6 +630,10 @@ internal sealed partial class MongoExpressionTranslator
             // MongoDateAddExpression immediately above.
             MongoStringIndexOfExpression indexOf
                 => AllFieldsDefaultSerialized(indexOf.Haystack) && AllFieldsDefaultSerialized(indexOf.Needle),
+            // A constructed-tuple operand's elements each render through the raw $expr field path exactly
+            // like an ordinary field-to-field/arithmetic operand — same reasoning as MongoBinaryExpression's
+            // arm above, recursed per element instead of per side.
+            MongoTupleExpression tuple => tuple.Elements.All(AllFieldsDefaultSerialized),
             // A MongoInExpression is deliberately NOT given its own arm — it is correct via the catch-all
             // below: RenderIn/RenderInValues serialize every candidate value through the field's own property
             // serializer (MongoConstantExpression.ForSerialization / the parameter's serializer), so a
@@ -729,6 +733,14 @@ internal sealed partial class MongoExpressionTranslator
             case BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } eq
                 when TryTranslateEntityEquality(eq, out var entityEquality):
                 return entityEquality;
+
+            // A constructed-tuple comparison (`new Tuple<string>(c.City) == new Tuple<string>("London")`) —
+            // must run before the ordinary comparison dispatch below for the same reason as entity equality
+            // just above: neither side is a member access/simple value, so TranslateComparison has no
+            // coverage for it. See MongoExpressionTranslator.TupleEquality.cs.
+            case BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } tupleEq
+                when TryTranslateTupleEquality(tupleEq, out var tupleEquality):
+                return tupleEquality;
 
             // `root.GetType() == typeof(T)` / `!=` against a non-hierarchy root entity — collapses to a
             // compile-time constant true/false. See MongoExpressionTranslator.EntityType.cs.

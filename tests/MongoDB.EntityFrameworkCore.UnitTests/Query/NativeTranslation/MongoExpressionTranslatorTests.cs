@@ -3126,4 +3126,55 @@ public class MongoExpressionTranslatorTests
         Assert.True(translator.TryTranslateField(FieldBody<Customer>(c => (object)c.Age), out var boxed));
         Assert.Equal("Age", boxed!.ElementName);
     }
+
+    // ------------------------------------------------------------------
+    // EF-322 follow-up: a constructed-tuple comparison (`new Tuple<string>(c.Name) == new Tuple<string>("A")`)
+    // — EF's NorthwindWhereQueryTestBase.Where_compare_tuple_constructed_equal shape. Neither side is a member
+    // access or a simple value, so this must be recognized before the general field-to-field/$expr path.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Single_value_tuple_equality_translates_to_binary_of_tuples()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => new Tuple<string>(c.Name) == new Tuple<string>("A");
+
+        var translated = translator.TryTranslate(predicate.Body, out var result);
+
+        Assert.True(translated);
+        var binary = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, binary.Operator);
+
+        var left = Assert.IsType<MongoTupleExpression>(binary.Left);
+        var leftField = Assert.IsType<MongoFieldExpression>(Assert.Single(left.Elements));
+        Assert.Equal("Name", leftField.ElementName);
+
+        var right = Assert.IsType<MongoTupleExpression>(binary.Right);
+        var rightConstant = Assert.IsType<MongoConstantExpression>(Assert.Single(right.Elements));
+        Assert.Equal("A", rightConstant.Value);
+    }
+
+    [Fact]
+    public void Multi_value_tuple_inequality_translates_to_binary_of_tuples_per_element()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate =
+            c => new Tuple<string, string>(c.Name, c.Nickname) != new Tuple<string, string>("A", "B");
+
+        var translated = translator.TryTranslate(predicate.Body, out var result);
+
+        Assert.True(translated);
+        var binary = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.NotEqual, binary.Operator);
+
+        var left = Assert.IsType<MongoTupleExpression>(binary.Left);
+        Assert.Equal(2, left.Elements.Count);
+        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(left.Elements[0]).ElementName);
+        Assert.Equal("Nickname", Assert.IsType<MongoFieldExpression>(left.Elements[1]).ElementName);
+
+        var right = Assert.IsType<MongoTupleExpression>(binary.Right);
+        Assert.Equal(2, right.Elements.Count);
+        Assert.Equal("A", Assert.IsType<MongoConstantExpression>(right.Elements[0]).Value);
+        Assert.Equal("B", Assert.IsType<MongoConstantExpression>(right.Elements[1]).Value);
+    }
 }

@@ -144,6 +144,10 @@ internal static class MongoFieldPrefixRewriter
             // MongoComputedInExpression's own consistency-over-necessity recursion into Values.
             MongoValueListExpression list => new MongoValueListExpression(
                 list.Elements.Select(el => Rewrite(el, prefix)).ToList()),
+            // A tuple's own elements are field/constant/parameter/computed values like any other operand —
+            // same consistency-over-necessity recursion as MongoValueListExpression immediately above.
+            MongoTupleExpression tuple => new MongoTupleExpression(
+                tuple.Elements.Select(el => Rewrite(el, prefix)).ToList()),
             _ => throw new NativeTranslationNotSupportedException(
                 $"Cannot prefix-rewrite MongoExpression node '{expr.GetType().Name}'.")
         };
