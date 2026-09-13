@@ -48,6 +48,18 @@ public class NativeGroupByCtorProjectionTests(TemporaryDatabaseFixture database)
         }
     }
 
+    // A ctor-only DTO wrapping ONLY the key, with no aggregate at all — the exact shape EF Core's own
+    // GroupBy_nominal_type_count spec test uses.
+    private class CustomerIdOnly
+    {
+        public string CustomerId { get; }
+
+        public CustomerIdOnly(string customerId)
+        {
+            CustomerId = customerId;
+        }
+    }
+
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
@@ -88,5 +100,39 @@ public class NativeGroupByCtorProjectionTests(TemporaryDatabaseFixture database)
         Assert.Equal(2, results[0].OrderCount);
         Assert.Equal("B", results[1].CustomerId);
         Assert.Equal(1, results[1].OrderCount);
+    }
+
+    [Fact]
+    public void GroupBy_select_with_one_argument_ctor_only_dto_and_no_aggregate_goes_native()
+    {
+        var coll = database.MongoDatabase.GetCollection<BsonDocument>(
+            UniqueCollectionName(nameof(GroupBy_select_with_one_argument_ctor_only_dto_and_no_aggregate_goes_native)));
+        coll.InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "CustomerId", "A" }, { "Total", 10m } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "CustomerId", "A" }, { "Total", 20m } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "CustomerId", "B" }, { "Total", 5m } },
+        ]);
+        var collection = database.MongoDatabase.GetCollection<Order>(coll.CollectionNamespace.CollectionName);
+
+        using var db = SingleEntityDbContext.Create(
+            collection,
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+            });
+
+        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
+        // here proves the zero-aggregate, ctor-only DTO key projection went native.
+        var results = db.Entities
+            .GroupBy(o => o.CustomerId)
+            .Select(g => new CustomerIdOnly(g.Key))
+            .AsEnumerable()
+            .OrderBy(r => r.CustomerId)
+            .ToList();
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal("A", results[0].CustomerId);
+        Assert.Equal("B", results[1].CustomerId);
     }
 }

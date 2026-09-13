@@ -125,9 +125,11 @@ internal static class NativeGroupByBinder
     /// each be either a grouping-key access (<c>g.Key</c> / <c>g.Key.&lt;Sub&gt;</c>) or a supported aggregate
     /// over the grouping (<c>g.Count()</c>/<c>g.LongCount()</c> → <c>$sum:1</c>;
     /// <c>g.Sum/Min/Max/Average(x =&gt; ...)</c> over any translatable value — a plain member, constant,
-    /// cast, or computed arithmetic expression). Returns
-    /// <see langword="false"/> for any other shape, or when no accumulator is produced, so the caller falls
-    /// back.
+    /// cast, or computed arithmetic expression). A WRAPPED (non-bare) body with no accumulator at all — a
+    /// key-only ctor-DTO or anonymous-type projection — is also admitted, as a "distinct keys" $group. Returns
+    /// <see langword="false"/> for any other shape: a BARE key access with no wrapper (semantically a plain
+    /// Distinct, out of scope here), or a zero-accumulator projection combined with a pending-ordering
+    /// aggregate (an untested combination), so the caller falls back.
     /// </summary>
     /// <param name="mongoQ">The query whose <see cref="MongoSelectDefinition"/> is being populated.</param>
     /// <param name="resultSelector">The <c>Select</c> result selector lambda over the grouping.</param>
@@ -246,8 +248,17 @@ internal static class NativeGroupByBinder
             flatten.Add(new MongoProjection(memberName, flattenRead));
         }
 
-        if (accumulators.Count == 0)
-            return false; // pure key regroup with no aggregate — unsupported here, falls back
+        // A zero-accumulator Select still admits a WRAPPED (ctor-only DTO or anonymous-type) key-only
+        // projection — e.g. GroupBy(key).Select(g => new Result(g.Key)) — as a legitimate "distinct keys"
+        // $group (a $group with only _id and no other accumulator fields is ordinary, valid MQL). Two shapes
+        // still decline: a BARE g.Key projection (isBareBody — semantically a plain Distinct, out of scope
+        // here), and a zero-Select-accumulator projection combined with a pending-ordering aggregate
+        // (orderAccumulators.Count > 0 — an untested combination this plan does not attempt). A pending
+        // ordering that instead resolves via a KEY access (adding to resolvedOrderings, not
+        // orderAccumulators) is still admitted — only an ordering that resolves to its OWN $group
+        // accumulator excludes this shape.
+        if (accumulators.Count == 0 && (isBareBody || orderAccumulators.Count > 0))
+            return false;
 
         select.Grouping = new MongoGrouping(keyParts, [..orderAccumulators, ..accumulators]);
         select.GroupOrderOp = resolvedOrderings.Count > 0 ? new MongoSortOp(resolvedOrderings) : null;

@@ -629,6 +629,26 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     }
 
     [Fact]
+    public void GroupBy_OrderBy_key_before_select_with_wrapped_key_only_no_aggregate_goes_native()
+    {
+        // A pending ordering that resolves via a KEY access (not an aggregate) combined with a wrapped
+        // zero-accumulator projection — a newly-reachable shape (orderAccumulators stays empty here, so it
+        // isn't excluded by the guard's orderAccumulators.Count > 0 clause), confirmed correct by the final
+        // review: identical $sort-after-$group machinery to the already-shipped GroupBy_OrderBy_key_before_
+        // select_goes_native, just without an accumulator alongside the key.
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_OrderBy_key_before_select_with_wrapped_key_only_no_aggregate_goes_native));
+
+        var result = db.Entities
+            .GroupBy(o => o.Country)
+            .OrderBy(g => g.Key)
+            .Select(g => new { g.Key })
+            .ToList();
+
+        Assert.Equal(["FR", "UK", "US"], result.Select(r => r.Key).ToArray());
+    }
+
+    [Fact]
     public void GroupBy_OrderBy_aggregate_before_select_goes_native()
     {
         // Orders by the SAME aggregate the Select projects (Count) — the two accumulators are deliberately
@@ -1532,5 +1552,21 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         var result = db.Entities.GroupBy(o => new { }).Count();
 
         Assert.Equal(0, result); // no rows at all → no groups
+    }
+
+    [Fact]
+    public void GroupBy_anonymous_key_only_with_no_aggregate_goes_native()
+    {
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_anonymous_key_only_with_no_aggregate_goes_native));
+
+        var result = db.Entities
+            .GroupBy(o => o.Country)
+            .Select(g => new { g.Key })
+            .AsEnumerable()
+            .OrderBy(r => r.Key)
+            .ToList();
+
+        Assert.Equal(["FR", "UK", "US"], result.Select(r => r.Key).ToArray());
     }
 }

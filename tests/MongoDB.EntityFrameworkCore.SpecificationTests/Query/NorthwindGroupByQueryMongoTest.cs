@@ -1954,20 +1954,12 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 } } }, { "$
 
     public override async Task GroupBy_nominal_type_count(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_nominal_type_count(async));
+        await base.GroupBy_nominal_type_count(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-    """
-            Orders.
-            """);
-        }
+        AssertMql(
+            """
+Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$project" : { "_ctorArg0" : "$_id", "_id" : 0 } }, { "$count" : "v" }
+""");
     }
 
     public override async Task GroupBy_based_on_renamed_property_simple(bool async)
