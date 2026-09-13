@@ -777,6 +777,26 @@ internal sealed partial class MongoExpressionTranslator
                 when equalsCall.Method.GetParameters()[0].ParameterType != typeof(object):
                 return TranslateComparisonCore(equalsCall.Object!, equalsCall.Arguments[0], ExpressionType.Equal);
 
+            // --- Nullable-receiver Equals(object) call: e.g. `c.NullableAge.Equals(21)` ---
+            //
+            // Nullable<T> has no IEquatable<T>.Equals(T) of its own (only the inherited Equals(object)), so
+            // ANY call through a nullable receiver is compiled to the object overload above, regardless of
+            // whether the argument's underlying type actually matches the receiver's — the previous case's
+            // `!= typeof(object)` gate can't tell them apart. Mirror the static two-arg rule immediately below:
+            // peel exactly one boxing layer off the argument (RemoveObjectConvert) and require the UNBOXED,
+            // NULLABLE-STRIPPED types on both sides to match before treating it as an ordinary comparison. A
+            // mismatch (e.g. a genuinely different underlying type) falls through and stays declined, same as
+            // the object-overload case above.
+            case MethodCallExpression
+                {
+                    Method.Name: nameof(object.Equals), Object: not null, Arguments.Count: 1
+                } nullableEqualsCall
+                when (Nullable.GetUnderlyingType(nullableEqualsCall.Object!.Type) ?? nullableEqualsCall.Object.Type)
+                     == (Nullable.GetUnderlyingType(nullableEqualsCall.Arguments[0].RemoveObjectConvert().Type)
+                         ?? nullableEqualsCall.Arguments[0].RemoveObjectConvert().Type):
+                return TranslateComparisonCore(
+                    nullableEqualsCall.Object!, nullableEqualsCall.Arguments[0].RemoveObjectConvert(), ExpressionType.Equal);
+
             // --- Static object.Equals(a, b) method call ---
             //
             // The static overload's parameters are ALWAYS object (there is only one), so both arguments are

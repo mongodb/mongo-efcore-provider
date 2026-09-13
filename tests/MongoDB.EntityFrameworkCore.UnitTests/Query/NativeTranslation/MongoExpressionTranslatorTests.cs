@@ -613,6 +613,28 @@ public class MongoExpressionTranslatorTests
         Assert.Null(result);
     }
 
+    // EF-322 follow-up: a NULLABLE receiver's Equals(...) call. Nullable<T> has no IEquatable<T>.Equals(T) of
+    // its own — only the inherited Equals(object) — so `c.NullableAge.Equals(21)` is ALWAYS routed through the
+    // object overload even though the argument's underlying type (int) matches the receiver's underlying type
+    // (int) exactly. Unlike Equals_method_call_using_object_overload_reports_not_translatable above, this is
+    // NOT a genuine type mismatch and must translate, not decline.
+    [Fact]
+    public void Equals_method_call_on_nullable_receiver_with_matching_underlying_type_translates_to_equal_binary()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => c.NullableAge.Equals(21);
+
+        var translated = translator.TryTranslate(predicate.Body, out var result);
+
+        Assert.True(translated);
+        var binary = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, binary.Operator);
+        var field = Assert.IsType<MongoFieldExpression>(binary.Left);
+        Assert.Equal("NullableAge", field.ElementName);
+        var constant = Assert.IsType<MongoConstantExpression>(binary.Right);
+        Assert.Equal(21, constant.Value);
+    }
+
     // ------------------------------------------------------------------
     // Test 11e-11f (EF-322 follow-up): the STATIC two-argument object.Equals(a, b) form. Both parameters are
     // always object (there is only one static overload), so both arguments are ALWAYS boxed regardless of
