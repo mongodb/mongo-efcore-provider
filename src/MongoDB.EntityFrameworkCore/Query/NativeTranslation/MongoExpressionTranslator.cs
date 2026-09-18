@@ -389,6 +389,20 @@ internal sealed partial class MongoExpressionTranslator
             return false; // the subtree throws when evaluated (e.g. an invalid DateTime) — decline, don't crash translation
         }
 
+        // A DateTime literal like `new DateTime(1900, 1, 1)` has Kind Unspecified, exactly like the value the
+        // in-memory LINQ comparison computes against (no conversion at all — .AddMinutes is pure tick
+        // arithmetic). BsonValue.Create(DateTime), reached with ForSerialization null below, calls the
+        // driver's BsonUtils.ToUniversalTime, which for a non-Utc Kind calls DateTime.ToUniversalTime() and
+        // therefore depends on the MACHINE'S LOCAL TIME ZONE — for a pre-1916 date on a host whose zone has a
+        // historical non-whole-minute LMT offset (e.g. Europe/Dublin's -00:25 before 1916), that silently skews
+        // the rendered $date by the offset (MEASURED: 1900-01-01 renders as 00:25 UTC, not 00:00, causing
+        // Add_minutes_on_constant_value to be off by exactly that skew). SpecifyKind (a relabel, not a
+        // conversion — the ticks are untouched) makes it Utc, which BsonUtils.ToUniversalTime treats as a
+        // no-op, so the rendered literal matches the tick value the in-memory comparison uses regardless of
+        // the host's time zone.
+        if (value is DateTime { Kind: not DateTimeKind.Utc } dateTimeValue)
+            value = DateTime.SpecifyKind(dateTimeValue, DateTimeKind.Utc);
+
         result = new MongoConstantExpression(value, forSerialization: null);
         return true;
     }
@@ -797,24 +811,23 @@ internal sealed partial class MongoExpressionTranslator
                 return TranslateComparisonCore(
                     nullableEqualsCall.Object!, nullableEqualsCall.Arguments[0].RemoveObjectConvert(), ExpressionType.Equal);
 
-            // --- Equals(object) call between known-different simple types, e.g. `c.NullableAge.Equals(uintValue)` ---
+            // --- Nullable-receiver Equals(object) call across a genuinely mismatched underlying type: e.g.
+            // `nullableLongPrm.Equals(e.ReportsTo)` (ulong? vs int?) ---
             //
-            // The previous case's type-match guard just failed, so this is the "mismatched-type" shape its
-            // own comment describes: plain C#'s Equals(object) checks the runtime type first (Int32.Equals
-            // does `obj is int`), so it's guaranteed false whenever the two sides are different EXACT-equality
-            // simple types — same restricted set the driver-LINQ bridge folds
-            // (ExpressionExtensionMethods.AreMismatchedExactEqualityTypes), scoped there rather than any
-            // mismatched types since an arbitrary type's Equals(object) override could compare across types.
-            // Folding to a constant here (instead of declining to the fallback) is what makes this shape go
-            // native at all.
+            // The case above admits a MATCHING underlying type; this one is the sibling for a mismatched one.
+            // Plain C# always returns false here (Nullable<T>.Equals(object) checks the argument's runtime type
+            // against T before comparing), so this is a compile-time-known constant, not a query — mirrors the
+            // driver-LINQ bridge's own fold for the identical shape (see
+            // ExpressionExtensionMethods.IsAlwaysFalseAcrossTypeMismatch). Scoped to
+            // ExactTypeEqualityTypes/AreMismatchedExactEqualityTypes, same as that bridge: an arbitrary type's
+            // Equals(object) override could legitimately compare across types, so only the known-exact-match
+            // primitives are safe to fold. Anything outside that set still falls through and stays declined.
             case MethodCallExpression
                 {
                     Method.Name: nameof(object.Equals), Object: not null, Arguments.Count: 1
                 } mismatchedEqualsCall
-                when ExpressionExtensionMethods.AreMismatchedExactEqualityTypes(
-                    Nullable.GetUnderlyingType(mismatchedEqualsCall.Object!.Type) ?? mismatchedEqualsCall.Object.Type,
-                    Nullable.GetUnderlyingType(mismatchedEqualsCall.Arguments[0].RemoveObjectConvert().Type)
-                        ?? mismatchedEqualsCall.Arguments[0].RemoveObjectConvert().Type):
+                when ExpressionExtensionMethods.IsAlwaysFalseAcrossTypeMismatch(
+                    mismatchedEqualsCall.Object!, mismatchedEqualsCall.Arguments[0]):
                 return new MongoConstantExpression(false, forSerialization: null);
 
             // --- Static object.Equals(a, b) method call ---
@@ -826,10 +839,11 @@ internal sealed partial class MongoExpressionTranslator
             // static-Equals case): peel exactly one boxing layer off each argument
             // (ExpressionExtensionMethods.RemoveObjectConvert — unlike Unwrap, this strips ONLY a single
             // Convert-to-object layer, leaving any numeric/widening conversion underneath intact) and require
-            // the UNBOXED types to match. A mismatch folds to a constant false when the two (nullable-stripped)
-            // types are known-different EXACT-equality simple types (mirrors the instance-call fold above via
-            // the same shared AreMismatchedExactEqualityTypes gate); any other mismatch declines rather than
-            // mistranslate — same correctness reasoning as the instance-call case above.
+            // the UNBOXED types to match. A genuinely mismatched EXACT-equality-type pair (e.g.
+            // object.Equals(intField, (long)21)) folds to a compile-time-known `false` constant instead —
+            // same fold and same ExactTypeEqualityTypes scoping as the instance-call case above, mirroring
+            // MongoEFToLinqTranslatingExpressionVisitor's static-Equals case. Anything else (mismatched types
+            // outside that set) declines rather than mistranslate.
             case MethodCallExpression
                 {
                     Method.Name: nameof(object.Equals), Object: null, Arguments.Count: 2
@@ -837,14 +851,16 @@ internal sealed partial class MongoExpressionTranslator
             {
                 var leftArg = staticEqualsCall.Arguments[0].RemoveObjectConvert();
                 var rightArg = staticEqualsCall.Arguments[1].RemoveObjectConvert();
-                if (leftArg.Type == rightArg.Type)
-                    return TranslateComparisonCore(leftArg, rightArg, ExpressionType.Equal);
+                if (leftArg.Type != rightArg.Type)
+                {
+                    return ExpressionExtensionMethods.AreMismatchedExactEqualityTypes(
+                        Nullable.GetUnderlyingType(leftArg.Type) ?? leftArg.Type,
+                        Nullable.GetUnderlyingType(rightArg.Type) ?? rightArg.Type)
+                        ? new MongoConstantExpression(false, forSerialization: null)
+                        : null;
+                }
 
-                return ExpressionExtensionMethods.AreMismatchedExactEqualityTypes(
-                    Nullable.GetUnderlyingType(leftArg.Type) ?? leftArg.Type,
-                    Nullable.GetUnderlyingType(rightArg.Type) ?? rightArg.Type)
-                    ? new MongoConstantExpression(false, forSerialization: null)
-                    : null;
+                return TranslateComparisonCore(leftArg, rightArg, ExpressionType.Equal);
             }
 
             // --- Negation of a boolean field ---
@@ -932,6 +948,13 @@ internal sealed partial class MongoExpressionTranslator
                 return new MongoArrayContainsExpression(arrayFieldExpr, itemNode, negated: false);
             }
 
+            // --- Entity-list membership: customers.Contains(c) — the root entity itself is the item.
+            // Must run BEFORE the general collection-membership arm below: TryResolveMember(item) there
+            // requires a member-access item, which a bare whole-entity item never is, so it would decline.
+            // See MongoExpressionTranslator.EntityEquality.cs's TryTranslateEntityListContains.
+            case MethodCallExpression entityContainsCall when TryTranslateEntityListContains(entityContainsCall, out var entityListContains):
+                return entityListContains;
+
             // --- Collection membership: Enumerable.Contains / List<T>.Contains / ICollection<T>.Contains ---
 
             case MethodCallExpression call when TryMatchContainsMethod(call, out var collectionExpr, out var itemExpr):
@@ -950,18 +973,24 @@ internal sealed partial class MongoExpressionTranslator
                 }
 
                 // The item isn't a bare field — try a COMPUTED needle (e.g. string concatenation of a
-                // column with a constant/other column: `data.Contains(c.CustomerID + "SomeConstant")`).
-                // A computed needle has no query-dialect form at all (only a bare field can key
-                // { field: { $in: [...] } }), so it can only be tested via $expr's array-form $in — hence
-                // MongoComputedInExpression, not MongoInExpression. Scoped to a STRING-typed needle (the
-                // only computed shape TranslateValue produces that TranslateInValuesRaw can serialize
-                // without a backing IProperty) and gated by CanRender so a needle shape the aggregation
-                // renderer can't express declines here rather than throwing at render time.
+                // column with a constant/other column: `data.Contains(c.CustomerID + "SomeConstant")`, a
+                // date-part chain: `dates.Contains(o.OrderDate!.Value.Date)`), or a composite-key-style
+                // anonymous-type tuple built from entity fields (`ids.Contains(new { Id1 = o.OrderID, Id2 =
+                // o.ProductID })`, EF's Northwind `Contains_with_local_anonymous_type_array_closure`) — the
+                // latter reaches here as a MongoDocumentConstructionExpression via TranslateOperand's own
+                // NewExpression/anonymous-type arm. A computed needle has no query-dialect form at all (only
+                // a bare field can key { field: { $in: [...] } }), so it can only be tested via $expr's
+                // array-form $in — hence MongoComputedInExpression, not MongoInExpression. Scoped to the
+                // shapes TranslateInValuesRaw can serialize without a backing IProperty (string, DateTime, or
+                // an anonymous-type tuple whose array element type matches the needle's own type) and gated
+                // by CanRender so a needle shape the aggregation renderer can't express declines here rather
+                // than throwing at render time.
                 if (TryTranslateValue(itemExpr, out var needleNode)
-                    && needleNode.Type == typeof(string)
+                    && (needleNode.Type == typeof(string) || needleNode.Type == typeof(DateTime)
+                        || needleNode is MongoDocumentConstructionExpression)
                     && MongoAggregationExpressionRenderer.CanRender(needleNode))
                 {
-                    var rawValuesNode = TranslateInValuesRaw(collectionExpr, typeof(string));
+                    var rawValuesNode = TranslateInValuesRaw(collectionExpr, needleNode.Type);
                     if (rawValuesNode is null)
                         return null;
 
@@ -1758,6 +1787,16 @@ internal sealed partial class MongoExpressionTranslator
                 ? new MongoOuterFieldExpression(property, fieldPath!)
                 : new MongoFieldExpression(property, fieldPath!);
         }
+
+        // EF-322: a member access naming a post-Distinct COMPUTED alias (no backing IProperty, so
+        // TryResolveMember above declines it) resolves to its flattened output path instead — the same
+        // primitive the StartsWith/EndsWith/Contains regex arm already uses (see
+        // TryResolveDistinctAliasComputedField's own remarks). This widens every operator that bottoms out in
+        // TranslateOperand — equality/relational comparisons via TranslateComparisonCore's general $expr
+        // fall-through, arithmetic, etc. — to accept a computed Distinct alias, not just the regex-only shape
+        // that previously special-cased it.
+        if (TryResolveDistinctAliasComputedField(node, out var aliasFieldRef))
+            return aliasFieldRef;
 
         // An OWNED-collection element count — b.Posts.Count / .Count() / .LongCount(). The renderer decides the
         // dialect: a comparison against an admissible integer constant becomes an array-index existence test,

@@ -119,6 +119,33 @@ internal sealed class PlaceholderTable
     }
 
     /// <summary>
+    /// Appends an <em>entity-key-array-extraction</em> placeholder entry — the per-element analog of
+    /// <see cref="CreateEntityMemberPlaceholder"/>, used for the values side of an entity-list
+    /// <c>Contains</c> (e.g. <c>customers.Contains(c)</c>). Unlike an ordinary array placeholder, the raw
+    /// parameter value is an ARRAY OF WHOLE ENTITY INSTANCES, not an array of the property's own values: at
+    /// <see cref="MongoPipelineFactory.Build(IReadOnlyDictionary{string, object})"/> time,
+    /// <paramref name="entityMemberProperty"/>'s <see cref="IPropertyBase.GetGetter"/> is applied to EACH
+    /// non-null element, per execution, before it is serialized with <paramref name="elementSerializer"/>; a
+    /// <see langword="null"/> element passes through as a BSON null.
+    /// </summary>
+    /// <param name="parameterName">The EF query-parameter name (e.g. <c>__customers_0</c>), bound to an
+    /// array of entities.</param>
+    /// <param name="entityMemberProperty">The primary-key property whose value is extracted from each
+    /// non-null entity element.</param>
+    /// <param name="elementSerializer">The <see cref="IBsonSerializer"/> that will serialize each extracted
+    /// key value.</param>
+    /// <returns>
+    /// A sentinel <see cref="BsonDocument"/> of the form <c>{ __mongoef_param__: &lt;index&gt; }</c>
+    /// where <c>index</c> is the zero-based position in <see cref="Entries"/>.
+    /// </returns>
+    public BsonValue CreateEntityKeyArrayPlaceholder(string parameterName, IProperty entityMemberProperty, IBsonSerializer elementSerializer)
+    {
+        var index = _entries.Count;
+        _entries.Add((parameterName, elementSerializer, true, null, entityMemberProperty, null));
+        return new BsonDocument(SentinelKey, new BsonInt32(index));
+    }
+
+    /// <summary>
     /// Appends an <em>array-element-extraction</em> placeholder entry — used when a query parameter's runtime
     /// value is an ARRAY and only ONE element of it (at a constant, compile-time-known index) is actually
     /// compared, e.g. <c>args[0]</c> in a compiled query whose lambda takes <c>args</c> as a top-level array

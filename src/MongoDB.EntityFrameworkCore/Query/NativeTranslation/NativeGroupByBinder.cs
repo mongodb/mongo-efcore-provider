@@ -53,9 +53,10 @@ internal static class NativeGroupByBinder
 
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
 
-        // EF-322: a GroupBy composed directly on top of a projected Distinct (Select.PriorGrouping, set by
-        // SnapshotDistinctGroupingForNestedGroupBy just before this call) resolves its key selector against
-        // the Distinct's own flattened output alias, never the entity — same rationale and mechanism as
+        // EF-322/EF-TBD: a GroupBy composed directly on top of an already-finalized prior grouping — a
+        // projected Distinct, or an ordinary prior GroupBy(key).Select(aggregate) (Select.PriorGrouping, set by
+        // SnapshotPriorGroupingForNestedGroupBy just before this call) — resolves its key selector against
+        // that prior stage's own flattened output alias, never the entity — same rationale and mechanism as
         // NativeSlotPopulator's Where arm (MongoExpressionTranslator.DistinctAliasScope's own remarks).
         if (select.PriorGrouping is { } priorGrouping)
             translator.DistinctAliasScope = priorGrouping;
@@ -91,6 +92,14 @@ internal static class NativeGroupByBinder
                     || !HasDefaultKeySerialization(scalarField.Property))
                     return false;
                 parts.Add(new MongoGroupingKeyPart(null, scalarField));
+                break;
+
+            // A literal-constant key (GroupBy(o => 2)) groups every row into a single group, identically to
+            // the zero-member new{} case above, EXCEPT the group's _id must be the literal itself (e.g. `2`),
+            // not `{}` — e.g. a GroupBy(e => 1) nested on a prior GroupBy's aggregate result (there is no
+            // property to check for default serialization; a raw literal is inherently safe to read back).
+            case ConstantExpression constant:
+                parts.Add(new MongoGroupingKeyPart(null, new MongoConstantExpression(constant.Value, forSerialization: null)));
                 break;
 
             default:
@@ -179,9 +188,10 @@ internal static class NativeGroupByBinder
 
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
 
-        // EF-322: an accumulator's operand selector (g.Sum(x => x.Field) etc.) over a GroupBy nested on a
-        // projected Distinct resolves against the Distinct's own flattened alias, never the entity — see
-        // TryBindGroupKey's own carve-out above for the identical rationale.
+        // EF-322/EF-TBD: an accumulator's operand selector (g.Sum(x => x.Field) etc.) over a GroupBy nested on
+        // an already-finalized prior grouping — a projected Distinct or an ordinary prior GroupBy — resolves
+        // against that prior stage's own flattened alias, never the entity — see TryBindGroupKey's own
+        // carve-out above for the identical rationale.
         if (select.PriorGrouping is { } priorGrouping)
             translator.DistinctAliasScope = priorGrouping;
 
@@ -204,7 +214,13 @@ internal static class NativeGroupByBinder
                 var groupParam = keySelector.Parameters[0];
                 var body = keySelector.Body;
 
-                if (TryGetKeyMemberPath(body, groupParam, keyParts, isComposite, out var keyPath))
+                // allowWholeKeyRead: false — ordering by the WHOLE composite key still declines, unlike the
+                // Select-projection flatten below. A composite key's CLR type is a compiler-generated
+                // anonymous type with no IComparable/IComparer, so `.OrderBy(g => g.Key)` over one is not a
+                // shape the in-memory LINQ oracle can even execute (Comparer<T>.Default throws for it) — this
+                // stays declined rather than emitting a $sort on the raw "_id" sub-document, which would give
+                // a different (BSON field-order) comparison with no oracle to match against.
+                if (TryGetKeyMemberPath(body, groupParam, keyParts, isComposite, out var keyPath, allowWholeKeyRead: false))
                 {
                     if (keyPath == null)
                         return false; // bare g.Key over a composite key — no single field to sort by
@@ -271,15 +287,17 @@ internal static class NativeGroupByBinder
     }
 
     // Classifies a result-member value as a grouping-key access and, if so, yields the group-output element
-    // path it reads from. Returns true for a key access; `path` is null only for the unsupported bare-g.Key
-    // over a composite key (whole anonymous key object — cannot flatten to one field). Returns false when the
-    // value is not a key access (i.e. it is an accumulator).
+    // path it reads from. Returns true for a key access; `path` is null for a bare g.Key that cannot resolve
+    // to one field — always for a zero-part (empty new{}) key, and additionally for a composite key when
+    // `allowWholeKeyRead` is false. Returns false when the value is not a key access (i.e. it is an
+    // accumulator).
     private static bool TryGetKeyMemberPath(
         Expression expr,
         ParameterExpression groupingParameter,
         IReadOnlyList<MongoGroupingKeyPart> keyParts,
         bool isComposite,
-        out string? path)
+        out string? path,
+        bool allowWholeKeyRead = true)
     {
         path = null;
         expr = Unwrap(expr);
@@ -287,11 +305,16 @@ internal static class NativeGroupByBinder
         if (expr is not MemberExpression member)
             return false;
 
-        // g.Key — the whole key. Only flattenable when the key is scalar (single unnamed part); a
-        // composite key or a zero-part (empty new{}) key has no single field to read it back from.
+        // g.Key — the whole key. For the Select-projection flatten (allowWholeKeyRead: true), flattenable for
+        // any non-empty key (scalar or composite) by reading the group's own "_id" back wholesale — for a
+        // composite key that is a sub-document whose fields already match the composite key type's member
+        // names (the exact shape TryBindGroupKey wrote them in), so the same generic CLR-type readback that
+        // already handles a scalar key materializes the composite type from it too. Only a zero-part (empty
+        // new{}) key has no single field to read it back from. The ordering call site passes
+        // allowWholeKeyRead: false — see its own call-site remarks.
         if (member.Member.Name == "Key" && member.Expression == groupingParameter)
         {
-            path = (isComposite || keyParts.Count == 0) ? null : "_id";
+            path = keyParts.Count == 0 || (isComposite && !allowWholeKeyRead) ? null : "_id";
             return true;
         }
 
@@ -353,6 +376,16 @@ internal static class NativeGroupByBinder
         // is tried FIRST, before the IsGroupingSource(call.Arguments[0], ...) guard below that would
         // otherwise reject it outright.
         if (TryBindDistinctAccumulator(call, outputField, groupingParameter, translator, out accumulator, out flattenRead))
+            return true;
+
+        // EF-TBD: a SELECTOR-LESS aggregate (g.Sum()/Average()/Min()/Max(), no lambda) over a GroupBy composed
+        // with a two-arg key+elementSelector overload arrives here as `g.Select(elementSelector).Sum()` —
+        // EF Core's normalizer re-expresses the parameterless aggregate as an ordinary Queryable.Select
+        // wrapping the grouping parameter, rather than inlining the element selector into a same-shaped
+        // aggregate lambda the way it does for a SELECTOR-carrying aggregate (see this method's own remarks
+        // on g.Sum(e => e.Field) above). Bind it the SAME way as the distinct form just above minus the
+        // dedup semantics — an ordinary $sum/$avg/$min/$max over the selected field, not $addToSet.
+        if (TryBindElementSelectedAccumulator(call, outputField, groupingParameter, translator, out accumulator, out flattenRead))
             return true;
 
         if (call.Arguments.Count == 0 || !IsGroupingSource(call.Arguments[0], groupingParameter))
@@ -474,6 +507,62 @@ internal static class NativeGroupByBinder
         flattenRead = isSize
             ? new MongoSizeExpression(outputField, call.Method.ReturnType)
             : new MongoArrayReduceExpression(reduceOp!, outputField, call.Method.ReturnType);
+        return true;
+    }
+
+    /// <summary>
+    /// A SELECTOR-LESS <c>Sum()</c>/<c>Average()</c>/<c>Min()</c>/<c>Max()</c> over a <c>GroupBy(key,
+    /// elementSelector)</c>'s element sequence — e.g. <c>.GroupBy(o =&gt; 2, o =&gt; o.OrderID).Select(g =&gt;
+    /// g.Sum())</c>. Unlike a selector-carrying aggregate (<c>g.Sum(x =&gt; x.Field)</c>, whose element
+    /// selector composition is inlined directly into the aggregate's own lambda before this translator ever
+    /// runs — see <see cref="TryBindAccumulator"/>'s own remarks), a parameterless aggregate has no lambda for
+    /// EF to inline into, so its normalizer instead re-expresses it as an ordinary
+    /// <c>g.AsQueryable().Select(elementSelector).Sum()</c> — the SAME shape <see cref="TryBindDistinctAccumulator"/>
+    /// recognizes, minus the trailing <c>Distinct()</c>. Binds an ordinary <c>$sum</c>/<c>$avg</c>/<c>$min</c>/
+    /// <c>$max</c> accumulator directly over the selected field (no <c>$addToSet</c>/dedup — every element
+    /// contributes, not just distinct ones).
+    /// </summary>
+    private static bool TryBindElementSelectedAccumulator(
+        MethodCallExpression call,
+        string outputField,
+        ParameterExpression groupingParameter,
+        MongoExpressionTranslator translator,
+        [NotNullWhen(true)] out MongoGroupAccumulator? accumulator,
+        [NotNullWhen(true)] out MongoExpression? flattenRead)
+    {
+        accumulator = null;
+        flattenRead = null;
+
+        if (call.Arguments.Count != 1)
+            return false;
+
+        // Min/Max are true open generics (<TSource>); Average/Sum's without-selector overloads are NOT
+        // generic — same asymmetry TryBindDistinctAccumulator's own remarks explain. Count/LongCount are
+        // deliberately excluded: a bare Count doesn't need the element's value at all, so EF has no reason to
+        // wrap it in a Select the way it does for a reducing aggregate.
+        var reduceOp = QueryableMethods.IsAverageWithoutSelector(call.Method) ? "$avg"
+            : call.Method.IsGenericMethod && call.Method.GetGenericMethodDefinition() == QueryableMethods.MinWithoutSelector ? "$min"
+            : call.Method.IsGenericMethod && call.Method.GetGenericMethodDefinition() == QueryableMethods.MaxWithoutSelector ? "$max"
+            : QueryableMethods.IsSumWithoutSelector(call.Method) ? "$sum"
+            : null;
+
+        if (reduceOp is null)
+            return false;
+
+        // The source must be g.Select(elementSelector) directly (never wrapped in a further Distinct() — that
+        // shape is TryBindDistinctAccumulator's, tried first by the caller).
+        if (Unwrap(call.Arguments[0]) is not MethodCallExpression { Method.IsGenericMethod: true } selectCall
+            || selectCall.Method.GetGenericMethodDefinition() != QueryableMethods.Select
+            || selectCall.Arguments.Count != 2
+            || !IsGroupingSource(selectCall.Arguments[0], groupingParameter))
+            return false;
+
+        if (selectCall.Arguments[1].UnwrapLambdaFromQuote() is not { } selector
+            || !translator.TryTranslateValue(selector.Body, out var operand))
+            return false;
+
+        accumulator = new MongoGroupAccumulator(outputField, reduceOp, operand);
+        flattenRead = new MongoElementRefExpression(outputField, call.Method.ReturnType);
         return true;
     }
 

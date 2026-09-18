@@ -206,6 +206,24 @@ internal sealed partial class MongoExpressionTranslator
             }
         }
 
+        // A member naming an ACCUMULATOR alias from a prior GroupBy(key).Select(aggregate) stage nested
+        // directly under a further GroupBy — e.g. .GroupBy(k).Select(g => new { g.Key, Count = g.Count() })
+        // .GroupBy(e => e.Key).Select(g => new { g.Key, Total = g.Sum(e => e.Count) }) — resolves to that
+        // accumulator's OWN flattened output field, the same top-level-pass-through mechanism as a computed
+        // key part above: the prior stage's flatten $project already wrote the accumulator's value under its
+        // own alias, so this stage's document has a top-level field of that exact name. An accumulator alias
+        // never has a backing IProperty (it is always a computed aggregate), so — unlike a key part — there is
+        // no companion branch in TryResolveMember to avoid double-claiming; every accumulator alias is
+        // resolved here. `scope.Accumulators` is empty for a plain Distinct, so this is a no-op there.
+        foreach (var acc in scope.Accumulators)
+        {
+            if (acc.OutputField == me.Member.Name)
+            {
+                fieldRef = new MongoElementRefExpression(acc.OutputField, me.Type);
+                return true;
+            }
+        }
+
         return false;
     }
 

@@ -79,11 +79,11 @@ internal static class NativeSlotPopulator
         // Scoped to Grouping == null (not yet finalized) so this can never fire for the OPPOSITE composition
         // order (OrderBy composed AFTER the Select, over a projected alias) — that shape must keep falling
         // through to the general guard below unchanged (see GroupBy_post_group_OrderBy_by_aggregate_matches_
-        // driver_linq in NativeGroupByTests). A GroupBy nested on a projected Distinct (PriorGrouping set) is
-        // naturally excluded too, since Grouping stays non-null in that shape (set by
-        // SnapshotDistinctGroupingForNestedGroupBy's sibling machinery) even before this carve-out's own
-        // Select runs — so this Grouping == null condition should not be loosened to "fix" that case; it is
-        // already excluded on purpose.
+        // driver_linq in NativeGroupByTests). A GroupBy nested on an already-finalized prior grouping
+        // (PriorGrouping set — a projected Distinct or an ordinary prior GroupBy) is naturally excluded too,
+        // since Grouping stays non-null in that shape (set by SnapshotPriorGroupingForNestedGroupBy's sibling
+        // machinery) even before this carve-out's own Select runs — so this Grouping == null condition should
+        // not be loosened to "fix" that case; it is already excluded on purpose.
         if (mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping == null && mongoQ.Select.PendingGroupKey != null
             && (methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.OrderByDescending
                 || methodDefinition == QueryableMethods.ThenBy || methodDefinition == QueryableMethods.ThenByDescending))

@@ -331,26 +331,6 @@ internal static class ExpressionExtensionMethods
             ? unaryExpression.Operand
             : expression;
 
-    // Types whose Equals(object) requires an exact runtime-type match, i.e. no cross-type equality.
-    private static readonly HashSet<Type> ExactTypeEqualityTypes =
-    [
-        typeof(bool), typeof(byte), typeof(sbyte), typeof(short), typeof(ushort),
-        typeof(int), typeof(uint), typeof(long), typeof(ulong), typeof(float), typeof(double),
-        typeof(decimal), typeof(char), typeof(string), typeof(Guid), typeof(DateTime),
-        typeof(DateTimeOffset), typeof(TimeSpan)
-    ];
-
-    /// <summary>
-    /// True when <paramref name="left"/> and <paramref name="right"/> are different <see cref="ExactTypeEqualityTypes"/>
-    /// members, so an <c>Equals(object)</c> call between them is guaranteed <see langword="false"/> at runtime
-    /// (e.g. <c>((int?)1).Equals((uint)2)</c>). Scoped to that set rather than any mismatched types, since an
-    /// arbitrary type's <c>Equals(object)</c> override could compare across types. Shared by
-    /// <c>MongoEFToLinqTranslatingExpressionVisitor</c> (driver-LINQ fallback) and
-    /// <c>MongoExpressionTranslator</c> (native), which must fold this shape identically.
-    /// </summary>
-    internal static bool AreMismatchedExactEqualityTypes(Type left, Type right)
-        => left != right && ExactTypeEqualityTypes.Contains(left) && ExactTypeEqualityTypes.Contains(right);
-
     /// <summary>
     /// Whether <paramref name="type"/> is one of EF Core's compiler-generated
     /// <c>TransparentIdentifier&lt;TOuter, TInner&gt;</c> constructions — the anonymous result type a join's
@@ -366,6 +346,40 @@ internal static class ExpressionExtensionMethods
     internal static bool IsTransparentIdentifierType(this Type? type)
         => type is { IsGenericType: true }
            && type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal);
+
+    // Types whose Equals(object) requires an exact runtime-type match, i.e. no cross-type equality. Shared by
+    // MongoEFToLinqTranslatingExpressionVisitor (driver-LINQ bridge) and MongoExpressionTranslator (native
+    // translator) — both fold a mismatched-type Equals(...) call to a `false` constant, and must agree on
+    // exactly which types are eligible for the fold.
+    private static readonly HashSet<Type> ExactTypeEqualityTypes =
+    [
+        typeof(bool), typeof(byte), typeof(sbyte), typeof(short), typeof(ushort),
+        typeof(int), typeof(uint), typeof(long), typeof(ulong), typeof(float), typeof(double),
+        typeof(decimal), typeof(char), typeof(string), typeof(Guid), typeof(DateTime),
+        typeof(DateTimeOffset), typeof(TimeSpan)
+    ];
+
+    /// <summary>
+    /// True when <paramref name="left"/> and <paramref name="right"/> are different <see cref="ExactTypeEqualityTypes"/>
+    /// members, so equality between them is always false. Scoped to that set rather than any mismatched
+    /// types, since an arbitrary type's <c>Equals(object)</c> override could compare across types.
+    /// </summary>
+    internal static bool AreMismatchedExactEqualityTypes(Type left, Type right)
+        => left != right && ExactTypeEqualityTypes.Contains(left) && ExactTypeEqualityTypes.Contains(right);
+
+    /// <summary>
+    /// True when <paramref name="receiver"/>.Equals(<paramref name="argument"/>) is guaranteed to return
+    /// <see langword="false"/> at runtime because the two sides are known-different simple types with no
+    /// cross-type equality (e.g. <c>((int?)1).Equals((ulong)2)</c>).
+    /// </summary>
+    internal static bool IsAlwaysFalseAcrossTypeMismatch(Expression receiver, Expression argument)
+    {
+        var receiverType = Nullable.GetUnderlyingType(receiver.Type) ?? receiver.Type;
+        var argumentType = argument.RemoveObjectConvert().Type;
+        argumentType = Nullable.GetUnderlyingType(argumentType) ?? argumentType;
+
+        return AreMismatchedExactEqualityTypes(receiverType, argumentType);
+    }
 
     /// <summary>
     /// Extracts the simple member/property name from a key-selector-style expression — a member access

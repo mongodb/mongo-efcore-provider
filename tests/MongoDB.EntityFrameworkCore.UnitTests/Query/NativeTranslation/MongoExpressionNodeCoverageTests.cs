@@ -393,7 +393,7 @@ public class MongoExpressionNodeCoverageTests
     /// behaviour so it cannot change silently; it does not claim every cell is desirable.
     /// </summary>
     /// <remarks>
-    /// <para>Four cross-cutting facts this matrix makes visible, all of them pre-existing:</para>
+    /// <para>Three cross-cutting facts this matrix makes visible, all of them pre-existing:</para>
     /// <list type="number">
     /// <item>
     /// <c>QL.Render</c> is <c>rendered</c> for <b>every</b> node type, including the 12 the query-dialect
@@ -407,11 +407,6 @@ public class MongoExpressionNodeCoverageTests
     /// back to driver-LINQ. That decline is now a <see langword="false"/> return rather than the throw it used to
     /// be (which converted a would-be graceful fallback into a hard failure in every
     /// <see cref="MongoQueryMode"/>).
-    /// </item>
-    /// <item>
-    /// <c>MongoDocumentConstructionExpression</c> has <c>Agg.Render = rendered</c> but
-    /// <c>Agg.CanRender = false</c> — the renderer has an arm the classifier does not. Not unsafe (it only
-    /// declines a shape that would in fact render), but it is a missing <c>CanRender</c> arm.
     /// </item>
     /// <item>
     /// In the <c>(converted)</c> column, exactly the nine arm-bearing node kinds report <c>false</c>. The other
@@ -438,10 +433,11 @@ public class MongoExpressionNodeCoverageTests
 
         // No query-dialect form at all (aggregation-expression-only, over a synthetic $group-stage alias —
         // see the node's own remarks), so the negator declines and the query renderer falls through to
-        // $expr. Agg.CanRender has no arm for it (same missing-arm pattern as MongoDocumentConstructionExpression
-        // below — Agg.Render has an arm the classifier does not). The FieldName carries no backing IProperty,
-        // so both serialization columns read true for the same reason MongoConstantExpression/
-        // MongoParameterExpression/MongoElementRefExpression do (see remark 4 below).
+        // $expr. Agg.CanRender has no arm for it — Agg.Render has an arm the classifier does not (the same
+        // missing-arm pattern MongoDocumentConstructionExpression below used to have, before EF-322 gave it
+        // its own CanRender arm). The FieldName carries no backing IProperty, so both serialization columns
+        // read true for the same reason MongoConstantExpression/MongoParameterExpression/
+        // MongoElementRefExpression do (see remark 4 below).
         ["MongoArrayReduceExpression|Agg.CanRender"] = "false",
         ["MongoArrayReduceExpression|Agg.Render"] = "rendered",
         ["MongoArrayReduceExpression|AllFieldsDefaultSerialized"] = "true",
@@ -543,8 +539,9 @@ public class MongoExpressionNodeCoverageTests
         ["MongoDateTimeOffsetLocalExpression|QL.IsQueryDialectRenderable"] = "false",
         ["MongoDateTimeOffsetLocalExpression|QL.Render"] = "rendered",
 
-        // Agg.Render has an arm this node reaches; Agg.CanRender does not — see remark 3 above.
-        ["MongoDocumentConstructionExpression|Agg.CanRender"] = "false",
+        // EF-322 follow-up: Agg.CanRender now has its own arm (see remark 3 above), closing what used to be
+        // a "renderer wider than classifier" gap.
+        ["MongoDocumentConstructionExpression|Agg.CanRender"] = "true",
         ["MongoDocumentConstructionExpression|Agg.Render"] = "rendered",
         ["MongoDocumentConstructionExpression|AllFieldsDefaultSerialized"] = "true",
         ["MongoDocumentConstructionExpression|AllFieldsDefaultSerialized(converted)"] = "true",

@@ -260,4 +260,83 @@ internal sealed partial class MongoExpressionTranslator
 
     private static bool MemberMatchesProperty(MemberInfo member, IProperty property)
         => member == property.PropertyInfo || member == property.FieldInfo || member.Name == property.Name;
+
+    /// <summary>
+    /// <c>customers.Contains(c)</c> — the LIST generalization of
+    /// <see cref="TryTranslateEntityEquality(BinaryExpression, out MongoExpression?)"/>'s single-comparand shape: the root entity tested against a CLIENT-SIDE collection of entity values
+    /// (rather than exactly one). Rewritten to a primary-key <c>$in</c> rather than an OR-chain of per-element
+    /// key comparisons — unlike the driver-LINQ bridge's <c>TryRewriteEntityContains</c>, which runs fresh per
+    /// execution and can size an OR-chain to the list's actual runtime length, this runs ONCE at compile time
+    /// and the list's length isn't known until execution, so the rewrite must be a single, list-length-
+    /// independent construct. A <see langword="null"/> element (comparing the root entity, which a real
+    /// fetched document is never absent-as-null, to a null list entry) can never match a real row either way,
+    /// so it is passed through into the <c>$in</c> values verbatim (mirroring Cosmos's own
+    /// <c>IN (null, "ALFKI")</c> translation of the same shape) rather than filtered out — cheaper than
+    /// proving it dead at every call site.
+    /// </summary>
+    /// <remarks>
+    /// Scoped to a SINGLE-property, non-shadow primary key, like
+    /// <see cref="TryTranslateEntityEquality(BinaryExpression, out MongoExpression?)"/> —
+    /// a composite key would need a multi-field <c>$in</c> (an array of per-key-component tuples), which
+    /// <see cref="MongoInExpression"/> cannot express; that shape declines (falls back) rather than being
+    /// admitted here.
+    /// </remarks>
+    internal bool TryTranslateEntityListContains(MethodCallExpression call, [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+
+        if (SelfParam is null || !TryMatchContainsMethod(call, out var collection, out var item)
+            || !ReferenceEquals(Unwrap(item), SelfParam))
+            return false;
+
+        var elementType = GetEnumerableElementType(Unwrap(collection).Type);
+        if (elementType != _entityType.ClrType)
+            return false;
+
+        var primaryKey = _entityType.FindPrimaryKey();
+        if (primaryKey is null || primaryKey.Properties.Count != 1)
+            return false; // composite keys need a multi-field $in — out of scope here, decline
+
+        var keyProperty = primaryKey.Properties[0];
+        if (keyProperty.IsShadowProperty())
+            return false;
+
+        var valuesNode = TranslateEntityKeyInValues(collection, keyProperty);
+        if (valuesNode is null)
+            return false;
+
+        result = new MongoInExpression(
+            new MongoFieldExpression(keyProperty, GetKeyFieldPath(keyProperty)), valuesNode, negated: false);
+        return true;
+    }
+
+    /// <summary>
+    /// Translates the collection side of <see cref="TryTranslateEntityListContains"/> into the <c>$in</c>
+    /// values node: a <see cref="MongoConstantExpression"/> of extracted keys for a compile-time-known list
+    /// (each element's key read immediately via <see cref="IPropertyBase.GetGetter"/>, a null element passed
+    /// through as <see langword="null"/>), or a <see cref="MongoParameterExpression"/> with
+    /// <see cref="MongoParameterExpression.ExtractEntityKeyFromArrayElements"/> set for a query-parameter
+    /// list — the per-element analog of <see cref="TryExtractEntityMemberValue"/>'s single-entity parameter
+    /// case, deferring the extraction to per-execution time via <see cref="PlaceholderTable"/> /
+    /// <see cref="MongoPipelineFactory"/>.
+    /// </summary>
+    private static MongoExpression? TranslateEntityKeyInValues(Expression collectionExpr, IProperty keyProperty)
+    {
+        var unwrapped = Unwrap(collectionExpr);
+
+        if (unwrapped is ConstantExpression { Value: System.Collections.IEnumerable items })
+        {
+            var getter = keyProperty.GetGetter();
+            var keys = new List<object?>();
+            foreach (var item in items)
+                keys.Add(item is null ? null : getter.GetClrValue(item));
+
+            return new MongoConstantExpression(keys, keyProperty);
+        }
+
+        if (NativeQueryParameter.TryGetQueryParameterName(unwrapped, out var parameterName))
+            return new MongoParameterExpression(parameterName, keyProperty, extractEntityKeyFromArrayElements: true);
+
+        return null;
+    }
 }

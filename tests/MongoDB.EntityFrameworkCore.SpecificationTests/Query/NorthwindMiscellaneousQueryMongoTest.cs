@@ -3056,7 +3056,7 @@ Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
         AssertMql(
             """
-            Customers.{ "$project" : { "A" : { "$concat" : ["$_id", "$City"] }, "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$match" : { "A" : "ALFKIBerlin" } }
+            Customers.{ "$group" : { "_id" : { "A" : { "$concat" : ["$_id", "$City"] } } } }, { "$project" : { "A" : "$_id.A", "_id" : 0 } }, { "$match" : { "$expr" : { "$eq" : ["$A", "ALFKIBerlin"] } } }
             """);
     }
 
@@ -3135,7 +3135,7 @@ Customers.{ "$set" : { "__sort0" : { "$concat" : ["$_id", "$City"] } } }, { "$so
 
         AssertMql(
             """
-            Customers.{ "$project" : { "Property" : { "$concat" : ["$_id", "$City"] }, "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$match" : { "Property" : "ALFKIBerlin" } }
+            Customers.{ "$group" : { "_id" : { "Property" : { "$concat" : ["$_id", "$City"] } } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$match" : { "$expr" : { "$eq" : ["$Property", "ALFKIBerlin"] } } }
             """);
     }
 
@@ -3926,7 +3926,7 @@ OrderDetails.{ "$group" : { "_id" : null, "v" : { "$max" : "$Quantity" } } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$or" : [{ "$expr" : { "$eq" : ["$$ROOT", null] } }, { "_id" : "ALFKI" }] } }
+            Customers.{ "$match" : { "_id" : { "$in" : [null, "ALFKI"] } } }
             """);
     }
 

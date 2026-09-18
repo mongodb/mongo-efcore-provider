@@ -730,15 +730,17 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     [Fact]
-    public void Wrapped_projection_Distinct_then_Sum_with_computed_selector_still_falls_back_under_native_only()
+    public void Wrapped_projection_Distinct_then_Sum_with_computed_selector_goes_native()
     {
-        // A computed selector (not a bare member access naming one of the Distinct's own key parts) must still
-        // decline — the pre-existing "computed selectors fall back" guard in NativeCardinalityBinder
-        // .TryBindAggregate, unaffected by the EF-322 alias-scope carve-out.
+        // A computed selector (not a bare member access naming one of the Distinct's own key parts) now goes
+        // native too: NativeCardinalityBinder.TryBindAggregate resolves it via TryTranslateValue, which
+        // composes with the EF-322 alias-scope carve-out the same way a bare-member selector already did.
+        // Distinct {Country, Year} pairs: (US,2020),(US,2021),(UK,2020),(FR,2021) — sum of Year*2 = 16164.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
-            nameof(Wrapped_projection_Distinct_then_Sum_with_computed_selector_still_falls_back_under_native_only));
+            nameof(Wrapped_projection_Distinct_then_Sum_with_computed_selector_goes_native));
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() =>
+        Assert.Equal(
+            16164,
             db.Entities.Select(o => new { o.Country, o.Year }).Distinct().Sum(r => r.Year * 2));
     }
 

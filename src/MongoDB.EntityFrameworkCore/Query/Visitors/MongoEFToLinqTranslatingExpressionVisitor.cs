@@ -344,7 +344,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 // Plain C# returns false here (e.g. ((int?)1).Equals((ulong)2)); left untouched, the driver's
                 // Equals translator instead tries to serialize the RHS with the LHS's serializer and throws
                 // (EF-221). Fold to the correct constant instead.
-                if (IsAlwaysFalseAcrossTypeMismatch(instanceEqualsCall.Object!, instanceEqualsCall.Arguments[0]))
+                if (ExpressionExtensionMethods.IsAlwaysFalseAcrossTypeMismatch(instanceEqualsCall.Object!, instanceEqualsCall.Arguments[0]))
                     return Expression.Constant(false);
 
                 break;
@@ -727,21 +727,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             {
                 { MongoVectorSearchScoreStage.ScoreField, new BsonDocument("$meta", "vectorSearchScore") }
             });
-
-    /// <summary>
-    /// True when <paramref name="receiver"/>.Equals(<paramref name="argument"/>) is guaranteed to return
-    /// <see langword="false"/> at runtime because the two sides are known-different simple types with no
-    /// cross-type equality (e.g. <c>((int?)1).Equals((ulong)2)</c>). See
-    /// <see cref="ExpressionExtensionMethods.AreMismatchedExactEqualityTypes"/>.
-    /// </summary>
-    private static bool IsAlwaysFalseAcrossTypeMismatch(Expression receiver, Expression argument)
-    {
-        var receiverType = Nullable.GetUnderlyingType(receiver.Type) ?? receiver.Type;
-        var argumentType = argument.RemoveObjectConvert().Type;
-        argumentType = Nullable.GetUnderlyingType(argumentType) ?? argumentType;
-
-        return ExpressionExtensionMethods.AreMismatchedExactEqualityTypes(receiverType, argumentType);
-    }
 
     protected override Expression VisitMethodCall(MethodCallExpression node)
     {

@@ -731,6 +731,33 @@ internal sealed class MongoPipelineFactory
                 $"MongoPipelineFactory.Build: parameter '{name}' (placeholder index {index}) "
                 + "is not present in parameterValues. This is a bug in the query compilation pipeline.");
 
+        // Entity-list-Contains rewrite (`customers.Contains(c)`): the raw parameter value is an ARRAY OF
+        // WHOLE ENTITY INSTANCES, not an array of the property's own values — extract the key member's own
+        // CLR value from EACH non-null element now, per execution, mirroring the single-entity extraction
+        // immediately below but per-element. A null element passes through as a BSON null rather than being
+        // extracted (GetGetter has nothing to read from a null instance) — see
+        // MongoExpressionTranslator.EntityEquality.cs's TryTranslateEntityListContains for why a null
+        // element is meaningful to keep rather than filter out. Checked BEFORE the single-entity branch
+        // immediately below, which would otherwise misinterpret this array as a single entity value.
+        if (entityMemberProperty is not null && isArray)
+        {
+            var getter = entityMemberProperty.GetGetter();
+            var array = new BsonArray();
+            foreach (var element in (System.Collections.IEnumerable)rawValue!)
+            {
+                if (element is null)
+                {
+                    array.Add(BsonNull.Value);
+                    continue;
+                }
+
+                var coerced = BsonValueSerializer.Coerce(serializer!.ValueType, getter.GetClrValue(element));
+                array.Add(BsonValueSerializer.SerializeThroughWriter(serializer, coerced));
+            }
+
+            return array;
+        }
+
         // Entity-equality rewrite (`c == local`): the raw parameter value is a WHOLE ENTITY instance, not
         // the value to compare — extract the key member's own CLR value from it now, per execution, mirroring
         // the regexKind deferred-computation pattern immediately below. Applied before the regexKind/serializer

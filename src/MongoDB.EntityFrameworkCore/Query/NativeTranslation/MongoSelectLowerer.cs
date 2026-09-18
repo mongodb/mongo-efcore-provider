@@ -217,14 +217,16 @@ internal sealed class MongoSelectLowerer
             return stages;
         }
 
-        // EF-322: a GroupBy(key).Select(aggregate) composed directly on a projected Distinct snapshotted the
-        // Distinct's OWN $group/flatten-$project aside into PriorGrouping/PriorGroupingProjection
-        // (MongoSelectDefinition.SnapshotDistinctGroupingForNestedGroupBy) so it can emit here FIRST — the
-        // Distinct's dedup must apply before the outer GroupBy's own $group runs, or the two would collapse
-        // into one (silently counting pre-dedup rows). PostGroupOps (a Where/OrderBy/etc. composed BETWEEN the
-        // Distinct and this GroupBy) lands here too, immediately after — nothing can route into PostGroupOps
-        // once IsGroupBy flips true, so this is the ONLY place it can belong for this shape. Null for every
-        // other query, including an ordinary (non-nested) GroupBy(key).Select(aggregate).
+        // EF-322/EF-TBD: a GroupBy(key).Select(aggregate) composed directly on an already-finalized prior
+        // grouping — a projected Distinct (EF-322) or an ordinary prior GroupBy(key).Select(aggregate)
+        // (EF-TBD) — snapshotted that PRIOR stage's OWN $group/flatten-$project aside into
+        // PriorGrouping/PriorGroupingProjection (MongoSelectDefinition.SnapshotPriorGroupingForNestedGroupBy)
+        // so it can emit here FIRST — the prior stage's own dedup/aggregation must apply before the outer
+        // GroupBy's own $group runs, or the two would collapse into one (silently counting pre-dedup/
+        // pre-aggregate rows). PostGroupOps (a Where/OrderBy/etc. composed BETWEEN the two GroupBys) lands here
+        // too, immediately after — nothing can route into PostGroupOps once IsGroupBy flips true, so this is
+        // the ONLY place it can belong for this shape. Null for every other query, including an ordinary
+        // (non-nested) GroupBy(key).Select(aggregate).
         if (select.PriorGrouping is { } priorGrouping)
         {
             stages.Add(new MongoGroupStage(priorGrouping));

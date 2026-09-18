@@ -158,7 +158,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : 10248 } }, { "$group" : { "_id" : null, "_v" : { "$avg" : { "$subtract" : ["$_id", 10248] } } } }, { "$project" : { "_id" : 0 } }
+            Orders.{ "$match" : { "_id" : 10248 } }, { "$group" : { "_id" : null, "v" : { "$avg" : { "$subtract" : ["$_id", 10248] } } } }
             """);
     }
 
@@ -168,7 +168,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : 10248 } }, { "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : { "$subtract" : ["$_id", 10248] } } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
+            Orders.{ "$match" : { "_id" : 10248 } }, { "$group" : { "_id" : null, "v" : { "$max" : { "$subtract" : ["$_id", 10248] } } } }
             """);
     }
 
@@ -178,7 +178,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : 10248 } }, { "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : { "$subtract" : ["$_id", 10248] } } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
+            Orders.{ "$match" : { "_id" : 10248 } }, { "$group" : { "_id" : null, "v" : { "$min" : { "$subtract" : ["$_id", 10248] } } } }
             """);
     }
 
@@ -338,7 +338,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_v" : { "$avg" : "$_id" } } }, { "$project" : { "_id" : 0 } }
+            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "v" : { "$avg" : "$_id" } } }
             """);
     }
 
@@ -676,7 +676,7 @@ Employees.{ "$set" : { "__sort0" : { "$literal" : 42 } } }, { "$sort" : { "__sor
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : null, "_v" : { "$sum" : { "$add" : ["$_id", "$_id"] } } } }, { "$project" : { "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : null, "v" : { "$sum" : { "$add" : ["$_id", "$_id"] } } } }
             """);
     }
 
@@ -686,7 +686,7 @@ Employees.{ "$set" : { "__sort0" : { "$literal" : 42 } } }, { "$sort" : { "__sor
 
         AssertMql(
             """
-            OrderDetails.{ "$group" : { "_id" : null, "_v" : { "$sum" : { "$divide" : ["$Quantity", { "$numberDecimal" : "2.09" }] } } } }, { "$project" : { "_id" : 0 } }
+            OrderDetails.{ "$group" : { "_id" : null, "v" : { "$sum" : { "$divide" : ["$Quantity", { "$numberDecimal" : "2.09" }] } } } }
             """);
     }
 
@@ -696,7 +696,7 @@ Employees.{ "$set" : { "__sort0" : { "$literal" : 42 } } }, { "$sort" : { "__sor
 
         AssertMql(
             """
-            OrderDetails.{ "$group" : { "_id" : null, "_v" : { "$sum" : { "$divide" : ["$Quantity", { "$numberDecimal" : "2" }] } } } }, { "$project" : { "_id" : 0 } }
+            OrderDetails.{ "$group" : { "_id" : null, "v" : { "$sum" : { "$divide" : ["$Quantity", { "$numberDecimal" : "2" }] } } } }
             """);
     }
 
@@ -706,7 +706,7 @@ Employees.{ "$set" : { "__sort0" : { "$literal" : 42 } } }, { "$sort" : { "__sor
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "_v" : { "$sum" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } } }, { "$project" : { "_id" : 0 } }
+            Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$sum" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } } }
             """);
     }
 
@@ -817,7 +817,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : null, "_v" : { "$avg" : { "$add" : ["$_id", "$_id"] } } } }, { "$project" : { "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : null, "v" : { "$avg" : { "$add" : ["$_id", "$_id"] } } } }
             """);
     }
 
@@ -827,7 +827,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         AssertMql(
             """
-            OrderDetails.{ "$group" : { "_id" : null, "_v" : { "$avg" : { "$divide" : ["$Quantity", { "$numberDecimal" : "2.09" }] } } } }, { "$project" : { "_id" : 0 } }
+            OrderDetails.{ "$group" : { "_id" : null, "v" : { "$avg" : { "$divide" : ["$Quantity", { "$numberDecimal" : "2.09" }] } } } }
             """);
     }
 
@@ -837,7 +837,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         AssertMql(
             """
-            OrderDetails.{ "$group" : { "_id" : null, "_v" : { "$avg" : { "$divide" : ["$Quantity", { "$numberDecimal" : "2" }] } } } }, { "$project" : { "_id" : 0 } }
+            OrderDetails.{ "$group" : { "_id" : null, "v" : { "$avg" : { "$divide" : ["$Quantity", { "$numberDecimal" : "2" }] } } } }
             """);
     }
 
@@ -847,7 +847,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "_v" : { "$avg" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } } }, { "$project" : { "_id" : 0 } }
+            Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$avg" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } } }
             """);
     }
 
@@ -942,7 +942,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
+            Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$min" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } } }
             """);
     }
 
@@ -1007,7 +1007,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
+            Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$max" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } } }
             """);
     }
 
@@ -1785,7 +1785,7 @@ Orders.{ "$match" : { "CustomerID" : "VINET" } }, { "$match" : { "_id" : 10248 }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }] } }
+            Customers.{ "$match" : { "_id" : { "$in" : ["ALFKI", "ANATR"] } } }
             """);
     }
 
@@ -1795,7 +1795,7 @@ Orders.{ "$match" : { "CustomerID" : "VINET" } }, { "$match" : { "_id" : 10248 }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }] } }
+            Customers.{ "$match" : { "_id" : { "$in" : ["ALFKI", "ANATR"] } } }
             """);
     }
 
@@ -1805,7 +1805,7 @@ Orders.{ "$match" : { "CustomerID" : "VINET" } }, { "$match" : { "_id" : 10248 }
 
         AssertMql(
             """
-Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
+Orders.{ "$match" : { "_id" : { "$in" : [10248, 10249] } } }
 """);
     }
 
@@ -1815,7 +1815,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
+Orders.{ "$match" : { "_id" : { "$in" : [10248, 10249] } } }
 """);
     }
 
@@ -2038,7 +2038,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Employees.{ "$group" : { "_id" : null, "_v" : { "$sum" : 1 } } }, { "$project" : { "_id" : 0 } }
+            Employees.{ "$group" : { "_id" : null, "v" : { "$sum" : 1 } } }
             """);
     }
 
@@ -2166,7 +2166,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : null, "_v" : { "$sum" : { "$toLong" : "$_id" } } } }, { "$project" : { "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : null, "v" : { "$sum" : "$_id" } } }
             """);
     }
 
@@ -2234,7 +2234,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : null, "_v" : { "$avg" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1.0, "else" : 0.0 } } } } }, { "$project" : { "_id" : 0 } }
+            Customers.{ "$group" : { "_id" : null, "v" : { "$avg" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1.0, "else" : 0.0 } } } } }
             """);
     }
 
@@ -2244,7 +2244,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : null, "_v" : { "$sum" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1, "else" : 0 } } } } }, { "$project" : { "_id" : 0 } }
+            Customers.{ "$group" : { "_id" : null, "v" : { "$sum" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1, "else" : 0 } } } } }
             """);
     }
 
@@ -2274,7 +2274,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1, "else" : 0 } } } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
+            Customers.{ "$group" : { "_id" : null, "v" : { "$max" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1, "else" : 0 } } } } }
             """);
     }
 
@@ -2284,7 +2284,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1, "else" : 0 } } } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
+            Customers.{ "$group" : { "_id" : null, "v" : { "$min" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1, "else" : 0 } } } } }
             """);
     }
 
@@ -2360,23 +2360,19 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
     public override async Task Type_casting_inside_sum(bool async)
     {
         // Fails: Truncation data loss issue EF-228
-        // Returns 121.04000180587159838 instead of 121.040 because of conversion errors (driver-LINQ mode,
-        // which executes the query and returns wrong data); native-only mode rejects the shape outright as
-        // NativeTranslationNotSupportedException, before it ever executes.
+        // Returns 121.04000180587159838 instead of 121.040 because of conversion errors. This now executes
+        // and returns wrong data in EVERY mode: the selector is a bare Convert-to-decimal over a member, which
+        // NativeCardinalityBinder.TryBindAggregate admits (via TryTranslateValue, since the go-native-for-
+        // computed-selector change) exactly like the driver-LINQ push-down already did, so native and
+        // driver-LINQ now render and execute the identical $toDecimal pipeline and hit the identical
+        // precision bug — native-only no longer rejects this shape outright at compile time.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.Type_casting_inside_sum(async), typeof(EqualException));
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-                """
-                OrderDetails.{ "$group" : { "_id" : null, "_v" : { "$sum" : { "$toDecimal" : "$Discount" } } } }, { "$project" : { "_id" : 0 } }
-                """);
-        }
+        AssertMql(
+            """
+            OrderDetails.{ "$group" : { "_id" : null, "v" : { "$sum" : { "$toDecimal" : "$Discount" } } } }
+            """);
     }
 
 #endif

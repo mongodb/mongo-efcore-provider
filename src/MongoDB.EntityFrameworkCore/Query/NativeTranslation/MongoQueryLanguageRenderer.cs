@@ -278,7 +278,9 @@ internal sealed class MongoQueryLanguageRenderer
             case MongoParameterExpression parameter:
             {
                 var info = BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization!);
-                return placeholders.CreateArrayPlaceholder(parameter.Name, info.Serializer);
+                return parameter.ExtractEntityKeyFromArrayElements
+                    ? placeholders.CreateEntityKeyArrayPlaceholder(parameter.Name, parameter.ForSerialization!, info.Serializer)
+                    : placeholders.CreateArrayPlaceholder(parameter.Name, info.Serializer);
             }
             case MongoValueListExpression list:
             {

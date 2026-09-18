@@ -597,7 +597,7 @@ internal sealed partial class MongoExpressionTranslator
         // IProperty); RenderInValues' parameter arm falls back to a plain element serializer keyed on
         // elementClrType for that reason — see its own remarks.
         if (NativeQueryParameter.TryGetQueryParameterName(unwrapped, out var parameterName))
-            return new MongoParameterExpression(parameterName, forSerialization: null);
+            return new MongoParameterExpression(parameterName, forSerialization: null, rawElementType: elementClrType);
 
         return null; // any other shape is not supported for a computed needle
     }
