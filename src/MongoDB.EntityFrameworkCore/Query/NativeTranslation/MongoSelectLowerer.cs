@@ -104,6 +104,14 @@ internal sealed class MongoSelectLowerer
             // trailing $limit) must land HERE, after the $lookup/$unwind, rather than in PipelineOps above.
             // Empty (a no-op append) for every query that never took that path.
             AppendSelectOpStages(select.PostJoinOps, stages, sortFields);
+            // Native-post-join-paging plan: Skip/Take (and anything hoisted alongside it) deferred past a
+            // confirmed join whose $unwind isn't guaranteed row-count-preserving — see
+            // MongoSelectDefinition.PostLookupPagingOps. Safe to emit unconditionally inside this
+            // `select.SetOperation == null` block: a confirmed join only ever reaches
+            // IsSingleEligibleNativeJoinScope (the sole writer of PostLookupPagingOps), and both
+            // IsPlainWholeEntitySelect and IsPlainProjectedSelect (the gates that admit a select as a set-op
+            // operand) exclude join queries — so a set op and a confirmed join can never co-occur here.
+            AppendSelectOpStages(select.PostLookupPagingOps, stages, sortFields);
         }
 
         // Set operation terminal ($unionWith [+ dedup] or a set-difference shape for Intersect/Except).
@@ -517,12 +525,15 @@ internal sealed class MongoSelectLowerer
             }
             else if (lookup.Navigation is { IsCollection: true } && lookup.ForceUnwind)
             {
-                // A cross-collection reference SelectMany flatten: $lookup the referenced collection, then
-                // $unwind to one row per child with inner-join semantics (preserve:false) — a principal with
-                // no children drops out. (Include's reference $unwind uses preserve:true / left-join; this
-                // is the opposite.)
+                // A collection-navigation Join/LeftJoin/GroupJoin, or a cross-collection reference SelectMany
+                // flatten: $lookup the referenced collection, then $unwind with the join-registration site's
+                // own PreserveNullAndEmptyArrays verdict — false (inner-join semantics; a principal with no
+                // children/matches drops out) for a plain Join or a SelectMany flatten, true (left-outer; the
+                // principal survives with a null/empty navigation) for a LeftJoin/GroupJoin. (Include's own
+                // reference $unwind, handled by the arm above, threads the same property for the identical
+                // reason.)
                 stages.Add(new MongoLookupStage(lookup));
-                stages.Add(new MongoUnwindStage(lookup, preserveNullAndEmptyArrays: false));
+                stages.Add(new MongoUnwindStage(lookup, lookup.PreserveNullAndEmptyArrays));
             }
             else if (lookup.PipelineKind == LookupPipelineKind.CorrelatedReducer)
             {

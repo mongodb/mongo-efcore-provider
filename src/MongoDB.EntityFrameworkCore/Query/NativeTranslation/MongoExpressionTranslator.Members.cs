@@ -86,8 +86,15 @@ internal sealed partial class MongoExpressionTranslator
         // members to access instead (handled by the ordinary DistinctAliasScope branch below), and a computed
         // sole key part has no IProperty this method could hand back (that shape, if it arises, still declines
         // here and falls back to driver-LINQ, exactly like any other unsupported member access).
+        //
+        // Accumulators.Count == 0 is load-bearing, not redundant: a GroupBy(key).Select(g => g.Sum(...))
+        // scope ALSO has a single field-backed Key part (the group key), but there a bare SelfParam names the
+        // Select's accumulator output, not the key — that shape is resolved by
+        // TranslateComparisonCore's bare-accumulator-alias branch instead, which must run first for
+        // comparisons; this branch would otherwise wrongly bind the accumulator's value against the key's
+        // property serializer.
         if (SelfParam is not null && ReferenceEquals(node, SelfParam)
-            && DistinctAliasScope is { Key: [{ FieldRef: MongoFieldExpression soleField } soleKeyPart] })
+            && DistinctAliasScope is { Accumulators.Count: 0, Key: [{ FieldRef: MongoFieldExpression soleField } soleKeyPart] })
         {
             property = soleField.Property;
             fieldPath = soleKeyPart.Name!;

@@ -1349,6 +1349,36 @@ internal sealed partial class MongoExpressionTranslator
             return new MongoBinaryExpression(selfOp.Value, rootRef, rootRef);
         }
 
+        // --- Bare-accumulator-alias shape: a scalar aggregate's predicate/comparison (All/Any composed
+        // directly after GroupBy(key).Select(g => g.Sum(...)), or the analogous bare-scalar-Distinct-with-
+        // aggregate shape) whose SelfParam IS the Select's own flattened accumulator output, e.g.
+        // `.Select(g => g.Sum(o => o.OrderID)).All(v => v >= 0)`. Must be checked BEFORE the ordinary
+        // query-native member/value branch below: the GroupBy key may ALSO be a single field-backed part (the
+        // shape TryResolveMember's bare-Distinct-scalar carve-out matches), but a bare SelfParam here names the
+        // accumulator, never the key — that carve-out is scoped to zero accumulators for exactly this reason.
+        // Scoped to EXACTLY ONE accumulator: a composite/named projection has real members to access instead
+        // (handled by the ordinary DistinctAliasScope member branch), and more than one accumulator has no
+        // single implied target for a bare parameter.
+        if (SelfParam is not null && DistinctAliasScope is { Accumulators: [{ OutputField: var soleAccField }] }
+            && (ReferenceEquals(leftUnwrapped, SelfParam) || ReferenceEquals(rightUnwrapped, SelfParam)))
+        {
+            var selfOnLeft = ReferenceEquals(leftUnwrapped, SelfParam);
+            var valueSide = selfOnLeft ? rightUnwrapped : leftUnwrapped;
+            if (!IsSimpleValue(valueSide))
+                return null; // no other branch can resolve this SelfParam correctly — decline outright
+
+            var accOp = MapComparisonOperator(selfOnLeft ? nodeType : Mirror(nodeType));
+            if (accOp is null)
+                return null;
+
+            var accValue = TranslateValue(valueSide, forSerialization: null);
+            if (accValue is null)
+                return null;
+
+            var accFieldRef = new MongoElementRefExpression(soleAccField, (selfOnLeft ? leftUnwrapped : rightUnwrapped).Type);
+            return new MongoBinaryExpression(accOp.Value, accFieldRef, accValue);
+        }
+
         // --- Query-native shape: member on exactly one side, value on the other ---
 
         // Set only when a numeric-cast relational comparison over a NULLABLE property falls through below —

@@ -121,6 +121,41 @@ public class MongoSelectDefinitionTests
         Assert.True(s.HasLimit);
     }
 
+    // ── DeferPipelineOpsPastConfirmedJoin (native-post-join-paging plan, final-review fix, Minor 5) ──────
+
+    [Fact]
+    public void DeferPipelineOpsPastConfirmedJoin_moves_ops_in_order_and_clears_the_source_list()
+    {
+        var s = new MongoSelectDefinition();
+        s.StartOrReplaceSort(Asc());
+        s.AppendSkip(Const(5));
+        s.AppendLimit(Const(10));
+
+        s.DeferPipelineOpsPastConfirmedJoin();
+
+        Assert.Empty(s.PipelineOps);
+        Assert.Collection(s.PostLookupPagingOps,
+            o => Assert.IsType<MongoSortOp>(o),
+            o => Assert.IsType<MongoSkipOp>(o),
+            o => Assert.IsType<MongoLimitOp>(o));
+    }
+
+    [Fact]
+    public void DeferPipelineOpsPastConfirmedJoin_second_call_is_a_no_op_once_PipelineOps_is_empty()
+    {
+        var s = new MongoSelectDefinition();
+        s.AppendSkip(Const(5));
+
+        s.DeferPipelineOpsPastConfirmedJoin();
+        Assert.Single(s.PostLookupPagingOps);
+
+        // PipelineOps is already empty after the first call, so a second call adds nothing further and
+        // PostLookupPagingOps is unchanged.
+        s.DeferPipelineOpsPastConfirmedJoin();
+        Assert.Single(s.PostLookupPagingOps);
+        Assert.Empty(s.PipelineOps);
+    }
+
     [Fact]
     public void Fallback_wrong_data_is_false_by_default()
     {

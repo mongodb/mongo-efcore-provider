@@ -555,7 +555,9 @@ public class MongoSelectLowererTests
     public void Reference_UnwindSource_lowers_to_lookup_then_unwind_then_project_stage_in_order()
     {
         var (query, navigation) = TestReferenceSelect();
-        var lookup = new LookupExpression(navigation, forceUnwind: true);
+        // A reference-collection SelectMany flatten is inner-join semantics — mirrors what
+        // NativeSelectManyBinder sets explicitly at its own registration sites.
+        var lookup = new LookupExpression(navigation, forceUnwind: true) { PreserveNullAndEmptyArrays = false };
         query.AddLookup(lookup);
         query.Select.AddUnwindSource(MongoUnwindSource.Reference(
             LookupExpression.GetLookupAlias(navigation), navigation.TargetEntityType, lookup));
@@ -591,7 +593,9 @@ public class MongoSelectLowererTests
     public void WholeElement_Reference_UnwindSource_lowers_to_lookup_then_unwind_then_plain_replaceRoot()
     {
         var (query, navigation) = TestReferenceSelect();
-        var lookup = new LookupExpression(navigation, forceUnwind: true);
+        // A reference-collection SelectMany flatten is inner-join semantics — mirrors what
+        // NativeSelectManyBinder sets explicitly at its own registration sites.
+        var lookup = new LookupExpression(navigation, forceUnwind: true) { PreserveNullAndEmptyArrays = false };
         query.AddLookup(lookup);
         var unwind = MongoUnwindSource.Reference(
             LookupExpression.GetLookupAlias(navigation), navigation.TargetEntityType, lookup);

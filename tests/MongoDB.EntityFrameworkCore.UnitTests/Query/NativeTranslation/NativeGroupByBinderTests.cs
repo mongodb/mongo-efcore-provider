@@ -784,4 +784,36 @@ public class NativeGroupByBinderTests
         Assert.False(NativeGroupByBinder.TryBindGroupTerminalAggregate(
             mongoQ, MongoAggregateOperator.Count, null, typeof(int)));
     }
+
+    // ── NativeCardinalityBinder.TryBindAggregate composed after GroupBy(key).Select(aggregate) ─────────────
+    // All_after_GroupBy_aggregate2: Orders.GroupBy(o => o.CustomerID).Select(g => g.Sum(...)).All(v => v >= 0).
+    // The predicate's bare parameter (v) is the Select's OWN flattened scalar output — the accumulator — NOT
+    // the GroupBy key, even though the key is ALSO a single field-backed part (the same shape
+    // MongoExpressionTranslator's EF-322 gap-3 carve-out uses for a genuine bare-scalar Distinct). Regression
+    // for a bug where TryResolveMember matched the carve-out on the key regardless of Accumulators, binding the
+    // predicate's constant against the KEY property's serializer (a string) instead of the accumulator's.
+
+    [Fact]
+    public void All_predicate_after_GroupBy_Select_scalar_aggregate_binds_against_accumulator_not_key()
+    {
+        var mongoQ = BoundScalarKeyQuery(); // key: x => x.Country (single field-backed key part)
+        mongoQ.Select.IsGroupBy = true; // set by the visitor's GroupBy handling in production, not this binder
+        Expression<Func<IGrouping<string, Order>, object>> proj = g => g.Sum(o => o.Amount);
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out var bareLeafAlias));
+        Assert.NotNull(bareLeafAlias);
+
+        Expression<Func<int, bool>> pred = v => v >= 0;
+
+        Assert.True(NativeCardinalityBinder.TryBindAggregate(
+            mongoQ, MongoAggregateOperator.All, selector: null, predicate: pred, resultType: typeof(bool)));
+
+        var matchOp = Assert.IsType<MongoMatchOp>(Assert.Single(mongoQ.Select.PostGroupOps));
+        var negated = Assert.IsType<MongoUnaryExpression>(matchOp.Predicate);
+        Assert.Equal(MongoUnaryOperator.Not, negated.Operator);
+        var comparison = Assert.IsType<MongoBinaryExpression>(negated.Operand);
+
+        // The comparison must read the accumulator's OWN flattened alias, never the GroupBy key's field.
+        var left = Assert.IsType<MongoElementRefExpression>(comparison.Left);
+        Assert.Equal(bareLeafAlias, left.Path);
+    }
 }

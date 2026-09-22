@@ -1853,7 +1853,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : "$_id" } } }, { "
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$__agg0", "_id" : 0 } }, { "$match" : { "_v" : { "$not" : { "$gte" : 0 } } } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }, { "$match" : { "$expr" : { "$not" : [{ "$gte" : ["$_v", 0] }] } } }, { "$limit" : 1 }
             """);
     }
 

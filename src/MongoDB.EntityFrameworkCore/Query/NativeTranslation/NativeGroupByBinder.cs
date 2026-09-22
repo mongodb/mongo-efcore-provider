@@ -815,15 +815,18 @@ internal static class NativeGroupByBinder
         _ => nodeType
     };
 
-    // Negates a group-predicate comparison built by TryBindGroupPredicateComparison. Always aggregation-
-    // expression-only (the left operand is a MongoElementRefExpression, never query-dialect renderable), so
-    // this cannot reuse MongoExpressionNegator's public TryNegate (which gates on IsQueryDialectRenderable) —
-    // it applies the SAME rule as that negator's own private aggregation-context arm: $eq/$ne are inverted
-    // (they partition every value); the four relational operators are $not-wrapped, never inverted (the
-    // general reason — they don't partition a missing/null value — doesn't strictly apply to an accumulator
-    // output field, which is never missing/null, but wrapping is exact regardless and keeps one rule instead
-    // of a second, narrower one to maintain).
-    private static bool TryNegateGroupComparison(MongoExpression node, [NotNullWhen(true)] out MongoExpression? negated)
+    // Negates a group-predicate comparison built by TryBindGroupPredicateComparison — or, via
+    // NativeCardinalityBinder.TryBindAggregate's isPostGroupTerminalAggregate arm, the analogous bare-
+    // accumulator-alias comparison MongoExpressionTranslator.TranslateComparisonCore builds for
+    // All(pred) composed after GroupBy(key).Select(scalar-aggregate). Always aggregation-expression-only (the
+    // left operand is a MongoElementRefExpression, never query-dialect renderable), so this cannot reuse
+    // MongoExpressionNegator's public TryNegate (which gates on IsQueryDialectRenderable) — it applies the SAME
+    // rule as that negator's own private aggregation-context arm: $eq/$ne are inverted (they partition every
+    // value); the four relational operators are $not-wrapped, never inverted (the general reason — they don't
+    // partition a missing/null value — doesn't strictly apply to an accumulator output field, which is never
+    // missing/null, but wrapping is exact regardless and keeps one rule instead of a second, narrower one to
+    // maintain).
+    internal static bool TryNegateGroupComparison(MongoExpression node, [NotNullWhen(true)] out MongoExpression? negated)
     {
         negated = node is MongoBinaryExpression comparison
             ? comparison.Operator switch

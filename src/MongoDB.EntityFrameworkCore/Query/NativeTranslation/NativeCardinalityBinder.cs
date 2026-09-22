@@ -240,7 +240,19 @@ internal static class NativeCardinalityBinder
             if (!translator.TryTranslate(predicate.Body, out var predicateNode))
                 return false;
 
-            if (!MongoExpressionNegator.TryNegate(predicateNode, out var negatedNode))
+            // The ordinary query-dialect negator declines a bare-accumulator-alias comparison (its Left is a
+            // MongoElementRefExpression — aggregation-expression-only, never query-dialect renderable; see
+            // TranslateComparisonCore's own remarks on that shape) — NativeGroupByBinder.TryNegateGroupComparison
+            // applies the same $eq/$ne-invert, relational-$not-wrap rule directly for exactly that case. Scoped
+            // to isPostGroupTerminalAggregate (the only case that shape can arise from): an ORDINARY row-level
+            // predicate (e.g. a genuine field-to-field comparison over a bare entity) must still decline through
+            // the general TryNegate gate exactly as before — this is not a general relaxation of the negator,
+            // only a narrow bridge for the one shape TranslateComparisonCore's new branch introduces. See
+            // All_with_a_field_to_field_predicate_still_falls_back, which pins the non-grouped case must stay
+            // declined.
+            if (!MongoExpressionNegator.TryNegate(predicateNode, out var negatedNode)
+                && !(isPostGroupTerminalAggregate
+                     && NativeGroupByBinder.TryNegateGroupComparison(predicateNode, out negatedNode)))
                 return false; // no exact complement — decline, so the query falls back to driver-LINQ
 
             select.AddPredicateConjunct(negatedNode);

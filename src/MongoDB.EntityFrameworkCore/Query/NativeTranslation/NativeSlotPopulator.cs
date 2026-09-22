@@ -304,10 +304,19 @@ internal static class NativeSlotPopulator
         {
             // Repeated / non-canonical-order paging is natively representable: each Skip appends a $skip op
             // at its arrival position, and the lowerer emits ops verbatim.
+            //
+            // Joins.Count == 0 here means this Skip is genuinely positioned BEFORE any join on this select
+            // (e.g. Customers.Take(1).GroupJoin(...)) — see MongoSelectDefinition.HasPagingRecordedBeforeAnyJoin
+            // for why that must never be deferred past a LATER join the same way EF's hoisted-forward
+            // Join(...).Select(...).Skip()/Take() shape safely is.
+            if (mongoQ.Joins.Count == 0)
+                mongoQ.Select.MarkPagingRecordedBeforeAnyJoin();
             PopulatePagingSlot(mongoQ, call, mongoQ.Select.AppendSkip);
         }
         else if (methodDefinition == QueryableMethods.Take)
         {
+            if (mongoQ.Joins.Count == 0)
+                mongoQ.Select.MarkPagingRecordedBeforeAnyJoin();
             PopulatePagingSlot(mongoQ, call, mongoQ.Select.AppendLimit);
         }
         else if (methodDefinition == QueryableMethods.Reverse)

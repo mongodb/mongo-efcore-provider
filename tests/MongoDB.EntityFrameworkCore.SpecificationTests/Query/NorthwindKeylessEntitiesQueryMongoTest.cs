@@ -57,13 +57,25 @@ Customers.{ "$match" : { "City" : "London" } }
 
     public override async Task Entity_mapped_to_view_on_right_side_of_join(bool async)
     {
-        // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.Entity_mapped_to_view_on_right_side_of_join(async);
 
+#if EF8 || EF9
+        // EF8/EF9's NavigationExpandingExpressionVisitor never flattens this GroupJoin+SelectMany(DefaultIfEmpty)
+        // idiom onto a recognizable Join/LeftJoin call in the first place when the inner side is this keyless
+        // view-mapped entity — TranslateJoinCore is never even invoked (confirmed: this query still renders the
+        // pre-EF-322 driver-LINQ bridge shape byte-for-byte, unaffected by the navigation-less join eligibility
+        // widening below). This is a pre-existing EF8/EF9 nav-expansion limitation, not a regression from that
+        // work — see the EF10-only fact in NavigationlessJoinChainTests.cs for the same family of limitation.
         AssertMql(
             """
 Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Products", "localField" : "_outer.CustomerID", "foreignField" : "CategoryName", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
 """);
+#else
+        AssertMql(
+            """
+Orders.{ "$lookup" : { "from" : "Products", "localField" : "CustomerID", "foreignField" : "CategoryName", "as" : "_lookup_ProductView" } }, { "$unwind" : { "path" : "$_lookup_ProductView", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "Order" : "$$ROOT", "_lookup_ProductView" : "$_lookup_ProductView", "_id" : 0 } }
+""");
+#endif
     }
 
     public override async Task KeylessEntity_with_nav_defining_query(bool async)
