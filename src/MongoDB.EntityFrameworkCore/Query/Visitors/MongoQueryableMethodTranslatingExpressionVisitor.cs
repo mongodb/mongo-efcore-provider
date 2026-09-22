@@ -811,14 +811,17 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// FIRST join's recorded scope types (<c>Join(a, b, …).Select(x =&gt; x.Outer).Join(c, d, …)</c>) — now
     /// PASSES this gate</b> (both joins individually eligible, so the chain is rebuilt to 2 levels covering
     /// both) but is still closed safely one layer down, in <see cref="NativeJoinScopeProjectionBinder"/>: a
-    /// chain (<c>Levels.Count &gt; 1</c>) admits ONLY whole-entity leaves, resolved structurally via
-    /// <c>MongoTransparentScopeResolver.TryResolveScopeDepth</c> — never falls through to the flat depth-1
+    /// chain (<c>Levels.Count &gt; 1</c>) admits a whole-entity leaf, resolved structurally via
+    /// <c>MongoTransparentScopeResolver.TryResolveScopeDepth</c>, OR (native-chained-join-scalar-projection
+    /// plan, Task 4) a scalar/computed leaf resolving to exactly ONE scope in the chain, via
+    /// <c>NativeJoinScopeTranslator.TryTranslateSingleScope</c> — never falls through to the flat depth-1
     /// <c>NativeJoinScopeTranslator.TryTranslateValue</c> path that gap warns about, which is the only call
     /// path that could actually misresolve a scalar/computed leaf against the wrong join's <c>InnerPrefix</c>.
     /// See that binder's own remarks, and <c>NativeJoinScopeProjectionBinderTests
-    /// .Declines_a_second_chained_join_rather_than_reusing_the_first_joins_scope</c>, which still declines (its
-    /// trailing selector's leaves are scalar, not whole-entity) — pinning that this gate's widening alone does
-    /// not resurrect the gap.
+    /// .Binds_a_second_chained_join_reusing_the_first_joins_target_type_at_the_correct_alias</c>, which now
+    /// BINDS (its trailing selector's leaves are scalar, not whole-entity) and asserts <c>r2.Total</c> resolves
+    /// against the SECOND join's own alias, not the first's — pinning that this gate's widening does not
+    /// resurrect the gap, because the leaf is resolved correctly rather than merely refused.
     /// </para>
     /// <para>
     /// <b>The left-outer conjunct is a lowerer constraint, not a scope statement.</b>

@@ -124,10 +124,10 @@ public class ExpressionExtensionMethodsTests
         Assert.Empty(members);
     }
 
-    // The whole safety story for family A (ordinary Select/Join projections) depends on exactly 3 call sites
+    // The whole safety story for family A (ordinary Select/Join projections) depends on exactly 5 call sites
     // NEVER passing allowPositionalConstructorArguments: true — see TryGetProjectionMembers' own parameter doc.
     // Passing true there would let a wrapped member's alias be a synthetic positional pseudo-name
-    // ("_ctorArg0", ...) that EF Core's ProjectionMember/MemberInfo-keyed read side (which those 3 call sites
+    // ("_ctorArg0", ...) that EF Core's ProjectionMember/MemberInfo-keyed read side (which those 5 call sites
     // alone rely on) can never resolve, silently breaking projection reads. This is currently enforced only by
     // that doc comment, so pin it with a cheap source-text check: every call site outside the
     // known family-B/opt-in set must not pass true.
@@ -138,13 +138,15 @@ public class ExpressionExtensionMethodsTests
 
         // The family-A call sites this ticket's design doc calls out as load-bearing: NativeProjectionBinder's
         // WRAPPED arm, its document-construction leaf, and NativeJoinScopeProjectionBinder.TryBindProjection's
-        // top-level member walk PLUS (native-join-scope-nested-projection ticket) its new NESTED wrapped-leaf
-        // arm, which reuses the same primitive to recognize the inner `new {...}` body one level down. Listed
-        // with their expected call count so a call site silently added or removed doesn't go unnoticed.
+        // top-level member walk, its NESTED wrapped-leaf arm (native-join-scope-nested-projection ticket, which
+        // reuses the same primitive to recognize the inner `new {...}` body one level down), PLUS (native-
+        // chained-join-scalar-projection plan) the ordinary/computed leaf arm's own guard excluding a nested-
+        // projection-shaped leafBody from the Levels.Count > 1 chain-scalar path. Listed with their expected
+        // call count so a call site silently added or removed doesn't go unnoticed.
         var familyASources = new (string RelativePath, int ExpectedCallCount)[]
         {
             ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeProjectionBinder.cs", 2),
-            ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeJoinScopeProjectionBinder.cs", 2),
+            ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeJoinScopeProjectionBinder.cs", 3),
         };
 
         foreach (var (relativePath, expectedCallCount) in familyASources)

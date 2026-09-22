@@ -48,8 +48,9 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <para>
 /// These tests pin both sides of that line: the shapes that now go native (asserted under
 /// <see cref="MongoQueryMode.NativeOnly"/>, the only mode that can prove nativeness), and the shapes that
-/// still decline gracefully — a chained second join, a query-filtered inner, a key-equality join with no
-/// matching navigation. A whole-entity projection leaf (<c>x.Outer</c>/<c>x.Inner</c> verbatim inside a
+/// still decline gracefully — a chain-scalar leaf composed with trailing <c>Skip</c>/<c>Take</c>, a
+/// query-filtered inner, a key-equality join with no matching navigation. A whole-entity projection leaf
+/// (<c>x.Outer</c>/<c>x.Inner</c> verbatim inside a
 /// wrapped <c>new {...}</c>) was originally deferred territory too, but EF-444 gave both sides a native
 /// shaper — the OUTER leaf stages a <c>$$ROOT</c> reference under its own alias; the INNER leaf stages the
 /// same mechanism but under a FIXED, self-referential alias (the join's own <c>$lookup</c> prefix), because
@@ -215,29 +216,46 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 
     [Fact]
-    public void Chained_second_join_still_declines_cleanly_in_NativeOnly()
+    public void Chained_join_scalar_leaf_shapes_resolve_correctly_under_NativeOnly()
     {
+        // Native-chained-join-scalar-projection plan (2026-09-18), Task 4. This shape (a genuine three-source
+        // chain, Owners -> Orders -> OrderLines, with single-scope scalar leaves x.o.Name/l.Sku) used to
+        // decline outright under the OLDER native-chained-join-scope plan's blanket "chain admits only
+        // whole-entity leaves" restriction. This plan's own Task 1 test
+        // (Chained_join_scalar_leaf_projection_goes_native_under_NativeOnly) is the motivating proof that it
+        // should now go native instead; this method's Part 1 is updated accordingly to assert success and
+        // correct data rather than a throw.
         var seed = SeedOwnersOrdersAndLines();
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
-            nameof(Chained_second_join_still_declines_cleanly_in_NativeOnly));
+            nameof(Chained_join_scalar_leaf_shapes_resolve_correctly_under_NativeOnly));
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() =>
-            db.Owners
-                .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
-                .Join(db.OrderLines, x => x.r.Id, l => l.OrderId, (x, l) => new { x.o.Name, l.Sku })
-                .AsEnumerable()
-                .ToList());
+        var chainResult = db.Owners
+            .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+            .Join(db.OrderLines, x => x.r.Id, l => l.OrderId, (x, l) => new { x.o.Name, l.Sku })
+            .AsEnumerable()
+            .OrderBy(x => x.Name).ThenBy(x => x.Sku)
+            .ToList();
 
-        // Final-review finding 4: the routing assertion above (and its unit-test twin,
-        // NativeJoinScopeProjectionBinderTests.Declines_a_second_chained_join_rather_than_reusing_the_first_joins_scope)
+        var expectedChainResult = seed.Owners
+            .Join(seed.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+            .Join(seed.OrderLines, x => x.r.Id, l => l.OrderId, (x, l) => new { x.o.Name, l.Sku })
+            .OrderBy(x => x.Name).ThenBy(x => x.Sku)
+            .ToList();
+
+        Assert.NotEmpty(chainResult);
+        Assert.Equal(expectedChainResult, chainResult);
+
+        // Final-review finding 4: the assertion above (and its unit-test twin,
+        // NativeJoinScopeProjectionBinderTests.Binds_a_second_chained_join_reusing_the_first_joins_target_type_at_the_correct_alias)
         // is not enough on its own for the INTERMEDIATE-Select spelling below. There, the intermediate
         // `Select(x => x.o)` hits the bare-whole-entity-leaf confirm arm while Joins.Count is still 1 — so
-        // AddLookup FIRES and MongoQueryExpression.UsesDriverJoinFields flips — and only THEN does the second
-        // join push the overall query to Fallback. That is precisely the ordering that produced a real
-        // wrong-DATA failure elsewhere on this plan (NorthwindJoinQueryMongoTest.GroupJoin_Where), so the
-        // driver-LINQ fallback for this shape needs a RESULT check, not just a route check.
+        // AddLookup FIRES and MongoQueryExpression.UsesDriverJoinFields flips before the second join runs at
+        // all. That is precisely the ordering that produced a real wrong-DATA failure elsewhere on this plan
+        // (NorthwindJoinQueryMongoTest.GroupJoin_Where), so this shape needs a RESULT check, not just a route
+        // check — the check below is valid regardless of whether the query actually goes native or falls back,
+        // which is why it is run under MongoQueryMode.Native rather than NativeOnly.
         using var dbNative = CreateContext(seed, MongoQueryMode.Native,
-            nameof(Chained_second_join_still_declines_cleanly_in_NativeOnly) + "_fallback");
+            nameof(Chained_join_scalar_leaf_shapes_resolve_correctly_under_NativeOnly) + "_fallback");
 
         var result = dbNative.Owners
             .Join(dbNative.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
@@ -308,6 +326,103 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
 
         Assert.True(count > 0);
     }
+
+    [Fact]
+    public void Chained_join_scalar_leaf_projection_goes_native_under_NativeOnly()
+    {
+        // Native-chained-join-scalar-projection plan (2026-09-18). Every leaf here is a scalar value rooted at
+        // exactly one scope in the chain: e.o.Name is the root (scope 0), e.r.Total is join #1's Inner (scope
+        // 1), l.Sku is join #2's Inner (scope 2). No Skip/Take after the Select — that is a SEPARATE,
+        // still-open gap (NativeSlotPopulator's post-confirmed-join guard), not part of this plan.
+        var seed = SeedOwnersOrdersAndLines();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Chained_join_scalar_leaf_projection_goes_native_under_NativeOnly));
+
+        var results = db.Owners
+            .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+            .Join(db.OrderLines, e => e.r.Id, l => l.OrderId, (e, l) => new
+            {
+                OwnerName = e.o.Name,
+                OrderTotal = e.r.Total,
+                LineSku = l.Sku
+            })
+            .Where(x => x.OwnerName == seed.Owners[0].Name)
+            .ToList();
+
+        Assert.NotEmpty(results);
+        Assert.All(results, r => Assert.Equal(seed.Owners[0].Name, r.OwnerName));
+    }
+
+    [Fact]
+    public void Chained_join_scalar_leaf_projection_with_trailing_paging_still_declines_under_NativeOnly()
+    {
+        // The exact shape NorthwindMiscellaneousQueryMongoTest.Join_Customers_Orders_Orders_Skip_Take_Same_
+        // Properties has, minus Northwind's specific entities: a chain-scalar projection (this plan's own
+        // feature) followed by Skip/Take. This plan does NOT touch NativeSlotPopulator's post-confirmed-join
+        // guard, so paging after the newly-native projection must still decline — this is the gap a SEPARATE,
+        // follow-up plan closes. If this test starts PASSING (i.e. Skip/Take goes native) without that follow-up
+        // plan having landed, something in Tasks 2-4 leaked past the intended scope — stop and investigate via
+        // superpowers:systematic-debugging rather than accepting the unexpected win.
+        var seed = SeedOwnersOrdersAndLines();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Chained_join_scalar_leaf_projection_with_trailing_paging_still_declines_under_NativeOnly));
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() =>
+            db.Owners
+                .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(db.OrderLines, e => e.r.Id, l => l.OrderId, (e, l) => new
+                {
+                    OwnerName = e.o.Name,
+                    OrderTotal = e.r.Total,
+                    LineSku = l.Sku
+                })
+                .Skip(1).Take(1)
+                .ToList());
+    }
+
+#if !EF8 && !EF9
+    [Fact]
+    public void Chained_join_then_LeftJoin_unmatched_row_reads_a_scalar_leaf_at_the_second_level_under_NativeOnly()
+    {
+        // Final-review Important-1: the depth-1 analogue of this exact hazard
+        // (LeftJoin_unmatched_row_reads_a_dotted_scalar_leaf_through_the_whole_document_path, below) has its own
+        // dedicated test; this is the chain-depth (2-level) equivalent for the shape THIS plan newly admits to
+        // native. A 2-level chain — OrderLine -> Order -> Owner — whose SECOND level is a LeftJoin over the
+        // REFERENCE navigation Order.Owner (the same safe left-outer shape the depth-1 test below pins), with an
+        // unmatched row (danglingOrder's OwnerId matches no seeded Owner), and a scalar leaf at every level:
+        // LineQuantity is the root (scope 0), OrderTotal is join #1's Inner (scope 1), OwnerRank is join #2's —
+        // the LeftJoin's — Inner (scope 2). For the dangling row, the emitted $project reads OwnerRank off a
+        // MISSING sub-document rather than a merely-null field.
+        var seed = SeedLinesOrdersAndOwnersWithADanglingOwnerId();
+
+        static List<(int? Quantity, decimal Total, int? Rank)> Run(JoinTestDbContext db) =>
+            db.OrderLines
+                .Join(db.Orders, l => l.OrderId, r => r.Id, (l, r) => new { l, r })
+                .LeftJoin(db.Owners, e => e.r.OwnerId, o => o.Id, (e, o) => new
+                {
+                    LineQuantity = e.l.Quantity,
+                    OrderTotal = e.r.Total,
+                    OwnerRank = o.Rank
+                })
+                .AsEnumerable()
+                .OrderBy(x => x.LineQuantity)
+                .Select(x => (x.LineQuantity, x.OrderTotal, x.OwnerRank))
+                .ToList();
+
+        // Spelled out rather than taken from an in-memory oracle: LINQ-to-objects' own LeftJoin hands back a
+        // null `o` for the unmatched danglingOrder row, and `o.Rank` (the exact spelling the query under test
+        // uses) would NullReferenceException over that — precisely the case under test.
+        List<(int?, decimal, int?)> expected = [(1, 10m, 7), (2, 20m, null)];
+
+        using var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Chained_join_then_LeftJoin_unmatched_row_reads_a_scalar_leaf_at_the_second_level_under_NativeOnly) + "_nativeOnly");
+        Assert.Equal(expected, Run(nativeOnly));
+
+        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(Chained_join_then_LeftJoin_unmatched_row_reads_a_scalar_leaf_at_the_second_level_under_NativeOnly) + "_dl");
+        Assert.Equal(expected, Run(driverLinq));
+    }
+#endif
 
     [Fact]
     public void Chained_join_onto_the_same_target_entity_type_disambiguates_lookup_aliases_under_NativeOnly()
@@ -1303,6 +1418,49 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         }
     }
 
+    [Fact]
+    public void Chain_scalar_leaf_beside_a_whole_entity_leaf_at_a_non_adjacent_chain_level_reads_correctly()
+    {
+        // Final-review Important-3, the chain-depth analogue of
+        // Computed_leaf_beside_a_whole_entity_leaf_declines_and_still_reads_correctly above. The unit-test twin
+        // (NativeJoinScopeProjectionBinderTests.Binds_a_chain_scalar_leaf_mixed_with_a_whole_entity_leaf) proves
+        // this shape STAGES correctly (NativeRoute.Projection) at the unit level only; this proves both the
+        // NATIVE leg (now the default route for this shape) and the explicit DriverLinq opt-out fallback leg
+        // read correct DATA. A whole-entity leaf (`e.o`, the root, scope 0) forces BOTH fallback legs onto a
+        // whole-document read, so the chain-scalar sibling here deliberately names a NON-root, NON-adjacent
+        // level (`l.Sku`, join #2's Inner, scope 2 — the middle scope 1, `r`, is skipped entirely) rather than
+        // the root's own immediate join partner, which is the case that needed an end-to-end check.
+        var seed = SeedOwnersOrdersAndLines();
+
+        using (var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+                   nameof(Chain_scalar_leaf_beside_a_whole_entity_leaf_at_a_non_adjacent_chain_level_reads_correctly) + "_nativeOnly"))
+        {
+            var results = nativeOnly.Owners
+                .Join(nativeOnly.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(nativeOnly.OrderLines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, LineSku = l.Sku })
+                .ToList();
+            Assert.NotEmpty(results);
+        }
+
+        var expected = seed.Owners
+            .Join(seed.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+            .Join(seed.OrderLines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, LineSku = l.Sku })
+            .OrderBy(x => x.o.Name).ThenBy(x => x.LineSku)
+            .Select(x => (x.o.Name, x.LineSku)).ToList();
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = CreateContext(seed, mode,
+                nameof(Chain_scalar_leaf_beside_a_whole_entity_leaf_at_a_non_adjacent_chain_level_reads_correctly) + mode);
+
+            Assert.Equal(expected, db.Owners
+                .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(db.OrderLines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, LineSku = l.Sku })
+                .AsEnumerable().OrderBy(x => x.o.Name).ThenBy(x => x.LineSku)
+                .Select(x => (x.o.Name, x.LineSku)).ToList());
+        }
+    }
+
 #if !EF8 && !EF9
     [Fact]
     public void LeftJoin_over_a_collection_navigation_still_declines_under_NativeOnly()
@@ -1566,13 +1724,39 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
 
         var lines = new[]
         {
-            new OrderLine { Id = ObjectId.GenerateNewId(), OrderId = order1.Id, Sku = "SKU-1" },
-            new OrderLine { Id = ObjectId.GenerateNewId(), OrderId = order1.Id, Sku = "SKU-2" },
-            new OrderLine { Id = ObjectId.GenerateNewId(), OrderId = order2.Id, Sku = "SKU-3" },
-            new OrderLine { Id = ObjectId.GenerateNewId(), OrderId = order3.Id, Sku = "SKU-4" },
+            new OrderLine { Id = ObjectId.GenerateNewId(), OrderId = order1.Id, Sku = "SKU-1", Quantity = 1 },
+            new OrderLine { Id = ObjectId.GenerateNewId(), OrderId = order1.Id, Sku = "SKU-2", Quantity = 2 },
+            new OrderLine { Id = ObjectId.GenerateNewId(), OrderId = order2.Id, Sku = "SKU-3", Quantity = 3 },
+            new OrderLine { Id = ObjectId.GenerateNewId(), OrderId = order3.Id, Sku = "SKU-4", Quantity = 4 },
         };
 
         return new Seed(owners, orders, lines);
+    }
+
+    // A three-source chain (OrderLine -> Order -> Owner) with a DANGLING Order.OwnerId — needed by
+    // Chained_join_then_LeftJoin_unmatched_row_reads_a_scalar_leaf_at_the_second_level_under_NativeOnly, which
+    // requires an unmatched row at the SECOND chain level driven over a REFERENCE navigation (Order.Owner, the
+    // same safe left-outer shape LeftJoin_unmatched_row_reads_a_dotted_scalar_leaf_through_the_whole_document_path
+    // pins at depth 1) — SeedOwnersAndOrdersWithUnmatchedRows only has two joinable collections, and
+    // SeedOwnersOrdersAndLines has no dangling FK at all. Driving the equivalent chain over Owner.Orders (a
+    // COLLECTION navigation) instead would hit the UNRELATED, already-declined
+    // LeftJoin_over_a_collection_navigation_still_declines_under_NativeOnly guard rather than the shape this
+    // plan admits — deliberately avoided here.
+    private static Seed SeedLinesOrdersAndOwnersWithADanglingOwnerId()
+    {
+        var owner = new Owner { Id = ObjectId.GenerateNewId(), Name = "Alice", Region = "North", Rank = 7 };
+
+        var matchedOrder = new Order { Id = ObjectId.GenerateNewId(), OwnerId = owner.Id, Total = 10m, Region = "North" };
+        var danglingOrder = new Order { Id = ObjectId.GenerateNewId(), OwnerId = ObjectId.GenerateNewId(), Total = 20m, Region = "East" };
+        var orders = new[] { matchedOrder, danglingOrder };
+
+        var lines = new[]
+        {
+            new OrderLine { Id = ObjectId.GenerateNewId(), OrderId = matchedOrder.Id, Sku = "SKU-1", Quantity = 1 },
+            new OrderLine { Id = ObjectId.GenerateNewId(), OrderId = danglingOrder.Id, Sku = "SKU-2", Quantity = 2 },
+        };
+
+        return new Seed([owner], orders, lines);
     }
 
     public class Owner
@@ -1608,6 +1792,12 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         public ObjectId OrderId { get; set; }
         public Order? Order { get; set; }
         public string Sku { get; set; } = "";
+
+        // NULLABLE deliberately, same technique as Owner.Rank above: only used by
+        // Chained_join_then_LeftJoin_unmatched_row_reads_a_scalar_leaf_at_the_second_level_under_NativeOnly, so
+        // the absent-sub-document read for the unmatched row is asserted as null unambiguously, rather than
+        // depending on Sku's own (unrelated) nullability disposition.
+        public int? Quantity { get; set; }
     }
 
     private JoinTestDbContext CreateContext(Seed seed, MongoQueryMode mode, string name)

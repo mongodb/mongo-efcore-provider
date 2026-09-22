@@ -81,46 +81,10 @@ internal static class NativeJoinScopeTranslator
     {
         result = null;
 
-        // Final-review fix (M2): restore parity with TryTranslateCore's own two guards, which this sibling
-        // entry point was missing. (a) rootParam.Type must actually be a TransparentIdentifier — without this,
-        // a body reached from some other call site whose parameter merely happens to expose members named
-        // "Outer"/"Inner" could be mis-walked. Fail-closed today by luck only (a non-TransparentIdentifier root
-        // wouldn't coincidentally resolve any member to scope 0 anyway), not by an explicit check — restore the
-        // check rather than rely on that coincidence.
-        if (!rootParam.Type.IsTransparentIdentifierType())
-            return false;
-
-        var sourceCount = scope.Levels.Count;
-
-        // scopeParams: index 0 is the root scope's own synthetic parameter; indices 1..sourceCount are each
-        // level's Inner synthetic parameter (unused here — CrossScope/ResolvedScope!=0 rejects any access to
-        // them — but ScopeRerootingVisitor's constructor still needs one entry per index).
-        var rootScopeParam = Expression.Parameter(scope.OuterEntityType.ClrType, "rootScope");
-        var scopeParams = new ParameterExpression[sourceCount + 1];
-        scopeParams[0] = rootScopeParam;
-        for (var i = 0; i < sourceCount; i++)
+        if (!TryRerootToSingleScope(scope, rootParam, body, out var scopeIndex, out var rewritten) || scopeIndex != 0)
         {
-            scopeParams[i + 1] = Expression.Parameter(scope.Levels[i].InnerEntityType.ClrType, $"innerScope{i}");
+            return false;
         }
-
-        var visitor = new MongoTransparentScopeResolver.ScopeRerootingVisitor(
-            rootParam, hopNames: ["Outer", "Inner"], sourceCount, scopeParams);
-        var rewritten = visitor.Visit(body);
-
-        if (visitor.CrossScope || visitor.ResolvedScope is not 0)
-            return false;
-
-        // (b) the depth-1 sibling's SawUnscopedRootAccess equivalent: ScopeRerootingVisitor only rewrites a
-        // member access whose RECEIVER resolves to a scope index via a pure run of "Outer" hops (optionally
-        // ending in one "Inner") — it never flags a body that references rootParam some OTHER way (a bare use
-        // of the parameter, or a member access rooted on it that isn't part of that hop chain, e.g. some
-        // unrelated member the compiler-generated type happens to expose). Such a reference survives rewriting
-        // untouched and would then be translated against scope.OuterEntityType by the two-scope-agnostic
-        // translator below — either throwing, or (the unsafe case this guard exists to catch) coincidentally
-        // resolving against the wrong entity. Reject explicitly rather than let the translator "succeed" on an
-        // untouched TransparentIdentifier-typed subtree.
-        if (ReferencesParameterOutsideHopChain(rewritten, rootParam))
-            return false;
 
         var translator = new MongoExpressionTranslator(scope.OuterEntityType);
         return valueMode
@@ -128,9 +92,120 @@ internal static class NativeJoinScopeTranslator
             : translator.TryTranslate(rewritten, out result);
     }
 
-    /// <summary>Backs <see cref="TryTranslateRootScopeOnly"/>'s parity guard (M2) — true if <paramref name="rootParam"/>
-    /// still appears anywhere in <paramref name="rewritten"/> after <see cref="MongoTransparentScopeResolver.ScopeRerootingVisitor"/>
-    /// has run, i.e. some reference to it was not resolved as part of the Outer*/Inner? hop chain.</summary>
+    /// <summary>
+    /// Resolves a scalar/computed leaf rooted at ANY SINGLE scope in a chained join — the root, or any one
+    /// join's Inner side — never a leaf that spans more than one scope (see <see cref="TryRerootToSingleScope"/>'s
+    /// <c>CrossScope</c> rejection). Used by <see cref="NativeJoinScopeProjectionBinder"/>'s ordinary-leaf arm
+    /// once <c>scope.Levels.Count &gt; 1</c>, in place of the flat, type-comparing depth-1 entry points
+    /// (<see cref="TryTranslateValue"/>/<see cref="TryTranslatePredicate"/>), whose own documented RESIDUAL GAP is
+    /// specifically about chains. This method never falls into that gap: resolution is by the ACTUAL member-name
+    /// hop chain (<see cref="MongoTransparentScopeResolver"/>), never by comparing a scope's recorded CLR type
+    /// against some OTHER level's type. See
+    /// docs/superpowers/specs/2026-09-18-native-chained-join-scalar-projection-design.md.
+    /// </summary>
+    public static bool TryTranslateSingleScope(
+        MongoJoinScope scope, ParameterExpression rootParam, Expression body, bool valueMode,
+        [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+        if (!TryRerootToSingleScope(scope, rootParam, body, out var scopeIndex, out var rewritten))
+        {
+            return false;
+        }
+
+        MongoExpressionTranslator translator;
+        if (scopeIndex == 0)
+        {
+            translator = new MongoExpressionTranslator(scope.OuterEntityType);
+        }
+        else
+        {
+            var level = scope.Levels[scopeIndex - 1];
+
+            // Reuse the two-scope MongoExpressionTranslator constructor with a THROWAWAY outer parameter that
+            // never appears in `rewritten` (TryRerootToSingleScope already proved the whole body resolves to
+            // scopeIndex, never scope 0) — so every member in `rewritten` resolves via the "not outer" branch:
+            // scope.Levels[k-1].InnerEntityType, prefixed with scope.Levels[k-1].InnerPrefix. See this method's
+            // own design doc for why this is safe, not a hack.
+            var unusedOuterParam = Expression.Parameter(scope.OuterEntityType.ClrType, "unusedOuterScope");
+            translator = new MongoExpressionTranslator(
+                level.InnerEntityType, unusedOuterParam, scope.OuterEntityType, level.InnerPrefix);
+        }
+
+        return valueMode
+            ? translator.TryTranslateValue(rewritten, out result)
+            : translator.TryTranslate(rewritten, out result);
+    }
+
+    /// <summary>
+    /// Rewrites <paramref name="body"/>'s <c>Outer</c>/<c>Inner</c> hop chain (rooted at <paramref
+    /// name="rootParam"/>) onto one synthetic parameter per <paramref name="scope"/> level, exactly as <see
+    /// cref="MongoTransparentScopeResolver.ScopeRerootingVisitor"/> does for <c>SelectMany</c>'s own chained
+    /// scopes. Succeeds only when the WHOLE body resolves to a SINGLE scope index (no <c>CrossScope</c>) and no
+    /// reference to <paramref name="rootParam"/> survives the rewrite outside that hop chain. Callers judge
+    /// whether the returned <paramref name="scopeIndex"/> is one they accept — this helper itself has no
+    /// opinion on which index is valid, matching <see cref="MongoTransparentScopeResolver.TryResolveScopeDepth"/>'s
+    /// own division of labor. See docs/superpowers/specs/2026-09-18-native-chained-join-scalar-projection-design.md.
+    /// </summary>
+    private static bool TryRerootToSingleScope(
+        MongoJoinScope scope, ParameterExpression rootParam, Expression body,
+        out int scopeIndex, [NotNullWhen(true)] out Expression? rewritten)
+    {
+        scopeIndex = -1;
+        rewritten = null;
+
+        // Carries forward TryTranslateRootScopeOnly's own "Final-review fix (M2)" guard — do not drop it in this
+        // extraction. (a) rootParam.Type must actually be a TransparentIdentifier — without this, a body
+        // reached from some other call site whose parameter merely happens to expose members named
+        // "Outer"/"Inner" could be mis-walked. Fail-closed today by luck only (a non-TransparentIdentifier root
+        // wouldn't coincidentally resolve any member to scope 0 anyway), not by an explicit check — restore the
+        // check rather than rely on that coincidence.
+        if (!rootParam.Type.IsTransparentIdentifierType())
+        {
+            return false;
+        }
+
+        var sourceCount = scope.Levels.Count;
+
+        // scopeParams: index 0 is the root scope's own synthetic parameter; indices 1..sourceCount are each
+        // level's Inner synthetic parameter.
+        var scopeParams = new ParameterExpression[sourceCount + 1];
+        scopeParams[0] = Expression.Parameter(scope.OuterEntityType.ClrType, "rootScope");
+        for (var i = 0; i < sourceCount; i++)
+        {
+            scopeParams[i + 1] = Expression.Parameter(scope.Levels[i].InnerEntityType.ClrType, $"innerScope{i}");
+        }
+
+        var visitor = new MongoTransparentScopeResolver.ScopeRerootingVisitor(
+            rootParam, hopNames: ["Outer", "Inner"], sourceCount, scopeParams);
+        var candidate = visitor.Visit(body);
+
+        // (b) the depth-1 sibling's SawUnscopedRootAccess equivalent: ScopeRerootingVisitor only rewrites a
+        // member access whose RECEIVER resolves to a scope index via a pure run of "Outer" hops (optionally
+        // ending in one "Inner") — it never flags a body that references rootParam some OTHER way (a bare use
+        // of the parameter, or a member access rooted on it that isn't part of that hop chain, e.g. some
+        // unrelated member the compiler-generated type happens to expose). Such a reference survives rewriting
+        // untouched and would then be translated against the wrong entity by a caller's two-scope-agnostic
+        // translator — either throwing, or (the unsafe case this guard exists to catch) coincidentally
+        // resolving against the wrong entity. Reject explicitly rather than let a caller "succeed" on an
+        // untouched TransparentIdentifier-typed subtree.
+        if (visitor.CrossScope
+            || visitor.ResolvedScope is not { } resolved
+            || ReferencesParameterOutsideHopChain(candidate, rootParam))
+        {
+            return false;
+        }
+
+        scopeIndex = resolved;
+        rewritten = candidate;
+        return true;
+    }
+
+    /// <summary>Backs both <see cref="TryTranslateRootScopeOnly"/>'s and <see cref="TryTranslateSingleScope"/>'s
+    /// parity guard (M2), via the shared <see cref="TryRerootToSingleScope"/> helper — true if <paramref
+    /// name="rootParam"/> still appears anywhere in <paramref name="rewritten"/> after <see
+    /// cref="MongoTransparentScopeResolver.ScopeRerootingVisitor"/> has run, i.e. some reference to it was not
+    /// resolved as part of the Outer*/Inner? hop chain.</summary>
     private static bool ReferencesParameterOutsideHopChain(Expression rewritten, ParameterExpression rootParam)
     {
         var found = false;

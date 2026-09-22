@@ -93,6 +93,12 @@ failure.
   an inner/element scope, route by `ReferenceEquals` against the scope's own parameter. Two types sharing a
   property name (`Item.Name` vs `Owner.Name`) is the standing regression test. The shared primitive is
   `MongoExpressionTranslator.TryBeginOwnedHopWalk`; don't reintroduce a per-resolver copy.
+- **A trailing `Select` over a `Joins.Count >= 2` join chain can go native for a whole-entity leaf at any level,
+  or for a scalar/computed leaf that resolves to exactly ONE scope in the chain.** A leaf spanning more than one
+  chain scope, a nested wrapped leaf (`X = new { Id = ... }`) over such a chain, or `Skip`/`Take`/`Where`/
+  `OrderBy` composed after such a projection's `Select`, still decline the whole projection. The
+  ordinary/computed leaf arm must exclude a nested-projection-shaped `leafBody` BEFORE calling
+  `TryTranslateSingleScope`, or the translator's generic `NewExpression` handling silently admits it.
 - **Structural classification beats metadata/depth/CLR-type shortcuts.** A TPH-inherited or EF10-named query
   filter isn't visible through `GetQueryFilter()`; join-hop depth doesn't distinguish a root hop from a
   transitive one; a self-referencing entity type defeats a CLR-type check. Walk the actual tree. These
