@@ -3328,9 +3328,44 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         if (IsPlainWholeEntitySelect(mongo1) && IsPlainWholeEntitySelect(mongo2)
             && mongo1.CollectionExpression.EntityType == mongo2.CollectionExpression.EntityType)
         {
-            mongo1.Select.SetOperation = new MongoSetOperation(
-                kind, mongo2.Select, mongo2.CollectionExpression.CollectionName, mongo2.CollectionExpression.EntityType);
+            mongo1.Select.AppendSetOperation(new MongoSetOperation(
+                kind, mongo2.Select, mongo2.CollectionExpression.CollectionName, mongo2.CollectionExpression.EntityType));
             mongo1.Select.IsSetOp = true;
+            return source1;
+        }
+
+        // Nested whole-entity Concat/Union, on EITHER side. Neither arm above can match a nested shape
+        // (both IsPlainWholeEntitySelect and IsPlainProjectedSelect require SetOperation == null &&
+        // !IsSetOp), so without this arm every nesting declines. Two directions, handled uniformly:
+        //
+        //   LEFT-nested  (A.Concat(B).Concat(C)) — EF hands the OUTER set op a source1 that already carries
+        //     the inner one. Appending another link to source1's chain is enough: the lowerer emits one
+        //     $unionWith per link in order, each Union link's dedup inline right after its own $unionWith.
+        //     That inline placement is what makes a MIXED chain correct — Concat(Union(A,B),C) must dedup
+        //     A,B BEFORE unioning C in — and an all-Union chain is unaffected because whole-document dedup
+        //     is idempotent.
+        //
+        //   RIGHT-nested (A.Concat(B.Union(C))) — source2 is the set-op select. This one CANNOT be
+        //     flattened into a chain: A.Concat(B).Union(C) would dedup A's rows too, which the written query
+        //     does not do. The operand keeps its own chain and the lowerer recurses, emitting it as a
+        //     $unionWith nested INSIDE the outer $unionWith's pipeline (the operand's own dedup therefore
+        //     lands inside that nested pipeline, where it sees only B and C).
+        //
+        // Both directions compose, so a chain link's operand may itself be a chain to arbitrary depth;
+        // IsWholeEntitySetOpOperandSelect recurses for exactly that reason.
+        //
+        // Restricted to whole-entity Concat/Union on ONE entity type. Intersect/Except are deliberately
+        // excluded: they lower to the very differently shaped MongoSetDifferenceStage, and per this area's
+        // AGENTS.md they have NO driver-LINQ oracle at all, so a mis-lowered nesting there would be the only
+        // answer available in any MongoQueryMode. They keep hard-failing via the null return below.
+        if (kind is MongoSetOperationKind.Concat or MongoSetOperationKind.Union
+            && (IsPlainWholeEntitySelect(mongo1) || IsWholeEntitySetOpChainSelect(mongo1))
+            && (IsPlainWholeEntitySelect(mongo2) || IsWholeEntitySetOpChainSelect(mongo2))
+            && mongo1.CollectionExpression.EntityType == mongo2.CollectionExpression.EntityType)
+        {
+            mongo1.Select.AppendSetOperation(new MongoSetOperation(
+                kind, mongo2.Select, mongo2.CollectionExpression.CollectionName, mongo2.CollectionExpression.EntityType));
+            mongo1.Select.IsSetOp = true; // already true when mongo1 is itself a chain; needed when it is plain
             return source1;
         }
 
@@ -3344,13 +3379,32 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // instead (a correctness guard, not just an optimization: the dedup / source-tagging compare whole
         // projected documents by value, so mismatched alias sets would mis-compare). EF Core rejects
         // incompatible operand shapes upstream, so a mismatch is defense-in-depth.
-        if ((IsPlainProjectedSelect(mongo1) || IsPlainDistinctSelect(mongo1))
+        // source1 (mongo1) is the query MongoSelectLowerer.Lower is ultimately invoked on, so ITS OWN
+        // pending lookups (an InjectAfterRoot projected collection-navigation Count, e.g.
+        // Orders.Select(o => o.OrderDetails.Count())) are safe to admit here: the lowerer emits them
+        // ahead of source1's own $project when OperandsProjected is set (see MongoSelectLowerer.Lower's
+        // setOp.OperandsProjected branch), so they run before both source1's own $size read AND the
+        // $unionWith combine -- unlike source2, whose MongoSetOperation.OperandSelect carries no lookup
+        // plumbing at all, so source2 must still decline outright if it carries one.
+        // mongo1 (source1) is also the SHAPER source for the whole combined result -- this method always
+        // returns source1, so its own shaper is reused unmodified for every row of the $unionWith-ed stream,
+        // including rows physically contributed by mongo2's collection/pipeline. A bare constant/parameter
+        // LEAF anywhere in mongo1's projection (top-level, or nested in an anonymous/DTO member) is embedded
+        // by MongoProjectionBindingExpressionVisitor.Visit as a compile-time literal / QueryContext parameter
+        // read -- NOT a per-document field read (see its `case ConstantExpression: return expression;` arm and
+        // the parallel parameter arms) -- which is correct for a standalone query (every row of THAT query
+        // really does share the value) but wrong once shared across rows from a different operand: every
+        // combined row then reads back mongo1's baked-in value instead of its own actual "_v". Measured: the
+        // server-side pipeline is unaffected (each operand's own $project is correct BSON), only the CLIENT
+        // shaper is wrong. mongo2 needs no equivalent guard -- its own shaper is always discarded here.
+        if ((IsPlainProjectedSelect(mongo1, allowPreCombineLookups: true) || IsPlainDistinctSelect(mongo1, allowPreCombineLookups: true))
+            && !HasShaperUnsafeConstantLeaf(mongo1)
             && (IsPlainProjectedSelect(mongo2) || IsPlainDistinctSelect(mongo2))
             && ProjectionShapesMatch(mongo1.Select.Projection, mongo2.Select.Projection))
         {
-            mongo1.Select.SetOperation = new MongoSetOperation(
+            mongo1.Select.AppendSetOperation(new MongoSetOperation(
                 kind, mongo2.Select, mongo2.CollectionExpression.CollectionName, mongo2.CollectionExpression.EntityType,
-                operandsProjected: true);
+                operandsProjected: true));
             mongo1.Select.IsSetOp = true;
             return source1;
         }
@@ -3369,6 +3423,51 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         mongo1.Select.MarkNotNativelyRepresentable();
         return source1;
     }
+
+    // QUERY-level: a select that is ALREADY a whole-entity Concat/Union nesting — so it may take another
+    // link (left-nested) or serve as another set op's operand (right-nested).
+    //
+    // IsSetOpTerminalOnly establishes that a set op is the ONLY terminal: no grouping, projected Distinct,
+    // SelectMany unwind, or trailing projection. IsWholeEntitySetOpOperandSelect (below) adds the structural
+    // requirements, recursively. The remaining conjuncts are the query-level state that a MongoSelectDefinition
+    // cannot see, and mirror IsPlainWholeEntitySelect for the same reasons.
+    private static bool IsWholeEntitySetOpChainSelect(MongoQueryExpression mongo)
+        => mongo.Select.IsSetOpTerminalOnly
+           && mongo.Select.SetOperations.Count > 0
+           && IsWholeEntitySetOpOperandSelect(mongo.Select)
+           && !mongo.IsJoinQuery
+           && mongo.Lookups.Count == 0
+           && !mongo.Select.HasClientWrappedWholeEntityShaper
+           && !mongo.CapturedExpression.ContainsVectorSearch();
+
+    // SELECT-level, RECURSIVE: a whole-entity Concat/Union tree that the lowerer can emit as a
+    // self-contained sub-pipeline (its own PipelineOps, then one $unionWith per link, each link's operand
+    // lowered the same way). True for a plain whole-entity select too — that is the recursion's base case,
+    // and the reason a chain link's operand may itself be a chain to arbitrary depth.
+    //
+    // Each conjunct pins something the operand lowering does NOT emit, so admitting it would silently DROP
+    // that operator rather than fail:
+    //   Projection / Grouping / Cardinality / UnwindSources — no $project, $group or $unwind is emitted for
+    //     a whole-entity operand. (A whole-entity Distinct is exempt on purpose: it is an ordinary
+    //     MongoDistinctOp inside PipelineOps, not a Grouping, so it rides along correctly.)
+    //   per-link !OperandsProjected + Concat/Union — a projected operand's pre-combine $project/$group is
+    //     emitted for a top-level link only, and Intersect/Except lower to a different stage shape.
+    //
+    // TrailingOps is deliberately NOT required to be empty. Ops recorded between two links
+    // (A.Union(B).OrderBy(..).Take(1).Union(C)) are handed to the new link as its PrecedingOps by
+    // MongoSelectDefinition.AppendSetOperation and emitted before that link's stage; a nested operand's own
+    // trailing ops close out its sub-pipeline. Both are ordinary $sort/$skip/$limit stages, legal at either
+    // position. What made this unsafe before was that the lowerer emitted TrailingOps only once, after the
+    // whole chain — so admitting it would have re-ordered a Take past a union it was written before.
+    private static bool IsWholeEntitySetOpOperandSelect(MongoSelectDefinition select)
+        => select.Projection.Count == 0
+           && select.Grouping == null
+           && select.Cardinality == null
+           && select.UnwindSources.Count == 0
+           && select.SetOperations.All(
+               link => !link.OperandsProjected
+                       && link.Kind is MongoSetOperationKind.Concat or MongoSetOperationKind.Union
+                       && IsWholeEntitySetOpOperandSelect(link.OperandSelect));
 
     // A plain whole-entity select: filter/sort/paging slots only — no projection, grouping, scalar
     // cardinality, its own set op, cross-collection lookups (Include), or a lifted-out VectorSearch.
@@ -3427,7 +3526,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     // $$ROOT means. This also means Intersect/Except (no driver-LINQ baseline at all) now answer correctly
     // for a bare operand instead of hard-failing, which is a strict improvement for those two: there was
     // never a working fallback to preserve. Pinned by NativeBareProjectionTests.
-    private static bool IsPlainProjectedSelect(MongoQueryExpression mongo)
+    // allowPreCombineLookups: only ever passed true for source1 (see TryTranslateSetOperation) — a lookup
+    // there is source1's OWN InjectAfterRoot projected-Count lookup, which the lowerer moves ahead of
+    // source1's $project when it's a set-op operand. Any other lookup shape (Include, a join, ...) still
+    // declines: it either lacks InjectAfterRoot or was never reachable here in the first place (Include
+    // is hoisted past the set op entirely — see EF-397 — and a join query is excluded by !mongo.IsJoinQuery
+    // above regardless of this flag).
+    private static bool IsPlainProjectedSelect(MongoQueryExpression mongo, bool allowPreCombineLookups = false)
         => mongo.Select.Route == NativeRoute.Projection
            && mongo.Select.Projection.Count > 0
            && !mongo.Select.HasArrayProjectionLeaf
@@ -3437,7 +3542,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            && mongo.Select.Cardinality == null
            && mongo.Select.UnwindSource == null
            && !mongo.IsJoinQuery
-           && mongo.Lookups.Count == 0
+           && (allowPreCombineLookups ? mongo.Lookups.All(l => l.InjectAfterRoot) : mongo.Lookups.Count == 0)
            && !mongo.CapturedExpression.ContainsVectorSearch();
 
     // EF-322: a plain PROJECTED Distinct() (Select(new {...}).Distinct(), route == GroupBy via
@@ -3452,7 +3557,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     // not a Distinct-shaped operand at all here. A whole-entity Distinct (MongoDistinctOp in PipelineOps,
     // Grouping stays null) is UNAFFECTED by this predicate — it is already covered by IsPlainWholeEntitySelect,
     // no different from any other ordinary op in PipelineOps.
-    private static bool IsPlainDistinctSelect(MongoQueryExpression mongo)
+    private static bool IsPlainDistinctSelect(MongoQueryExpression mongo, bool allowPreCombineLookups = false)
         => mongo.Select.Route == NativeRoute.GroupBy
            && mongo.Select.IsDistinct
            && !mongo.Select.IsGroupBy
@@ -3461,8 +3566,18 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            && mongo.Select.Cardinality == null
            && mongo.Select.UnwindSource == null
            && !mongo.IsJoinQuery
-           && mongo.Lookups.Count == 0
+           && (allowPreCombineLookups ? mongo.Lookups.All(l => l.InjectAfterRoot) : mongo.Lookups.Count == 0)
            && !mongo.CapturedExpression.ContainsVectorSearch();
+
+    // See TryTranslateSetOperation's call-site remarks: mongo1's projection reaching a bare
+    // MongoConstantExpression/MongoParameterExpression leaf (top-level or nested in an anonymous/DTO member)
+    // means its shaper never reads the document for that member at all -- unsafe ONLY because
+    // TryTranslateSetOperation reuses mongo1's shaper across the whole combined set-op stream. Not a general
+    // projection-safety predicate: a standalone query with this exact shape is fully correct and native (see
+    // NativeComputedBareProjectionTests / NativeCastTests), so this is deliberately NOT folded into
+    // IsPlainProjectedSelect/IsPlainDistinctSelect themselves.
+    private static bool HasShaperUnsafeConstantLeaf(MongoQueryExpression mongo)
+        => mongo.Select.Projection.Any(p => p.Expression is MongoConstantExpression or MongoParameterExpression);
 
     // The two operands' projected shapes must have identical top-level alias SETS (same count, same alias names).
     // The output documents' fields are exactly these aliases, and Union dedup / Intersect-Except source-tagging

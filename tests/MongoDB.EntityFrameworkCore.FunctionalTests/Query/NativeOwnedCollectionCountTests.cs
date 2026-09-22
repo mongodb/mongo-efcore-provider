@@ -603,30 +603,26 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     [InlineData("constant-0")]
     [InlineData("constant-false")]
     [InlineData("captured-parameter")]
-    public void Constant_projection_leaf_is_not_admitted_by_the_count_binder_gate(string leafKind)
+    public void Constant_projection_leaf_is_safely_admitted_via_the_project_literal_wrap(string leafKind)
     {
-        // THE MUTATION GUARD for NativeProjectionBinder's node-kind gate — the `value is MongoSizeExpression`
-        // test on the count leaf branch. Before this test, NOTHING protected that line: relaxing the gate to
-        // plain `TryTranslateValue(...)` success left the entire functional Query namespace green, 0 failed
-        // (measured during the branch review, under "Debug EF10"). No pass COUNT is quoted: three counts recorded
-        // at different points in this branch's life were irreconcilable to a later reader, and a subsequent run of
-        // the same filter gave another — see the same note on NativeProjectionBinder's count-leaf branch.
+        // A bare constant/parameter leaf (`X = 5`, `X = 0`, `X = false`, a captured local) now goes native:
+        // NativeProjectionBinder's node-kind gate (TryTranslateLeaf's final catch-all, and
+        // TryDeriveSyntheticAlias's mirror gate) admits MongoConstantExpression/MongoParameterExpression, and
+        // MongoPipelineFactory.RenderProject $literal-wraps a bare constant/parameter projection value exactly
+        // as RenderAddFields already did for $set — so $project never sees an un-wrapped bare value it could
+        // misread as an inclusion(1)/exclusion(0) flag.
         //
-        // Why the gate must stay narrow, as MEASURED rather than assumed: under a widened gate a bare constant
-        // leaf renders as a BARE VALUE inside $project, and $project reads a bare value as an inclusion/exclusion
-        // FLAG, not a literal. `X = 5` survives that (junk `X: 5` in the pipeline, values still correct via
-        // Visit's own client-side constant fold), but `X = 0` and `X = false` make the server reject the whole
-        // command: "Invalid $project :: caused by :: Cannot do exclusion on field X in inclusion projection".
-        //
-        // WHAT THIS TEST DISCRIMINATES, and why it asserts routing rather than only values: today these shapes
-        // are NOT native — measured, not expected. NativeOnly throws NativeTranslationNotSupportedException
-        // ("Query projects a non-entity result..."), and Native/DriverLinq return correct values through the
-        // driver-LINQ fallback, which renders a constant safely as {$literal: 5} rather than a bare value. So a
-        // values-only assertion would NOT catch the widening for `X = 5` — the values are correct either way.
-        // The NativeOnly leg is what fails if the gate is widened (the shape starts going native and stops
-        // throwing); the Native leg is what fails for the 0/false rows (the command aborts).
+        // THIS TEST USED TO BE THE MUTATION GUARD for a DELIBERATELY NARROW gate: before that wrap existed, a
+        // bare 0/false constant aborted the whole aggregate ("Invalid $project :: caused by :: Cannot do
+        // exclusion on field X in inclusion projection"), so the gate excluded constants/parameters entirely
+        // and this test pinned NativeOnly declining. Once RenderProject's $literal wrap closed that hazard
+        // structurally, admitting the node kind became safe, and this test now pins the OPPOSITE: NativeOnly
+        // succeeding, with the SAME values as the driver-LINQ fallback (which already rendered `{$literal: 5}`
+        // and was always correct). If the $literal wrap or the gate ever regresses independently, the 0/false
+        // rows are exactly what catches it — `X = 5` alone would go on returning a correct value even from a
+        // bare, un-wrapped `$project` field (a junk BSON `5`, but never a value EF materializes wrong).
         var collection = SeedWellFormed(
-            nameof(Constant_projection_leaf_is_not_admitted_by_the_count_binder_gate) + leafKind);
+            nameof(Constant_projection_leaf_is_safely_admitted_via_the_project_literal_wrap) + leafKind);
 
         var captured = 7;
 
@@ -672,11 +668,11 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
             Assert.Equal(expected, run(db));
         }
 
-        // NativeOnly: the shape DECLINES. This is the leg that reddens the moment the node-kind gate is widened,
-        // for every row of this theory including `X = 5`.
+        // NativeOnly: correct values, no fallback. Reddens if the gate ever narrows back to declining a bare
+        // constant/parameter leaf, or if the $literal wrap is ever dropped and a 0/false row aborts the command.
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
-            Assert.Throws<NativeTranslationNotSupportedException>(() => run(db));
+            Assert.Equal(expected, run(db));
         }
     }
 

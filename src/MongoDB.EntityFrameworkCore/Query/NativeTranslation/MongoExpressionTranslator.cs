@@ -671,7 +671,7 @@ internal sealed partial class MongoExpressionTranslator
     // copy of ExpressionExtensionMethods.RemoveConvert. The local name is kept because it is the vocabulary the
     // ~20 call sites in this file read in, and because the SIBLING peelers here are deliberately NOT the same
     // thing (see UnwrapOrderPreserving's remarks below for why they must not be collapsed into this one).
-    private static Expression Unwrap(Expression e)
+    internal static Expression Unwrap(Expression e)
         => e.RemoveConvert();
 
     /// <summary>
@@ -1963,6 +1963,24 @@ internal sealed partial class MongoExpressionTranslator
                 return null;
 
             return new MongoBinaryExpression(arithOp, left, right);
+        }
+
+        // EF-322: C#'s unary minus (`-x`) compiles to UnaryExpression(Negate), not a BinaryExpression, so it
+        // falls through the arithmetic branch above untouched. Rendered as $subtract:[0, x] — the same shape
+        // the driver's own LINQ provider emits for it — so an existing MQL baseline recorded against the
+        // fallback needs no change when a query using this shape starts going native. Recurses through THIS
+        // method exactly like the arithmetic operands above, so the operand may itself be a nested conditional,
+        // cast, or another arithmetic/negate expression. Scoped to numeric types the same way the arithmetic
+        // branch above is, so e.g. TimeSpan's own unary minus (which also compiles to Negate) still declines
+        // here rather than being (mis)rendered as a numeric subtraction.
+        if (node is UnaryExpression { NodeType: ExpressionType.Negate or ExpressionType.NegateChecked } negate
+            && IsNumericType(negate.Type))
+        {
+            var negatedOperand = TranslateOperand(negate.Operand, allowNumericWidening);
+            if (negatedOperand is null)
+                return null;
+
+            return new MongoBinaryExpression(MongoBinaryOperator.Subtract, new MongoConstantExpression(0, forSerialization: null), negatedOperand);
         }
 
         // EF-413: a client-collection Contains (→ MongoInExpression) or a Not (→ MongoUnaryExpression) used as

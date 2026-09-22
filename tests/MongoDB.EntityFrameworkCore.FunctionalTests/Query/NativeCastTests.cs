@@ -1576,35 +1576,34 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Equal(nativeResult, driverLinqResult);
     }
 
-    // ── 24. The node-kind gate, mutation-verified: a bare constant/parameter leaf ───────────────────
+    // ── 24. The node-kind gate now admits a bare constant/parameter leaf too ────────────────────────
     //
     // NativeProjectionBinder.TryTranslateLeaf's cast-leaf branch is UNCONDITIONAL on leafExpression's own
     // top-level shape — it mirrors the owned-collection count branch's style, not the arithmetic branch's
     // structural pre-filter, because MongoConvertExpression has exactly ONE construction site in the whole
     // codebase (TranslateOperand's Convert branch, MongoExpressionTranslator.cs), so gating on the RESULTING
-    // node kind is sufficient on its own. Relaxing that node-kind check to plain "TryTranslateValue
-    // succeeded" wrongly admits ANY leaf that translates — including a BARE constant/parameter that never
-    // went through a cast at all (confirmed live: a captured local reaches this exact branch, translating to
-    // a MongoParameterExpression, before ever reaching the arithmetic/count branches' own — differently
-    // gated — checks). The emitted $project would carry that bare value under alias "X" alongside the
-    // inclusion "Label", and a FALSY value (0) makes $project read it as an EXCLUSION flag, aborting the
-    // aggregate with MongoCommandException under the default Native mode — the same hazard the sibling
-    // count/arithmetic gates' own mutation-verified tests already pin
-    // (NativeOwnedCollectionCountTests.Constant_projection_leaf_is_not_admitted_by_the_count_binder_gate).
-    // This test asserts the CORRECT (declined, graceful-fallback) behavior; the mutation itself was verified
-    // manually by relaxing the gate, rebuilding, and re-running this test (see the task report), rather than
-    // automated in-repo.
+    // node kind is sufficient on its own. A captured local reaches this exact branch, translating to a
+    // MongoParameterExpression, before ever reaching the arithmetic/count branches' own — differently gated
+    // — checks. That USED TO be a hazard: the emitted $project carried the bare value under alias "X"
+    // alongside the inclusion "Label", and a FALSY value (0) made $project read it as an EXCLUSION flag,
+    // aborting the aggregate. MongoPipelineFactory.RenderProject now $literal-wraps a bare
+    // MongoConstantExpression/MongoParameterExpression projection value (mirroring what RenderAddFields
+    // already did for $set), closing that hazard structurally — so TryTranslateLeaf's final catch-all
+    // (and TryDeriveSyntheticAlias's mirror gate) now admit both node kinds outright. See
+    // NativeOwnedCollectionCountTests.Constant_projection_leaf_is_safely_admitted_via_the_project_literal_wrap
+    // for the sibling count-branch pin covering the same 0/false hazard.
 
     [Fact]
-    public void Constant_leaf_is_not_admitted_by_the_projection_cast_gate()
+    public void Constant_leaf_now_goes_native_via_the_project_literal_wrap()
     {
-        var collection = Seed(nameof(Constant_leaf_is_not_admitted_by_the_projection_cast_gate));
+        var collection = Seed(nameof(Constant_leaf_now_goes_native_via_the_project_literal_wrap));
         var captured = 0;
 
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => nativeOnly.Entities.AsNoTracking()
-                .Select(x => new { x.Label, X = captured }).ToList());
+        var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().OrderBy(x => x.Label)
+            .Select(x => new { x.Label, X = captured }).ToList();
+        Assert.All(nativeOnlyResult, r => Assert.Equal(0, r.X));
+        Assert.Equal(Rows.Select(r => r.Label).ToList(), nativeOnlyResult.Select(r => r.Label).ToList());
 
         using var native = CreateContext(collection, MongoQueryMode.Native);
         var nativeResult = native.Entities.AsNoTracking().OrderBy(x => x.Label)

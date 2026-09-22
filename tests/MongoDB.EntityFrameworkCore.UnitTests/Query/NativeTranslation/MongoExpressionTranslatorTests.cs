@@ -3278,4 +3278,84 @@ public class MongoExpressionTranslatorTests
         Assert.Equal("A", Assert.IsType<MongoConstantExpression>(right.Elements[0]).Value);
         Assert.Equal("B", Assert.IsType<MongoConstantExpression>(right.Elements[1]).Value);
     }
+
+    // ------------------------------------------------------------------
+    // EF-322 follow-up: the `Tuple.Create(...)` FACTORY-METHOD spelling of the same shape
+    // (`Where_compare_tuple_create_constructed_multi_value_equal`). `Tuple.Create(a, b)` compiles to a
+    // MethodCallExpression, never a NewExpression, so this must be recognized as its own arm alongside the
+    // NewExpression one above.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Tuple_create_multi_value_equality_translates_to_binary_of_tuples()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate =
+            c => Tuple.Create(c.Name, c.Nickname) == Tuple.Create("A", "B");
+
+        var translated = translator.TryTranslate(predicate.Body, out var result);
+
+        Assert.True(translated);
+        var binary = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, binary.Operator);
+
+        var left = Assert.IsType<MongoTupleExpression>(binary.Left);
+        Assert.Equal(2, left.Elements.Count);
+        Assert.Equal("Name", Assert.IsType<MongoFieldExpression>(left.Elements[0]).ElementName);
+        Assert.Equal("Nickname", Assert.IsType<MongoFieldExpression>(left.Elements[1]).ElementName);
+
+        var right = Assert.IsType<MongoTupleExpression>(binary.Right);
+        Assert.Equal(2, right.Elements.Count);
+        Assert.Equal("A", Assert.IsType<MongoConstantExpression>(right.Elements[0]).Value);
+        Assert.Equal("B", Assert.IsType<MongoConstantExpression>(right.Elements[1]).Value);
+    }
+
+    // A `Tuple.Create(...)` on the value side whose arguments have no field reference gets funcletized by EF's
+    // own parameter-extraction pass into a SINGLE query parameter carrying the whole materialized Tuple
+    // instance, never surviving as a MethodCallExpression the translator can walk argument-by-argument — see
+    // MongoExpressionTranslator.TupleEquality.cs's remarks. This must decompose into one
+    // MongoParameterExpression per tuple element (same Name, ArrayElementIndex 0..n-1), mirroring the
+    // `args[i]`-shaped array-parameter decomposition just above.
+    [Fact]
+    public void Tuple_create_multi_value_equality_against_a_materialized_tuple_parameter_decomposes_per_element()
+    {
+        var entityType = GetEntityType<Customer>();
+        var cParam = Expression.Parameter(typeof(Customer), "c");
+        var nameMember = Expression.MakeMemberAccess(cParam, typeof(Customer).GetProperty(nameof(Customer.Name))!);
+        var nicknameMember =
+            Expression.MakeMemberAccess(cParam, typeof(Customer).GetProperty(nameof(Customer.Nickname))!);
+
+        var tupleCreate = typeof(Tuple).GetMethods()
+            .First(m => m.Name == nameof(Tuple.Create) && m.GetGenericArguments().Length == 2)
+            .MakeGenericMethod(typeof(string), typeof(string));
+        var leftTuple = Expression.Call(tupleCreate, nameMember, nicknameMember);
+
+#if EF8 || EF9
+        const string paramName = QueryCompilationContext.QueryParameterPrefix + "tuple_0";
+        Expression efParam = Expression.Parameter(typeof(Tuple<string, string>), paramName);
+#else
+        const string paramName = "__tuple_0";
+        Expression efParam = new QueryParameterExpression(paramName, typeof(Tuple<string, string>));
+#endif
+
+        var body = Expression.Equal(leftTuple, efParam);
+
+        var translator = NewTranslator(entityType);
+        var translated = translator.TryTranslate(body, out var result);
+
+        Assert.True(translated);
+        var binary = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.Equal, binary.Operator);
+
+        var right = Assert.IsType<MongoTupleExpression>(binary.Right);
+        Assert.Equal(2, right.Elements.Count);
+
+        var firstElement = Assert.IsType<MongoParameterExpression>(right.Elements[0]);
+        Assert.Equal(paramName, firstElement.Name);
+        Assert.Equal(0, firstElement.ArrayElementIndex);
+
+        var secondElement = Assert.IsType<MongoParameterExpression>(right.Elements[1]);
+        Assert.Equal(paramName, secondElement.Name);
+        Assert.Equal(1, secondElement.ArrayElementIndex);
+    }
 }

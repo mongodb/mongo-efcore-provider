@@ -929,6 +929,64 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Single(result[1].Details);
     }
 
+    [Fact]
+    public void Projected_operand_union_over_collection_navigation_count_goes_native()
+    {
+        // EF-322 (Union_over_scalarsubquery_constant): the LEFT operand's own projection is a collection-
+        // navigation Count (i.Details.Count), which registers its own InjectAfterRoot $lookup on THAT
+        // operand's MongoQueryExpression before Union is even translated -- unlike EF-397's hoisted-Include
+        // case, this lookup belongs solely to source1's own pre-combine pipeline and must run BEFORE
+        // source1's own $project (which reads it via $size) and BEFORE the $unionWith combine (the RIGHT
+        // operand's rows have no Details at all to join against).
+        var (itemsName, detailsName) = SeedLinked(nameof(Projected_operand_union_over_collection_navigation_count_goes_native));
+
+        List<int> Run(MongoQueryMode mode)
+        {
+            using var db = new LinkedItemDbContext(database, itemsName, detailsName, mode);
+            return db.Items.Select(i => i.Details.Count())
+                .Union(db.Items.Select(i => 8))
+                .ToList();
+        }
+
+        var native = Run(MongoQueryMode.NativeOnly); // NativeOnly succeeding is the "went native" signal
+
+        Assert.Equal([0, 1, 2, 8], native.Order());
+
+        // Driver-LINQ oracle: Union HAS a working fallback, so the native answer is checked against it too.
+        var driver = Run(MongoQueryMode.DriverLinq);
+        Assert.Equal(driver.Order(), native.Order());
+    }
+
+    [Fact]
+    public void Constant_projected_operand_as_source1_still_declines_to_protect_the_shared_shaper()
+    {
+        // The mirror image of Projected_operand_union_over_collection_navigation_count_goes_native: here the
+        // CONSTANT leaf (`Select(i => 8)`) is on the LEFT/source1 side. TryTranslateSetOperation always reuses
+        // source1's own shaper for the WHOLE combined ($unionWith-ed, deduped) stream -- and
+        // MongoProjectionBindingExpressionVisitor embeds a bare constant/parameter leaf as a compile-time
+        // literal, never a per-document field read (see HasShaperUnsafeConstantLeaf's remarks). Admitting this
+        // shape natively measured as silently WRONG DATA: every combined row read back as the literal 8,
+        // including rows that came from the arithmetic operand and have a genuinely different "_v" in their
+        // actual BSON document (confirmed via a raw driver run of the identical pipeline, which returns the
+        // correct varying values). So this must keep falling back gracefully -- throws under NativeOnly,
+        // correct via the driver-LINQ fallback under Native.
+        var collection = SeedCollection(
+            nameof(Constant_projected_operand_as_source1_still_declines_to_protect_the_shared_shaper));
+
+        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+                nativeOnlyDb.Entities.Select(i => 8).Union(nativeOnlyDb.Entities.Select(i => i.Value + 1)).ToList());
+        }
+
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        var result = nativeDb.Entities.Select(i => 8).Union(nativeDb.Entities.Select(i => i.Value + 1))
+            .ToList().Order().ToList();
+
+        // {1..5} -> right operand {2,3,4,5,6}; left operand is 8 for every row, deduped to one; Union of the two.
+        Assert.Equal([2, 3, 4, 5, 6, 8], result);
+    }
+
     // ── Composition-seam regression tests (EF-347 Task 5, updated by slice B Task 3): a set operation is
     // TERMINAL-ONLY, so every operator applied AFTER a Union/Concat must either go native correctly or
     // fall back gracefully -- throw under NativeOnly for a genuinely-deferred shape (the "went native"
@@ -1059,24 +1117,18 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal(Run(driverDb), native);
     }
 
+    // Was Chained_union_falls_back: a left-nested whole-entity Union chain now goes NATIVE as a chain of
+    // $unionWith links rather than declining. See the "Left-nested whole-entity Concat/Union CHAIN" block
+    // near the end of this file for the per-link dedup-placement cases.
     [Fact]
-    public void Chained_union_falls_back()
+    public void Chained_union_goes_native()
     {
-        var collection = SeedCollection(nameof(Chained_union_falls_back));
+        var collection = SeedCollection(nameof(Chained_union_goes_native));
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
 
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
-        {
-            Assert.Throws<NativeTranslationNotSupportedException>(() =>
-                nativeOnlyDb.Entities.Where(i => i.Value <= 2)
-                    .Union(nativeOnlyDb.Entities.Where(i => i.Value == 3))
-                    .Union(nativeOnlyDb.Entities.Where(i => i.Value >= 4))
-                    .ToList());
-        }
-
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        var result = nativeDb.Entities.Where(i => i.Value <= 2)
-            .Union(nativeDb.Entities.Where(i => i.Value == 3))
-            .Union(nativeDb.Entities.Where(i => i.Value >= 4))
+        var result = nativeOnlyDb.Entities.Where(i => i.Value <= 2)
+            .Union(nativeOnlyDb.Entities.Where(i => i.Value == 3))
+            .Union(nativeOnlyDb.Entities.Where(i => i.Value >= 4))
             .ToList().Select(i => i.Value).OrderBy(v => v).ToList();
 
         Assert.Equal([1, 2, 3, 4, 5], result); // three disjoint sets {1,2} U {3} U {4,5}
@@ -2051,5 +2103,404 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
             db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value })
                 .Intersect(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
                 .Where(x => x.Value > 2).ToList());
+    }
+
+    // ── Left-nested whole-entity Concat/Union CHAIN ───────────────────────────────────────────────
+    //
+    // A.Concat(B).Concat(C) hands the OUTER set op a source1 that already carries the inner one. The IR
+    // holds the links as an ordered chain and the lowerer emits one $unionWith per link in source order,
+    // with each Union link's dedup inline right after its OWN $unionWith. Operand sets below are chosen so
+    // duplicate counts, not just distinct values, distinguish the orderings:
+    //   A = Value <= 2  -> {1,2}      B = Value >= 2 -> {2,3,4,5}      C = Value == 2 -> {2}
+
+    [Fact]
+    public void Concat_chain_goes_native()
+    {
+        var collection = SeedCollection(nameof(Concat_chain_goes_native));
+        var logs = new List<string>();
+        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+
+        var result = db.Entities.Where(i => i.Value <= 2)
+            .Concat(db.Entities.Where(i => i.Value >= 2))
+            .Concat(db.Entities.Where(i => i.Value == 2))
+            .ToList();
+
+        // {1,2} + {2,3,4,5} + {2} — no dedup anywhere, so Value==2 appears three times.
+        Assert.Equal([1, 2, 2, 2, 3, 4, 5], result.Select(i => i.Value).OrderBy(v => v));
+
+        var mql = Mql(logs);
+        Assert.Equal(2, CountOccurrences(mql, "$unionWith"));
+        Assert.DoesNotContain("$group", mql); // no dedup stage anywhere in an all-Concat chain
+    }
+
+    [Fact]
+    public void Union_chain_goes_native()
+    {
+        var collection = SeedCollection(nameof(Union_chain_goes_native));
+        var logs = new List<string>();
+        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+
+        var result = db.Entities.Where(i => i.Value <= 2)
+            .Union(db.Entities.Where(i => i.Value >= 2))
+            .Union(db.Entities.Where(i => i.Value == 2))
+            .ToList();
+
+        Assert.Equal([1, 2, 3, 4, 5], result.Select(i => i.Value).OrderBy(v => v));
+
+        var mql = Mql(logs);
+        Assert.Equal(2, CountOccurrences(mql, "$unionWith"));
+        // One dedup per Union link, each immediately after its own $unionWith. Whole-document dedup is
+        // idempotent, so the repeat is redundant HERE — but emitting it per-link unconditionally is what
+        // makes the MIXED chain below correct, so it is pinned rather than optimized away.
+        Assert.Equal(2, CountOccurrences(mql, "$replaceRoot"));
+    }
+
+    // THE correctness case for per-link dedup placement. Concat(Union(A,B), C) must dedup A,B BEFORE C
+    // joins the stream: the inner Union collapses A and B's shared Value==2 row to one, and the outer
+    // Concat then re-adds C's Value==2 without deduping. If the dedup were hoisted to run once after the
+    // WHOLE chain, the answer would be {1,2,3,4,5} (5 rows) instead of 6 — silently wrong rows, not a
+    // failure. Asserted against an in-memory LINQ oracle over the same operands.
+    [Fact]
+    public void Union_then_Concat_chain_dedups_only_the_inner_union()
+    {
+        var collection = SeedCollection(nameof(Union_then_Concat_chain_dedups_only_the_inner_union));
+        var logs = new List<string>();
+        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+
+        var result = db.Entities.Where(i => i.Value <= 2)
+            .Union(db.Entities.Where(i => i.Value >= 2))
+            .Concat(db.Entities.Where(i => i.Value == 2))
+            .ToList();
+
+        var seed = SeedItems();
+        var oracle = seed.Where(i => i.Value <= 2)
+            .Union(seed.Where(i => i.Value >= 2))
+            .Concat(seed.Where(i => i.Value == 2))
+            .Select(i => i.Value).OrderBy(v => v);
+
+        Assert.Equal([1, 2, 2, 3, 4, 5], result.Select(i => i.Value).OrderBy(v => v));
+        Assert.Equal(oracle, result.Select(i => i.Value).OrderBy(v => v));
+
+        var mql = Mql(logs);
+        Assert.Equal(2, CountOccurrences(mql, "$unionWith"));
+        Assert.Equal(1, CountOccurrences(mql, "$replaceRoot")); // only the Union link dedups
+    }
+
+    [Fact]
+    public void Concat_then_Union_chain_dedups_the_whole_result()
+    {
+        var collection = SeedCollection(nameof(Concat_then_Union_chain_dedups_the_whole_result));
+        var logs = new List<string>();
+        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+
+        var result = db.Entities.Where(i => i.Value <= 2)
+            .Concat(db.Entities.Where(i => i.Value >= 2))
+            .Union(db.Entities.Where(i => i.Value == 2))
+            .ToList();
+
+        // The trailing Union's dedup runs over the already-concatenated stream, collapsing the duplicate
+        // Value==2 the Concat introduced.
+        Assert.Equal([1, 2, 3, 4, 5], result.Select(i => i.Value).OrderBy(v => v));
+
+        var mql = Mql(logs);
+        Assert.Equal(2, CountOccurrences(mql, "$unionWith"));
+        Assert.Equal(1, CountOccurrences(mql, "$replaceRoot"));
+    }
+
+    [Fact]
+    public void Chain_with_a_whole_entity_Distinct_operand_goes_native()
+    {
+        var collection = SeedCollection(nameof(Chain_with_a_whole_entity_Distinct_operand_goes_native));
+        var logs = new List<string>();
+        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+
+        // The spec suite's Nested_concat_with_distinct_in_the_middle_and_pruning shape: a whole-entity
+        // Distinct() on the MIDDLE operand. That Distinct is an ordinary MongoDistinctOp in the operand's
+        // own PipelineOps (not a Grouping), so the operand still qualifies as a plain whole-entity select
+        // and the chain admits it.
+        var result = db.Entities.Where(i => i.Value <= 2)
+            .Concat(db.Entities.Where(i => i.Value >= 2).Distinct())
+            .Concat(db.Entities.Where(i => i.Value == 2))
+            .ToList();
+
+        Assert.Equal([1, 2, 2, 2, 3, 4, 5], result.Select(i => i.Value).OrderBy(v => v));
+        Assert.Equal(2, CountOccurrences(Mql(logs), "$unionWith"));
+    }
+
+    // ── RIGHT-nested whole-entity set ops (the operand is itself a set op) ───────────────────────
+    //
+    // A.Concat(B.Union(C)) CANNOT be flattened into a left chain: A.Concat(B).Union(C) would dedup A's rows
+    // too, which the written query does not do. The operand keeps its own chain and the lowerer recurses,
+    // emitting it as a $unionWith nested INSIDE the outer $unionWith's pipeline — so the inner dedup sees
+    // only B and C.
+
+    [Fact]
+    public void Union_inside_Concat_goes_native()
+    {
+        var collection = SeedCollection(nameof(Union_inside_Concat_goes_native));
+        var logs = new List<string>();
+        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+
+        // A = {1,2}; inner Union(B={2,3,4,5}, C={2}) = {2,3,4,5}; outer Concat keeps A's own Value==2.
+        var result = db.Entities.Where(i => i.Value <= 2)
+            .Concat(db.Entities.Where(i => i.Value >= 2).Union(db.Entities.Where(i => i.Value == 2)))
+            .ToList();
+
+        var seed = SeedItems();
+        var oracle = seed.Where(i => i.Value <= 2)
+            .Concat(seed.Where(i => i.Value >= 2).Union(seed.Where(i => i.Value == 2)))
+            .Select(i => i.Value).OrderBy(v => v);
+
+        Assert.Equal([1, 2, 2, 3, 4, 5], result.Select(i => i.Value).OrderBy(v => v));
+        Assert.Equal(oracle, result.Select(i => i.Value).OrderBy(v => v));
+
+        // The inner $unionWith is NESTED inside the outer one's pipeline, and the dedup belongs to the
+        // inner link — so it sits inside that nested pipeline, after the inner $unionWith, not at the end
+        // of the outer pipeline (which would wrongly dedup A's rows in too).
+        var mql = Mql(logs);
+        var outerUnion = mql.IndexOf("$unionWith", StringComparison.Ordinal);
+        var innerUnion = mql.IndexOf("$unionWith", outerUnion + 1, StringComparison.Ordinal);
+        var dedup = mql.IndexOf("$replaceRoot", StringComparison.Ordinal);
+        Assert.True(innerUnion > outerUnion, "expected a nested $unionWith");
+        Assert.True(dedup > innerUnion, "expected the dedup to follow the INNER $unionWith");
+        Assert.Equal(1, CountOccurrences(mql, "$replaceRoot")); // exactly one dedup, the inner Union's
+    }
+
+    // The flattening trap, stated as a result: Concat(A, Union(B,C)) and Union(Concat(A,B), C) differ. If
+    // the right-nested operand were flattened into a left chain, the first would silently return the
+    // second's answer (5 rows instead of 6).
+    [Fact]
+    public void Right_nested_union_is_not_flattened_into_a_left_chain()
+    {
+        var collection = SeedCollection(nameof(Right_nested_union_is_not_flattened_into_a_left_chain));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+
+        var rightNested = db.Entities.Where(i => i.Value <= 2)
+            .Concat(db.Entities.Where(i => i.Value >= 2).Union(db.Entities.Where(i => i.Value == 2)))
+            .ToList();
+
+        var leftChain = db.Entities.Where(i => i.Value <= 2)
+            .Concat(db.Entities.Where(i => i.Value >= 2))
+            .Union(db.Entities.Where(i => i.Value == 2))
+            .ToList();
+
+        Assert.Equal(6, rightNested.Count);
+        Assert.Equal(5, leftChain.Count);
+    }
+
+    [Fact]
+    public void Nesting_on_both_sides_goes_native()
+    {
+        var collection = SeedCollection(nameof(Nesting_on_both_sides_goes_native));
+        var logs = new List<string>();
+        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+
+        // A left chain whose NEXT link's operand is itself a set op — the two directions composing.
+        var result = db.Entities.Where(i => i.Value == 1)
+            .Concat(db.Entities.Where(i => i.Value == 2))
+            .Concat(db.Entities.Where(i => i.Value >= 4).Union(db.Entities.Where(i => i.Value == 5)))
+            .ToList();
+
+        var seed = SeedItems();
+        var oracle = seed.Where(i => i.Value == 1)
+            .Concat(seed.Where(i => i.Value == 2))
+            .Concat(seed.Where(i => i.Value >= 4).Union(seed.Where(i => i.Value == 5)))
+            .Select(i => i.Value).OrderBy(v => v);
+
+        Assert.Equal([1, 2, 4, 5], result.Select(i => i.Value).OrderBy(v => v));
+        Assert.Equal(oracle, result.Select(i => i.Value).OrderBy(v => v));
+        Assert.Equal(3, CountOccurrences(Mql(logs), "$unionWith")); // two top-level links + one nested
+    }
+
+    [Fact]
+    public void Deeply_right_nested_chain_goes_native()
+    {
+        var collection = SeedCollection(nameof(Deeply_right_nested_chain_goes_native));
+        var logs = new List<string>();
+        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+
+        // Three levels: the recursion in IsWholeEntitySetOpOperandSelect / AppendSetOpOperandStages has no
+        // depth limit, so a nested operand may itself carry a nested operand.
+        var result = db.Entities.Where(i => i.Value == 1)
+            .Concat(db.Entities.Where(i => i.Value == 2)
+                .Concat(db.Entities.Where(i => i.Value == 3)
+                    .Union(db.Entities.Where(i => i.Value >= 4))))
+            .ToList();
+
+        Assert.Equal([1, 2, 3, 4, 5], result.Select(i => i.Value).OrderBy(v => v));
+        Assert.Equal(3, CountOccurrences(Mql(logs), "$unionWith"));
+    }
+
+    [Fact]
+    public void Right_nested_operand_with_a_parameter_substitutes_correctly()
+    {
+        var collection = SeedCollection(nameof(Right_nested_operand_with_a_parameter_substitutes_correctly));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+
+        // The nested operand renders into the SAME placeholder table as the outer pipeline, so a captured
+        // variable inside it must still substitute at Build time rather than being baked in or dropped.
+        var threshold = 4;
+        var result = db.Entities.Where(i => i.Value == 1)
+            .Concat(db.Entities.Where(i => i.Value >= threshold).Union(db.Entities.Where(i => i.Value == 5)))
+            .ToList();
+
+        Assert.Equal([1, 4, 5], result.Select(i => i.Value).OrderBy(v => v));
+
+        threshold = 5;
+        var reRun = db.Entities.Where(i => i.Value == 1)
+            .Concat(db.Entities.Where(i => i.Value >= threshold).Union(db.Entities.Where(i => i.Value == 5)))
+            .ToList();
+
+        Assert.Equal([1, 5], reRun.Select(i => i.Value).OrderBy(v => v));
+    }
+
+    // ── Chain declines (still out of the native slice) ────────────────────────────────────────────
+
+    // ── Paging BETWEEN two links (per-link PrecedingOps) ─────────────────────────────────────────
+    //
+    // Ops recorded after one link and before the next land in TrailingOps (ActiveOps routes there once a
+    // set op is attached) but belong BEFORE the new link. AppendSetOperation hands them to the new link as
+    // its PrecedingOps, keeping TrailingOps meaning "after the LAST link". Operand sets are chosen so that
+    // emitting the Take in the wrong place changes the ROW COUNT:
+    //   A = Value <= 2 -> {1,2}     B = Value >= 4 -> {4,5}     C = Value == 3 -> {3}
+    // A.Union(B).OrderBy(Value).Take(2) = {1,2}, then .Union(C) = {1,2,3} — three rows. Emitted after the
+    // whole chain instead, the Take would truncate {1,2,3,4,5} to {1,2} — two rows.
+
+    [Fact]
+    public void Take_between_two_set_ops_pages_the_partial_combine()
+    {
+        var collection = SeedCollection(nameof(Take_between_two_set_ops_pages_the_partial_combine));
+        var logs = new List<string>();
+        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+
+        var result = db.Entities.Where(i => i.Value <= 2)
+            .Union(db.Entities.Where(i => i.Value >= 4))
+            .OrderBy(i => i.Value).Take(2)
+            .Union(db.Entities.Where(i => i.Value == 3))
+            .ToList();
+
+        var seed = SeedItems();
+        var oracle = seed.Where(i => i.Value <= 2)
+            .Union(seed.Where(i => i.Value >= 4))
+            .OrderBy(i => i.Value).Take(2)
+            .Union(seed.Where(i => i.Value == 3))
+            .Select(i => i.Value).OrderBy(v => v);
+
+        Assert.Equal([1, 2, 3], result.Select(i => i.Value).OrderBy(v => v));
+        Assert.Equal(oracle, result.Select(i => i.Value).OrderBy(v => v));
+
+        // The $limit sits BETWEEN the two $unionWith stages, not after both.
+        var mql = Mql(logs);
+        var firstUnion = mql.IndexOf("$unionWith", StringComparison.Ordinal);
+        var secondUnion = mql.IndexOf("$unionWith", firstUnion + 1, StringComparison.Ordinal);
+        var limit = mql.IndexOf("$limit", StringComparison.Ordinal);
+        Assert.InRange(limit, firstUnion, secondUnion);
+    }
+
+    [Fact]
+    public void Take_after_the_last_link_still_pages_the_whole_combine()
+    {
+        var collection = SeedCollection(nameof(Take_after_the_last_link_still_pages_the_whole_combine));
+        var logs = new List<string>();
+        using var db = MakeWithLogs(collection, MongoQueryMode.NativeOnly, logs);
+
+        // The companion to the case above: with no op recorded between the links, TrailingOps still means
+        // "after the LAST link" and the Take pages the fully-combined result.
+        var result = db.Entities.Where(i => i.Value <= 2)
+            .Union(db.Entities.Where(i => i.Value >= 4))
+            .Union(db.Entities.Where(i => i.Value == 3))
+            .OrderBy(i => i.Value).Take(2)
+            .ToList();
+
+        Assert.Equal([1, 2], result.Select(i => i.Value));
+
+        var mql = Mql(logs);
+        Assert.True(
+            mql.LastIndexOf("$limit", StringComparison.Ordinal)
+            > mql.LastIndexOf("$unionWith", StringComparison.Ordinal),
+            "expected the $limit after both $unionWith stages");
+    }
+
+    [Fact]
+    public void Paging_between_every_link_of_a_three_link_chain()
+    {
+        var collection = SeedCollection(nameof(Paging_between_every_link_of_a_three_link_chain));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+
+        var result = db.Entities.Where(i => i.Value == 1)
+            .Union(db.Entities.Where(i => i.Value == 2))
+            .OrderBy(i => i.Value).Take(2)
+            .Union(db.Entities.Where(i => i.Value == 3))
+            .OrderBy(i => i.Value).Take(3)
+            .Union(db.Entities.Where(i => i.Value == 4))
+            .OrderBy(i => i.Value).Take(4)
+            .ToList();
+
+        var seed = SeedItems();
+        var oracle = seed.Where(i => i.Value == 1)
+            .Union(seed.Where(i => i.Value == 2))
+            .OrderBy(i => i.Value).Take(2)
+            .Union(seed.Where(i => i.Value == 3))
+            .OrderBy(i => i.Value).Take(3)
+            .Union(seed.Where(i => i.Value == 4))
+            .OrderBy(i => i.Value).Take(4)
+            .Select(i => i.Value);
+
+        Assert.Equal([1, 2, 3, 4], result.Select(i => i.Value));
+        Assert.Equal(oracle, result.Select(i => i.Value));
+    }
+
+    [Fact]
+    public void Right_nested_operand_with_its_own_trailing_paging_goes_native()
+    {
+        var collection = SeedCollection(nameof(Right_nested_operand_with_its_own_trailing_paging_goes_native));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+
+        // The operand's own post-combine paging closes out ITS nested sub-pipeline, mirroring where the
+        // outer select's TrailingOps land in the outer pipeline.
+        var result = db.Entities.Where(i => i.Value <= 2)
+            .Concat(db.Entities.Where(i => i.Value >= 4)
+                .Union(db.Entities.Where(i => i.Value == 3))
+                .OrderBy(i => i.Value).Take(1))
+            .ToList();
+
+        var seed = SeedItems();
+        var oracle = seed.Where(i => i.Value <= 2)
+            .Concat(seed.Where(i => i.Value >= 4)
+                .Union(seed.Where(i => i.Value == 3))
+                .OrderBy(i => i.Value).Take(1))
+            .Select(i => i.Value).OrderBy(v => v);
+
+        Assert.Equal([1, 2, 3], result.Select(i => i.Value).OrderBy(v => v));
+        Assert.Equal(oracle, result.Select(i => i.Value).OrderBy(v => v));
+    }
+
+    [Fact]
+    public void Intersect_after_a_set_op_is_not_chained()
+    {
+        var collection = SeedCollection(nameof(Intersect_after_a_set_op_is_not_chained));
+        using var db = Make(collection, MongoQueryMode.Native);
+
+        // Intersect/Except lower to the differently shaped MongoSetDifferenceStage and have no driver-LINQ
+        // oracle, so they are deliberately excluded from a chain and keep hard-failing translation in
+        // EVERY mode (TryTranslateSetOperation's null return) rather than being lowered as a union link.
+        Assert.ThrowsAny<Exception>(() =>
+            db.Entities.Where(i => i.Value <= 2)
+                .Union(db.Entities.Where(i => i.Value >= 2))
+                .Intersect(db.Entities.Where(i => i.Value == 2))
+                .ToList());
+    }
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        var count = 0;
+        for (var i = haystack.IndexOf(needle, StringComparison.Ordinal);
+             i >= 0;
+             i = haystack.IndexOf(needle, i + needle.Length, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
     }
 }

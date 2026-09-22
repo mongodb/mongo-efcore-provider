@@ -1,4 +1,4 @@
-/* Copyright 2023-present MongoDB Inc.
+﻿/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -209,8 +209,8 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
         AssertMql(
             """
-            Customers.{ "$unionWith" : "Customers" }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$project" : { "_v" : { "$literal" : 1 }, "_id" : 0 } }
-            """);
+Customers.{ "$unionWith" : { "coll" : "Customers", "pipeline" : [] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$project" : { "_v" : { "$literal" : 1 }, "_id" : 0 } }
+""");
     }
 
     public override async Task Union_with_anonymous_type_projection(bool async)
@@ -737,26 +737,20 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
     public override async Task Except_simple_followed_by_projecting_constant(bool async)
     {
-        // Fails: EF-347 -- Select(constant) after a whole-entity terminal Except composes past the IsSetOp
-        // terminal gate, so translation falls back to driver-LINQ (a graceful MarkNotNativelyRepresentable(),
-        // not a translation-time hard fail); the driver's own LINQ v3 provider has no Except translation at
-        // all, so it throws ExpressionNotSupportedException mid-enumeration -- after QueryingEnumerable's
-        // logging try/finally has already fired with whatever partial LoggedStages existed (none, here), so
-        // a single empty-pipeline "Customers." entry is logged despite the failure. Was previously tagged
-        // "Cross-document navigation access issue EF-216" (Except hard-failed unconditionally pre-EF-347).
-        await AssertTranslationFailed(() => base.Except_simple_followed_by_projecting_constant(async));
+        // A trailing Select(constant) after a whole-entity terminal Except now goes fully native: the bare
+        // constant leaf is admitted by NativeProjectionBinder's widened node-kind gate and $literal-wrapped by
+        // MongoPipelineFactory.RenderProject. Unlike an OPERAND carrying a constant leaf (see
+        // MongoQueryableMethodTranslatingExpressionVisitor.HasShaperUnsafeConstantLeaf's remarks), a TRAILING
+        // projection composed AFTER the combine is safe: its value doesn't vary per row regardless of which
+        // operand contributed that row, so the shaper's compile-time-embedded constant is correct for every
+        // row of the combined stream by construction. This also fixes what used to be a genuine dead end --
+        // Except has NO driver-LINQ fallback at all, so before this the whole query hard-failed at execution.
+        await base.Except_simple_followed_by_projecting_constant(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-    """
-            Customers.
+        AssertMql(
+            """
+            Customers.{ "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : false } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$project" : { "_v" : { "$literal" : 1 }, "_id" : 0 } }
             """);
-        }
     }
 
     public override async Task Except_nested(bool async)
@@ -921,7 +915,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }] } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }] } }, { "$project" : { "_v" : "$City", "_id" : 0 } }
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }] } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }] } }, { "$project" : { "City" : "$City", "_id" : 0 } }
             """);
     }
 
@@ -931,7 +925,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }] } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }] } }, { "$project" : { "_v" : "$City", "_id" : 0 } }
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }] } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }] } }, { "$project" : { "City" : "$City", "_id" : 0 } }
             """);
     }
 

@@ -76,21 +76,32 @@ internal static class NativeCardinalityBinder
         // there deliberately. The previous unconditional decline treated the non-set-op case as
         // unrepresentable; it is representable, it just wasn't recognized as such.
 
-        if (kind is MongoReducerKind.Last or MongoReducerKind.LastOrDefault)
-        {
-            // Last/LastOrDefault have no MQL "take the last row" form and no defined element at all without
-            // an explicit prior sort (same policy as Reverse — LINQ order is undefined for an unordered
-            // source). Flip that sort's direction and reuse the ordinary First/FirstOrDefault $limit:1
-            // machinery below: the first row of the reversed order is the last row of the original order.
-            // TryFlipTrailingSortDirection declines (no mutation) when the tail op is not a sort, which is
-            // exactly the "no explicit order" case this reducer must not natively represent.
-            if (!select.TryFlipTrailingSortDirection())
-                return false;
-        }
+        // Last/LastOrDefault have no MQL "take the last row" form via a sort flip when there is no explicit
+        // prior sort to flip (same starting point as Reverse — LINQ leaves row order undefined for an
+        // unordered source). Where a sort DOES exist, flip its direction and reuse the ordinary
+        // First/FirstOrDefault $limit:1 machinery below: the first row of the reversed order is the last row
+        // of the original order. Where none exists, mark MongoCardinality.UnorderedLastRow instead of
+        // declining: MongoSelectLowerer lowers that to the $group{_id:null,_last:{$last:"$$ROOT"}} +
+        // $replaceRoot pattern the driver-LINQ fallback already emits for this exact shape, bit-for-bit —
+        // going native here doesn't invent a NEW notion of "the last row", it just stops paying a fallback
+        // for one LINQ already leaves implementation-defined. Unlike the $limit path, that pattern collapses
+        // the WHOLE input into one document, so it must run AFTER any $lookup (or an Included collection
+        // would be captured as missing) — the lowerer, not this binder, owns emitting it in that spot, which
+        // is the one slot a projected-Distinct's own $group/PostGroupOps block (isPostDistinctReducer) has no
+        // room for. Decline that combination outright rather than silently drop the pattern.
+        var isUnorderedLast = kind is MongoReducerKind.Last or MongoReducerKind.LastOrDefault
+            && !select.TryFlipTrailingSortDirection();
 
-        var limit = kind is MongoReducerKind.Single or MongoReducerKind.SingleOrDefault ? 2 : 1;
-        select.AppendLimit(new MongoConstantExpression(limit, forSerialization: null));
-        var cardinality = MongoCardinality.ForReducer(kind, resultType);
+        if (isUnorderedLast && isPostDistinctReducer)
+            return false;
+
+        var cardinality = MongoCardinality.ForReducer(kind, resultType, isUnorderedLast);
+
+        if (!isUnorderedLast)
+        {
+            var limit = kind is MongoReducerKind.Single or MongoReducerKind.SingleOrDefault ? 2 : 1;
+            select.AppendLimit(new MongoConstantExpression(limit, forSerialization: null));
+        }
 
         // EF-322: Cardinality and Grouping are ordinarily mutually exclusive (see the Cardinality setter's own
         // remarks), but a reducer composed after a projected Distinct is the SAME sanctioned exception

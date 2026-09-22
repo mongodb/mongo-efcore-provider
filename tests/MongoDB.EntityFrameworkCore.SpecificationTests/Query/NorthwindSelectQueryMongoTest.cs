@@ -156,8 +156,8 @@ public class NorthwindSelectQueryMongoTest : NorthwindSelectQueryTestBase<Northw
 
         AssertMql(
             """
-            Orders.
-            """);
+Orders.{ "$project" : { "OrderID" : "$_id", "Double" : { "$multiply" : ["$_id", 2] }, "Add" : { "$add" : ["$_id", 23] }, "Sub" : { "$subtract" : [100000, "$_id"] }, "Divide" : { "$trunc" : { "$divide" : ["$_id", { "$trunc" : { "$divide" : ["$_id", 2] } }] } }, "Literal" : { "$literal" : 42 }, "o" : "$$ROOT", "_id" : 0 } }
+""");
     }
 
     public override async Task Projection_when_arithmetic_mixed(bool async)
@@ -237,21 +237,16 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }
 
     public override async Task Select_bool_closure_with_order_parameter_with_cast_to_nullable(bool async)
     {
-        // Fails: Unknown reasons EF-X009
-        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
-            () => base.Select_bool_closure_with_order_parameter_with_cast_to_nullable(async), typeof(MongoCommandException));
+        // A bare constant/parameter Select leaf now goes native with a $literal wrap (see the Query area's
+        // NativeProjectionBinder/MongoPipelineFactory widening), which also fixed this: the un-wrapped bare
+        // value used to reach the server as a naked boolean sort-key/projection field and abort with
+        // MongoCommandException (EF-X009). $literal-wrapping it closes that unrelated-looking gap too.
+        await base.Select_bool_closure_with_order_parameter_with_cast_to_nullable(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-    """
-            Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : false } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$project" : { "_v" : { "$literal" : false }, "_id" : 0 } }
-            """);
-        }
+        AssertMql(
+            """
+Customers.{ "$set" : { "__sort0" : { "$literal" : false } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$project" : { "_v" : { "$literal" : false }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_scalar(bool async)
@@ -340,8 +335,8 @@ Customers.{ "$project" : { "City" : "$City", "_id" : 0 } }
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : null, "_id" : 0 } }
-            """);
+Customers.{ "$project" : { "_v" : { "$literal" : null }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_local(bool async)
@@ -1831,8 +1826,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "local
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : { "$literal" : { "X" : 10 } }, "_id" : 0 } }
-            """);
+Customers.{ "$project" : { "X" : { "$literal" : 10 }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_anonymous_nested(bool async)

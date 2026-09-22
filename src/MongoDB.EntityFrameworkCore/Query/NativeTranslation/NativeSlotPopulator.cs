@@ -196,6 +196,20 @@ internal static class NativeSlotPopulator
                 translator.DistinctAliasScope = distinctScope;
             if (translator.TryTranslate(predicate.Body, out var predicateNode))
                 mongoQ.Select.AddPredicateConjunct(predicateNode);
+            // `customers.Contains(od.Order)` (EF Core's own Where_navigation_contains spec shape), arriving
+            // here as `customers.Contains(ti.Inner)` — EF's nav-expansion of the bare reference-navigation
+            // access. Structurally references Inner (so the Outer-only ReferencesInnerScope arm below would
+            // decline it), but semantically needs no $lookup at all: the navigation's own FK property already
+            // lives on the OUTER document. So this stays an Outer-side ($match-before-$lookup) predicate,
+            // like the arm above — it deliberately does NOT call MarkJoinInnerAccessConfirmedFromWhere,
+            // unlike every other Inner-referencing arm below, because it never reads the $lookup's joined
+            // field and has no ordering dependency on it. See NativeJoinScopeTranslator.TryMatchInnerListContains.
+            else if (mongoQ.Select.JoinScope is { Levels.Count: 1 }
+                     && mongoQ.Joins.Count == 1
+                     && mongoQ.Joins[0].Navigation is { } containsNavigation
+                     && NativeJoinScopeTranslator.TryMatchInnerListContains(
+                         predicate.Parameters[0], predicate.Body, containsNavigation, out var innerListContainsNode))
+                mongoQ.Select.AddPredicateConjunct(innerListContainsNode);
             // Outer-side-only: PipelineOps ($match) always lower BEFORE the $lookup stage that materializes
             // the join's Inner side, so a Where reaching Inner would filter on a not-yet-joined field —
             // NativeJoinScopeTranslator.ReferencesInnerScope declines that here, deferring Inner access to
@@ -656,7 +670,7 @@ internal static class NativeSlotPopulator
     /// reject a <see cref="MongoParameterExpression"/> under its reference-type allowlist even though the
     /// value underneath boxes cleanly.
     /// </summary>
-    private static Type UnwrapBoxingToObjectType(Expression e)
+    internal static Type UnwrapBoxingToObjectType(Expression e)
     {
         while (e is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked, Type: var t } u
                && t == typeof(object))
@@ -680,7 +694,7 @@ internal static class NativeSlotPopulator
     /// no property serializer, so both paths reach <c>BsonValue.Create</c>, whose admission decision is keyed
     /// on the CLR type rather than the value.
     /// </remarks>
-    private static bool TryProbeBareValueRenders(MongoExpression translated, Type declaredType)
+    internal static bool TryProbeBareValueRenders(MongoExpression translated, Type declaredType)
     {
         switch (translated)
         {

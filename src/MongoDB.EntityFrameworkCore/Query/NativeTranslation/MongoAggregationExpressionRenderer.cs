@@ -121,12 +121,14 @@ internal static class MongoAggregationExpressionRenderer
             MongoConcatExpression concat
                 => new BsonDocument("$concat",
                     new BsonArray(concat.Operands.Select(o => Render(o, placeholders, elementVariable)))),
-            // Scoped to a FIELD-to-field term only (EF-322 Task 2 review fix): a constant/parameter-term regex
-            // already has a perfectly good query-dialect form via $regularExpression and must keep declining
-            // here, so callers that rely on that decline (a computed sort key, a filtered-count element
-            // predicate) keep falling back exactly as before. Only c.A.StartsWith(c.B) — no query-dialect form
-            // at all — needs this arm.
-            MongoRegexExpression { Term: MongoFieldExpression } regex => RenderRegexAsExpr(regex, placeholders, elementVariable),
+            // EF-322 (Include_collection_with_conditional_order_by): admits ANY Term shape, not just a
+            // field-to-field one. Every CanRender caller (see its own remarks) is already inside an
+            // $expr/$addFields/$sort/quantifier scope with no $regularExpression alternative available — a
+            // top-level $match predicate never reaches this renderer at all, since a constant/parameter-term
+            // regex is handled entirely by the separate query-dialect path (MongoQueryLanguageRenderer) before
+            // it would. So there is no fallback disposition being preserved by declining a constant/parameter
+            // term here; it must render exactly like the field-to-field case.
+            MongoRegexExpression regex => RenderRegexAsExpr(regex, placeholders, elementVariable),
             // A constructed-tuple comparison operand (EF-322 follow-up) — a literal MQL array of the tuple's
             // per-member values, each rendered through this SAME Render call exactly like any other computed
             // value (a field ref, a constant, a nested computation). Unlike MongoValueListExpression (which
@@ -213,8 +215,10 @@ internal static class MongoAggregationExpressionRenderer
             // MongoRegexKind staying exhaustive (all 3 current members handled; its `_` arm throws and is
             // presently unreachable). Adding a new MongoRegexKind member requires adding it to BOTH that switch
             // and (implicitly) here at the same time, or this would wrongly admit a Kind that Render then throws
-            // on.
-            MongoRegexExpression { Term: MongoFieldExpression } regex => CanRender(regex.Field) && CanRender(regex.Term),
+            // on. Admits ANY Term shape (EF-322) — see the matching comment on Render's arm above for why a
+            // constant/parameter term has no fallback disposition to preserve at any of this method's call
+            // sites.
+            MongoRegexExpression regex => CanRender(regex.Field) && CanRender(regex.Term),
             MongoTupleExpression tuple => tuple.Elements.All(CanRender),
             // EF-322 follow-up: a constructed nested sub-document leaf (mirrors Render's own arm above).
             // Previously missing — Render already had an arm for it, so this used to be a "renderer wider

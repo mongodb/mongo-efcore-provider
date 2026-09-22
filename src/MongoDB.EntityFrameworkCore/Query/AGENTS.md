@@ -1,4 +1,4 @@
----
+﻿---
 area: Query / LINQ translation
 scope: ["src/MongoDB.EntityFrameworkCore/Query/**"]
 reviewer-agent: query-reviewer
@@ -126,6 +126,24 @@ failure.
   exception: if paging was recorded before ANY join existed on the select, it's declined instead of deferred
   — deferring would page the joined (multiplied) result instead of the outer sequence the paging actually
   targeted.
+- **A set op is a TREE, and each `Union`'s dedup belongs to its own link — never hoisted.**
+  `MongoSelectDefinition.SetOperations` is an ordered list of links, and a link's operand may itself carry
+  one, so whole-entity `Concat`/`Union` nests in both directions. LEFT (`A.Concat(B).Concat(C)`) appends a
+  link, because EF hands the outer set op a `source1` that already carries the inner one. RIGHT
+  (`A.Concat(B.Union(C))`) keeps the operand's own chain and the lowerer recurses, emitting it as a
+  `$unionWith` nested inside the outer one's pipeline. **Right-nesting cannot be flattened into a left
+  chain** — `A.Concat(B).Union(C)` would dedup A's rows too — and the inline dedup placement is what makes a
+  MIXED left chain correct: `Concat(Union(A,B),C)` must collapse A/B's duplicates *before* C joins the
+  stream. Both mistakes are silently-wrong rows, not failures; `NativeSetOpsTests` pins each against an
+  in-memory oracle. `SetOperation` (singular) is the first link and is the canonical "is this a set-op
+  query?" test; anything that walks operands must recurse (`ReservedElementNames` does). Ops recorded
+  BETWEEN two links (`A.Union(B).Take(1).Union(C)`) land in `TrailingOps` because `ActiveOps` routes there
+  once a set op attaches, but they belong before the NEW link: `AppendSetOperation` moves them onto that
+  link as its `PrecedingOps`, which is what preserves the invariant the lowerer relies on — `TrailingOps`
+  always means "after the LAST link". Leave them behind and the `Take` silently pages the wrong stream.
+  Gated by `IsWholeEntitySetOpOperandSelect`. `Intersect`/`Except` are excluded from any nesting (different stage shape, and no
+  driver-LINQ oracle to check a mistake against). `MongoPipelineFactory.RenderStage` has no case for the
+  set-op stages, so a nested one must go through `RenderOperandStages`.
 - **Structural classification beats metadata/depth/CLR-type shortcuts.** A TPH-inherited or EF10-named query
   filter isn't visible through `GetQueryFilter()`; join-hop depth doesn't distinguish a root hop from a
   transitive one; a self-referencing entity type defeats a CLR-type check. Walk the actual tree. These

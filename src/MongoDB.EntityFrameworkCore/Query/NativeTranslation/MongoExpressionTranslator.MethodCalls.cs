@@ -353,7 +353,7 @@ internal sealed partial class MongoExpressionTranslator
     /// (<c>List&lt;T&gt;</c>, <c>HashSet&lt;T&gt;</c>, <c>IList&lt;T&gt;</c>, <c>ICollection&lt;T&gt;</c>).
     /// Matches by <see cref="System.Reflection.MethodInfo"/> shape, not by name string alone.
     /// </summary>
-    private static bool TryMatchContainsMethod(
+    internal static bool TryMatchContainsMethod(
         MethodCallExpression call,
         [NotNullWhen(true)] out Expression? collection,
         [NotNullWhen(true)] out Expression? item)

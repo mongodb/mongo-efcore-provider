@@ -1306,7 +1306,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }, { "$lookup" : { 
 """,
             //
             """
-OrderDetails.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id.OrderID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$match" : { "$or" : [{ "_inner._id" : 10643 }, { "_inner._id" : 10692 }, { "_inner._id" : 10702 }, { "_inner._id" : 10835 }, { "_inner._id" : 10952 }, { "_inner._id" : 11011 }] } }
+OrderDetails.{ "$match" : { "_id.OrderID" : { "$in" : [10643, 10692, 10702, 10835, 10952, 11011] } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }
 """);
     }
 

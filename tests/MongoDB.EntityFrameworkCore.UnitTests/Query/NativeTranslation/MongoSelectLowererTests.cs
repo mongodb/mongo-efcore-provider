@@ -1,4 +1,4 @@
-/* Copyright 2023-present MongoDB Inc.
+﻿/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -378,7 +378,7 @@ public class MongoSelectLowererTests
     {
         var operand = new MongoSelectDefinition(); // empty operand → no inner stages
         var query = TestSelect();
-        query.Select.SetOperation = new MongoSetOperation(MongoSetOperationKind.Concat, operand, "customers", query.CollectionExpression.EntityType);
+        query.Select.AppendSetOperation(new MongoSetOperation(MongoSetOperationKind.Concat, operand, "customers", query.CollectionExpression.EntityType));
         query.Select.IsSetOp = true;
 
         var stages = new MongoSelectLowerer().Lower(query);
@@ -401,7 +401,7 @@ public class MongoSelectLowererTests
             new MongoConstantExpression("UK", null)));
 
         var query = TestSelect();
-        query.Select.SetOperation = new MongoSetOperation(MongoSetOperationKind.Union, operand, "customers", query.CollectionExpression.EntityType);
+        query.Select.AppendSetOperation(new MongoSetOperation(MongoSetOperationKind.Union, operand, "customers", query.CollectionExpression.EntityType));
         query.Select.IsSetOp = true;
 
         var stages = new MongoSelectLowerer().Lower(query);
@@ -419,7 +419,7 @@ public class MongoSelectLowererTests
         var operand = new MongoSelectDefinition();
         var query = TestSelect();
         query.Select.AddPredicateConjunct(new MongoConstantExpression(true, null));
-        query.Select.SetOperation = new MongoSetOperation(MongoSetOperationKind.Concat, operand, "customers", query.CollectionExpression.EntityType);
+        query.Select.AppendSetOperation(new MongoSetOperation(MongoSetOperationKind.Concat, operand, "customers", query.CollectionExpression.EntityType));
         query.Select.IsSetOp = true;
 
         var stages = new MongoSelectLowerer().Lower(query);
@@ -443,8 +443,8 @@ public class MongoSelectLowererTests
         var lookup = new LookupExpression(navigation); // collection nav, no ForceUnwind => IsNativeCollectionLookup
         query.AddLookup(lookup);
         query.Select.AddPredicateConjunct(new MongoConstantExpression(true, null));
-        query.Select.SetOperation = new MongoSetOperation(
-            MongoSetOperationKind.Union, new MongoSelectDefinition(), "others", query.CollectionExpression.EntityType);
+        query.Select.AppendSetOperation(new MongoSetOperation(
+            MongoSetOperationKind.Union, new MongoSelectDefinition(), "others", query.CollectionExpression.EntityType));
         query.Select.IsSetOp = true;
 
         var stages = new MongoSelectLowerer().Lower(query);
@@ -464,8 +464,8 @@ public class MongoSelectLowererTests
         var (query, navigation) = TestReferenceSelect();
         var lookup = new LookupExpression(navigation);
         query.AddLookup(lookup);
-        query.Select.SetOperation = new MongoSetOperation(
-            MongoSetOperationKind.Concat, new MongoSelectDefinition(), "others", query.CollectionExpression.EntityType);
+        query.Select.AppendSetOperation(new MongoSetOperation(
+            MongoSetOperationKind.Concat, new MongoSelectDefinition(), "others", query.CollectionExpression.EntityType));
         query.Select.IsSetOp = true;
         query.Select.AppendLimit(new MongoConstantExpression(2, null)); // lands in TrailingOps (post-set-op)
         query.Select.AddProjection(new MongoProjection("Name", new MongoFieldExpression(property: null!, elementName: "Name")));
@@ -848,8 +848,8 @@ public class MongoSelectLowererTests
         var query = TestSelect();
         // source1's own pre-set-op predicate:
         query.Select.AddPredicateConjunct(new MongoConstantExpression(true, null));
-        query.Select.SetOperation = new MongoSetOperation(
-            MongoSetOperationKind.Union, new MongoSelectDefinition(), "customers", query.CollectionExpression.EntityType);
+        query.Select.AppendSetOperation(new MongoSetOperation(
+            MongoSetOperationKind.Union, new MongoSelectDefinition(), "customers", query.CollectionExpression.EntityType));
         query.Select.IsSetOp = true;
         // post-set-op (trailing) sort — routes to TrailingOps because SetOperation is now attached:
         query.Select.StartOrReplaceSort(new MongoOrdering(FieldRef(query, "A"), true));
@@ -867,8 +867,8 @@ public class MongoSelectLowererTests
     public void Trailing_cardinality_lowers_after_the_set_op_stage()
     {
         var query = TestSelect();
-        query.Select.SetOperation = new MongoSetOperation(
-            MongoSetOperationKind.Intersect, new MongoSelectDefinition(), "customers", query.CollectionExpression.EntityType);
+        query.Select.AppendSetOperation(new MongoSetOperation(
+            MongoSetOperationKind.Intersect, new MongoSelectDefinition(), "customers", query.CollectionExpression.EntityType));
         query.Select.IsSetOp = true;
         query.Select.Cardinality = MongoCardinality.ForAggregate(
             MongoAggregateOperator.Count, selector: null, MongoEmptyAggregateBehavior.DefaultValue,
@@ -1098,8 +1098,8 @@ public class MongoSelectLowererTests
 
         var operand = new MongoSelectDefinition();
         operand.StartOrReplaceSort(new MongoOrdering(Sum(), Ascending: true));
-        query.Select.SetOperation = new MongoSetOperation(
-            MongoSetOperationKind.Union, operand, "others", operandEntityType);
+        query.Select.AppendSetOperation(new MongoSetOperation(
+            MongoSetOperationKind.Union, operand, "others", operandEntityType));
         query.Select.IsSetOp = true;
 
         var stages = new MongoSelectLowerer().Lower(query);
@@ -1125,7 +1125,7 @@ public class MongoSelectLowererTests
         var operand = new MongoSelectDefinition();
         operand.StartOrReplaceSort(new MongoOrdering(Product(), Ascending: true));
 
-        query.Select.SetOperation = new MongoSetOperation(MongoSetOperationKind.Union, operand, "customers", query.CollectionExpression.EntityType);
+        query.Select.AppendSetOperation(new MongoSetOperation(MongoSetOperationKind.Union, operand, "customers", query.CollectionExpression.EntityType));
         query.Select.IsSetOp = true;
 
         var stages = new MongoSelectLowerer().Lower(query);
@@ -1153,8 +1153,8 @@ public class MongoSelectLowererTests
         // Outer query's own PipelineOps (recorded BEFORE the set op is attached):
         query.Select.StartOrReplaceSort(new MongoOrdering(Sum(), Ascending: true));
 
-        query.Select.SetOperation = new MongoSetOperation(
-            MongoSetOperationKind.Union, new MongoSelectDefinition(), "customers", query.CollectionExpression.EntityType);
+        query.Select.AppendSetOperation(new MongoSetOperation(
+            MongoSetOperationKind.Union, new MongoSelectDefinition(), "customers", query.CollectionExpression.EntityType));
         query.Select.IsSetOp = true;
 
         // Post-set-op (trailing) sort — routes to TrailingOps because SetOperation is now attached:
@@ -1170,5 +1170,28 @@ public class MongoSelectLowererTests
         var outerName = Assert.Single(outerAddFields.Fields).Alias;
         var trailingName = Assert.Single(trailingAddFields.Fields).Alias;
         Assert.NotEqual(outerName, trailingName);
+    }
+
+    // EF-322: Last()/LastOrDefault() with no explicit OrderBy has no MQL "take the last row" form via a sort
+    // flip (there is no sort to flip), but it's still natively representable via the same
+    // $group{_id:null,_last:{$last:"$$ROOT"}} + $replaceRoot pattern the driver-LINQ fallback already relies
+    // on for this exact shape (its own baseline MQL, captured under NorthwindIncludeQueryMongoTest
+    // .Include_collection_with_last_no_orderby).
+    [Fact]
+    public void Last_with_no_explicit_order_binds_natively_via_group_last_and_replace_root()
+    {
+        var query = TestSelect();
+
+        var bound = NativeCardinalityBinder.TryBindReducer(query, MongoReducerKind.Last, typeof(StubEntity));
+
+        Assert.True(bound);
+
+        var stages = new MongoSelectLowerer().Lower(query);
+
+        var lastRow = Assert.IsType<MongoLastRowStage>(Assert.Single(stages, s => s is MongoLastRowStage));
+        var replaceRoot = Assert.IsType<MongoReplaceRootStage>(Assert.Single(stages, s => s is MongoReplaceRootStage));
+        Assert.Equal("_last", replaceRoot.NewRoot);
+        Assert.False(replaceRoot.MergeOwnerKeySentinels);
+        Assert.True(Array.IndexOf(stages.ToArray(), lastRow) < Array.IndexOf(stages.ToArray(), replaceRoot));
     }
 }

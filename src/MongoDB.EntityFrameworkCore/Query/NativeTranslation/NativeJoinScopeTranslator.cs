@@ -18,6 +18,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
@@ -268,6 +269,71 @@ internal static class NativeJoinScopeTranslator
         => node is MemberExpression { Member.Name: "Inner" } member
            && ReferenceEquals(member.Expression, rootParam)
            && member.IsTransparentIdentifierOuterOrInnerAccess();
+
+    /// <summary>
+    /// <c>customers.Contains(od.Order)</c> (EF Core's own <c>Where_navigation_contains</c> spec shape),
+    /// arriving here as <c>customers.Contains(ti.Inner)</c> — EF's nav-expansion has already rewritten the
+    /// bare navigation access into a LeftJoin/TransparentIdentifier the same way it does for a reference
+    /// <c>Include</c> (see <see cref="TryMatchInnerNullCheck"/>'s sibling shape). Unlike that join, THIS
+    /// predicate needs no <c>$lookup</c> at all to answer: <paramref name="navigation"/>'s own foreign-key
+    /// property already lives on the OUTER (root) document, and by construction of the relationship it holds
+    /// exactly the target's principal-key value — so the Contains rewrites to a principal-key-vs-foreign-key
+    /// <c>$in</c>, the reference-navigation generalization of
+    /// <see cref="MongoExpressionTranslator.EntityEquality.TryTranslateEntityListContains"/>'s whole-root-entity
+    /// shape, keyed off the FK field instead of the root's own PK field. Whether the join ends up registering a
+    /// <c>$lookup</c> anyway (a subsequent mandatory <c>Select(ti =&gt; ti.Outer)</c> unwrap usually forces one)
+    /// is irrelevant to this predicate — the FK value on the outer document already carries the same key a
+    /// <c>$lookup</c> would need a round trip to confirm, dangling FK included: a document whose FK points at no
+    /// existing principal still has a real key value to compare, just like a captured local whose reference
+    /// object doesn't happen to be tracked.
+    /// </summary>
+    /// <remarks>
+    /// Scoped exactly like the whole-entity case: a SINGLE-property, non-shadow foreign key whose principal key
+    /// is likewise single-property and non-shadow. A composite FK/principal-key would need a multi-field
+    /// <c>$in</c>, which <see cref="MongoInExpression"/> cannot express, so that shape declines here rather than
+    /// being admitted. <paramref name="navigation"/> must be on the DEPENDENT (outer) side — <c>IsOnDependent</c>
+    /// — which is guaranteed by construction here since it is read from the join's own recorded
+    /// <see cref="JoinInfo.Navigation"/>, always the outer-to-inner navigation nav-expansion resolved.
+    /// </remarks>
+    public static bool TryMatchInnerListContains(
+        ParameterExpression rootParam, Expression body, INavigation navigation,
+        [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+
+        if (body is not MethodCallExpression call
+            || !MongoExpressionTranslator.TryMatchContainsMethod(call, out var collection, out var item)
+            || !IsBareInnerAccess(rootParam, MongoExpressionTranslator.Unwrap(item)))
+            return false;
+
+        if (navigation.IsCollection)
+            return false; // the reversed, principal-side shape — a different shape entirely, unaffected here
+
+        var foreignKey = navigation.ForeignKey;
+        if (foreignKey.Properties.Count != 1)
+            return false; // composite FK needs a multi-field $in — out of scope here, decline
+
+        var fkProperty = foreignKey.Properties[0];
+        if (fkProperty.IsShadowProperty())
+            return false;
+
+        var principalKeyProperties = foreignKey.PrincipalKey.Properties;
+        if (principalKeyProperties.Count != 1)
+            return false; // composite principal key — same exclusion as the whole-entity case
+
+        var principalKeyProperty = principalKeyProperties[0];
+        if (principalKeyProperty.IsShadowProperty())
+            return false;
+
+        var valuesNode = MongoExpressionTranslator.TranslateEntityKeyInValues(collection, principalKeyProperty);
+        if (valuesNode is null)
+            return false;
+
+        result = new MongoInExpression(
+            new MongoFieldExpression(fkProperty, MongoExpressionTranslator.GetKeyFieldPath(fkProperty)),
+            valuesNode, negated: false);
+        return true;
+    }
 
     private static bool TryTranslateCore(
         MongoJoinScope scope, ParameterExpression rootParam, Expression body, bool valueMode,

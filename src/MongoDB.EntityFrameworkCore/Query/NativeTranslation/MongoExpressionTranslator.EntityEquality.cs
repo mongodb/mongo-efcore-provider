@@ -190,7 +190,7 @@ internal sealed partial class MongoExpressionTranslator
         return combined;
     }
 
-    private static string GetKeyFieldPath(IProperty property)
+    internal static string GetKeyFieldPath(IProperty property)
         => IsCompositeKeyComponent(property) ? "_id." + property.GetElementName() : property.GetElementName();
 
     /// <summary>
@@ -320,7 +320,7 @@ internal sealed partial class MongoExpressionTranslator
     /// case, deferring the extraction to per-execution time via <see cref="PlaceholderTable"/> /
     /// <see cref="MongoPipelineFactory"/>.
     /// </summary>
-    private static MongoExpression? TranslateEntityKeyInValues(Expression collectionExpr, IProperty keyProperty)
+    internal static MongoExpression? TranslateEntityKeyInValues(Expression collectionExpr, IProperty keyProperty)
     {
         var unwrapped = Unwrap(collectionExpr);
 

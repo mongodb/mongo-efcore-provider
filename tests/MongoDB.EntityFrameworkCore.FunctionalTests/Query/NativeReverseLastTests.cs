@@ -1,4 +1,4 @@
-/* Copyright 2023-present MongoDB Inc.
+﻿/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -217,43 +217,50 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
         Assert.Equal(3, last.Value);
     }
 
+    // EF-322 RE-BASELINE (the three tests below). They pinned Last/LastOrDefault DECLINING when there is no
+    // explicit prior sort to flip. That shape now goes native via $group{_id:null,_last:{$last:"$$ROOT"}} +
+    // $replaceRoot — the exact MQL the driver-LINQ fallback already emitted for it, so going native did not
+    // invent a new notion of "the last row". Re-pinned as results rather than deleted.
     [Fact]
-    public void Last_without_an_explicit_order_declines_and_falls_back_with_driver_linq_parity()
+    public void Last_without_an_explicit_order_goes_native_with_driver_linq_parity()
     {
-        var collection = Seed([1, 2, 3], nameof(Last_without_an_explicit_order_declines_and_falls_back_with_driver_linq_parity));
+        var collection = Seed([1, 2, 3], nameof(Last_without_an_explicit_order_goes_native_with_driver_linq_parity));
 
-        using var nativeDb = CreateContext(collection, MongoQueryMode.Native);
-        var nativeValue = nativeDb.Entities.Last().Value;
+        using var nativeOnlyDb = CreateContext(collection, MongoQueryMode.NativeOnly);
+        var nativeValue = nativeOnlyDb.Entities.Last().Value;
 
         using var driverDb = CreateContext(collection, MongoQueryMode.DriverLinq);
         var driverValue = driverDb.Entities.Last().Value;
 
-        Assert.Equal(driverValue, nativeValue); // Native == DriverLinq parity (fallback both ways)
-
-        using var nativeOnlyDb = CreateContext(collection, MongoQueryMode.NativeOnly);
-        Assert.Throws<NativeTranslationNotSupportedException>(() => nativeOnlyDb.Entities.Last());
+        // LINQ leaves row order undefined for an unordered source, so the DRIVER is the oracle here, not a
+        // hard-coded value: the contract this pins is that going native did not change which row comes back.
+        Assert.Equal(driverValue, nativeValue);
     }
 
     [Fact]
-    public void LastOrDefault_without_an_explicit_order_declines_and_falls_back_to_correct_rows()
+    public void LastOrDefault_without_an_explicit_order_goes_native_and_returns_null_when_empty()
     {
-        var collection = Seed([], nameof(LastOrDefault_without_an_explicit_order_declines_and_falls_back_to_correct_rows));
+        var collection = Seed([], nameof(LastOrDefault_without_an_explicit_order_goes_native_and_returns_null_when_empty));
 
-        using var nativeDb = CreateContext(collection, MongoQueryMode.Native);
-        Assert.Null(nativeDb.Entities.LastOrDefault());
-
+        // The empty case is the one with a DEFINED answer regardless of row order, and it is the case the
+        // $group pattern could plausibly get wrong: $group{_id:null} over no input emits no document at all
+        // (rather than one with a null _last), so the reducer must still yield null and not throw.
         using var nativeOnlyDb = CreateContext(collection, MongoQueryMode.NativeOnly);
-        Assert.Throws<NativeTranslationNotSupportedException>(() => nativeOnlyDb.Entities.LastOrDefault());
+        Assert.Null(nativeOnlyDb.Entities.LastOrDefault());
     }
 
     [Fact]
-    public void Last_after_Take_over_an_ordered_source_still_declines_since_the_limit_slot_is_already_taken()
+    public void Last_after_Take_over_an_ordered_source_goes_native_and_respects_the_Take()
     {
-        var collection = Seed([1, 2, 3], nameof(Last_after_Take_over_an_ordered_source_still_declines_since_the_limit_slot_is_already_taken));
+        var collection = Seed([1, 2, 3], nameof(Last_after_Take_over_an_ordered_source_goes_native_and_respects_the_Take));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // HasLimit is already true from Take(2), matching the pre-existing First/Single guard — this is not
-        // a new decline this slice introduces, just Last/LastOrDefault inheriting it.
-        Assert.Throws<NativeTranslationNotSupportedException>(() => db.Entities.OrderBy(e => e.Value).Take(2).Last());
+        // This used to decline on the grounds that Take(2) had already consumed the limit slot that the
+        // sort-flip + $limit:1 lowering needed. The $group lowering needs no limit slot at all, so the
+        // conflict is gone — but that makes the ORDERING load-bearing, which is what this asserts: the
+        // $group must run AFTER the $sort/$limit ($sort asc, $limit 2, $last => 2), not before or instead
+        // of them. Flipping the sort here (the old lowering) would answer 3, and dropping the Take would
+        // also answer 3 — so the correct answer distinguishes this from both ways of getting it wrong.
+        Assert.Equal(2, db.Entities.OrderBy(e => e.Value).Take(2).Last().Value);
     }
 }

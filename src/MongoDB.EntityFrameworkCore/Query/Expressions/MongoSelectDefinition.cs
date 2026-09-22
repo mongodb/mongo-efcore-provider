@@ -1,4 +1,4 @@
-/* Copyright 2023-present MongoDB Inc.
+﻿/* Copyright 2023-present MongoDB Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -292,8 +292,13 @@ internal sealed class MongoSelectDefinition
     /// existing ascending-sort machinery for the descending case (MQL has no "reverse row order" stage).
     /// Targets <see cref="ActiveOps"/> so a set-op-terminal reducer/Reverse flips the TRAILING sort, matching
     /// where a trailing OrderBy would have been recorded. Returns <see langword="false"/> (no mutation) when
-    /// the tail op is not a sort — an unordered source has no defined row order to complement, so the caller
-    /// should decline rather than invent an unreliable natural-order sort.
+    /// the tail op is not a sort — an unordered source has no defined row order to complement. Reverse still
+    /// declines outright in that case (there is no cheap MQL "reverse the whole sequence" stage). EF-322:
+    /// Last/LastOrDefault no longer decline here — <c>NativeCardinalityBinder.TryBindReducer</c> instead sets
+    /// <see cref="MongoCardinality.UnorderedLastRow"/>, which <c>MongoSelectLowerer</c> lowers to a
+    /// <c>$group{_id:null,_last:{$last:"$$ROOT"}}</c> + <c>$replaceRoot</c> pair AFTER any <c>$lookup</c> (a
+    /// single "last row", unlike a full reversed sequence, has a cheap MQL form, and the driver-LINQ fallback
+    /// it would otherwise land on relies on that exact same natural-order semantics anyway).
     /// </summary>
     internal bool TryFlipTrailingSortDirection()
     {
@@ -743,8 +748,52 @@ internal sealed class MongoSelectDefinition
     /// </remarks>
     internal MongoVectorSearch? VectorSearch { get; set; }
 
-    /// <summary>The terminal set operation (Union/Concat), when this select is a set-op query.</summary>
-    internal MongoSetOperation? SetOperation { get; set; }
+    // The terminal set-operation CHAIN, in LINQ source order. Ordinarily one entry; a LEFT-NESTED
+    // whole-entity Concat/Union chain (A.Concat(B).Concat(C)) appends a second and subsequent entry rather
+    // than declining, because EF hands the outer set op a source1 that already carries the inner one. The
+    // lowerer emits one $unionWith per entry in order, so the chain is emitted exactly as it was written.
+    private readonly List<MongoSetOperation> _setOperations = [];
+
+    /// <summary>
+    /// The terminal set operations (Union/Concat/Intersect/Except) attached to this select, in LINQ source
+    /// order — empty when this is not a set-op query. More than one entry only for a left-nested WHOLE-ENTITY
+    /// Concat/Union chain; see <c>MongoQueryableMethodTranslatingExpressionVisitor.IsChainableSetOpSelect</c>
+    /// for exactly what is admitted into a chain.
+    /// </summary>
+    internal IReadOnlyList<MongoSetOperation> SetOperations => _setOperations;
+
+    /// <summary>
+    /// The FIRST terminal set operation, or <see langword="null"/> when this select is not a set-op query.
+    /// A null check on this property is the canonical "is this a set-op query?" test. Reading its OPERAND
+    /// state is only valid where a chain cannot occur — a chain is whole-entity-only, so
+    /// <see cref="MongoSetOperation.OperandsProjected"/> is uniform across every entry and safe to read from
+    /// the first; anything that walks operands must iterate <see cref="SetOperations"/> instead.
+    /// </summary>
+    internal MongoSetOperation? SetOperation => _setOperations.Count > 0 ? _setOperations[0] : null;
+
+    /// <summary>
+    /// Attaches <paramref name="setOperation"/> as the next link of the set-operation chain, handing it any
+    /// ops recorded since the previous link.
+    /// </summary>
+    /// <remarks>
+    /// The hand-off is what makes a chain with paging BETWEEN its links correct
+    /// (<c>A.Union(B).OrderBy(..).Take(1).Union(C)</c>): those ops were recorded into
+    /// <see cref="TrailingOps"/> because <see cref="ActiveOps"/> routes there once a set op is attached, but
+    /// they belong before the NEW link, not after it. Moving them onto the link preserves the invariant the
+    /// lowerer relies on — <see cref="TrailingOps"/> is always "after the LAST link" — so it can keep
+    /// emitting that list once, at the end. Leaving them behind would silently re-order the <c>Take</c> to
+    /// run after a union it was written before.
+    /// </remarks>
+    internal void AppendSetOperation(MongoSetOperation setOperation)
+    {
+        if (_trailingOps.Count > 0)
+        {
+            setOperation.SetPrecedingOps([.. _trailingOps]);
+            _trailingOps.Clear();
+        }
+
+        _setOperations.Add(setOperation);
+    }
 
     /// <summary>
     /// <see langword="true"/> when a terminal set operation is attached. A SEPARATE provenance flag (like

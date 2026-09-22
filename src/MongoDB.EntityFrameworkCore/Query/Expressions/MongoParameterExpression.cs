@@ -82,11 +82,15 @@ internal sealed class MongoParameterExpression : MongoExpression
     public bool ExtractFromEntityValue { get; }
 
     /// <summary>
-    /// When set, the runtime value bound to <see cref="Name"/> is an ARRAY, and this is the constant index
-    /// of the element actually compared (e.g. <c>args[0]</c> where <c>args</c> is a compiled query's own
-    /// array-typed parameter) — the element at this index must be extracted from the array, per execution,
-    /// before it is serialized with <see cref="ForSerialization"/>'s serializer. See
-    /// <see cref="NativeTranslation.NativeQueryParameter.TryGetParameterArrayElementIndex"/>.
+    /// When set, the runtime value bound to <see cref="Name"/> is an ARRAY or a TUPLE, and this is the
+    /// constant index of the element actually compared — the element at this index must be extracted from
+    /// the array/tuple, per execution, before it is serialized with <see cref="ForSerialization"/>'s
+    /// serializer. Two distinct shapes produce this: <c>args[0]</c> where <c>args</c> is a compiled query's
+    /// own array-typed parameter (see
+    /// <see cref="NativeTranslation.NativeQueryParameter.TryGetParameterArrayElementIndex"/>), and a
+    /// <c>Tuple.Create(...)</c> operand EF Core's parameter extraction funcletized into a single
+    /// materialized-tuple parameter (see
+    /// <see cref="NativeTranslation.MongoExpressionTranslator.TryDecomposeTupleOperand"/>).
     /// </summary>
     public int? ArrayElementIndex { get; }
 

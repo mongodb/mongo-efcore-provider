@@ -906,8 +906,10 @@ internal static class NativeProjectionBinder
         // translates fine but renders as a bare value, and $project reads a bare value as an inclusion/exclusion
         // flag rather than a literal (a truthy constant folds client-side and is harmless beyond a junk emitted
         // field, but a 0/false constant hard-aborts the aggregate with "Cannot do exclusion on field ... in
-        // inclusion projection"). { $size: ... } is a document, so it is safe exactly where a bare value is not.
-        // See NativeOwnedCollectionCountTests.Constant_projection_leaf_is_not_admitted_by_the_count_binder_gate.
+        // inclusion projection"). { $size: ... } is a document, so it is safe exactly where a bare value is not
+        // -- MongoConstantExpression/MongoParameterExpression are admitted separately, below, only once
+        // MongoPipelineFactory.RenderProject's own $literal wrap makes THEM safe too.
+        // See NativeOwnedCollectionCountTests.Constant_projection_leaf_is_safely_admitted_via_the_project_literal_wrap.
         //
         // Running after the arithmetic branch is not load-bearing: `Count * 2` translates to a
         // MongoBinaryExpression regardless of order and reaches the arithmetic branch either way. The node-kind
@@ -950,10 +952,26 @@ internal static class NativeProjectionBinder
         // is exact, and there is no read-back type question left to defer. Pinned by
         // NativeCastTests.Widening_cast_bare_projection_leaf_goes_native /
         // NativeCastTests.Widening_cast_projection_leaf_now_goes_native.
+        // A bare constant/parameter leaf (`Select(x => 8)`) is admitted too: MongoPipelineFactory.RenderProject
+        // $literal-wraps a bare MongoConstantExpression/MongoParameterExpression exactly as RenderAddFields
+        // already does, so the historical "$project reads a bare value as an inclusion/exclusion flag" hazard
+        // this gate otherwise guards against (see the comment above) cannot fire for this pair of node kinds.
+        // A SEPARATE hazard remains, though: BsonValue.Create (what MongoPipelineFactory.SerializeParameter
+        // and MongoAggregationExpressionRenderer both bottom out on) throws for a non-BSON-mappable CLR value
+        // (a captured anonymous type/POCO), and TryTranslateValue never checked for that -- it only rejects a
+        // value-converted/non-default-represented FIELD operand. NativeSlotPopulator.TryProbeBareValueRenders
+        // is the existing, shared guard for exactly this (built for the identical hazard on a computed sort
+        // key): trial-renders a MongoConstantExpression's real value, or a MongoParameterExpression's declared
+        // type via a default-instance proxy, and declines if that throws. See
+        // NativeCastTests.Constant_leaf_now_goes_native_via_the_project_literal_wrap (admitted) vs.
+        // NorthwindSelectQueryMongoTest.Select_bool_closure (an anonymous-type closure capture, declined).
         if (translator.TryTranslateValue(leafExpression, out var value)
             && (value is MongoSizeExpression or MongoFilteredSizeExpression or MongoConvertExpression
                     or MongoConditionalExpression or MongoDatePartExpression or MongoDateTimeOffsetLocalExpression
                     or MongoElementRefExpression or MongoDateAddExpression or MongoCoalesceExpression
+                || (value is MongoConstantExpression or MongoParameterExpression
+                    && NativeSlotPopulator.TryProbeBareValueRenders(
+                        value, NativeSlotPopulator.UnwrapBoxingToObjectType(leafExpression)))
                 || (leafExpression is UnaryExpression { NodeType: ExpressionType.Convert } && value is MongoFieldExpression)))
         {
             result = value;
@@ -1812,21 +1830,24 @@ internal static class NativeProjectionBinder
     /// </summary>
     /// <remarks>
     /// <para>
-    /// This is a node-kind gate, not a "the leaf translated" gate: a <c>$project</c> reads a bare value as an
-    /// inclusion/exclusion flag rather than a literal, so a constant or captured-parameter leaf is not a value
-    /// the projection can carry at all. An arithmetic <see cref="MongoBinaryExpression"/> renders
-    /// <c>{$multiply: […]}</c> and a <see cref="MongoConvertExpression"/> renders <c>{$toInt: …}</c>; both are
-    /// documents, so both are safe exactly where a bare value is not. This mirrors the decision
-    /// <see cref="TryTranslateLeaf"/>'s own count/cast gate makes for a wrapped leaf.
+    /// This is a node-kind gate, not a "the leaf translated" gate: an un-wrapped <c>$project</c> value would
+    /// read as an inclusion/exclusion flag rather than a literal, so a bare constant/parameter leaf gets its
+    /// own dedicated, unconditional arm (gate 1e) rather than falling through the arithmetic/cast gates above.
+    /// <see cref="MongoPipelineFactory"/>'s <c>RenderProject</c> $literal-wraps a bare
+    /// <see cref="MongoConstantExpression"/>/<see cref="MongoParameterExpression"/> projection value (mirroring
+    /// the wrap <c>RenderAddFields</c> already applied for <c>$set</c>), so the hazard this gate's arithmetic/
+    /// cast arms otherwise guard against cannot occur for these two node kinds — an arithmetic
+    /// <see cref="MongoBinaryExpression"/> or <see cref="MongoConvertExpression"/> renders as a document
+    /// (<c>{$multiply: […]}</c>/<c>{$toInt: …}</c>) and never needed the wrap in the first place. This mirrors
+    /// the decision <see cref="TryTranslateLeaf"/>'s own count/cast gate makes for a wrapped leaf.
     /// </para>
     /// <para>
-    /// The consequence of relaxing this gate differs from the wrapped spelling: a wrapped falsy leaf
-    /// (<c>new { b.Title, X = 0 }</c>) hard-fails under the default <c>Native</c> mode (<c>$project</c> rejects
-    /// mixing a falsy flag with an inclusion), but a bare falsy leaf has no sibling to mix with, so MongoDB
-    /// accepts the pipeline — just not as a value projection any more (a pure exclusion returning whole
-    /// documents minus fields). Pinned by
-    /// <c>NativeComputedBareProjectionTests.Bare_constant_leaf_is_not_admitted_by_the_tier_2_node_kind_gate</c>,
-    /// which asserts the emitted MQL since a values-only assertion would be vacuous for this shape.
+    /// Before the <c>$literal</c> wrap existed, a bare falsy leaf (<c>Select(x => 0)</c>) rendered as a pure
+    /// exclusion (<c>{"_v": 0, "_id": 0}</c>) — MongoDB accepted the pipeline, but not as a value projection;
+    /// it returned whole documents minus fields, with correct values arriving only because the shaper never
+    /// needed the pipeline's output for a constant. Pinned by
+    /// <c>NativeComputedBareProjectionTests.Bare_constant_leaf_now_goes_native_via_the_project_literal_wrap</c>,
+    /// which asserts the emitted MQL now matches the driver-LINQ fallback's own <c>$literal</c>-wrapped shape.
     /// </para>
     /// <para>
     /// The operator test is on <see cref="MongoBinaryExpression.Operator"/>, deliberately — matching on
@@ -1891,6 +1912,12 @@ internal static class NativeProjectionBinder
             // MongoCoalesceExpression's own remarks) could itself contain a nested size node, so
             // IsArrayFreeComputedSubtree's recursion into MongoCoalesceExpression covers the whole chain.
             case MongoCoalesceExpression when IsArrayFreeComputedSubtree(leaf):
+                break;
+
+            // Gate 1e — a bare constant/parameter top node (`Select(x => 8)`). Unconditionally safe, unlike
+            // gates 1b-1d: it has no subtree to check for a nested size node, and MongoPipelineFactory's
+            // RenderProject $literal-wraps it, so there is no bare-value/inclusion-flag hazard either.
+            case MongoConstantExpression or MongoParameterExpression:
                 break;
 
             default:

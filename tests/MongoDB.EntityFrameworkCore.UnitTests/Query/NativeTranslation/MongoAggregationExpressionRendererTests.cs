@@ -413,20 +413,6 @@ public class MongoAggregationExpressionRendererTests
 
     public static IEnumerable<object[]> UnrenderableNodes()
     {
-        var age = GetProperty<Customer>("Age");
-
-        // A MongoRegexExpression with a constant term — the aggregation dialect deliberately keeps declining
-        // this shape (EF-322 Task 2 review fix): only a FIELD-to-field term goes native here, because a
-        // constant/parameter term already has a perfectly good query-dialect $regularExpression form, and
-        // widening this arm to admit it too would silently steal a computed-sort-key/filtered-count decline
-        // that other callers rely on to fall back gracefully.
-        yield return
-        [
-            new MongoRegexExpression(
-                new MongoFieldExpression(age, "Age"), MongoRegexKind.StartsWith,
-                new MongoConstantExpression("x", forSerialization: null), negated: false)
-        ];
-
         // A MongoElemMatchExpression.
         yield return
         [
@@ -442,9 +428,11 @@ public class MongoAggregationExpressionRendererTests
         [
             new MongoFilteredSizeExpression(
                 "Posts",
-                new MongoRegexExpression(
-                    new MongoFieldExpression(age, "Age"), MongoRegexKind.StartsWith,
-                    new MongoConstantExpression("x", forSerialization: null), negated: false),
+                new MongoElemMatchExpression(
+                    "Comments",
+                    new MongoBinaryExpression(MongoBinaryOperator.GreaterThan,
+                        new MongoElementRefExpression("Rank", typeof(int)), new MongoConstantExpression(0, forSerialization: null)),
+                    negated: false),
                 typeof(int))
         ];
     }
@@ -492,15 +480,14 @@ public class MongoAggregationExpressionRendererTests
     [Fact]
     public void Convert_node_reports_unrenderable_when_its_OPERAND_is()
     {
-        // A constant-term MongoRegexExpression is one of the node kinds the aggregation dialect cannot express
-        // (CanRender admits field/element refs, constants/parameters, binaries over its listed operators, the
-        // two size nodes, $in, Not over a renderable operand, and — as of EF-322 Task 2 — a FIELD-to-field
-        // MongoRegexExpression specifically, but nothing else). Wrapping it in a convert must not launder it
-        // into renderability.
-        var age = GetProperty<Customer>("Age");
-        var unrenderable = new MongoRegexExpression(
-            new MongoFieldExpression(age, "Age"), MongoRegexKind.StartsWith,
-            new MongoConstantExpression("x", forSerialization: null), negated: false);
+        // A MongoElemMatchExpression is one of the node kinds the aggregation dialect cannot express (it's a
+        // $match-only construct — a hard server error inside $expr, see the Query AGENTS.md invariant on
+        // $elemMatch nesting). Wrapping it in a convert must not launder it into renderability.
+        var unrenderable = new MongoElemMatchExpression(
+            "Posts",
+            new MongoBinaryExpression(MongoBinaryOperator.GreaterThan,
+                new MongoElementRefExpression("Rank", typeof(int)), new MongoConstantExpression(0, forSerialization: null)),
+            negated: false);
 
         Assert.False(MongoAggregationExpressionRenderer.CanRender(
             new MongoConvertExpression(unrenderable, typeof(int))));
@@ -638,6 +625,39 @@ public class MongoAggregationExpressionRendererTests
 
         Assert.Equal(
             """{ "$not" : [{ "$let" : { "vars" : { "start" : { "$subtract" : [{ "$strLenCP" : "$Status" }, { "$strLenCP" : "$Nickname" }] } }, "in" : { "$and" : [{ "$gte" : ["$$start", 0] }, { "$eq" : [{ "$indexOfCP" : ["$Status", "$Nickname", "$$start"] }, "$$start"] }] } } }] }""",
+            result.ToJson());
+    }
+
+    // ------------------------------------------------------------------
+    // MongoRegexExpression with a constant Term (EF-322: Include_collection_with_conditional_order_by) —
+    // every CanRender caller is already inside an $expr/$addFields/$sort/quantifier scope with no
+    // $regularExpression alternative available, so there is no fallback disposition to preserve here; a
+    // constant-term regex must render exactly like a field-to-field one via $indexOfCP/$strLenCP.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void CanRender_reports_true_for_a_constant_term_regex()
+    {
+        var status = GetProperty<Customer>("Status");
+        var node = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.StartsWith,
+            new MongoConstantExpression("S", forSerialization: null), negated: false);
+
+        Assert.True(MongoAggregationExpressionRenderer.CanRender(node));
+    }
+
+    [Fact]
+    public void Renders_constant_term_starts_with_via_indexOfCP()
+    {
+        var status = GetProperty<Customer>("Status");
+        var expr = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.StartsWith,
+            new MongoConstantExpression("S", forSerialization: null), negated: false);
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$eq" : [{ "$indexOfCP" : ["$Status", "S"] }, 0] }""",
             result.ToJson());
     }
 

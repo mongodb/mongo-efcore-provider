@@ -1134,8 +1134,8 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Customers.{ "$project" : { "CustomerID" : "$_id", "Data1" : "none", "Data2" : "none", "Data3" : "none", "_id" : 0 } }
-            """);
+Customers.{ "$project" : { "CustomerID" : "$_id", "Data1" : { "$literal" : "none" }, "Data2" : { "$literal" : "none" }, "Data3" : { "$literal" : "none" }, "_id" : 0 } }
+""");
     }
 
     public override async Task Ternary_should_not_evaluate_both_sides_with_parameter(bool async)
@@ -1144,8 +1144,8 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : { "$literal" : { "Data1" : true, "Data2" : true } }, "_id" : 0 } }
-            """);
+Orders.{ "$project" : { "Data1" : { "$literal" : true }, "Data2" : { "$literal" : true }, "_id" : 0 } }
+""");
     }
 
     public override async Task Take_Skip(bool async)
@@ -2141,8 +2141,8 @@ Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$so
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
-            """);
+Customers.{ "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$project" : { "Customer" : "$$ROOT", "Test" : { "$literal" : false }, "_id" : 0 } }
+""");
     }
 
     public override async Task Null_Coalesce_Short_Circuit_with_server_correlated_leftover(bool async)
@@ -2151,8 +2151,8 @@ Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$so
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : { "$literal" : { "Result" : false } }, "_id" : 0 } }
-            """);
+Customers.{ "$project" : { "Result" : { "$literal" : false }, "_id" : 0 } }
+""");
     }
 
     public override async Task OrderBy_conditional_operator_where_condition_false(bool async)

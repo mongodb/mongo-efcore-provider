@@ -651,8 +651,11 @@ public class MongoExpressionNodeCoverageTests
         ["MongoQuantifierExpression|QL.IsQueryDialectRenderable"] = "false",
         ["MongoQuantifierExpression|QL.Render"] = "rendered",
 
-        ["MongoRegexExpression|Agg.CanRender"] = "false",
-        ["MongoRegexExpression|Agg.Render"] = "declined",
+        // EF-322 (Include_collection_with_conditional_order_by): a constant-term regex is now aggregation-
+        // renderable too — every Agg.CanRender/Agg.Render caller is already past the point where a
+        // $regularExpression query-dialect form would have been an option (see the renderer's own remarks).
+        ["MongoRegexExpression|Agg.CanRender"] = "true",
+        ["MongoRegexExpression|Agg.Render"] = "rendered",
         ["MongoRegexExpression|AllFieldsDefaultSerialized"] = "true",
         ["MongoRegexExpression|AllFieldsDefaultSerialized(converted)"] = "true",
         ["MongoRegexExpression|Negator.TryNegate"] = "true",
