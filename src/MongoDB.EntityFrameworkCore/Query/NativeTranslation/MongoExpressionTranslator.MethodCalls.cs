@@ -466,6 +466,22 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
+    /// Recognizes <c>string.Length</c> (<c>x.Name.Length</c>) — the only member the aggregation dialect has a
+    /// dedicated operator for (<c>$strLenCP</c>). A receiver that isn't <see cref="string"/> is left unmatched.
+    /// </summary>
+    private static bool TryMatchStringLength(Expression node, [NotNullWhen(true)] out Expression? receiver)
+    {
+        receiver = null;
+
+        if (node is not MemberExpression { Expression: { } inner } member
+            || inner.Type != typeof(string) || member.Member.Name != nameof(string.Length))
+            return false;
+
+        receiver = inner;
+        return true;
+    }
+
+    /// <summary>
     /// Translates the collection side of a <c>Contains</c> call into a <see cref="MongoConstantExpression"/>
     /// (a captured/inline collection) or <see cref="MongoParameterExpression"/> (a query-parameter
     /// collection), using <paramref name="property"/> as the element serialization context. Returns

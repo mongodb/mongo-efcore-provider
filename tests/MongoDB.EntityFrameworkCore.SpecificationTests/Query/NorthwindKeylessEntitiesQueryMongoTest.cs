@@ -174,7 +174,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-Customers.{ "$group" : { "_id" : "$City", "__agg0" : { "$sum" : 1 }, "__agg1" : { "$sum" : { "$strLenCP" : "$Address" } } } }, { "$project" : { "Key" : "$_id", "Count" : "$__agg0", "Sum" : "$__agg1", "_id" : 0 } }
+Customers.{ "$group" : { "_id" : "$City", "Count" : { "$sum" : 1 }, "Sum" : { "$sum" : { "$strLenCP" : "$Address" } } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "Sum" : "$Sum", "_id" : 0 } }
 """);
     }
 

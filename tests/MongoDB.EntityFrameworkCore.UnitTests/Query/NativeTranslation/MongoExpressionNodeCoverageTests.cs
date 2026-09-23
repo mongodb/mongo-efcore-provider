@@ -176,6 +176,7 @@ public class MongoExpressionNodeCoverageTests
             new MongoDateTimeOffsetLocalExpression(new MongoFieldExpression(stamp, "Stamp")),
             new MongoConcatExpression([headingField, new MongoConstantExpression("x", heading)]),
             new MongoStringIndexOfExpression(headingField, new MongoConstantExpression("x", heading)),
+            new MongoStringLengthExpression(headingField),
             new MongoDocumentConstructionExpression(
                 Expression.New(typeof(object)), [(nameof(Post.Rank), rankField)]),
             new MongoTupleExpression([rankField, rankConstant])
@@ -682,6 +683,17 @@ public class MongoExpressionNodeCoverageTests
         ["MongoStringIndexOfExpression|PrefixRewriter.Rewrite"] = "rendered",
         ["MongoStringIndexOfExpression|QL.IsQueryDialectRenderable"] = "false",
         ["MongoStringIndexOfExpression|QL.Render"] = "rendered",
+
+        // Same treatment as MongoStringIndexOfExpression immediately above throughout: $strLenCP runs directly
+        // against its operand's raw BSON representation, has no query-dialect form, and needs no negator arm.
+        ["MongoStringLengthExpression|Agg.CanRender"] = "true",
+        ["MongoStringLengthExpression|Agg.Render"] = "rendered",
+        ["MongoStringLengthExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoStringLengthExpression|AllFieldsDefaultSerialized(converted)"] = "false",
+        ["MongoStringLengthExpression|Negator.TryNegate"] = "false",
+        ["MongoStringLengthExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoStringLengthExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoStringLengthExpression|QL.Render"] = "rendered",
 
         ["MongoUnaryExpression|Agg.CanRender"] = "true",
         ["MongoUnaryExpression|Agg.Render"] = "rendered",

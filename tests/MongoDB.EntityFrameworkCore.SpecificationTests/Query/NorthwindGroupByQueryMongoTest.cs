@@ -2350,8 +2350,8 @@ Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A"
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : { "$add" : ["$_id", { "$strLenCP" : "$CustomerID" }] } } } }, { "$project" : { "Key" : "$_id", "Sum" : "$__agg0", "_id" : 0 } }
-            """);
+Orders.{ "$group" : { "_id" : "$CustomerID", "Sum" : { "$sum" : { "$add" : ["$_id", { "$strLenCP" : "$CustomerID" }] } } } }, { "$project" : { "Key" : "$_id", "Sum" : "$Sum", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_scalar_subquery(bool async)

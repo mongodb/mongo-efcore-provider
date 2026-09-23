@@ -335,14 +335,15 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Where_on_unrelated_computed_key_falls_back_under_native_only()
     {
-        // A computed predicate member (not one of the Distinct's own key part aliases) must still decline
-        // rather than silently resolving against the entity — the whole point of DistinctAliasScope is that a
-        // member name outside the key parts is out of scope, not a fallthrough.
+        // A computed predicate over the alias (not a plain equality/comparison) must still decline rather than
+        // silently resolving against the entity — the whole point of DistinctAliasScope is that anything beyond
+        // a translatable operand is out of scope, not a fallthrough. ToUpper() has no native translation
+        // (unlike .Length, which EF-322 gave one — using it here would no longer exercise this decline).
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Where_on_unrelated_computed_key_falls_back_under_native_only));
 
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
-            db.Entities.Select(o => new { o.Country }).Distinct().Where(r => r.Country.Length == 2).ToList());
+            db.Entities.Select(o => new { o.Country }).Distinct().Where(r => r.Country.ToUpper() == "US").ToList());
     }
 
     [Fact]
@@ -536,13 +537,12 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Count_with_unrelated_computed_predicate_falls_back_under_native_only()
     {
-        // A computed predicate member (not one of the Distinct's own key part aliases) must still decline
-        // rather than silently resolving against the entity.
+        // Same reasoning as the Where test above: ToUpper() has no native translation, unlike .Length.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Count_with_unrelated_computed_predicate_falls_back_under_native_only));
 
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
-            db.Entities.Select(o => new { o.Country }).Distinct().Count(r => r.Country.Length == 2));
+            db.Entities.Select(o => new { o.Country }).Distinct().Count(r => r.Country.ToUpper() == "US"));
     }
 
     [Fact]

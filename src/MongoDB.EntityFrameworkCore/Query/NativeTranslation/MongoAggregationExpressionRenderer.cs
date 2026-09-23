@@ -110,6 +110,8 @@ internal static class MongoAggregationExpressionRenderer
                     Render(indexOf.Haystack, placeholders, elementVariable),
                     Render(indexOf.Needle, placeholders, elementVariable)
                 }),
+            MongoStringLengthExpression length
+                => new BsonDocument("$strLenCP", Render(length.Operand, placeholders, elementVariable)),
             MongoQuantifierExpression quantifier => RenderQuantifier(quantifier, placeholders, elementVariable),
             // A constructed nested sub-document leaf (EF-447, `new Book { Id = e.Id, Title = e.Title }`).
             // Each member renders through this SAME Render call, recursively, so a nested field ref renders as
@@ -209,6 +211,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoDatePartExpression datePart => CanRender(datePart.Operand),
             MongoDateAddExpression dateAdd => CanRender(dateAdd.StartDate) && CanRender(dateAdd.Amount),
             MongoStringIndexOfExpression indexOf => CanRender(indexOf.Haystack) && CanRender(indexOf.Needle),
+            MongoStringLengthExpression length => CanRender(length.Operand),
             MongoQuantifierExpression quantifier => CanRender(quantifier.ArrayPath) && CanRender(quantifier.ElementPredicate),
             MongoConcatExpression concat => concat.Operands.All(CanRender),
             // Answers true unconditionally for any regex.Kind — this relies on RenderRegexAsExpr's switch over

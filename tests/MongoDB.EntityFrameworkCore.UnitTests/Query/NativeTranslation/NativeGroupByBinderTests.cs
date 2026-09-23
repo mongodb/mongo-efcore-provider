@@ -291,6 +291,22 @@ public class NativeGroupByBinderTests
     }
 
     [Fact]
+    public void Sum_with_string_length_selector_binds_length_operand()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, object>> proj =
+            g => new { Total = g.Sum(x => x.Region.Length) };
+
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+
+        var acc = Assert.Single(mongoQ.Select.Grouping!.Accumulators);
+        Assert.Equal("Total", acc.OutputField);
+        Assert.Equal("$sum", acc.Operator);
+        var length = Assert.IsType<MongoStringLengthExpression>(acc.Operand);
+        Assert.Equal("Region", Assert.IsType<MongoFieldExpression>(length.Operand).ElementName);
+    }
+
+    [Fact]
     public void Min_max_average_map_to_operators()
     {
         var mongoQ = BoundScalarKeyQuery();

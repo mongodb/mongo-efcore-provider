@@ -661,6 +661,26 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 return source.UpdateShaperExpression(
                     BuildPositionalCtorProjectionShaper(mongoQueryExpression, selector.Body));
             }
+            // A wrapped opaque client-method call over a single-level join scope (NativeProjectionBinder's
+            // general client-only-whole-entity arm, e.g. Include(e => e.Manager) compiled to a join whose
+            // selector is `ti => ti.Inner != null ? "..." + ClientMethod(ti.Outer) : ""`) needs the SAME
+            // confirm/register step the bare ti.Outer/ti.Inner pass-through arm above performs for its own
+            // narrower shape (AddLookup + MarkReferenceIncludeConfirmed + MarkJoinLookupConfirmed).
+            // NativeProjectionBinder's own recognizer proves the client-only-whole-entity SHAPE but has no
+            // access to the join machinery to confirm the candidate itself — without this,
+            // HasUnconfirmedCandidateJoin stays true and Route stays Fallback even though
+            // TryPopulateNativeProjection just succeeded (EF-322, measured:
+            // Include_is_not_ignored_when_projection_contains_client_method_and_complex_expression). Gated on
+            // HasClientWrappedWholeEntityShaper — set ONLY by that one arm — so this never fires for any
+            // OTHER successful projection shape reaching this branch.
+            else if (mongoQueryExpression.Select.HasClientWrappedWholeEntityShaper
+                     && mongoQueryExpression.Select.JoinScope is { Levels.Count: 1 }
+                     && IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var clientMethodJoin))
+            {
+                mongoQueryExpression.AddLookup(clientMethodJoin.Lookup!);
+                mongoQueryExpression.Select.MarkReferenceIncludeConfirmed();
+                mongoQueryExpression.Select.MarkJoinLookupConfirmed();
+            }
         }
 
         // A bare-nav owned/reference SelectMany (UnwindSource set by NativeSelectManyBinder.TryBindBareNavUnwind)

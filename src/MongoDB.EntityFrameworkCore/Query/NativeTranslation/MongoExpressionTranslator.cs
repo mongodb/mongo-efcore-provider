@@ -644,6 +644,9 @@ internal sealed partial class MongoExpressionTranslator
             // MongoDateAddExpression immediately above.
             MongoStringIndexOfExpression indexOf
                 => AllFieldsDefaultSerialized(indexOf.Haystack) && AllFieldsDefaultSerialized(indexOf.Needle),
+            // $strLenCP runs directly against its operand's raw BSON representation, same reasoning as
+            // MongoStringIndexOfExpression immediately above.
+            MongoStringLengthExpression length => AllFieldsDefaultSerialized(length.Operand),
             // A constructed-tuple operand's elements each render through the raw $expr field path exactly
             // like an ordinary field-to-field/arithmetic operand — same reasoning as MongoBinaryExpression's
             // arm above, recursed per element instead of per side.
@@ -1917,6 +1920,16 @@ internal sealed partial class MongoExpressionTranslator
                 return new MongoStringIndexOfExpression(haystack, needle);
 
             return null;
+        }
+
+        // string.Length (`x.Name.Length`). Same reasoning as the IndexOf arm immediately above: placed here
+        // because a MemberExpression whose member is "Length" is never matched by TryResolveMember below (that
+        // resolves a MAPPED property/field, and Length has no backing IProperty), and the operand recurses
+        // through THIS method so it may itself be a field, a constant, or another computed expression.
+        if (TryMatchStringLength(node, out var lengthReceiver))
+        {
+            var lengthOperand = TranslateOperand(lengthReceiver, allowNumericWidening);
+            return lengthOperand is null ? null : new MongoStringLengthExpression(lengthOperand);
         }
 
         if (TryResolveMember(node, out var property, out var fieldPath, out var operandIsOuter))

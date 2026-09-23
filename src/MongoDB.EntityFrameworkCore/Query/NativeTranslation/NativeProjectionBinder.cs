@@ -374,7 +374,20 @@ internal static class NativeProjectionBinder
                 // — see its own remarks.
                 if (!TryBindAsBareProjection(selector.Body, provisionalAlias, allowWholeRootEntityLeafForThis: false))
                 {
-                    return false;
+                    // TryTranslateLeaf couldn't render the bare body as a native computed/field leaf — often
+                    // because it embeds an opaque client-method call (e.g. the ternary+concat body in
+                    // EF-322's Include_is_not_ignored_when_projection_contains_client_method_and_complex_expression).
+                    // Before declining outright, check the client-method-wrap arm's general sibling: if every
+                    // entity reference in the body resolves to the whole entity itself, nothing needed
+                    // server-side reshaping anyway — leave Select.Projection untouched (Route falls through to
+                    // WholeEntity) and let the whole body be evaluated client-side against the materialized,
+                    // Include-fixed-up entity, exactly like the top-level client-method-wrap arm above.
+                    if (!IsClientOnlyWholeEntityExpression(mongoQ, selector.Body, selector.Parameters[0]))
+                    {
+                        return false;
+                    }
+
+                    mongoQ.Select.HasClientWrappedWholeEntityShaper = true;
                 }
 
                 break;
@@ -1167,12 +1180,46 @@ internal static class NativeProjectionBinder
            && leafExpression.Type == mongoQ.CollectionExpression.EntityType.ClrType;
 
     /// <summary>
+    /// The join-scope-aware sibling of <see cref="IsWholeRootEntityLeaf"/>, used only by
+    /// <see cref="TryGetSoleWholeRootEntityOperand"/> and <see cref="IsClientOnlyWholeEntityExpression"/> —
+    /// NOT by <see cref="TryTranslateLeaf"/>'s own <c>$$ROOT</c> arm or the ctor-wrap sub-case 1, which must
+    /// stay byte-identical to <see cref="IsWholeRootEntityLeaf"/> per that method's own remarks. When
+    /// <paramref name="outerParameter"/> is a compiler-generated <c>TransparentIdentifier</c> (the shape EF's
+    /// nav-expansion produces for an <c>Include</c> on a REFERENCE navigation — e.g.
+    /// <c>Include(e =&gt; e.Manager)</c> becomes a join whose selector parameter carries <c>Outer</c>/<c>Inner</c>
+    /// members), a one-hop <c>ti.Outer</c>/<c>ti.Inner</c> member access off that SAME parameter is exactly as
+    /// much "the whole entity, unchanged" as the bare parameter is in the non-join case — see
+    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.TryGetCollectionIncludeOverJoinScope</c> for the
+    /// identical one-hop recognition used elsewhere for a collection-Include over a join scope. Scope still
+    /// resolves by parameter IDENTITY (<paramref name="outerParameter"/> itself), never by member name alone.
+    /// </summary>
+    private static bool IsWholeRootEntityLeafOrJoinScopePassthrough(
+        MongoQueryExpression mongoQ, Expression leafExpression, ParameterExpression outerParameter)
+    {
+        if (IsWholeRootEntityLeaf(mongoQ, leafExpression, outerParameter))
+        {
+            return true;
+        }
+
+        var current = leafExpression.RemoveConvert();
+        while (current is IncludeExpression include)
+        {
+            current = include.EntityExpression.RemoveConvert();
+        }
+
+        return outerParameter.Type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal)
+               && current is MemberExpression { Member.Name: "Outer" or "Inner" } member
+               && ReferenceEquals(member.Expression, outerParameter)
+               && member.Type == mongoQ.CollectionExpression.EntityType.ClrType;
+    }
+
+    /// <summary>
     /// True when exactly one of <paramref name="methodCall"/>'s operands (its <c>Object</c> receiver, if any,
-    /// plus every argument) is <see cref="IsWholeRootEntityLeaf"/>, and no OTHER operand references
-    /// <paramref name="outerParameter"/> at all. This is the client-method-call sibling of the ctor-only-DTO
-    /// arm's sub-case 1: the method itself is opaque (arbitrary user code), but if the whole entity is its
-    /// only entity-referencing operand, nothing needs server-side translation — the whole document is
-    /// fetched and the method runs client-side against the materialized entity.
+    /// plus every argument) is <see cref="IsWholeRootEntityLeafOrJoinScopePassthrough"/>, and no OTHER operand
+    /// references <paramref name="outerParameter"/> at all. This is the client-method-call sibling of the
+    /// ctor-only-DTO arm's sub-case 1: the method itself is opaque (arbitrary user code), but if the whole
+    /// entity is its only entity-referencing operand, nothing needs server-side translation — the whole
+    /// document is fetched and the method runs client-side against the materialized entity.
     /// </summary>
     /// <remarks>
     /// A second operand that also references the parameter (e.g. <c>context.ClientMethod(x, x.CustomerID)</c>)
@@ -1189,7 +1236,7 @@ internal static class NativeProjectionBinder
 
         if (methodCall.Object != null)
         {
-            if (IsWholeRootEntityLeaf(mongoQ, methodCall.Object, outerParameter))
+            if (IsWholeRootEntityLeafOrJoinScopePassthrough(mongoQ, methodCall.Object, outerParameter))
             {
                 sawWholeRootEntityOperand = true;
             }
@@ -1201,7 +1248,7 @@ internal static class NativeProjectionBinder
 
         foreach (var argument in methodCall.Arguments)
         {
-            if (IsWholeRootEntityLeaf(mongoQ, argument, outerParameter))
+            if (IsWholeRootEntityLeafOrJoinScopePassthrough(mongoQ, argument, outerParameter))
             {
                 if (sawWholeRootEntityOperand)
                 {
@@ -1217,6 +1264,82 @@ internal static class NativeProjectionBinder
         }
 
         return sawWholeRootEntityOperand;
+    }
+
+    /// <summary>
+    /// The general sibling of <see cref="TryGetSoleWholeRootEntityOperand"/>: true when
+    /// <paramref name="node"/> — a client-only expression <see cref="TryTranslateLeaf"/> could not render
+    /// (e.g. a conditional or string concatenation wrapping an opaque client-method call) — contains at least
+    /// one genuinely opaque call (never a plain translatable comparison/arithmetic/member-access tree with NO
+    /// opaque call at all — that shape has nothing to do with a client-method wrap and must keep declining
+    /// here exactly as before this method existed, so it still reaches whatever ELSE used to handle it, e.g.
+    /// the driver-LINQ push-down path; MEASURED regression otherwise:
+    /// Ternary_Null_Equals_Non_Numeric_First_Part, a plain `x == null ? null : "" + x.OrderID + ""` with no
+    /// opaque call anywhere, used to push down via the driver and must keep doing so) — and references
+    /// <paramref name="outerParameter"/> everywhere else only through positions that resolve to the whole
+    /// entity itself (directly, or via ordinary member-access chains off it, e.g.
+    /// <c>e.Manager</c>/<c>e.Manager.FirstName</c>), never as a partial value some OTHER, separately-referencing
+    /// operand of an opaque call would need extracted and reshaped server-side. Recognizing this lets
+    /// <see cref="TryPopulateNativeProjection"/> leave <c>Select.Projection</c> empty and fall through to
+    /// <c>NativeRoute.WholeEntity</c> exactly as the top-level client-method-wrap arm above does: the whole
+    /// document is fetched (with <c>Include</c> fix-up) and the ENTIRE original selector body — translatable
+    /// parts and all — is evaluated client-side against the materialized entity, which is always correct
+    /// since nothing was pushed down.
+    /// </summary>
+    /// <remarks>
+    /// Only recurses through the handful of combinator shapes a client-only projection body plausibly uses
+    /// (conditional, binary/string-concat, unary/cast, member-access chain, and a nested opaque call). Any
+    /// other node shape declines conservatively — same "no regression" reasoning as
+    /// <see cref="TryGetSoleWholeRootEntityOperand"/>'s own decline: falling through to
+    /// <see cref="TryBindAsBareProjection"/>'s existing failure is what happened before this method existed.
+    /// A nested <see cref="MethodCallExpression"/> reuses <see cref="TryGetSoleWholeRootEntityOperand"/>
+    /// unchanged, so the same "at most one whole-entity operand" cap applies at every opaque call in the tree.
+    /// </remarks>
+    private static bool IsClientOnlyWholeEntityExpression(
+        MongoQueryExpression mongoQ, Expression node, ParameterExpression outerParameter)
+    {
+        var sawOpaqueCall = false;
+        return IsClientOnlyWholeEntitySubtree(mongoQ, node, outerParameter, ref sawOpaqueCall) && sawOpaqueCall;
+    }
+
+    private static bool IsClientOnlyWholeEntitySubtree(
+        MongoQueryExpression mongoQ, Expression node, ParameterExpression outerParameter, ref bool sawOpaqueCall)
+    {
+        if (!node.ReferencesParameter(outerParameter))
+        {
+            return true;
+        }
+
+        if (IsWholeRootEntityLeafOrJoinScopePassthrough(mongoQ, node, outerParameter))
+        {
+            return true;
+        }
+
+        switch (node)
+        {
+            case ConditionalExpression conditional:
+                return IsClientOnlyWholeEntitySubtree(mongoQ, conditional.Test, outerParameter, ref sawOpaqueCall)
+                    && IsClientOnlyWholeEntitySubtree(mongoQ, conditional.IfTrue, outerParameter, ref sawOpaqueCall)
+                    && IsClientOnlyWholeEntitySubtree(mongoQ, conditional.IfFalse, outerParameter, ref sawOpaqueCall);
+
+            case BinaryExpression binary:
+                return IsClientOnlyWholeEntitySubtree(mongoQ, binary.Left, outerParameter, ref sawOpaqueCall)
+                    && IsClientOnlyWholeEntitySubtree(mongoQ, binary.Right, outerParameter, ref sawOpaqueCall);
+
+            case UnaryExpression unary:
+                return IsClientOnlyWholeEntitySubtree(mongoQ, unary.Operand, outerParameter, ref sawOpaqueCall);
+
+            case MemberExpression { Expression: not null } member:
+                return IsClientOnlyWholeEntitySubtree(mongoQ, member.Expression, outerParameter, ref sawOpaqueCall);
+
+            case MethodCallExpression methodCall when !methodCall.Method.IsEFPropertyMethod()
+                                                       && TryGetSoleWholeRootEntityOperand(mongoQ, methodCall, outerParameter):
+                sawOpaqueCall = true;
+                return true;
+
+            default:
+                return false;
+        }
     }
 
     /// <summary>

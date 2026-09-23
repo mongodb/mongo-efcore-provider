@@ -943,12 +943,23 @@ Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^F"
 
     public override async Task Include_is_not_ignored_when_projection_contains_client_method_and_complex_expression(bool async)
     {
-        // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.Include_is_not_ignored_when_projection_contains_client_method_and_complex_expression(async);
+#if EF8 || EF9
+        // EF8/EF9's Include(reference-nav) compiles through the internal LeftJoin shim rather than EF10's
+        // native join-scope building, and something earlier in that path already marks the query
+        // HasUnsupportedOperator before NativeProjectionBinder's client-only-whole-entity arm ever runs — so
+        // this still falls back to driver-LINQ under EF8/EF9, unlike EF10. Not investigated further; tracked
+        // as a known EF8/EF9 gap rather than blocking the EF10 fix.
         AssertMql(
             """
 Employees.{ "$match" : { "$or" : [{ "_id" : 1 }, { "_id" : 2 }] } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Employees", "localField" : "_outer.ReportsTo", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
 """);
+#else
+        AssertMql(
+            """
+Employees.{ "$match" : { "$or" : [{ "_id" : 1 }, { "_id" : 2 }] } }, { "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Employees", "localField" : "ReportsTo", "foreignField" : "_id", "as" : "_lookup_Manager" } }, { "$unwind" : { "path" : "$_lookup_Manager", "preserveNullAndEmptyArrays" : true } }
+""");
+#endif
     }
 
     public override async Task Include_reference_with_filter_reordered(bool async)
