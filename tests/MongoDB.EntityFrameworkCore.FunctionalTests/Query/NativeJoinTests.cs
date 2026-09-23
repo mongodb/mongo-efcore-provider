@@ -1171,50 +1171,21 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
 #endif
 
     [Fact]
-    public void Where_after_join_still_declines_under_NativeOnly_pending_the_Select_side_binder()
+    public void Where_after_join_with_a_bare_scalar_select_goes_native()
     {
-        // NOTE (review-round honesty fix): this test's name and the exception it asserts CANNOT distinguish
-        // "the Where arm translated x.o.Name natively and the trailing Select(x => x.r.Total) declined" from
-        // "the Where arm itself declined and nothing downstream ever got a chance" — both raise the exact
-        // same NativeTranslationNotSupportedException with the exact same message under NativeOnly, because
-        // EF Core's own pipeline always appends a final Select (explicit here, but even an implicit identity
-        // one for a bare `.Where(...).ToList()` would do the same) and the Select-side join-scope binder
-        // doesn't exist yet (Task 5). So this test currently only pins "still declines gracefully, doesn't
-        // crash, doesn't silently return wrong data" — it does NOT prove the Where arm works.
-        //
-        // EF-392 Task 5 update: the Select-side binder now exists, and this shape STILL declines — correctly.
-        // The trailing `Select(x => x.r.Total)` is a BARE (unwrapped) scalar leaf, which is neither of Task 5's
-        // two shapes: not a bare whole-ENTITY leaf, and not a `new {...}` wrapper. A bare scalar leaf needs the
-        // reserved-alias machinery NativeProjectionBinder carries for its own bare bodies
-        // (ProjectionAliasTier/`_v`), which has no join-scope analogue yet. So this test keeps its original
-        // meaning unchanged; the caveat below about what it can and cannot distinguish still applies.
-        //
-        // The actual proof that NativeSlotPopulator's Where arm resolves a join-scope predicate against a
-        // REAL EF-generated TransparentIdentifier lives in a fast, deterministic unit test instead:
-        // JoinScopeWhereSlotPopulationTests.Where_reading_outer_scope_after_join_populates_predicate_natively
-        // (tests/.../UnitTests/Query/NativeTranslation/), which asserts directly on the populated
-        // MongoSelectDefinition.PipelineOps rather than relying on an end-to-end result that Task 5 hasn't
-        // made reachable yet. Once Task 5 lands the Select-side binder, THIS test should be revisited: either
-        // extended to assert NativeOnly success (proving the whole chain), or left as the "still declines for
-        // shapes Task 5 doesn't cover" pin — whichever is accurate at that point.
+        // Formerly "Where_after_join_still_declines_under_NativeOnly_pending_the_Select_side_binder" — its own
+        // comment anticipated this exact revisit: "Once Task 5 lands the Select-side binder, THIS test should
+        // be revisited: either extended to assert NativeOnly success ... or left as the 'still declines for
+        // shapes Task 5 doesn't cover' pin". EF-322 Task 3b is that binder for a BARE (unwrapped) scalar leaf
+        // specifically — `Select(x => x.r.Total)` is neither a whole-entity leaf nor a `new {...}` wrapper, and
+        // is exactly the shape Task 3b's new TranslateSelect arm now handles — so this shape goes native under
+        // NativeOnly instead of declining.
         var seed = SeedOwnersAndOrders();
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
-            nameof(Where_after_join_still_declines_under_NativeOnly_pending_the_Select_side_binder));
+            nameof(Where_after_join_with_a_bare_scalar_select_goes_native));
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() =>
-            db.Owners
-                .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
-                .Where(x => x.o.Name == seed.Owners[0].Name)
-                .Select(x => x.r.Total)
-                .ToList());
-
-        // Correctness is still proven under the default Native mode (graceful fallback), exactly like the
-        // other genuine-join tests in this file.
-        using var dbNative = CreateContext(seed, MongoQueryMode.Native,
-            nameof(Where_after_join_still_declines_under_NativeOnly_pending_the_Select_side_binder) + "_fallback");
-
-        var result = dbNative.Owners
-            .Join(dbNative.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+        var result = db.Owners
+            .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
             .Where(x => x.o.Name == seed.Owners[0].Name)
             .Select(x => x.r.Total)
             .ToList();

@@ -64,6 +64,32 @@ internal static class MongoAggregationExpressionRenderer
             MongoElementRefExpression elementRef => FieldRef(elementRef.Path, elementVariable),
             // Always at document root, REGARDLESS of elementVariable — see the node's own remarks.
             MongoOuterFieldExpression outer => FieldRef(outer.ElementName, elementVariable: null),
+            // EF-322: the ONLY consumer today is a Select-side join-scope null-check ternary
+            // (`ti.Inner != null ? ti.Inner.City : null`) whose Test is rendered here as the MongoConditionalExpression's
+            // "if" — see NativeJoinScopeProjectionBinder.TryBindConditionalProjection. LookupAlias is a plain top-level
+            // field name (the $lookup's own "as"), so it renders through the same FieldRef helper as any other field.
+            //
+            // Wrapped in $ifNull, mirroring the NullSafe MongoElementRefExpression arm just above and for the
+            // EXACT SAME reason: after a $lookup + $unwind(preserveNullAndEmptyArrays: true), an unmatched row's
+            // LookupAlias field is genuinely MISSING (unset), not an explicit BSON null — and $eq/$ne in the
+            // aggregation-EXPRESSION dialect (unlike the query dialect's {field: null}) do NOT treat missing and
+            // null alike; BSON's Missing type sorts strictly below Null, so a bare $ne against an unmatched row's
+            // missing field evaluates true (wrongly reporting "present"). MEASURED against a real server: without
+            // the $ifNull normalization, an unmatched left-joined row's null-check comes back true and the
+            // ternary picks the WRONG (IfTrue) branch, itself reading a now-missing nested field, which $project
+            // then drops from the output entirely rather than emitting the intended IfFalse value — silently
+            // wrong data, not a translation failure. $ifNull(missing, null) => null and $ifNull(<doc>, null) =>
+            // <doc>, so the wrapped comparison is correct for both the matched and unmatched cases.
+            // Always at document root, REGARDLESS of elementVariable — a $lookup alias is always a ROOT-level
+            // field by construction (this node is never produced/read inside a $filter/$map element scope),
+            // exactly like the MongoOuterFieldExpression arm above (final-review fix, M4).
+            MongoLookupNullCheckExpression lookupNullCheck
+                => new BsonDocument(lookupNullCheck.IsNotNull ? "$ne" : "$eq",
+                    new BsonArray
+                    {
+                        new BsonDocument("$ifNull", new BsonArray { FieldRef(lookupNullCheck.LookupAlias, elementVariable: null), BsonNull.Value }),
+                        BsonNull.Value
+                    }),
             MongoConstantExpression or MongoParameterExpression => MongoValueRenderer.RenderValue(node, placeholders),
             MongoBinaryExpression binary => RenderBinary(binary, placeholders, elementVariable),
             MongoSizeExpression size => RenderSize(size, elementVariable),
@@ -174,7 +200,7 @@ internal static class MongoAggregationExpressionRenderer
     public static bool CanRender(MongoExpression node)
         => node switch
         {
-            MongoFieldExpression or MongoElementRefExpression or MongoOuterFieldExpression => true,
+            MongoFieldExpression or MongoElementRefExpression or MongoOuterFieldExpression or MongoLookupNullCheckExpression => true,
             MongoConstantExpression or MongoParameterExpression => true,
             // EF-396 (review fix): $and/$or evaluate a BARE operand by TRUTHINESS, not by CLR boolean value —
             // the same hazard the Not arm below already guards against for its own bare-field operand. Without

@@ -2259,10 +2259,19 @@ Customers.{ "$match" : { "$expr" : { "$eq" : ["$_id", { "$concat" : ["ALF", "KI"
     {
         await base.Where_string_length(async);
 
+#if EF8 || EF9
+        // EF8/EF9: .Length in a Where predicate now goes native (MongoStringLengthExpression / $strLenCP)
+        // instead of falling back to driver-LINQ's regex-length trick — different MQL, same results.
+        AssertMql(
+            """
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$strLenCP" : "$City" }, 6] } } }
+            """);
+#else
         AssertMql(
             """
             Customers.{ "$match" : { "City" : { "$regularExpression" : { "pattern" : "^.{6}$", "options" : "s" } } } }
             """);
+#endif
     }
 
     public override async Task Where_string_indexof(bool async)

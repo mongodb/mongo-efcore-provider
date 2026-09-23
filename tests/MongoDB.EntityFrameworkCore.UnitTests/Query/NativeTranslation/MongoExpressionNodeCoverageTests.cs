@@ -596,12 +596,12 @@ public class MongoExpressionNodeCoverageTests
         ["MongoInExpression|QL.IsQueryDialectRenderable"] = "true",
         ["MongoInExpression|QL.Render"] = "rendered",
 
-        // Query-dialect-only by design (see the node's own remarks): it is produced only for the exact
-        // `ti.Inner == null`/`!= null` top-level Where shape, never nested under Not/a quantifier/$elemMatch,
-        // so none of the other six dispatchers need an arm for it — each fails closed/open exactly the way an
-        // unrecognized node already does, safely, because this recognizer never hands them one.
-        ["MongoLookupNullCheckExpression|Agg.CanRender"] = "false",
-        ["MongoLookupNullCheckExpression|Agg.Render"] = "declined",
+        // EF-322: now has BOTH a query-dialect form (Where-position, produced by TryMatchInnerNullCheck) and an
+        // aggregation-expression form (Select-position conditional Test, produced by TryMatchScopeNullCheck) — see
+        // the node's own remarks. Still never nested under Not/a quantifier/$elemMatch (the shapes that produce it
+        // never place it there), so the remaining four dispatchers are unaffected.
+        ["MongoLookupNullCheckExpression|Agg.CanRender"] = "true",
+        ["MongoLookupNullCheckExpression|Agg.Render"] = "rendered",
         ["MongoLookupNullCheckExpression|AllFieldsDefaultSerialized"] = "true",
         ["MongoLookupNullCheckExpression|AllFieldsDefaultSerialized(converted)"] = "true",
         ["MongoLookupNullCheckExpression|Negator.TryNegate"] = "false",

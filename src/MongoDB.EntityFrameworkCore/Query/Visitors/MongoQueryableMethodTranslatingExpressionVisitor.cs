@@ -617,6 +617,62 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return source.UpdateShaperExpression(
                 BuildSelectManyResultShaper(mongoQueryExpression, selector.Body, foldedJoinBody));
         }
+        // A BARE (non-wrapped) `Select` body that is exactly a ternary null-checking a join scope's Inner side and
+        // dereferencing it — `ti => ti.Inner != null ? ti.Inner.City : null` (EF-322, native join-scope
+        // nav-null-check conditional projection). Sibling to the wrapped-projection arm above, structurally disjoint
+        // from it (a bare ConditionalExpression is never a NewExpression/MemberInit) and from the bare-leaf
+        // whole-entity arm above it (that recognizer matches only an UNADORNED `x.Outer`/`x.Inner` member access, a
+        // ConditionalExpression is neither). No fold/BuildSelectManyResultShaper needed: the staged leaf is a single
+        // bare scalar/computed value, not a wrapped anonymous/DTO construction, so it is bound exactly the way the
+        // GroupBy/SelectMany bare-leaf branches above bind their own single reserved alias — BindSelectManyMember,
+        // which registers the RAW selector.Body under the SAME "_v" alias TryBindConditionalProjection just staged
+        // into the native IR, and returns a ProjectionBindingExpression the DOM shaper reads by index.
+        else if (IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var conditionalLeafJoin)
+                 && NativeJoinScopeProjectionBinder.TryBindConditionalProjection(mongoQueryExpression, selector, conditionalLeafJoin))
+        {
+            var boundBareLeaf = BindSelectManyMember(
+                mongoQueryExpression, NativeProjectionBinder.SyntheticBareProjectionAlias, selector.Body);
+            return source.UpdateShaperExpression(boundBareLeaf);
+        }
+        // A bare (non-wrapped, non-whole-entity, non-conditional) scalar/computed Select body over an eligible,
+        // SINGLE-LEVEL join scope — e.g. `ti => ti.Inner.City` (EF Core's own null-check-removal preprocessing
+        // produces exactly this shape for `nav != null ? nav.Member : null` once nav-expansion runs, collapsing
+        // the conditional away entirely). Sibling to (and deliberately AFTER) the bare-whole-entity arm and
+        // Task 3's own bare-Conditional arm above — both are tried and declined first, so this arm never shadows
+        // either.
+        // Reuses the depth-1 value translator unchanged; the only new work is routing and staging under the same
+        // "_v" bare alias the generic (join-scope-unaware) bare-leaf path already uses.
+        //
+        // Deliberately restricted to Levels.Count == 1 (measured, not a simplification left for later): widening
+        // this to a multi-level chain via TryTranslateSingleScope — mirroring Task 3's own conditional arm — hits
+        // a PRE-EXISTING gap in IsSingleEligibleNativeJoinScope/ConfirmEntireChain's chain-paging-deferral
+        // handling, reproduced independently through the ALREADY-MERGED wrapped-projection arm
+        // (NativeJoinScopeProjectionBinder.TryBindProjection) with an unrelated wrapped `new { o.Name }` leaf: a
+        // Skip/Take/OrderBy interleaved BETWEEN two plain (non-left-outer) joins in a 2-level chain gets deferred
+        // as ONE snapshot past BOTH joins' $lookup/$unwind blocks together (DeferPipelineOpsPastConfirmedJoin +
+        // ConfirmEntireChain's single confirming call), so paging lands on the fully-joined (doubly-filtered)
+        // result instead of between the two joins as written — silently wrong rows, not a decline. This bare
+        // arm's whole reason to exist is Levels.Count == 1 (Manual_expression_tree_typed_null_equality's own
+        // shape is a single LeftJoin), so it doesn't need the chain case to meet its goal — staying narrow avoids
+        // newly exposing that pre-existing gap through a shape (a chain confirmed via a BARE leaf) nothing could
+        // reach natively before this task. Fixing the chain-paging gap itself is out of scope here; it predates
+        // this task and equally affects the wrapped-projection arm once something exercises that combination.
+        else if (IsSingleEligibleNativeJoinScope(mongoQueryExpression, out _)
+                 && mongoQueryExpression.Select.JoinScope is { Levels.Count: 1 }
+                 && mongoQueryExpression.Select.Projection.Count == 0
+                 && selector.Body is not ConditionalExpression
+                 && !selector.Body.TryGetProjectionMembers(out _)
+                 && NativeJoinScopeTranslator.TryTranslateValue(
+                     mongoQueryExpression.Select.JoinScope, selector.Parameters[0], selector.Body, out var bareValueLeaf))
+        {
+            mongoQueryExpression.Select.AddProjection(
+                new MongoProjection(NativeProjectionBinder.SyntheticBareProjectionAlias, bareValueLeaf!));
+            NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, mongoQueryExpression.Select.JoinScope!);
+
+            var boundBareValueLeaf = BindSelectManyMember(
+                mongoQueryExpression, NativeProjectionBinder.SyntheticBareProjectionAlias, selector.Body);
+            return source.UpdateShaperExpression(boundBareValueLeaf);
+        }
         else if (!IsTransparentIdentifierSelector(selector) && !IsSingleLevelCollectionIncludeSelector(selector)
                  && !IsTransparentIdentifierMemberAccessSelector(selector)
                  && !IsOwnedEmbeddedIncludeSelector(selector))

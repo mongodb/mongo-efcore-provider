@@ -2100,10 +2100,20 @@ OrderDetails.
     {
         await base.Order_by_length_twice(async);
 
+#if EF8 || EF9
+        // EF8/EF9: string.Length as a computed OrderBy key now lowers via a direct $set/$sort/$unset
+        // sequence (native sort-key computation) instead of the $project/$$ROOT/$replaceRoot wrapper —
+        // different MQL, same results.
+        AssertMql(
+            """
+            Customers.{ "$set" : { "__sort0" : { "$strLenCP" : "$_id" }, "__sort1" : { "$strLenCP" : "$_id" } } }, { "$sort" : { "__sort0" : 1, "__sort1" : 1, "_id" : 1 } }, { "$unset" : ["__sort0", "__sort1"] }
+            """);
+#else
         AssertMql(
             """
             Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$strLenCP" : "$_id" }, "_key2" : { "$strLenCP" : "$_id" } } }, { "$sort" : { "_key1" : 1, "_key2" : 1, "_document._id" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }
             """);
+#endif
     }
 
     public override async Task Order_by_length_twice_followed_by_projection_of_naked_collection_navigation(bool async)

@@ -529,6 +529,47 @@ public class MongoAggregationExpressionRendererTests
     }
 
     [Fact]
+    public void Renders_not_equal_null_lookup_check_as_ne_against_the_alias_field()
+    {
+        var node = new MongoLookupNullCheckExpression("_lookup_Manager", isNotNull: true);
+        var placeholders = new PlaceholderTable();
+
+        var rendered = MongoAggregationExpressionRenderer.Render(node, placeholders);
+
+        // Wrapped in $ifNull (not a bare field ref) — see the render site's own remarks: after
+        // $lookup+$unwind(preserveNullAndEmptyArrays: true), an unmatched row's alias field is genuinely
+        // MISSING, and the aggregation-expression dialect's $ne does NOT treat missing and null alike the
+        // way the query dialect does, so a bare comparison would wrongly answer "not null" for an unmatched
+        // row. MEASURED against a real server (not merely asserted here).
+        Assert.Equal(
+            new BsonDocument("$ne",
+                new BsonArray { new BsonDocument("$ifNull", new BsonArray { "$_lookup_Manager", BsonNull.Value }), BsonNull.Value }),
+            rendered);
+    }
+
+    [Fact]
+    public void Renders_equal_null_lookup_check_as_eq_against_the_alias_field()
+    {
+        var node = new MongoLookupNullCheckExpression("_lookup_Manager", isNotNull: false);
+        var placeholders = new PlaceholderTable();
+
+        var rendered = MongoAggregationExpressionRenderer.Render(node, placeholders);
+
+        // Same $ifNull-wrapping as the $ne case above, and for the same reason.
+        Assert.Equal(
+            new BsonDocument("$eq",
+                new BsonArray { new BsonDocument("$ifNull", new BsonArray { "$_lookup_Manager", BsonNull.Value }), BsonNull.Value }),
+            rendered);
+    }
+
+    [Fact]
+    public void CanRender_reports_true_for_a_lookup_null_check()
+    {
+        Assert.True(MongoAggregationExpressionRenderer.CanRender(
+            new MongoLookupNullCheckExpression("_lookup_Manager", isNotNull: true)));
+    }
+
+    [Fact]
     public void MongoQuantifierExpression_Any_renders_as_anyElementTrue_over_map()
     {
         var elementPredicate = new MongoBinaryExpression(

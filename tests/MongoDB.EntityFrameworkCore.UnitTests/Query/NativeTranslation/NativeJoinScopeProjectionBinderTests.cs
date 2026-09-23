@@ -20,6 +20,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 using MongoDB.EntityFrameworkCore.UnitTests.TestUtilities;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
@@ -80,6 +81,72 @@ public class NativeJoinScopeProjectionBinderTests
         Assert.NotNull(result);
         var shaped = Assert.IsAssignableFrom<ShapedQueryExpression>(result);
         return Assert.IsType<MongoQueryExpression>(shaped.QueryExpression);
+    }
+
+#if !EF8 && !EF9
+    // EF10-ONLY IN PRACTICE, and not because of anything in this file: on EF8/EF9 an optional reference
+    // navigation lowers onto EF's own internal LeftJoin shim (Ef8Ef9LeftJoinMethod), which
+    // NativeSlotPopulator.PopulateNativeSlots' candidate-join arm never recognizes pre-EF10 — the whole join
+    // declines before any Select-side binder runs. See NativeJoinScopeProjectionBinder.cs (~line 290) for the
+    // full explanation; this test asserts the native (EF10-only) outcome.
+    [Fact]
+    public void Binds_a_bare_nav_null_check_ternary_over_a_left_join()
+    {
+        // `(r, o) => o != null ? o.Name : ""` after a LeftJoin — mirrors Manual_expression_tree_typed_null_equality's
+        // nav-expanded shape (`ti.Inner != null ? ti.Inner.City : null`), using a plain string default instead of
+        // a typed null so the test doesn't depend on Task 1-5's null-branch handling specifically —
+        // TranslateOperand's generic ConstantExpression fall-through already handles either.
+        //
+        // DELIBERATELY Order-outer/Owner-inner (not the other way around): RebindInnerShaperToOuterQuery resolves
+        // a join's Navigation by searching the OUTER entity's own navigation set first for one matching the outer
+        // key selector's FK property AND IsOnDependent — i.e. it only ever finds a REFERENCE nav when the OUTER
+        // side is the dependent (FK-holding) entity. Owner-outer/Order-inner (the "natural" reading order) resolves
+        // to Owner.Orders — a COLLECTION nav — which the degenerate-check guard below correctly declines (a
+        // collection has no single "is it null" answer); this is unrelated to IsLeftOuter and reproduces on a plain
+        // Join too. Order-outer/Owner-inner resolves to Order.Owner — a REFERENCE nav — the shape this feature
+        // targets, matching Manual_expression_tree_typed_null_equality's own Order-outer/Customer-inner shape.
+        var mongoQ = TranslateJoinQuery((owners, orders) =>
+            orders.GroupJoin(owners, r => r.OwnerId, o => o.Id, (r, os) => new { r, os })
+                .SelectMany(x => x.os.DefaultIfEmpty(), (x, o) => new { x.r, o })
+                .Select(x => x.o != null ? x.o.Name : ""));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.True(mongoQ.Select.JoinScope!.Levels[0].IsLeftOuter);
+        Assert.Equal(
+            [NativeProjectionBinder.SyntheticBareProjectionAlias],
+            mongoQ.Select.Projection.Select(p => p.Alias).ToArray());
+
+        var leaf = Assert.IsType<MongoConditionalExpression>(mongoQ.Select.Projection[0].Expression);
+        var test = Assert.IsType<MongoLookupNullCheckExpression>(leaf.Test);
+        Assert.True(test.IsNotNull);
+        Assert.Equal(mongoQ.Select.JoinScope!.Levels[0].InnerPrefix, test.LookupAlias);
+
+        Assert.Single(mongoQ.Lookups);
+        Assert.False(mongoQ.Select.HasUnconfirmedCandidateJoin);
+    }
+#endif
+
+    [Fact]
+    public void Declines_when_the_checked_level_is_an_inner_not_left_outer_join()
+    {
+        // A plain Join never produces a null Inner (an unmatched row is DROPPED, not unwound-as-null), so the
+        // null check is degenerate there — must decline, not silently admit an always-true/always-false test.
+        var mongoQ = TranslateJoinQuery((owners, orders) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Select(x => x.r != null ? x.r.Total : 0m));
+
+        Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
+    }
+
+    [Fact]
+    public void Declines_a_conditional_whose_test_is_not_a_scope_null_check()
+    {
+        var mongoQ = TranslateJoinQuery((owners, orders) =>
+            owners.GroupJoin(orders, o => o.Id, r => r.OwnerId, (o, rs) => new { o, rs })
+                .SelectMany(x => x.rs.DefaultIfEmpty(), (x, r) => new { x.o, r })
+                .Select(x => x.o.Name == "Alice" ? 1m : 0m));
+
+        Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
     }
 
     // Deliberately SEPARATE fixture types for the chained (Task 6) test below, rather than adding a "Lines"
@@ -632,4 +699,147 @@ public class NativeJoinScopeProjectionBinderTests
         Assert.Empty(mongoQ.Select.Projection);
         Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
     }
+
+    [Fact]
+    public void Declines_a_bare_nav_null_check_ternary_over_a_two_level_chain_whose_second_level_is_not_left_outer()
+    {
+        // `x.l != null ? x.l.Sku : ""` is a bare ConditionalExpression whose Test resolves (via
+        // TryMatchScopeNullCheck) to the SECOND join's own Inner side (scope index 2) — but that second join
+        // here is a plain (required) `Join`, not a `LeftJoin`/GroupJoin+SelectMany(DefaultIfEmpty). A plain Join
+        // drops an unmatched row entirely rather than unwinding it as an explicit null, so "Inner != null" is
+        // unconditionally true there — not a real check. TryBindConditionalProjection's `!level.IsLeftOuter`
+        // guard declines for exactly this reason (see that method's own comment); it is NOT about chain depth —
+        // TryBindConditionalProjection works at any depth (this is a genuine 2-level chain, scope.Levels.Count
+        // == 2) — see Binds_a_bare_nav_null_check_ternary_over_a_two_level_chain below for the positive case
+        // with a genuine LeftJoin at the second level.
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e, l })
+                .Select(x => x.l != null ? x.l.Sku : ""));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.Equal(2, mongoQ.Select.JoinScope!.Levels.Count);
+        Assert.Empty(mongoQ.Select.Projection);
+        Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
+    }
+
+    // Dedicated, fully self-contained fixture for the LeftJoin-at-level-2 test below — deliberately NOT
+    // reusing ChainOwner/ChainOrder/ChainOrderLine (or adding a field to them): a genuine FK from the second
+    // level's OUTER side (mirroring NativeJoinScopeConditionalProjectionTests' functional-test
+    // Customer.RegionId -> Region.Id relationship, the "outer holds the FK" shape RebindInnerShaperToOuterQuery
+    // needs to resolve a REFERENCE, not COLLECTION, navigation) needs its own target entity; grafting one onto
+    // ChainOrder was tried and MEASURED to break three already-passing whole-entity-leaf chain tests above
+    // (Binds_a_two_level_chain_projection_naming_every_scope_as_a_whole_entity et al.) — those go through
+    // TranslateThreeSourceJoinQuery's OWN model, which never registers the new target type, so conventions
+    // treat the added navigation as an owned/undiscovered reference and silently change unrelated shapes. Local
+    // types scoped to this one test side-step that entirely.
+    private class RegionChainOwner
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public List<RegionChainOrder> Orders { get; set; } = [];
+    }
+
+    private class RegionChainOrder
+    {
+        public int Id { get; set; }
+        public int OwnerId { get; set; }
+        public RegionChainOwner? Owner { get; set; }
+        public int? RegionId { get; set; }
+        public RegionChainRegion? Region { get; set; }
+    }
+
+    private class RegionChainRegion
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+    }
+
+#if !EF8 && !EF9
+    // EF10-ONLY IN PRACTICE: see the comment on Binds_a_bare_nav_null_check_ternary_over_a_left_join above —
+    // the LeftJoin shape here never becomes a candidate join pre-EF10, so the join (and this bare scalar leaf)
+    // declines before any Select-side binder runs. This test asserts the native (EF10-only) outcome.
+    [Fact]
+    public void Binds_a_bare_nav_null_check_ternary_over_a_two_level_chain()
+    {
+        // TryBindConditionalProjection is depth-agnostic (works for any scope.Levels.Count), exactly like
+        // TryBindProjection's own scalar/computed leaf arm for a chain — there is no Levels.Count restriction on
+        // this method. A genuine two-level chain (level 1: Owner->Order, a plain Join; level 2: Order->Region, a
+        // genuine LeftJoin via GroupJoin/SelectMany(DefaultIfEmpty), with OUTER (Order) holding the FK
+        // (RegionId) — see the fixture's own remarks for why that FK direction matters here) with a bare
+        // nav-null-check ternary targeting the SECOND level's Inner side — the same shape
+        // Binds_a_bare_nav_null_check_ternary_over_a_left_join pins at depth 1 — binds NATIVELY here too, each
+        // branch translated via NativeJoinScopeTranslator.TryTranslateSingleScope re-rooted onto the second
+        // level.
+        using var db = SingleEntityDbContext.Create<RegionChainOwner>(mb =>
+        {
+            mb.Entity<RegionChainOrder>();
+            mb.Entity<RegionChainRegion>();
+        });
+
+        var query = db.Set<RegionChainOwner>().Join(db.Set<RegionChainOrder>(), o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+            .GroupJoin(db.Set<RegionChainRegion>(), e => e.r.RegionId, g => g.Id, (e, gs) => new { e.o, e.r, gs })
+            .SelectMany(x => x.gs.DefaultIfEmpty(), (x, g) => new { x.o, x.r, g })
+            .Select(x => x.g != null ? x.g.Name : "none");
+
+        var ccFactory = db.GetService<IQueryCompilationContextFactory>();
+        var compilationContext = ccFactory.Create(async: false);
+
+        var preprocessor = db.GetService<IQueryTranslationPreprocessorFactory>().Create(compilationContext);
+        var preprocessed = preprocessor.Process(query.Expression);
+
+        var visitor = db.GetService<IQueryableMethodTranslatingExpressionVisitorFactory>().Create(compilationContext);
+        var result = visitor.Visit(preprocessed);
+
+        Assert.NotNull(result);
+        var shaped = Assert.IsAssignableFrom<ShapedQueryExpression>(result);
+        var mongoQ = Assert.IsType<MongoQueryExpression>(shaped.QueryExpression);
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.Equal(2, mongoQ.Select.JoinScope!.Levels.Count);
+        Assert.Single(mongoQ.Select.Projection);
+        Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
+    }
+#endif
+
+#if !EF8 && !EF9
+    // EF10-ONLY IN PRACTICE: see the comment on Binds_a_bare_nav_null_check_ternary_over_a_left_join above —
+    // the LeftJoin shape here never becomes a candidate join pre-EF10, so the join (and this bare scalar leaf)
+    // declines before any Select-side binder runs. This test asserts the native (EF10-only) outcome.
+    [Fact]
+    public void Bare_scalar_leaf_over_a_left_join_goes_native()
+    {
+        var mongoQ = TranslateJoinQuery((owners, orders) =>
+            owners.GroupJoin(orders, o => o.Id, r => r.OwnerId, (o, rs) => new { o, rs })
+                .SelectMany(x => x.rs.DefaultIfEmpty(), (x, r) => new { x.o, r })
+                .Select(x => x.r.Total));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.Equal(
+            [NativeProjectionBinder.SyntheticBareProjectionAlias],
+            mongoQ.Select.Projection.Select(p => p.Alias).ToArray());
+        Assert.False(mongoQ.Select.HasUnconfirmedCandidateJoin);
+    }
+#endif
+
+#if !EF8 && !EF9
+    // EF10-ONLY IN PRACTICE: see the comment on Binds_a_bare_nav_null_check_ternary_over_a_left_join above —
+    // the LeftJoin shape here never becomes a candidate join pre-EF10, so the join (and this bare scalar leaf)
+    // declines before any Select-side binder runs. This test asserts the native (EF10-only) outcome.
+    [Fact]
+    public void Bare_scalar_leaf_matching_the_real_nav_expanded_shape_goes_native()
+    {
+        // The ACTUAL shape EF Core's null-check-removal preprocessing produces for
+        // `o.Owner != null ? o.Owner.Name : null` once nav-expansion runs — a plain LeftJoin + bare `x.Inner.Name`.
+        var mongoQ = TranslateJoinQuery((owners, orders) =>
+            orders.GroupJoin(owners, r => r.OwnerId, o => o.Id, (r, os) => new { r, os })
+                .SelectMany(x => x.os.DefaultIfEmpty(), (x, o) => new { x.r, o })
+                .Select(x => x.o.Name));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.Equal(
+            [NativeProjectionBinder.SyntheticBareProjectionAlias],
+            mongoQ.Select.Projection.Select(p => p.Alias).ToArray());
+    }
+#endif
 }
