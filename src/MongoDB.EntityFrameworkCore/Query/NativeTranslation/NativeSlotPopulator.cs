@@ -265,7 +265,7 @@ internal static class NativeSlotPopulator
                          predicate.Parameters[0], predicate.Body, out var isNotNull))
             {
                 // Flip BEFORE AddPredicateConjunct: see this arm's remarks above.
-                mongoQ.Select.MarkJoinInnerAccessConfirmedFromWhere();
+                mongoQ.Select.MarkJoinInnerAccessConfirmed();
                 mongoQ.Select.AddPredicateConjunct(new MongoLookupNullCheckExpression(lookup.As, isNotNull));
             }
             // A GENERAL predicate reaching a single-level join's Inner side (`o.Customer.City != "London"`,
@@ -292,7 +292,7 @@ internal static class NativeSlotPopulator
                      && NativeJoinScopeTranslator.TryTranslatePredicate(
                          innerScope, predicate.Parameters[0], predicate.Body, out var innerPredicateNode))
             {
-                mongoQ.Select.MarkJoinInnerAccessConfirmedFromWhere();
+                mongoQ.Select.MarkJoinInnerAccessConfirmed();
                 mongoQ.Select.AddPredicateConjunct(innerPredicateNode);
             }
             else
@@ -450,6 +450,40 @@ internal static class NativeSlotPopulator
                  && NativeJoinScopeTranslator.TryTranslateValue(
                      singleLevelScope, keySelector.Parameters[0], keySelector.Body, out var joinSortKey))
             record(new MongoOrdering(joinSortKey, ascending));
+        // A sort key reaching a single-level join's Inner side (`o.OrderID`), e.g.
+        // `Customers.Join(Orders, ...).OrderBy(x => x.Inner.OrderID)`. Mirrors NativeSlotPopulator's Where
+        // Inner arm (docs/superpowers/specs/2026-09-08-native-join-where-inner-scope-design.md): translates
+        // via the same general-purpose two-scope TryTranslateValue the Outer-only arm above already calls
+        // (guarded there by !ReferencesInnerScope), then defers this sort — and anything recorded after it —
+        // into PostJoinOps so it lowers past the $lookup/$unwind block that materializes Inner.
+        //
+        // UNLIKE the Where arm, this is NOT restricted to a non-collection-navigation/reference lookup: a
+        // $sort changes neither row count nor row identity, so — unlike paging
+        // (docs/superpowers/specs/2026-09-22-native-post-join-paging-design.md), which DOES need to reason
+        // about 1:1-safety — sorting the post-$unwind rows is correct for ANY join cardinality, collection
+        // navigation or not. This matters in practice, not just in theory: the motivating test
+        // (Join_Customers_Orders_Skip_Take family) is `Customers.Join(Orders, c => c.CustomerID, o =>
+        // o.CustomerID, ...)`, whose Navigation resolves to Customer.Orders — a COLLECTION navigation
+        // (Lookup.IsReference is false) — not the reference nav Order.Customer, because TranslateJoinCore
+        // resolves the navigation from the OUTER (Customer) side's key selector. Requiring IsReference here
+        // (as Where's arm does) would keep this exact family declining. Joins.Count == 1 makes Joins[0] safe
+        // to read directly (JoinScope is only ever recorded for the first/only join at this depth); no
+        // further conjunct is needed; see
+        // docs/superpowers/specs/2026-09-23-native-join-orderby-inner-scope-design.md.
+        else if (mongoQ.Select.JoinScope is { Levels.Count: 1 } innerSortScope
+                 && mongoQ.Joins.Count == 1
+                 && NativeJoinScopeTranslator.TryTranslateValue(
+                     innerSortScope, keySelector.Parameters[0], keySelector.Body, out var innerSortKey))
+        {
+            // Relocate BEFORE flipping/recording: an earlier Outer-only key in this SAME chain (e.g.
+            // `OrderBy(o.OrderID).ThenBy(o.Customer.CustomerID)`) is still sitting in PipelineOps as a
+            // MongoSortOp — it must move into PostJoinOps too, so both keys end up in ONE $sort stage. See
+            // DeferTrailingSortPastConfirmedJoin's own remarks for why splitting them across two stages is a
+            // silent wrong-order bug, not just a cosmetic difference.
+            mongoQ.Select.DeferTrailingSortPastConfirmedJoin();
+            mongoQ.Select.MarkJoinInnerAccessConfirmed();
+            record(new MongoOrdering(innerSortKey, ascending));
+        }
         else if (mongoQ.Select.JoinScope is { Levels.Count: > 1 } chainedScope
                  && NativeJoinScopeTranslator.TryTranslateRootScopeOnly(
                      chainedScope, keySelector.Parameters[0], keySelector.Body, valueMode: true, out var chainedSortKey))

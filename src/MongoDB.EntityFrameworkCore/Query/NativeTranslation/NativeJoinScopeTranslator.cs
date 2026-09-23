@@ -279,7 +279,7 @@ internal static class NativeJoinScopeTranslator
     /// property already lives on the OUTER (root) document, and by construction of the relationship it holds
     /// exactly the target's principal-key value — so the Contains rewrites to a principal-key-vs-foreign-key
     /// <c>$in</c>, the reference-navigation generalization of
-    /// <see cref="MongoExpressionTranslator.EntityEquality.TryTranslateEntityListContains"/>'s whole-root-entity
+    /// <see cref="MongoExpressionTranslator.TryTranslateEntityListContains"/>'s whole-root-entity
     /// shape, keyed off the FK field instead of the root's own PK field. Whether the join ends up registering a
     /// <c>$lookup</c> anyway (a subsequent mandatory <c>Select(ti =&gt; ti.Outer)</c> unwrap usually forces one)
     /// is irrelevant to this predicate — the FK value on the outer document already carries the same key a

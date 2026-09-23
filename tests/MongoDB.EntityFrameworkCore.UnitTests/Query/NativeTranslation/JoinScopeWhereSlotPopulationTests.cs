@@ -398,4 +398,59 @@ public class JoinScopeWhereSlotPopulationTests
         // PipelineOps assertion is what actually proves the Where arm declined.
         Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
     }
+
+    /// <summary>
+    /// docs/superpowers/specs/2026-09-23-native-join-orderby-inner-scope-design.md's own Component 2:
+    /// unlike <see cref="Where_reading_inner_scope_after_join_still_declines_gracefully"/>, a depth-1
+    /// <c>OrderBy</c> key reaching the join's Inner side (<c>x.r.Total</c>) now translates and defers into
+    /// <see cref="MongoSelectDefinition.PostJoinOps"/> — the Owner/Order fixture's <c>owners.Join(orders,
+    /// ...)</c> resolves its <c>Navigation</c> to <c>Owner.Orders</c> (a COLLECTION navigation), exactly the
+    /// shape the motivating <c>Join_Customers_Orders_Skip_Take</c> family hits, so this deliberately does NOT
+    /// require <see cref="LookupExpression.IsReference"/> the way the Where arm's own Inner gate does.
+    /// </summary>
+    [Fact]
+    public void OrderBy_reading_inner_scope_after_join_populates_sort_in_post_join_ops()
+    {
+        var mongoQ = TranslateJoinQuery((owners, orders) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .OrderBy(x => x.r.Total));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.Single(mongoQ.Select.JoinScope!.Levels);
+        Assert.True(mongoQ.Select.JoinInnerAccessConfirmed);
+
+        Assert.Empty(mongoQ.Select.PipelineOps);
+        var sortOp = Assert.IsType<MongoSortOp>(Assert.Single(mongoQ.Select.PostJoinOps));
+        var ordering = Assert.Single(sortOp.Orderings);
+        Assert.True(ordering.Ascending);
+    }
+
+    /// <summary>
+    /// Regression test for the wrong-row-order bug <see cref="MongoSelectDefinition.DeferTrailingSortPastConfirmedJoin"/>'s
+    /// own remarks describe (MEASURED via
+    /// <c>NorthwindMiscellaneousQueryMongoTest.OrderBy_object_type_server_evals</c>): an <c>OrderBy</c> over
+    /// the Outer side followed by a <c>ThenBy</c> reaching Inner must keep BOTH keys in the SAME
+    /// <c>$sort</c> stage — splitting them across <c>PipelineOps</c> (pre-<c>$lookup</c>) and
+    /// <c>PostJoinOps</c> (post-<c>$lookup</c>) would silently make the Inner key the primary sort order
+    /// instead of a tie-breaker.
+    /// </summary>
+    [Fact]
+    public void ThenBy_reading_inner_scope_after_outer_OrderBy_relocates_whole_sort_into_post_join_ops()
+    {
+        var mongoQ = TranslateJoinQuery((owners, orders) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .OrderBy(x => x.o.Name)
+                .ThenBy(x => x.r.Total));
+
+        Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.True(mongoQ.Select.JoinInnerAccessConfirmed);
+
+        // Nothing left behind pre-join — the Outer key from the OrderBy moved along with the Inner key from
+        // the ThenBy, into ONE sort op, not two.
+        Assert.Empty(mongoQ.Select.PipelineOps);
+        var sortOp = Assert.IsType<MongoSortOp>(Assert.Single(mongoQ.Select.PostJoinOps));
+        Assert.Equal(2, sortOp.Orderings.Count);
+        Assert.True(sortOp.Orderings[0].Ascending);
+        Assert.True(sortOp.Orderings[1].Ascending);
+    }
 }

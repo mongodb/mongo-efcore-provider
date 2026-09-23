@@ -522,7 +522,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // snapshot into PostLookupPagingOps, MongoSelectLowerer would emit PostJoinOps (the $match) BEFORE
         // PostLookupPagingOps (the $skip/$limit) — filter-then-page — inverting the page-then-filter order the
         // user actually wrote. IsSingleEligibleNativeJoinScope now declines this narrow combination outright
-        // instead (see its own remarks, guarded by JoinInnerAccessConfirmedFromWhere) — this test pins that
+        // instead (see its own remarks, guarded by JoinInnerAccessConfirmed) — this test pins that
         // safety restoration. No currently-passing test exercised this exact combination before this fix (the
         // motivating Include_where_skip_take_projection family's own Where predicate is root-scope-only, e.g.
         // `Quantity == 10`, never reaching the Inner side), so declining it costs no coverage.
@@ -531,7 +531,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // ti.Outer)` for a plain `Where` over a reference-navigation dereference with no user projection, and
         // THAT is what actually confirms/registers the join (the bare-whole-entity-leaf pass-through arm) —
         // same mechanism the motivating spec test's own (Include-based) shape relies on. MEASURED: with this
-        // fix's `JoinInnerAccessConfirmedFromWhere` guard temporarily removed, this exact query went native and
+        // fix's `JoinInnerAccessConfirmed` guard temporarily removed, this exact query went native and
         // returned ZERO rows instead of the correct ONE (Order Total=30, whose Owner is Bob) — the "returns
         // wrong data" hazard this fix closes.
         var seed = SeedOwnersAndOrders();

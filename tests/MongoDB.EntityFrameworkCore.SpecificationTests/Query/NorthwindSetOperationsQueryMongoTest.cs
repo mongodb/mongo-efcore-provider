@@ -276,7 +276,7 @@ Customers.{ "$unionWith" : { "coll" : "Customers", "pipeline" : [] } }, { "$grou
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "Berlin" } }, { "$group" : { "_id" : "$_id", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "CustomerID" : "$_id", "Count" : "$__agg0", "_id" : 0 } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }, { "$group" : { "_id" : "$_id", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "CustomerID" : "$_id", "Count" : { "$size" : "$_elements" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "City" : "Berlin" } }, { "$group" : { "_id" : "$_id", "Count" : { "$sum" : 1 } } }, { "$project" : { "CustomerID" : "$_id", "Count" : "$Count", "_id" : 0 } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "City" : "London" } }, { "$group" : { "_id" : "$_id", "Count" : { "$sum" : 1 } } }, { "$project" : { "CustomerID" : "$_id", "Count" : "$Count", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -361,7 +361,7 @@ Orders.{ "$group" : { "_id" : "$_id", "__agg0" : { "$sum" : 1 } } }, { "$project
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$_id", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$__agg0", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$_id", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "_v" : { "$size" : "$_elements" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+Orders.{ "$group" : { "_id" : "$_id", "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$_id", "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
 """);
     }
 
@@ -371,7 +371,7 @@ Orders.{ "$group" : { "_id" : "$_id", "__agg0" : { "$sum" : 1 } } }, { "$project
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$_id", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$__agg0", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$literal" : 8 }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+Orders.{ "$group" : { "_id" : "$_id", "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$literal" : 8 }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
 """);
     }
 
@@ -391,7 +391,7 @@ Orders.{ "$group" : { "_id" : "$_id", "__agg0" : { "$sum" : 1 } } }, { "$project
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$_id", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$__agg0", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$add" : ["$_id", 1] }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+Orders.{ "$group" : { "_id" : "$_id", "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$add" : ["$_id", 1] }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
 """);
     }
 
@@ -529,7 +529,7 @@ Orders.{ "$group" : { "_id" : "$_id", "__agg0" : { "$sum" : 1 } } }, { "$project
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : { "$add" : ["$_id", 1] }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$_id", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "_v" : { "$size" : "$_elements" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Orders.{ "$project" : { "_v" : { "$add" : ["$_id", 1] }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$_id", "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -584,7 +584,7 @@ Orders.{ "$group" : { "_id" : "$_id", "__agg0" : { "$sum" : 1 } } }, { "$project
 
         AssertMql(
             """
-            Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "_v" : { "$size" : "$_lookup_OrderDetails" }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$_id", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "_v" : { "$size" : "$_elements" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "_v" : { "$size" : "$_lookup_OrderDetails" }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$_id", "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 

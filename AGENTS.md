@@ -45,15 +45,14 @@ For all three versions in parallel, invoke the `/test-all` skill.
 ## Testing
 
 **Recommended: run with both `MONGODB_URI` and `ATLAS_URI` unset.** `TestServer` then has TestContainers boot a
-`mongodb/mongodb-atlas-local` container, which (a) runs the Atlas-gated tests (vector search) **for real**
-against Atlas Search, and (b) gives each `dotnet test` process its **own** container and uniquely-named
-databases — so parallel runs and parallel agents don't collide. Cost: Docker required, plus a one-time ~2 GB
-image pull.
+`mongodb/mongodb-atlas-local` container, running Atlas-gated tests (vector search) for real and giving each
+`dotnet test` process its own container and uniquely-named databases (so parallel runs/agents don't collide).
+Cost: Docker required, plus a one-time ~2 GB image pull.
 
-Connection resolution (`FunctionalTests/Utilities/TestServer.cs`): the default server comes from `MONGODB_URI`
-(else a container); the Atlas (`IsAtlas`) server from `ATLAS_URI` (else a container — so Atlas tests run
-whenever `ATLAS_URI` isn't `"Disabled"`, regardless of `MONGODB_URI`). Point either var at an external server
-to use it instead; note a plain `mongod`/replica set can't run Atlas Search.
+Connection resolution (`FunctionalTests/Utilities/TestServer.cs`): default server from `MONGODB_URI` (else a
+container); Atlas (`IsAtlas`) server from `ATLAS_URI` (else a container — so Atlas tests run whenever
+`ATLAS_URI` isn't `"Disabled"`). Point either var at an external server to use it instead; a plain
+`mongod`/replica set can't run Atlas Search.
 
 Each test gets a unique database via `TestDatabaseNamer.GetUniqueDatabaseName()`. `[ModuleInitializer]` in
 `FunctionalTests/ModuleInitialization.cs` registers BSON serializers at load.
@@ -86,12 +85,12 @@ gh release list --limit 100 --json tagName               # highest non-preview v
 git show <tag>:<path>                                    # diff the file at that tag against the working tree
 ```
 
-**Is a break:** public API signature/default/visibility changes; annotation-key changes (the `Mongo:` prefix —
-they affect stored compiled models and design-time output); behavior changes affecting persisted document shape
-(element name, BSON representation, discriminator field, Guid representation); `IMongoClientWrapper` /
-`IMongoDatabaseCreator` / `IMongoTransactionManager` interface changes (users are warned not to implement
-these, but they're observable public surface); default-value changes for `AutoTransactionBehavior`, conventions,
-or `BsonRepresentation` handling.
+**Is a break:** public API signature/default/visibility changes; annotation-key changes (`Mongo:` prefix —
+they affect stored compiled models and design-time output); behavior changes affecting persisted document
+shape (element name, BSON representation, discriminator field, Guid representation);
+`IMongoClientWrapper`/`IMongoDatabaseCreator`/`IMongoTransactionManager` interface changes (observable public
+surface, even though users are warned not to implement these); default-value changes for
+`AutoTransactionBehavior`, conventions, or `BsonRepresentation` handling.
 
 **Is not a break:**
 

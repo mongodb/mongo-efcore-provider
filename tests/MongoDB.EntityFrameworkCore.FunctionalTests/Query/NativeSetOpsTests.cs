@@ -1322,6 +1322,51 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         Assert.Equal(new[] { "Five", "Four", "One", "Three", "Two" }, result);
     }
 
+    // EF-322: a genuine GroupBy(key).Select(aggregate) — as opposed to Distinct's degenerate $group with no
+    // real accumulator — AS a Union operand now goes native too. Route == GroupBy with IsGroupBy true was
+    // previously excluded here on the (mistaken) assumption that this is as wrong-data-unsafe as GroupBy
+    // feeding a Join: it is not. The lowerer already emits a Grouping-bearing operand's own $group +
+    // flattening $project generically (MongoSelectLowerer's OperandsProjected branch keys only off
+    // Grouping != null, never IsDistinct/IsGroupBy), and the Union/Concat dedup still runs over the
+    // ALREADY-flattened {Key, Count} values from both operands exactly as it does for a Distinct operand.
+    [Fact]
+    public void GroupBy_select_operand_union_goes_native()
+    {
+        var collection = SeedCollection(nameof(GroupBy_select_operand_union_goes_native));
+        using var db = Make(collection, MongoQueryMode.NativeOnly);
+
+        var result = db.Entities.Where(i => i.Value <= 3).GroupBy(i => i.Value)
+                .Select(g => new { Key = g.Key, Count = g.Count() })
+            .Union(db.Entities.Where(i => i.Value >= 3).GroupBy(i => i.Value)
+                .Select(g => new { Key = g.Key, Count = g.Count() }))
+            .ToList().OrderBy(x => x.Key).ToList();
+
+        // {1,2,3} U {3,4,5} grouped by Value (one row per group, Count == 1) -> 5 distinct {Key, Count} rows,
+        // the shared Value==3 group deduped away just like a whole-entity Union would dedup the shared document.
+        Assert.Equal(
+            new[] { (1, 1), (2, 1), (3, 1), (4, 1), (5, 1) },
+            result.Select(x => (x.Key, x.Count)));
+    }
+
+    [Fact]
+    public void GroupBy_select_operand_union_matches_driver_linq()
+    {
+        var collection = SeedCollection(nameof(GroupBy_select_operand_union_matches_driver_linq));
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        using var driverDb = Make(collection, MongoQueryMode.DriverLinq);
+
+        List<(int Key, int Count)> Run(SingleEntityDbContext<Item> db) =>
+            db.Entities.Where(i => i.Value <= 3).GroupBy(i => i.Value)
+                    .Select(g => new { Key = g.Key, Count = g.Count() })
+                .Union(db.Entities.Where(i => i.Value >= 3).GroupBy(i => i.Value)
+                    .Select(g => new { Key = g.Key, Count = g.Count() }))
+                .ToList().OrderBy(x => x.Key).Select(x => (x.Key, x.Count)).ToList();
+
+        var native = Run(nativeDb);
+        Assert.Equal(new[] { (1, 1), (2, 1), (3, 1), (4, 1), (5, 1) }, native);
+        Assert.Equal(Run(driverDb), native);
+    }
+
     [Fact]
     public void Distinct_operand_concat_goes_native()
     {

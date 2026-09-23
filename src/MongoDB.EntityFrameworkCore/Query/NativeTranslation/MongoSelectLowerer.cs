@@ -364,8 +364,8 @@ internal sealed class MongoSelectLowerer
     }
 
     /// <summary>
-    /// Appends the ordered filter/sort/page stages ($match / $sort / $skip / $limit) for <paramref name="ops"/>
-    /// in their recorded order. Shared by the outer query's own <see cref="MongoSelectDefinition.PipelineOps"/>,
+    /// Appends the ordered filter/sort/page stages ($match / $sort / $skip / $limit) for <paramref name="select"/>'s
+    /// set operations in their recorded order. Shared by the outer query's own <see cref="MongoSelectDefinition.PipelineOps"/>,
     /// a set-operation operand's <see cref="MongoSelectDefinition.PipelineOps"/>
     /// (<see cref="MongoSetOperation.OperandSelect"/>, a plain whole-entity select), and the outer query's
     /// post-set-op <see cref="MongoSelectDefinition.TrailingOps"/>.

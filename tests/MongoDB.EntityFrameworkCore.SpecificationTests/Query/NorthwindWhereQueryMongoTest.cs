@@ -46,7 +46,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
         AssertMql(
             """
-Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
+Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["$UnitsInStock", 20] }, "then" : false, "else" : true } }] } } }
 """);
     }
 
@@ -1000,7 +1000,7 @@ Products.{ "$match" : { "$expr" : { "$not" : [{ "$or" : [{ "$not" : [{ "$and" : 
         await base.Where_comparison_to_nullable_bool(async);
         AssertMql(
             """
-Customers.{ "$match" : { "$expr" : { "$let" : { "vars" : { "start" : { "$subtract" : [{ "$strLenCP" : "$_id" }, 2] } }, "in" : { "$and" : [{ "$gte" : ["$$start", 0] }, { "$eq" : [{ "$indexOfCP" : ["$_id", "KI", "$$start"] }, "$$start"] }] } } } } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "KI$", "options" : "s" } } } }
 """);
     }
 
@@ -1162,8 +1162,8 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Products.{ "$match" : { "UnitsInStock" : { "$gte" : 20 } } }
-            """);
+Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["$UnitsInStock", 20] }, "then" : false, "else" : true } }] } } }
+""");
     }
 #endif
 

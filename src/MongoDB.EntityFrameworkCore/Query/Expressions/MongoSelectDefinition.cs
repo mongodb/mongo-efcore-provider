@@ -62,23 +62,25 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     public IReadOnlyList<MongoSelectOp> TrailingOps => _trailingOps;
 
-    // ── Post-join ops (deferred past a confirmed Where over a join's Inner scope) ──
+    // ── Post-join ops (deferred past a confirmed Where/OrderBy over a join's Inner scope) ──
     // A THIRD ordered filter/sort/page list, emitted by the lowerer immediately after the (single) reference-
     // Include's $lookup/$unwind block — never reached via SetOperation, which is mutually exclusive with this
-    // (a query either confirms a join's Inner access from a bare Where, or attaches a set op; nothing here
-    // supports both at once). Populated only once JoinInnerAccessConfirmedFromWhere flips ActiveOps for every
-    // op recorded from that point on, so the Where predicate itself (via AddPredicateConjunct) AND any later
-    // slot operator (notably a reducer's First()/FirstOrDefault() $limit) land here instead of _pipelineOps —
-    // which is required for correctness, not just tidiness: the Where predicate IS the filter that decides
-    // "first", so it must run before, never after, the reducer's own $limit.
+    // (a query either confirms a join's Inner access from a bare Where/OrderBy, or attaches a set op; nothing
+    // here supports both at once). Populated only once JoinInnerAccessConfirmed flips ActiveOps for every op
+    // recorded from that point on, so the Where predicate/OrderBy key itself (via AddPredicateConjunct/
+    // StartOrReplaceSort) AND any later slot operator (notably a reducer's First()/FirstOrDefault() $limit)
+    // land here instead of _pipelineOps — which is required for correctness, not just tidiness: e.g. the
+    // Where predicate IS the filter that decides "first", so it must run before, never after, the reducer's
+    // own $limit.
     private readonly List<MongoSelectOp> _postJoinOps = [];
 
     /// <summary>
-    /// The ordered filter/sort/page operations recorded AFTER a <c>Where</c> predicate reaching a single-level
-    /// join's Inner side (a null check, e.g. <c>e.Manager == null</c>, or a general comparison, e.g.
-    /// <c>o.Customer.City != "London"</c>) confirmed that join's <c>$lookup</c> from a bare <c>Where</c>. The
-    /// lowerer emits these verbatim immediately after that <c>$lookup</c>/<c>$unwind</c> block. Empty for every
-    /// query that never took this path.
+    /// The ordered filter/sort/page operations recorded AFTER a <c>Where</c> predicate or <c>OrderBy</c>/
+    /// <c>ThenBy</c> sort key reaching a single-level join's Inner side (a null check, e.g.
+    /// <c>e.Manager == null</c>, a general comparison, e.g. <c>o.Customer.City != "London"</c>, or a sort key,
+    /// e.g. <c>o.OrderID</c>) confirmed that join's <c>$lookup</c> without a confirming <c>Select</c> reaching
+    /// it. The lowerer emits these verbatim immediately after that <c>$lookup</c>/<c>$unwind</c> block. Empty
+    /// for every query that never took this path.
     /// </summary>
     public IReadOnlyList<MongoSelectOp> PostJoinOps => _postJoinOps;
 
@@ -129,30 +131,63 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     public IReadOnlyList<MongoSelectOp> PostGroupOps => _postGroupOps;
 
-    private bool _joinInnerAccessConfirmedFromWhere;
+    private bool _joinInnerAccessConfirmed;
 
     /// <summary>
-    /// <see langword="true"/> once <c>NativeSlotPopulator</c>'s <c>Where</c> arm has resolved a predicate
-    /// reaching a single-level join's Inner side — either
-    /// <see cref="NativeTranslation.NativeJoinScopeTranslator.TryMatchInnerNullCheck"/>'s null-check shape, or
-    /// a general comparison via <see cref="NativeTranslation.NativeJoinScopeTranslator.TryTranslatePredicate"/>.
-    /// Flips <see cref="ActiveOps"/> to <see cref="PostJoinOps"/> for every op recorded from this point on —
-    /// see that list's own remarks for why the ordering matters.
+    /// <see langword="true"/> once <c>NativeSlotPopulator</c>'s <c>Where</c> or <c>OrderBy</c>/<c>ThenBy</c>
+    /// arm has resolved an expression reaching a single-level join's Inner side — a
+    /// <see cref="NativeTranslation.NativeJoinScopeTranslator.TryMatchInnerNullCheck"/> null check, a general
+    /// comparison via <see cref="NativeTranslation.NativeJoinScopeTranslator.TryTranslatePredicate"/>, or a
+    /// sort key via <see cref="NativeTranslation.NativeJoinScopeTranslator.TryTranslateValue"/>. Flips
+    /// <see cref="ActiveOps"/> to <see cref="PostJoinOps"/> for every op recorded from this point on — see
+    /// that list's own remarks for why the ordering matters.
     /// </summary>
-    internal bool JoinInnerAccessConfirmedFromWhere => _joinInnerAccessConfirmedFromWhere;
+    internal bool JoinInnerAccessConfirmed => _joinInnerAccessConfirmed;
 
     /// <summary>
-    /// Records that a bare <c>Where</c> predicate reaching a single-level join's Inner side confirmed this
-    /// select's join (no confirming <c>Select</c> reached it yet). See
-    /// <see cref="JoinInnerAccessConfirmedFromWhere"/>.
+    /// Records that a bare <c>Where</c> predicate or <c>OrderBy</c>/<c>ThenBy</c> sort key reaching a
+    /// single-level join's Inner side confirmed this select's join (no confirming <c>Select</c> reached it
+    /// yet). See <see cref="JoinInnerAccessConfirmed"/>.
     /// </summary>
-    internal void MarkJoinInnerAccessConfirmedFromWhere() => _joinInnerAccessConfirmedFromWhere = true;
+    internal void MarkJoinInnerAccessConfirmed() => _joinInnerAccessConfirmed = true;
+
+    /// <summary>
+    /// Relocates a trailing <see cref="MongoSortOp"/> already recorded in <see cref="PipelineOps"/> (from
+    /// earlier Outer-only keys in the SAME <c>OrderBy</c>/<c>ThenBy</c> chain) into <see cref="PostJoinOps"/>,
+    /// in place, before a <c>ThenBy</c> key reaching the join's Inner side extends it there. A no-op when the
+    /// tail of <see cref="PipelineOps"/> isn't a sort (nothing to relocate — the new key starts a fresh sort
+    /// in <see cref="PostJoinOps"/> instead, which needs no special handling).
+    /// <para>
+    /// Necessary because, unlike <see cref="MongoMatchOp"/> (two sequential <c>$match</c> stages AND together
+    /// regardless of which side of a stage boundary each lands on), a <c>$sort</c> stage does NOT compose with
+    /// an EARLIER <c>$sort</c> the way a later <c>ThenBy</c> key needs it to: MongoDB's <c>$sort</c> re-orders
+    /// the WHOLE input by its own keys, using arrival order only to break ties on those keys — it does not
+    /// treat an earlier <c>$sort</c>'s ordering as a higher-priority key to preserve. Leaving
+    /// <c>OrderBy(o.OrderID).ThenBy(o.OrderDate)</c> in <c>PipelineOps</c> (pre-<c>$lookup</c>) and a later
+    /// <c>ThenBy(o.Customer.CustomerID)</c> in <c>PostJoinOps</c> (post-<c>$lookup</c>) as TWO separate
+    /// <c>$sort</c> stages would silently make <c>CustomerID</c> the PRIMARY sort key and drop
+    /// <c>OrderID</c>/<c>OrderDate</c> to tie-breakers — MEASURED wrong-row-order regression in
+    /// <c>NorthwindMiscellaneousQueryMongoTest.OrderBy_object_type_server_evals</c>
+    /// (<c>Orders.OrderBy(o =&gt; o.OrderID).ThenBy(o =&gt; o.OrderDate).ThenBy(o =&gt; o.Customer.CustomerID)
+    /// .ThenBy(o =&gt; o.Customer.City)</c>) before this method existed. Relocating the WHOLE existing sort op
+    /// keeps every key of one logical ordering in the SAME <c>$sort</c> stage, wherever it ends up.
+    /// </para>
+    /// </summary>
+    internal void DeferTrailingSortPastConfirmedJoin()
+    {
+        if (_pipelineOps.Count > 0 && _pipelineOps[^1] is MongoSortOp trailingSort)
+        {
+            _pipelineOps.RemoveAt(_pipelineOps.Count - 1);
+            _postJoinOps.Add(trailingSort);
+        }
+    }
 
     /// <summary>
     /// The op list the five merge methods currently target: <see cref="TrailingOps"/> once a set op has been
-    /// attached (so post-set-op ops are trailing); <see cref="PostJoinOps"/> once a bare <c>Where</c> has
-    /// confirmed a join's Inner access (a null check or a general comparison — so the predicate itself, and
-    /// anything recorded after it, land past the <c>$lookup</c>/<c>$unwind</c> block); <see cref="PostGroupOps"/>
+    /// attached (so post-set-op ops are trailing); <see cref="PostJoinOps"/> once a bare <c>Where</c> or
+    /// <c>OrderBy</c>/<c>ThenBy</c> has confirmed a join's Inner access (a null check, a general comparison,
+    /// or a sort key — so the expression itself, and anything recorded after it, land past the
+    /// <c>$lookup</c>/<c>$unwind</c> block); <see cref="PostGroupOps"/>
     /// once a projected Distinct's OR an ordinary <c>GroupBy(key).Select(aggregate)</c>'s degenerate/keyed
     /// <c>$group</c> has finalized (so a following OrderBy/ThenBy/Skip/Take/aggregate-predicate lands past the
     /// <c>$group</c> + flattening <c>$project</c>); otherwise <see cref="PipelineOps"/> (source1's own /
@@ -168,7 +203,7 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     private List<MongoSelectOp> ActiveOps
         => SetOperation != null ? _trailingOps
-            : _joinInnerAccessConfirmedFromWhere ? _postJoinOps
+            : _joinInnerAccessConfirmed ? _postJoinOps
             : IsDistinct && !IsGroupBy && Grouping != null ? _postGroupOps
             : IsGroupBy && !IsDistinct && Grouping != null ? _postGroupOps
             : _pipelineOps;

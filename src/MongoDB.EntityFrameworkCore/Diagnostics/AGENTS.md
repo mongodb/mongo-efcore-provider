@@ -9,47 +9,35 @@ adjacent-areas: [Storage, Query]
 
 ## Scope
 
-EF Core's events/logging integration: the provider's event IDs, their `EventDefinition`s, the logger extension
-methods that emit them, and the `EventData` payloads dispatched to `DiagnosticSource`. Touchpoints are query
-execution, bulk writes, and transaction lifecycle.
+EF Core's events/logging integration: event IDs, `EventDefinition`s, logger extension methods, and the
+`EventData` payloads dispatched to `DiagnosticSource`. Touchpoints: query execution, bulk writes, transaction
+lifecycle.
 
-**Out:** the log *call sites* (they live in Storage and Query and call into here), and the sensitive-data
-setting itself (`DbContextOptionsBuilder.EnableSensitiveDataLogging()`, read via `ShouldLogSensitiveData()`).
+**Out:** log call sites (Storage/Query call into here); the sensitive-data setting itself
+(`EnableSensitiveDataLogging()` / `ShouldLogSensitiveData()`).
 
 ## Key entry points
 
-- `MongoEventId` — the event-ID registry, grouped by `DbLoggerCategory.*`. Values are **versioned and
-  immutable**: append new IDs, never insert or renumber.
+- `MongoEventId` — event-ID registry by `DbLoggerCategory.*`. **Versioned and immutable**: append, never
+  renumber.
 - `MongoLoggingDefinitions` — extends EF's `LoggingDefinitions`; lazily allocates `EventDefinition`s via
-  `NonCapturingLazyInitializer` (EF's own diagnostics convention).
-- `MongoLoggerExtensions`, `MongoLoggerTransactionExtensions`, `MongoLoggerUpdateExtensions` — each method
-  checks `ShouldLog(...)` → emits to `ILogger`, then `NeedsEventData(...)` → allocates an `EventData` and
-  dispatches. Sensitive payloads (MQL with bound parameter values) require `ShouldLogSensitiveData()`;
-  otherwise the sensitive part logs as `"?"`.
-- `MongoQueryEventData`, `MongoBulkWriteEventData`, `MongoTransactionStartingEventData`, … — the typed payloads.
-
-## Boundaries with adjacent areas
-
-- **vs Storage.** `MongoDatabaseWrapper`/`MongoClientWrapper`/`MongoTransaction` are the callers; emission and
-  event-data construction live here.
-- **vs Query.** `MongoClientWrapper.Execute(...)` logs executed MQL via `ExecutedMqlQuery(...)`; the redaction
-  for that path lives here.
+  `NonCapturingLazyInitializer`.
+- `MongoLoggerExtensions`/`…TransactionExtensions`/`…UpdateExtensions` — each method: `ShouldLog(...)` → log,
+  `NeedsEventData(...)` → build `EventData` and dispatch. Sensitive payloads require
+  `ShouldLogSensitiveData()`, else log as `"?"`.
+- `MongoQueryEventData`, `MongoBulkWriteEventData`, `MongoTransactionStartingEventData`, … — typed payloads.
 
 ## Common pitfalls
 
-- **Event-ID stability is contract.** External `DiagnosticSource` subscribers observe these. Reordering,
-  renumbering or removing a member is a breaking change.
-- **Redaction is single-pointed.** MQL is only printed in full when `ShouldLogSensitiveData()` is true. Don't
-  bypass the gate by formatting MQL into some other log path — that flag is the *only* user-visible control,
-  and `security-reviewer` flags regressions.
-- **Event-definition fields are lazily initialized.** Forgetting to declare a new event's `EventDefinition`
-  field in `MongoLoggingDefinitions` makes the lazy-init lambda throw NRE the first time the event fires.
-- **`EventData` must snapshot.** Don't capture mutable references (an `IUpdateEntry` whose state may change) —
-  copy the values you need into the payload's properties.
+- **Event-ID stability is contract** — external `DiagnosticSource` subscribers observe these values.
+- **Redaction is single-pointed** on `ShouldLogSensitiveData()`; don't add a second path around it
+  (`security-reviewer` flags this).
+- **New events need a declared `EventDefinition` field** in `MongoLoggingDefinitions`, or the lazy-init throws
+  NRE on first fire.
+- **`EventData` must snapshot values**, not mutable references (e.g. an `IUpdateEntry`).
 
 ## How to test
 
-There is no `Diagnostics/` test folder — diagnostics are covered indirectly via `TestMqlLoggerFactory` (in
-SpecificationTests and FunctionalTests `Utilities/`) and by features asserting on events (e.g.
-`QueryableEncryptionTests` checks `EncryptedNullablePropertyEncountered` is raised). For a focused test, hook a
-`TestLoggerFactory` into a `DbContextOptionsBuilder` and filter captured events by `MongoEventId.<name>`.
+No `Diagnostics/` test folder — covered via `TestMqlLoggerFactory` and feature tests asserting events (e.g.
+`QueryableEncryptionTests`). For a focused check, hook a `TestLoggerFactory` into `DbContextOptionsBuilder` and
+filter by `MongoEventId.<name>`.

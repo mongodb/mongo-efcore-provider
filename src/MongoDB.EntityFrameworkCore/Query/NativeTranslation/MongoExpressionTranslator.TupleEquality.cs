@@ -182,7 +182,7 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
-    /// Whether <paramref name="call"/> is a call to one of the eight generic <see cref="Tuple.Create"/>
+    /// Whether <paramref name="call"/> is a call to one of the eight generic <see cref="Tuple"/>.Create
     /// overloads. The C# compiler never inlines a factory-method body into an expression tree, so
     /// <c>Tuple.Create(a, b)</c> reaches here as a <see cref="MethodCallExpression"/>, never as the
     /// <see cref="NewExpression"/> the sibling <c>new Tuple&lt;...&gt;(...)</c> spelling produces.

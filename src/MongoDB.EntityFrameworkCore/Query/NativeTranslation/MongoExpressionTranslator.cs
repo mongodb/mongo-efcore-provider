@@ -767,6 +767,17 @@ internal sealed partial class MongoExpressionTranslator
             case MethodCallExpression callEq when TryTranslateEntityEqualityCall(callEq, out var entityEqualityCall):
                 return entityEqualityCall;
 
+            // A two-valued predicate compared to a boolean literal (`c.CustomerID.EndsWith("KI") ==
+            // ((bool?)true)`) — the predicate side (a method call, ternary, quantifier, etc.) has no
+            // stored-member shape TranslateComparisonCore's query-native branches recognize (TryResolveMember
+            // only matches a bare member) and TranslateOperand's value-position path has no case for a
+            // predicate either, so this always declined to driver-LINQ. Must run BEFORE the ordinary
+            // comparison dispatch below for the same reason as entity/tuple equality above: TryResolveMember
+            // will never see a member here. See TryTranslateBooleanPredicateComparison.
+            case BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } boolPredEq
+                when TryTranslateBooleanPredicateComparison(boolPredEq, out var boolPredicateComparison):
+                return boolPredicateComparison;
+
             case BinaryExpression be when IsComparison(be.NodeType):
                 return TranslateComparison(be);
 
@@ -915,6 +926,41 @@ internal sealed partial class MongoExpressionTranslator
                 if (TryGetBareFieldProperty(operand, out var notOperandProperty) && notOperandProperty.IsNullable)
                     return null; // conservative: nullable bool Not could diverge from driver rendering
                 return new MongoUnaryExpression(MongoUnaryOperator.Not, operand);
+            }
+
+            // --- Boolean-typed ternary used as a predicate: test ? ifTrue : ifFalse ---
+            //
+            // EF-322 (Where_ternary_boolean_condition_negated): TranslateOperand already translates a ternary
+            // as a VALUE (computed sort keys, projections, arithmetic operands); this admits the identical
+            // shape as a PREDICATE ROOT (Where's own body, an &&/|| operand, or — via the Not case above — the
+            // operand of a negation). Test is translated via TryTranslate, the same ordinary predicate
+            // translator TranslateOperand's own ternary arm uses for its Test. Both BRANCHES, unlike
+            // TranslateOperand's, recurse through THIS method rather than TranslateOperand: a boolean-typed
+            // branch here is itself a predicate (e.g. a nested comparison or another ternary), not a computed
+            // value. A branch that resolves to a bare non-default-serialized bool field is declined
+            // (IsUnsafeTruthinessRoot) — the built MongoConditionalExpression always renders through the
+            // aggregation-expression $cond, which evaluates by BSON truthiness, the same hazard RenderUnary's
+            // own Not-over-$expr fallback already guards against.
+            //
+            // MongoConditionalExpression has no query-dialect form (see its own remarks and
+            // IsQueryDialectRenderable's `MongoConditionalExpression => false` arm), so the result always
+            // renders through the $expr catch-all — safe at a top-level $match conjunct or as a Not operand,
+            // and IsQueryDialectRenderable's existing `false` answer already keeps it out of any $elemMatch,
+            // where $expr is a hard server error.
+            case ConditionalExpression conditional when conditional.Type == typeof(bool):
+            {
+                if (!TryTranslate(conditional.Test, out var test))
+                    return null;
+
+                var ifTrue = TranslateNode(Unwrap(conditional.IfTrue));
+                if (ifTrue is null || IsUnsafeTruthinessRoot(ifTrue, out _))
+                    return null;
+
+                var ifFalse = TranslateNode(Unwrap(conditional.IfFalse));
+                if (ifFalse is null || IsUnsafeTruthinessRoot(ifFalse, out _))
+                    return null;
+
+                return new MongoConditionalExpression(test, ifTrue, ifFalse);
             }
 
             // --- Array field contains value: arrayField.Contains(constant) → { field: value } ---
@@ -1290,6 +1336,70 @@ internal sealed partial class MongoExpressionTranslator
     /// </remarks>
     private MongoBinaryExpression? TranslateComparison(BinaryExpression be)
         => TranslateComparisonCore(be.Left, be.Right, be.NodeType);
+
+    /// <summary>
+    /// Recognizes <c>predicate == literalBool</c> / <c>predicate != literalBool</c> (e.g.
+    /// <c>c.CustomerID.EndsWith("KI") == ((bool?)true)</c>), where <c>predicate</c> is a non-nullable
+    /// bool-typed expression with no stored-member shape of its own — a method call, ternary, quantifier,
+    /// etc., anything <see cref="TranslateComparisonCore"/>'s member/value branches can't resolve via
+    /// <see cref="TryResolveMember"/>. Comparing a two-valued predicate to a literal true/false is
+    /// semantically just the predicate itself (<c>Equal</c>+<see langword="true"/> /
+    /// <c>NotEqual</c>+<see langword="false"/>) or its negation (<c>Equal</c>+<see langword="false"/> /
+    /// <c>NotEqual</c>+<see langword="true"/>); this reuses <see cref="TryTranslate"/> — the ordinary
+    /// predicate path already used by <c>Where</c>/<c>&amp;&amp;</c>/<c>||</c> — plus
+    /// <see cref="MongoExpressionNegator"/>, instead of teaching <see cref="TranslateOperand"/>'s
+    /// value-position path to emit predicates as <c>$expr</c> booleans.
+    /// </summary>
+    /// <remarks>
+    /// Declines (returns <see langword="false"/>) whenever the non-literal side already resolves via
+    /// <see cref="TryResolveMember"/> — that shape belongs to <see cref="TranslateComparisonCore"/>'s own
+    /// query-native branch (indexable <c>$match</c>, not a predicate re-translation) and must keep owning it
+    /// unchanged. Confined to a non-nullable bool predicate side: a nullable-bool predicate has no
+    /// TryTranslate coverage that preserves three-valued semantics, so admitting it here would risk silently
+    /// answering the wrong tri-state comparison.
+    /// </remarks>
+    private bool TryTranslateBooleanPredicateComparison(BinaryExpression be, [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+
+        var left = Unwrap(be.Left);
+        var right = Unwrap(be.Right);
+
+        Expression predicateSide;
+        bool literalValue;
+        if (right is ConstantExpression { Value: bool rightBool })
+        {
+            literalValue = rightBool;
+            predicateSide = left;
+        }
+        else if (left is ConstantExpression { Value: bool leftBool })
+        {
+            literalValue = leftBool;
+            predicateSide = right;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (predicateSide.Type != typeof(bool) || predicateSide is ConstantExpression)
+            return false;
+
+        if (TryResolveMember(predicateSide, out _, out _, out _))
+            return false; // TranslateComparisonCore's own query-native branch owns this shape
+
+        if (!TryTranslate(predicateSide, out var predicate))
+            return false;
+
+        var negate = be.NodeType == ExpressionType.Equal ? !literalValue : literalValue;
+        if (!negate)
+        {
+            result = predicate;
+            return true;
+        }
+
+        return MongoExpressionNegator.TryNegate(predicate, out result);
+    }
 
     /// <summary>
     /// The shared core of <see cref="TranslateComparison"/>, taking the two operands and the comparison's

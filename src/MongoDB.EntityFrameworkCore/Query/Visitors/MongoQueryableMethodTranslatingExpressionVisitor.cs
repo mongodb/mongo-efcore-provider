@@ -997,8 +997,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         {
             // Final review, Critical 1: PostJoinOps and PostLookupPagingOps are NOT mutually exclusive.
             // NativeSlotPopulator's general inner-predicate Where arm (the one whose own comment says "unlike
-            // the null-check arm, no IsLeftOuter requirement") can call MarkJoinInnerAccessConfirmedFromWhere()
-            // — populating PostJoinOps with its own $match — for a REQUIRED (non-left-outer) reference
+            // the null-check arm, no IsLeftOuter requirement") can call MarkJoinInnerAccessConfirmed() —
+            // populating PostJoinOps with its own $match — for a REQUIRED (non-left-outer) reference
             // navigation, which is exactly the "not 1:1-safe" category this paging branch also targets. If a
             // Skip/Take was ALSO recorded before that Where-flip (still sitting in PipelineOps) and this branch
             // then defers it into PostLookupPagingOps, MongoSelectLowerer emits PostJoinOps (the $match) THEN
@@ -1008,7 +1008,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // outright for this narrow, currently-untested combination instead — a pure safety restoration of
             // today's behavior for this shape, not a loss of any currently-passing coverage (confirmed by
             // searching the test suite before making this change).
-            if (mongoQueryExpression.Select.JoinInnerAccessConfirmedFromWhere)
+            if (mongoQueryExpression.Select.JoinInnerAccessConfirmed)
             {
                 return false;
             }
@@ -3370,11 +3370,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         }
 
         // Projected operands. Both operands are plain projected selects (a Select-projection is the SOLE
-        // terminal on each) OR a plain projected Distinct (EF-322: IsPlainDistinctSelect — its own $group +
-        // flattening $project is exactly as much "this operand's own pre-combine pipeline" as a plain
-        // Select's $project is; either kind may appear on either side, independently, since the Union/
-        // Concat dedup only ever compares the FLATTENED projected values by alias, never how they got that
-        // shape). The EntityType-equality gate above does NOT apply — projected operands may be different
+        // terminal on each), a plain projected Distinct (EF-322: IsPlainDistinctSelect), OR a genuine
+        // GroupBy(key).Select(aggregate) (EF-322: IsPlainGroupBySelect) — each kind's own $group (real
+        // accumulator or Distinct's dedup-only degenerate form) + flattening $project is exactly as much
+        // "this operand's own pre-combine pipeline" as a plain Select's $project is; any of the three kinds
+        // may appear on either side, independently, since the Union/Concat dedup only ever compares the
+        // FLATTENED projected values by alias, never how they got that shape. The EntityType-equality gate
+        // above does NOT apply — projected operands may be different
         // collections that project to the same shape; ProjectionShapesMatch guards the shape compatibility
         // instead (a correctness guard, not just an optimization: the dedup / source-tagging compare whole
         // projected documents by value, so mismatched alias sets would mis-compare). EF Core rejects
@@ -3397,9 +3399,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // combined row then reads back mongo1's baked-in value instead of its own actual "_v". Measured: the
         // server-side pipeline is unaffected (each operand's own $project is correct BSON), only the CLIENT
         // shaper is wrong. mongo2 needs no equivalent guard -- its own shaper is always discarded here.
-        if ((IsPlainProjectedSelect(mongo1, allowPreCombineLookups: true) || IsPlainDistinctSelect(mongo1, allowPreCombineLookups: true))
+        if ((IsPlainProjectedSelect(mongo1, allowPreCombineLookups: true) || IsPlainDistinctSelect(mongo1, allowPreCombineLookups: true)
+                || IsPlainGroupBySelect(mongo1, allowPreCombineLookups: true))
             && !HasShaperUnsafeConstantLeaf(mongo1)
-            && (IsPlainProjectedSelect(mongo2) || IsPlainDistinctSelect(mongo2))
+            && (IsPlainProjectedSelect(mongo2) || IsPlainDistinctSelect(mongo2) || IsPlainGroupBySelect(mongo2))
             && ProjectionShapesMatch(mongo1.Select.Projection, mongo2.Select.Projection))
         {
             mongo1.Select.AppendSetOperation(new MongoSetOperation(
@@ -3550,9 +3553,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     // of IsPlainProjectedSelect. Its own $group + flattening $project (Select.Grouping / Select.Projection)
     // become part of ITS pre-combine pipeline in MongoSelectLowerer, exactly where a plain projected operand's
     // own $project already goes — so the Union/Concat dedup still ends up comparing the SAME flattened
-    // projected values either way. IsGroupBy excludes a genuine GroupBy(key).Select(aggregate) (a completely
-    // different — and, combined with a set op, wrong-data-unsafe — shape; see MarkGroupByFallbackUnsafe
-    // elsewhere). PriorGrouping excludes a GroupBy nested ON this Distinct (EF-322's own nested-GroupBy
+    // projected values either way. IsGroupBy excludes a genuine GroupBy(key).Select(aggregate) — see
+    // IsPlainGroupBySelect just below for THAT shape as an operand; it is a SEPARATE (not narrower/wider)
+    // predicate, not folded into this one, because IsDistinct/IsGroupBy are mutually exclusive by
+    // construction. PriorGrouping excludes a GroupBy nested ON this Distinct (EF-322's own nested-GroupBy
     // feature) — that shape's OWN Grouping now describes the outer GroupBy, not the Distinct, so it is simply
     // not a Distinct-shaped operand at all here. A whole-entity Distinct (MongoDistinctOp in PipelineOps,
     // Grouping stays null) is UNAFFECTED by this predicate — it is already covered by IsPlainWholeEntitySelect,
@@ -3561,6 +3565,29 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         => mongo.Select.Route == NativeRoute.GroupBy
            && mongo.Select.IsDistinct
            && !mongo.Select.IsGroupBy
+           && mongo.Select.Grouping != null
+           && mongo.Select.PriorGrouping == null
+           && mongo.Select.Cardinality == null
+           && mongo.Select.UnwindSource == null
+           && !mongo.IsJoinQuery
+           && (allowPreCombineLookups ? mongo.Lookups.All(l => l.InjectAfterRoot) : mongo.Lookups.Count == 0)
+           && !mongo.CapturedExpression.ContainsVectorSearch();
+
+    // EF-322: a genuine GroupBy(key).Select(aggregate) — route == GroupBy with IsGroupBy true, as opposed to
+    // IsPlainDistinctSelect's degenerate dedup-only $group — as a set-op operand. This shape was previously
+    // excluded here entirely (MarkNotNativelyRepresentable, graceful driver-LINQ fallback) on the assumption
+    // that it shares IsGroupBy's OTHER hazard: a GroupBy feeding a Join returns silently-wrong (empty) rows
+    // over driver-LINQ, so TranslateJoinCore HARD-declines that shape via MarkGroupByFallbackUnsafe. That
+    // hazard is specific to Join — nothing about Union/Concat's dedup cares whether an operand's flattened
+    // projected values came from a real aggregate ($group with a $sum/$avg/etc. accumulator) or a Distinct's
+    // dedup-only $group ($first per group). MongoSelectLowerer's operand-lowering already treats the two
+    // identically: it emits a Grouping-bearing operand's own $group + flattening $project keyed only on
+    // Grouping != null (see AppendSetOpChainStages), never on IsDistinct/IsGroupBy — so the plumbing this
+    // predicate now admits was already exercised, just never reachable for a genuine GroupBy operand. Mirrors
+    // IsPlainDistinctSelect's field list exactly, swapping which of IsDistinct/IsGroupBy is required.
+    private static bool IsPlainGroupBySelect(MongoQueryExpression mongo, bool allowPreCombineLookups = false)
+        => mongo.Select.Route == NativeRoute.GroupBy
+           && mongo.Select.IsGroupBy
            && mongo.Select.Grouping != null
            && mongo.Select.PriorGrouping == null
            && mongo.Select.Cardinality == null

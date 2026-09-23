@@ -1097,7 +1097,7 @@ Customers.{ "$set" : { "__sort0" : { "$literal" : true } } }, { "$sort" : { "__s
         await base.Join_Customers_Orders_Skip_Take(async);
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$sort" : { "Inner._id" : 1 } }, { "$skip" : 10 }, { "$limit" : 5 }, { "$project" : { "ContactName" : "$Outer.ContactName", "OrderID" : "$Inner._id", "_id" : 0 } }
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$sort" : { "_lookup_Orders._id" : 1 } }, { "$skip" : 10 }, { "$limit" : 5 }, { "$project" : { "ContactName" : "$ContactName", "OrderID" : "$_lookup_Orders._id", "_id" : 0 } }
 """);
     }
 
@@ -1115,7 +1115,7 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
         await base.Join_Customers_Orders_Projection_With_String_Concat_Skip_Take(async);
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$sort" : { "Inner._id" : 1 } }, { "$skip" : 10 }, { "$limit" : 5 }, { "$project" : { "Contact" : { "$concat" : ["$Outer.ContactName", " ", "$Outer.ContactTitle"] }, "OrderID" : "$Inner._id", "_id" : 0 } }
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$sort" : { "_lookup_Orders._id" : 1 } }, { "$skip" : 10 }, { "$limit" : 5 }, { "$project" : { "Contact" : { "$concat" : ["$ContactName", " ", "$ContactTitle"] }, "OrderID" : "$_lookup_Orders._id", "_id" : 0 } }
 """);
     }
 
@@ -3744,9 +3744,15 @@ Orders.
     {
         await base.OrderBy_object_type_server_evals(async);
         AssertMql(
+#if EF8 || EF9
             """
 Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : "$_outer.OrderDate" } }, { "$sort" : { "_document._outer._id" : 1, "_key1" : 1, "_document._inner._id" : 1, "_document._inner.City" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$skip" : 0 }, { "$limit" : 20 }
 """);
+#else
+            """
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$set" : { "__sort0" : "$_id", "__sort1" : "$OrderDate" } }, { "$sort" : { "__sort0" : 1, "__sort1" : 1, "_lookup_Customer._id" : 1, "_lookup_Customer.City" : 1 } }, { "$unset" : ["__sort0", "__sort1"] }, { "$skip" : 0 }, { "$limit" : 20 }
+""");
+#endif
     }
 
     public override async Task AsQueryable_in_query_server_evals(bool async)
