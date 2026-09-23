@@ -143,13 +143,21 @@ public class ExpressionExtensionMethodsTests
         // chained-join-scalar-projection plan) the ordinary/computed leaf arm's own guard excluding a nested-
         // projection-shaped leafBody from the Levels.Count > 1 chain-scalar path. Listed with their expected
         // call count so a call site silently added or removed doesn't go unnoticed.
-        var familyASources = new (string RelativePath, int ExpectedCallCount)[]
+        //
+        // NativeProjectionBinder.cs ALSO carries exactly ONE family-B (opted-in) call site as of the
+        // multi-argument positional-ctor-DTO projection ticket: the NewExpression{Members:null,Arguments.Count>1}
+        // arm, which (like GroupBy's/SelectMany's own ctor-DTO result selectors) is read back by INDEX
+        // (MongoQueryableMethodTranslatingExpressionVisitor.BuildPositionalCtorProjectionShaper), never through
+        // the ProjectionMember/MemberInfo-keyed dictionary the family-A sites depend on — see
+        // MongoSelectDefinition.HasPositionalCtorProjectionShaper's remarks. ExpectedOptedInCallCount distinguishes
+        // that one line from the file's two still-forbidden family-A sites.
+        var familyASources = new (string RelativePath, int ExpectedCallCount, int ExpectedOptedInCallCount)[]
         {
-            ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeProjectionBinder.cs", 2),
-            ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeJoinScopeProjectionBinder.cs", 3),
+            ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeProjectionBinder.cs", 3, 1),
+            ("src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeJoinScopeProjectionBinder.cs", 3, 0),
         };
 
-        foreach (var (relativePath, expectedCallCount) in familyASources)
+        foreach (var (relativePath, expectedCallCount, expectedOptedInCallCount) in familyASources)
         {
             var fullPath = Path.Combine(repoRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
             Assert.True(File.Exists(fullPath), $"Expected source file not found: {fullPath}");
@@ -164,15 +172,17 @@ public class ExpressionExtensionMethodsTests
                 + $"{callSiteLines.Count}. If a call site was added/removed, update this test's expectations "
                 + "(and confirm the new/removed site does not opt in to allowPositionalConstructorArguments).");
 
-            foreach (var line in callSiteLines)
-            {
-                Assert.False(
-                    Regex.IsMatch(line, @"allowPositionalConstructorArguments\s*:\s*true"),
-                    $"{relativePath}: a family-A call site must NOT pass allowPositionalConstructorArguments: "
-                    + $"true (line: '{line.Trim()}'). Doing so lets a wrapped member resolve to a synthetic "
-                    + "positional alias that this call site's ProjectionMember/MemberInfo-keyed read cannot "
-                    + "find — see TryGetProjectionMembers' parameter doc for who may pass true.");
-            }
+            var optedInLines = callSiteLines
+                .Where(line => Regex.IsMatch(line, @"allowPositionalConstructorArguments\s*:\s*true"))
+                .ToList();
+
+            Assert.True(
+                optedInLines.Count == expectedOptedInCallCount,
+                $"{relativePath}: expected {expectedOptedInCallCount} call site(s) opting in to "
+                + $"allowPositionalConstructorArguments: true, found {optedInLines.Count}. A family-A call site "
+                + "must NOT pass allowPositionalConstructorArguments: true — doing so lets a wrapped member "
+                + "resolve to a synthetic positional alias that this call site's ProjectionMember/MemberInfo-"
+                + "keyed read cannot find — see TryGetProjectionMembers' parameter doc for who may pass true.");
         }
     }
 

@@ -129,6 +129,11 @@ internal static class NativeProjectionBinder
         // not be the member's own name. Registered on the select in the commit block below, alongside
         // AddProjection, for the same ordering reason as the bare override.
         var namedAliasOverrides = new List<(string MemberName, string Alias)>();
+        // True once the MULTI-ARGUMENT ctor-only-DTO arm below has translated every argument successfully.
+        // Committed to MongoSelectDefinition.HasPositionalCtorProjectionShaper only in the commit block, so a
+        // later leaf declining (there is none after this arm sets it — it's the last thing the arm does) can
+        // never leave the flag set for a projection that didn't actually commit. See that flag's own remarks.
+        var hasPositionalCtorProjection = false;
 
         switch (selector.Body)
         {
@@ -225,6 +230,47 @@ internal static class NativeProjectionBinder
 
                 break;
             }
+
+            // A MULTI-ARGUMENT CTOR-ONLY DTO — `x => new CustomerListItem(x.CustomerID, x.City)` — the
+            // 2-or-more-argument sibling of the single-argument arm above. The single-argument arm reuses the
+            // bare-body machinery (TryBindAsBareProjection), which is safe there only because a Members-null
+            // NewExpression with exactly one argument has nothing else to collide with; a SECOND argument does
+            // collide, for the reason explained on MongoSelectDefinition.HasPositionalCtorProjectionShaper — the
+            // generic read side (MongoProjectionBindingExpressionVisitor.VisitNew) resolves every argument of a
+            // Members-null body under the SAME ambient ProjectionMember, with no per-argument Enter/Exit at all.
+            //
+            // Handled here exactly like the WRAPPED-body arm above (same per-leaf translation, same alias
+            // derivation, same bookkeeping — seenAliases/leafIsArray/hasArrayLeaf/leafIsOwnedNavEntity/
+            // hasOwnedNavEntityLeaf/hasStringSequenceLeaf/namedAliasOverrides), reading the (memberName, value)
+            // pairs via TryGetProjectionMembers's OWN positional-argument admission
+            // (allowPositionalConstructorArguments: true) instead of the Members-based one — see that
+            // parameter's remarks for why only this shape (and GroupBy's/SelectMany's own ctor-DTO result
+            // selectors) may opt into it. hasPositionalCtorProjection is committed onto
+            // MongoSelectDefinition.HasPositionalCtorProjectionShaper only in the shared commit block below, once
+            // every leaf (and the sibling-readability sweep) has actually passed — never on a decline, per this
+            // file's "stage into locals, commit only once every gate passes" rule.
+            case NewExpression { Members: null, Arguments: { Count: > 1 } } when
+                selector.Body.TryGetProjectionMembers(out var positionalMembers, allowPositionalConstructorArguments: true):
+                foreach (var (memberName, memberValue) in positionalMembers)
+                {
+                    var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], memberValue, memberName);
+                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
+                        return false;
+                    if (!seenAliases.Add(alias))
+                        return false;
+                    projections.Add(new MongoProjection(alias, leaf));
+                    if (alias != memberName || isOwnedNavEntityLeaf)
+                        namedAliasOverrides.Add((memberName, alias));
+                    leafIsArray.Add(isArrayLeaf);
+                    hasArrayLeaf |= isArrayLeaf;
+                    leafIsOwnedNavEntity.Add(isOwnedNavEntityLeaf);
+                    hasOwnedNavEntityLeaf |= isOwnedNavEntityLeaf;
+                    hasStringSequenceLeaf |= memberValue is MethodCallExpression positionalStringSequenceCall
+                                             && IsStringSequenceMaterializationCall(positionalStringSequenceCall);
+                }
+
+                hasPositionalCtorProjection = true;
+                break;
 
             // A CLIENT-METHOD CALL wrapping the whole entity as its only meaningful operand —
             // `x => context.ClientMethod(x)` (an instance method on a captured `DbContext`, or any other
@@ -484,6 +530,11 @@ internal static class NativeProjectionBinder
         // successful commit so a projection that declined on any path above leaves none behind.
         if (hasStringSequenceLeaf)
             mongoQ.Select.HasStringSequenceProjectionLeaf = true;
+        // Same discipline, same block: provenance for the multi-argument ctor-only-DTO shape, recorded only
+        // alongside a successful commit — see MongoSelectDefinition.HasPositionalCtorProjectionShaper's remarks
+        // for why TranslateSelect needs this to divert the shaper build away from the generic fold.
+        if (hasPositionalCtorProjection)
+            mongoQ.Select.HasPositionalCtorProjectionShaper = true;
         return true;
     }
 

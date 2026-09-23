@@ -652,6 +652,15 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             {
                 mongoQueryExpression.Select.MarkNotNativelyRepresentable();
             }
+            // A multi-argument positional-ctor DTO just committed above — divert to the index-based shaper
+            // BEFORE the generic _projectionBindingExpressionVisitor fold at the bottom of this method ever
+            // sees it. See MongoSelectDefinition.HasPositionalCtorProjectionShaper's remarks for why that fold
+            // cannot be used for this shape.
+            else if (mongoQueryExpression.Select.HasPositionalCtorProjectionShaper)
+            {
+                return source.UpdateShaperExpression(
+                    BuildPositionalCtorProjectionShaper(mongoQueryExpression, selector.Body));
+            }
         }
 
         // A bare-nav owned/reference SelectMany (UnwindSource set by NativeSelectManyBinder.TryBindBareNavUnwind)
@@ -775,6 +784,55 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     // value raw by the alias (the member name) since these sources resolve to no IProperty.
     private static Expression BindGroupMember(MongoQueryExpression mongoQueryExpression, string alias, Expression valueExpression)
     {
+        var index = mongoQueryExpression.AddToProjection(valueExpression, alias);
+        return new ProjectionBindingExpression(mongoQueryExpression, index, valueExpression.Type);
+    }
+
+    /// <summary>
+    /// Builds the result shaper for a plain <c>Select</c> whose body is a MULTI-ARGUMENT positional-ctor DTO
+    /// (<c>x =&gt; new CustomerListItem(x.CustomerID, x.City)</c>) once
+    /// <c>NativeProjectionBinder.TryPopulateNativeProjection</c> has already committed the native
+    /// <c>$project</c> for it and set <see cref="MongoSelectDefinition.HasPositionalCtorProjectionShaper"/>.
+    /// Rewrites each constructor argument onto a <see cref="ProjectionBindingExpression"/> reading its own
+    /// INDEX — mirrors <see cref="TryBuildGroupResultShaper"/>/<see cref="BindGroupMember"/> (GroupBy's
+    /// analogous ctor-DTO result selector), for the identical reason: a <c>Members</c>-null
+    /// <see cref="NewExpression"/>'s read side has no per-argument Enter/Exit scoping to bind more than one
+    /// argument through — see <see cref="MongoSelectDefinition.HasPositionalCtorProjectionShaper"/>'s own
+    /// remarks.
+    /// </summary>
+    private static Expression BuildPositionalCtorProjectionShaper(MongoQueryExpression mongoQueryExpression, Expression projectionBody)
+    {
+        // NativeProjectionBinder.TryPopulateNativeProjection already validated this exact shape through the
+        // SAME reader (allowPositionalConstructorArguments: true) before setting
+        // HasPositionalCtorProjectionShaper, so a decline here is unreachable in practice — thrown rather than
+        // allowed to silently mis-shape the result, mirroring BuildSelectManyResultShaper's identical guard.
+        if (!projectionBody.TryGetProjectionMembers(out var members, allowPositionalConstructorArguments: true))
+        {
+            throw new InvalidOperationException(
+                $"Unexpected positional-ctor projection shape '{projectionBody.GetType().Name}' after successful native binding.");
+        }
+
+        var boundValues = new Expression[members.Count];
+        for (var i = 0; i < boundValues.Length; i++)
+        {
+            boundValues[i] = BindPositionalCtorProjectionMember(mongoQueryExpression, members[i].MemberName, members[i].Value);
+        }
+
+        return projectionBody.RebuildProjectionMembers(boundValues);
+    }
+
+    // Registers a projection for one positional-ctor-DTO member and returns a ProjectionBindingExpression
+    // reading it by index — mirrors BindGroupMember/BindSelectManyMember. Unlike those two, the alias is looked
+    // up through Select.TryGetProjectionAlias rather than used verbatim: NativeProjectionBinder's
+    // multi-argument arm reuses the WRAPPED-body leaf translation wholesale, which (for an owned-array or
+    // owned-nav-entity leaf) can register a DOCUMENT-PATH alias that differs from the synthetic memberName
+    // (TryGetProjectionMembers's "_ctorArg<N>" pseudo-name) — the override table is the single source of truth
+    // for that, exactly as MongoQueryExpression.ApplyProjection itself already consults it.
+    private static Expression BindPositionalCtorProjectionMember(MongoQueryExpression mongoQueryExpression, string memberName, Expression valueExpression)
+    {
+        var alias = mongoQueryExpression.Select.TryGetProjectionAlias(memberName, out var overriddenAlias)
+            ? overriddenAlias
+            : memberName;
         var index = mongoQueryExpression.AddToProjection(valueExpression, alias);
         return new ProjectionBindingExpression(mongoQueryExpression, index, valueExpression.Type);
     }

@@ -905,6 +905,27 @@ internal sealed class MongoSelectDefinition
     /// </remarks>
     internal bool HasClientWrappedWholeEntityShaper { get; set; }
 
+    /// <summary>
+    /// <see langword="true"/> when <c>NativeProjectionBinder.TryPopulateNativeProjection</c> committed a
+    /// MULTI-ARGUMENT positional-ctor DTO projection (<c>x =&gt; new CustomerListItem(x.CustomerID, x.City)</c>
+    /// — a <see cref="System.Linq.Expressions.NewExpression"/> whose <c>Members</c> is <see langword="null"/>
+    /// and whose <c>Arguments.Count</c> is 2 or more).
+    /// </summary>
+    /// <remarks>
+    /// Read by <c>MongoQueryableMethodTranslatingExpressionVisitor.TranslateSelect</c> to divert this Select's
+    /// result shaper away from the generic <c>_projectionBindingExpressionVisitor.Translate</c> fold and into
+    /// an INDEX-based shaper built the same way <c>NativeGroupByBinder</c>'s/<c>NativeSelectManyBinder</c>'s own
+    /// ctor-DTO result selectors already are (<c>TryBuildGroupResultShaper</c>/<c>BindGroupMember</c>,
+    /// <c>BuildSelectManyResultShaper</c>/<c>BindResultMember</c>). That diversion is necessary, not cosmetic:
+    /// the generic fold's <c>MongoProjectionBindingExpressionVisitor.VisitNew</c> only calls
+    /// <c>EnterProjectionMember</c>/<c>ExitProjectionMember</c> when <c>NewExpression.Members</c> is non-null —
+    /// for a <c>Members</c>-null body every constructor argument is visited under the SAME ambient
+    /// <c>ProjectionMember</c>, with no way to tell a 2nd/3rd argument apart. Binding by index instead (this
+    /// flag's whole purpose) sidesteps that scoping gap entirely, exactly as the two existing ctor-DTO result
+    /// selectors already do for their own shapes.
+    /// </remarks>
+    internal bool HasPositionalCtorProjectionShaper { get; set; }
+
     /// <summary>The native join scope chain recorded by <c>TranslateJoinCore</c>, or <see
     /// langword="null"/> if this select has no eligible native join.</summary>
     internal MongoJoinScope? JoinScope { get; set; }

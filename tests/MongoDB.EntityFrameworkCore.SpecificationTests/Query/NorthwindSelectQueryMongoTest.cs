@@ -1133,7 +1133,7 @@ Customers.
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$let" : { "vars" : { "this" : { "_id" : "$_id", "City" : "$City" } }, "in" : "$$this.City" } } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$limit" : 3 }, { "$project" : { "_id" : "$_id", "City" : "$City" } }
+            Customers.{ "$sort" : { "City" : 1 } }, { "$limit" : 3 }, { "$project" : { "_ctorArg0" : "$_id", "_ctorArg1" : "$City", "_id" : 0 } }
             """);
     }
 

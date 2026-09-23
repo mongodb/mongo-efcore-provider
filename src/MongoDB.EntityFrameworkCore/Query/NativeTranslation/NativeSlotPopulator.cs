@@ -488,8 +488,58 @@ internal static class NativeSlotPopulator
                  && NativeJoinScopeTranslator.TryTranslateRootScopeOnly(
                      chainedScope, keySelector.Parameters[0], keySelector.Body, valueMode: true, out var chainedSortKey))
             record(new MongoOrdering(chainedSortKey, ascending));
+        // A sort key reaching through a multi-argument positional-ctor DTO Select projection, e.g.
+        // `Select(c => new CustomerListItem(c.CustomerID, c.City)).OrderBy(c => c.City)` — EF Core's own
+        // Northwind Member_binding_after_ctor_arguments_fails_with_client_eval shape. Nav-expansion's pending-
+        // selector mechanism composes the key selector as `x => new CustomerListItem(x.CustomerID, x.City).City`
+        // — a MemberExpression whose receiver re-BUILDS the same Members-null NewExpression the trailing Select
+        // will project — and, empirically (confirmed by tracing this exact query), visits OrderBy/Take BEFORE
+        // the trailing Select: MongoSelectDefinition.HasPositionalCtorProjectionShaper is still unset and
+        // Projection is still empty at this point, so there is no alias table to consult yet. EF's own
+        // ReplacingExpressionVisitor only folds `new T(...).Prop` back to the original ctor argument when
+        // NewExpression.Members is populated (anonymous types) — never for this ordinary named-type positional
+        // ctor — so this raw, unfoldable shape reaches here instead of the plain-field arm above.
+        //
+        // Resolved by translating the MATCHING constructor argument directly, rather than through any projection
+        // alias: since the argument is evaluated against the SAME root parameter the sort runs over, translating
+        // it in place is exactly equivalent to `new T(...).Prop` and needs no coordination with the (not yet
+        // populated) Select. Which argument matches Prop is not otherwise recoverable without IL/body analysis
+        // — this uses the ctor-parameter-name-matches-property-name convention (case-insensitive) this
+        // codebase's own ctor-DTO shapes (CustomerOrderSummary/CustomerListItem-style) already follow.
+        else if (keySelector.Body is MemberExpression { Expression: NewExpression { Members: null } ctorExpr, Member: PropertyInfo prop }
+                 && ctorExpr.Constructor is { } ctor
+                 && Array.FindIndex(
+                     ctor.GetParameters(), p => string.Equals(p.Name, prop.Name, StringComparison.OrdinalIgnoreCase)) is var argIndex
+                 && argIndex >= 0
+                 && argIndex < ctorExpr.Arguments.Count
+                 && TryTranslateSortKeyExpression(translator, ctorExpr.Arguments[argIndex], out var ctorSortKey))
+            record(new MongoOrdering(ctorSortKey, ascending));
         else
             mongoQ.Select.MarkNotNativelyRepresentable();
+    }
+
+    /// <summary>
+    /// Translates a value expression to a sort key exactly like the two leading arms of
+    /// <see cref="PopulateSortSlot"/> (plain field, then computed key) — factored out so the positional-ctor arm
+    /// can reuse both without duplicating the fallback chain.
+    /// </summary>
+    private static bool TryTranslateSortKeyExpression(
+        MongoExpressionTranslator translator, Expression valueExpression, [NotNullWhen(true)] out MongoExpression? sortKey)
+    {
+        if (translator.TryTranslateField(valueExpression, out var fieldKey))
+        {
+            sortKey = fieldKey;
+            return true;
+        }
+
+        if (TryTranslateComputedSortKey(translator, valueExpression, out var computedKey))
+        {
+            sortKey = computedKey;
+            return true;
+        }
+
+        sortKey = null;
+        return false;
     }
 
     /// <summary>
