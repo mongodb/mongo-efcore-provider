@@ -1283,7 +1283,7 @@ Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { } }
             """);
     }
 
@@ -1381,8 +1381,8 @@ Products.{ "$match" : { "$and" : [{ "UnitPrice" : { "$type" : "number" } }, { "$
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$type" : -1 } } }
-            """);
+Products.{ "$match" : { "$expr" : { "$cond" : { "if" : true, "then" : false, "else" : true } } } }
+""");
     }
 
     public override async Task Filter_non_nullable_value_after_FirstOrDefault_on_empty_collection(bool async)
