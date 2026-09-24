@@ -149,7 +149,7 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
             new { OrderNo = 1, CustomerId = (ObjectId?)matchedCustomerId },
             new { OrderNo = 2, CustomerId = (ObjectId?)danglingCustomerId }
         };
-        var customerSeeds = new[] { new { Id = matchedCustomerId, Name = "Alfreds" } };
+        var customerSeeds = new[] { new { Id = matchedCustomerId, Name = (string?)"Alfreds" } };
 
         var oracle = orderSeeds
             .OrderBy(o => o.OrderNo)
@@ -252,7 +252,7 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
             new { Id = matchedCustomerId, RegionId = (ObjectId?)matchedRegionId },
             new { Id = unmatchedCustomerId, RegionId = (ObjectId?)danglingRegionId }
         };
-        var regionSeeds = new[] { new { Id = matchedRegionId, Name = "Western Europe" } };
+        var regionSeeds = new[] { new { Id = matchedRegionId, Name = (string?)"Western Europe" } };
 
         var oracle = orderSeeds
             .Join(customerSeeds, o => o.CustomerId, c => c.Id, (o, c) => new { o, c })

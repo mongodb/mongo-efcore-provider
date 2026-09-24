@@ -647,6 +647,10 @@ internal sealed partial class MongoExpressionTranslator
             // $strLenCP runs directly against its operand's raw BSON representation, same reasoning as
             // MongoStringIndexOfExpression immediately above.
             MongoStringLengthExpression length => AllFieldsDefaultSerialized(length.Operand),
+            // Same reasoning as MongoStringLengthExpression immediately above: a Math/MathF function runs
+            // $abs/etc. directly against each operand's raw BSON representation, so a value-converted/
+            // non-default-represented field underneath would run the function against the WRONG value.
+            MongoMathExpression math => math.Operands.All(AllFieldsDefaultSerialized),
             // A constructed-tuple operand's elements each render through the raw $expr field path exactly
             // like an ordinary field-to-field/arithmetic operand — same reasoning as MongoBinaryExpression's
             // arm above, recursed per element instead of per side.
@@ -1126,6 +1130,11 @@ internal sealed partial class MongoExpressionTranslator
 
                 return new MongoRegexExpression(fieldNode, kind, termNode, negated: false);
             }
+
+            // --- EF.Functions.Like(matchExpression, pattern) ---
+
+            case MethodCallExpression likeCall when TryTranslateLike(likeCall, out var likeResult):
+                return likeResult;
 
             // --- Quantifiers over an owned (embedded) collection: source.Any() / Any(pred) / All(pred) ---
 
@@ -1931,6 +1940,11 @@ internal sealed partial class MongoExpressionTranslator
             var lengthOperand = TranslateOperand(lengthReceiver, allowNumericWidening);
             return lengthOperand is null ? null : new MongoStringLengthExpression(lengthOperand);
         }
+
+        // A Math/MathF function call (`Math.Abs(x)`, etc.). Same reasoning as the DateAdd/IndexOf arms above:
+        // a MethodCallExpression is never matched by TryResolveMember below.
+        if (TryTranslateMath(node, allowNumericWidening, out var math))
+            return math;
 
         if (TryResolveMember(node, out var property, out var fieldPath, out var operandIsOuter))
         {

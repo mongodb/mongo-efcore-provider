@@ -177,6 +177,7 @@ public class MongoExpressionNodeCoverageTests
             new MongoConcatExpression([headingField, new MongoConstantExpression("x", heading)]),
             new MongoStringIndexOfExpression(headingField, new MongoConstantExpression("x", heading)),
             new MongoStringLengthExpression(headingField),
+            new MongoMathExpression(MongoMathFunction.Abs, [rankField], typeof(int)),
             new MongoDocumentConstructionExpression(
                 Expression.New(typeof(object)), [(nameof(Post.Rank), rankField)]),
             new MongoTupleExpression([rankField, rankConstant])
@@ -694,6 +695,18 @@ public class MongoExpressionNodeCoverageTests
         ["MongoStringLengthExpression|PrefixRewriter.Rewrite"] = "rendered",
         ["MongoStringLengthExpression|QL.IsQueryDialectRenderable"] = "false",
         ["MongoStringLengthExpression|QL.Render"] = "rendered",
+
+        // Same treatment throughout: a Math/MathF function runs its MQL operator directly against each
+        // operand's raw BSON representation, has no query-dialect form (QL.Render's default arm delegates to
+        // $expr instead of a dedicated case, so it still renders successfully), and needs no negator arm.
+        ["MongoMathExpression|Agg.CanRender"] = "true",
+        ["MongoMathExpression|Agg.Render"] = "rendered",
+        ["MongoMathExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoMathExpression|AllFieldsDefaultSerialized(converted)"] = "false",
+        ["MongoMathExpression|Negator.TryNegate"] = "false",
+        ["MongoMathExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoMathExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoMathExpression|QL.Render"] = "rendered",
 
         ["MongoUnaryExpression|Agg.CanRender"] = "true",
         ["MongoUnaryExpression|Agg.Render"] = "rendered",

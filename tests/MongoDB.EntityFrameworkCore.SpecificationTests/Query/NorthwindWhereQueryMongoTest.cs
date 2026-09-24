@@ -2589,25 +2589,21 @@ Customers.{ "$match" : { "$expr" : { "$eq" : ["$_id", { "$concat" : ["ALF", "KI"
 
     public override async Task Where_Like_and_comparison(bool async)
     {
-        // Fails: translation of Like issue EF-222
-        await AssertTranslationFailed(() =>
-            base.Where_Like_and_comparison(async));
+        await base.Where_Like_and_comparison(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F.*$", "options" : "is" } }, "City" : "Seattle" } }
             """);
     }
 
     public override async Task Where_Like_or_comparison(bool async)
     {
-        // Fails: translation of Like issue EF-222
-        await AssertTranslationFailed(() =>
-            base.Where_Like_or_comparison(async));
+        await base.Where_Like_or_comparison(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$or" : [{ "_id" : { "$regularExpression" : { "pattern" : "^F.*$", "options" : "is" } } }, { "City" : "Seattle" }] } }
             """);
     }
 

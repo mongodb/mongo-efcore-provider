@@ -333,10 +333,15 @@ internal sealed class MongoQueryLanguageRenderer
             case MongoConstantExpression { Value: string literal }:
                 var pattern = MongoRegexPatternBuilder.BuildPattern(literal, regex.Kind);
 
-                // Matches the driver-LINQ v3 rendering exactly: a BsonRegularExpression value (canonical
-                // extended JSON: { $regularExpression: { pattern, options } }) with options "s" (dotall) —
-                // captured empirically by observing the translation under MongoQueryMode.DriverLinq.
-                body = new BsonRegularExpression(pattern, "s");
+                // Matches the driver-LINQ v3 rendering exactly for StartsWith/EndsWith/Contains: a
+                // BsonRegularExpression value (canonical extended JSON: { $regularExpression: { pattern,
+                // options } }) with options "s" (dotall) — captured empirically by observing the translation
+                // under MongoQueryMode.DriverLinq. EF.Functions.Like has no driver-LINQ precedent to match at
+                // all (the driver's own LINQ v3 provider does not translate it either — see
+                // MongoExpressionTranslator.Like.cs's remarks), so its case-sensitivity is this provider's own
+                // choice: case-insensitive ("i"), matching typical SQL LIKE collation semantics and the
+                // upstream EF Core conformance suite's own case-insensitive expected-result shape.
+                body = new BsonRegularExpression(pattern, regex.Kind == MongoRegexKind.Like ? "is" : "s");
                 break;
 
             case MongoParameterExpression parameter:
@@ -558,6 +563,7 @@ internal sealed class MongoQueryLanguageRenderer
             MongoDateAddExpression => false,
             MongoStringIndexOfExpression => false,
             MongoStringLengthExpression => false,
+            MongoMathExpression => false,
             MongoDateTimeOffsetLocalExpression => false,
             // No query-dialect form at all — see the node's own remarks. Explicit rather than left to the
             // catch-all, matching the style of MongoConditionalExpression/MongoDatePartExpression above.

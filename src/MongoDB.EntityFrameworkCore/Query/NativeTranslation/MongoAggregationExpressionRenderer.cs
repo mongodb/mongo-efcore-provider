@@ -138,6 +138,7 @@ internal static class MongoAggregationExpressionRenderer
                 }),
             MongoStringLengthExpression length
                 => new BsonDocument("$strLenCP", Render(length.Operand, placeholders, elementVariable)),
+            MongoMathExpression math => RenderMath(math, placeholders, elementVariable),
             MongoQuantifierExpression quantifier => RenderQuantifier(quantifier, placeholders, elementVariable),
             // A constructed nested sub-document leaf (EF-447, `new Book { Id = e.Id, Title = e.Title }`).
             // Each member renders through this SAME Render call, recursively, so a nested field ref renders as
@@ -238,15 +239,23 @@ internal static class MongoAggregationExpressionRenderer
             MongoDateAddExpression dateAdd => CanRender(dateAdd.StartDate) && CanRender(dateAdd.Amount),
             MongoStringIndexOfExpression indexOf => CanRender(indexOf.Haystack) && CanRender(indexOf.Needle),
             MongoStringLengthExpression length => CanRender(length.Operand),
+            MongoMathExpression math => math.Operands.All(CanRender),
             MongoQuantifierExpression quantifier => CanRender(quantifier.ArrayPath) && CanRender(quantifier.ElementPredicate),
             MongoConcatExpression concat => concat.Operands.All(CanRender),
-            // Answers true unconditionally for any regex.Kind — this relies on RenderRegexAsExpr's switch over
-            // MongoRegexKind staying exhaustive (all 3 current members handled; its `_` arm throws and is
-            // presently unreachable). Adding a new MongoRegexKind member requires adding it to BOTH that switch
-            // and (implicitly) here at the same time, or this would wrongly admit a Kind that Render then throws
-            // on. Admits ANY Term shape (EF-322) — see the matching comment on Render's arm above for why a
+            // Answers true unconditionally for StartsWith/EndsWith/Contains — this relies on RenderRegexAsExpr's
+            // switch over MongoRegexKind staying exhaustive for those 3 members (its `_` arm throws and is
+            // otherwise unreachable). Adding a new MongoRegexKind member requires adding it to BOTH that switch
+            // and here at the same time, or this would wrongly admit a Kind that Render then throws on. Admits
+            // ANY Term shape for those 3 (EF-322) — see the matching comment on Render's arm above for why a
             // constant/parameter term has no fallback disposition to preserve at any of this method's call
             // sites.
+            // `Like` is EXCLUDED here deliberately: it has no $expr rendering (a LIKE pattern needs
+            // wildcard-to-regex conversion, not a literal substring search like $indexOfCP), and
+            // MongoExpressionTranslator.Like.cs only ever produces one in a $match-dialect position — but if
+            // that ever changes (e.g. a future negated-Like-inside-a-projection shape), this must decline
+            // rather than let RenderRegexAsExpr's default throw arm surface as a crash instead of a graceful
+            // decline-to-fallback.
+            MongoRegexExpression { Kind: MongoRegexKind.Like } => false,
             MongoRegexExpression regex => CanRender(regex.Field) && CanRender(regex.Term),
             MongoTupleExpression tuple => tuple.Elements.All(CanRender),
             // EF-322 follow-up: a constructed nested sub-document leaf (mirrors Render's own arm above).
@@ -324,6 +333,58 @@ internal static class MongoAggregationExpressionRenderer
                 => new BsonDocument("$subtract", new BsonArray { new BsonDocument("$dayOfWeek", operand), 1 }),
             MongoDatePart.Date => new BsonDocument("$dateTrunc", new BsonDocument { { "date", operand }, { "unit", "day" } }),
             _ => throw new NativeTranslationNotSupportedException($"Unhandled {nameof(MongoDatePart)} '{node.Part}'.")
+        };
+    }
+
+    private static BsonValue RenderMath(MongoMathExpression node, PlaceholderTable placeholders, string? elementVariable)
+    {
+        BsonValue Arg(int i) => Render(node.Operands[i], placeholders, elementVariable);
+
+        return node.Function switch
+        {
+            MongoMathFunction.Abs => new BsonDocument("$abs", Arg(0)),
+            MongoMathFunction.Ceiling => new BsonDocument("$ceil", Arg(0)),
+            MongoMathFunction.Floor => new BsonDocument("$floor", Arg(0)),
+            MongoMathFunction.Exp => new BsonDocument("$exp", Arg(0)),
+            MongoMathFunction.Sqrt => new BsonDocument("$sqrt", Arg(0)),
+            MongoMathFunction.Truncate => new BsonDocument("$trunc", Arg(0)),
+            MongoMathFunction.Round => new BsonDocument("$round", Arg(0)),
+            MongoMathFunction.RoundDigits => new BsonDocument("$round", new BsonArray { Arg(0), Arg(1) }),
+            MongoMathFunction.Ln => new BsonDocument("$ln", Arg(0)),
+            MongoMathFunction.Log10 => new BsonDocument("$log10", Arg(0)),
+            MongoMathFunction.Log2 => new BsonDocument("$log", new BsonArray { Arg(0), 2 }),
+            MongoMathFunction.LogNewBase => new BsonDocument("$log", new BsonArray { Arg(0), Arg(1) }),
+            MongoMathFunction.Sign => new BsonDocument("$switch", new BsonDocument
+            {
+                {
+                    "branches", new BsonArray
+                    {
+                        new BsonDocument { { "case", new BsonDocument("$gt", new BsonArray { Arg(0), 0 }) }, { "then", 1 } },
+                        new BsonDocument { { "case", new BsonDocument("$lt", new BsonArray { Arg(0), 0 }) }, { "then", -1 } }
+                    }
+                },
+                { "default", 0 }
+            }),
+            MongoMathFunction.Pow => new BsonDocument("$pow", new BsonArray { Arg(0), Arg(1) }),
+            MongoMathFunction.Atan2 => new BsonDocument("$atan2", new BsonArray { Arg(0), Arg(1) }),
+            MongoMathFunction.Max => new BsonDocument("$max", new BsonArray { Arg(0), Arg(1) }),
+            MongoMathFunction.Min => new BsonDocument("$min", new BsonArray { Arg(0), Arg(1) }),
+            MongoMathFunction.DegreesToRadians => new BsonDocument("$degreesToRadians", Arg(0)),
+            MongoMathFunction.RadiansToDegrees => new BsonDocument("$radiansToDegrees", Arg(0)),
+            MongoMathFunction.Acos => new BsonDocument("$acos", Arg(0)),
+            MongoMathFunction.Acosh => new BsonDocument("$acosh", Arg(0)),
+            MongoMathFunction.Asin => new BsonDocument("$asin", Arg(0)),
+            MongoMathFunction.Asinh => new BsonDocument("$asinh", Arg(0)),
+            MongoMathFunction.Atan => new BsonDocument("$atan", Arg(0)),
+            MongoMathFunction.Atanh => new BsonDocument("$atanh", Arg(0)),
+            MongoMathFunction.Cos => new BsonDocument("$cos", Arg(0)),
+            MongoMathFunction.Cosh => new BsonDocument("$cosh", Arg(0)),
+            MongoMathFunction.Sin => new BsonDocument("$sin", Arg(0)),
+            MongoMathFunction.Sinh => new BsonDocument("$sinh", Arg(0)),
+            MongoMathFunction.Tan => new BsonDocument("$tan", Arg(0)),
+            MongoMathFunction.Tanh => new BsonDocument("$tanh", Arg(0)),
+            _ => throw new NativeTranslationNotSupportedException(
+                $"Unhandled {nameof(MongoMathFunction)} '{node.Function}'.")
         };
     }
 

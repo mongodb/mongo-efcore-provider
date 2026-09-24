@@ -939,9 +939,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_abs2(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "UnitPrice" : { "$lt" : { "$numberDecimal" : "7" } } } }, { "$match" : { "$expr" : { "$gt" : [{ "$toInt" : { "$abs" : "$Quantity" } }, 10] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "UnitPrice" : { "$lt" : { "$numberDecimal" : "7" } } }, { "$expr" : { "$gt" : [{ "$toInt" : { "$abs" : "$Quantity" } }, 10] } }] } }
+""");
     }
 
     public override async Task Where_math_abs3(bool async)
@@ -949,9 +949,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_abs3(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "Quantity" : { "$lt" : 5 } } }, { "$match" : { "$expr" : { "$gt" : [{ "$abs" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "Quantity" : { "$lt" : 5 } }, { "$expr" : { "$gt" : [{ "$abs" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } }] } }
+""");
     }
 
     public override async Task Where_math_abs_uncorrelated(bool async)
@@ -969,9 +969,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_ceiling1(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "UnitPrice" : { "$lt" : { "$numberDecimal" : "7" } } } }, { "$match" : { "$expr" : { "$gt" : [{ "$ceil" : "$Discount" }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "UnitPrice" : { "$lt" : { "$numberDecimal" : "7" } } }, { "$expr" : { "$gt" : [{ "$ceil" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_ceiling2(bool async)
@@ -979,9 +979,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_ceiling2(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "Quantity" : { "$lt" : 5 } } }, { "$match" : { "$expr" : { "$gt" : [{ "$ceil" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "Quantity" : { "$lt" : 5 } }, { "$expr" : { "$gt" : [{ "$ceil" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } }] } }
+""");
     }
 
     public override async Task Where_math_floor(bool async)
@@ -989,9 +989,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_floor(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "Quantity" : { "$lt" : 5 } } }, { "$match" : { "$expr" : { "$gt" : [{ "$floor" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "Quantity" : { "$lt" : 5 } }, { "$expr" : { "$gt" : [{ "$floor" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } }] } }
+""");
     }
 
     public override async Task Where_math_power(bool async)
@@ -1019,9 +1019,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_round(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "Quantity" : { "$lt" : 5 } } }, { "$match" : { "$expr" : { "$gt" : [{ "$round" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "Quantity" : { "$lt" : 5 } }, { "$expr" : { "$gt" : [{ "$round" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } }] } }
+""");
     }
 
     public override async Task Sum_over_round_works_correctly_in_projection(bool async)
@@ -1095,9 +1095,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_truncate(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "Quantity" : { "$lt" : 5 } } }, { "$match" : { "$expr" : { "$gt" : [{ "$trunc" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "Quantity" : { "$lt" : 5 } }, { "$expr" : { "$gt" : [{ "$trunc" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } }] } }
+""");
     }
 
     public override async Task Where_math_exp(bool async)
@@ -1105,9 +1105,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_exp(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077 } }, { "$match" : { "$expr" : { "$gt" : [{ "$exp" : "$Discount" }, 1.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$exp" : "$Discount" }, 1.0] } }] } }
+""");
     }
 
     public override async Task Where_math_log10(bool async)
@@ -1115,9 +1115,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_log10(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } } }, { "$match" : { "$expr" : { "$lt" : [{ "$log10" : "$Discount" }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } }, { "$expr" : { "$lt" : [{ "$log10" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_log(bool async)
@@ -1125,9 +1125,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_log(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } } }, { "$match" : { "$expr" : { "$lt" : [{ "$ln" : "$Discount" }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } }, { "$expr" : { "$lt" : [{ "$ln" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_log_new_base(bool async)
@@ -1137,12 +1137,12 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
 #if EF9
         AssertMql(
             """
-OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } } }, { "$match" : { "$expr" : { "$lt" : [{ "$log" : ["$Discount", 7.0] }, -1.0] } } }
-""");
+            OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } }, { "$expr" : { "$lt" : [{ "$log" : ["$Discount", 7.0] }, -1.0] } }] } }
+            """);
 #else
         AssertMql(
             """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } } }, { "$match" : { "$expr" : { "$lt" : [{ "$log" : ["$Discount", 7.0] }, 0.0] } } }
+            OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } }, { "$expr" : { "$lt" : [{ "$log" : ["$Discount", 7.0] }, 0.0] } }] } }
             """);
 #endif
     }
@@ -1152,9 +1152,9 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
         await base.Where_math_sqrt(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077 } }, { "$match" : { "$expr" : { "$gt" : [{ "$sqrt" : "$Discount" }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$sqrt" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_acos(bool async)
@@ -1162,9 +1162,9 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
         await base.Where_math_acos(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077 } }, { "$match" : { "$expr" : { "$gt" : [{ "$acos" : { "$toDouble" : "$Discount" } }, 1.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$acos" : "$Discount" }, 1.0] } }] } }
+""");
     }
 
     public override async Task Where_math_asin(bool async)
@@ -1172,9 +1172,9 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
         await base.Where_math_asin(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077 } }, { "$match" : { "$expr" : { "$gt" : [{ "$asin" : { "$toDouble" : "$Discount" } }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$asin" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_atan(bool async)
@@ -1182,9 +1182,9 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
         await base.Where_math_atan(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077 } }, { "$match" : { "$expr" : { "$gt" : [{ "$atan" : { "$toDouble" : "$Discount" } }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$atan" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_atan2(bool async)
@@ -1192,9 +1192,9 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
         await base.Where_math_atan2(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077 } }, { "$match" : { "$expr" : { "$gt" : [{ "$atan2" : [{ "$toDouble" : "$Discount" }, 1.0] }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$atan2" : ["$Discount", 1.0] }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_cos(bool async)
@@ -1202,9 +1202,9 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
         await base.Where_math_cos(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077 } }, { "$match" : { "$expr" : { "$gt" : [{ "$cos" : { "$toDouble" : "$Discount" } }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$cos" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_sin(bool async)
@@ -1212,9 +1212,9 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
         await base.Where_math_sin(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077 } }, { "$match" : { "$expr" : { "$gt" : [{ "$sin" : { "$toDouble" : "$Discount" } }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$sin" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_tan(bool async)
@@ -1222,57 +1222,49 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
         await base.Where_math_tan(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077 } }, { "$match" : { "$expr" : { "$gt" : [{ "$tan" : { "$toDouble" : "$Discount" } }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$tan" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_sign(bool async)
     {
-        // Fails: Math.Sign mapping issue EF-239
-        await AssertTranslationFailed(() =>
-            base.Where_math_sign(async));
+        await base.Where_math_sign(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$switch" : { "branches" : [{ "case" : { "$gt" : ["$Discount", 0] }, "then" : 1 }, { "case" : { "$lt" : ["$Discount", 0] }, "then" : -1 }], "default" : 0 } }, 0] } }] } }
+""");
     }
 
     public override async Task Where_math_min(bool async)
     {
-        // Fails: Math.Min/Math.Max mapping issue EF-238
-        await AssertTranslationFailed(() =>
-            base.Where_math_min(async));
+        await base.Where_math_min(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$eq" : [{ "$min" : ["$_id.OrderID", "$_id.ProductID"] }, "$_id.ProductID"] } }] } }
+""");
     }
 
 #if EF9
     public override async Task Where_math_min_nested(bool async)
     {
-        // Fails: Math.Min/Math.Max mapping issue EF-238
-        await AssertTranslationFailed(() =>
-            base.Where_math_min_nested(async));
+        await base.Where_math_min_nested(async);
 
         AssertMql(
-            """
-OrderDetails.
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$eq" : [{ "$min" : ["$_id.OrderID", { "$min" : ["$_id.ProductID", 99999] }] }, "$_id.ProductID"] } }] } }
 """);
     }
 
     public override async Task Where_math_min_nested_twice(bool async)
     {
-        // Fails: Math.Min/Math.Max mapping issue EF-238
-        await AssertTranslationFailed(() =>
-            base.Where_math_min_nested_twice(async));
+        await base.Where_math_min_nested_twice(async);
 
         AssertMql(
-            """
-OrderDetails.
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$eq" : [{ "$min" : [{ "$min" : [99999, { "$min" : ["$_id.OrderID", 99998] }] }, "$_id.ProductID"] }, "$_id.ProductID"] } }] } }
 """);
     }
 
@@ -1280,38 +1272,32 @@ OrderDetails.
 
     public override async Task Where_math_max(bool async)
     {
-        // Fails: Math.Min/Math.Max mapping issue EF-238
-        await AssertTranslationFailed(() =>
-            base.Where_math_max(async));
+        await base.Where_math_max(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$eq" : [{ "$max" : ["$_id.OrderID", "$_id.ProductID"] }, "$_id.OrderID"] } }] } }
+""");
     }
 
 #if EF9
     public override async Task Where_math_max_nested(bool async)
     {
-        // Fails: Math.Min/Math.Max mapping issue EF-238
-        await AssertTranslationFailed(() =>
-            base.Where_math_max_nested(async));
+        await base.Where_math_max_nested(async);
 
         AssertMql(
-            """
-OrderDetails.
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$eq" : [{ "$max" : ["$_id.OrderID", { "$max" : ["$_id.ProductID", 1] }] }, "$_id.OrderID"] } }] } }
 """);
     }
 
     public override async Task Where_math_max_nested_twice(bool async)
     {
-        // Fails: Math.Min/Math.Max mapping issue EF-238
-        await AssertTranslationFailed(() =>
-            base.Where_math_max_nested_twice(async));
+        await base.Where_math_max_nested_twice(async);
 
         AssertMql(
-            """
-OrderDetails.
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$eq" : [{ "$max" : [{ "$max" : [1, { "$max" : ["$_id.OrderID", 2] }] }, "$_id.ProductID"] }, "$_id.OrderID"] } }] } }
 """);
     }
 
@@ -1319,50 +1305,42 @@ OrderDetails.
 
     public override async Task Where_math_degrees(bool async)
     {
-        // Fails: Double.RadiansToDegrees and Double.DegreesToRadians mapping issue EF-240
-        await AssertTranslationFailed(() =>
-            base.Where_math_degrees(async));
+        await base.Where_math_degrees(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$radiansToDegrees" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_radians(bool async)
     {
-        // Fails: Double.RadiansToDegrees and Double.DegreesToRadians mapping issue EF-240
-        await AssertTranslationFailed(() =>
-            base.Where_math_radians(async));
+        await base.Where_math_radians(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$degreesToRadians" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_abs1(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_abs1(async));
+        await base.Where_mathf_abs1(async);
 
         AssertMql(
-            """
-            Products.
-            """);
+"""
+Products.{ "$match" : { "$expr" : { "$gt" : [{ "$abs" : "$_id" }, 10.0] } } }
+""");
     }
 
     public override async Task Where_mathf_ceiling1(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_ceiling1(async));
+        await base.Where_mathf_ceiling1(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "UnitPrice" : { "$lt" : { "$numberDecimal" : "7" } } }, { "$expr" : { "$gt" : [{ "$ceil" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_floor(bool async)
@@ -1379,26 +1357,22 @@ OrderDetails.
 
     public override async Task Where_mathf_power(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_power(async));
+        await base.Where_mathf_power(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$expr" : { "$gt" : [{ "$pow" : ["$Discount", 3.0] }, 0.004999999888241291] } } }
+""");
     }
 
     public override async Task Where_mathf_square(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_square(async));
+        await base.Where_mathf_square(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$expr" : { "$gt" : [{ "$pow" : ["$Discount", 2.0] }, 0.05000000074505806] } } }
+""");
     }
 
     public override async Task Where_mathf_round2(bool async)
@@ -1463,182 +1437,159 @@ OrderDetails.
 
     public override async Task Where_mathf_exp(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_exp(async));
+        await base.Where_mathf_exp(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$exp" : "$Discount" }, 1.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_log10(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_log10(async));
+        await base.Where_mathf_log10(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } }, { "$expr" : { "$lt" : [{ "$log10" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_log(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_log(async));
+        await base.Where_mathf_log(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } }, { "$expr" : { "$lt" : [{ "$ln" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_log_new_base(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_log_new_base(async));
+        await base.Where_mathf_log_new_base(async);
 
+#if EF9
         AssertMql(
             """
-            OrderDetails.
+            OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } }, { "$expr" : { "$lt" : [{ "$log" : ["$Discount", 7.0] }, -1.0] } }] } }
             """);
+#else
+        AssertMql(
+            """
+            OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } }, { "$expr" : { "$lt" : [{ "$log" : ["$Discount", 7.0] }, 0.0] } }] } }
+            """);
+#endif
     }
 
     public override async Task Where_mathf_sqrt(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_sqrt(async));
+        await base.Where_mathf_sqrt(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$sqrt" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_acos(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_acos(async));
+        await base.Where_mathf_acos(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$acos" : "$Discount" }, 1.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_asin(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_asin(async));
+        await base.Where_mathf_asin(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$asin" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_atan(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_atan(async));
+        await base.Where_mathf_atan(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$atan" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_atan2(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_atan2(async));
+        await base.Where_mathf_atan2(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$atan2" : ["$Discount", 1.0] }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_cos(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_cos(async));
+        await base.Where_mathf_cos(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$cos" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_sin(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_sin(async));
+        await base.Where_mathf_sin(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$sin" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_tan(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_tan(async));
+        await base.Where_mathf_tan(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$tan" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_sign(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_sign(async));
+        await base.Where_mathf_sign(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$switch" : { "branches" : [{ "case" : { "$gt" : ["$Discount", 0] }, "then" : 1 }, { "case" : { "$lt" : ["$Discount", 0] }, "then" : -1 }], "default" : 0 } }, 0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_degrees(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_degrees(async));
+        await base.Where_mathf_degrees(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$radiansToDegrees" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_radians(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Where_mathf_radians(async));
+        await base.Where_mathf_radians(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$degreesToRadians" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_guid_newguid(bool async)
@@ -2178,9 +2129,9 @@ OrderDetails.
         await base.Projecting_Math_Truncate_and_ordering_by_it_twice(async);
 
         AssertMql(
-            """
-            Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$trunc" : "$_id" } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$trunc" : "$_id" } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$project" : { "A" : { "$trunc" : "$_id" }, "_id" : 0 } }
-            """);
+"""
+Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$set" : { "__sort0" : { "$trunc" : "$_id" } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$project" : { "A" : { "$trunc" : "$_id" }, "_id" : 0 } }
+""");
     }
 
     public override async Task Projecting_Math_Truncate_and_ordering_by_it_twice2(bool async)
@@ -2188,9 +2139,9 @@ OrderDetails.
         await base.Projecting_Math_Truncate_and_ordering_by_it_twice2(async);
 
         AssertMql(
-            """
-            Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$trunc" : "$_id" } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$trunc" : "$_id" } } }, { "$sort" : { "_key1" : -1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$project" : { "A" : { "$trunc" : "$_id" }, "_id" : 0 } }
-            """);
+"""
+Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$set" : { "__sort0" : { "$trunc" : "$_id" } } }, { "$sort" : { "__sort0" : -1 } }, { "$unset" : ["__sort0"] }, { "$project" : { "A" : { "$trunc" : "$_id" }, "_id" : 0 } }
+""");
     }
 
     public override async Task Projecting_Math_Truncate_and_ordering_by_it_twice3(bool async)
@@ -2198,9 +2149,9 @@ OrderDetails.
         await base.Projecting_Math_Truncate_and_ordering_by_it_twice3(async);
 
         AssertMql(
-            """
-            Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$trunc" : "$_id" }, "_key2" : { "$trunc" : "$_id" } } }, { "$sort" : { "_key1" : -1, "_key2" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$project" : { "A" : { "$trunc" : "$_id" }, "_id" : 0 } }
-            """);
+"""
+Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$set" : { "__sort0" : { "$trunc" : "$_id" }, "__sort1" : { "$trunc" : "$_id" } } }, { "$sort" : { "__sort0" : -1, "__sort1" : 1 } }, { "$unset" : ["__sort0", "__sort1"] }, { "$project" : { "A" : { "$trunc" : "$_id" }, "_id" : 0 } }
+""");
     }
 
     public override async Task Regex_IsMatch_MethodCall(bool async)
