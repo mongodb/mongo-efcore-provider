@@ -564,6 +564,7 @@ internal sealed class MongoQueryLanguageRenderer
             MongoStringIndexOfExpression => false,
             MongoStringLengthExpression => false,
             MongoMathExpression => false,
+            MongoTrimExpression => false,
             MongoDateTimeOffsetLocalExpression => false,
             // No query-dialect form at all — see the node's own remarks. Explicit rather than left to the
             // catch-all, matching the style of MongoConditionalExpression/MongoDatePartExpression above.

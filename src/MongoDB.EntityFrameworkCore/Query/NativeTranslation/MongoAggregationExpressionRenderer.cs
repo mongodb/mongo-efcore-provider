@@ -143,6 +143,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoStringLengthExpression length
                 => new BsonDocument("$strLenCP", Render(length.Operand, placeholders, elementVariable)),
             MongoMathExpression math => RenderMath(math, placeholders, elementVariable),
+            MongoTrimExpression trim => RenderTrim(trim, placeholders, elementVariable),
             MongoQuantifierExpression quantifier => RenderQuantifier(quantifier, placeholders, elementVariable),
             // A constructed nested sub-document leaf (EF-447, `new Book { Id = e.Id, Title = e.Title }`).
             // Each member renders through this SAME Render call, recursively, so a nested field ref renders as
@@ -244,6 +245,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoStringIndexOfExpression indexOf => CanRender(indexOf.Haystack) && CanRender(indexOf.Needle),
             MongoStringLengthExpression length => CanRender(length.Operand),
             MongoMathExpression math => math.Operands.All(CanRender),
+            MongoTrimExpression trim => CanRender(trim.Source) && (trim.Chars is null || CanRender(trim.Chars)),
             MongoQuantifierExpression quantifier => CanRender(quantifier.ArrayPath) && CanRender(quantifier.ElementPredicate),
             MongoConcatExpression concat => concat.Operands.All(CanRender),
             // Answers true unconditionally for StartsWith/EndsWith/Contains — this relies on RenderRegexAsExpr's
@@ -390,6 +392,28 @@ internal static class MongoAggregationExpressionRenderer
             _ => throw new NativeTranslationNotSupportedException(
                 $"Unhandled {nameof(MongoMathFunction)} '{node.Function}'.")
         };
+    }
+
+    // MQL's $trim/$ltrim/$rtrim take a "chars" option that is semantically identical to .NET's Trim(char[])
+    // "strip any of these chars" contract; a null Chars omits the option, leaving MongoDB's own default
+    // (whitespace) to match the zero-arg .NET overload.
+    private static BsonValue RenderTrim(MongoTrimExpression node, PlaceholderTable placeholders, string? elementVariable)
+    {
+        var op = node.Side switch
+        {
+            MongoTrimSide.Both => "$trim",
+            MongoTrimSide.Start => "$ltrim",
+            MongoTrimSide.End => "$rtrim",
+            _ => throw new NativeTranslationNotSupportedException($"Unhandled {nameof(MongoTrimSide)} '{node.Side}'.")
+        };
+
+        var spec = new BsonDocument("input", Render(node.Source, placeholders, elementVariable));
+        if (node.Chars is not null)
+        {
+            spec.Add("chars", Render(node.Chars, placeholders, elementVariable));
+        }
+
+        return new BsonDocument(op, spec);
     }
 
     private static BsonValue RenderDateAdd(MongoDateAddExpression node, PlaceholderTable placeholders, string? elementVariable)

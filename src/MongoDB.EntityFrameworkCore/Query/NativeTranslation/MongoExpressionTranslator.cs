@@ -651,6 +651,10 @@ internal sealed partial class MongoExpressionTranslator
             // $abs/etc. directly against each operand's raw BSON representation, so a value-converted/
             // non-default-represented field underneath would run the function against the WRONG value.
             MongoMathExpression math => math.Operands.All(AllFieldsDefaultSerialized),
+            // Same reasoning as MongoMathExpression immediately above: $trim/$ltrim/$rtrim run directly
+            // against Source's (and, if present, Chars's) raw BSON representation.
+            MongoTrimExpression trim => AllFieldsDefaultSerialized(trim.Source)
+                && (trim.Chars is null || AllFieldsDefaultSerialized(trim.Chars)),
             // A constructed-tuple operand's elements each render through the raw $expr field path exactly
             // like an ordinary field-to-field/arithmetic operand — same reasoning as MongoBinaryExpression's
             // arm above, recursed per element instead of per side.
@@ -1960,6 +1964,11 @@ internal sealed partial class MongoExpressionTranslator
         // a MethodCallExpression is never matched by TryResolveMember below.
         if (TryTranslateMath(node, allowNumericWidening, out var math))
             return math;
+
+        // string.Trim()/TrimStart()/TrimEnd() and their char/char[]-arg overloads. Same reasoning as the Math
+        // arm immediately above: a MethodCallExpression is never matched by TryResolveMember below.
+        if (node is MethodCallExpression trimCall && TryTranslateTrim(trimCall, out var trim))
+            return trim;
 
         if (TryResolveMember(node, out var property, out var fieldPath, out var operandIsOuter))
         {

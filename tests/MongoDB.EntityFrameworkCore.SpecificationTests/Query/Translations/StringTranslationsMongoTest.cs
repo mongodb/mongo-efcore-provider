@@ -622,12 +622,24 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
     }
 
     public override async Task TrimStart_without_arguments()
-        // Fails: TrimStart() zero-arg overload EF-X101
-        => await AssertTranslationFailed(() => base.TrimStart_without_arguments());
+    {
+        await base.TrimStart_without_arguments();
+
+        AssertMql(
+            """
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$String" } }, "Boston  "] } } }
+""");
+    }
 
     public override async Task TrimStart_with_char_argument()
-        // Fails: TrimStart(char) overload EF-X101
-        => await AssertTranslationFailed(() => base.TrimStart_with_char_argument());
+    {
+        await base.TrimStart_with_char_argument();
+
+        AssertMql(
+            """
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$String", "chars" : "S" } }, "eattle"] } } }
+""");
+    }
 
     public override async Task TrimStart_with_char_array_argument()
     {
@@ -635,17 +647,29 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "^[Se]*(?=[^Se])attle$", "options" : "s" } } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$String", "chars" : "Se" } }, "attle"] } } }
 """);
     }
 
     public override async Task TrimEnd_without_arguments()
-        // Fails: TrimEnd() zero-arg overload EF-X101
-        => await AssertTranslationFailed(() => base.TrimEnd_without_arguments());
+    {
+        await base.TrimEnd_without_arguments();
+
+        AssertMql(
+            """
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$String" } }, "  Boston"] } } }
+""");
+    }
 
     public override async Task TrimEnd_with_char_argument()
-        // Fails: TrimEnd(char) overload EF-X101
-        => await AssertTranslationFailed(() => base.TrimEnd_with_char_argument());
+    {
+        await base.TrimEnd_with_char_argument();
+
+        AssertMql(
+            """
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$String", "chars" : "e" } }, "Seattl"] } } }
+""");
+    }
 
     public override async Task TrimEnd_with_char_array_argument()
     {
@@ -653,7 +677,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "^Seatt(?<=[^le])[le]*$", "options" : "s" } } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$String", "chars" : "le" } }, "Seatt"] } } }
 """);
     }
 
@@ -663,19 +687,29 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "^\\s*(?!\\s)Boston(?<!\\s)\\s*$", "options" : "s" } } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$String" } }, "Boston"] } } }
 """);
     }
 
     public override async Task Trim_with_char_argument_in_predicate()
-        // Fails: Trim(char) overload EF-X101
-        => await AssertTranslationFailed(() => base.Trim_with_char_argument_in_predicate());
+    {
+        await base.Trim_with_char_argument_in_predicate();
+
+        AssertMql(
+            """
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$String", "chars" : "S" } }, "eattle"] } } }
+""");
+    }
 
     public override async Task Trim_with_char_array_argument_in_predicate()
-        // Fails: Trim(char[]) overload EF-X101 — translates to an invalid regex, so the server rejects it
-        // with MongoCommandException rather than a client-side translation-rejection type.
-        => await AssertTranslationFailed(
-            () => base.Trim_with_char_array_argument_in_predicate(), typeof(MongoCommandException));
+    {
+        await base.Trim_with_char_array_argument_in_predicate();
+
+        AssertMql(
+            """
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$String", "chars" : "Se" } }, "attl"] } } }
+""");
+    }
 
     public override async Task Compare_simple_zero()
     {

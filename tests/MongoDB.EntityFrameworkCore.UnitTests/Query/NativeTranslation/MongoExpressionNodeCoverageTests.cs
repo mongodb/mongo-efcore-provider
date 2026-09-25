@@ -178,6 +178,7 @@ public class MongoExpressionNodeCoverageTests
             new MongoStringIndexOfExpression(headingField, new MongoConstantExpression("x", heading)),
             new MongoStringLengthExpression(headingField),
             new MongoMathExpression(MongoMathFunction.Abs, [rankField], typeof(int)),
+            new MongoTrimExpression(headingField, MongoTrimSide.Both, chars: null),
             new MongoDocumentConstructionExpression(
                 Expression.New(typeof(object)), [(nameof(Post.Rank), rankField)]),
             new MongoTupleExpression([rankField, rankConstant])
@@ -707,6 +708,19 @@ public class MongoExpressionNodeCoverageTests
         ["MongoMathExpression|PrefixRewriter.Rewrite"] = "rendered",
         ["MongoMathExpression|QL.IsQueryDialectRenderable"] = "false",
         ["MongoMathExpression|QL.Render"] = "rendered",
+
+        // Same treatment as MongoMathExpression immediately above throughout: $trim/$ltrim/$rtrim run
+        // directly against Source's (and, if present, Chars's) raw BSON representation, has no query-dialect
+        // form (QL.Render's default arm delegates to $expr instead of a dedicated case, so it still renders
+        // successfully), and needs no negator arm.
+        ["MongoTrimExpression|Agg.CanRender"] = "true",
+        ["MongoTrimExpression|Agg.Render"] = "rendered",
+        ["MongoTrimExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoTrimExpression|AllFieldsDefaultSerialized(converted)"] = "false",
+        ["MongoTrimExpression|Negator.TryNegate"] = "false",
+        ["MongoTrimExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoTrimExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoTrimExpression|QL.Render"] = "rendered",
 
         ["MongoUnaryExpression|Agg.CanRender"] = "true",
         ["MongoUnaryExpression|Agg.Render"] = "rendered",
