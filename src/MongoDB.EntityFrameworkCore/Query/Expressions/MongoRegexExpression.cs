@@ -59,12 +59,19 @@ internal sealed class MongoRegexExpression : MongoExpression
     /// form inside <c>$expr</c>.
     /// </param>
     /// <param name="negated"><see langword="true"/> for a negated match (<c>!s.StartsWith(...)</c>).</param>
-    public MongoRegexExpression(MongoExpression field, MongoRegexKind kind, MongoExpression term, bool negated)
+    /// <param name="caseInsensitive">
+    /// <see langword="true"/> for a case-insensitive match (<c>StringComparison.OrdinalIgnoreCase</c>).
+    /// <see langword="false"/> (the default, matching every pre-existing construction site) for the ordinal
+    /// case-sensitive form.
+    /// </param>
+    public MongoRegexExpression(
+        MongoExpression field, MongoRegexKind kind, MongoExpression term, bool negated, bool caseInsensitive = false)
     {
         Field = field;
         Kind = kind;
         Term = term;
         Negated = negated;
+        CaseInsensitive = caseInsensitive;
     }
 
     /// <summary>
@@ -87,6 +94,13 @@ internal sealed class MongoRegexExpression : MongoExpression
 
     /// <summary><see langword="true"/> for a negated match (<c>!s.StartsWith(...)</c>).</summary>
     public bool Negated { get; }
+
+    /// <summary>
+    /// <see langword="true"/> for a case-insensitive match (<c>StringComparison.OrdinalIgnoreCase</c>).
+    /// <see langword="false"/> (the default, matching every pre-existing construction site) for the ordinal
+    /// case-sensitive form.
+    /// </summary>
+    public bool CaseInsensitive { get; }
 
     /// <inheritdoc />
     public override Type Type => typeof(bool);

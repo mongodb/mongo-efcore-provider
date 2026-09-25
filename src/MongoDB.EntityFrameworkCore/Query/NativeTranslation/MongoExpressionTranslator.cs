@@ -1066,7 +1066,7 @@ internal sealed partial class MongoExpressionTranslator
 
             // --- String prefix/suffix/substring: string.StartsWith/EndsWith/Contains(string) ---
 
-            case MethodCallExpression call when TryMatchRegexMethod(call, out var kind, out var receiver, out var termExpr):
+            case MethodCallExpression call when TryMatchRegexMethod(call, out var kind, out var receiver, out var termExpr, out var caseInsensitive):
             {
                 MongoExpression fieldNode;
                 IProperty? property = null;
@@ -1132,7 +1132,7 @@ internal sealed partial class MongoExpressionTranslator
                     termNode = new MongoFieldExpression(termProperty, termFieldPath);
                 }
 
-                return new MongoRegexExpression(fieldNode, kind, termNode, negated: false);
+                return new MongoRegexExpression(fieldNode, kind, termNode, negated: false, caseInsensitive);
             }
 
             // --- EF.Functions.Like(matchExpression, pattern) ---

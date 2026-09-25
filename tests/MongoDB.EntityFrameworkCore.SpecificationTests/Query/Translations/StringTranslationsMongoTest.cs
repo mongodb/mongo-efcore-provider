@@ -461,21 +461,36 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$Strin
 """);
     }
 
-    // In-scope gaps (Tasks 2-6 close these one at a time):
     public override async Task StartsWith_with_StringComparison_Ordinal()
-        // Fails: StringComparison overload EF-X102
-        => await AssertTranslationFailed(() => base.StartsWith_with_StringComparison_Ordinal());
+    {
+        await base.StartsWith_with_StringComparison_Ordinal();
+
+        AssertMql(
+            """
+BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "^Se", "options" : "s" } } } }
+""");
+    }
 
     public override async Task StartsWith_with_StringComparison_OrdinalIgnoreCase()
-        // Fails: StringComparison overload EF-X102
-        => await AssertTranslationFailed(() => base.StartsWith_with_StringComparison_OrdinalIgnoreCase());
+    {
+        await base.StartsWith_with_StringComparison_OrdinalIgnoreCase();
 
-    // Fails: StringComparison overload EF-X102 — unlike Ordinal/OrdinalIgnoreCase above, the native
-    // translator accepts these culture-based comparisons without validating them (no exception at all),
-    // so base's own internal Assert.ThrowsAsync<InvalidOperationException> (the same expectation every
-    // relational provider satisfies) fails with a ThrowsException. That's the actual gap signal here —
-    // asserted directly rather than via AssertTranslationFailed, since a ThrowsException isn't itself
-    // evidence of a translation rejection.
+        AssertMql(
+            """
+BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "^Se", "options" : "is" } } } }
+""");
+    }
+
+    // CurrentCulture(IgnoreCase)/InvariantCulture(IgnoreCase) have no culture-aware collation equivalent in
+    // MongoDB's $regularExpression, so our native translator correctly declines them — same as before Task
+    // 3, unaffected by Ordinal/OrdinalIgnoreCase now going native. But the decline still just falls through
+    // to the driver-LINQ v3 fallback, which (confirmed empirically, still true post-Task-3) accepts the
+    // StringComparison-taking overload without validating the culture member at all: no exception is thrown
+    // by AssertQuery(...), so base's own internal Assert.ThrowsAsync<InvalidOperationException> check (the
+    // same expectation every relational provider satisfies) fails with a ThrowsException. That's the actual
+    // gap signal here — asserted directly rather than via AssertTranslationFailed, since a ThrowsException
+    // isn't itself evidence of a translation rejection. This is a permanent, correct decline on our side
+    // (same convention as Where_bitwise_xor in the misc-roadmap doc) — not a gap to close.
     public override async Task StartsWith_with_StringComparison_unsupported()
         => await Assert.ThrowsAsync<ThrowsException>(() => base.StartsWith_with_StringComparison_unsupported());
 
@@ -530,14 +545,27 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$let" : { "vars" : { "start" : { 
     }
 
     public override async Task EndsWith_with_StringComparison_Ordinal()
-        // Fails: StringComparison overload EF-X102
-        => await AssertTranslationFailed(() => base.EndsWith_with_StringComparison_Ordinal());
+    {
+        await base.EndsWith_with_StringComparison_Ordinal();
+
+        AssertMql(
+            """
+BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "le$", "options" : "s" } } } }
+""");
+    }
 
     public override async Task EndsWith_with_StringComparison_OrdinalIgnoreCase()
-        // Fails: StringComparison overload EF-X102
-        => await AssertTranslationFailed(() => base.EndsWith_with_StringComparison_OrdinalIgnoreCase());
+    {
+        await base.EndsWith_with_StringComparison_OrdinalIgnoreCase();
 
-    // Fails: StringComparison overload EF-X102 — see StartsWith_with_StringComparison_unsupported above.
+        AssertMql(
+            """
+BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "LE$", "options" : "is" } } } }
+""");
+    }
+
+    // See StartsWith_with_StringComparison_unsupported above — same permanent, correct decline, same
+    // ThrowsException-wrapping-a-ThrowsException gap signal.
     public override async Task EndsWith_with_StringComparison_unsupported()
         => await Assert.ThrowsAsync<ThrowsException>(() => base.EndsWith_with_StringComparison_unsupported());
 
@@ -590,14 +618,27 @@ BasicTypesEntities.{ "$project" : { "_v" : { "$not" : { "$gte" : [{ "$indexOfCP"
     }
 
     public override async Task Contains_with_StringComparison_Ordinal()
-        // Fails: StringComparison overload EF-X102
-        => await AssertTranslationFailed(() => base.Contains_with_StringComparison_Ordinal());
+    {
+        await base.Contains_with_StringComparison_Ordinal();
+
+        AssertMql(
+            """
+BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "eattl", "options" : "s" } } } }
+""");
+    }
 
     public override async Task Contains_with_StringComparison_OrdinalIgnoreCase()
-        // Fails: StringComparison overload EF-X102
-        => await AssertTranslationFailed(() => base.Contains_with_StringComparison_OrdinalIgnoreCase());
+    {
+        await base.Contains_with_StringComparison_OrdinalIgnoreCase();
 
-    // Fails: StringComparison overload EF-X102 — see StartsWith_with_StringComparison_unsupported above.
+        AssertMql(
+            """
+BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "EATTL", "options" : "is" } } } }
+""");
+    }
+
+    // See StartsWith_with_StringComparison_unsupported above — same permanent, correct decline, same
+    // ThrowsException-wrapping-a-ThrowsException gap signal.
     public override async Task Contains_with_StringComparison_unsupported()
         => await Assert.ThrowsAsync<ThrowsException>(() => base.Contains_with_StringComparison_unsupported());
 

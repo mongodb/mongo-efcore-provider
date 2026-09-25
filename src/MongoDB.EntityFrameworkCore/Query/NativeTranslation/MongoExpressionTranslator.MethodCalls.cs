@@ -395,28 +395,30 @@ internal sealed partial class MongoExpressionTranslator
 
     /// <summary>
     /// Recognizes the single-argument, ordinal-equivalent overload of
-    /// <c>string.StartsWith(string)</c>/<c>EndsWith(string)</c>/<c>Contains(string)</c> — the only
-    /// overloads the driver-LINQ v3 provider translates for these methods (it throws
+    /// <c>string.StartsWith(string)</c>/<c>EndsWith(string)</c>/<c>Contains(string)</c> — the only overload
+    /// the driver-LINQ v3 provider translates without a <see cref="StringComparison"/> argument (it throws
     /// <c>ExpressionNotSupportedException</c> for the <c>StringComparison</c>-taking overloads, confirmed
-    /// empirically under <c>MongoQueryMode.DriverLinq</c>). Matching only this overload
-    /// keeps native and fallback behavior identical: anything else (a <see cref="StringComparison"/> arg,
-    /// or a receiver that isn't <see cref="string"/>) is left unmatched here and falls through to the
-    /// driver-LINQ path unchanged.
+    /// empirically under <c>MongoQueryMode.DriverLinq</c>) — plus the two-argument overload that takes an
+    /// explicit <see cref="StringComparison"/>, but only for its two ordinal members
+    /// (<see cref="StringComparison.Ordinal"/>/<see cref="StringComparison.OrdinalIgnoreCase"/>): those are
+    /// the only members with a fixed, culture-independent meaning MongoDB's regex engine can reproduce
+    /// (<c>$regularExpression</c> has no culture-aware collation). <c>CurrentCulture(IgnoreCase)</c>/
+    /// <c>InvariantCulture(IgnoreCase)</c> are left unmatched here and fall through to the driver-LINQ path
+    /// unchanged (where they are equally unsupported), same as a receiver that isn't <see cref="string"/>.
     /// </summary>
     private static bool TryMatchRegexMethod(
         MethodCallExpression call,
         out MongoRegexKind kind,
         [NotNullWhen(true)] out Expression? receiver,
-        [NotNullWhen(true)] out Expression? term)
+        [NotNullWhen(true)] out Expression? term,
+        out bool caseInsensitive)
     {
         kind = default;
         receiver = null;
         term = null;
+        caseInsensitive = false;
 
         if (call.Method.IsStatic || call.Object is null || call.Object.Type != typeof(string))
-            return false;
-
-        if (call.Arguments.Count != 1 || call.Arguments[0].Type != typeof(string))
             return false;
 
         switch (call.Method.Name)
@@ -430,6 +432,23 @@ internal sealed partial class MongoExpressionTranslator
             case nameof(string.Contains):
                 kind = MongoRegexKind.Contains;
                 break;
+            default:
+                return false;
+        }
+
+        switch (call.Arguments.Count)
+        {
+            case 1 when call.Arguments[0].Type == typeof(string):
+                break;
+
+            case 2 when call.Arguments[0].Type == typeof(string)
+                        && call.Arguments[1] is ConstantExpression { Value: StringComparison comparison }:
+                if (comparison is not (StringComparison.Ordinal or StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                caseInsensitive = comparison == StringComparison.OrdinalIgnoreCase;
+                break;
+
             default:
                 return false;
         }

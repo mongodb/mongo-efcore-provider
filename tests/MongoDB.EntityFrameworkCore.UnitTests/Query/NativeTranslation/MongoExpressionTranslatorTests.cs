@@ -1411,14 +1411,31 @@ public class MongoExpressionTranslatorTests
     }
 
     [Fact]
-    public void StartsWith_with_string_comparison_overload_reports_not_translatable()
+    public void StartsWith_with_string_comparison_ordinal_overload_translates_to_regex_expression()
     {
-        // The driver-LINQ v3 provider does not support the StringComparison-taking overloads (confirmed
-        // empirically — see Task 6 report); matching only the plain single-arg overload keeps native and
-        // fallback behavior identical, so this shape must fall back rather than be mistranslated.
+        // EF-322 (Task 3): StringComparison.Ordinal has a fixed, culture-independent meaning MongoDB's
+        // regex engine can reproduce, so this overload is now natively representable (case-sensitive, same
+        // as the plain single-arg overload).
         var entityType = GetEntityType<Customer>();
         var translator = NewTranslator(entityType);
         Expression<Func<Customer, bool>> predicate = c => c.Name.StartsWith("A", StringComparison.Ordinal);
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+        var regex = Assert.IsType<MongoRegexExpression>(result);
+        Assert.Equal(MongoRegexKind.StartsWith, regex.Kind);
+        Assert.False(regex.CaseInsensitive);
+    }
+
+    [Fact]
+    public void StartsWith_with_string_comparison_current_culture_overload_reports_not_translatable()
+    {
+        // CurrentCulture(IgnoreCase)/InvariantCulture(IgnoreCase) have no culture-aware collation
+        // equivalent in MongoDB's $regularExpression, so they still decline — the driver-LINQ v3 provider
+        // does not support any StringComparison-taking overload either (confirmed empirically — see Task 6
+        // report), so this shape falls back rather than being mistranslated.
+        var entityType = GetEntityType<Customer>();
+        var translator = NewTranslator(entityType);
+        Expression<Func<Customer, bool>> predicate = c => c.Name.StartsWith("A", StringComparison.CurrentCulture);
 
         var translated = translator.TryTranslate(predicate.Body, out var result);
 

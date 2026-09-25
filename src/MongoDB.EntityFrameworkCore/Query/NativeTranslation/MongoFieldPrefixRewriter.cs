@@ -86,7 +86,7 @@ internal static class MongoFieldPrefixRewriter
             MongoArrayContainsExpression ac => new MongoArrayContainsExpression(
                 (MongoFieldExpression)Rewrite(ac.Field, prefix), Rewrite(ac.Value, prefix), ac.Negated),
             MongoRegexExpression r => new MongoRegexExpression(
-                (MongoFieldExpression)Rewrite(r.Field, prefix), r.Kind, Rewrite(r.Term, prefix), r.Negated),
+                (MongoFieldExpression)Rewrite(r.Field, prefix), r.Kind, Rewrite(r.Term, prefix), r.Negated, r.CaseInsensitive),
             // Prefix the ARRAY path only. The element predicate's field paths are ELEMENT-relative (that is
             // what $elemMatch requires), so rewriting them would mis-address every field inside the
             // $elemMatch and silently match nothing.

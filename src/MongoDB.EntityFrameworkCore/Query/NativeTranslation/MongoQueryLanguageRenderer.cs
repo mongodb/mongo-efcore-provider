@@ -340,8 +340,12 @@ internal sealed class MongoQueryLanguageRenderer
                 // all (the driver's own LINQ v3 provider does not translate it either — see
                 // MongoExpressionTranslator.Like.cs's remarks), so its case-sensitivity is this provider's own
                 // choice: case-insensitive ("i"), matching typical SQL LIKE collation semantics and the
-                // upstream EF Core conformance suite's own case-insensitive expected-result shape.
-                body = new BsonRegularExpression(pattern, regex.Kind == MongoRegexKind.Like ? "is" : "s");
+                // upstream EF Core conformance suite's own case-insensitive expected-result shape. The "s"
+                // (dotall) flag is otherwise inert here — every pattern is Regex.Escape'd and anchored, so it
+                // never contains an unescaped "." wildcard for dotall to affect — so adding "i" for
+                // StringComparison.OrdinalIgnoreCase only changes case sensitivity, nothing else.
+                body = new BsonRegularExpression(
+                    pattern, regex.Kind == MongoRegexKind.Like ? "is" : regex.CaseInsensitive ? "is" : "s");
                 break;
 
             case MongoParameterExpression parameter:
