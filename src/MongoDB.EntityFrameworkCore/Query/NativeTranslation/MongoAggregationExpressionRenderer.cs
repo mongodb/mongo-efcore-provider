@@ -250,13 +250,14 @@ internal static class MongoAggregationExpressionRenderer
             MongoStringFirstOrLastExpression firstOrLast => CanRender(firstOrLast.Source),
             MongoQuantifierExpression quantifier => CanRender(quantifier.ArrayPath) && CanRender(quantifier.ElementPredicate),
             MongoConcatExpression concat => concat.Operands.All(CanRender),
-            // Answers true unconditionally for StartsWith/EndsWith/Contains — this relies on RenderRegexAsExpr's
-            // switch over MongoRegexKind staying exhaustive for those 3 members (its `_` arm throws and is
-            // otherwise unreachable). Adding a new MongoRegexKind member requires adding it to BOTH that switch
-            // and here at the same time, or this would wrongly admit a Kind that Render then throws on. Admits
-            // ANY Term shape for those 3 (EF-322) — see the matching comment on Render's arm above for why a
-            // constant/parameter term has no fallback disposition to preserve at any of this method's call
-            // sites.
+            // Answers true unconditionally for StartsWith/EndsWith/Contains/IsMatch — this relies on
+            // RenderRegexAsExpr's switch over MongoRegexKind staying exhaustive for those 4 members (its `_`
+            // arm throws and is otherwise unreachable). Adding a new MongoRegexKind member requires adding it
+            // to BOTH that switch and here at the same time, or this would wrongly admit a Kind that Render
+            // then throws on. Admits ANY Term shape for StartsWith/EndsWith/Contains (EF-322) — see the
+            // matching comment on Render's arm above for why a constant/parameter term has no fallback
+            // disposition to preserve at any of this method's call sites. IsMatch's Term is always a
+            // MongoConstantExpression<string> by construction (TryTranslateRegexIsMatch's own gate).
             // `Like` is EXCLUDED here deliberately: it has no $expr rendering (a LIKE pattern needs
             // wildcard-to-regex conversion, not a literal substring search like $indexOfCP), and
             // MongoExpressionTranslator.Like.cs only ever produces one in a $match-dialect position — but if
@@ -572,6 +573,18 @@ internal static class MongoAggregationExpressionRenderer
             MongoRegexKind.Contains
                 => new BsonDocument("$gte", new BsonArray { new BsonDocument("$indexOfCP", new BsonArray { field, term }), 0 }),
             MongoRegexKind.EndsWith => RenderEndsWithAsExpr(field, term),
+            // Regex.IsMatch(constantInput, fieldPattern) — reversed-argument shape. Field holds the resolved
+            // PATTERN field, Term holds the fixed input string (roles swapped relative to the 3 kinds above —
+            // see MongoRegexKind.IsMatch's own remarks), so this is the one arm where "field" below is fed to
+            // $regexMatch's "regex" operand and "term" to its "input" operand. $regexMatch's regex operand,
+            // unlike $regularExpression's pattern, may itself be a field-valued expression, which is exactly
+            // why this kind renders here rather than via RenderRegex's query-dialect $regularExpression.
+            MongoRegexKind.IsMatch => new BsonDocument("$regexMatch", new BsonDocument
+            {
+                { "input", term },
+                { "regex", field },
+                { "options", regex.CaseInsensitive ? "i" : "" }
+            }),
             _ => throw new NativeTranslationNotSupportedException($"Unsupported {nameof(MongoRegexKind)} '{regex.Kind}'.")
         };
 

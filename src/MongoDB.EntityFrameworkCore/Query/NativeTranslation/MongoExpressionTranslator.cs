@@ -1143,6 +1143,11 @@ internal sealed partial class MongoExpressionTranslator
             case MethodCallExpression likeCall when TryTranslateLike(likeCall, out var likeResult):
                 return likeResult;
 
+            // --- Regex.IsMatch(constantInput, fieldPattern) — reversed-argument shape ---
+
+            case MethodCallExpression regexIsMatchCall when TryTranslateRegexIsMatch(regexIsMatchCall, out var regexIsMatchResult):
+                return regexIsMatchResult;
+
             // --- Quantifiers over an owned (embedded) collection: source.Any() / Any(pred) / All(pred) ---
 
             case MethodCallExpression call

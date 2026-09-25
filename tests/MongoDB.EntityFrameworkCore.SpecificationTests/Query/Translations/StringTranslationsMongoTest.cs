@@ -1203,8 +1203,14 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
     }
 
     public override async Task Regex_IsMatch_constant_input()
-        // Fails: Regex.IsMatch(constant, field) reversed-argument shape EF-X104
-        => await AssertTranslationFailed(() => base.Regex_IsMatch_constant_input());
+    {
+        await base.Regex_IsMatch_constant_input();
+
+        AssertMql(
+            """
+BasicTypesEntities.{ "$match" : { "$expr" : { "$regexMatch" : { "input" : "Seattle", "regex" : "$String", "options" : "" } } } }
+""");
+    }
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);

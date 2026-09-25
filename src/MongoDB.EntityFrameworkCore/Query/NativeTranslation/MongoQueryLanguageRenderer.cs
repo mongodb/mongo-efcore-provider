@@ -88,7 +88,12 @@ internal sealed class MongoQueryLanguageRenderer
             MongoNumericTypeBracketExpression bracket => RenderNumericTypeBracket(bracket),
             MongoInExpression inExpr => RenderIn(inExpr, placeholders),
             MongoArrayContainsExpression arrayContains => RenderArrayContains(arrayContains, placeholders),
-            MongoRegexExpression { Term: MongoConstantExpression { Value: string } or MongoParameterExpression } regex
+            // MongoRegexKind.IsMatch is EXCLUDED here deliberately: its Field holds the resolved PATTERN
+            // field, not the value under test, so RenderRegex's query-dialect $regularExpression rendering
+            // (which always treats Field as the tested value) would be semantically backwards for it — see
+            // MongoRegexKind.IsMatch's own remarks. It falls through to the catch-all ($expr / $regexMatch)
+            // below instead, even though its Term also happens to be a MongoConstantExpression<string>.
+            MongoRegexExpression { Kind: not MongoRegexKind.IsMatch, Term: MongoConstantExpression { Value: string } or MongoParameterExpression } regex
                 => RenderRegex(regex, placeholders),
             MongoElemMatchExpression elemMatch => RenderElemMatch(elemMatch, placeholders),
             // A literal boolean predicate root. `true` imposes no constraint (an empty $match body matches
@@ -586,6 +591,11 @@ internal sealed class MongoQueryLanguageRenderer
             // and rendered, so there is no unrenderable sub-shape to exclude here (unlike MongoInExpression's
             // Values, which can carry an unsupported node the renderer would throw on).
             MongoArrayContainsExpression => true,
+            // MongoRegexKind.IsMatch has no query-dialect form at all — see RenderNode's own matching
+            // exclusion above and MongoRegexKind.IsMatch's remarks. Must be listed BEFORE the generic regex
+            // arm below, which would otherwise wrongly admit it (its Term is also a MongoConstantExpression
+            // <string>).
+            MongoRegexExpression { Kind: MongoRegexKind.IsMatch } => false,
             // RenderRegex handles both a constant term (baked into the pattern at render time) and a
             // parameterized term (deferred to a regex placeholder sentinel, resolved at Build time).
             MongoRegexExpression { Term: MongoConstantExpression { Value: string } or MongoParameterExpression }
