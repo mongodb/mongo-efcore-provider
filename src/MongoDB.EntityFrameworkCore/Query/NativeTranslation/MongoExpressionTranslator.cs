@@ -1656,10 +1656,12 @@ internal sealed partial class MongoExpressionTranslator
         // representation already does), so wrapping it in $toInt sends a non-numeral single-character string
         // into $toInt, which throws (MEASURED against a real server: "Failed to parse number ... in $convert
         // with no onError value"). Unwrap the $toInt on that side and re-express the OTHER, compile-time-
-        // constant side in the SAME string/Int32-zero shape RenderStringFirstOrLast itself uses, keeping the
-        // whole comparison in STRING space instead. A non-constant (parameterized) other side declines outright
-        // — its runtime value isn't known here to re-express, and letting the original $toInt-wrapped form
-        // through would crash at render/execution time instead of falling back cleanly.
+        // constant side as the SAME one-character-string shape RenderStringFirstOrLast itself ALWAYS uses
+        // (including for '\0' — see CharCodeAsFirstOrLastValue's own remarks for why an Int32 zero would be
+        // wrong there), keeping the whole comparison in STRING space instead. A non-constant (parameterized)
+        // other side declines outright — its runtime value isn't known here to re-express, and letting the
+        // original $toInt-wrapped form through would crash at render/execution time instead of falling back
+        // cleanly.
         if (TryUnwrapCharFirstOrLast(leftOperand, out var leftFirstOrLast))
         {
             if (rightOperand is not MongoConstantExpression { Value: int rightCharCode })
@@ -1760,12 +1762,15 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
-    /// Re-expresses a char comparison's compile-time-constant OTHER-side int code point in the exact
-    /// string/Int32-zero shape <c>MongoAggregationExpressionRenderer.RenderStringFirstOrLast</c>'s own
-    /// rendering uses: the BSON <see cref="int"/> literal <c>0</c> for <c>'\0'</c> (matching the empty-source
-    /// branch), or a one-character BSON string otherwise (matching the non-empty <c>$substrCP</c> branch).
+    /// Re-expresses a char comparison's compile-time-constant OTHER-side int code point as the one-character
+    /// BSON STRING <c>MongoAggregationExpressionRenderer.RenderStringFirstOrLast</c>'s own rendering ALWAYS
+    /// uses now for both its <c>then</c> (empty-source) and <c>else</c> (<c>$substrCP</c>) branches (EF-322
+    /// Task 4 review fix) — including for code point <c>0</c> (<c>'\0'</c>): an Int32 zero would cross BSON
+    /// type brackets against a non-empty source whose real first/last character genuinely IS <c>'\0'</c>
+    /// (a legal embedded-NUL string), which renders through the <c>$substrCP</c> branch as the STRING
+    /// <c>"\0"</c>, not an Int32. See <see cref="MongoStringFirstOrLastExpression"/>'s own remarks.
     /// </summary>
-    private static object CharCodeAsFirstOrLastValue(int code) => code == 0 ? 0 : ((char)code).ToString();
+    private static object CharCodeAsFirstOrLastValue(int code) => ((char)code).ToString();
 
     /// <summary>
     /// <see langword="true"/> when the numeric-cast comparison's $expr fall-through must be conjoined with a

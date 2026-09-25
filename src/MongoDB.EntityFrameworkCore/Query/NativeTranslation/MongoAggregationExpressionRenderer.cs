@@ -423,11 +423,14 @@ internal static class MongoAggregationExpressionRenderer
     // start, but a NEGATIVE start (what Last's strLenCP-1 would compute for an empty source) is a hard server
     // error, so both kinds gate on strLenCP(Source) == 0 up front via $cond rather than letting $substrCP see
     // one. $cond short-circuits (confirmed empirically), so the untaken branch's $substrCP never actually runs.
-    // The "then" (empty) branch is the Int32 literal 0 — CharSerializer.Deserialize accepts Int32/Int64/String
-    // on the wire regardless of its own configured representation, so mixing an Int32 zero with a one-character
-    // String is safe. Source (and its $strLenCP) are each rendered once and the resulting BsonValue reused at
-    // every position that needs it, matching RenderEndsWithAsExpr's own reuse-without-$let precedent for a
-    // cheap, side-effect-free operand.
+    // BOTH branches render as a one-character BSON STRING (review fix, EF-322 Task 4) — the "then" (empty)
+    // branch is the literal string "\0", NOT an Int32 zero: a genuinely non-empty Source whose real first/last
+    // character IS '\0' (a legal embedded-NUL string) renders through the "else"/$substrCP branch as the
+    // one-character STRING "\0", so mixing representations would make a comparison against '\0' cross BSON
+    // type brackets (String vs Int32) and silently answer wrong for that case. See the node's own remarks.
+    // Source (and its $strLenCP) are each rendered once and the resulting BsonValue reused at every position
+    // that needs it, matching RenderEndsWithAsExpr's own reuse-without-$let precedent for a cheap,
+    // side-effect-free operand.
     private static BsonValue RenderStringFirstOrLast(
         MongoStringFirstOrLastExpression node, PlaceholderTable placeholders, string? elementVariable)
     {
@@ -448,7 +451,7 @@ internal static class MongoAggregationExpressionRenderer
         return new BsonDocument("$cond", new BsonDocument
         {
             { "if", isEmpty },
-            { "then", 0 },
+            { "then", "\0" },
             { "else", extract }
         });
     }

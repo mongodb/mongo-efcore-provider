@@ -60,11 +60,19 @@ internal enum MongoStringFirstOrLastKind
 /// untaken branch, even one that would itself be a hard error if evaluated, is never evaluated).
 /// </para>
 /// <para>
-/// The <c>then</c> (empty) branch renders as the BSON <c>Int32</c> literal <c>0</c>, not a one-character
-/// string — <c>CharSerializer</c>'s <c>Deserialize</c> switches on the ACTUAL wire <see cref="Type"/> it
-/// reads (<c>Int32</c>/<c>Int64</c>/<c>String</c> are all accepted, independent of the serializer's own
-/// configured representation), so a computed <c>char</c> leaf may freely mix an <c>Int32</c> zero for the
-/// empty case with a one-character <c>String</c> for the non-empty case.
+/// <b>Both branches render as a one-character BSON String — never mixed with an Int32 zero (EF-322 Task 4
+/// review fix).</b> An earlier revision rendered the <c>then</c> (empty) branch as the Int32 literal
+/// <c>0</c>, reasoning that <c>CharSerializer</c>'s <c>Deserialize</c> accepts Int32/Int64/String
+/// interchangeably on READ. That is true for materializing a projected <c>char</c>, but wrong for a
+/// COMPARISON: a genuinely non-empty <c>Source</c> whose actual first/last character IS <c>'\0'</c> (a
+/// string with an embedded NUL — legal BSON/UTF-8, e.g. <c>"\0abc"</c>) renders through the <c>else</c>/
+/// <c>$substrCP</c> branch as the one-character STRING <c>"\0"</c>, not Int32 <c>0</c> — so a mixed
+/// representation would make <c>"\0abc".FirstOrDefault() == '\0'</c> compare a String against an Int32
+/// across BSON type brackets (MongoDB never considers a number equal to a string), wrongly answering
+/// <see langword="false"/> instead of the correct <see langword="true"/>. MEASURED against a real server:
+/// a BSON string MAY contain an embedded NUL byte, and <c>$substrCP</c>/<c>$eq</c> handle it exactly like
+/// any other character. The <c>then</c> branch therefore renders as the one-character string <c>"\0"</c>
+/// too, so both branches always agree on ONE BSON type regardless of which one is taken.
 /// </para>
 /// <para>
 /// Like <see cref="MongoStringIndexOfExpression"/>/<see cref="MongoStringLengthExpression"/>/
