@@ -655,6 +655,9 @@ internal sealed partial class MongoExpressionTranslator
             // against Source's (and, if present, Chars's) raw BSON representation.
             MongoTrimExpression trim => AllFieldsDefaultSerialized(trim.Source)
                 && (trim.Chars is null || AllFieldsDefaultSerialized(trim.Chars)),
+            // Same reasoning as MongoStringLengthExpression above: $substrCP (and the $strLenCP/$subtract
+            // that guard it) run directly against Source's raw BSON representation.
+            MongoStringFirstOrLastExpression firstOrLast => AllFieldsDefaultSerialized(firstOrLast.Source),
             // A constructed-tuple operand's elements each render through the raw $expr field path exactly
             // like an ordinary field-to-field/arithmetic operand — same reasoning as MongoBinaryExpression's
             // arm above, recursed per element instead of per side.
@@ -1643,6 +1646,37 @@ internal sealed partial class MongoExpressionTranslator
         if (rightOperand is null)
             return null;
 
+        // A char comparison (`x.FirstOrDefault() == 'S'`) — C# ALWAYS lowers char equality/relational
+        // comparisons by widening both sides to int (folding a literal char operand straight to a bare int
+        // constant, e.g. `Convert(x.FirstOrDefault(), Int32) == 83`), so TranslateOperand's ordinary
+        // Convert-handling above wraps our side in a $toInt. That is correct for a stored char FIELD (whose
+        // default BSON representation already IS Int32, so $toInt is a harmless no-op there), but WRONG for
+        // MongoStringFirstOrLastExpression: $substrCP is inherently string-shaped at the MQL level (there is
+        // no MQL "code point of a string" operator to produce a raw Int32 the way a stored field's own
+        // representation already does), so wrapping it in $toInt sends a non-numeral single-character string
+        // into $toInt, which throws (MEASURED against a real server: "Failed to parse number ... in $convert
+        // with no onError value"). Unwrap the $toInt on that side and re-express the OTHER, compile-time-
+        // constant side in the SAME string/Int32-zero shape RenderStringFirstOrLast itself uses, keeping the
+        // whole comparison in STRING space instead. A non-constant (parameterized) other side declines outright
+        // — its runtime value isn't known here to re-express, and letting the original $toInt-wrapped form
+        // through would crash at render/execution time instead of falling back cleanly.
+        if (TryUnwrapCharFirstOrLast(leftOperand, out var leftFirstOrLast))
+        {
+            if (rightOperand is not MongoConstantExpression { Value: int rightCharCode })
+                return null;
+
+            leftOperand = leftFirstOrLast;
+            rightOperand = new MongoConstantExpression(CharCodeAsFirstOrLastValue(rightCharCode), forSerialization: null);
+        }
+        else if (TryUnwrapCharFirstOrLast(rightOperand, out var rightFirstOrLast))
+        {
+            if (leftOperand is not MongoConstantExpression { Value: int leftCharCode })
+                return null;
+
+            rightOperand = rightFirstOrLast;
+            leftOperand = new MongoConstantExpression(CharCodeAsFirstOrLastValue(leftCharCode), forSerialization: null);
+        }
+
         // An $expr field reference reads the RAW STORED value, with no serializer applied. A value-converted
         // or non-default-represented operand on EITHER side would therefore be compared in provider (stored)
         // form rather than model form -- a value-transforming converter compares scaled/re-encoded numbers
@@ -1707,6 +1741,31 @@ internal sealed partial class MongoExpressionTranslator
     /// </remarks>
     private static bool CanFallThroughToExpr(IProperty property)
         => NativeGroupByBinder.HasDefaultKeySerialization(property);
+
+    /// <summary>
+    /// Recognizes <paramref name="operand"/> as a <see cref="MongoStringFirstOrLastExpression"/> that C#'s
+    /// char-comparison lowering has wrapped in a widening <c>Convert(_, Int32)</c> — i.e. what
+    /// <see cref="TranslateOperand"/> already turned into <c>MongoConvertExpression(MongoStringFirstOrLastExpression,
+    /// typeof(int))</c>. See <see cref="TranslateComparisonCore"/>'s own remarks for why this specific shape
+    /// needs unwrapping rather than being left to render as <c>$toInt</c>.
+    /// </summary>
+    private static bool TryUnwrapCharFirstOrLast(
+        MongoExpression operand, [NotNullWhen(true)] out MongoStringFirstOrLastExpression? source)
+    {
+        source = operand is MongoConvertExpression { Type: var toType, Operand: MongoStringFirstOrLastExpression inner }
+            && toType == typeof(int)
+                ? inner
+                : null;
+        return source is not null;
+    }
+
+    /// <summary>
+    /// Re-expresses a char comparison's compile-time-constant OTHER-side int code point in the exact
+    /// string/Int32-zero shape <c>MongoAggregationExpressionRenderer.RenderStringFirstOrLast</c>'s own
+    /// rendering uses: the BSON <see cref="int"/> literal <c>0</c> for <c>'\0'</c> (matching the empty-source
+    /// branch), or a one-character BSON string otherwise (matching the non-empty <c>$substrCP</c> branch).
+    /// </summary>
+    private static object CharCodeAsFirstOrLastValue(int code) => code == 0 ? 0 : ((char)code).ToString();
 
     /// <summary>
     /// <see langword="true"/> when the numeric-cast comparison's $expr fall-through must be conjoined with a
@@ -1969,6 +2028,19 @@ internal sealed partial class MongoExpressionTranslator
         // arm immediately above: a MethodCallExpression is never matched by TryResolveMember below.
         if (node is MethodCallExpression trimCall && TryTranslateTrim(trimCall, out var trim))
             return trim;
+
+        // string.FirstOrDefault()/LastOrDefault() (`x.Name.FirstOrDefault()`). Same reasoning as the Trim arm
+        // immediately above: a MethodCallExpression is never matched by TryResolveMember below. The receiver
+        // recurses through THIS method, so it may itself be a field, a constant/parameter, or another
+        // computed expression (e.g. a Trim() result).
+        if (node is MethodCallExpression firstLastCall
+            && TryMatchStringFirstOrLastMethod(firstLastCall, out var firstOrLastKind, out var firstOrLastReceiver))
+        {
+            var firstOrLastSource = TranslateOperand(firstOrLastReceiver, allowNumericWidening);
+            return firstOrLastSource is null
+                ? null
+                : new MongoStringFirstOrLastExpression(firstOrLastSource, firstOrLastKind);
+        }
 
         if (TryResolveMember(node, out var property, out var fieldPath, out var operandIsOuter))
         {

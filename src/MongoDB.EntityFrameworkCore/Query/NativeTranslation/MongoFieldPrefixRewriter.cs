@@ -126,6 +126,7 @@ internal static class MongoFieldPrefixRewriter
                 m.Function, m.Operands.Select(o => Rewrite(o, prefix)).ToList(), m.Type),
             MongoTrimExpression t => new MongoTrimExpression(
                 Rewrite(t.Source, prefix), t.Side, t.Chars is null ? null : Rewrite(t.Chars, prefix)),
+            MongoStringFirstOrLastExpression fl => new MongoStringFirstOrLastExpression(Rewrite(fl.Source, prefix), fl.Kind),
             MongoDateTimeOffsetLocalExpression l => new MongoDateTimeOffsetLocalExpression(
                 (MongoFieldExpression)Rewrite(l.Operand, prefix)),
             // NullSafe MUST be carried across — dropping it (as this arm used to) silently removed the $ifNull

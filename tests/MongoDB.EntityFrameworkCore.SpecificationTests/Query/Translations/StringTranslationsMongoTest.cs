@@ -1172,13 +1172,25 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["A", "B", 
 """);
     }
 
-    public override Task FirstOrDefault()
-        // Fails: string.FirstOrDefault() char extraction EF-X103
-        => AssertTranslationFailed(() => base.FirstOrDefault());
+    public override async Task FirstOrDefault()
+    {
+        await base.FirstOrDefault();
 
-    public override Task LastOrDefault()
-        // Fails: string.LastOrDefault() char extraction EF-X103
-        => AssertTranslationFailed(() => base.LastOrDefault());
+        AssertMql(
+            """
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : "$String" }, 0] }, "then" : 0, "else" : { "$substrCP" : ["$String", 0, 1] } } }, "S"] } } }
+""");
+    }
+
+    public override async Task LastOrDefault()
+    {
+        await base.LastOrDefault();
+
+        AssertMql(
+            """
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : "$String" }, 0] }, "then" : 0, "else" : { "$substrCP" : ["$String", { "$subtract" : [{ "$strLenCP" : "$String" }, 1] }, 1] } } }, "e"] } } }
+""");
+    }
 
     public override async Task Regex_IsMatch()
     {

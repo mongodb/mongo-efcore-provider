@@ -144,6 +144,7 @@ internal static class MongoAggregationExpressionRenderer
                 => new BsonDocument("$strLenCP", Render(length.Operand, placeholders, elementVariable)),
             MongoMathExpression math => RenderMath(math, placeholders, elementVariable),
             MongoTrimExpression trim => RenderTrim(trim, placeholders, elementVariable),
+            MongoStringFirstOrLastExpression firstOrLast => RenderStringFirstOrLast(firstOrLast, placeholders, elementVariable),
             MongoQuantifierExpression quantifier => RenderQuantifier(quantifier, placeholders, elementVariable),
             // A constructed nested sub-document leaf (EF-447, `new Book { Id = e.Id, Title = e.Title }`).
             // Each member renders through this SAME Render call, recursively, so a nested field ref renders as
@@ -246,6 +247,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoStringLengthExpression length => CanRender(length.Operand),
             MongoMathExpression math => math.Operands.All(CanRender),
             MongoTrimExpression trim => CanRender(trim.Source) && (trim.Chars is null || CanRender(trim.Chars)),
+            MongoStringFirstOrLastExpression firstOrLast => CanRender(firstOrLast.Source),
             MongoQuantifierExpression quantifier => CanRender(quantifier.ArrayPath) && CanRender(quantifier.ElementPredicate),
             MongoConcatExpression concat => concat.Operands.All(CanRender),
             // Answers true unconditionally for StartsWith/EndsWith/Contains — this relies on RenderRegexAsExpr's
@@ -414,6 +416,41 @@ internal static class MongoAggregationExpressionRenderer
         }
 
         return new BsonDocument(op, spec);
+    }
+
+    // Empty-safe char extraction (EF-322 Task 4) — see MongoStringFirstOrLastExpression's own remarks for the
+    // empirically-confirmed contract this composes: $substrCP answers "" for an out-of-range but NON-NEGATIVE
+    // start, but a NEGATIVE start (what Last's strLenCP-1 would compute for an empty source) is a hard server
+    // error, so both kinds gate on strLenCP(Source) == 0 up front via $cond rather than letting $substrCP see
+    // one. $cond short-circuits (confirmed empirically), so the untaken branch's $substrCP never actually runs.
+    // The "then" (empty) branch is the Int32 literal 0 — CharSerializer.Deserialize accepts Int32/Int64/String
+    // on the wire regardless of its own configured representation, so mixing an Int32 zero with a one-character
+    // String is safe. Source (and its $strLenCP) are each rendered once and the resulting BsonValue reused at
+    // every position that needs it, matching RenderEndsWithAsExpr's own reuse-without-$let precedent for a
+    // cheap, side-effect-free operand.
+    private static BsonValue RenderStringFirstOrLast(
+        MongoStringFirstOrLastExpression node, PlaceholderTable placeholders, string? elementVariable)
+    {
+        var source = Render(node.Source, placeholders, elementVariable);
+        var length = new BsonDocument("$strLenCP", source);
+        var isEmpty = new BsonDocument("$eq", new BsonArray { length, 0 });
+
+        BsonValue start = node.Kind switch
+        {
+            MongoStringFirstOrLastKind.First => 0,
+            MongoStringFirstOrLastKind.Last => new BsonDocument("$subtract", new BsonArray { length, 1 }),
+            _ => throw new NativeTranslationNotSupportedException(
+                $"Unhandled {nameof(MongoStringFirstOrLastKind)} '{node.Kind}'.")
+        };
+
+        var extract = new BsonDocument("$substrCP", new BsonArray { source, start, 1 });
+
+        return new BsonDocument("$cond", new BsonDocument
+        {
+            { "if", isEmpty },
+            { "then", 0 },
+            { "else", extract }
+        });
     }
 
     private static BsonValue RenderDateAdd(MongoDateAddExpression node, PlaceholderTable placeholders, string? elementVariable)

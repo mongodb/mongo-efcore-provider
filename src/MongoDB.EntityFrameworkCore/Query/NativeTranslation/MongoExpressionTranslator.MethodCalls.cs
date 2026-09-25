@@ -501,6 +501,48 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
+    /// Recognizes <c>string.FirstOrDefault()</c>/<c>LastOrDefault()</c> — which resolve, via <see cref="string"/>'s
+    /// own <see cref="System.Collections.Generic.IEnumerable{T}"/> (of <see langword="char"/>) implementation, to
+    /// the STATIC <see cref="Enumerable.FirstOrDefault{TSource}(System.Collections.Generic.IEnumerable{TSource})"/>/
+    /// <see cref="Enumerable.LastOrDefault{TSource}(System.Collections.Generic.IEnumerable{TSource})"/> single-argument
+    /// overloads, generic over <see langword="char"/>, with the string itself as the sole argument (no receiver,
+    /// no <c>Convert</c>/cast wrapper — a <see cref="string"/> already implements
+    /// <see cref="System.Collections.Generic.IEnumerable{T}"/> of <see langword="char"/> directly). Confirmed
+    /// empirically (EF-322 Task 4) against the exact tree EF hands the translator for
+    /// <c>e.Text.FirstOrDefault()</c>/<c>LastOrDefault()</c>. Only these two single-argument, <see langword="char"/>-
+    /// generic, string-argument shapes are matched — the predicated <c>FirstOrDefault(predicate)</c>/
+    /// <c>LastOrDefault(predicate)</c> overloads, and any receiver whose element type isn't <see langword="char"/>,
+    /// are left unmatched and fall through to the driver-LINQ path unchanged.
+    /// </summary>
+    private static bool TryMatchStringFirstOrLastMethod(
+        MethodCallExpression call,
+        out MongoStringFirstOrLastKind kind,
+        [NotNullWhen(true)] out Expression? receiver)
+    {
+        kind = default;
+        receiver = null;
+
+        if (!call.Method.IsStatic || call.Method.DeclaringType != typeof(Enumerable) || call.Arguments.Count != 1)
+            return false;
+
+        if (call.Method.Name == nameof(Enumerable.FirstOrDefault))
+            kind = MongoStringFirstOrLastKind.First;
+        else if (call.Method.Name == nameof(Enumerable.LastOrDefault))
+            kind = MongoStringFirstOrLastKind.Last;
+        else
+            return false;
+
+        if (!call.Method.IsGenericMethod || call.Method.GetGenericArguments() is not [{ } elementType]
+            || elementType != typeof(char) || call.Arguments[0].Type != typeof(string))
+        {
+            return false;
+        }
+
+        receiver = call.Arguments[0];
+        return true;
+    }
+
+    /// <summary>
     /// Translates the collection side of a <c>Contains</c> call into a <see cref="MongoConstantExpression"/>
     /// (a captured/inline collection) or <see cref="MongoParameterExpression"/> (a query-parameter
     /// collection), using <paramref name="property"/> as the element serialization context. Returns
