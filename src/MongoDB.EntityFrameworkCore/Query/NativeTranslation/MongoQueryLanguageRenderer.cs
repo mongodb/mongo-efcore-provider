@@ -88,7 +88,12 @@ internal sealed class MongoQueryLanguageRenderer
             MongoNumericTypeBracketExpression bracket => RenderNumericTypeBracket(bracket),
             MongoInExpression inExpr => RenderIn(inExpr, placeholders),
             MongoArrayContainsExpression arrayContains => RenderArrayContains(arrayContains, placeholders),
-            MongoRegexExpression { Term: MongoConstantExpression { Value: string } or MongoParameterExpression } regex
+            // MongoRegexKind.IsMatch is EXCLUDED here deliberately: its Field holds the resolved PATTERN
+            // field, not the value under test, so RenderRegex's query-dialect $regularExpression rendering
+            // (which always treats Field as the tested value) would be semantically backwards for it — see
+            // MongoRegexKind.IsMatch's own remarks. It falls through to the catch-all ($expr / $regexMatch)
+            // below instead, even though its Term also happens to be a MongoConstantExpression<string>.
+            MongoRegexExpression { Kind: not MongoRegexKind.IsMatch, Term: MongoConstantExpression { Value: string } or MongoParameterExpression } regex
                 => RenderRegex(regex, placeholders),
             MongoElemMatchExpression elemMatch => RenderElemMatch(elemMatch, placeholders),
             // A literal boolean predicate root. `true` imposes no constraint (an empty $match body matches
@@ -340,12 +345,16 @@ internal sealed class MongoQueryLanguageRenderer
                 // all (the driver's own LINQ v3 provider does not translate it either — see
                 // MongoExpressionTranslator.Like.cs's remarks), so its case-sensitivity is this provider's own
                 // choice: case-insensitive ("i"), matching typical SQL LIKE collation semantics and the
-                // upstream EF Core conformance suite's own case-insensitive expected-result shape.
-                body = new BsonRegularExpression(pattern, regex.Kind == MongoRegexKind.Like ? "is" : "s");
+                // upstream EF Core conformance suite's own case-insensitive expected-result shape. The "s"
+                // (dotall) flag is otherwise inert here — every pattern is Regex.Escape'd and anchored, so it
+                // never contains an unescaped "." wildcard for dotall to affect — so adding "i" for
+                // StringComparison.OrdinalIgnoreCase only changes case sensitivity, nothing else.
+                body = new BsonRegularExpression(
+                    pattern, regex.Kind == MongoRegexKind.Like ? "is" : regex.CaseInsensitive ? "is" : "s");
                 break;
 
             case MongoParameterExpression parameter:
-                body = placeholders.CreateRegexPlaceholder(parameter.Name, regex.Kind);
+                body = placeholders.CreateRegexPlaceholder(parameter.Name, regex.Kind, regex.CaseInsensitive);
                 break;
 
             default:
@@ -564,6 +573,8 @@ internal sealed class MongoQueryLanguageRenderer
             MongoStringIndexOfExpression => false,
             MongoStringLengthExpression => false,
             MongoMathExpression => false,
+            MongoTrimExpression => false,
+            MongoStringFirstOrLastExpression => false,
             MongoDateTimeOffsetLocalExpression => false,
             // No query-dialect form at all — see the node's own remarks. Explicit rather than left to the
             // catch-all, matching the style of MongoConditionalExpression/MongoDatePartExpression above.
@@ -580,6 +591,11 @@ internal sealed class MongoQueryLanguageRenderer
             // and rendered, so there is no unrenderable sub-shape to exclude here (unlike MongoInExpression's
             // Values, which can carry an unsupported node the renderer would throw on).
             MongoArrayContainsExpression => true,
+            // MongoRegexKind.IsMatch has no query-dialect form at all — see RenderNode's own matching
+            // exclusion above and MongoRegexKind.IsMatch's remarks. Must be listed BEFORE the generic regex
+            // arm below, which would otherwise wrongly admit it (its Term is also a MongoConstantExpression
+            // <string>).
+            MongoRegexExpression { Kind: MongoRegexKind.IsMatch } => false,
             // RenderRegex handles both a constant term (baked into the pattern at render time) and a
             // parameterized term (deferred to a regex placeholder sentinel, resolved at Build time).
             MongoRegexExpression { Term: MongoConstantExpression { Value: string } or MongoParameterExpression }

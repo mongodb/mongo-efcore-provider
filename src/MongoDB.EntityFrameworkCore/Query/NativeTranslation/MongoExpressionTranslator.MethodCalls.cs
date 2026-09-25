@@ -395,28 +395,35 @@ internal sealed partial class MongoExpressionTranslator
 
     /// <summary>
     /// Recognizes the single-argument, ordinal-equivalent overload of
-    /// <c>string.StartsWith(string)</c>/<c>EndsWith(string)</c>/<c>Contains(string)</c> — the only
-    /// overloads the driver-LINQ v3 provider translates for these methods (it throws
+    /// <c>string.StartsWith(string)</c>/<c>EndsWith(string)</c>/<c>Contains(string)</c> — the only overload
+    /// the driver-LINQ v3 provider translates without a <see cref="StringComparison"/> argument (it throws
     /// <c>ExpressionNotSupportedException</c> for the <c>StringComparison</c>-taking overloads, confirmed
-    /// empirically under <c>MongoQueryMode.DriverLinq</c>). Matching only this overload
-    /// keeps native and fallback behavior identical: anything else (a <see cref="StringComparison"/> arg,
-    /// or a receiver that isn't <see cref="string"/>) is left unmatched here and falls through to the
-    /// driver-LINQ path unchanged.
+    /// empirically under <c>MongoQueryMode.DriverLinq</c>) — plus the two-argument overload that takes an
+    /// explicit <see cref="StringComparison"/>, but only for its two ordinal members
+    /// (<see cref="StringComparison.Ordinal"/>/<see cref="StringComparison.OrdinalIgnoreCase"/>): those are
+    /// the only members with a fixed, culture-independent meaning MongoDB's regex engine can reproduce
+    /// (<c>$regularExpression</c> has no culture-aware collation). <c>CurrentCulture(IgnoreCase)</c>/
+    /// <c>InvariantCulture(IgnoreCase)</c> are left unmatched here and fall through to the driver-LINQ path
+    /// unchanged, same as a receiver that isn't <see cref="string"/> — NOT because the driver rejects them the
+    /// same way it rejects the two ordinal members without a native recognizer: empirically, the driver's own
+    /// LINQ v3 provider silently EXECUTES these four culture-sensitive members (Ordinal-equivalent semantics,
+    /// not genuine culture-aware collation) instead of throwing. That's a pre-existing latent wrong-data risk
+    /// for genuinely culture-sensitive input, entirely inside the driver, unrelated to and unchanged by this
+    /// method — left unmatched here deliberately rather than silently reproducing it in a NEW native path.
     /// </summary>
     private static bool TryMatchRegexMethod(
         MethodCallExpression call,
         out MongoRegexKind kind,
         [NotNullWhen(true)] out Expression? receiver,
-        [NotNullWhen(true)] out Expression? term)
+        [NotNullWhen(true)] out Expression? term,
+        out bool caseInsensitive)
     {
         kind = default;
         receiver = null;
         term = null;
+        caseInsensitive = false;
 
         if (call.Method.IsStatic || call.Object is null || call.Object.Type != typeof(string))
-            return false;
-
-        if (call.Arguments.Count != 1 || call.Arguments[0].Type != typeof(string))
             return false;
 
         switch (call.Method.Name)
@@ -430,6 +437,23 @@ internal sealed partial class MongoExpressionTranslator
             case nameof(string.Contains):
                 kind = MongoRegexKind.Contains;
                 break;
+            default:
+                return false;
+        }
+
+        switch (call.Arguments.Count)
+        {
+            case 1 when call.Arguments[0].Type == typeof(string):
+                break;
+
+            case 2 when call.Arguments[0].Type == typeof(string)
+                        && call.Arguments[1] is ConstantExpression { Value: StringComparison comparison }:
+                if (comparison is not (StringComparison.Ordinal or StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                caseInsensitive = comparison == StringComparison.OrdinalIgnoreCase;
+                break;
+
             default:
                 return false;
         }
@@ -478,6 +502,137 @@ internal sealed partial class MongoExpressionTranslator
             return false;
 
         receiver = inner;
+        return true;
+    }
+
+    /// <summary>
+    /// Recognizes <c>string.FirstOrDefault()</c>/<c>LastOrDefault()</c> — which resolve, via <see cref="string"/>'s
+    /// own <see cref="System.Collections.Generic.IEnumerable{T}"/> (of <see langword="char"/>) implementation, to
+    /// the STATIC <see cref="Enumerable.FirstOrDefault{TSource}(System.Collections.Generic.IEnumerable{TSource})"/>/
+    /// <see cref="Enumerable.LastOrDefault{TSource}(System.Collections.Generic.IEnumerable{TSource})"/> single-argument
+    /// overloads, generic over <see langword="char"/>, with the string itself as the sole argument (no receiver,
+    /// no <c>Convert</c>/cast wrapper — a <see cref="string"/> already implements
+    /// <see cref="System.Collections.Generic.IEnumerable{T}"/> of <see langword="char"/> directly). Confirmed
+    /// empirically (EF-322 Task 4) against the exact tree EF hands the translator for
+    /// <c>e.Text.FirstOrDefault()</c>/<c>LastOrDefault()</c>. Only these two single-argument, <see langword="char"/>-
+    /// generic, string-argument shapes are matched — the predicated <c>FirstOrDefault(predicate)</c>/
+    /// <c>LastOrDefault(predicate)</c> overloads, and any receiver whose element type isn't <see langword="char"/>,
+    /// are left unmatched and fall through to the driver-LINQ path unchanged.
+    /// </summary>
+    private static bool TryMatchStringFirstOrLastMethod(
+        MethodCallExpression call,
+        out MongoStringFirstOrLastKind kind,
+        [NotNullWhen(true)] out Expression? receiver)
+    {
+        kind = default;
+        receiver = null;
+
+        if (!call.Method.IsStatic || call.Method.DeclaringType != typeof(Enumerable) || call.Arguments.Count != 1)
+            return false;
+
+        if (call.Method.Name == nameof(Enumerable.FirstOrDefault))
+            kind = MongoStringFirstOrLastKind.First;
+        else if (call.Method.Name == nameof(Enumerable.LastOrDefault))
+            kind = MongoStringFirstOrLastKind.Last;
+        else
+            return false;
+
+        if (!call.Method.IsGenericMethod || call.Method.GetGenericArguments() is not [{ } elementType]
+            || elementType != typeof(char) || call.Arguments[0].Type != typeof(string))
+        {
+            return false;
+        }
+
+        receiver = call.Arguments[0];
+        return true;
+    }
+
+    /// <summary>
+    /// Recognizes <c>string.Join(separator, elements)</c> over a compile-time-fixed-length array LITERAL of
+    /// <see cref="string"/> (<c>string.Join("|", new[] { a, b, c })</c>) — EF-322 Task 6. <c>string.Join</c> has
+    /// no native MQL equivalent (there is no variadic "insert a separator between elements" aggregation
+    /// operator), so the only representable form is expanding it, at TRANSLATE time, into the same
+    /// <see cref="MongoConcatExpression"/> IR the <c>+</c>-operator string-concatenation path already produces
+    /// and <c>MongoAggregationExpressionRenderer</c> already renders as <c>$concat</c> — with the separator
+    /// interleaved between each pair of elements.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The null hazard.</b> <c>$concat</c> treats ANY <see langword="null"/>/missing operand as nulling the
+    /// WHOLE expression — unlike .NET's <c>string.Join</c>, which treats a <see langword="null"/> element as an
+    /// empty string. Each element is therefore wrapped in <see cref="MongoCoalesceExpression"/> (rendered
+    /// <c>$ifNull</c>, same node the <c>??</c> operator already uses) against <c>""</c> before it enters the
+    /// concat operand list.
+    /// </para>
+    /// <para>
+    /// <b>Only a <see cref="NewArrayExpression"/> element argument is admitted</b> — a parameterized/runtime
+    /// collection has no fixed arity to interleave a separator into at translate time, and there is no
+    /// placeholder-substitution path for a variable-length operand list (same reasoning
+    /// <c>TryTranslateTrim</c>'s computed-<c>char[]</c> arm declines for). This also means the generic
+    /// <c>string.Join&lt;T&gt;(string, IEnumerable&lt;T&gt;)</c> overload is out of scope UNLESS its argument
+    /// happens to be a <see cref="NewArrayExpression"/> too (the general <c>IEnumerable&lt;T&gt;</c> shape has no
+    /// compile-time arity either).
+    /// </para>
+    /// <para>
+    /// Scoped to <see cref="string"/>-typed elements only: a non-string <c>T</c> would require the SAME
+    /// <c>ToString()</c>-equivalent <c>$toString</c> conversion <c>TranslateConcatOperand</c> applies for the
+    /// <c>+</c> operator, which is untested for this shape and out of this task's scope — declines rather than
+    /// guessing.
+    /// </para>
+    /// </remarks>
+    private bool TryTranslateStringJoin(Expression node, [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+
+        if (node is not MethodCallExpression call
+            || !call.Method.IsStatic
+            || call.Method.DeclaringType != typeof(string)
+            || call.Method.Name != nameof(string.Join)
+            || call.Arguments.Count != 2)
+        {
+            return false;
+        }
+
+        if (!TryTranslateValue(call.Arguments[0], out var separator))
+            return false;
+
+        // Final-review fix (MINOR, real bug — finding 4): $concat treats ANY null/missing operand as nulling
+        // the WHOLE expression, same hazard the remarks above already call out for each ELEMENT — but the
+        // separator itself was left un-coalesced, so a null/parameterized-null separator (e.g.
+        // string.Join(nullSeparator, new[] { a, b, c })) nulled the entire result instead of degrading to
+        // .NET's own "null separator behaves like an empty one" semantics. Coalesced against "" exactly like
+        // each element already is, and reused (not re-coalesced) at every interleaved position below.
+        separator = new MongoCoalesceExpression(separator, new MongoConstantExpression(string.Empty, forSerialization: null));
+
+        var elementsArg = call.Arguments[1];
+        if (elementsArg is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
+            elementsArg = convert.Operand;
+
+        if (elementsArg is not NewArrayExpression { NodeType: ExpressionType.NewArrayInit } newArray
+            || newArray.Type.GetElementType() != typeof(string))
+        {
+            return false;
+        }
+
+        if (newArray.Expressions.Count == 0)
+        {
+            result = new MongoConstantExpression(string.Empty, forSerialization: null);
+            return true;
+        }
+
+        var operands = new List<MongoExpression>();
+        for (var i = 0; i < newArray.Expressions.Count; i++)
+        {
+            if (i > 0)
+                operands.Add(separator);
+
+            if (!TryTranslateValue(newArray.Expressions[i], out var element))
+                return false;
+
+            operands.Add(new MongoCoalesceExpression(element, new MongoConstantExpression(string.Empty, forSerialization: null)));
+        }
+
+        result = new MongoConcatExpression(operands);
         return true;
     }
 

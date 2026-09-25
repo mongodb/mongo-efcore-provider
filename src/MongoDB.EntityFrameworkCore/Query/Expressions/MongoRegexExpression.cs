@@ -33,7 +33,35 @@ internal enum MongoRegexKind
     /// $expr rendering for it (a Like pattern needs wildcard-to-regex conversion, not a literal substring
     /// search like $indexOfCP).
     /// </summary>
-    Like
+    Like,
+
+    /// <summary>
+    /// The REVERSED-argument shape of <c>System.Text.RegularExpressions.Regex.IsMatch(input, pattern)</c> —
+    /// a compile-time-constant <c>input</c> tested against a document-field-valued <c>pattern</c> (e.g.
+    /// <c>Regex.IsMatch("Seattle", o.String)</c>). Unlike every other <see cref="MongoRegexKind"/> member,
+    /// <see cref="MongoRegexExpression.Field"/> here holds the resolved PATTERN field (not the value under
+    /// test) and <see cref="MongoRegexExpression.Term"/> holds the fixed input string — see
+    /// <see cref="NativeTranslation.MongoExpressionTranslator"/>'s <c>TryTranslateRegexIsMatch</c> for why the
+    /// roles are swapped relative to StartsWith/EndsWith/Contains/Like.
+    /// <para>
+    /// Aggregation-expression-dialect ONLY: MongoDB's <c>$regularExpression</c> query-dialect BSON type
+    /// requires a literal pattern, never a field, so this kind has no query-dialect form at all — see
+    /// <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>'s and <c>RenderNode</c>'s dedicated
+    /// <c>IsMatch</c> exclusions. It renders instead via the aggregation expression <c>$regexMatch</c>
+    /// operator, whose <c>regex</c> operand — unlike <c>$regularExpression</c>'s — may itself be a
+    /// field-valued expression.
+    /// </para>
+    /// <para>
+    /// <b>Malformed-pattern risk is inherent, not a bug to guard against.</b> Because the pattern is sourced
+    /// from a document field rather than validated once at C# compile/translate time, a row whose pattern
+    /// field holds an invalid regex causes <c>$regexMatch</c> to throw a genuine per-document server error at
+    /// execution time. This is unavoidable for a field-valued pattern (the forward, constant-pattern shape
+    /// has no equivalent risk — its pattern is a fixed, already-valid .NET <see cref="System.Text.RegularExpressions.Regex"/>
+    /// literal) and is not specific to this provider: the same query would fail the same way against any
+    /// driver capable of expressing it.
+    /// </para>
+    /// </summary>
+    IsMatch
 }
 
 /// <summary>
@@ -59,12 +87,19 @@ internal sealed class MongoRegexExpression : MongoExpression
     /// form inside <c>$expr</c>.
     /// </param>
     /// <param name="negated"><see langword="true"/> for a negated match (<c>!s.StartsWith(...)</c>).</param>
-    public MongoRegexExpression(MongoExpression field, MongoRegexKind kind, MongoExpression term, bool negated)
+    /// <param name="caseInsensitive">
+    /// <see langword="true"/> for a case-insensitive match (<c>StringComparison.OrdinalIgnoreCase</c>).
+    /// <see langword="false"/> (the default, matching every pre-existing construction site) for the ordinal
+    /// case-sensitive form.
+    /// </param>
+    public MongoRegexExpression(
+        MongoExpression field, MongoRegexKind kind, MongoExpression term, bool negated, bool caseInsensitive = false)
     {
         Field = field;
         Kind = kind;
         Term = term;
         Negated = negated;
+        CaseInsensitive = caseInsensitive;
     }
 
     /// <summary>
@@ -87,6 +122,13 @@ internal sealed class MongoRegexExpression : MongoExpression
 
     /// <summary><see langword="true"/> for a negated match (<c>!s.StartsWith(...)</c>).</summary>
     public bool Negated { get; }
+
+    /// <summary>
+    /// <see langword="true"/> for a case-insensitive match (<c>StringComparison.OrdinalIgnoreCase</c>).
+    /// <see langword="false"/> (the default, matching every pre-existing construction site) for the ordinal
+    /// case-sensitive form.
+    /// </summary>
+    public bool CaseInsensitive { get; }
 
     /// <inheritdoc />
     public override Type Type => typeof(bool);
