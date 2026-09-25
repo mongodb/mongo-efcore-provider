@@ -195,7 +195,6 @@ public class MongoComplianceTest : ComplianceTestBase
         typeof(Microsoft.EntityFrameworkCore.Query.Translations.Operators.ComparisonOperatorTranslationsTestBase<>),
         typeof(Microsoft.EntityFrameworkCore.Query.Translations.Operators.LogicalOperatorTranslationsTestBase<>),
         typeof(Microsoft.EntityFrameworkCore.Query.Translations.Operators.MiscellaneousOperatorTranslationsTestBase<>),
-        typeof(Microsoft.EntityFrameworkCore.Query.Translations.StringTranslationsTestBase<>),
         typeof(Microsoft.EntityFrameworkCore.Query.Translations.Temporal.DateOnlyTranslationsTestBase<>),
         typeof(Microsoft.EntityFrameworkCore.Query.Translations.Temporal.DateTimeOffsetTranslationsTestBase<>),
         typeof(Microsoft.EntityFrameworkCore.Query.Translations.Temporal.DateTimeTranslationsTestBase<>),
