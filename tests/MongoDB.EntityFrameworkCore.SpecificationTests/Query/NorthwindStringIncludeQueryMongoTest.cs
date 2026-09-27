@@ -235,7 +235,7 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$sort" : { "_id" : 1 } }
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$set" : { "__sort0" : { "$ne" : [{ "$ifNull" : ["$_lookup_Customer._id", null] }, null] }, "__sort1" : { "$cond" : { "if" : { "$ne" : [{ "$ifNull" : ["$_lookup_Customer", null] }, null] }, "then" : "$_lookup_Customer._id", "else" : "" } } } }, { "$sort" : { "__sort0" : 1, "__sort1" : 1 } }, { "$unset" : ["__sort0", "__sort1"] }, { "$limit" : 2 }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$set" : { "__sort0" : { "$ne" : [{ "$ifNull" : ["$_lookup_Customer._id", null] }, null] }, "__sort1" : { "$cond" : { "if" : { "$ne" : [{ "$ifNull" : ["$_lookup_Customer", null] }, null] }, "then" : "$_lookup_Customer._id", "else" : { "$literal" : "" } } } } }, { "$sort" : { "__sort0" : 1, "__sort1" : 1 } }, { "$unset" : ["__sort0", "__sort1"] }, { "$limit" : 2 }
 """);
     }
 
@@ -549,7 +549,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$set" : { "__sort0" : { "$gt" : ["$_id", 0] }, "__sort1" : { "$cond" : { "if" : { "$ne" : [{ "$ifNull" : ["$_lookup_Customer", null] }, null] }, "then" : "$_lookup_Customer.City", "else" : "" } } } }, { "$sort" : { "__sort0" : 1, "__sort1" : 1 } }, { "$unset" : ["__sort0", "__sort1"] }, { "$limit" : 5 }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$set" : { "__sort0" : { "$gt" : ["$_id", 0] }, "__sort1" : { "$cond" : { "if" : { "$ne" : [{ "$ifNull" : ["$_lookup_Customer", null] }, null] }, "then" : "$_lookup_Customer.City", "else" : { "$literal" : "" } } } } }, { "$sort" : { "__sort0" : 1, "__sort1" : 1 } }, { "$unset" : ["__sort0", "__sort1"] }, { "$limit" : 5 }
 """);
     }
 
