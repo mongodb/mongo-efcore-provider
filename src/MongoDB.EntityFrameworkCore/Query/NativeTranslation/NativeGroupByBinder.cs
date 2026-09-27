@@ -772,6 +772,11 @@ internal static class NativeGroupByBinder
         return false;
     }
 
+    // A non-nullable value type (int, decimal, DateTime, ...) has no representation for "no value" — a null
+    // read back from the server for one of these must not be silently defaulted. Nullable<T> and reference
+    // types are unaffected: null IS their legitimate "no value".
+    private static bool IsNonNullableValueType(Type type) => type.IsValueType && Nullable.GetUnderlyingType(type) is null;
+
     /// <summary>
     /// Translates a per-element accumulator CONDITION (from <c>g.Count(pred)</c>, <c>g.Where(pred).Op(...)</c>,
     /// or the leading <c>Where</c>/<c>Distinct</c> hop <see cref="TryBindDistinctAccumulator"/> also uses).
@@ -784,11 +789,6 @@ internal static class NativeGroupByBinder
     /// e.Key == "x"</c>) — no target shape needs it; declines so the whole query falls back rather than
     /// silently translating only half the condition.
     /// </summary>
-    // A non-nullable value type (int, decimal, DateTime, ...) has no representation for "no value" — a null
-    // read back from the server for one of these must not be silently defaulted. Nullable<T> and reference
-    // types are unaffected: null IS their legitimate "no value".
-    private static bool IsNonNullableValueType(Type type) => type.IsValueType && Nullable.GetUnderlyingType(type) is null;
-
     private static bool TryTranslateAccumulatorCondition(
         Expression predicateBody,
         ParameterExpression groupingParameter,
