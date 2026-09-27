@@ -410,7 +410,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // "which bodies are bare" here, so the shaper can never disagree with what was actually bound.
             var selectManyShaper = bareSelectManyLeafAlias != null
                 ? BindSelectManyMember(mongoQueryExpression, bareSelectManyLeafAlias, selector.Body)
-                : BuildSelectManyResultShaper(mongoQueryExpression, selector.Body);
+                : BuildSelectManyResultShaper(mongoQueryExpression, selector.Body, _projectionBindingExpressionVisitor);
             return source.UpdateShaperExpression(selectManyShaper);
         }
 
@@ -615,7 +615,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 selector.Parameters.Single(), source.ShaperExpression, selector.Body);
 
             return source.UpdateShaperExpression(
-                BuildSelectManyResultShaper(mongoQueryExpression, selector.Body, foldedJoinBody));
+                BuildSelectManyResultShaper(mongoQueryExpression, selector.Body, _projectionBindingExpressionVisitor, foldedJoinBody));
         }
         // A BARE (non-wrapped) `Select` body that is exactly a ternary null-checking a join scope's Inner side and
         // dereferencing it — `ti => ti.Inner != null ? ti.Inner.City : null` (EF-322, native join-scope
@@ -3255,7 +3255,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         if (!NativeSelectManyBinder.TryBind(mongoQueryExpression, collectionSelector))
             return null;
 
-        return BuildSelectManyWrappedShaper(source, mongoQueryExpression, collectionSelector, resultSelector);
+        return BuildSelectManyWrappedShaper(source, mongoQueryExpression, collectionSelector, resultSelector, _projectionBindingExpressionVisitor);
     }
 
     /// <summary>
@@ -3301,13 +3301,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// </summary>
     private static ShapedQueryExpression BuildSelectManyWrappedShaper(
         ShapedQueryExpression source, MongoQueryExpression mongoQueryExpression, LambdaExpression collectionSelector,
-        LambdaExpression resultSelector)
+        LambdaExpression resultSelector, MongoProjectionBindingExpressionVisitor projectionBindingExpressionVisitor)
     {
         // TryBind already validated that collectionSelector.Body is Queryable.Select(<source>, innerLambda)
         // with a new{...}/MemberInit body — re-extract that same nested lambda body here rather than thread
         // the parsed member list through TryBind's bool-returning signature.
         var innerLambda = ((MethodCallExpression)collectionSelector.Body).Arguments[1].UnwrapLambdaFromQuote();
-        var innerShaper = BuildSelectManyResultShaper(mongoQueryExpression, innerLambda.Body);
+        var innerShaper = BuildSelectManyResultShaper(mongoQueryExpression, innerLambda.Body, projectionBindingExpressionVisitor);
 
         // Replace both transparent-identifier parameters via two nested single-argument Replace calls. The
         // multi-argument ReplacingExpressionVisitor.Replace(IReadOnlyList<Expression>, IReadOnlyList<Expression>,
@@ -3323,7 +3323,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     }
 
     private static Expression BuildSelectManyResultShaper(
-        MongoQueryExpression mongoQueryExpression, Expression projectionBody, Expression? foldedBody = null)
+        MongoQueryExpression mongoQueryExpression, Expression projectionBody,
+        MongoProjectionBindingExpressionVisitor projectionBindingExpressionVisitor, Expression? foldedBody = null)
     {
         // NativeSelectManyBinder.TryBind already validated this shape through the SAME reader, so a decline
         // here is unreachable in practice — thrown rather than allowed to silently mis-shape the result.
@@ -3347,7 +3348,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         for (var i = 0; i < boundValues.Length; i++)
         {
             boundValues[i] = BindResultMember(
-                mongoQueryExpression, members[i].MemberName, members[i].Value,
+                mongoQueryExpression, members[i].MemberName, members[i].Value, projectionBindingExpressionVisitor,
                 foldedMembers is not null && i < foldedMembers.Count ? foldedMembers[i].Value : null);
         }
 
@@ -3374,21 +3375,83 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     // (measured in the EF-444 Task 0 spike). Any leaf that isn't a folded whole-entity shaper (a plain
     // scalar/computed member) falls through unchanged. foldedExpression is null for every non-join caller of
     // BuildSelectManyResultShaper (foldedBody defaults to null), so this is byte-for-byte inert there.
+    //
+    // EF-322 Phase 2 Group B (root cause A2 — materialization half): a whole-entity leaf that is ALSO the
+    // target of an Include/ThenInclude arrives here as IncludeExpression { EntityExpression: <the folded
+    // shaper>, ... } rather than the bare StructuralTypeShaperExpression itself. Unwrap down to the
+    // innermost EntityExpression before the shape check below (mirroring
+    // NativeJoinScopeProjectionBinder.TryBindProjection's own unwrap for the SAME reason), rebuild the
+    // shaper exactly as before, then re-wrap the REBUILT shaper back inside the SAME chain of
+    // IncludeExpressions (innermost first) — preserving each collection wrapper's own, untouched
+    // NavigationExpression (a reference wrapper's is rebound too — see the comment inside) — and route the
+    // re-wrapped chain through VisitIncludeExpression so the Include's own $lookup registration and
+    // node-rewrite (MongoProjectionBindingExpressionVisitor.VisitExtension's IncludeExpression case) actually
+    // runs. Without this, the shape check below fails on the wrapped leaf, execution falls through to
+    // BindSelectManyMember, and the RAW (Include-wrapped, unfolded) leaf
+    // gets registered under the member's own alias — a field the native $project never emits under (the
+    // Outer leaf emits under $$ROOT, the Inner leaf under its own fixed InnerPrefix, never the member's
+    // alias) — silently misreading the whole leaf. See the design doc's "Root cause, precisely" section
+    // for the full trace (docs/superpowers/specs/2026-09-25-native-join-scope-include-materialization-design.md).
     private static Expression BindResultMember(
-        MongoQueryExpression mongoQueryExpression, string alias, Expression valueExpression, Expression? foldedExpression)
+        MongoQueryExpression mongoQueryExpression, string alias, Expression valueExpression,
+        MongoProjectionBindingExpressionVisitor projectionBindingExpressionVisitor, Expression? foldedExpression)
     {
-        if (foldedExpression is StructuralTypeShaperExpression shaper
-            && shaper.ValueBufferExpression is ProjectionBindingExpression shaperBinding)
+        var includeWrappers = new List<IncludeExpression>();
+        var unwrappedFoldedExpression = foldedExpression;
+        // Two kinds of Include wrapper can be rebound here:
+        //
+        //  * A COLLECTION Include keeps its NavigationExpression untouched; its own $lookup is registered (and
+        //    the node rewritten) by MongoProjectionBindingExpressionVisitor's IsCollection branch, reached via
+        //    VisitIncludeExpression below.
+        //  * A REFERENCE Include (EF-322, reference-Include materialization — e.g. EF Core's own
+        //    Include_reference_when_entity_in_projection shape, Set<Order>().Include(o => o.Customer)
+        //    .Select(o => new { o, o.CustomerID }), which nav-expansion lowers into a LeftJoin onto Customers)
+        //    has no lookup of its own to register: its target IS the join's Inner side, so its folded
+        //    NavigationExpression is the join's own Inner StructuralTypeShaperExpression, rebound by index here
+        //    exactly like the leaf's own shaper. NativeJoinScopeProjectionBinder.TryResolveReferenceIncludeLevel
+        //    (the staging side) only admits a reference Include of exactly that shape, and has already staged the
+        //    level's Inner document into the $project so the shaper has something to read.
+        //
+        // Anything else (a reference Include whose NavigationExpression is not a plain rebindable shaper — e.g. a
+        // nested ThenInclude, which the staging side already declined) falls through to the pre-existing
+        // BindSelectManyMember fallback below: a loud failure, never a shaper with nowhere to read the reference
+        // navigation from (which would be silent null data — the bug commit 0b0a7a6d originally guarded against).
+        //
+        // Every wrapper is CHECKED before anything is rebound (AddToProjection mutates the query expression), so a
+        // decline leaves no stray projection entry behind.
+        var allIncludesRebindable = true;
+        while (unwrappedFoldedExpression is IncludeExpression includeToUnwrap)
         {
-            var entityProjection = shaperBinding.Index is int existingIndex
-                                   && shaperBinding.QueryExpression == mongoQueryExpression
-                ? (EntityProjectionExpression)mongoQueryExpression.Projection[existingIndex].Expression
-                : (EntityProjectionExpression)mongoQueryExpression.GetMappedProjection(shaperBinding.ProjectionMember!);
+            includeWrappers.Add(includeToUnwrap);
+            if (includeToUnwrap.Navigation is not { IsCollection: true }
+                && !IsRebindableEntityShaper(includeToUnwrap.NavigationExpression))
+            {
+                allIncludesRebindable = false;
+            }
 
-            var entityIndex = mongoQueryExpression.AddToProjection(entityProjection, alias);
+            unwrappedFoldedExpression = includeToUnwrap.EntityExpression;
+        }
 
-            return shaper.Update(
-                new ProjectionBindingExpression(mongoQueryExpression, entityIndex, typeof(ValueBuffer)));
+        if (allIncludesRebindable && IsRebindableEntityShaper(unwrappedFoldedExpression))
+        {
+            var rebound = RebindEntityShaper(
+                mongoQueryExpression, (StructuralTypeShaperExpression)unwrappedFoldedExpression!, alias);
+
+            if (includeWrappers.Count == 0)
+            {
+                return rebound;
+            }
+
+            for (var i = includeWrappers.Count - 1; i >= 0; i--)
+            {
+                var navigationExpression = includeWrappers[i].Navigation is { IsCollection: true }
+                    ? includeWrappers[i].NavigationExpression
+                    : RebindEntityShaper(
+                        mongoQueryExpression, (StructuralTypeShaperExpression)includeWrappers[i].NavigationExpression, alias: null);
+                rebound = includeWrappers[i].Update(rebound, navigationExpression);
+            }
+
+            return projectionBindingExpressionVisitor.VisitIncludeExpression(mongoQueryExpression, (IncludeExpression)rebound);
         }
 
         // A NESTED wrapped leaf sourced from a join scope (native-join-scope-nested-projection ticket):
@@ -3419,6 +3482,28 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         }
 
         return BindSelectManyMember(mongoQueryExpression, alias, valueExpression);
+    }
+
+    // Whether BindResultMember can rebind this folded expression by index: a whole-entity
+    // StructuralTypeShaperExpression reading a ProjectionBindingExpression.
+    private static bool IsRebindableEntityShaper(Expression? expression)
+        => expression is StructuralTypeShaperExpression { ValueBufferExpression: ProjectionBindingExpression };
+
+    // Rebinds a folded whole-entity StructuralTypeShaperExpression (see IsRebindableEntityShaper) by index over its
+    // own EntityProjectionExpression — registered under `alias`, or deduplicated onto the existing entry when that
+    // projection is already present. Shared by BindResultMember's leaf and its reference-Include targets.
+    private static Expression RebindEntityShaper(
+        MongoQueryExpression mongoQueryExpression, StructuralTypeShaperExpression shaper, string? alias)
+    {
+        var shaperBinding = (ProjectionBindingExpression)shaper.ValueBufferExpression;
+        var entityProjection = shaperBinding.Index is int existingIndex
+                               && shaperBinding.QueryExpression == mongoQueryExpression
+            ? (EntityProjectionExpression)mongoQueryExpression.Projection[existingIndex].Expression
+            : (EntityProjectionExpression)mongoQueryExpression.GetMappedProjection(shaperBinding.ProjectionMember!);
+
+        var entityIndex = mongoQueryExpression.AddToProjection(entityProjection, alias);
+
+        return shaper.Update(new ProjectionBindingExpression(mongoQueryExpression, entityIndex, typeof(ValueBuffer)));
     }
 
     protected override ShapedQueryExpression? TranslateSelectMany(ShapedQueryExpression source, LambdaExpression selector)

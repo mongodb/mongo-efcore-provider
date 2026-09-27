@@ -1721,6 +1721,392 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 
     [Fact]
+    public void Whole_outer_entity_leaf_that_is_also_reference_included_goes_native()
+    {
+        // Design doc spike 1 / Include_reference_when_entity_in_projection's shape, promoted: the Outer side of
+        // an explicit Join ALSO carries `.Include(o => o.Orders)` (a collection nav on Owner, unrelated to the
+        // join's own key `o.Id == r.OwnerId`), and the trailing Select captures Owner WHOLE alongside a scalar
+        // Inner leaf.
+        var seed = SeedOwnersAndOrders();
+
+        static List<(string Name, decimal Total, int OwnerOrderCount)> Run(JoinTestDbContext db) =>
+            db.Owners.Include(o => o.Orders)
+                .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r.Total })
+                .AsEnumerable()
+                .OrderBy(x => x.o.Name).ThenBy(x => x.Total)
+                .Select(x => (x.o.Name, x.Total, x.o.Orders.Count))
+                .ToList();
+
+        var expected = seed.Owners
+            .Join(seed.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r.Total })
+            .OrderBy(x => x.o.Name).ThenBy(x => x.Total)
+            .Select(x => (x.o.Name, x.Total, seed.Orders.Count(order => order.OwnerId == x.o.Id)))
+            .ToList();
+
+        using var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Whole_outer_entity_leaf_that_is_also_reference_included_goes_native) + "_nativeOnly");
+        Assert.Equal(expected, Run(nativeOnly));
+
+        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(Whole_outer_entity_leaf_that_is_also_reference_included_goes_native) + "_driverLinq");
+        Assert.Equal(expected, Run(driverLinq));
+    }
+
+#if !EF8 && !EF9
+    // EF8/EF9-only limitation, unrelated to this plan's own work: EF Core's NavigationExpandingExpressionVisitor
+    // cannot construct this combination (an explicit .LeftJoin(...) with .Include(...) on the joined-in side)
+    // under EF8/EF9, throwing before the expression ever reaches Mongo-specific dispatch. See
+    // docs/superpowers/plans/2026-09-24-ef8-ef9-leftjoin-shim-native-include.md for the dedicated, already-scoped
+    // plan tracking that gap — not fixed here.
+    [Fact]
+    public void Whole_inner_entity_leaf_that_is_also_collection_included_goes_native_under_a_left_join()
+    {
+        // Design doc spike 2 / Outer_identifier_correctly_determined_when_doing_include_on_right_side_of_left_join's
+        // shape, promoted: the INNER side of a LeftJoin ALSO carries `.Include(r => r.OrderLines)` — a
+        // navigation UNRELATED to the join's own key (`o.Id == r.OwnerId`) — and the trailing Select captures
+        // both sides WHOLE. Left-outer row preservation (an Owner with no Order) is exercised via
+        // SeedOwnersAndOrdersWithUnmatchedRows so the unmatched row's `r` materializes null rather than being
+        // silently dropped.
+        var seed = SeedOwnersAndOrdersWithUnmatchedRows();
+
+        static List<(string OwnerName, decimal? Total, int LineCount)> Run(JoinTestDbContext db) =>
+            db.Owners
+                .LeftJoin(db.Orders.Include(r => r.OrderLines), o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .AsEnumerable()
+                .OrderBy(x => x.o.Name)
+                .Select(x => (x.o.Name, x.r?.Total, x.r?.OrderLines.Count ?? 0))
+                .ToList();
+
+        var expected = seed.Owners
+            .LeftJoin(seed.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+            .OrderBy(x => x.o.Name)
+            .Select(x => (x.o.Name, x.r?.Total, x.r == null ? 0 : seed.OrderLines.Count(l => l.OrderId == x.r.Id)))
+            .ToList();
+
+        using var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Whole_inner_entity_leaf_that_is_also_collection_included_goes_native_under_a_left_join) + "_nativeOnly");
+        Assert.Equal(expected, Run(nativeOnly));
+
+        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(Whole_inner_entity_leaf_that_is_also_collection_included_goes_native_under_a_left_join) + "_driverLinq");
+        Assert.Equal(expected, Run(driverLinq));
+    }
+#endif
+
+    [Theory]
+    [InlineData("Join")]
+    [InlineData("GroupJoinDefaultIfEmpty")]
+#if !EF8 && !EF9
+    [InlineData("LeftJoin")]
+#endif
+    public void Collection_Include_on_the_inner_side_of_a_join_reads_the_inner_entitys_own_collection(string shape)
+    {
+        // EF Core's own Outer_identifier_correctly_determined_when_doing_include_on_right_side_of_left_join shape:
+        // a COLLECTION Include on the joined-in (Inner) source. The Include's own $lookup must be scoped under the
+        // join's "_lookup_Orders" sub-document (localField "_lookup_Orders._id", as
+        // "_lookup_Orders._lookup_OrderLines") — the same place the shaper reads the collection from. It used to be
+        // emitted at the document root instead (localField "_id" — the OUTER Owner's key), so every inner
+        // entity's collection silently came back EMPTY, in every query mode, including DriverLinq. The older
+        // Whole_inner_entity_leaf_that_is_also_collection_included_goes_native_under_a_left_join test could not
+        // see this: its seed has no OrderLines at all, so an empty collection was the expected answer.
+        // Plus an Owner with NO Orders: a left-outer shape must keep it with a null inner entity. This pins that the
+        // Include's $lookup never creates a phantom "_lookup_Orders" sub-document for that unmatched row (a dotted
+        // "as" would, and the shaper would then materialize a key-less Order and throw).
+        var baseSeed = SeedOwnersOrdersAndLines();
+        var seed = baseSeed with
+        {
+            Owners = [.. baseSeed.Owners, new Owner { Id = ObjectId.GenerateNewId(), Name = "Carol", Region = "North" }]
+        };
+        var isLeftOuter = shape != "Join";
+
+        List<(string Name, decimal? Total, string Skus)> Run(JoinTestDbContext db)
+        {
+            var rows = shape switch
+            {
+                "Join" => db.Owners
+                    .Join(db.Orders.Include(r => r.OrderLines), o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                    .AsEnumerable().Select(x => (x.o, (Order?)x.r)).ToList(),
+                "GroupJoinDefaultIfEmpty" => (
+                        from o in db.Owners
+                        join r in db.Orders.Include(r => r.OrderLines) on o.Id equals r.OwnerId into g
+                        from r in g.DefaultIfEmpty()
+                        where o.Region == "North"
+                        select new { o, r })
+                    .AsEnumerable().Select(x => (x.o, (Order?)x.r)).ToList(),
+#if !EF8 && !EF9
+                "LeftJoin" => db.Owners
+                    .LeftJoin(db.Orders.Include(r => r.OrderLines), o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                    .AsEnumerable().Select(x => (x.o, x.r)).ToList(),
+#endif
+                _ => throw new ArgumentOutOfRangeException(nameof(shape))
+            };
+
+            return rows
+                .Select(x => (x.o.Name, x.Item2?.Total,
+                    string.Join(",", (x.Item2?.OrderLines ?? []).Select(l => l.Sku).OrderBy(sku => sku))))
+                .OrderBy(x => x.Total).ToList();
+        }
+
+        // In-memory left join via GroupJoin/SelectMany (Enumerable.LeftJoin is .NET 10-only; this test runs on all
+        // EF targets).
+        var expected = seed.Owners
+            .GroupJoin(seed.Orders, o => o.Id, r => r.OwnerId, (o, rs) => new { o, rs })
+            .SelectMany(x => x.rs.DefaultIfEmpty(), (x, r) => new { x.o, r })
+            .Where(x => isLeftOuter || x.r != null)
+            .Where(x => shape != "GroupJoinDefaultIfEmpty" || x.o.Region == "North")
+            .Select(x => (x.o.Name, x.r?.Total,
+                string.Join(",", seed.OrderLines.Where(l => l.OrderId == x.r?.Id).Select(l => l.Sku).OrderBy(sku => sku))))
+            .OrderBy(x => x.Total).ToList();
+        Assert.All(expected.Where(x => x.Total != null), x => Assert.NotEqual("", x.Item3));
+        Assert.Equal(isLeftOuter, expected.Any(x => x.Total == null));
+
+        using var native = CreateContext(seed, MongoQueryMode.Native,
+            nameof(Collection_Include_on_the_inner_side_of_a_join_reads_the_inner_entitys_own_collection) + shape + "_native");
+        Assert.Equal(expected, Run(native));
+
+        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(Collection_Include_on_the_inner_side_of_a_join_reads_the_inner_entitys_own_collection) + shape + "_driverLinq");
+        Assert.Equal(expected, Run(driverLinq));
+
+#if !EF8 && !EF9
+        // Goes native on EF10 (EF8/EF9's LeftJoin shim for the GroupJoin form is a separate, already-scoped gap).
+        using var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Collection_Include_on_the_inner_side_of_a_join_reads_the_inner_entitys_own_collection) + shape + "_nativeOnly");
+        Assert.Equal(expected, Run(nativeOnly));
+#endif
+    }
+
+    [Fact]
+    public void Whole_entity_leaf_that_is_also_reference_included_materializes_correctly()
+    {
+        // EF-322 (reference-Include materialization): a REFERENCE Include on a whole-entity join-scope leaf —
+        // mirrors EF Core's own Include_reference_when_entity_in_projection spec test
+        // (Set<Order>().Include(o => o.Customer).Select(o => new { o, o.CustomerID }), no explicit .Join()
+        // needed — EF Core's nav-expansion lowers a reference Include in a projection into a LeftJoin onto the
+        // target collection, which our join-scope machinery recognizes, and whose own $lookup IS the Include's
+        // lookup). Previously declined loudly (commit 0b0a7a6d); must now go native under NativeOnly (never
+        // throw) and populate the Owner navigation with the right entity on every row.
+        var seed = SeedOwnersAndOrders();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Whole_entity_leaf_that_is_also_reference_included_materializes_correctly));
+
+        var results = db.Orders.Include(o => o.Owner).Select(o => new { o, o.OwnerId })
+            .AsEnumerable().OrderBy(x => x.o.Total).ToList();
+
+        var expected = seed.Orders.OrderBy(o => o.Total)
+            .Select(o => (o.Total, o.OwnerId, seed.Owners.Single(w => w.Id == o.OwnerId).Name)).ToList();
+        Assert.Equal(expected, results.Select(x => (x.o.Total, x.OwnerId, x.o.Owner!.Name)).ToList());
+        Assert.All(results, x => Assert.Equal(x.o.OwnerId, x.o.Owner!.Id));
+    }
+
+    // Each shape renders its rows to comparable strings (stable order), so results can be compared directly against
+    // ExpectedReferenceIncludeShape's in-memory oracle. Every query (bar one, see below) is AsNoTracking(): with tracking, change-tracker
+    // fixup would populate a navigation from OTHER tracked rows (e.g. Owner.Orders from the Orders the query itself
+    // returns) even if the Include's own $lookup returned nothing, masking exactly the bug these tests guard against.
+    // Shared by the two reference-Include theories below.
+    private static List<string> RunReferenceIncludeShape(JoinTestDbContext db, string shape)
+        => shape switch
+        {
+            // Design doc Shape 1: a reference Include on the OUTER source of an explicit Join — a 2-level chain
+            // (the Include's own nav-expansion LeftJoin, then the explicit Join).
+            "ExplicitJoin" => db.Orders.AsNoTracking().Include(o => o.Owner)
+                .Join(db.Owners, o => o.OwnerId, w => w.Id, (o, w) => new { o, w.Name }).AsEnumerable()
+                .Select(x => $"{x.o.Total}|{x.o.Owner?.Name}|{x.Name}").OrderBy(x => x).ToList(),
+
+            // The Include's target is ALSO projected as its own whole-entity Inner leaf — both read the same
+            // "_lookup_Owner" field, which must be staged into the $project exactly once.
+            "IncludedTargetAlsoProjected" => db.Orders.AsNoTracking().Include(o => o.Owner).Select(o => new { o, W = o.Owner })
+                .AsEnumerable()
+                .Select(x => $"{x.o.Total}|{x.o.Owner?.Name}|{x.W?.Name}").OrderBy(x => x).ToList(),
+
+            // A reference Include and a collection Include on the SAME whole-entity leaf.
+            "MixedWithCollectionInclude" => db.Orders.AsNoTracking().Include(o => o.Owner).Include(o => o.OrderLines)
+                .Select(o => new { o, o.Total }).AsEnumerable()
+                .Select(x => $"{x.Total}|{x.o.Owner?.Name}|{string.Join(",", x.o.OrderLines.Select(l => l.Sku).OrderBy(s => s))}")
+                .OrderBy(x => x).ToList(),
+
+            // ThenInclude reference -> reference.
+            "ReferenceThenReference" => db.OrderLines.AsNoTracking().Include(l => l.Order).ThenInclude(o => o!.Owner)
+                .Select(l => new { l, l.Sku }).AsEnumerable()
+                .Select(x => $"{x.Sku}|{x.l.Order?.Total}|{x.l.Order?.Owner?.Name}").OrderBy(x => x).ToList(),
+
+            // ThenInclude reference -> collection. The one exception to AsNoTracking(): Owner.Orders is the inverse
+            // of Order.Owner, and EF Core rejects that Include cycle in a no-tracking query. Fixup masking is defeated
+            // instead by the filter: the query itself only tracks the Total 10 and Total 30 orders, so if the
+            // Include's own $lookup returned nothing, fixup alone would give Alice ONE order (10) instead of both
+            // (10, 20) — which the rendered list of Owner.Orders totals would expose.
+            "ReferenceThenCollection" => db.Orders.Where(o => o.Total != 20m).Include(o => o.Owner).ThenInclude(w => w!.Orders)
+                .Select(o => new { o, o.Total }).AsEnumerable()
+                .Select(x => $"{x.Total}|{x.o.Owner?.Name}|{string.Join(",", (x.o.Owner?.Orders ?? []).Select(r => r.Total).OrderBy(t => t))}")
+                .OrderBy(x => x).ToList(),
+
+            _ => throw new ArgumentOutOfRangeException(nameof(shape))
+        };
+
+    // The in-memory oracle for RunReferenceIncludeShape, computed from the seed alone — never from another query
+    // mode, which could share the same bug (commit 89c3446e fixed a case where DriverLinq ALSO returned silently
+    // empty Include collections).
+    private static List<string> ExpectedReferenceIncludeShape(Seed seed, string shape)
+    {
+        Owner OwnerOf(Order o) => seed.Owners.Single(w => w.Id == o.OwnerId);
+        Order OrderOf(OrderLine l) => seed.Orders.Single(o => o.Id == l.OrderId);
+
+        return (shape switch
+        {
+            "ExplicitJoin" or "IncludedTargetAlsoProjected" =>
+                seed.Orders.Select(o => $"{o.Total}|{OwnerOf(o).Name}|{OwnerOf(o).Name}"),
+            "MixedWithCollectionInclude" => seed.Orders.Select(o =>
+                $"{o.Total}|{OwnerOf(o).Name}|{string.Join(",", seed.OrderLines.Where(l => l.OrderId == o.Id).Select(l => l.Sku).OrderBy(sku => sku))}"),
+            "ReferenceThenReference" => seed.OrderLines.Select(l =>
+                $"{l.Sku}|{OrderOf(l).Total}|{OwnerOf(OrderOf(l)).Name}"),
+            "ReferenceThenCollection" => seed.Orders.Where(o => o.Total != 20m).Select(o =>
+                $"{o.Total}|{OwnerOf(o).Name}|{string.Join(",", seed.Orders.Where(other => other.OwnerId == o.OwnerId).Select(other => other.Total).OrderBy(t => t))}"),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape))
+        }).OrderBy(x => x).ToList();
+    }
+
+    [Theory]
+    [InlineData("ExplicitJoin")]
+    [InlineData("IncludedTargetAlsoProjected")]
+    [InlineData("MixedWithCollectionInclude")]
+    public void Reference_included_whole_entity_leaf_goes_native_and_matches_the_oracle(string shape)
+    {
+        // EF-322 (reference-Include materialization): variations on the shape above that also reach the join-scope
+        // arm with a reference-Include-wrapped whole-entity leaf. Each must go native (NativeOnly never throws) and
+        // produce exactly the in-memory oracle's rows (every Owner populated — all seeded FKs match), as must
+        // driver-LINQ — both asserted against the oracle independently, not against each other.
+        var seed = SeedOwnersOrdersAndLines();
+        using var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Reference_included_whole_entity_leaf_goes_native_and_matches_the_oracle) + shape + "_nativeOnly");
+        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(Reference_included_whole_entity_leaf_goes_native_and_matches_the_oracle) + shape + "_driverLinq");
+
+        var expected = ExpectedReferenceIncludeShape(seed, shape);
+        Assert.Equal(seed.Orders.Length, expected.Count);
+
+        Assert.Equal(expected, RunReferenceIncludeShape(nativeOnly, shape));
+        Assert.Equal(expected, RunReferenceIncludeShape(driverLinq, shape));
+    }
+
+    [Theory]
+    [InlineData("ReferenceThenReference")]
+    [InlineData("ReferenceThenCollection")]
+    public void Reference_Include_with_a_ThenInclude_on_a_join_scope_leaf_falls_back_with_correct_data(string shape)
+    {
+        // A ThenInclude hanging off the reference Include's own target is NOT admitted by the join-scope arm
+        // (NativeJoinScopeProjectionBinder.TryResolveReferenceIncludeLevel requires the Include's
+        // NavigationExpression to be exactly a join-scope Inner leaf, not a further IncludeExpression). Pins that
+        // it declines cleanly under NativeOnly, and that the default Native mode (which therefore falls back to
+        // driver-LINQ) returns the in-memory oracle's rows — every ThenInclude target populated, never a
+        // partially-populated navigation chain.
+        var seed = SeedOwnersOrdersAndLines();
+        using var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Reference_Include_with_a_ThenInclude_on_a_join_scope_leaf_falls_back_with_correct_data) + shape + "_nativeOnly");
+        Assert.Throws<NativeTranslationNotSupportedException>(() => RunReferenceIncludeShape(nativeOnly, shape));
+
+        using var native = CreateContext(seed, MongoQueryMode.Native,
+            nameof(Reference_Include_with_a_ThenInclude_on_a_join_scope_leaf_falls_back_with_correct_data) + shape + "_native");
+        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(Reference_Include_with_a_ThenInclude_on_a_join_scope_leaf_falls_back_with_correct_data) + shape + "_driverLinq");
+
+        var expected = ExpectedReferenceIncludeShape(seed, shape);
+        Assert.NotEmpty(expected);
+
+        Assert.Equal(expected, RunReferenceIncludeShape(native, shape));
+        Assert.Equal(expected, RunReferenceIncludeShape(driverLinq, shape));
+    }
+
+    [Fact]
+    public void Reference_Include_with_no_join_in_the_query_materializes_correctly()
+    {
+        // Design doc Shape 4: db.Orders.Include(o => o.Owner).Select(o => new { o, o.OwnerId }) has no .Join()/
+        // .LeftJoin() at all in the user's LINQ. Task 1's investigation showed EF Core's nav-expansion still lowers
+        // it into a join that reaches the join-scope arm (same path as the NativeOnly test above), so it lives here.
+        // Covers the default Native mode, over a seed with a dangling (unmatched) OwnerId: Order.OwnerId is a
+        // REQUIRED FK, so EF Core lowers the Include to an INNER join and the dangling order is dropped — the
+        // native result must match driver-LINQ's exactly, with the surviving row's Owner populated.
+        var seed = SeedLinesOrdersAndOwnersWithADanglingOwnerId();
+        using var native = CreateContext(seed, MongoQueryMode.Native,
+            nameof(Reference_Include_with_no_join_in_the_query_materializes_correctly) + "_native");
+        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(Reference_Include_with_no_join_in_the_query_materializes_correctly) + "_driverLinq");
+
+        static List<(decimal Total, ObjectId OwnerId, string? OwnerName)> Run(JoinTestDbContext db) =>
+            db.Orders.Include(o => o.Owner).Select(o => new { o, o.OwnerId })
+                .AsEnumerable().Select(x => (x.o.Total, x.OwnerId, x.o.Owner?.Name)).OrderBy(x => x.Total).ToList();
+
+        var results = Run(native);
+
+        var matched = Assert.Single(results);
+        Assert.Equal("Alice", matched.OwnerName);
+        Assert.Equal(Run(driverLinq), results);
+    }
+
+    [Fact]
+    public void Reference_included_Inner_leaf_of_a_join_scope_materializes_correctly()
+    {
+        // Design doc Shape 2: a reference Include on the join's INNER source. Task 2 (commit 91a8528a) made this
+        // decline instead of silently returning a null Order.Owner; Task 3 (root cause A3) makes it materialize:
+        // nav-expansion lowers the Include into a further join onto Owners whose Inner side is the Include's own
+        // NavigationExpression, which the staging side (NativeJoinScopeProjectionBinder) and the materialization
+        // side (BindResultMember) now both resolve. Must go native under NativeOnly and match driver-LINQ.
+        var seed = SeedOwnersAndOrders();
+        using var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Reference_included_Inner_leaf_of_a_join_scope_materializes_correctly) + "_nativeOnly");
+        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(Reference_included_Inner_leaf_of_a_join_scope_materializes_correctly) + "_driverLinq");
+
+        static List<(string OwnerName, decimal Total, ObjectId? IncludedOwnerId, string? IncludedOwnerName)> Run(
+            JoinTestDbContext db) =>
+            db.Owners.Join(db.Orders.Include(r => r.Owner), o => o.Id, r => r.OwnerId, (o, r) => new { o.Name, r })
+                .AsEnumerable().Select(x => (x.Name, x.r.Total, x.r.Owner?.Id, x.r.Owner?.Name))
+                .OrderBy(x => x.Total).ToList();
+
+        var results = Run(nativeOnly);
+
+        Assert.Equal(seed.Orders.Length, results.Count);
+        Assert.All(results, x => Assert.Equal(x.OwnerName, x.IncludedOwnerName));
+        Assert.Equal(Run(driverLinq), results);
+    }
+
+    [Fact]
+    public void Whole_root_entity_leaf_that_is_also_collection_included_goes_native_in_a_two_level_chain()
+    {
+        // Root cause A's own Task 2 re-rooted its chain-depth unit proof onto the ROOT leaf specifically
+        // (owners.Include(o => o.Orders)) rather than a non-root chain level, after measuring that Including a
+        // non-root level's own reference nav can coincidentally widen the recognized join-scope chain by one
+        // level (see that plan's ledger). Mirror the same choice here at the FUNCTIONAL level: a genuine
+        // Levels.Count == 2 chain, with the Include on the chain's ROOT (Owner.Orders) rather than either
+        // joined-in level, proving Task 1/2's BindResultMember fix generalizes to scope depth > 1 without
+        // reproducing that unrelated, pre-existing chain-detection hazard.
+        var seed = SeedOwnersOrdersAndLines();
+
+        static List<(string OwnerName, int OwnerOrderCount, string Sku)> Run(JoinTestDbContext db) =>
+            db.Owners.Include(o => o.Orders)
+                .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(db.OrderLines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, LineSku = l.Sku })
+                .AsEnumerable()
+                .OrderBy(x => x.o.Name).ThenBy(x => x.LineSku)
+                .Select(x => (x.o.Name, x.o.Orders.Count, x.LineSku))
+                .ToList();
+
+        var expected = seed.Owners
+            .Join(seed.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+            .Join(seed.OrderLines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, LineSku = l.Sku })
+            .OrderBy(x => x.o.Name).ThenBy(x => x.LineSku)
+            .Select(x => (x.o.Name, seed.Orders.Count(order => order.OwnerId == x.o.Id), x.LineSku))
+            .ToList();
+
+        using var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Whole_root_entity_leaf_that_is_also_collection_included_goes_native_in_a_two_level_chain) + "_nativeOnly");
+        Assert.Equal(expected, Run(nativeOnly));
+
+        using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(Whole_root_entity_leaf_that_is_also_collection_included_goes_native_in_a_two_level_chain) + "_driverLinq");
+        Assert.Equal(expected, Run(driverLinq));
+    }
+
+    [Fact]
     public void Chain_scalar_leaf_beside_a_whole_entity_leaf_at_a_non_adjacent_chain_level_reads_correctly()
     {
         // Final-review Important-3, the chain-depth analogue of

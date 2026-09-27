@@ -1556,9 +1556,20 @@ internal sealed partial class MongoExpressionTranslator
                 // property it un-type-brackets the comparison (BSON total ordering admits null under $lt/$lte/
                 // $gt/$gte, where the query dialect would not), silently admitting null/missing rows a
                 // correlated SelectMany inner filter previously excluded.
+                //
+                // EF-322 follow-up: NullSafe when this field is the two-scope translator's Inner side
+                // (_innerPrefix non-null, !leftIsOuter) AND we're comparing it to a literal null via Equal/
+                // NotEqual — an unmatched left-outer-joined row's whole Inner sub-document is entirely MISSING
+                // (not an explicit null), so a nested field under it is itself missing, and $expr's $eq/$ne
+                // don't treat missing the same as null (see MongoFieldExpression.NullSafe's own remarks).
+                // Harmless when the join is actually required/inner (the Inner side is never missing there):
+                // $ifNull(present-field, null) is a no-op.
+                var leftNullSafe = _innerPrefix is not null && !leftIsOuter
+                    && rightUnwrapped is ConstantExpression { Value: null }
+                    && nodeType is ExpressionType.Equal or ExpressionType.NotEqual;
                 MongoExpression leftField = leftIsOuter && _innerPrefix is null
                     ? new MongoOuterFieldExpression(leftProperty, leftPath!)
-                    : new MongoFieldExpression(leftProperty, leftPath!);
+                    : new MongoFieldExpression(leftProperty, leftPath!, leftNullSafe);
                 return new MongoBinaryExpression(mongoOp.Value, leftField, valueExpr);
             }
         }
@@ -1592,9 +1603,13 @@ internal sealed partial class MongoExpressionTranslator
                     return null;
 
                 // Same confinement as the mirrored branch above — see its comment for the full rationale.
+                // Same EF-322 follow-up NullSafe rule as the mirrored branch above, mirrored onto this side.
+                var rightNullSafe = _innerPrefix is not null && !rightIsOuter
+                    && leftUnwrapped is ConstantExpression { Value: null }
+                    && nodeType is ExpressionType.Equal or ExpressionType.NotEqual;
                 MongoExpression rightField = rightIsOuter && _innerPrefix is null
                     ? new MongoOuterFieldExpression(rightProperty, rightPath!)
-                    : new MongoFieldExpression(rightProperty, rightPath!);
+                    : new MongoFieldExpression(rightProperty, rightPath!, rightNullSafe);
                 return new MongoBinaryExpression(mongoOp.Value, rightField, valueExpr);
             }
         }

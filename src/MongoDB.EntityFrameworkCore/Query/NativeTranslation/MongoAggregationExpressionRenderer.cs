@@ -55,6 +55,10 @@ internal static class MongoAggregationExpressionRenderer
     public static BsonValue Render(MongoExpression node, PlaceholderTable placeholders, string? elementVariable = null)
         => node switch
         {
+            // NullSafe mirrors the MongoElementRefExpression{NullSafe:true} arm just below, for the same
+            // reason: see MongoFieldExpression.NullSafe's own remarks.
+            MongoFieldExpression { NullSafe: true } nullSafeField
+                => new BsonDocument("$ifNull", new BsonArray { FieldRef(nullSafeField.ElementName, elementVariable), BsonNull.Value }),
             MongoFieldExpression field => FieldRef(field.ElementName, elementVariable),
             // NullSafe wraps a MISSING element the same as an explicitly-stored null (see the node's own
             // remarks) — needed for an owned-nav null-equality check, where $expr's own $eq does not

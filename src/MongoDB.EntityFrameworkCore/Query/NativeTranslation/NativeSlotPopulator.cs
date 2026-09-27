@@ -21,6 +21,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Query.Visitors;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
@@ -357,6 +358,13 @@ internal static class NativeSlotPopulator
                  || methodDefinition == QueryableMethods.GroupJoin
 #if !EF8 && !EF9
                  || methodDefinition == QueryableMethods.LeftJoin
+#else
+                 // EF8/EF9 lower a GroupJoin+DefaultIfEmpty pair — including EF's own nav-expansion of an
+                 // OPTIONAL reference Include — onto this same private shim rather than a public LeftJoin
+                 // method (see Ef8Ef9LeftJoinMethod's remarks). Recognize it here exactly like the EF10
+                 // public LeftJoin above, or every EF8/EF9 optional reference Include is marked non-native
+                 // before the join-scope binder ever runs (EF-322).
+                 || MongoQueryableMethodTranslatingExpressionVisitor.IsEf8Ef9LeftJoinShim(call.Method)
 #endif
                 )
         {
@@ -484,6 +492,22 @@ internal static class NativeSlotPopulator
             mongoQ.Select.MarkJoinInnerAccessConfirmed();
             record(new MongoOrdering(innerSortKey, ascending));
         }
+        // A CONDITIONAL sort key reaching a single-level join's Inner side (EF-322, Phase 2 Group A), e.g.
+        // `Orders.OrderBy(o => o.Customer != null ? o.Customer.City : "")`. The plain-value arm immediately
+        // above never matches a ConditionalExpression body (TryTranslateValue has no ternary handling), so
+        // this arm is checked next, not in place of it.
+        else if (mongoQ.Select.JoinScope is { Levels.Count: 1 } conditionalSortScope
+                 && mongoQ.Joins.Count == 1
+                 && TryTranslateConditionalSortKey(
+                     mongoQ, conditionalSortScope, keySelector.Parameters[0], keySelector.Body,
+                     out var conditionalSortKey))
+        {
+            // Same relocate-then-confirm sequence as the plain-value Inner-access arm above, for the same
+            // reason: an earlier Outer-only key in this SAME chain must land in the same $sort stage.
+            mongoQ.Select.DeferTrailingSortPastConfirmedJoin();
+            mongoQ.Select.MarkJoinInnerAccessConfirmed();
+            record(new MongoOrdering(conditionalSortKey, ascending));
+        }
         else if (mongoQ.Select.JoinScope is { Levels.Count: > 1 } chainedScope
                  && NativeJoinScopeTranslator.TryTranslateRootScopeOnly(
                      chainedScope, keySelector.Parameters[0], keySelector.Body, valueMode: true, out var chainedSortKey))
@@ -516,6 +540,62 @@ internal static class NativeSlotPopulator
             record(new MongoOrdering(ctorSortKey, ascending));
         else
             mongoQ.Select.MarkNotNativelyRepresentable();
+    }
+
+    /// <summary>
+    /// Attempts to translate a BARE nav-null-check ternary ORDER BY/THEN BY sort key reaching a single-level
+    /// join scope's Inner side — <c>o =&gt; o.Customer != null ? o.Customer.City : ""</c> — mirroring
+    /// <see cref="NativeJoinScopeProjectionBinder.TryBindConditionalProjection"/>'s SELECT-side recognizer for
+    /// the identical shape (structural null-check match via
+    /// <see cref="NativeJoinScopeTranslator.TryMatchScopeNullCheck"/>, branch translation via
+    /// <see cref="NativeJoinScopeProjectionBinder.TryTranslateConditionalBranch"/>), but NOT extracted into a
+    /// shared method with it: the two call sites confirm the join differently (
+    /// <see cref="NativeJoinScopeProjectionBinder.ConfirmEntireChain"/> for the SELECT case vs.
+    /// <see cref="MongoSelectDefinition.DeferTrailingSortPastConfirmedJoin"/> +
+    /// <see cref="MongoSelectDefinition.MarkJoinInnerAccessConfirmed"/> here), so the caller must stay in
+    /// control of the commit step. Declines (returns <see langword="false"/>, never throws) for a plain inner
+    /// <c>Join</c>'s degenerate "always true" null check and for a collection navigation's "no single
+    /// is-it-null answer" case — the same two guards <c>TryBindConditionalProjection</c> applies, re-derived
+    /// here since this is a different call site (see <c>JoinScopeOrderBySlotPopulationTests</c> for
+    /// both decline cases proven independently).
+    /// </summary>
+    private static bool TryTranslateConditionalSortKey(
+        MongoQueryExpression mongoQ, MongoJoinScope scope, ParameterExpression rootParam, Expression body,
+        [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+
+        if (body is not ConditionalExpression conditional
+            || !NativeJoinScopeTranslator.TryMatchScopeNullCheck(
+                scope, rootParam, conditional.Test, out var scopeIndex, out var isNotNull))
+        {
+            return false;
+        }
+
+        // scopeIndex is 1-based over Levels (see TryMatchScopeNullCheck's own contract: 0 is the root, never
+        // returned); mongoQ.Joins is the parallel 0-based list TranslateJoinCore built the scope from.
+        var checkedJoin = mongoQ.Joins[scopeIndex - 1];
+        var level = scope.Levels[scopeIndex - 1];
+
+        // Degenerate-check guard: a plain inner Join drops an unmatched row entirely rather than unwinding it
+        // as an explicit null, so "Inner != null" is unconditionally true there (and "== null" unconditionally
+        // false) — not a real check. A collection navigation is a different shape (many joined rows, not a
+        // single nullable one) with no single "is it null" answer. Mirrors
+        // NativeJoinScopeProjectionBinder.TryBindConditionalProjection's identical guard.
+        if (!level.IsLeftOuter || checkedJoin.Navigation is { IsCollection: true })
+        {
+            return false;
+        }
+
+        if (!NativeJoinScopeProjectionBinder.TryTranslateConditionalBranch(scope, rootParam, conditional.IfTrue, out var ifTrue)
+            || !NativeJoinScopeProjectionBinder.TryTranslateConditionalBranch(scope, rootParam, conditional.IfFalse, out var ifFalse))
+        {
+            return false;
+        }
+
+        result = new MongoConditionalExpression(
+            new MongoLookupNullCheckExpression(level.InnerPrefix, isNotNull), ifTrue, ifFalse);
+        return true;
     }
 
     /// <summary>

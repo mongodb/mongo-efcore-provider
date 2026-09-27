@@ -219,6 +219,18 @@ internal sealed class LookupExpression
     public bool ForceUnwind { get; }
 
     /// <summary>
+    /// Set when this collection Include's own lookup alias was renamed away from its default
+    /// (<see cref="GetLookupAlias(IReadOnlyNavigationBase)"/>) because it collided with an already-registered,
+    /// incompatible ($unwind-ed) lookup at that alias — see the collision-detection in
+    /// <c>MongoProjectionBindingExpressionVisitor.VisitExtension</c>'s <c>IncludeExpression</c> case (EF-322
+    /// Phase 2 Group B, root cause A2). Lets
+    /// <see cref="NativeTranslation.MongoSelectLowerer.AppendLookupStages"/> recognize this
+    /// lookup as a plain (no-pipeline, non-unwound) collection Include despite its non-default alias — it
+    /// renders identically to <see cref="IsNativeCollectionLookup"/>'s case, just under a different field name.
+    /// </summary>
+    public bool RenamedToAvoidJoinCollision { get; set; }
+
+    /// <summary>
     /// A single-level collection Include the native pipeline can emit as a <c>$lookup</c> array (no
     /// <c>$unwind</c>), readable by the DOM collection materializer from a root-level
     /// <c>_lookup_&lt;Nav&gt;</c> field: a collection nav, no filtered-Include pipeline stages, not

@@ -79,6 +79,60 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         return MatchTypes(result, expression.Type);
     }
 
+    /// <summary>
+    /// Visits a single, already correctly re-bound <see cref="IncludeExpression"/> subtree — produced by
+    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.BindResultMember</c> re-wrapping a rebound
+    /// join-scope whole-entity shaper — WITHOUT going through <see cref="Translate"/>'s wholesale
+    /// <see cref="MongoQueryExpression.ReplaceProjectionMapping"/> side effect. The caller's own projection
+    /// mapping (already correctly built via index-based <see cref="MongoQueryExpression.AddToProjection"/>
+    /// calls) must survive untouched; only <see cref="VisitExtension"/>'s existing <see cref="IncludeExpression"/>
+    /// handling — registering the Include's own collection <c>$lookup</c> and rewriting the node into a
+    /// reducible shape via <c>RewriteCollectionIncludeForLookup</c> — is needed here. See
+    /// docs/superpowers/specs/2026-09-25-native-join-scope-include-materialization-design.md, "Design options",
+    /// Option B (confirmed correct by reading <c>RewriteCollectionIncludeForLookup</c>'s own
+    /// "already wrapped in one or more IncludeExpressions" handling, which anticipates exactly this shape).
+    /// <para>
+    /// Still seeds <see cref="_projectionMembers"/> with a fresh <see cref="ProjectionMember"/> frame before
+    /// visiting (mirroring <see cref="Translate"/>'s own seeding) — <see cref="GetCurrentProjectionMember"/>/
+    /// <see cref="EnterProjectionMember"/>/<see cref="ExitProjectionMember"/> assume a non-empty stack, and a
+    /// nested owned-collection-navigation shape inside the visited <see cref="IncludeExpression"/> subtree
+    /// (<see cref="TryBindNativeArrayProjection"/>) reaches those unconditionally, regardless of this bridge's
+    /// caller. Without this, an ordinary join-scope whole-entity leaf whose entity happens to carry an
+    /// EF-auto-included owned collection navigation — no explicit <c>.Include()</c> needed — crashes with
+    /// "Stack empty" (MEASURED). <see cref="_translatedRootExpression"/> deliberately stays untouched (and
+    /// null): its only two readers treat a null root as "not reachable" — a safe decline, not a crash — for an
+    /// unrelated arithmetic-spine shape this bridge's input (always an <see cref="IncludeExpression"/>) never
+    /// takes.
+    /// </para>
+    /// <para>
+    /// Also restores <see cref="_projectionMapping"/> on every return path (Review Focus: "must not leak
+    /// state") — defensive insurance rather than a path this bridge's own caller (<c>BindResultMember</c>,
+    /// which only takes this route for an all-collection <see cref="IncludeExpression"/> chain) is currently
+    /// known to exercise, since <see cref="VisitExtension"/>'s own <see cref="IncludeExpression"/> case does
+    /// not itself write to <see cref="_projectionMapping"/> for that shape.
+    /// </para>
+    /// </summary>
+    internal Expression VisitIncludeExpression(MongoQueryExpression queryExpression, IncludeExpression includeExpression)
+    {
+        var previousQueryExpression = _queryExpression;
+        _queryExpression = queryExpression;
+        _projectionMembers.Push(new ProjectionMember());
+        var projectionMappingKeysBefore = _projectionMapping.Keys.ToList();
+        try
+        {
+            return Visit(includeExpression);
+        }
+        finally
+        {
+            foreach (var key in _projectionMapping.Keys.Except(projectionMappingKeysBefore).ToList())
+            {
+                _projectionMapping.Remove(key);
+            }
+            _projectionMembers.Pop();
+            _queryExpression = previousQueryExpression;
+        }
+    }
+
     /// <inheritdoc />
     public override Expression Visit(Expression expression)
     {
@@ -518,6 +572,17 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                     {
                         var lookup = new LookupExpression(includableNavigation);
 
+                        // Captured BEFORE any of the prefixing below runs. ObjectArrayProjectionExpression's
+                        // Name (what RewriteCollectionIncludeForLookup builds the read side with) must stay
+                        // PLAIN — the outer/inner and transitive-intermediate scoping applied to lookup.As
+                        // below is purely $lookup/AddLookup bookkeeping (LocalField/dedup); the read side
+                        // already encodes that scoping separately via outerEntityProjection.ParentAccessExpression.
+                        // Feeding the read side the fully-prefixed lookup.As instead (EF-322 Phase 2 Group B
+                        // regression, caught by the Northwind multi-level-Include suite: 60 failures, a
+                        // collection Include materializing 1 element instead of 5) doubly-scopes the field
+                        // path and reads the wrong/malformed field.
+                        var plainLookupAlias = lookup.As;
+
                         // For multi-level Include where the declaring entity is a cross-collection
                         // reference (handled by LeftJoin producing _outer/_inner), the $lookup
                         // localField must be prefixed to reference the inner sub-document.
@@ -550,6 +615,45 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                             // The output "as" is nested under the same intermediate sub-document because
                             // the shaper reads the collection array relative to the intermediate's
                             // ParentAccessExpression (i.e. "_lookup_<Nav>._lookup_<Collection>").
+                            //
+                            // EF-322: a collection Include whose declaring entity is the INNER side of a
+                            // Join/LeftJoin over a COLLECTION navigation (e.g. Owners.LeftJoin(Orders.Include(r =>
+                            // r.OrderLines), ...) — EF Core's own
+                            // Outer_identifier_correctly_determined_when_doing_include_on_right_side_of_left_join)
+                            // is never found by the reference-only type-based match below, so its $lookup used to
+                            // be emitted at the document ROOT — matching the OUTER entity's _id and writing to a
+                            // field the read side never reads: every inner entity's collection came back silently
+                            // EMPTY, in every query mode. The intermediate is resolved from the Include's own entity
+                            // binding (the exact ParentAccessExpression RewriteCollectionIncludeForLookup builds the
+                            // read side from), and the Include's $lookup is NESTED inside that join's own $lookup
+                            // sub-pipeline rather than prefixed: the read side still finds the array at
+                            // "_lookup_<Join>._lookup_<Collection>", but — unlike a dotted "as" — an unmatched
+                            // LEFT-OUTER row never gets a phantom "_lookup_<Join>" sub-document created for it (which
+                            // would materialize a key-less inner entity instead of a null one).
+                            if (TryGetDeclaringJoinLookup(includeExpression) is
+                                { Navigation.IsCollection: true, ForceUnwind: true } declaringJoinLookup)
+                            {
+                                ExtractNestedIncludePipeline(
+                                    includeExpression.NavigationExpression, lookup, includableNavigation.TargetEntityType);
+
+                                // The same Include can be visited once per projection member it appears in (e.g.
+                                // `new { a = r, b = r }`); nest its $lookup only once.
+                                var nestedLookupDocument = BuildLookupDocument(lookup);
+                                if (!declaringJoinLookup.PipelineStages.Contains(nestedLookupDocument))
+                                {
+                                    declaringJoinLookup.PipelineStages.Add(nestedLookupDocument);
+                                }
+
+                                // Never re-stamp a kind an earlier registration already chose (mirrors
+                                // ExtractNestedIncludePipeline's own write-once discipline).
+                                if (declaringJoinLookup.PipelineKind == LookupPipelineKind.None)
+                                {
+                                    declaringJoinLookup.PipelineKind = LookupPipelineKind.NestedInclude;
+                                }
+
+                                return RewriteCollectionIncludeForLookup(includeExpression, includableNavigation, plainLookupAlias);
+                            }
+
                             var declaringType = includableNavigation.DeclaringEntityType;
                             var intermediateMatches = _queryExpression.GetPendingLookups().Where(
                                 l => l.IsReference
@@ -579,8 +683,31 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                         // Extract filtered Include pipeline stages (OrderBy, Skip, Take)
                         // and nested ThenInclude $lookups from the NavigationExpression.
                         ExtractNestedIncludePipeline(includeExpression.NavigationExpression, lookup, includableNavigation.TargetEntityType);
+
+                        // EF-322 Phase 2 Group B (root cause A2): the Include's target navigation can coincide
+                        // with a join's own already-registered lookup at the SAME alias (e.g.
+                        // Owners.Include(o => o.Orders).Join(db.Orders, o => o.Id, r => r.OwnerId, ...) — the
+                        // join's key resolves to the exact same Owner.Orders navigation the Include targets).
+                        // AddLookup dedupes by alias and, when neither side carries a pipeline, silently keeps
+                        // whichever was registered FIRST — the join's, since a join registers its lookup before
+                        // this Include registration ever runs. The join's own lookup is $unwind-ed
+                        // (ShouldUnwind — single document per row, needed for the join's own row
+                        // multiplication); this Include needs the BARE array. The two are structurally
+                        // incompatible under one $lookup regardless of pipeline state, so give THIS lookup a
+                        // distinct alias instead of colliding — the join's own alias, and everything already
+                        // staged against it elsewhere in the SAME projection, is untouched.
+                        var existingIncompatibleLookup = _queryExpression.GetPendingLookups()
+                            .FirstOrDefault(l => l.As == lookup.As && l.ShouldUnwind);
+                        var readAlias = plainLookupAlias;
+                        if (existingIncompatibleLookup != null)
+                        {
+                            lookup.As = $"{lookup.As}_include";
+                            lookup.RenamedToAvoidJoinCollision = true;
+                            readAlias = $"{plainLookupAlias}_include";
+                        }
+
                         _queryExpression.AddLookup(lookup);
-                        return RewriteCollectionIncludeForLookup(includeExpression, includableNavigation);
+                        return RewriteCollectionIncludeForLookup(includeExpression, includableNavigation, readAlias);
                     }
 
                     _includedNavigations.Push(includableNavigation);
