@@ -1389,13 +1389,11 @@ OrderDetails.{ "$match" : { "$expr" : { "$gt" : [{ "$pow" : ["$Discount", 2.0] }
 
     public override async Task Select_mathf_round(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        await AssertTranslationFailed(() =>
-            base.Select_mathf_round(async));
+        await base.Select_mathf_round(async);
 
         AssertMql(
             """
-            Orders.
+            Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$project" : { "_v" : { "$round" : "$_id" }, "_id" : 0 } }
             """);
     }
 
