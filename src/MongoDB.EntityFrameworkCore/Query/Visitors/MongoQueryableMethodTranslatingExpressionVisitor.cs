@@ -858,8 +858,26 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     // it by index. The stored source expression (the original g.Key / g.Count() / g.Sum(...) argument) is kept
     // only for its distinctness (AddToProjection dedups by expression) and CLR type; the DOM shaper reads the
     // value raw by the alias (the member name) since these sources resolve to no IProperty.
+    //
+    // A NESTED-CONSTRUCTION member (EF-322, `Container = new LastInChain { Name = "x", Value = g.Sum(...) }`)
+    // is the one exception: NativeGroupByBinder.TryBindNestedGroupProjectionConstruction already translated it
+    // into a MongoDocumentConstructionExpression and staged it into mongoQueryExpression.Select.Projection —
+    // registering the RAW, untranslated valueExpression (the original MemberInitExpression) under this alias
+    // instead would mean MongoProjectionBindingRemovingExpressionVisitor's MongoDocumentConstructionExpression
+    // case (VisitExtension) never matches, and the shaper falls through to an ordinary alias read that hands
+    // the WHOLE nested CLR type to BsonBinding.GetElementValue<T>, which has no serializer for it and either
+    // throws or (for a `BsonClassMapSerializer`-eligible type) silently misreads a member's raw BSON
+    // representation instead (MEASURED: a decimal accumulator member came back as a raw
+    // MongoDB.Bson.Decimal128, not a decimal). Same fix, same lookup (TryGetDocumentConstructionProjection), as
+    // BindResultMember's identical join-scope-nested-leaf carve-out just above.
     private static Expression BindGroupMember(MongoQueryExpression mongoQueryExpression, string alias, Expression valueExpression)
     {
+        if (mongoQueryExpression.Select.TryGetDocumentConstructionProjection(alias, valueExpression.Type, out var construction))
+        {
+            var constructionIndex = mongoQueryExpression.AddToProjection(construction, alias);
+            return new ProjectionBindingExpression(mongoQueryExpression, constructionIndex, valueExpression.Type);
+        }
+
         var index = mongoQueryExpression.AddToProjection(valueExpression, alias);
         return new ProjectionBindingExpression(mongoQueryExpression, index, valueExpression.Type);
     }

@@ -1163,7 +1163,7 @@ Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "x" : "$City" }, { "x" : "London" }] } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "x" : "$City" }, { "x" : { "$literal" : "London" } }] } } }
             """);
     }
 
@@ -1173,7 +1173,7 @@ Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "x" : "$City", "y" : "$Country" }, { "x" : "London", "y" : "UK" }] } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "x" : "$City", "y" : "$Country" }, { "x" : { "$literal" : "London" }, "y" : { "$literal" : "UK" } }] } } }
             """);
     }
 

@@ -2371,4 +2371,452 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
                 .Take(0)
                 .ToArray());
     }
+
+    // EF-322: nested-construction GroupBy projection member — a Select-projection member whose own value is a
+    // fresh NewExpression/MemberInitExpression (e.g. `Container = new LastInChain { Name = "x", Value =
+    // g.Sum(...) }`), the last SP7-descoped Odata_groupby_empty_key shape (see NativeGroupByBinderTests and
+    // NorthwindGroupByQueryMongoTest.Odata_groupby_empty_key).
+    private class NestedAggregateContainer
+    {
+        public string Name { get; set; } = "";
+        public object Value { get; set; } = null!;
+    }
+
+    private class NestedAggregateWrapper
+    {
+        public NestedAggregateContainer Container { get; set; } = null!;
+    }
+
+    [Fact]
+    public void GroupBy_select_with_nested_construction_projection_member_goes_native()
+    {
+        var seed = new[]
+        {
+            new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 10 },
+            new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 20 },
+        };
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(GroupBy_select_with_nested_construction_projection_member_goes_native));
+
+        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
+        // here proves the nested construction went native.
+        var result = db.Entities
+            .GroupBy(o => new { })
+            .Select(g => new NestedAggregateWrapper
+            {
+                Container = new NestedAggregateContainer
+                {
+                    Name = "TotalAmount",
+                    Value = g.Sum(o => o.Amount)
+                }
+            })
+            .AsEnumerable()
+            .Single();
+
+        Assert.Equal("TotalAmount", result.Container.Name);
+        Assert.Equal(30m, result.Container.Value);
+    }
+
+    [Fact]
+    public void GroupBy_select_with_nested_construction_referencing_per_element_value_declines_cleanly()
+    {
+        var seed = new[] { new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 10 } };
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(GroupBy_select_with_nested_construction_referencing_per_element_value_declines_cleanly));
+
+        // A per-element reference (o.Country via g.First()) mixed into the SAME nested construction as an
+        // accumulator — the outer o is NOT the grouping parameter, so this must decline the WHOLE projection,
+        // not partially translate it.
+        Assert.Throws<NativeTranslationNotSupportedException>(
+            () => db.Entities
+                .GroupBy(o => new { })
+                .Select(g => new NestedAggregateWrapper
+                {
+                    Container = new NestedAggregateContainer
+                    {
+                        Name = g.First().Country,
+                        Value = g.Sum(o => o.Amount)
+                    }
+                })
+                .AsEnumerable()
+                .Single());
+    }
+
+    [Fact]
+    public void GroupBy_select_with_doubly_nested_construction_goes_native()
+    {
+        var seed = new[]
+        {
+            new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 10 },
+            new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 20 },
+        };
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(GroupBy_select_with_doubly_nested_construction_goes_native));
+
+        var result = db.Entities
+            .GroupBy(o => new { })
+            .Select(g => new OuterNestedWrapper
+            {
+                Mid = new MidNestedWrapper
+                {
+                    Inner = new NestedAggregateContainer
+                    {
+                        Name = "Deep",
+                        Value = g.Sum(o => o.Amount)
+                    }
+                }
+            })
+            .AsEnumerable()
+            .Single();
+
+        Assert.Equal("Deep", result.Mid.Inner.Name);
+        Assert.Equal(30m, result.Mid.Inner.Value);
+    }
+
+    private class OuterNestedWrapper
+    {
+        public MidNestedWrapper Mid { get; set; } = null!;
+    }
+
+    private class MidNestedWrapper
+    {
+        public NestedAggregateContainer Inner { get; set; } = null!;
+    }
+
+    // Nests BOTH accumulators inside the SAME construction (Container), not as two top-level Select members —
+    // two SIBLING top-level accumulators already go through the outer per-member loop's own top-level dispatch
+    // without ever reaching TryBindNestedGroupProjectionConstruction, so that shape would not exercise this
+    // plan's own two-accumulator synthetic-field-naming path at all.
+    [Fact]
+    public void GroupBy_select_with_two_nested_accumulators_uses_distinct_synthetic_fields()
+    {
+        var seed = new[]
+        {
+            new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 10 },
+            new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 20 },
+        };
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(GroupBy_select_with_two_nested_accumulators_uses_distinct_synthetic_fields));
+
+        var result = db.Entities
+            .GroupBy(o => new { })
+            .Select(g => new ThreeMemberNestedWrapper
+            {
+                Container = new TwoAccumulatorContainer
+                {
+                    Sum = g.Sum(o => o.Amount),
+                    Count = g.Count()
+                }
+            })
+            .AsEnumerable()
+            .Single();
+
+        Assert.Equal(30m, result.Container.Sum);
+        Assert.Equal(2, result.Container.Count);
+    }
+
+    private class ThreeMemberNestedWrapper
+    {
+        public TwoAccumulatorContainer Container { get; set; } = null!;
+    }
+
+    private class TwoAccumulatorContainer
+    {
+        public decimal Sum { get; set; }
+        public int Count { get; set; }
+    }
+
+    // Final-review fix (Critical regression): a CONSTANT or PARAMETER member sitting alongside an accumulator
+    // inside a MongoDocumentConstructionExpression used to render through MongoAggregationExpressionRenderer's
+    // plain Render (no $literal wrapping), rather than RenderBranch (which DOES $literal-wrap a constant/
+    // parameter, exactly like an ordinary top-level $project value already gets). This is the first shape to put
+    // constant/parameter members into a MongoDocumentConstructionExpression — EF-447's own prior usage only ever
+    // produced MongoFieldExpression members, which have no $literal hazard. Each [Fact] below pins one member
+    // shape the reviewer found broken: a bare number/bool misread as a $project inclusion/exclusion flag, and a
+    // "$"-prefixed string misread as a field-path reference.
+    private class NestedConstantContainer
+    {
+        public string DollarString { get; set; } = "";
+        public int IntConstant { get; set; }
+        public int ZeroConstant { get; set; }
+        public bool BoolConstant { get; set; }
+        public int CapturedParameter { get; set; }
+        public decimal Sum { get; set; }
+    }
+
+    private class NestedConstantWrapper
+    {
+        public NestedConstantContainer Container { get; set; } = null!;
+    }
+
+    [Fact]
+    public void GroupBy_select_with_nested_construction_dollar_prefixed_string_constant_matches_driver_linq()
+    {
+        // Regression: a "$"-prefixed string constant member used to read back null — MongoDB's $project reads
+        // an unwrapped "$Country" as a field-path reference, not the literal string.
+        var seed = new[]
+        {
+            new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 10 },
+            new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 20 },
+        };
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(GroupBy_select_with_nested_construction_dollar_prefixed_string_constant_matches_driver_linq) + "N");
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(GroupBy_select_with_nested_construction_dollar_prefixed_string_constant_matches_driver_linq) + "D");
+
+        NestedConstantContainer Run(SingleEntityDbContext<Order> db) =>
+            db.Entities
+                .GroupBy(o => new { })
+                .Select(g => new NestedConstantWrapper
+                {
+                    Container = new NestedConstantContainer
+                    {
+                        DollarString = "$Country",
+                        Sum = g.Sum(o => o.Amount)
+                    }
+                })
+                .AsEnumerable()
+                .Single()
+                .Container;
+
+        var native = Run(nativeDb);
+        var driver = Run(driverDb);
+        Assert.Equal("$Country", native.DollarString);
+        Assert.Equal(driver.DollarString, native.DollarString);
+        Assert.Equal(driver.Sum, native.Sum);
+
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(GroupBy_select_with_nested_construction_dollar_prefixed_string_constant_matches_driver_linq) + "O");
+        var nativeOnly = nativeOnlyDb.Entities
+            .GroupBy(o => new { })
+            .Select(g => new NestedConstantWrapper
+            {
+                Container = new NestedConstantContainer
+                {
+                    DollarString = "$Country",
+                    Sum = g.Sum(o => o.Amount)
+                }
+            })
+            .AsEnumerable()
+            .Single()
+            .Container;
+        Assert.Equal("$Country", nativeOnly.DollarString);
+        Assert.Equal(30m, nativeOnly.Sum);
+    }
+
+    [Fact]
+    public void GroupBy_select_with_nested_construction_int_constant_matches_in_memory_linq()
+    {
+        // Regression: an int constant member used to throw InvalidOperationException ("Document element '...'
+        // is missing but required") because the bare integer was misread by $project as an inclusion flag.
+        //
+        // NOT compared against DriverLinq: the C# driver's own LINQ v3 translation of a bare numeric member here
+        // has the SAME missing-$literal-wrap bug (a bare int is likewise misread as an inclusion/exclusion flag
+        // by $project), so it is not a valid oracle for this specific shape — see Query/AGENTS.md's "No
+        // driver-LINQ oracle for some shapes" invariant. The oracle here is genuine in-memory LINQ instead.
+        var seed = new[]
+        {
+            new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 10 },
+            new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 20 },
+        };
+
+        NestedConstantContainer expected = seed.AsQueryable()
+            .GroupBy(o => new { })
+            .Select(g => new NestedConstantWrapper
+            {
+                Container = new NestedConstantContainer { IntConstant = 7, Sum = g.Sum(o => o.Amount) }
+            })
+            .Single()
+            .Container;
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(GroupBy_select_with_nested_construction_int_constant_matches_in_memory_linq) + "N");
+        var native = nativeDb.Entities
+            .GroupBy(o => new { })
+            .Select(g => new NestedConstantWrapper
+            {
+                Container = new NestedConstantContainer { IntConstant = 7, Sum = g.Sum(o => o.Amount) }
+            })
+            .AsEnumerable()
+            .Single()
+            .Container;
+
+        Assert.Equal(expected.IntConstant, native.IntConstant);
+        Assert.Equal(expected.Sum, native.Sum);
+
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(GroupBy_select_with_nested_construction_int_constant_matches_in_memory_linq) + "O");
+        var nativeOnly = nativeOnlyDb.Entities
+            .GroupBy(o => new { })
+            .Select(g => new NestedConstantWrapper
+            {
+                Container = new NestedConstantContainer { IntConstant = 7, Sum = g.Sum(o => o.Amount) }
+            })
+            .AsEnumerable()
+            .Single()
+            .Container;
+        Assert.Equal(expected.IntConstant, nativeOnly.IntConstant);
+        Assert.Equal(expected.Sum, nativeOnly.Sum);
+    }
+
+    [Fact]
+    public void GroupBy_select_with_nested_construction_literal_zero_constant_matches_in_memory_linq()
+    {
+        // Regression: a literal 0 member used to throw MongoCommandException ("Invalid $project :: Cannot do
+        // exclusion on field ... in inclusion projection") — 0 is misread as an EXCLUSION flag.
+        //
+        // NOT compared against DriverLinq: the driver's own LINQ v3 translation hits the EXACT SAME server-side
+        // ambiguity for a bare literal 0 (MongoCommandException, not merely a wrong value), so it cannot serve
+        // as this shape's oracle — see Query/AGENTS.md's "No driver-LINQ oracle for some shapes" invariant.
+        var seed = new[]
+        {
+            new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 10 },
+            new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 20 },
+        };
+
+        NestedConstantContainer expected = seed.AsQueryable()
+            .GroupBy(o => new { })
+            .Select(g => new NestedConstantWrapper
+            {
+                Container = new NestedConstantContainer { ZeroConstant = 0, Sum = g.Sum(o => o.Amount) }
+            })
+            .Single()
+            .Container;
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(GroupBy_select_with_nested_construction_literal_zero_constant_matches_in_memory_linq) + "N");
+        var native = nativeDb.Entities
+            .GroupBy(o => new { })
+            .Select(g => new NestedConstantWrapper
+            {
+                Container = new NestedConstantContainer { ZeroConstant = 0, Sum = g.Sum(o => o.Amount) }
+            })
+            .AsEnumerable()
+            .Single()
+            .Container;
+
+        Assert.Equal(expected.ZeroConstant, native.ZeroConstant);
+        Assert.Equal(expected.Sum, native.Sum);
+
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(GroupBy_select_with_nested_construction_literal_zero_constant_matches_in_memory_linq) + "O");
+        var nativeOnly = nativeOnlyDb.Entities
+            .GroupBy(o => new { })
+            .Select(g => new NestedConstantWrapper
+            {
+                Container = new NestedConstantContainer { ZeroConstant = 0, Sum = g.Sum(o => o.Amount) }
+            })
+            .AsEnumerable()
+            .Single()
+            .Container;
+        Assert.Equal(expected.ZeroConstant, nativeOnly.ZeroConstant);
+        Assert.Equal(expected.Sum, nativeOnly.Sum);
+    }
+
+    [Fact]
+    public void GroupBy_select_with_nested_construction_bool_constant_matches_in_memory_linq()
+    {
+        // Regression: a bool constant member misrenders the same way as the int/zero cases above.
+        //
+        // NOT compared against DriverLinq for the same reason as the int/zero cases: the driver's own LINQ v3
+        // translation of a bare bool member here shares the same missing-$literal-wrap bug.
+        var seed = new[]
+        {
+            new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 10 },
+            new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 20 },
+        };
+
+        NestedConstantContainer expected = seed.AsQueryable()
+            .GroupBy(o => new { })
+            .Select(g => new NestedConstantWrapper
+            {
+                Container = new NestedConstantContainer { BoolConstant = true, Sum = g.Sum(o => o.Amount) }
+            })
+            .Single()
+            .Container;
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(GroupBy_select_with_nested_construction_bool_constant_matches_in_memory_linq) + "N");
+        var native = nativeDb.Entities
+            .GroupBy(o => new { })
+            .Select(g => new NestedConstantWrapper
+            {
+                Container = new NestedConstantContainer { BoolConstant = true, Sum = g.Sum(o => o.Amount) }
+            })
+            .AsEnumerable()
+            .Single()
+            .Container;
+
+        Assert.Equal(expected.BoolConstant, native.BoolConstant);
+        Assert.Equal(expected.Sum, native.Sum);
+
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(GroupBy_select_with_nested_construction_bool_constant_matches_in_memory_linq) + "O");
+        var nativeOnly = nativeOnlyDb.Entities
+            .GroupBy(o => new { })
+            .Select(g => new NestedConstantWrapper
+            {
+                Container = new NestedConstantContainer { BoolConstant = true, Sum = g.Sum(o => o.Amount) }
+            })
+            .AsEnumerable()
+            .Single()
+            .Container;
+        Assert.Equal(expected.BoolConstant, nativeOnly.BoolConstant);
+        Assert.Equal(expected.Sum, nativeOnly.Sum);
+    }
+
+    [Fact]
+    public void GroupBy_select_with_nested_construction_captured_parameter_matches_in_memory_linq()
+    {
+        // Regression: a captured parameter member (not just a literal constant) hit the SAME missing-$literal
+        // bug as the constant cases above — the reviewer's probe reported a NullReferenceException for this
+        // shape specifically.
+        //
+        // NOT compared against DriverLinq for the same reason as the int/zero/bool cases above.
+        var seed = new[]
+        {
+            new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 10 },
+            new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 20 },
+        };
+        var capturedValue = 42;
+
+        NestedConstantContainer expected = seed.AsQueryable()
+            .GroupBy(o => new { })
+            .Select(g => new NestedConstantWrapper
+            {
+                Container = new NestedConstantContainer { CapturedParameter = capturedValue, Sum = g.Sum(o => o.Amount) }
+            })
+            .Single()
+            .Container;
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(GroupBy_select_with_nested_construction_captured_parameter_matches_in_memory_linq) + "N");
+        var native = nativeDb.Entities
+            .GroupBy(o => new { })
+            .Select(g => new NestedConstantWrapper
+            {
+                Container = new NestedConstantContainer { CapturedParameter = capturedValue, Sum = g.Sum(o => o.Amount) }
+            })
+            .AsEnumerable()
+            .Single()
+            .Container;
+
+        Assert.Equal(expected.CapturedParameter, native.CapturedParameter);
+        Assert.Equal(expected.Sum, native.Sum);
+
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(GroupBy_select_with_nested_construction_captured_parameter_matches_in_memory_linq) + "O");
+        var nativeOnly = nativeOnlyDb.Entities
+            .GroupBy(o => new { })
+            .Select(g => new NestedConstantWrapper
+            {
+                Container = new NestedConstantContainer { CapturedParameter = capturedValue, Sum = g.Sum(o => o.Amount) }
+            })
+            .AsEnumerable()
+            .Single()
+            .Container;
+        Assert.Equal(expected.CapturedParameter, nativeOnly.CapturedParameter);
+        Assert.Equal(expected.Sum, nativeOnly.Sum);
+    }
 }
