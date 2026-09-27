@@ -993,6 +993,95 @@ git add tests/MongoDB.EntityFrameworkCore.SpecificationTests/MongoComplianceTest
 git commit -m "EF-322: remove StringTranslationsTestBase from IgnoredTestBases"
 ```
 
+## Task 8: Regenerate EF8/EF9 baselines and flip stale declines exposed by Tasks 2-6
+
+**Emergent task, added after the original 7 were written.** Task 7's `/test-all` sweep found EF8 has 28 and
+EF9 has 42 spec-test failures that don't exist at this branch's base commit. Two independent agents confirmed
+(via bisection to the base commit, and by inspecting 5 sampled failures' actual error output) this is entirely
+safe: Tasks 2-6's new native recognizers live in shared, non-EF-version-gated `src/` code and fire differently
+under EF8/EF9's older LINQ expression-tree shapes on **pre-existing tests in
+`NorthwindFunctionsQueryMongoTest.cs`** (an EF8/EF9-only file, guarded `#if EF8 || EF9`) that already exercised
+Trim/StartsWith/EndsWith/Contains/`Regex.IsMatch`/`FirstOrDefault`/`LastOrDefault`/`Join`. Every sampled
+failure was one of two benign signatures: (a) an `AssertMql` MQL-text mismatch occurring AFTER that test's own
+`base.X()` data/oracle comparison already passed — different, presumably-correct MQL vs. a stale baseline; or
+(b) a stale `AssertTranslationFailed`/`MongoSpecTestHelpers.AssertNativeTranslationFailedAsync` wrapper that
+still asserts "this shape must fail to translate," now false because it actually works under EF8/EF9 too
+("No exception was thrown" — structurally impossible to produce from a genuine data-assertion failure inside
+`base.X()`, which would instead surface as "query threw XunitException").
+
+**Files:**
+- Modify: `tests/MongoDB.EntityFrameworkCore.SpecificationTests/Query/NorthwindFunctionsQueryMongoTest.cs`
+  (confirm via Step 1 whether any other EF8/EF9-covering spec file is also affected — do not assume this is
+  the only one)
+
+**Interfaces:** None (test-file-only; no `src/` changes expected — if Step 1's investigation turns up a
+genuine data-correctness failure rather than one of the two benign signatures above, STOP and treat it as a
+new finding requiring a `src/` fix, don't force it into this task's baseline-regen shape).
+
+- [ ] **Step 1: Enumerate the exact failing-test list for both EF8 and EF9**
+
+Run, for each version:
+```bash
+dotnet build MongoDB.EFCoreProvider.sln -c "Debug EF8"
+dotnet test tests/MongoDB.EntityFrameworkCore.SpecificationTests/MongoDB.EntityFrameworkCore.SpecificationTests.csproj -c "Debug EF8" --no-build --logger "console;verbosity=normal" > /tmp/ef8-full-run.txt 2>&1
+grep -E "^  Failed " /tmp/ef8-full-run.txt
+```
+and the equivalent for EF9. Confirm every failing test is in `NorthwindFunctionsQueryMongoTest.cs`, plus
+exactly the two known pre-existing `Select_mathf_round(async: True/False)` failures. If ANY failing test is
+in a different file, read that file's failure too before proceeding — the fix pattern (Steps 2-3 below) may
+need to extend there as well.
+
+- [ ] **Step 2: Classify and fix each failing test in `NorthwindFunctionsQueryMongoTest.cs`**
+
+For each failing test, read its current override and the actual test-runner error output (from Step 1's
+captured logs) to determine which of the two signatures it is:
+
+- **Signature (a) — `AssertMql` string mismatch, `base.X()` already passed.** The override already calls
+  `await base.X(async);` followed by an `AssertMql(...)` whose baseline is stale for EF8/EF9. Fix per this
+  branch's own precedent (commit `a64271ab`, "EF-322: fix EF8/EF9 baselines for Where_string_length and
+  Order_by_length_twice"): branch the baseline with `#if EF8 || EF9` / `#else` / `#endif` around the
+  `AssertMql(...)` call, regenerating the EF8/EF9 baseline via
+  `EF_TEST_REWRITE_BASELINES=1 dotnet test ... -c "Debug EF8" --no-build --filter "FullyQualifiedName~NorthwindFunctionsQueryMongoTest.<Method>"`
+  (and again for EF9 — the two may differ from each other too, check both) while leaving the existing EF10 (or
+  version-unconditional, if it turns out identical) baseline in the `#else` arm untouched unless it also needs
+  updating.
+
+- **Signature (b) — stale `AssertTranslationFailed`/`AssertNativeTranslationFailedAsync` wrapper, "No
+  exception was thrown."** The override currently declines with a `// Fails: ...` comment from before Tasks
+  2-6 existed. Flip it to `await base.X(async); AssertMql();` (empty), regenerate via
+  `EF_TEST_REWRITE_BASELINES=1` the same way, and remove the now-inaccurate `// Fails:` comment. If the
+  resulting baseline differs between EF8/EF9 and EF10 (likely, since EF10 already has its own separate
+  baseline from before this plan or wasn't affected), branch with `#if EF8 || EF9` the same way as signature
+  (a).
+
+For every fix, **re-run under `MONGODB_EF_NATIVE_ONLY=1`** to confirm genuine native translation (not another
+coincidental fallback match) where applicable, matching the discipline every other task in this plan followed.
+
+- [ ] **Step 3: Full EF8 and EF9 spec-suite reruns**
+
+Run:
+```bash
+dotnet build MongoDB.EFCoreProvider.sln -c "Debug EF8"
+dotnet test tests/MongoDB.EntityFrameworkCore.SpecificationTests/MongoDB.EntityFrameworkCore.SpecificationTests.csproj -c "Debug EF8" --no-build
+```
+and the equivalent for EF9. Expected: both back down to exactly their 2 pre-existing `Select_mathf_round`
+failures, nothing else.
+
+- [ ] **Step 4: Confirm EF10 unaffected**
+
+Run: `dotnet build MongoDB.EFCoreProvider.sln -c "Debug EF10"` then
+`dotnet test tests/MongoDB.EntityFrameworkCore.SpecificationTests/MongoDB.EntityFrameworkCore.SpecificationTests.csproj -c "Debug EF10" --no-build`
+Expected: still exactly the 2 pre-existing `Select_non_matching_value_types_from_method_call_introduces_explicit_cast`
+failures (async: True/False), nothing else — confirm the `#if EF8 || EF9` branching didn't change EF10's own
+compiled behavior for these overrides.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tests/MongoDB.EntityFrameworkCore.SpecificationTests/Query/NorthwindFunctionsQueryMongoTest.cs
+git commit -m "EF-322: fix EF8/EF9 baselines and stale declines exposed by Tasks 2-6's native string translations"
+```
+
 ## Self-Review
 
 - **Spec coverage:** All 19 in-scope gaps from the empirical scoping run are covered (Trim family: Task 2;
