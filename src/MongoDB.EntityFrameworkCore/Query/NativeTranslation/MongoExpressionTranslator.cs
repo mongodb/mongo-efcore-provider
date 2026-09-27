@@ -2052,6 +2052,12 @@ internal sealed partial class MongoExpressionTranslator
                 : new MongoStringFirstOrLastExpression(firstOrLastSource, firstOrLastKind);
         }
 
+        // string.Join(separator, elements) over a fixed-arity array literal (`string.Join("|", new[] { .. })`).
+        // Same reasoning as the FirstOrLast arm immediately above: a MethodCallExpression is never matched by
+        // TryResolveMember below.
+        if (TryTranslateStringJoin(node, out var joinResult))
+            return joinResult;
+
         if (TryResolveMember(node, out var property, out var fieldPath, out var operandIsOuter))
         {
             // Deliberately NOT confined to _innerPrefix is null here, unlike TranslateComparison's two

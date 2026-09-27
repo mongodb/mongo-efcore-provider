@@ -543,6 +543,87 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
+    /// Recognizes <c>string.Join(separator, elements)</c> over a compile-time-fixed-length array LITERAL of
+    /// <see cref="string"/> (<c>string.Join("|", new[] { a, b, c })</c>) — EF-322 Task 6. <c>string.Join</c> has
+    /// no native MQL equivalent (there is no variadic "insert a separator between elements" aggregation
+    /// operator), so the only representable form is expanding it, at TRANSLATE time, into the same
+    /// <see cref="MongoConcatExpression"/> IR the <c>+</c>-operator string-concatenation path already produces
+    /// and <c>MongoAggregationExpressionRenderer</c> already renders as <c>$concat</c> — with the separator
+    /// interleaved between each pair of elements.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>The null hazard.</b> <c>$concat</c> treats ANY <see langword="null"/>/missing operand as nulling the
+    /// WHOLE expression — unlike .NET's <c>string.Join</c>, which treats a <see langword="null"/> element as an
+    /// empty string. Each element is therefore wrapped in <see cref="MongoCoalesceExpression"/> (rendered
+    /// <c>$ifNull</c>, same node the <c>??</c> operator already uses) against <c>""</c> before it enters the
+    /// concat operand list.
+    /// </para>
+    /// <para>
+    /// <b>Only a <see cref="NewArrayExpression"/> element argument is admitted</b> — a parameterized/runtime
+    /// collection has no fixed arity to interleave a separator into at translate time, and there is no
+    /// placeholder-substitution path for a variable-length operand list (same reasoning
+    /// <c>TryTranslateTrim</c>'s computed-<c>char[]</c> arm declines for). This also means the generic
+    /// <c>string.Join&lt;T&gt;(string, IEnumerable&lt;T&gt;)</c> overload is out of scope UNLESS its argument
+    /// happens to be a <see cref="NewArrayExpression"/> too (the general <c>IEnumerable&lt;T&gt;</c> shape has no
+    /// compile-time arity either).
+    /// </para>
+    /// <para>
+    /// Scoped to <see cref="string"/>-typed elements only: a non-string <c>T</c> would require the SAME
+    /// <c>ToString()</c>-equivalent <c>$toString</c> conversion <c>TranslateConcatOperand</c> applies for the
+    /// <c>+</c> operator, which is untested for this shape and out of this task's scope — declines rather than
+    /// guessing.
+    /// </para>
+    /// </remarks>
+    private bool TryTranslateStringJoin(Expression node, [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+
+        if (node is not MethodCallExpression call
+            || !call.Method.IsStatic
+            || call.Method.DeclaringType != typeof(string)
+            || call.Method.Name != nameof(string.Join)
+            || call.Arguments.Count != 2)
+        {
+            return false;
+        }
+
+        if (!TryTranslateValue(call.Arguments[0], out var separator))
+            return false;
+
+        var elementsArg = call.Arguments[1];
+        if (elementsArg is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
+            elementsArg = convert.Operand;
+
+        if (elementsArg is not NewArrayExpression { NodeType: ExpressionType.NewArrayInit } newArray
+            || newArray.Type.GetElementType() != typeof(string))
+        {
+            return false;
+        }
+
+        if (newArray.Expressions.Count == 0)
+        {
+            result = new MongoConstantExpression(string.Empty, forSerialization: null);
+            return true;
+        }
+
+        var operands = new List<MongoExpression>();
+        for (var i = 0; i < newArray.Expressions.Count; i++)
+        {
+            if (i > 0)
+                operands.Add(separator);
+
+            if (!TryTranslateValue(newArray.Expressions[i], out var element))
+                return false;
+
+            operands.Add(new MongoCoalesceExpression(element, new MongoConstantExpression(string.Empty, forSerialization: null)));
+        }
+
+        result = new MongoConcatExpression(operands);
+        return true;
+    }
+
+    /// <summary>
     /// Translates the collection side of a <c>Contains</c> call into a <see cref="MongoConstantExpression"/>
     /// (a captured/inline collection) or <see cref="MongoParameterExpression"/> (a query-parameter
     /// collection), using <paramref name="property"/> as the element serialization context. Returns

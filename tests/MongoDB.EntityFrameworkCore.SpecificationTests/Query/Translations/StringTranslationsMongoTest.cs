@@ -1073,9 +1073,15 @@ BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle" } } }, { "$mat
         // Fails: depends on native GroupBy (other agent's work) EF-149
         => AssertTranslationFailed(() => base.Join_with_ordering());
 
-    public override Task Join_non_aggregate()
-        // Fails: string.Join over an array literal EF-X105
-        => AssertTranslationFailed(() => base.Join_non_aggregate());
+    public override async Task Join_non_aggregate()
+    {
+        await base.Join_non_aggregate();
+
+        AssertMql(
+            """
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$String", ""] }, "|", { "$ifNull" : ["foo", ""] }, "|", { "$ifNull" : [null, ""] }, "|", { "$ifNull" : ["bar", ""] }] }, "Seattle|foo||bar"] } } }
+""");
+    }
 
     public override async Task Concat_operator()
     {

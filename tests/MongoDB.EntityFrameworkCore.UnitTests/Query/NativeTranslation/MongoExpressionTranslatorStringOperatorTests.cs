@@ -216,4 +216,85 @@ public class MongoExpressionTranslatorStringOperatorTests
         var translator = BuildTranslator();
         Assert.False(translator.TryTranslateValue(call, out _));
     }
+
+    [Fact]
+    public void Join_over_array_literal_with_null_element_translates_to_ifNull_wrapped_interleaved_concat()
+    {
+        // EF-322 Task 6: string.Join("|", new[] { c.Text, foo, (string?)null, "bar" }) — a field, a captured
+        // local (constant-folded), a literal null, and a string constant. Pins two things: (1) the separator
+        // is interleaved BETWEEN each pair of elements, not just prefixed/appended, and (2) every element is
+        // wrapped in a MongoCoalesceExpression (rendered $ifNull) so the null element contributes "" rather
+        // than nulling out the whole $concat (the hazard this task's plan calls out explicitly).
+        var translator = BuildTranslator();
+        var parameter = Expression.Parameter(typeof(Widget), "w");
+        var textAccess = Expression.Property(parameter, nameof(Widget.Text));
+
+        var joinCall = Expression.Call(
+            null,
+            typeof(string).GetMethod(nameof(string.Join), [typeof(string), typeof(string[])])!,
+            Expression.Constant("|"),
+            Expression.NewArrayInit(
+                typeof(string),
+                textAccess,
+                Expression.Constant("foo"),
+                Expression.Constant(null, typeof(string)),
+                Expression.Constant("bar")));
+
+        Assert.True(translator.TryTranslateValue(joinCall, out var result));
+        var concat = Assert.IsType<MongoConcatExpression>(result);
+
+        // 4 elements + 3 interleaved separators = 7 operands.
+        Assert.Equal(7, concat.Operands.Count);
+
+        var expectedElementIndexes = new[] { 0, 2, 4, 6 };
+        var expectedSeparatorIndexes = new[] { 1, 3, 5 };
+
+        foreach (var i in expectedSeparatorIndexes)
+        {
+            var separator = Assert.IsType<MongoConstantExpression>(concat.Operands[i]);
+            Assert.Equal("|", separator.Value);
+        }
+
+        foreach (var i in expectedElementIndexes)
+        {
+            var coalesce = Assert.IsType<MongoCoalesceExpression>(concat.Operands[i]);
+            var fallback = Assert.IsType<MongoConstantExpression>(coalesce.Right);
+            Assert.Equal(string.Empty, fallback.Value);
+        }
+
+        Assert.IsType<MongoFieldExpression>(((MongoCoalesceExpression)concat.Operands[0]).Left);
+        Assert.Equal("foo", ((MongoConstantExpression)((MongoCoalesceExpression)concat.Operands[2]).Left).Value);
+        Assert.Null(((MongoConstantExpression)((MongoCoalesceExpression)concat.Operands[4]).Left).Value);
+        Assert.Equal("bar", ((MongoConstantExpression)((MongoCoalesceExpression)concat.Operands[6]).Left).Value);
+    }
+
+    [Fact]
+    public void Join_over_a_parameterized_runtime_array_declines()
+    {
+        // No fixed arity to interleave a separator into at translate time — must decline, not guess.
+        var translator = BuildTranslator();
+        var arrayParam = Expression.Parameter(typeof(string[]), "elements");
+        var joinCall = Expression.Call(
+            null,
+            typeof(string).GetMethod(nameof(string.Join), [typeof(string), typeof(string[])])!,
+            Expression.Constant("|"),
+            arrayParam);
+
+        Assert.False(translator.TryTranslateValue(joinCall, out _));
+    }
+
+    [Fact]
+    public void Join_over_empty_array_literal_translates_to_empty_string_constant()
+    {
+        var translator = BuildTranslator();
+        var joinCall = Expression.Call(
+            null,
+            typeof(string).GetMethod(nameof(string.Join), [typeof(string), typeof(string[])])!,
+            Expression.Constant("|"),
+            Expression.NewArrayInit(typeof(string)));
+
+        Assert.True(translator.TryTranslateValue(joinCall, out var result));
+        var constant = Assert.IsType<MongoConstantExpression>(result);
+        Assert.Equal(string.Empty, constant.Value);
+    }
 }
