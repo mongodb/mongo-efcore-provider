@@ -2526,6 +2526,14 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // assignment would always be true and defeat the guard).
         var hadTerminalGrouping = mongoQueryExpression.Select.HasTerminalOperator;
 
+        // EF-322 SP6: a GroupBy composed directly on a COMPLETED set-op terminal (Union/Concat/Intersect/
+        // Except, no grouping/projection/lookup of its own — IsSetOpTerminalOnly) is not the Distinct/prior-
+        // grouping overwrite hazard hadTerminalGrouping exists to catch: the set op's own operands never set
+        // Grouping (a plain whole-entity Union/Concat operand, per TranslateSetOperation's own admission
+        // guard), so there is nothing for TryBindGroupKey to silently overwrite. Mirrors TranslateSelect's own
+        // sibling exemption for the identical reason (search this file for IsSetOpTerminalOnly to find it).
+        var wasSetOpTerminalOnly = mongoQueryExpression.Select.IsSetOpTerminalOnly;
+
         // EF-322/EF-TBD: a GroupBy(key).Select(aggregate) composed directly on top of an ALREADY-FINALIZED
         // grouping (Grouping != null) is NOT the overwrite hazard the guard above exists for — whether that
         // prior grouping came from a pure projected Distinct (EF-322: Distinct().GroupBy(...)) or an ordinary
@@ -2546,7 +2554,18 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // recognized as the wrong-data-on-fallback shape.
         mongoQueryExpression.Select.IsGroupBy = true;
 
-        if (hadTerminalGrouping && !hasFinalizedPriorGrouping)
+        if (hadTerminalGrouping && !hasFinalizedPriorGrouping && !wasSetOpTerminalOnly)
+        {
+            mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+        }
+        // EF-322 fix round: the prior stage's own Skip/Take (e.g. GroupBy(key1).Skip(1).Select(agg)
+        // .GroupBy(key2).Select(agg2)) is recorded in GroupPagingOps, but SnapshotPriorGroupingForNestedGroupBy
+        // only moves Grouping/Projection/GroupHavingPredicate aside — GroupPagingOps stays put, and the SECOND
+        // TryBindGroupProjection call (for THIS outer GroupBy) unconditionally resets GroupPagingOps from its
+        // own (empty) PendingGroupPaging, silently discarding the prior stage's paging entirely. Decline
+        // instead of snapshotting so this composition falls back to driver-LINQ. See this fix round's report
+        // for the reproducing probe query.
+        else if (hasFinalizedPriorGrouping && mongoQueryExpression.Select.GroupPagingOps.Count > 0)
         {
             mongoQueryExpression.Select.MarkNotNativelyRepresentable();
         }
@@ -3813,7 +3832,20 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            && mongo.Select.UnwindSource == null
            && !mongo.IsJoinQuery
            && (allowPreCombineLookups ? mongo.Lookups.All(l => l.InjectAfterRoot) : mongo.Lookups.Count == 0)
-           && !mongo.CapturedExpression.ContainsVectorSearch();
+           && !mongo.CapturedExpression.ContainsVectorSearch()
+           // EF-322 follow-up: a GroupBy(key) composed with its own post-group Skip/Take (GroupPagingOps),
+           // HAVING (GroupHavingPredicate), or OrderBy/ThenBy (GroupOrderOp) BEFORE the terminal
+           // Select(aggregate) must NOT be admitted here. MongoSelectLowerer's projected-operand path (see
+           // "setOp.OperandsProjected" in Lower and AppendSetOpOperandStages) only ever emits this operand's
+           // own $group + flattening $project — it has no stage that emits these three compositions. Admitting
+           // an operand carrying any of them would silently DROP that composition (the operand still executes
+           // and contributes rows, just without its own paging/HAVING/ordering) — a silent-wrong-data bug, not
+           // a clean decline. Requiring all three empty/null here means such a query instead falls through to
+           // the "out of scope" decline below (MarkNotNativelyRepresentable for Union/Concat, null for
+           // Intersect/Except), which is already correct.
+           && mongo.Select.GroupPagingOps.Count == 0
+           && mongo.Select.GroupHavingPredicate == null
+           && mongo.Select.GroupOrderOp == null;
 
     // See TryTranslateSetOperation's call-site remarks: mongo1's projection reaching a bare
     // MongoConstantExpression/MongoParameterExpression leaf (top-level or nested in an anonymous/DTO member)

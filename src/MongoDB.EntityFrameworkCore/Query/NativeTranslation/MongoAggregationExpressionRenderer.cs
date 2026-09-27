@@ -116,14 +116,14 @@ internal static class MongoAggregationExpressionRenderer
                 => new BsonDocument("$cond", new BsonDocument
                 {
                     { "if", Render(conditional.Test, placeholders, elementVariable) },
-                    { "then", Render(conditional.IfTrue, placeholders, elementVariable) },
-                    { "else", Render(conditional.IfFalse, placeholders, elementVariable) }
+                    { "then", RenderBranch(conditional.IfTrue, placeholders, elementVariable) },
+                    { "else", RenderBranch(conditional.IfFalse, placeholders, elementVariable) }
                 }),
             MongoCoalesceExpression coalesce
                 => new BsonDocument("$ifNull", new BsonArray
                 {
-                    Render(coalesce.Left, placeholders, elementVariable),
-                    Render(coalesce.Right, placeholders, elementVariable)
+                    RenderBranch(coalesce.Left, placeholders, elementVariable),
+                    RenderBranch(coalesce.Right, placeholders, elementVariable)
                 }),
             MongoDateTimeOffsetLocalExpression local
                 => new BsonDocument("$dateAdd", new BsonDocument
@@ -317,6 +317,20 @@ internal static class MongoAggregationExpressionRenderer
     // keeps every pre-existing call site's emitted MQL byte-identical.
     private static BsonValue FieldRef(string path, string? elementVariable)
         => elementVariable is null ? "$" + path : "$$" + elementVariable + "." + path;
+
+    // A $cond/$ifNull BRANCH gets the SAME $literal-wrapping RenderProject/RenderAddFields already apply to a
+    // bare TOP-LEVEL constant/parameter — MongoDB reads an unwrapped string starting with "$" as a field-path
+    // reference, not a literal value, and a $cond "then"/"else" or $ifNull operand is exactly as vulnerable to
+    // this misread as a top-level projected value is. Without this, `g.Key ?? "$Year"` silently returns null
+    // instead of the literal string "$Year", and a captured parameter whose runtime value happens to start
+    // with "$" can throw at execution time.
+    private static BsonValue RenderBranch(MongoExpression node, PlaceholderTable placeholders, string? elementVariable)
+    {
+        var rendered = Render(node, placeholders, elementVariable);
+        return node is MongoConstantExpression or MongoParameterExpression
+            ? new BsonDocument("$literal", rendered)
+            : rendered;
+    }
 
     // MongoDB's $dayOfWeek returns 1 (Sunday)..7 (Saturday); .NET's DayOfWeek enum is 0 (Sunday)..6 (Saturday).
     // The subtraction is mandatory, not defensive — omitting it silently shifts every day of the week by one.

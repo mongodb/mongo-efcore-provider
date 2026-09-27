@@ -143,6 +143,29 @@ internal sealed class MongoSelectLowerer
                 // deferred call at the bottom of this method, which is skipped for this branch.
                 AppendLookupStages(query, stages);
 
+                // KNOWN BUG (EF-TBD, pre-existing, unrelated to EF-322 SP6 — see NativeSetOpsTests.cs's
+                // GroupBy_after_Union_of_projected_operand_does_not_regress_the_preexisting_decline_path for
+                // the full trace and a git-stash-confirmed repro): this read of `select.Grouping` assumes it
+                // is still operand-1's OWN pre-combine Distinct grouping (the reason this branch exists at
+                // all — see the EF-322 comment above). That assumption breaks once an OUTER GroupBy composes
+                // on top of this projected-Distinct-operand Union/Concat: TranslateGroupBy's pre-existing
+                // SnapshotPriorGroupingForNestedGroupBy (unrelated to this branch, predates it) moves THIS
+                // grouping aside into `select.PriorGrouping` and overwrites `select.Grouping` with the NEW
+                // outer grouping instead — so this line then wrongly emits the OUTER grouping's own $group
+                // HERE, before the $unionWith. The operand's own original grouping is NOT lost/never
+                // emitted — it IS emitted, by the `if (select.PriorGrouping is { } priorGrouping)` block
+                // below (~line 252) — but in the WRONG PLACE: that block runs AFTER the $unionWith, whereas
+                // correctness requires operand-1's own pre-combine dedup to run BEFORE it (a Union must
+                // combine already-deduped operand rows, not dedup them together with operand 2's). Reproduced
+                // as `System.InvalidOperationException: Document element '...' is missing but required`
+                // under every MongoQueryMode, identically on code that predates EF-322 SP6 — neither of SP6's
+                // own two guard edits (TranslateGroupBy's wasSetOpTerminalOnly, this method's
+                // SetOperation.OperandsProjected check a few dozen lines below) can reach or fix this:
+                // OperandsProjected: true and IsSetOpTerminalOnly are mutually exclusive by construction
+                // (every operand kind admitted into OperandsProjected populates either Projection or
+                // Grouping, which IsSetOpTerminalOnly requires be empty), so the outer GroupBy's admission
+                // here is always decided by the OTHER (also pre-existing) hasFinalizedPriorGrouping path,
+                // never by SP6's. Not fixed here — worth its own follow-up ticket.
                 if (select.Grouping is { } outerGrouping)
                     stages.Add(new MongoGroupStage(outerGrouping));
                 stages.Add(new MongoProjectStage(select.Projection));
@@ -233,6 +256,17 @@ internal sealed class MongoSelectLowerer
         if (select.PriorGrouping is { } priorGrouping)
         {
             stages.Add(new MongoGroupStage(priorGrouping));
+
+            // EF-322 SP2 fix (final review): the prior stage's OWN HAVING (a Where composed between the
+            // FIRST GroupBy and ITS OWN Select) must still apply here — snapshotted alongside PriorGrouping
+            // by SnapshotPriorGroupingForNestedGroupBy specifically so the outer GroupBy's own (usually
+            // null) GroupHavingPredicate doesn't silently overwrite and drop it. Same ordering rule as the
+            // outer HAVING: after $group, before the flattening $project.
+            if (select.PriorGroupHavingPredicate is { } priorHavingPredicate)
+            {
+                stages.Add(new MongoMatchStage(priorHavingPredicate));
+            }
+
             if (select.PriorGroupingProjection.Count > 0)
                 stages.Add(new MongoProjectStage(select.PriorGroupingProjection));
             AppendSelectOpStages(select.PostGroupOps, stages, sortFields);
@@ -257,7 +291,15 @@ internal sealed class MongoSelectLowerer
         // emitted this exact $group + flattening $project itself, immediately before the set-op stage, once
         // per the OperandsProjected branch. Re-emitting it here would produce a spurious SECOND $group over
         // the already-combined/deduped result.
-        if (select.Grouping is { } grouping && select.SetOperation == null)
+        //
+        // EF-322 SP6: a GroupBy composed AFTER a completed Union/Concat (select.Grouping is the OUTER,
+        // post-set-op grouping, never the OperandsProjected branch's own pre-combine one) is NOT that hazard —
+        // OperandsProjected is false for two plain whole-entity operands, so the branch above never ran, and
+        // this IS the only place this Grouping can be emitted. The method has no early return between the
+        // SetOperation block and here (see its own "no early return" comment), so this fires in exactly the
+        // right position: after $unionWith/dedup and after TrailingOps, before this Grouping's own flatten
+        // $project just below.
+        if (select.Grouping is { } grouping && select.SetOperation is not { OperandsProjected: true })
         {
             stages.Add(new MongoGroupStage(grouping));
 
@@ -275,6 +317,17 @@ internal sealed class MongoSelectLowerer
                 stages.Add(new MongoMatchStage(postGroupPredicate));
             }
 
+            // EF-322 SP2: the ordinary HAVING case — a Where composed between GroupBy(key) and the terminal
+            // Select, resolved by NativeGroupByBinder.TryBindGroupProjection into GroupHavingPredicate. Must
+            // run BEFORE GroupOrderOp's sort (HAVING decides which groups exist; ORDER BY only orders the
+            // survivors — SQL's own evaluation order) and BEFORE the flatten $project (the predicate may
+            // reference an accumulator/_id field the Select itself doesn't project, e.g. a key-only
+            // comparison alongside a Sum-only Select).
+            if (select.GroupHavingPredicate is { } havingPredicate)
+            {
+                stages.Add(new MongoMatchStage(havingPredicate));
+            }
+
             // OrderBy/ThenBy composed directly on the ungrouped GroupBy result (before the terminal Select) —
             // resolved by NativeGroupByBinder.TryBindGroupProjection into GroupOrderOp. Must run BEFORE the
             // flatten $project below: an ordering aggregate the Select doesn't project (e.g. orders by
@@ -282,6 +335,17 @@ internal sealed class MongoSelectLowerer
             if (select.GroupOrderOp is { } groupOrderOp)
             {
                 AppendSortStages(groupOrderOp, stages, sortFields);
+            }
+
+            // EF-322 SP6: Skip/Take composed directly on the ungrouped GroupBy result (before the terminal
+            // Select) — resolved by NativeGroupByBinder.TryBindGroupProjection into GroupPagingOps. Must run
+            // AFTER GroupOrderOp's sort (SKIP/TAKE pages the ORDERED result — SQL's own evaluation order) and
+            // BEFORE the flatten $project (paging reduces the number of GROUP documents; the flatten only
+            // reshapes each surviving one). A zero Take needs no special handling here — MongoPipelineFactory
+            // .NormalizePagingStages rewrites a $limit: 0 at ANY pipeline position generically, at Build time.
+            if (select.GroupPagingOps.Count > 0)
+            {
+                AppendSelectOpStages(select.GroupPagingOps, stages, sortFields);
             }
 
             if (select.Projection.Count > 0)

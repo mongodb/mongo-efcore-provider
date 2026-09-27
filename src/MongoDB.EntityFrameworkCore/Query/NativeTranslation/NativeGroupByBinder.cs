@@ -43,7 +43,8 @@ internal static class NativeGroupByBinder
     /// <summary>
     /// Parses the <c>GroupBy</c> key selector into <see cref="MongoSelectDefinition.PendingGroupKey"/>.
     /// A bare <see cref="MemberExpression"/> is a scalar (single, unnamed) key; a <see cref="NewExpression"/>
-    /// with members (an anonymous type) is a composite key whose parts each carry the member name. Every part
+    /// with members (an anonymous type) or a <see cref="MemberInitExpression"/> (a DTO with an object
+    /// initializer) is a composite key whose parts each carry the member name. Every part
     /// must be a plain member access translatable to a field-ref; anything else (a computed key such as
     /// <c>x =&gt; x.Date.Year</c>) returns <see langword="false"/> and leaves the pending state unset.
     /// </summary>
@@ -78,35 +79,119 @@ internal static class NativeGroupByBinder
             case NewExpression { Members: { Count: > 0 } members } newExpr:
                 for (var i = 0; i < newExpr.Arguments.Count; i++)
                 {
-                    if (newExpr.Arguments[i] is not MemberExpression
-                        || !translator.TryTranslateField(newExpr.Arguments[i], out var field)
-                        || !HasDefaultKeySerialization(field.Property))
+                    // EF-322 SP1: each key part is translated via TryBindKeyPartValue — see its own remarks.
+                    if (!TryBindKeyPartValue(newExpr.Arguments[i], translator, out var partValue))
                         return false;
-                    parts.Add(new MongoGroupingKeyPart(members[i].Name, field));
+                    parts.Add(new MongoGroupingKeyPart(members[i].Name, partValue));
                 }
 
                 break;
 
-            case MemberExpression:
-                if (!translator.TryTranslateField(keySelector.Body, out var scalarField)
-                    || !HasDefaultKeySerialization(scalarField.Property))
-                    return false;
-                parts.Add(new MongoGroupingKeyPart(null, scalarField));
+            // A MemberInitExpression DTO key (GroupBy(o => new NominalType { A = ..., B = ... })) — a
+            // composite key whose parts each carry the bound member's name, same as the anonymous-type
+            // NewExpression case above, but for a real (non-anonymous) type with an object initializer. Each
+            // binding must be a plain MemberAssignment (a nested MemberMemberBinding/MemberListBinding — e.g.
+            // `new Foo { Bar = { Baz = 1 } }` — has no single translatable VALUE and declines the whole key,
+            // not just that part). The base NewExpression must take zero constructor arguments — a DTO
+            // combining a parameterized ctor with an initializer has no established key-part-naming
+            // convention in this codebase and is declined rather than silently dropping the ctor args.
+            case MemberInitExpression { NewExpression.Arguments.Count: 0 } memberInit:
+                // EF-322 SP7 fix-wave (Finding C1): key parts are named after the bound CLR member, but g.Key
+                // is read back through the DTO's OWN driver class-map serializer, which honors
+                // [BsonElement]/naming conventions rather than the CLR member name. If the DTO's stored
+                // element name differs from the member name (a [BsonElement] rename, or a convention like
+                // camelCase), $group._id would be written under the CLR name while the readback deserializer
+                // expects the element name — a FormatException at read time. Renaming the key part to the
+                // element name instead is NOT a fix: TryGetKeyMemberPath's sub-member matching
+                // (`part.Name == member.Member.Name`) reads g.Key.<Sub> by CLR member name, not element name.
+                // So: decline the whole key (fall back to driver-LINQ) unless every bound member's stored
+                // element name equals its own CLR member name.
+                var dtoClassMap = global::MongoDB.Bson.Serialization.BsonClassMap.LookupClassMap(memberInit.NewExpression.Type);
+                foreach (var binding in memberInit.Bindings)
+                {
+                    if (binding is not MemberAssignment assignment)
+                        return false;
+
+                    var memberMap = dtoClassMap.GetMemberMap(assignment.Member.Name);
+                    if (memberMap is null || memberMap.ElementName != assignment.Member.Name)
+                        return false;
+
+                    // EF-322 SP7: each key part is translated via TryBindKeyPartValue — the SAME helper the
+                    // anonymous-type composite-key case above uses, so a value-converted or non-default-
+                    // represented key member declines for free (the guard lives inside TryTranslateValue).
+                    if (!TryBindKeyPartValue(assignment.Expression, translator, out var memberPartValue))
+                        return false;
+                    parts.Add(new MongoGroupingKeyPart(assignment.Member.Name, memberPartValue));
+                }
+
                 break;
 
-            // A literal-constant key (GroupBy(o => 2)) groups every row into a single group, identically to
-            // the zero-member new{} case above, EXCEPT the group's _id must be the literal itself (e.g. `2`),
-            // not `{}` — e.g. a GroupBy(e => 1) nested on a prior GroupBy's aggregate result (there is no
-            // property to check for default serialization; a raw literal is inherently safe to read back).
-            case ConstantExpression constant:
-                parts.Add(new MongoGroupingKeyPart(null, new MongoConstantExpression(constant.Value, forSerialization: null)));
-                break;
-
+            // A bare member, EF.Property(...) call, computed expression (date-part/arithmetic/cast), literal
+            // constant, or captured query parameter. A genuine multi-argument constructor call (NewExpression
+            // with Members == null, e.g. new OrderKey(o.Country, o.Year)) also reaches here as the WHOLE
+            // NewExpression — see TryBindKeyPartValue's own remarks for why that still declines. A
+            // MemberInitExpression DTO key is handled by its own case above, EF-322 SP7.
             default:
-                return false; // computed / unsupported key shape
+                if (!TryBindKeyPartValue(keySelector.Body, translator, out var scalarValue))
+                    return false;
+                parts.Add(new MongoGroupingKeyPart(null, scalarValue));
+                break;
         }
 
         select.PendingGroupKey = parts;
+        return true;
+    }
+
+    /// <summary>
+    /// Translates one GroupBy key-selector body (or one composite key part) via
+    /// <see cref="MongoExpressionTranslator.TryTranslateValue"/> — the SAME general "any translatable value"
+    /// method <see cref="TryBindAccumulator"/> already uses for an accumulator's operand — then applies two
+    /// guards <c>TryTranslateValue</c> alone does not: it is a VALUE-position translator, not a KEY-position
+    /// one, and a GroupBy key has stricter requirements than an ordinary computed value.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Guard 1 — no document-construction leaves.</b> <c>TryTranslateValue</c> DOES translate a
+    /// <c>MemberInitExpression</c>/anonymous-type-equality operand into a <see cref="MongoDocumentConstructionExpression"/>
+    /// (<c>MongoExpressionTranslator.TranslateOperand</c>'s <c>TryGetProjectionMembers</c> arm — used for a
+    /// <c>new {...} == new {...}</c> structural-equality VALUE operand). That construction has no safe generic
+    /// <c>_id</c> (sub-)document readback the way a genuine NAMED composite key does (this method's own
+    /// <c>NewExpression</c>-with-<c>Members</c> caller) — it binds as a single, UNNAMED scalar key part here,
+    /// with no per-part <c>Name</c> at all, so the shaper cannot read it back into the DTO's own member names.
+    /// Building one anyway does not fail at translate time; it crashes at MATERIALIZATION time instead (a
+    /// <c>FormatException</c> reading the flattened <c>_id</c> back into the DTO's CLR type) — reject it here
+    /// so the query falls back to driver-LINQ instead, exactly as a <c>MemberInitExpression</c> key already did
+    /// before this method started calling <c>TryTranslateValue</c> at all. (A DTO key going native properly,
+    /// as a genuine named composite key, is Bucket J / a later slice's job — not this one's.)
+    /// </para>
+    /// <para>
+    /// <b>Guard 2 — probe renderability, not just translatability.</b> <c>TryTranslateValue</c> only checks
+    /// that an expression CAN be translated to a <see cref="MongoExpression"/> tree, not that the tree renders
+    /// to a valid <see cref="MongoDB.Bson.BsonValue"/> without throwing (e.g. a captured <see cref="Guid"/>
+    /// parameter translates cleanly but throws <see cref="ArgumentException"/> — "type cannot be mapped to a
+    /// BsonValue" — at pipeline-BUILD time). <see cref="NativeSlotPopulator.TryProbeBareValueRenders"/> already
+    /// exists for exactly this reason, for a bare value/parameter SORT key
+    /// (<see cref="NativeSlotPopulator.TryTranslateComputedSortKey"/>) — reused here unchanged.
+    /// </para>
+    /// </remarks>
+    private static bool TryBindKeyPartValue(
+        Expression body, MongoExpressionTranslator translator, [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+
+        if (!translator.TryTranslateValue(body, out var translated))
+            return false;
+
+        if (translated is MongoDocumentConstructionExpression)
+            return false;
+
+        if (!MongoAggregationExpressionRenderer.CanRender(translated))
+            return false;
+
+        if (!NativeSlotPopulator.TryProbeBareValueRenders(translated, NativeSlotPopulator.UnwrapBoxingToObjectType(body)))
+            return false;
+
+        result = translated;
         return true;
     }
 
@@ -157,17 +242,16 @@ internal static class NativeGroupByBinder
         if (select.PendingGroupKey is not { } keyParts)
             return false;
 
-        // EF-449: a HAVING Where was stashed between the GroupBy and this Select (e.g. GroupBy(key)
+        // EF-322 SP2: a HAVING Where stashed between GroupBy and this Select (e.g. GroupBy(key)
         // .Where(o => o.Count() > 4).Select(g => new { g.Key, Count = g.Count() })) — recognized by
-        // NativeSlotPopulator's Where carve-out on the assumption it might be feeding a terminal
-        // Count/LongCount/Any (NativeGroupByBinder.TryBindGroupTerminalAggregate), the ONLY consumer that
-        // clears it. A Select reaching here instead means that assumption was wrong: this predicate has NO
-        // native $match-after-$group mechanism on the flattening-$project path this method builds, so
-        // silently finalizing Grouping without applying it would silently DROP the HAVING filter and return
-        // every group. Decline so the whole query falls back to driver-LINQ, matching this shape's
-        // pre-existing (pre-EF-449) behavior.
-        if (select.PendingGroupPredicate != null)
-            return false;
+        // NativeSlotPopulator's Where carve-out (NativeGroupByBinder.TryBindGroupWherePredicate). Consumed
+        // here: its own accumulator (null for a bare key comparison) is folded into this grouping's
+        // accumulators below, and its comparison becomes GroupHavingPredicate, emitted by MongoSelectLowerer
+        // as a $match immediately after $group. Cleared unconditionally right away (one-shot, mirroring
+        // TryBindGroupTerminalAggregate's own consume discipline) so no stale state survives if this method
+        // declines later for an unrelated reason.
+        var havingPredicate = select.PendingGroupPredicate;
+        select.PendingGroupPredicate = null;
 
         // A BARE (non-`new {}`/DTO) result selector — e.g. `GroupBy(o => o.CustomerID)
         // .Select(g => g.Sum(o => o.OrderID))` — carries no member name, so it is projected under the
@@ -231,7 +315,7 @@ internal static class NativeGroupByBinder
                 }
 
                 var syntheticField = $"_orderAgg{orderIndex++}";
-                if (!TryBindAccumulator(body, syntheticField, groupParam, translator, out var acc, out var flattenRead))
+                if (!TryBindAccumulator(body, syntheticField, groupParam, keyParts, isComposite, translator, out var acc, out var flattenRead))
                     return false; // unsupported ordering shape — fall back to driver-LINQ
 
                 orderAccumulators.Add(acc);
@@ -247,6 +331,7 @@ internal static class NativeGroupByBinder
         // after the $group (MongoSelectLowerer) so the shaper never needs a nested-_id read.
         var accumulators = new List<MongoGroupAccumulator>();
         var flatten = new List<MongoProjection>();
+        var isBareBodyKeyMember = false; // EF-322 SP4: tracks whether a bare body was bound as a bare key member
         foreach (var (memberName, valueExpr) in bindings)
         {
             if (TryGetKeyMemberPath(valueExpr, groupingParameter, keyParts, isComposite, out var keyPath))
@@ -255,30 +340,48 @@ internal static class NativeGroupByBinder
                     return false; // bare g.Key over a composite key cannot flatten to a single field
 
                 flatten.Add(new MongoProjection(memberName, new MongoElementRefExpression(keyPath, Unwrap(valueExpr).Type)));
+                if (isBareBody)
+                    isBareBodyKeyMember = true; // EF-322 SP4: the bare body was a key member, not a computed expression
                 continue;
             }
 
-            if (!TryBindAccumulator(valueExpr, memberName, groupingParameter, translator, out var acc, out var flattenRead))
+            if (TryBindAccumulator(valueExpr, memberName, groupingParameter, keyParts, isComposite, translator, out var acc, out var flattenRead))
+            {
+                accumulators.Add(acc);
+                flatten.Add(new MongoProjection(memberName, flattenRead));
+                continue;
+            }
+
+            // EF-322 SP4: a COMPUTED member value (a ternary or, from Task 2, a coalesce) combining a
+            // g.Key/g.Key.Sub leaf with a constant — neither a bare key access nor a bare accumulator call.
+            if (!TryTranslateGroupProjectionExpression(valueExpr, groupingParameter, keyParts, isComposite, translator, out var computed))
                 return false;
-            accumulators.Add(acc);
-            flatten.Add(new MongoProjection(memberName, flattenRead));
+
+            flatten.Add(new MongoProjection(memberName, computed));
         }
 
         // A zero-accumulator Select still admits a WRAPPED (ctor-only DTO or anonymous-type) key-only
         // projection — e.g. GroupBy(key).Select(g => new Result(g.Key)) — as a legitimate "distinct keys"
         // $group (a $group with only _id and no other accumulator fields is ordinary, valid MQL). Two shapes
-        // still decline: a BARE g.Key projection (isBareBody — semantically a plain Distinct, out of scope
+        // still decline: a BARE g.Key projection (isBareBodyKeyMember — semantically a plain Distinct, out of scope
         // here), and a zero-Select-accumulator projection combined with a pending-ordering aggregate
         // (orderAccumulators.Count > 0 — an untested combination this plan does not attempt). A pending
         // ordering that instead resolves via a KEY access (adding to resolvedOrderings, not
         // orderAccumulators) is still admitted — only an ordering that resolves to its OWN $group
-        // accumulator excludes this shape.
-        if (accumulators.Count == 0 && (isBareBody || orderAccumulators.Count > 0))
+        // accumulator excludes this shape. EF-322 SP4: bare COMPUTED projections (ternaries, coalesces)
+        // are now admitted — only bare KEY projections decline.
+        if (accumulators.Count == 0 && (isBareBodyKeyMember || orderAccumulators.Count > 0))
             return false;
 
-        select.Grouping = new MongoGrouping(keyParts, [..orderAccumulators, ..accumulators]);
+        var havingAccumulators = havingPredicate?.Accumulator is { } havingAcc
+            ? new[] { havingAcc }
+            : Array.Empty<MongoGroupAccumulator>();
+        select.Grouping = new MongoGrouping(keyParts, [..orderAccumulators, ..havingAccumulators, ..accumulators]);
+        select.GroupHavingPredicate = havingPredicate?.Comparison;
         select.GroupOrderOp = resolvedOrderings.Count > 0 ? new MongoSortOp(resolvedOrderings) : null;
         select.PendingGroupOrderings = null;
+        select.GroupPagingOps = select.PendingGroupPaging ?? [];
+        select.PendingGroupPaging = null;
         foreach (var projection in flatten)
             select.AddProjection(projection);
         if (isBareBody)
@@ -288,9 +391,9 @@ internal static class NativeGroupByBinder
 
     // Classifies a result-member value as a grouping-key access and, if so, yields the group-output element
     // path it reads from. Returns true for a key access; `path` is null for a bare g.Key that cannot resolve
-    // to one field — always for a zero-part (empty new{}) key, and additionally for a composite key when
-    // `allowWholeKeyRead` is false. Returns false when the value is not a key access (i.e. it is an
-    // accumulator).
+    // to one field — a composite key when `allowWholeKeyRead` is false. A zero-part (empty new{}) key now
+    // resolves to "_id" (the group's own empty document) like any other key. Returns false when the value is
+    // not a key access (i.e. it is an accumulator).
     private static bool TryGetKeyMemberPath(
         Expression expr,
         ParameterExpression groupingParameter,
@@ -306,15 +409,15 @@ internal static class NativeGroupByBinder
             return false;
 
         // g.Key — the whole key. For the Select-projection flatten (allowWholeKeyRead: true), flattenable for
-        // any non-empty key (scalar or composite) by reading the group's own "_id" back wholesale — for a
+        // any key (scalar, composite, or zero-part) by reading the group's own "_id" back wholesale — for a
         // composite key that is a sub-document whose fields already match the composite key type's member
         // names (the exact shape TryBindGroupKey wrote them in), so the same generic CLR-type readback that
-        // already handles a scalar key materializes the composite type from it too. Only a zero-part (empty
-        // new{}) key has no single field to read it back from. The ordering call site passes
-        // allowWholeKeyRead: false — see its own call-site remarks.
+        // already handles a scalar key materializes the composite type from it too. A zero-part (empty new{})
+        // key's "_id" is itself the empty document — the correct readback for an empty anonymous-type key. The
+        // ordering call site passes allowWholeKeyRead: false — see its own call-site remarks.
         if (member.Member.Name == "Key" && member.Expression == groupingParameter)
         {
-            path = keyParts.Count == 0 || (isComposite && !allowWholeKeyRead) ? null : "_id";
+            path = isComposite && !allowWholeKeyRead ? null : "_id";
             return true;
         }
 
@@ -335,6 +438,165 @@ internal static class NativeGroupByBinder
         return false;
     }
 
+    // EF-322 SP4: translates a Select-projection member's value as a COMPUTED expression tree — a ternary or
+    // (Task 2) a null-coalesce — whose leaves resolve to a g.Key/g.Key.Sub access or an ordinary translatable
+    // value (constant, entity member, arithmetic — anything NOT referencing the grouping parameter). Runs in
+    // the FLATTENING $project stage, AFTER $group has already produced "_id" — unlike SP3's
+    // TryTranslateAccumulatorCondition (which runs INSIDE $group and must resolve a key reference to its own
+    // raw per-input-document expression instead, to avoid a circular reference to $group's own not-yet-
+    // computed output), a key leaf here correctly resolves via TryGetKeyMemberPath's ordinary "_id"[.Sub]
+    // path, the SAME resolution the flatten loop's own bare-key-member arm already uses.
+    private static bool TryTranslateGroupProjectionExpression(
+        Expression expr,
+        ParameterExpression groupingParameter,
+        IReadOnlyList<MongoGroupingKeyPart> keyParts,
+        bool isComposite,
+        MongoExpressionTranslator translator,
+        [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+        expr = Unwrap(expr);
+
+        // A bare g.Key / g.Key.Sub leaf.
+        if (TryGetKeyMemberPath(expr, groupingParameter, keyParts, isComposite, out var keyPath))
+        {
+            if (keyPath == null)
+                return false; // bare g.Key over a zero-part key — no single field to read
+
+            result = new MongoElementRefExpression(keyPath, expr.Type);
+            return true;
+        }
+
+        // A ternary (test ? ifTrue : ifFalse) — every part recurses through this SAME method, so a branch
+        // may itself be a nested conditional, a coalesce (Task 2), a key access, or an ordinary value.
+        if (expr is ConditionalExpression conditional)
+        {
+            if (!TryTranslateGroupProjectionConditionOrValue(
+                    conditional.Test, groupingParameter, keyParts, isComposite, translator, out var test)
+                || !TryTranslateGroupProjectionExpression(
+                    conditional.IfTrue, groupingParameter, keyParts, isComposite, translator, out var ifTrue)
+                || !TryTranslateGroupProjectionExpression(
+                    conditional.IfFalse, groupingParameter, keyParts, isComposite, translator, out var ifFalse))
+                return false;
+
+            result = new MongoConditionalExpression(test, ifTrue, ifFalse);
+            return true;
+        }
+
+        // A null-coalescing operator (`left ?? right`) — both operands recurse through this SAME method, so
+        // the right operand may itself be a nested Coalesce (a ?? b ?? c is right-associative: a ?? (b ?? c),
+        // matching BinaryExpression's own shape) — see this plan's own Review Focus.
+        if (expr is BinaryExpression { NodeType: ExpressionType.Coalesce } coalesce)
+        {
+            if (!TryTranslateGroupProjectionExpression(coalesce.Left, groupingParameter, keyParts, isComposite, translator, out var left)
+                || !TryTranslateGroupProjectionExpression(coalesce.Right, groupingParameter, keyParts, isComposite, translator, out var right))
+                return false;
+
+            result = new MongoCoalesceExpression(left, right);
+            return true;
+        }
+
+        // Not a key access or a ternary — an ordinary expression (constant, entity member, arithmetic) that
+        // must NOT reference the grouping parameter in any shape (an accumulator call, a mixed per-element
+        // reference, etc.) — see this plan's own Review Focus. Declines rather than letting the ordinary
+        // translator, which knows nothing about `g`, mis-resolve a same-named member against the wrong type
+        // (the exact bug class SP3's final review found and fixed for its own accumulator conditions).
+        if (ReferencesParameter(expr, groupingParameter))
+            return false;
+
+        return translator.TryTranslateValue(expr, out result);
+    }
+
+    // The BOOLEAN test of a ternary (e.g. `g.Key == null`) — a key-vs-constant comparison, recognized the
+    // SAME way SP3's TryTranslateAccumulatorCondition recognizes one, but resolving the key side via
+    // TryGetKeyMemberPath's ordinary post-$group "_id"[.Sub] path (this runs in $project, not inside $group —
+    // see TryTranslateGroupProjectionExpression's own remarks on why that distinction matters here).
+    private static bool TryTranslateGroupProjectionConditionOrValue(
+        Expression expr,
+        ParameterExpression groupingParameter,
+        IReadOnlyList<MongoGroupingKeyPart> keyParts,
+        bool isComposite,
+        MongoExpressionTranslator translator,
+        [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+
+        var unwrappedExpr = Unwrap(expr);
+        if (unwrappedExpr is BinaryExpression bin)
+        {
+            if (bin.NodeType == ExpressionType.Equal
+                || bin.NodeType == ExpressionType.NotEqual
+                || bin.NodeType == ExpressionType.GreaterThan
+                || bin.NodeType == ExpressionType.GreaterThanOrEqual
+                || bin.NodeType == ExpressionType.LessThan
+                || bin.NodeType == ExpressionType.LessThanOrEqual)
+            {
+                if (TryGetKeyMemberPath(bin.Left, groupingParameter, keyParts, isComposite, out var leftPath, allowWholeKeyRead: true)
+                    && leftPath != null
+                    && IsSafeZeroPartKeyComparison(leftPath, keyParts, bin.Right)
+                    && TryTranslateComparisonConstant(
+                        bin.Right, ResolveKeyMemberSerializationProperty(leftPath, keyParts, isComposite), out var rightConst))
+                {
+                    result = new MongoBinaryExpression(
+                        MapComparisonOperator(bin.NodeType), new MongoElementRefExpression(leftPath, Unwrap(bin.Left).Type), rightConst);
+                    return true;
+                }
+
+                if (TryGetKeyMemberPath(bin.Right, groupingParameter, keyParts, isComposite, out var rightPath, allowWholeKeyRead: true)
+                    && rightPath != null
+                    && IsSafeZeroPartKeyComparison(rightPath, keyParts, bin.Left)
+                    && TryTranslateComparisonConstant(
+                        bin.Left, ResolveKeyMemberSerializationProperty(rightPath, keyParts, isComposite), out var leftConst))
+                {
+                    result = new MongoBinaryExpression(
+                        MapComparisonOperator(FlipComparison(bin.NodeType)), new MongoElementRefExpression(rightPath, Unwrap(bin.Right).Type), leftConst);
+                    return true;
+                }
+            }
+        }
+
+        // Not a key comparison — delegate to the SAME leaf/ternary/coalesce dispatch as an ordinary value.
+        return TryTranslateGroupProjectionExpression(expr, groupingParameter, keyParts, isComposite, translator, out result);
+    }
+
+    // Resolves the matched key part's own serialization property from a "_id"[.Sub] path already confirmed by
+    // TryGetKeyMemberPath — mirrors TryBindGroupSideOperand's identical resolution for the SAME reason (a
+    // value-converted/non-default-represented key type like Guid needs its own property's serializer, not the
+    // generic BsonValue.Create fallback, which throws for such types). Returns null for the admitted
+    // whole-composite-key-vs-null case (keyPath == "_id" && isComposite) — a composite key has no single
+    // backing property, and comparing it to null doesn't need one.
+    private static IProperty? ResolveKeyMemberSerializationProperty(
+        string keyPath, IReadOnlyList<MongoGroupingKeyPart> keyParts, bool isComposite)
+    {
+        // EF-322 SP7: a zero-part (empty new{}) key now also resolves keyPath == "_id" (TryGetKeyMemberPath's
+        // own fix, this plan's Task 2) but has no single backing property at all — same "no property" answer
+        // a composite key's own whole-key comparison already returns, for the same reason (no single field).
+        if (keyPath == "_id")
+            return isComposite || keyParts.Count == 0 ? null : (keyParts[0].FieldRef as MongoFieldExpression)?.Property;
+
+        var matchedPart = keyParts.First(p => keyPath == "_id." + p.Name);
+        return (matchedPart.FieldRef as MongoFieldExpression)?.Property;
+    }
+
+    // EF-322 SP7 fix-wave (Finding I1): a zero-part (empty new{}) key's bare g.Key resolves to "_id" (Task 2)
+    // with no single backing property (ResolveKeyMemberSerializationProperty returns null for it). Comparing
+    // it against anything other than a literal null constant would otherwise reach
+    // TryTranslateComparisonConstant/MongoConstantExpression with no serialization property to render the
+    // OTHER operand through, falling back to the generic BsonValue.Create — which throws ArgumentException for
+    // a non-BSON-mappable CLR type (an anonymous type, an arbitrary DTO instance) instead of declining
+    // cleanly, the same way every other unsafe shape in this file declines. A composite key's whole-key read
+    // is unaffected — it already declines earlier via allowWholeKeyRead: false at its own call sites, or (for
+    // the allowWholeKeyRead: true flatten/ternary call sites) is not a keyPath == "_id" match with an empty
+    // keyParts list, so this guard is a no-op for it.
+    private static bool IsSafeZeroPartKeyComparison(
+        string keyPath, IReadOnlyList<MongoGroupingKeyPart> keyParts, Expression otherOperand)
+    {
+        if (keyPath != "_id" || keyParts.Count != 0)
+            return true;
+
+        return Unwrap(otherOperand) is ConstantExpression { Value: null };
+    }
+
     // Flatten a NewExpression (anonymous type) or MemberInitExpression (DTO) into (memberName, valueExpr) pairs.
 
     // Match g.Count()/g.LongCount() → ("$sum", null); g.Sum/Average/Min/Max(x => ...) over any translatable
@@ -350,6 +612,8 @@ internal static class NativeGroupByBinder
         Expression expr,
         string outputField,
         ParameterExpression groupingParameter,
+        IReadOnlyList<MongoGroupingKeyPart> keyParts,
+        bool isComposite,
         MongoExpressionTranslator translator,
         [NotNullWhen(true)] out MongoGroupAccumulator? accumulator,
         [NotNullWhen(true)] out MongoExpression? flattenRead)
@@ -375,7 +639,7 @@ internal static class NativeGroupByBinder
         // ordinary accumulators below (its own source is g.Select(...).Distinct(), never g directly), so it
         // is tried FIRST, before the IsGroupingSource(call.Arguments[0], ...) guard below that would
         // otherwise reject it outright.
-        if (TryBindDistinctAccumulator(call, outputField, groupingParameter, translator, out accumulator, out flattenRead))
+        if (TryBindDistinctAccumulator(call, outputField, groupingParameter, keyParts, isComposite, translator, out accumulator, out flattenRead))
             return true;
 
         // EF-TBD: a SELECTOR-LESS aggregate (g.Sum()/Average()/Min()/Max(), no lambda) over a GroupBy composed
@@ -385,7 +649,10 @@ internal static class NativeGroupByBinder
         // aggregate lambda the way it does for a SELECTOR-carrying aggregate (see this method's own remarks
         // on g.Sum(e => e.Field) above). Bind it the SAME way as the distinct form just above minus the
         // dedup semantics — an ordinary $sum/$avg/$min/$max over the selected field, not $addToSet.
-        if (TryBindElementSelectedAccumulator(call, outputField, groupingParameter, translator, out accumulator, out flattenRead))
+        if (TryBindElementSelectedAccumulator(call, outputField, groupingParameter, keyParts, isComposite, translator, out accumulator, out flattenRead))
+            return true;
+
+        if (TryBindFilteredAccumulator(call, outputField, groupingParameter, keyParts, isComposite, translator, out accumulator, out flattenRead))
             return true;
 
         if (call.Arguments.Count == 0 || !IsGroupingSource(call.Arguments[0], groupingParameter))
@@ -403,6 +670,19 @@ internal static class NativeGroupByBinder
             && call.Arguments.Count == 1)
         {
             accumulator = new MongoGroupAccumulator(outputField, "$sum", null);
+            flattenRead = new MongoElementRefExpression(outputField, call.Method.ReturnType);
+            return true;
+        }
+
+        // EF-322 SP3: g.Count(pred) / g.LongCount(pred) — a per-element PREDICATED count, reducing to
+        // $sum: {$cond: [translatedPredicate, 1, 0]} (0, not $$REMOVE, matching the driver-LINQ fallback's
+        // own existing baseline exactly — a non-matching element contributes 0 either way for a sum of 1s).
+        if (call.Arguments.Count == 2 && MongoExpressionTranslator.IsCanonicalCountWithPredicate(call.Method)
+            && call.Arguments[1].UnwrapLambdaFromQuote() is { } countPred
+            && TryTranslateAccumulatorCondition(countPred.Body, groupingParameter, keyParts, isComposite, translator, out _, out var countCond))
+        {
+            accumulator = new MongoGroupAccumulator(outputField, "$sum",
+                new MongoConditionalExpression(countCond, new MongoConstantExpression(1, null), new MongoConstantExpression(0, null)));
             flattenRead = new MongoElementRefExpression(outputField, call.Method.ReturnType);
             return true;
         }
@@ -442,20 +722,217 @@ internal static class NativeGroupByBinder
         return true;
     }
 
+    // EF-322 SP3: resolves g.Key / g.Key.Sub, inside an ACCUMULATOR's own condition/operand, to the key
+    // part's OWN raw per-input-document expression (the SAME expression already used to compute _id's value)
+    // — NEVER "_id" itself. An accumulator's condition/operand is evaluated PER INPUT DOCUMENT, inside the
+    // SAME $group stage that computes _id as its OUTPUT — referencing "_id" here would be a circular
+    // reference the server cannot evaluate. Contrast with NativeGroupByBinder's SP2 HAVING key comparison
+    // (TryBindGroupSideOperand), which correctly DOES use "_id"[.path] — that one runs in a separate, LATER
+    // $match stage, after $group has already produced _id.
+    private static bool TryResolveKeyReferenceAsRawExpression(
+        Expression expr,
+        ParameterExpression groupingParameter,
+        IReadOnlyList<MongoGroupingKeyPart> keyParts,
+        bool isComposite,
+        [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+        expr = Unwrap(expr);
+
+        if (expr is not MemberExpression member)
+            return false;
+
+        // KNOWN BUG (EF-TBD, pre-existing, out of scope for EF-322 SP7): a zero-part (empty new{}) key's
+        // g.Key referenced INSIDE an accumulator's own per-element condition (e.g. g.Count(e => g.Key ==
+        // null)) reaches the `keyParts[0]` read below with an EMPTY keyParts list — IndexOutOfRangeException.
+        // Unlike TryGetKeyMemberPath (fixed by SP7's Task 2), this method resolves against the per-element
+        // RAW expression, never through TryGetKeyMemberPath, so SP7's fix does not reach it. No target test
+        // exercises this shape; fix it if a future slice needs it.
+        if (member.Member.Name == "Key" && member.Expression == groupingParameter)
+        {
+            if (isComposite)
+                return false; // whole composite key has no single raw expression to compare against a scalar
+
+            result = keyParts[0].FieldRef;
+            return true;
+        }
+
+        if (member.Expression is MemberExpression { Member.Name: "Key" } inner && inner.Expression == groupingParameter)
+        {
+            foreach (var part in keyParts)
+            {
+                if (part.Name == member.Member.Name)
+                {
+                    result = part.FieldRef;
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Translates a per-element accumulator CONDITION (from <c>g.Count(pred)</c>, <c>g.Where(pred).Op(...)</c>,
+    /// or the leading <c>Where</c>/<c>Distinct</c> hop <see cref="TryBindDistinctAccumulator"/> also uses).
+    /// Recognizes exactly two shapes — a comparison whose one side is a <c>g.Key</c>/<c>g.Key.Sub</c> access
+    /// (resolved via <see cref="TryResolveKeyReferenceAsRawExpression"/>, since every element in a group
+    /// shares the SAME key value, this is a valid per-element condition even though it never actually varies
+    /// per element), or an ORDINARY per-element expression (delegated to <paramref name="translator"/>'s
+    /// normal <c>TryTranslate</c>, the same predicate translator <c>Where</c> itself uses). Deliberately does
+    /// NOT handle a predicate that COMBINES both in one condition (e.g. <c>e => e.Amount > 5 &amp;&amp;
+    /// e.Key == "x"</c>) — no target shape needs it; declines so the whole query falls back rather than
+    /// silently translating only half the condition.
+    /// </summary>
+    // A non-nullable value type (int, decimal, DateTime, ...) has no representation for "no value" — a null
+    // read back from the server for one of these must not be silently defaulted. Nullable<T> and reference
+    // types are unaffected: null IS their legitimate "no value".
+    private static bool IsNonNullableValueType(Type type) => type.IsValueType && Nullable.GetUnderlyingType(type) is null;
+
+    private static bool TryTranslateAccumulatorCondition(
+        Expression predicateBody,
+        ParameterExpression groupingParameter,
+        IReadOnlyList<MongoGroupingKeyPart> keyParts,
+        bool isComposite,
+        MongoExpressionTranslator translator,
+        out bool isKeyOnlyCondition,
+        [NotNullWhen(true)] out MongoExpression? result)
+    {
+        result = null;
+        isKeyOnlyCondition = false;
+
+        if (Unwrap(predicateBody) is BinaryExpression
+            {
+                NodeType: ExpressionType.Equal or ExpressionType.NotEqual or ExpressionType.GreaterThan
+                or ExpressionType.GreaterThanOrEqual or ExpressionType.LessThan or ExpressionType.LessThanOrEqual
+            } bin)
+        {
+            if (TryResolveKeyReferenceAsRawExpression(bin.Left, groupingParameter, keyParts, isComposite, out var leftKey)
+                && TryTranslateComparisonConstant(bin.Right, (leftKey as MongoFieldExpression)?.Property, out var rightConst))
+            {
+                result = new MongoBinaryExpression(MapComparisonOperator(bin.NodeType), leftKey, rightConst);
+                isKeyOnlyCondition = true;
+                return true;
+            }
+
+            if (TryResolveKeyReferenceAsRawExpression(bin.Right, groupingParameter, keyParts, isComposite, out var rightKey)
+                && TryTranslateComparisonConstant(bin.Left, (rightKey as MongoFieldExpression)?.Property, out var leftConst))
+            {
+                result = new MongoBinaryExpression(MapComparisonOperator(FlipComparison(bin.NodeType)), rightKey, leftConst);
+                isKeyOnlyCondition = true;
+                return true;
+            }
+        }
+
+        // Final-review fix: a predicate that references the grouping parameter in ANY shape the two arms
+        // above didn't already recognize and consume (e.g. a MIXED condition like `e.Amount > 5 &&
+        // g.Key == "x"`, or a same-parameter comparison the constant-side check rejected) must decline here
+        // rather than fall through to the ordinary translator below — that translator resolves members by
+        // NAME against the entity type, regardless of which parameter they hang off, so a `g.Key` reference
+        // would be silently misresolved as a same-named member of the ELEMENT's own entity type if one
+        // happens to exist (e.g. an entity with its own "Key" property) instead of declining.
+        if (ReferencesParameter(predicateBody, groupingParameter))
+            return false;
+
+        // Not a g.Key comparison — an ordinary per-element predicate (e.g. e.Amount < 100,
+        // e.OrderDate.HasValue). The ordinary translator resolves members against the entity type directly,
+        // regardless of which lambda parameter name the predicate happens to use.
+        return translator.TryTranslate(predicateBody, out result);
+    }
+
+    // Whether `expr` contains any reference (anywhere in the tree) to `parameter` — used to detect a
+    // predicate that touches the grouping parameter in a shape TryTranslateAccumulatorCondition's own
+    // recognized comparison arms didn't already consume, so it can decline instead of risking a
+    // parameter-blind, name-based mis-resolution by the ordinary translator.
+    private sealed class ParameterReferenceFinder(ParameterExpression parameter) : ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        [return: NotNullIfNotNull(nameof(node))]
+        public override Expression? Visit(Expression? node)
+        {
+            if (Found || node is null)
+                return node;
+
+            if (ReferenceEquals(node, parameter))
+            {
+                Found = true;
+                return node;
+            }
+
+            return base.Visit(node);
+        }
+    }
+
+    private static bool ReferencesParameter(Expression expr, ParameterExpression parameter)
+    {
+        var finder = new ParameterReferenceFinder(parameter);
+        finder.Visit(expr);
+        return finder.Found;
+    }
+
+    // EF-322 SP3: resolves the OPTIONAL leading hop before g.Select(selector).Distinct().<Op>() — either
+    // NOTHING (source is g directly), a bare g.Distinct() (a provable no-op for this shape — see this plan's
+    // own Review Focus note — admitted with NO condition, not a trivially-true one), or a genuine g.Where(pred)
+    // (a real per-element filter, admitted WITH a translated condition). Both Queryable and Enumerable forms
+    // of Where/Distinct are accepted, same reasoning as TryBindFilteredAccumulator.
+    private static bool TryResolveOptionalAccumulatorSourceCondition(
+        Expression source,
+        ParameterExpression groupingParameter,
+        IReadOnlyList<MongoGroupingKeyPart> keyParts,
+        bool isComposite,
+        MongoExpressionTranslator translator,
+        out bool isKeyOnlyCondition,
+        out MongoExpression? condition)
+    {
+        condition = null;
+        isKeyOnlyCondition = false;
+        source = Unwrap(source);
+
+        if (IsGroupingSource(source, groupingParameter))
+            return true; // bare g — no condition
+
+        if (source is not MethodCallExpression { Method: { Name: var methodName, DeclaringType: var declaringType } } call
+            || (declaringType != typeof(Queryable) && declaringType != typeof(Enumerable)))
+            return false;
+
+        if (methodName == nameof(Queryable.Distinct)
+            && call.Arguments.Count == 1
+            && IsGroupingSource(call.Arguments[0], groupingParameter))
+        {
+            return true; // g.Distinct() before Select(...).Distinct() — no condition needed
+        }
+
+        if (methodName == nameof(Queryable.Where)
+            && call.Arguments.Count == 2
+            && IsGroupingSource(call.Arguments[0], groupingParameter)
+            && call.Arguments[1].UnwrapLambdaFromQuote() is { } pred)
+        {
+            return TryTranslateAccumulatorCondition(
+                pred.Body, groupingParameter, keyParts, isComposite, translator, out isKeyOnlyCondition, out condition);
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// EF-322: <c>g.Select(e =&gt; e.Field).Distinct().&lt;Op&gt;()</c> — Count/LongCount/Average/Max/Min/Sum
     /// over the DISTINCT projected values within the group, not every row. Binds the <c>$group</c> accumulator
     /// as <c>$addToSet</c> (collecting the group's distinct values into an array) and produces a
     /// <see cref="MongoSizeExpression"/> (Count/LongCount) or <see cref="MongoArrayReduceExpression"/>
     /// (Average/Max/Min/Sum) to reduce that array back to a scalar in the flattening <c>$project</c> — see
-    /// those two types' own remarks. Only the QUERYABLE form is recognized (EF Core's own nav-expansion
-    /// normalizes a grouped aggregate to <c>Queryable.X(g.AsQueryable())</c>, so — unlike the ordinary
-    /// accumulators above — there is no hand-authored-Enumerable-form unit-test path to support here).
+    /// those two types' own remarks. Both the Queryable form (EF Core's own nav-expansion normalizes a
+    /// grouped aggregate to <c>Queryable.X(g.AsQueryable())</c>) and the Enumerable form (a hand-authored
+    /// unit-test lambda over <c>IGrouping&lt;TKey,TElement&gt;</c>) are recognized — EF-322 SP3 widened this
+    /// from Queryable-only. An optional leading <c>Where</c>/<c>Distinct</c> hop before the <c>Select</c> is
+    /// also recognized (<see cref="TryResolveOptionalAccumulatorSourceCondition"/>) — SP3 again.
     /// </summary>
     private static bool TryBindDistinctAccumulator(
         MethodCallExpression call,
         string outputField,
         ParameterExpression groupingParameter,
+        IReadOnlyList<MongoGroupingKeyPart> keyParts,
+        bool isComposite,
         MongoExpressionTranslator translator,
         [NotNullWhen(true)] out MongoGroupAccumulator? accumulator,
         [NotNullWhen(true)] out MongoExpression? flattenRead)
@@ -470,38 +947,77 @@ internal static class NativeGroupByBinder
         // overloads are NOT generic — the numeric type is baked into the overload (e.g.
         // Average(IQueryable<int>)) — so only Min/Max/Count/LongCount can be compared via
         // GetGenericMethodDefinition(). Average/Sum must be matched directly against call.Method.
-        var isSize = call.Method.IsGenericMethod
-            && (call.Method.GetGenericMethodDefinition() == QueryableMethods.CountWithoutPredicate
-                || call.Method.GetGenericMethodDefinition() == QueryableMethods.LongCountWithoutPredicate);
-        var reduceOp = isSize ? null
-            : QueryableMethods.IsAverageWithoutSelector(call.Method) ? "$avg"
-            : call.Method.IsGenericMethod && call.Method.GetGenericMethodDefinition() == QueryableMethods.MinWithoutSelector ? "$min"
-            : call.Method.IsGenericMethod && call.Method.GetGenericMethodDefinition() == QueryableMethods.MaxWithoutSelector ? "$max"
-            : QueryableMethods.IsSumWithoutSelector(call.Method) ? "$sum"
-            : null;
+        //
+        // EF-322 SP3: widened to accept BOTH the Queryable form (EF Core's own normalized shape,
+        // g.AsQueryable().Max()) and the Enumerable form (a hand-authored unit test lambda over
+        // IGrouping<TKey,TElement> — this method previously had no such unit-test path at all). Matched by
+        // name + declaring type since call.Arguments.Count == 1 (checked above) already excludes the
+        // with-selector overloads that share the same names.
+        var declaringOk = call.Method.DeclaringType == typeof(Queryable) || call.Method.DeclaringType == typeof(Enumerable);
+        var isSize = declaringOk && call.Method.Name is nameof(Queryable.Count) or nameof(Queryable.LongCount);
+        var reduceOp = !declaringOk || isSize ? null
+            : call.Method.Name switch
+            {
+                nameof(Queryable.Average) => "$avg",
+                nameof(Queryable.Min) => "$min",
+                nameof(Queryable.Max) => "$max",
+                nameof(Queryable.Sum) => "$sum",
+                _ => null
+            };
 
         if (!isSize && reduceOp is null)
             return false;
 
-        // The source must be g.Select(selector).Distinct() — a Distinct() call whose OWN source is a Select
-        // over the grouping parameter (never g directly, which is the ordinary-accumulator shape above).
-        if (Unwrap(call.Arguments[0]) is not MethodCallExpression { Method.IsGenericMethod: true } distinctCall
-            || distinctCall.Method.GetGenericMethodDefinition() != QueryableMethods.Distinct
-            || distinctCall.Arguments.Count != 1)
+        // The source must be g.Select(selector).Distinct() — a Distinct() call whose OWN source is a Select.
+        // The Select's OWN source is either g directly, or ONE extra hop (g.Where(pred) or g.Distinct()) —
+        // EF-322 SP3, see TryResolveOptionalAccumulatorSourceCondition's own remarks.
+        if (Unwrap(call.Arguments[0]) is not MethodCallExpression
+            {
+                Method: { Name: nameof(Queryable.Distinct), DeclaringType: var distinctDeclaring },
+                Arguments.Count: 1
+            } distinctCall
+            || (distinctDeclaring != typeof(Queryable) && distinctDeclaring != typeof(Enumerable)))
             return false;
 
-        if (Unwrap(distinctCall.Arguments[0]) is not MethodCallExpression { Method.IsGenericMethod: true } selectCall
-            || selectCall.Method.GetGenericMethodDefinition() != QueryableMethods.Select
-            || selectCall.Arguments.Count != 2
-            || !IsGroupingSource(selectCall.Arguments[0], groupingParameter))
+        if (Unwrap(distinctCall.Arguments[0]) is not MethodCallExpression
+            {
+                Method: { Name: nameof(Queryable.Select), DeclaringType: var selectDeclaring },
+                Arguments.Count: 2
+            } selectCall
+            || (selectDeclaring != typeof(Queryable) && selectDeclaring != typeof(Enumerable))
+            || !TryResolveOptionalAccumulatorSourceCondition(
+                selectCall.Arguments[0], groupingParameter, keyParts, isComposite, translator,
+                out var isKeyOnlyElementCondition, out var elementCondition))
             return false;
 
         // The selector is a bare lambda (Enumerable form) or a quoted lambda (Queryable form) — same
         // plain-member-access-only restriction as the ordinary Sum/Average/Min/Max accumulators above; a
         // computed selector falls back.
         if (selectCall.Arguments[1].UnwrapLambdaFromQuote() is not { Body: MemberExpression } selector
-            || !translator.TryTranslateField(selector.Body, out var operand))
+            || !translator.TryTranslateField(selector.Body, out var selectorField))
             return false;
+
+        MongoExpression operand = selectorField;
+
+        // EF-322 SP3: a leading g.Where(pred) hop wraps the operand with $cond, using "$$REMOVE" as the else
+        // branch so a non-matching element contributes nothing to the $addToSet at all (not a null entry —
+        // see this plan's own "Verified design decision"). A leading g.Distinct() hop (or no hop at all)
+        // needs no wrapping — elementCondition stays null.
+        if (elementCondition is not null)
+        {
+            // Final-review fix: same emptiness risk as TryBindFilteredAccumulator's own guard — if the
+            // filter excludes every element, the resulting empty array's external $min/$max/$avg reduce
+            // produces null, which the shaper would read back as default(T) for a non-nullable result. Only
+            // a REAL filter (elementCondition non-null, i.e. a genuine g.Where(pred) hop, not the no-op
+            // g.Distinct() hop) can make the array empty, so the no-hop/Distinct-hop cases are unaffected.
+            // Scoped to a genuine per-element predicate, same reasoning as TryBindFilteredAccumulator's own
+            // guard — a pure g.Key comparison shares the same value across every element of a given group.
+            if (!isKeyOnlyElementCondition && reduceOp is "$min" or "$max" or "$avg" && IsNonNullableValueType(call.Method.ReturnType))
+                return false;
+
+            operand = new MongoConditionalExpression(
+                elementCondition, operand, new MongoElementRefExpression(MongoElementRefExpression.RemoveSentinelPath, operand.Type));
+        }
 
         accumulator = new MongoGroupAccumulator(outputField, "$addToSet", operand);
         flattenRead = isSize
@@ -526,6 +1042,8 @@ internal static class NativeGroupByBinder
         MethodCallExpression call,
         string outputField,
         ParameterExpression groupingParameter,
+        IReadOnlyList<MongoGroupingKeyPart> keyParts,
+        bool isComposite,
         MongoExpressionTranslator translator,
         [NotNullWhen(true)] out MongoGroupAccumulator? accumulator,
         [NotNullWhen(true)] out MongoExpression? flattenRead)
@@ -562,6 +1080,111 @@ internal static class NativeGroupByBinder
             return false;
 
         accumulator = new MongoGroupAccumulator(outputField, reduceOp, operand);
+        flattenRead = new MongoElementRefExpression(outputField, call.Method.ReturnType);
+        return true;
+    }
+
+    /// <summary>
+    /// EF-322 SP3: <c>g.Where(pred).Sum/Min/Max/Average(selector)</c> — a per-element FILTERED aggregate,
+    /// reducing to <c>{"$&lt;op&gt;": {"$cond": [translatedPred, translatedOperand, "$$REMOVE"]}}</c>.
+    /// <c>"$$REMOVE"</c> (empirically verified — see this plan's own "Verified design decision") makes
+    /// Min/Max/Sum/Average treat a non-matching element as though it contributed nothing at all.
+    /// </summary>
+    private static bool TryBindFilteredAccumulator(
+        MethodCallExpression call,
+        string outputField,
+        ParameterExpression groupingParameter,
+        IReadOnlyList<MongoGroupingKeyPart> keyParts,
+        bool isComposite,
+        MongoExpressionTranslator translator,
+        [NotNullWhen(true)] out MongoGroupAccumulator? accumulator,
+        [NotNullWhen(true)] out MongoExpression? flattenRead)
+    {
+        accumulator = null;
+        flattenRead = null;
+
+        // EF-322 SP5: g.Where(pred).Count() / g.Where(pred).LongCount() — a filtered COUNT with NO selector.
+        // Tried before the call.Arguments.Count != 2 gate below (which the Sum/Average/Min/Max-with-selector
+        // arm requires): Count/LongCount without a predicate argument have call.Arguments.Count == 1 (just
+        // the Where-wrapped source), never 2. Reduces to $sum: {$cond: [translatedPredicate, 1, 0]} — the
+        // SAME shape SP3's direct g.Count(pred) arm (further down in TryBindAccumulator) already emits; the
+        // only difference is where the predicate comes from (the Where call's own lambda here, vs. Count's
+        // own argument there). 0, not $$REMOVE, matches a filtered COUNT's own correct semantics: an
+        // unmatched element contributes 0 to the sum-of-1s either way.
+        var countDefinition = call.Method.IsGenericMethod ? call.Method.GetGenericMethodDefinition() : null;
+        if (call.Arguments.Count == 1
+            && (countDefinition == EnumerableMethods.CountWithoutPredicate
+                || countDefinition == EnumerableMethods.LongCountWithoutPredicate
+                || countDefinition == QueryableMethods.CountWithoutPredicate
+                || countDefinition == QueryableMethods.LongCountWithoutPredicate)
+            && Unwrap(call.Arguments[0]) is MethodCallExpression
+                {
+                    Method: { Name: nameof(Queryable.Where), DeclaringType: var whereDeclaring0 },
+                    Arguments.Count: 2
+                } whereCall0
+            && (whereDeclaring0 == typeof(Queryable) || whereDeclaring0 == typeof(Enumerable))
+            && IsGroupingSource(whereCall0.Arguments[0], groupingParameter)
+            && whereCall0.Arguments[1].UnwrapLambdaFromQuote() is { } wherePred0
+            && TryTranslateAccumulatorCondition(
+                wherePred0.Body, groupingParameter, keyParts, isComposite, translator, out _, out var countCond0))
+        {
+            accumulator = new MongoGroupAccumulator(outputField, "$sum",
+                new MongoConditionalExpression(
+                    countCond0, new MongoConstantExpression(1, null), new MongoConstantExpression(0, null)));
+            flattenRead = new MongoElementRefExpression(outputField, call.Method.ReturnType);
+            return true;
+        }
+
+        if (call.Arguments.Count != 2)
+            return false;
+
+        var definition = call.Method.IsGenericMethod ? call.Method.GetGenericMethodDefinition() : null;
+        string? op = EnumerableMethods.IsSumWithSelector(call.Method) || QueryableMethods.IsSumWithSelector(call.Method) ? "$sum"
+            : EnumerableMethods.IsAverageWithSelector(call.Method) || QueryableMethods.IsAverageWithSelector(call.Method) ? "$avg"
+            : EnumerableMethods.IsMinWithSelector(call.Method) || definition == QueryableMethods.MinWithSelector ? "$min"
+            : EnumerableMethods.IsMaxWithSelector(call.Method) || definition == QueryableMethods.MaxWithSelector ? "$max"
+            : null;
+
+        if (op is null)
+            return false;
+
+        // The source must be g.Where(pred) — a Where call whose OWN source is the grouping parameter
+        // directly. Both the Queryable and Enumerable forms are accepted — see this plan's own Global
+        // Constraints note on why (a hand-written unit test lambda produces the Enumerable form).
+        if (Unwrap(call.Arguments[0]) is not MethodCallExpression
+            {
+                Method: { Name: nameof(Queryable.Where), DeclaringType: var whereDeclaring },
+                Arguments.Count: 2
+            } whereCall
+            || (whereDeclaring != typeof(Queryable) && whereDeclaring != typeof(Enumerable))
+            || !IsGroupingSource(whereCall.Arguments[0], groupingParameter))
+            return false;
+
+        if (whereCall.Arguments[1].UnwrapLambdaFromQuote() is not { } wherePred
+            || !TryTranslateAccumulatorCondition(
+                wherePred.Body, groupingParameter, keyParts, isComposite, translator, out var isKeyOnlyCondition, out var condition))
+            return false;
+
+        if (call.Arguments[1].UnwrapLambdaFromQuote() is not { } selector
+            || !translator.TryTranslateValue(selector.Body, out var operand))
+            return false;
+
+        // Final-review fix: if every element in the group fails `pred`, $$REMOVE leaves the $min/$max/$avg
+        // accumulator null server-side, and the native shaper would read that back as default(T) for a
+        // non-nullable result type — silently wrong (both LINQ-to-objects and the driver-LINQ fallback throw
+        // InvalidOperationException for an empty sequence instead). $sum is unaffected (0 for an empty/all-
+        // excluded sequence is the CORRECT answer both in-memory and via the fallback). Scoped to a genuine
+        // PER-ELEMENT predicate (isKeyOnlyCondition false) — a pure g.Key comparison shares the SAME value
+        // across every element in a given group, so whether it's satisfied is really a property of the
+        // GROUP as a whole, and the target shape this binds (GroupBy_constant_with_where_on_grouping_with_
+        // aggregate_operators) relies on exactly that invariant to stay supported (its predicate is
+        // trivially, provably true for every element of its only possible group).
+        if (!isKeyOnlyCondition && op is "$min" or "$max" or "$avg" && IsNonNullableValueType(call.Method.ReturnType))
+            return false;
+
+        accumulator = new MongoGroupAccumulator(outputField, op,
+            new MongoConditionalExpression(condition, operand,
+                new MongoElementRefExpression(MongoElementRefExpression.RemoveSentinelPath, operand.Type)));
         flattenRead = new MongoElementRefExpression(outputField, call.Method.ReturnType);
         return true;
     }
@@ -617,6 +1240,17 @@ internal static class NativeGroupByBinder
         if (select.PendingGroupKey is not { } keyParts || select.Grouping != null)
             return false;
 
+        // EF-322 fix round: a Skip/Take already recorded into PendingGroupPaging earlier in this chain
+        // (e.g. GroupBy(key).Skip(1).Count()) must decline — this bare-terminal-aggregate path has no
+        // mechanism to apply paging before the aggregate (there is no Select/flatten stage for
+        // GroupPagingOps to run against here), so silently proceeding would drop the paging entirely and
+        // aggregate over every group instead of the paged subset. See this fix round's report for the
+        // reproducing probe query.
+        if (select.PendingGroupPaging != null)
+            return false;
+
+        var isComposite = keyParts.Count == 0 ? false : keyParts.Count > 1 || keyParts[0].Name != null;
+
         if (op is not (MongoAggregateOperator.Count or MongoAggregateOperator.LongCount
                 or MongoAggregateOperator.Any or MongoAggregateOperator.All))
             return false;
@@ -635,7 +1269,7 @@ internal static class NativeGroupByBinder
             // both shapes reach this method with a non-null predicate depending on query form), so both must
             // be handled.
             if (!TryBindGroupPredicateComparison(predicate.Body, predicate.Parameters[0], translator,
-                    out accumulator, out comparisonNode))
+                    keyParts, isComposite, out accumulator, out comparisonNode))
                 return false;
         }
         else if (op is MongoAggregateOperator.All)
@@ -653,9 +1287,14 @@ internal static class NativeGroupByBinder
 
         select.PendingGroupPredicate = null; // one-shot: consumed above, or never set for a bare terminal.
 
-        if (accumulator != null)
+        // EF-322 SP2: gate on comparisonNode, not accumulator — a bare KEY comparison (g.Key == "ALFKI") has
+        // no accumulator at all, but still produces a valid $match predicate. Gating on accumulator alone
+        // would silently DROP a key-only predicate's filter here once TryBindGroupPredicateComparison's
+        // key-access arm exists — a correctness regression, not just a missed capability.
+        if (comparisonNode != null)
         {
-            accumulators.Add(accumulator);
+            if (accumulator != null)
+                accumulators.Add(accumulator);
 
             if (op is MongoAggregateOperator.All)
             {
@@ -667,7 +1306,7 @@ internal static class NativeGroupByBinder
                 // expression-only, like MongoOuterFieldExpression/a computed leaf) never satisfies — this
                 // node is ALWAYS rendered via $expr, so negate directly with the same $eq/$ne-invert,
                 // relational-$not-wrap rule the negator's own aggregation-context arm applies.
-                if (!TryNegateGroupComparison(comparisonNode!, out var negated))
+                if (!TryNegateGroupComparison(comparisonNode, out var negated))
                     return false;
                 matchPredicate = negated;
             }
@@ -709,25 +1348,33 @@ internal static class NativeGroupByBinder
     internal static bool TryBindGroupWherePredicate(MongoQueryExpression mongoQ, LambdaExpression predicate)
     {
         var select = mongoQ.Select;
+        if (select.PendingGroupKey is not { } keyParts)
+            return false;
+
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
+        var isComposite = keyParts.Count == 0 ? false : keyParts.Count > 1 || keyParts[0].Name != null;
 
         if (!TryBindGroupPredicateComparison(predicate.Body, predicate.Parameters[0], translator,
-                out var accumulator, out var comparisonNode))
+                keyParts, isComposite, out var accumulator, out var comparisonNode))
             return false;
 
         select.PendingGroupPredicate = (accumulator, comparisonNode);
         return true;
     }
 
-    // Recognizes `body` as a single comparison of one group-level aggregate (bound via the SAME
-    // TryBindAccumulator shapes the Select-projection path uses) against a constant/parameter, in EITHER
-    // operand order. Returns the bound accumulator (output field "__agg0") and the translated comparison node
-    // (accumulator field-ref on the left, in normalized — not necessarily source — operator direction).
+    // Recognizes `body` as a single comparison of one group-level operand — a KEY access (g.Key / g.Key.Sub,
+    // no accumulator needed) or a group-level aggregate (bound via the SAME TryBindAccumulator shapes the
+    // Select-projection path uses, output field "__agg0") — against a constant/parameter, in EITHER operand
+    // order. Returns the bound accumulator (null for a key-access comparison — EF-322 SP2) and the translated
+    // comparison node (the group-level operand's field-ref on the left, in normalized — not necessarily
+    // source — operator direction).
     private static bool TryBindGroupPredicateComparison(
         Expression body,
         ParameterExpression groupingParameter,
         MongoExpressionTranslator translator,
-        [NotNullWhen(true)] out MongoGroupAccumulator? accumulator,
+        IReadOnlyList<MongoGroupingKeyPart> keyParts,
+        bool isComposite,
+        out MongoGroupAccumulator? accumulator,
         [NotNullWhen(true)] out MongoExpression? comparisonNode)
     {
         accumulator = null;
@@ -744,25 +1391,86 @@ internal static class NativeGroupByBinder
             return false;
         }
 
-        if (TryBindAccumulator(bin.Left, outputField, groupingParameter, translator, out var acc, out _)
-            && TryTranslateComparisonConstant(bin.Right, out var rightNode))
+        if (TryBindGroupSideOperand(bin.Left, groupingParameter, keyParts, isComposite, translator, outputField,
+                out accumulator, out var leftKeyProperty, out var leftKeyPath, out var leftRef)
+            && (leftKeyPath == null || IsSafeZeroPartKeyComparison(leftKeyPath, keyParts, bin.Right))
+            && TryTranslateComparisonConstant(bin.Right, leftKeyProperty, out var rightNode))
         {
-            accumulator = acc;
-            comparisonNode = new MongoBinaryExpression(
-                MapComparisonOperator(bin.NodeType),
-                new MongoElementRefExpression(outputField, Unwrap(bin.Left).Type),
-                rightNode);
+            comparisonNode = new MongoBinaryExpression(MapComparisonOperator(bin.NodeType), leftRef, rightNode);
             return true;
         }
 
-        if (TryBindAccumulator(bin.Right, outputField, groupingParameter, translator, out acc, out _)
-            && TryTranslateComparisonConstant(bin.Left, out var leftNode))
+        if (TryBindGroupSideOperand(bin.Right, groupingParameter, keyParts, isComposite, translator, outputField,
+                out accumulator, out var rightKeyProperty, out var rightKeyPath, out var rightRef)
+            && (rightKeyPath == null || IsSafeZeroPartKeyComparison(rightKeyPath, keyParts, bin.Left))
+            && TryTranslateComparisonConstant(bin.Left, rightKeyProperty, out var leftNode))
+        {
+            comparisonNode = new MongoBinaryExpression(
+                MapComparisonOperator(FlipComparison(bin.NodeType)), rightRef, leftNode);
+            return true;
+        }
+
+        return false;
+    }
+
+    // EF-322 SP2: one side of a group predicate comparison — either a KEY access (g.Key / g.Key.Sub;
+    // accumulator stays null, the reference reads "_id"[.Name] directly, no $group accumulator needed at
+    // all) or a group-level ACCUMULATOR call (g.Count()/g.Sum(...) etc., bound to the reserved output field
+    // "__agg0"). A composite WHOLE-key read (bare g.Key over a >1-part key) still declines — TryGetKeyMemberPath's
+    // own allowWholeKeyRead: true default already encodes "no single field to compare" for this; passed
+    // through unchanged.
+    //
+    // Final review fix: a KEY match also resolves the matched key part's own IProperty (null for a
+    // computed/literal/parameter key part, which has no backing property) so the CALLER can serialize the
+    // comparison's OTHER operand (the constant/parameter side) through the SAME property serializer the key's
+    // stored value itself uses — without it, MongoValueRenderer.RenderValue falls back to the generic
+    // BsonValue.Create for that operand, which throws for a type it can't map directly (e.g. Guid), instead
+    // of declining cleanly. A key part is already known-safe here — TryBindGroupKey's own
+    // HasDefaultKeySerialization check (via TryTranslateValue's AllFieldsDefaultSerialized) already rejected
+    // a value-converted/non-default-represented key at bind time.
+    private static bool TryBindGroupSideOperand(
+        Expression side,
+        ParameterExpression groupingParameter,
+        IReadOnlyList<MongoGroupingKeyPart> keyParts,
+        bool isComposite,
+        MongoExpressionTranslator translator,
+        string accumulatorOutputField,
+        out MongoGroupAccumulator? accumulator,
+        out IProperty? keySerializationProperty,
+        out string? matchedKeyPath,
+        [NotNullWhen(true)] out MongoExpression? reference)
+    {
+        accumulator = null;
+        keySerializationProperty = null;
+        matchedKeyPath = null;
+        reference = null;
+
+        // allowWholeKeyRead: false — a WHOLE composite key comparison (g.Key == new {...}) still declines,
+        // same reasoning as the ordering carve-out in TryBindGroupProjection: the compiler-generated
+        // anonymous-type constant has no single backing property to serialize the comparison's OTHER side
+        // against (every OTHER key match here is a single sub-field, always resolvable to exactly one
+        // MongoGroupingKeyPart). A SCALAR key is unaffected — allowWholeKeyRead only gates the composite case.
+        if (TryGetKeyMemberPath(side, groupingParameter, keyParts, isComposite, out var keyPath, allowWholeKeyRead: false))
+        {
+            if (keyPath == null)
+                return false; // bare g.Key over a composite key — no single field to compare
+
+            // EF-322 SP7: a zero-part key (keyParts.Count == 0) resolves here too now (TryGetKeyMemberPath's
+            // fix, this plan's Task 2) but has no single backing property — same as the composite case just
+            // above it, for the same reason.
+            keySerializationProperty = isComposite || keyParts.Count == 0
+                ? null
+                : (keyParts[0].FieldRef as MongoFieldExpression)?.Property;
+
+            matchedKeyPath = keyPath;
+            reference = new MongoElementRefExpression(keyPath, Unwrap(side).Type);
+            return true;
+        }
+
+        if (TryBindAccumulator(side, accumulatorOutputField, groupingParameter, keyParts, isComposite, translator, out var acc, out _))
         {
             accumulator = acc;
-            comparisonNode = new MongoBinaryExpression(
-                MapComparisonOperator(FlipComparison(bin.NodeType)),
-                new MongoElementRefExpression(outputField, Unwrap(bin.Right).Type),
-                leftNode);
+            reference = new MongoElementRefExpression(accumulatorOutputField, Unwrap(side).Type);
             return true;
         }
 
@@ -771,20 +1479,22 @@ internal static class NativeGroupByBinder
 
     // The non-accumulator side of a group predicate comparison: a captured literal or a query parameter.
     // Mirrors MongoExpressionTranslator's own private TranslateValue (not accessible from here) — this operand
-    // is never a member access, so the full translator is unnecessary.
+    // is never a member access, so the full translator is unnecessary. `forSerialization` is the OTHER side's
+    // matched key property (null for an accumulator comparison, or a computed/literal/parameter key) — see
+    // TryBindGroupSideOperand's own remarks for why this is needed.
     private static bool TryTranslateComparisonConstant(
-        Expression expr, [NotNullWhen(true)] out MongoExpression? result)
+        Expression expr, IProperty? forSerialization, [NotNullWhen(true)] out MongoExpression? result)
     {
         expr = Unwrap(expr);
         switch (expr)
         {
             case ConstantExpression constant:
-                result = new MongoConstantExpression(constant.Value, forSerialization: null);
+                result = new MongoConstantExpression(constant.Value, forSerialization);
                 return true;
             default:
                 if (NativeQueryParameter.TryGetQueryParameterName(expr, out var name))
                 {
-                    result = new MongoParameterExpression(name, forSerialization: null);
+                    result = new MongoParameterExpression(name, forSerialization);
                     return true;
                 }
 

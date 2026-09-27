@@ -191,7 +191,7 @@ internal sealed partial class MongoExpressionTranslator
 
     // The Queryable spelling quotes its lambda and the Enumerable spelling does not; UnwrapLambdaFromQuote above
     // handles both, so both declaring types are admitted here.
-    private static bool IsCanonicalCountWithPredicate(MethodInfo method)
+    internal static bool IsCanonicalCountWithPredicate(MethodInfo method)
     {
         if (!method.IsGenericMethod)
             return false;

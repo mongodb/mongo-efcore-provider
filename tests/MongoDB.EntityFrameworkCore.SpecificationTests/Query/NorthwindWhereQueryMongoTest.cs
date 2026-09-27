@@ -46,7 +46,7 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
 
         AssertMql(
             """
-Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["$UnitsInStock", 20] }, "then" : false, "else" : true } }] } } }
+Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["$UnitsInStock", 20] }, "then" : { "$literal" : false }, "else" : { "$literal" : true } } }] } } }
 """);
     }
 
@@ -1152,7 +1152,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["$UnitsInStock", 20] }, "then" : false, "else" : true } }] } } }
+Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["$UnitsInStock", 20] }, "then" : { "$literal" : false }, "else" : { "$literal" : true } } }] } } }
 """);
     }
 #endif
@@ -1371,7 +1371,7 @@ Products.{ "$match" : { "$and" : [{ "UnitPrice" : { "$type" : "number" } }, { "$
 
         AssertMql(
             """
-Products.{ "$match" : { "$expr" : { "$cond" : { "if" : true, "then" : false, "else" : true } } } }
+Products.{ "$match" : { "$expr" : { "$cond" : { "if" : true, "then" : { "$literal" : false }, "else" : { "$literal" : true } } } } }
 """);
     }
 
@@ -1712,8 +1712,8 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : 10 
         await base.Case_block_simplification_works_correctly(async);
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : ["$Region", null] }, "then" : "OR", "else" : "$Region" } }, "OR"] } } }
-            """);
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : ["$Region", null] }, "then" : { "$literal" : "OR" }, "else" : "$Region" } }, "OR"] } } }
+""");
     }
 
     public override async Task Where_compare_null_with_cast_to_object(bool async)

@@ -634,19 +634,37 @@ internal sealed class MongoSelectDefinition
     internal IReadOnlyList<MongoProjection> PriorGroupingProjection { get; private set; } = [];
 
     /// <summary>
-    /// Moves the prior stage's own <see cref="Grouping"/>/<see cref="Projection"/> aside into
-    /// <see cref="PriorGrouping"/>/<see cref="PriorGroupingProjection"/> so a <c>GroupBy(key).Select(aggregate)</c>
-    /// composing directly on top of it (a projected Distinct, EF-322; or an ordinary prior GroupBy, EF-TBD) can
-    /// bind a SECOND, genuinely independent grouping into <see cref="Grouping"/>/<see cref="Projection"/>
-    /// without silently overwriting (and thereby dropping) the prior stage's own dedup/aggregation. Called by
-    /// the QMTEV's <c>TranslateGroupBy</c> exactly once, before <c>NativeGroupByBinder.TryBindGroupKey</c> runs,
-    /// and only when the post-terminal guard there has confirmed a finalized <see cref="Grouping"/> is already
-    /// sitting there (a pure projected-Distinct terminal, or an ordinary prior GroupBy(key).Select(aggregate)).
+    /// The prior stage's OWN <see cref="GroupHavingPredicate"/> (a HAVING <c>Where</c> composed between the
+    /// FIRST <c>GroupBy(key)</c> and ITS OWN terminal <c>Select</c> — e.g. <c>GroupBy(a).Where(g =&gt;
+    /// g.Count() &gt; 1).Select(...).GroupBy(...).Select(...)</c>), snapshotted alongside
+    /// <see cref="PriorGrouping"/>/<see cref="PriorGroupingProjection"/>. Without this, the OUTER
+    /// <c>GroupBy</c>'s own (usually absent) HAVING would unconditionally overwrite
+    /// <see cref="GroupHavingPredicate"/> back to <see langword="null"/>, silently DROPPING the first
+    /// grouping's filter and returning every one of its (unfiltered) groups instead. Emitted by
+    /// <c>MongoSelectLowerer</c> immediately after <see cref="PriorGrouping"/>'s own <c>$group</c> and BEFORE
+    /// <see cref="PriorGroupingProjection"/>'s flattening <c>$project</c> — same ordering rule
+    /// <see cref="GroupHavingPredicate"/> itself follows for the outer grouping.
+    /// </summary>
+    internal MongoExpression? PriorGroupHavingPredicate { get; private set; }
+
+    /// <summary>
+    /// Moves the prior stage's own <see cref="Grouping"/>/<see cref="Projection"/>/<see cref="GroupHavingPredicate"/>
+    /// aside into <see cref="PriorGrouping"/>/<see cref="PriorGroupingProjection"/>/
+    /// <see cref="PriorGroupHavingPredicate"/> so a <c>GroupBy(key).Select(aggregate)</c> composing directly on
+    /// top of it (a projected Distinct, EF-322; or an ordinary prior GroupBy, EF-TBD) can bind a SECOND,
+    /// genuinely independent grouping into <see cref="Grouping"/>/<see cref="Projection"/>/
+    /// <see cref="GroupHavingPredicate"/> without silently overwriting (and thereby dropping) the prior
+    /// stage's own dedup/aggregation/HAVING filter. Called by the QMTEV's <c>TranslateGroupBy</c> exactly
+    /// once, before <c>NativeGroupByBinder.TryBindGroupKey</c> runs, and only when the post-terminal guard
+    /// there has confirmed a finalized <see cref="Grouping"/> is already sitting there (a pure
+    /// projected-Distinct terminal, or an ordinary prior GroupBy(key).Select(aggregate)).
     /// </summary>
     internal void SnapshotPriorGroupingForNestedGroupBy()
     {
         PriorGrouping = _grouping;
         PriorGroupingProjection = [.. _projections];
+        PriorGroupHavingPredicate = GroupHavingPredicate;
+        GroupHavingPredicate = null;
         ClearProjections();
     }
 
@@ -679,7 +697,7 @@ internal sealed class MongoSelectDefinition
     /// <c>Any</c> arrives with <see langword="null"/> own predicate (already consumed by the preceding Where).
     /// Mirrors <see cref="PendingGroupKey"/>'s pattern: not itself part of <see cref="Route"/>.
     /// </summary>
-    internal (MongoGroupAccumulator Accumulator, MongoExpression Comparison)? PendingGroupPredicate { get; set; }
+    internal (MongoGroupAccumulator? Accumulator, MongoExpression Comparison)? PendingGroupPredicate { get; set; }
 
     /// <summary>
     /// Raw, unresolved <c>OrderBy</c>/<c>ThenBy</c> key selectors composed directly on the still-ungrouped
@@ -707,6 +725,49 @@ internal sealed class MongoSelectDefinition
     /// <see langword="null"/> for every query that never took this path.
     /// </summary>
     internal MongoSortOp? GroupOrderOp { get; set; }
+
+    /// <summary>
+    /// Raw, already-translated <c>Skip</c>/<c>Take</c> ops (<see cref="MongoSkipOp"/>/<see cref="MongoLimitOp"/>)
+    /// composed directly on the still-ungrouped <c>GroupBy(key)</c> result (before the terminal <c>Select</c>
+    /// that finalizes <see cref="Grouping"/>) — e.g. <c>GroupBy(o =&gt; o.CustomerID).Skip(0).Take(0)</c>.
+    /// Recorded by <c>NativeSlotPopulator.PopulateNativeSlots</c>'s pending-paging carve-out, in arrival order
+    /// (mirrors the ordinary, non-GroupBy <see cref="PipelineOps"/> paging's own "repeated paging is natively
+    /// representable" behavior). Unlike <see cref="PendingGroupOrderings"/>, a paging count needs NO deferred
+    /// resolution — it never references a not-yet-existent <c>$group</c> accumulator — so each entry here is
+    /// already a fully-formed <see cref="MongoSelectOp"/> by the time it lands here; the "pending" naming is
+    /// only about WHEN it may be committed (only once the terminal Select actually finalizes the grouping),
+    /// not about needing further translation. Consumed and cleared by
+    /// <c>NativeGroupByBinder.TryBindGroupProjection</c>, which moves it verbatim into
+    /// <see cref="GroupPagingOps"/>. <see langword="null"/> for every query that never took this path.
+    /// </summary>
+    internal List<MongoSelectOp>? PendingGroupPaging { get; set; }
+
+    private List<MongoSelectOp> _groupPagingOps = [];
+
+    /// <summary>
+    /// The <c>$skip</c>/<c>$limit</c> ops to run immediately AFTER <see cref="GroupOrderOp"/>'s sort (ORDER BY
+    /// orders the groups; SKIP/TAKE then pages the ordered result) and BEFORE the flattening <c>$project</c> —
+    /// resolved from <see cref="PendingGroupPaging"/> by <c>NativeGroupByBinder.TryBindGroupProjection</c>.
+    /// Empty for every query that never took this path.
+    /// </summary>
+    public IReadOnlyList<MongoSelectOp> GroupPagingOps
+    {
+        get => _groupPagingOps;
+        internal set => _groupPagingOps = [.. value];
+    }
+
+    /// <summary>
+    /// A <c>$match</c> predicate to emit immediately after the <c>$group</c> stage and before its flattening
+    /// <c>$project</c> — the ordinary "HAVING" case: a <c>Where</c> composed between <c>GroupBy(key)</c> and
+    /// the terminal <c>Select</c> (e.g. <c>GroupBy(key).Where(o =&gt; o.Count() &gt; 4).Select(g =&gt; new
+    /// { g.Key, Count = g.Count() })</c>). Resolved from <see cref="PendingGroupPredicate"/> by
+    /// <c>NativeGroupByBinder.TryBindGroupProjection</c>. Deliberately separate from
+    /// <see cref="PostGroupPredicate"/> (the EF-449 bare-<c>GroupBy</c>-terminal-aggregate's own post-group
+    /// filter — a query with NO <c>Select</c> at all) and from <see cref="PostGroupOps"/> (ops composed AFTER
+    /// the flattening <c>$project</c>, filtering the grouped OUTPUT rows, not group internals).
+    /// <see langword="null"/> for every query that never took this path.
+    /// </summary>
+    internal MongoExpression? GroupHavingPredicate { get; set; }
 
     // ── GroupBy provenance / fallback safety ──────────────────────────────────────
 

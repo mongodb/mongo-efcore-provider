@@ -436,12 +436,12 @@ internal sealed class MongoPipelineFactory
         {
             var idDoc = new BsonDocument();
             foreach (var part in grouping.Key)
-                idDoc.Add(part.Name, MongoAggregationExpressionRenderer.Render(part.FieldRef, placeholders));
+                idDoc.Add(part.Name, RenderKeyPart(part.FieldRef, placeholders));
             id = idDoc;
         }
         else
         {
-            id = MongoAggregationExpressionRenderer.Render(grouping.Key[0].FieldRef, placeholders);
+            id = RenderKeyPart(grouping.Key[0].FieldRef, placeholders);
         }
 
         var group = new BsonDocument { { "_id", id } };
@@ -465,6 +465,22 @@ internal sealed class MongoPipelineFactory
         }
 
         return new BsonDocument("$group", group);
+    }
+
+    // EF-322 SP1 fix-pass: a constant/parameter key part (admitted once TryBindGroupKey started routing
+    // through TryTranslateValue) is rendered as $group's bare _id value or an _id sub-field — unlike an
+    // accumulator operand (which is always wrapped inside an operator document like {$sum: expr}, so a
+    // "$"-prefixed string operand can't be mistaken for a top-level field-path key), a raw string key value
+    // would otherwise be indistinguishable from a genuine field reference to the server, silently grouping by
+    // the WRONG thing instead of the literal value. $literal-wrap unconditionally for any constant/parameter,
+    // matching the identical, pre-existing convention this method already applies to accumulator operands
+    // (immediately below) and RenderAddFields applies to $set values.
+    private static BsonValue RenderKeyPart(MongoExpression fieldRef, PlaceholderTable placeholders)
+    {
+        var rendered = MongoAggregationExpressionRenderer.Render(fieldRef, placeholders);
+        return fieldRef is MongoConstantExpression or MongoParameterExpression
+            ? new BsonDocument("$literal", rendered)
+            : rendered;
     }
 
     private static BsonDocument RenderSkip(
