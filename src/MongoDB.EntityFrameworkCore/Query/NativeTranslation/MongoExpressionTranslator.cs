@@ -1133,6 +1133,26 @@ internal sealed partial class MongoExpressionTranslator
                     }
 
                     termNode = new MongoFieldExpression(termProperty, termFieldPath);
+
+                    // EF-322 non-ASCII case-folding gap (parked-finding follow-up, verified empirically against
+                    // a live mongod 8.2.7): RenderRegexAsExpr folds CaseInsensitive field-to-field comparisons by
+                    // wrapping both operands in $toLower before the $indexOfCP/$strLenCP test — but MongoDB's
+                    // $toLower (and $strcasecmp) are genuinely ASCII-only, not merely narrower Unicode simple
+                    // case-folding: probed directly, $toLower leaves Latin-1 (É), Cyrillic (Б) and Greek (Ω)
+                    // uppercase letters completely untouched, and $strcasecmp never reports a non-ASCII
+                    // upper/lower pair as equal. There is no other $expr-scoped operator that does Unicode-aware,
+                    // locale-independent case folding — `collation` is a whole-command/collection option, not
+                    // something attachable to a single operator inside a larger $expr, so it can't rescue just
+                    // this one predicate. Rather than silently answer wrong for non-ASCII OrdinalIgnoreCase
+                    // field-to-field StartsWith/EndsWith/Contains, decline the shape here so it falls back to
+                    // driver-LINQ (which throws for it — no native OR fallback silent-wrong-data path exists).
+                    // Scoped ONLY to the field-to-field-term branch: a constant/parameterized term (Finding 1(a))
+                    // is unaffected — that shape's CaseInsensitive folding goes through PlaceholderTable's regex
+                    // "i" option, a real ICU/PCRE-backed case-insensitive match, not $toLower.
+                    if (caseInsensitive)
+                    {
+                        return null;
+                    }
                 }
 
                 return new MongoRegexExpression(fieldNode, kind, termNode, negated: false, caseInsensitive);
