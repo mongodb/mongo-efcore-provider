@@ -878,20 +878,32 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     [Fact]
-    public void Distinct_then_GroupBy_with_computed_key_still_falls_back_under_native_only()
+    public void Distinct_then_GroupBy_with_computed_key_goes_native_under_native_only()
     {
-        // A computed group-by key member (not one of the Distinct's own key part aliases) must still decline
-        // rather than silently resolving against the entity.
+        // EF-322 SP1: a computed group-by key (a string-concat over the Distinct's own flattened alias, not
+        // the entity) used to be a hard decline — NativeGroupByBinder.TryBindGroupKey only recognized a bare
+        // member/composite/constant key. It now routes through MongoExpressionTranslator.TryTranslateValue,
+        // which (via the translator's existing DistinctAliasScope — set from Select.PriorGrouping — the SAME
+        // mechanism this key selector already needed to resolve x.Country against the Distinct's own output,
+        // not the entity) resolves this computed expression correctly, so it now goes native instead of
+        // falling back.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
-            nameof(Distinct_then_GroupBy_with_computed_key_still_falls_back_under_native_only));
+            nameof(Distinct_then_GroupBy_with_computed_key_goes_native_under_native_only));
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() =>
-            db.Entities
-                .Select(o => new { o.Country, o.Year })
-                .Distinct()
-                .GroupBy(x => x.Country + x.Year)
-                .Select(g => new { g.Key, Count = g.Count() })
-                .ToList());
+        var result = db.Entities
+            .Select(o => new { o.Country, o.Year })
+            .Distinct()
+            .GroupBy(x => x.Country + x.Year)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .AsEnumerable()
+            .OrderBy(r => r.Key)
+            .ToList();
+
+        // Distinct (Country, Year) pairs: US/2020, US/2021, UK/2020, FR/2021 — each already unique, so each
+        // concatenated key ("US2020" etc.) groups exactly one row.
+        Assert.Equal(
+            [("FR2021", 1), ("UK2020", 1), ("US2020", 1), ("US2021", 1)],
+            result.Select(r => (r.Key, r.Count)).ToArray());
     }
 
     [Fact]

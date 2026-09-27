@@ -60,6 +60,18 @@ internal static class NativeSlotPopulator
         if (methodDefinition == QueryableMethods.Where
             && mongoQ.Select.PendingGroupKey != null && mongoQ.Select.Grouping == null)
         {
+            // EF-322 fix round: a Skip/Take already recorded into PendingGroupPaging earlier in this SAME
+            // chain (e.g. GroupBy(key).Skip(1).Where(g => g.Count() >= 2)) must decline rather than stash a
+            // HAVING comparison on top of it — MongoSelectLowerer always emits GroupHavingPredicate BEFORE
+            // GroupPagingOps regardless of LINQ arrival order, so admitting this would silently apply the
+            // HAVING filter before the paging that, in the actual LINQ chain, ran first. See this fix round's
+            // report for the reproducing probe query.
+            if (mongoQ.Select.PendingGroupPaging != null)
+            {
+                mongoQ.Select.MarkNotNativelyRepresentable();
+                return;
+            }
+
             // A SECOND Where reaching here (mongoQ.Select.PendingGroupPredicate already set by a prior one)
             // is out of scope — TryBindGroupWherePredicate has nowhere to put more than one stashed
             // comparison, and overwriting it would silently drop the first Where's filter entirely.
@@ -89,6 +101,18 @@ internal static class NativeSlotPopulator
             && (methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.OrderByDescending
                 || methodDefinition == QueryableMethods.ThenBy || methodDefinition == QueryableMethods.ThenByDescending))
         {
+            // EF-322 fix round: a Skip/Take already recorded into PendingGroupPaging earlier in this SAME
+            // chain (e.g. GroupBy(key).Skip(1).OrderByDescending(k => k)) must decline rather than stash an
+            // ordering on top of it — MongoSelectLowerer always emits GroupOrderOp's sort BEFORE
+            // GroupPagingOps regardless of LINQ arrival order, so admitting this would silently apply the
+            // ordering before the paging that, in the actual LINQ chain, ran first (wrong rows/order). See
+            // this fix round's report for the reproducing probe query.
+            if (mongoQ.Select.PendingGroupPaging != null)
+            {
+                mongoQ.Select.MarkNotNativelyRepresentable();
+                return;
+            }
+
             var orderKeySelector = call.Arguments[1].UnwrapLambdaFromQuote();
             var ascending = methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.ThenBy;
             var isThenBy = methodDefinition == QueryableMethods.ThenBy || methodDefinition == QueryableMethods.ThenByDescending;
@@ -97,6 +121,31 @@ internal static class NativeSlotPopulator
                 existingOrderings.Add((ascending, orderKeySelector));
             else
                 mongoQ.Select.PendingGroupOrderings = [(ascending, orderKeySelector)];
+            return;
+        }
+
+        // EF-322 SP6: Skip/Take composed DIRECTLY on the still-ungrouped GroupBy(key) result — e.g.
+        // GroupBy(o => o.CustomerID).Skip(0).Take(0) — mirrors the OrderBy/ThenBy carve-out immediately
+        // above, but needs NO deferred resolution: a paging count is always translatable right now via the
+        // SAME TranslateCountExpression helper the ordinary (non-GroupBy) Skip/Take arms below already use —
+        // it never references a $group accumulator that doesn't exist yet. Scoped to Grouping == null (not
+        // yet finalized) for the identical reason as the OrderBy/ThenBy carve-out: the OPPOSITE composition
+        // order (Skip/Take composed AFTER the terminal Select, over a finalized Grouping) must keep falling
+        // through unchanged into PostGroupOps, handled elsewhere.
+        if (mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping == null && mongoQ.Select.PendingGroupKey != null
+            && (methodDefinition == QueryableMethods.Skip || methodDefinition == QueryableMethods.Take))
+        {
+            var count = TranslateCountExpression(call.Arguments[1]);
+            if (count is null)
+            {
+                mongoQ.Select.MarkNotNativelyRepresentable();
+                return;
+            }
+
+            MongoSelectOp op = methodDefinition == QueryableMethods.Skip
+                ? new MongoSkipOp(count)
+                : new MongoLimitOp(count);
+            (mongoQ.Select.PendingGroupPaging ??= []).Add(op);
             return;
         }
 

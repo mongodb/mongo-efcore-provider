@@ -702,6 +702,55 @@ public class MongoAggregationExpressionRendererTests
             result.ToJson());
     }
 
+    [Fact]
+    public void Remove_sentinel_renders_as_the_REMOVE_system_variable()
+    {
+        var node = new MongoElementRefExpression(MongoElementRefExpression.RemoveSentinelPath, typeof(object));
+
+        var rendered = MongoAggregationExpressionRenderer.Render(node, new PlaceholderTable());
+
+        Assert.Equal("$$REMOVE", rendered.AsString);
+    }
+
+    // ------------------------------------------------------------------
+    // SP4 final-review fix: a "$"-prefixed constant used as a $ifNull/$cond BRANCH must be $literal-wrapped,
+    // the same way RenderProject/RenderAddFields already wrap a bare TOP-LEVEL constant/parameter — otherwise
+    // MongoDB reads the unwrapped string as a field-path reference instead of the literal value it is.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Coalesce_right_branch_dollar_prefixed_constant_is_literal_wrapped()
+    {
+        var status = GetProperty<Customer>("Status");
+        var expr = new MongoCoalesceExpression(
+            new MongoFieldExpression(status, "Status"),
+            new MongoConstantExpression("$Year", forSerialization: null));
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$ifNull" : ["$Status", { "$literal" : "$Year" }] }""",
+            result.ToJson());
+    }
+
+    [Fact]
+    public void Conditional_else_branch_dollar_prefixed_constant_is_literal_wrapped()
+    {
+        var status = GetProperty<Customer>("Status");
+        var nickname = GetProperty<Customer>("Nickname");
+        var expr = new MongoConditionalExpression(
+            new MongoBinaryExpression(
+                MongoBinaryOperator.Equal, new MongoFieldExpression(status, "Status"), new MongoFieldExpression(nickname, "Nickname")),
+            new MongoConstantExpression("match", forSerialization: null),
+            new MongoConstantExpression("$Year", forSerialization: null));
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$cond" : { "if" : { "$eq" : ["$Status", "$Nickname"] }, "then" : { "$literal" : "match" }, "else" : { "$literal" : "$Year" } } }""",
+            result.ToJson());
+    }
+
     // --- Helper methods ---
 
     private static IProperty NameProperty() => GetProperty<Customer>("Age");

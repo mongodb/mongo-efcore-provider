@@ -706,8 +706,8 @@ Employees.{ "$set" : { "__sort0" : { "$literal" : 42 } } }, { "$sort" : { "__sor
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$sum" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } } }
-            """);
+Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$sum" : { "$ifNull" : ["$UnitPrice", { "$literal" : { "$numberDecimal" : "0" } }] } } } }
+""");
     }
 
 #if !EF8
@@ -847,8 +847,8 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$avg" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } } }
-            """);
+Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$avg" : { "$ifNull" : ["$UnitPrice", { "$literal" : { "$numberDecimal" : "0" } }] } } } }
+""");
     }
 
 #if !EF8
@@ -942,8 +942,8 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$min" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } } }
-            """);
+Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$min" : { "$ifNull" : ["$UnitPrice", { "$literal" : { "$numberDecimal" : "0" } }] } } } }
+""");
     }
 
 #if !EF8
@@ -1007,8 +1007,8 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$max" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } } }
-            """);
+Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$max" : { "$ifNull" : ["$UnitPrice", { "$literal" : { "$numberDecimal" : "0" } }] } } } }
+""");
     }
 
 #if !EF8
@@ -2224,8 +2224,16 @@ Orders.{ "$match" : { "_id" : { "$in" : [10248, 10249] } } }
 
     public override async Task Contains_inside_aggregate_function_with_GroupBy(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.Contains_inside_aggregate_function_with_GroupBy(async));
+        // EF-322 SP3: the EF-149 gap this was pinning was the predicated Count itself (g.Count(pred)),
+        // which NativeGroupByBinder.TryBindAccumulator now translates via TryTranslateAccumulatorCondition —
+        // that delegates an ordinary per-element predicate to the SAME translator Where itself uses, so an
+        // array .Contains(...) predicate (already supported there) now works here too.
+        await base.Contains_inside_aggregate_function_with_GroupBy(async);
+
+        AssertMql(
+            """
+Customers.{ "$group" : { "_id" : "$Country", "_v" : { "$sum" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task Contains_inside_Average_without_GroupBy(bool async)
@@ -2234,8 +2242,8 @@ Orders.{ "$match" : { "_id" : { "$in" : [10248, 10249] } } }
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : null, "v" : { "$avg" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1.0, "else" : 0.0 } } } } }
-            """);
+Customers.{ "$group" : { "_id" : null, "v" : { "$avg" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : { "$literal" : 1.0 }, "else" : { "$literal" : 0.0 } } } } } }
+""");
     }
 
     public override async Task Contains_inside_Sum_without_GroupBy(bool async)
@@ -2244,8 +2252,8 @@ Orders.{ "$match" : { "_id" : { "$in" : [10248, 10249] } } }
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : null, "v" : { "$sum" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1, "else" : 0 } } } } }
-            """);
+Customers.{ "$group" : { "_id" : null, "v" : { "$sum" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }
+""");
     }
 
     public override async Task Contains_inside_Count_without_GroupBy(bool async)
@@ -2274,8 +2282,8 @@ Orders.{ "$match" : { "_id" : { "$in" : [10248, 10249] } } }
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : null, "v" : { "$max" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1, "else" : 0 } } } } }
-            """);
+Customers.{ "$group" : { "_id" : null, "v" : { "$max" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }
+""");
     }
 
     public override async Task Contains_inside_Min_without_GroupBy(bool async)
@@ -2284,8 +2292,8 @@ Orders.{ "$match" : { "_id" : { "$in" : [10248, 10249] } } }
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : null, "v" : { "$min" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1, "else" : 0 } } } } }
-            """);
+Customers.{ "$group" : { "_id" : null, "v" : { "$min" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }
+""");
     }
 
 #if EF8 || EF9
