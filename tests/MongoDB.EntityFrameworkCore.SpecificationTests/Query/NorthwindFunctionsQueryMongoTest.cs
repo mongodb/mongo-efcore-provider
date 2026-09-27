@@ -168,25 +168,21 @@ public class NorthwindFunctionsQueryMongoTest : NorthwindFunctionsQueryTestBase<
 #if EF9
     public override async Task String_StartsWith_with_StringComparison_Ordinal(bool async)
     {
-        // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        await AssertTranslationFailed(() =>
-            base.String_StartsWith_with_StringComparison_Ordinal(async));
+        await base.String_StartsWith_with_StringComparison_Ordinal(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^Qu", "options" : "s" } } } }
 """);
     }
 
     public override async Task String_StartsWith_with_StringComparison_OrdinalIgnoreCase(bool async)
     {
-        // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        await AssertTranslationFailed(() =>
-            base.String_StartsWith_with_StringComparison_OrdinalIgnoreCase(async));
+        await base.String_StartsWith_with_StringComparison_OrdinalIgnoreCase(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^Qu", "options" : "is" } } } }
 """);
     }
 
@@ -277,25 +273,21 @@ Customers.
 #if EF9
     public override async Task String_EndsWith_with_StringComparison_Ordinal(bool async)
     {
-        // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        await AssertTranslationFailed(() =>
-            base.String_EndsWith_with_StringComparison_Ordinal(async));
+        await base.String_EndsWith_with_StringComparison_Ordinal(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "DY$", "options" : "s" } } } }
 """);
     }
 
     public override async Task String_EndsWith_with_StringComparison_OrdinalIgnoreCase(bool async)
     {
-        // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        await AssertTranslationFailed(() =>
-            base.String_EndsWith_with_StringComparison_OrdinalIgnoreCase(async));
+        await base.String_EndsWith_with_StringComparison_OrdinalIgnoreCase(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "DY$", "options" : "is" } } } }
 """);
     }
 
@@ -392,29 +384,21 @@ Customers.{ "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName",
 
     public override async Task String_FirstOrDefault_MethodCall(bool async)
     {
-        // Fails: Translate String.FirstOrDefault and String.LastOrDefault issue EF-248
-        Assert.Contains(
-            "StringSerializer must implement IBsonArraySerializer",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.String_FirstOrDefault_MethodCall(async))).Message);
+        await base.String_FirstOrDefault_MethodCall(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : "$ContactName" }, 0] }, "then" : "\u0000", "else" : { "$substrCP" : ["$ContactName", 0, 1] } } }, "A"] } } }
             """);
     }
 
     public override async Task String_LastOrDefault_MethodCall(bool async)
     {
-        // Fails: Translate String.FirstOrDefault and String.LastOrDefault issue EF-248
-        Assert.Contains(
-            "StringSerializer must implement IBsonArraySerializer",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.String_LastOrDefault_MethodCall(async))).Message);
+        await base.String_LastOrDefault_MethodCall(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : "$ContactName" }, 0] }, "then" : "\u0000", "else" : { "$substrCP" : ["$ContactName", { "$subtract" : [{ "$strLenCP" : "$ContactName" }, 1] }, 1] } } }, "s"] } } }
             """);
     }
 
@@ -475,13 +459,11 @@ Customers.{ "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName",
 #if EF9
     public override async Task String_Join_non_aggregate(bool async)
     {
-        // Fails: String.Join issue EF-245
-        await AssertTranslationFailed(() =>
-            base.String_Join_non_aggregate(async));
+        await base.String_Join_non_aggregate(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$CompanyName", ""] }, "|", { "$ifNull" : ["foo", ""] }, "|", { "$ifNull" : [null, ""] }, "|", { "$ifNull" : ["bar", ""] }] }, "Around the Horn|foo||bar"] } } }
 """);
     }
 
@@ -1947,25 +1929,21 @@ OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "
 
     public override async Task TrimStart_without_arguments_in_predicate(bool async)
     {
-        // Fails: Translate string.Trim methods issue EF-241
-        await AssertTranslationFailed(() =>
-            base.TrimStart_without_arguments_in_predicate(async));
+        await base.TrimStart_without_arguments_in_predicate(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$ContactTitle" } }, "Owner"] } } }
             """);
     }
 
     public override async Task TrimStart_with_char_argument_in_predicate(bool async)
     {
-        // Fails: Translate string.Trim methods issue EF-241
-        await AssertTranslationFailed(() =>
-            base.TrimStart_without_arguments_in_predicate(async));
+        await base.TrimStart_with_char_argument_in_predicate(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$ContactTitle", "chars" : "O" } }, "wner"] } } }
             """);
     }
 
@@ -1973,33 +1951,38 @@ OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "
     {
         await base.TrimStart_with_char_array_argument_in_predicate(async);
 
+#if EF8 || EF9
+        // EF8/EF9: string.TrimStart(char[]) in a Where predicate now goes native ($ltrim) instead of
+        // falling back to driver-LINQ's regex-based lookaround trick — different MQL, same results.
+        AssertMql(
+            """
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$ContactTitle", "chars" : "Ow" } }, "ner"] } } }
+            """);
+#else
         AssertMql(
             """
             Customers.{ "$match" : { "ContactTitle" : { "$regularExpression" : { "pattern" : "^[Ow]*(?=[^Ow])ner$", "options" : "s" } } } }
             """);
+#endif
     }
 
     public override async Task TrimEnd_without_arguments_in_predicate(bool async)
     {
-        // Fails: Translate string.Trim methods issue EF-241
-        await AssertTranslationFailed(() =>
-            base.TrimEnd_without_arguments_in_predicate(async));
+        await base.TrimEnd_without_arguments_in_predicate(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$ContactTitle" } }, "Owner"] } } }
             """);
     }
 
     public override async Task TrimEnd_with_char_argument_in_predicate(bool async)
     {
-        // Fails: Translate string.Trim methods issue EF-241
-        await AssertTranslationFailed(() =>
-            base.TrimEnd_with_char_argument_in_predicate(async));
+        await base.TrimEnd_with_char_argument_in_predicate(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$ContactTitle", "chars" : "r" } }, "Owne"] } } }
             """);
     }
 
@@ -2007,43 +1990,57 @@ OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "
     {
         await base.TrimEnd_with_char_array_argument_in_predicate(async);
 
+#if EF8 || EF9
+        // EF8/EF9: string.TrimEnd(char[]) in a Where predicate now goes native ($rtrim) instead of
+        // falling back to driver-LINQ's regex-based lookbehind trick — different MQL, same results.
+        AssertMql(
+            """
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$ContactTitle", "chars" : "er" } }, "Own"] } } }
+            """);
+#else
         AssertMql(
             """
             Customers.{ "$match" : { "ContactTitle" : { "$regularExpression" : { "pattern" : "^Own(?<=[^er])[er]*$", "options" : "s" } } } }
             """);
+#endif
     }
 
     public override async Task Trim_without_argument_in_predicate(bool async)
     {
         await base.Trim_without_argument_in_predicate(async);
 
+#if EF8 || EF9
+        // EF8/EF9: string.Trim() in a Where predicate now goes native ($trim) instead of falling back
+        // to driver-LINQ's regex-based lookaround trick — different MQL, same results.
+        AssertMql(
+            """
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$ContactTitle" } }, "Owner"] } } }
+            """);
+#else
         AssertMql(
             """
             Customers.{ "$match" : { "ContactTitle" : { "$regularExpression" : { "pattern" : "^\\s*(?!\\s)Owner(?<!\\s)\\s*$", "options" : "s" } } } }
             """);
+#endif
     }
 
     public override async Task Trim_with_char_argument_in_predicate(bool async)
     {
-        // Fails: Translate string.Trim methods issue EF-241
-        await AssertTranslationFailed(() =>
-            base.Trim_with_char_argument_in_predicate(async));
+        await base.Trim_with_char_argument_in_predicate(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$ContactTitle", "chars" : "O" } }, "wner"] } } }
             """);
     }
 
     public override async Task Trim_with_char_array_argument_in_predicate(bool async)
     {
-        // Fails: Translate string.Trim methods issue EF-241
-        await AssertTranslationFailed(() =>
-            base.Trim_with_char_argument_in_predicate(async));
+        await base.Trim_with_char_array_argument_in_predicate(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$ContactTitle", "chars" : "Or" } }, "wne"] } } }
             """);
     }
 
@@ -2166,13 +2163,11 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$set" : { "__sort0" : { 
 
     public override async Task Regex_IsMatch_MethodCall_constant_input(bool async)
     {
-        // Fails: Regex with non-constant pattern issue EF-247
-        await AssertTranslationFailed(() =>
-            base.Regex_IsMatch_MethodCall_constant_input(async));
+        await base.Regex_IsMatch_MethodCall_constant_input(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$regexMatch" : { "input" : "ALFKI", "regex" : "$_id", "options" : "" } } } }
             """);
     }
 
@@ -2241,25 +2236,21 @@ Customers.{ "$project" : { "_id" : "$_id", "Value" : { "$not" : { "$gte" : [{ "$
 
     public override async Task String_Contains_with_StringComparison_Ordinal(bool async)
     {
-        // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        await AssertTranslationFailed(() =>
-            base.String_Contains_with_StringComparison_Ordinal(async));
+        await base.String_Contains_with_StringComparison_Ordinal(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "M", "options" : "s" } } } }
 """);
     }
 
     public override async Task String_Contains_with_StringComparison_OrdinalIgnoreCase(bool async)
     {
-        // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        await AssertTranslationFailed(() =>
-            base.String_Contains_with_StringComparison_OrdinalIgnoreCase(async));
+        await base.String_Contains_with_StringComparison_OrdinalIgnoreCase(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "M", "options" : "is" } } } }
 """);
     }
 
