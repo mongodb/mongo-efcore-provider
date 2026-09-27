@@ -1430,9 +1430,13 @@ public class MongoExpressionTranslatorTests
     public void StartsWith_with_string_comparison_current_culture_overload_reports_not_translatable()
     {
         // CurrentCulture(IgnoreCase)/InvariantCulture(IgnoreCase) have no culture-aware collation
-        // equivalent in MongoDB's $regularExpression, so they still decline — the driver-LINQ v3 provider
-        // does not support any StringComparison-taking overload either (confirmed empirically — see Task 6
-        // report), so this shape falls back rather than being mistranslated.
+        // equivalent in MongoDB's $regularExpression, so this translator still declines them — but NOT
+        // because the driver-LINQ v3 fallback rejects the shape too: empirically, the driver's own LINQ v3
+        // provider silently EXECUTES these four culture-sensitive members (Ordinal-equivalent semantics, not
+        // genuine culture-aware collation) instead of throwing (a pre-existing latent wrong-data risk for
+        // genuinely culture-sensitive input, entirely inside the driver — see Task 3's parked finding in the
+        // plan ledger). Declining here is deliberate: falling back reproduces the driver's existing behavior
+        // rather than this translator silently mistranslating the shape itself.
         var entityType = GetEntityType<Customer>();
         var translator = NewTranslator(entityType);
         Expression<Func<Customer, bool>> predicate = c => c.Name.StartsWith("A", StringComparison.CurrentCulture);

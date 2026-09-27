@@ -84,6 +84,78 @@ public class NativeStringFirstOrLastTests(TemporaryDatabaseFixture database) : I
         AssertWhereMatchesOracle(collection, x => x.S.FirstOrDefault() == 'a');
     }
 
+    public class NullableRow
+    {
+        public ObjectId Id { get; set; }
+        public string Label { get; set; } = "";
+        public string? S { get; set; }
+    }
+
+    // Final-review fix (MINOR, real bug — finding 3): $strLenCP is a hard MongoDB server error for a
+    // missing/null string argument, so FirstOrDefault()/LastOrDefault() over a null/missing string FIELD
+    // (as opposed to a genuinely empty string, which the class-level remarks above already cover) used to
+    // crash the whole query at execution time instead of degrading gracefully to the same '\0' default the
+    // empty-string case already produces. There is no working client-side .NET oracle for this shape —
+    // string.FirstOrDefault()/LastOrDefault() on a genuinely null string reference throws
+    // ArgumentNullException, so AssertWhereMatchesOracle's predicate.Compile() leg can't be reused here — this
+    // asserts the expected row set by hand instead.
+    [Fact]
+    public void FirstOrDefault_equals_null_char_on_null_field_no_longer_throws_a_server_error()
+    {
+        var collection = database.MongoDatabase.GetCollection<NullableRow>(UniqueCollectionName(
+            nameof(FirstOrDefault_equals_null_char_on_null_field_no_longer_throws_a_server_error)));
+        collection.InsertMany(
+        [
+            new NullableRow { Label = "null-field", S = null },
+            new NullableRow { Label = "empty", S = "" },
+            new NullableRow { Label = "ordinary", S = "abc" }
+        ]);
+
+        AssertNullableFieldMatchesExpected(
+            collection, x => x.S!.FirstOrDefault() == '\0', ["null-field", "empty"]);
+    }
+
+    [Fact]
+    public void LastOrDefault_equals_null_char_on_null_field_no_longer_throws_a_server_error()
+    {
+        var collection = database.MongoDatabase.GetCollection<NullableRow>(UniqueCollectionName(
+            nameof(LastOrDefault_equals_null_char_on_null_field_no_longer_throws_a_server_error)));
+        collection.InsertMany(
+        [
+            new NullableRow { Label = "null-field", S = null },
+            new NullableRow { Label = "empty", S = "" },
+            new NullableRow { Label = "ordinary", S = "abc" }
+        ]);
+
+        AssertNullableFieldMatchesExpected(
+            collection, x => x.S!.LastOrDefault() == '\0', ["null-field", "empty"]);
+    }
+
+    private static void AssertNullableFieldMatchesExpected(
+        IMongoCollection<NullableRow> collection, Expression<Func<NullableRow, bool>> predicate, string[] expectedLabels)
+    {
+        var expected = expectedLabels.OrderBy(x => x, StringComparer.Ordinal).ToList();
+
+        using var nativeOnly = CreateNullableContext(collection, MongoQueryMode.NativeOnly);
+        var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().Where(predicate).Select(x => x.Label).ToList()
+            .OrderBy(x => x, StringComparer.Ordinal).ToList();
+        Assert.Equal(expected, nativeOnlyResult);
+
+        using var native = CreateNullableContext(collection, MongoQueryMode.Native);
+        var nativeResult = native.Entities.AsNoTracking().Where(predicate).Select(x => x.Label).ToList()
+            .OrderBy(x => x, StringComparer.Ordinal).ToList();
+        Assert.Equal(expected, nativeResult);
+    }
+
+    private static SingleEntityDbContext<NullableRow> CreateNullableContext(IMongoCollection<NullableRow> collection, MongoQueryMode mode)
+        => SingleEntityDbContext.Create(
+            collection,
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
+
     // `predicate` MUST be Expression<Func<...>>, never a plain Func delegate — see NativeStringConcatTests'
     // own remarks on why a Func parameter here would silently pull every row into memory instead of
     // exercising the native translation at all.

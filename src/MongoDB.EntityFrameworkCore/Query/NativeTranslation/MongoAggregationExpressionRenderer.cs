@@ -397,9 +397,14 @@ internal static class MongoAggregationExpressionRenderer
         };
     }
 
-    // MQL's $trim/$ltrim/$rtrim take a "chars" option that is semantically identical to .NET's Trim(char[])
-    // "strip any of these chars" contract; a null Chars omits the option, leaving MongoDB's own default
-    // (whitespace) to match the zero-arg .NET overload.
+    // Final-review fix (IMPORTANT — real regression vs. the pre-existing driver-LINQ fallback): MQL's
+    // $trim/$ltrim/$rtrim take a "chars" option that is semantically identical to .NET's Trim(char[]) "strip
+    // any of these chars" contract, but MongoDB's OWN default whitespace set (used when "chars" is omitted)
+    // is NOT the same set as .NET's char.IsWhiteSpace — most notably, MongoDB's default treats U+0000 (NUL) as
+    // whitespace, while char.IsWhiteSpace does not. For the zero-arg .NET overload (Chars is null) this must
+    // render an EXPLICIT "chars" option containing exactly the code points char.IsWhiteSpace considers
+    // whitespace (Unicode category Zs, plus U+0009-000D/U+0085), so an embedded-NUL or other MongoDB-only
+    // "whitespace" character is left alone, matching .NET semantics instead of MongoDB's own default.
     private static BsonValue RenderTrim(MongoTrimExpression node, PlaceholderTable placeholders, string? elementVariable)
     {
         var op = node.Side switch
@@ -411,13 +416,32 @@ internal static class MongoAggregationExpressionRenderer
         };
 
         var spec = new BsonDocument("input", Render(node.Source, placeholders, elementVariable));
-        if (node.Chars is not null)
-        {
-            spec.Add("chars", Render(node.Chars, placeholders, elementVariable));
-        }
+        spec.Add(
+            "chars",
+            node.Chars is not null
+                ? Render(node.Chars, placeholders, elementVariable)
+                : DotNetWhitespaceChars);
 
         return new BsonDocument(op, spec);
     }
+
+    /// <summary>
+    /// Every code point <see cref="char.IsWhiteSpace(char)"/> considers whitespace (Unicode category Zs, plus
+    /// the ASCII control characters U+0009 tab through U+000D carriage-return), computed once at type-init and
+    /// cached — deliberately NOT recomputed per-query. Used as the explicit <c>$trim</c>/<c>$ltrim</c>/
+    /// <c>$rtrim</c> <c>"chars"</c> option for the zero-arg <c>Trim()</c>/<c>TrimStart()</c>/<c>TrimEnd()</c>
+    /// overload, so the native translation matches .NET's whitespace set rather than MongoDB's own (which
+    /// additionally treats U+0000 as whitespace). U+2028 (LINE SEPARATOR) and U+2029 (PARAGRAPH SEPARATOR)
+    /// can't be written as ordinary <c>\u</c> string escapes here — the C# lexer treats them as actual line
+    /// terminators even inside a non-verbatim string literal (<c>CS1010</c>) — so the whole set is built from
+    /// <c>char</c> values instead of a string literal.
+    /// </summary>
+    private static readonly string DotNetWhitespaceChars = new(
+    [
+        '\u0009', '\u000A', '\u000B', '\u000C', '\u000D', ' ', '\u0085', ' ', ' ',
+        ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ',
+        (char)0x2028 /* LINE SEPARATOR */, (char)0x2029 /* PARAGRAPH SEPARATOR */, ' ', ' ', '　'
+    ]);
 
     // Empty-safe char extraction (EF-322 Task 4) — see MongoStringFirstOrLastExpression's own remarks for the
     // empirically-confirmed contract this composes: $substrCP answers "" for an out-of-range but NON-NEGATIVE
@@ -435,7 +459,14 @@ internal static class MongoAggregationExpressionRenderer
     private static BsonValue RenderStringFirstOrLast(
         MongoStringFirstOrLastExpression node, PlaceholderTable placeholders, string? elementVariable)
     {
-        var source = Render(node.Source, placeholders, elementVariable);
+        // Final-review fix (MINOR, real bug): $strLenCP is a hard server error for a missing/null source
+        // ("$strLenCP requires a string argument, found: null"), so a null/missing string FIELD (as opposed to
+        // a genuinely empty string, which this method already handles) used to crash the whole aggregate at
+        // execution time instead of degrading gracefully. $ifNull to "" first — the untaken $cond branch below
+        // never runs $substrCP against the real (possibly null) source, only against this coalesced value — so
+        // a null/missing source now degrades to exactly the same empty-string/'\0' default-char behavior
+        // already established for a genuinely empty string.
+        var source = new BsonDocument("$ifNull", new BsonArray { Render(node.Source, placeholders, elementVariable), "" });
         var length = new BsonDocument("$strLenCP", source);
         var isEmpty = new BsonDocument("$eq", new BsonArray { length, 0 });
 
@@ -565,6 +596,21 @@ internal static class MongoAggregationExpressionRenderer
     {
         var field = Render(regex.Field, placeholders, elementVariable);
         var term = Render(regex.Term, placeholders, elementVariable);
+
+        // Final-review fix (CRITICAL — silent wrong-data risk): unlike the query-dialect $regularExpression
+        // path (RenderRegex), $indexOfCP/$strLenCP have no case-insensitive mode of their own — there is no
+        // "options" operand to set. StartsWith/Contains/EndsWith's OrdinalIgnoreCase term was previously
+        // silently dropped here (rendered as if case-sensitive) for every $expr-dialect term shape (field-to-
+        // field, and any constant/parameterized term reached via this renderer rather than RenderRegex's own
+        // query-dialect form). Fold both operands through $toLower first — this only changes results when
+        // regex.CaseInsensitive is true, so the pre-existing case-sensitive path (the vast majority of calls)
+        // is unaffected byte-for-byte. IsMatch is excluded: it renders via $regexMatch below, which has its own
+        // native "options" operand and needs no folding.
+        if (regex.CaseInsensitive && regex.Kind != MongoRegexKind.IsMatch)
+        {
+            field = new BsonDocument("$toLower", field);
+            term = new BsonDocument("$toLower", term);
+        }
 
         BsonValue test = regex.Kind switch
         {

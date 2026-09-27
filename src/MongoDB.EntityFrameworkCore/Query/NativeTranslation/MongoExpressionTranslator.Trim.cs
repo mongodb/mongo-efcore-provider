@@ -25,9 +25,9 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// </summary>
 /// <remarks>
 /// The driver-LINQ v3 provider only translates the <c>char[]</c>-arg overload of
-/// <c>TrimStart</c>/<c>TrimEnd</c> and the zero-arg overload of <c>Trim</c> (confirmed empirically via
-/// `StringTranslationsMongoTest`'s throwaway scoping run) — every other combination here is genuinely new
-/// capability, not a native conversion of existing fallback behavior.
+/// <c>TrimStart</c>/<c>TrimEnd</c> and the zero-arg overload of <c>Trim</c> (confirmed empirically by
+/// observing <c>StringTranslationsMongoTest</c>'s baselines under <c>MongoQueryMode.DriverLinq</c>) — every
+/// other combination here is genuinely new capability, not a native conversion of existing fallback behavior.
 /// </remarks>
 internal sealed partial class MongoExpressionTranslator
 {

@@ -2028,8 +2028,8 @@ Orders.{ "$match" : { "_id" : { "$in" : [10248, 10249] } } }
 
         AssertMql(
             """
-            Customers.
-            """);
+Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : { "$ifNull" : ["$_id", ""] } }, 0] }, "then" : "\u0000", "else" : { "$substrCP" : [{ "$ifNull" : ["$_id", ""] }, 0, 1] } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Project_constant_Sum(bool async)

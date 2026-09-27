@@ -404,7 +404,12 @@ internal sealed partial class MongoExpressionTranslator
     /// the only members with a fixed, culture-independent meaning MongoDB's regex engine can reproduce
     /// (<c>$regularExpression</c> has no culture-aware collation). <c>CurrentCulture(IgnoreCase)</c>/
     /// <c>InvariantCulture(IgnoreCase)</c> are left unmatched here and fall through to the driver-LINQ path
-    /// unchanged (where they are equally unsupported), same as a receiver that isn't <see cref="string"/>.
+    /// unchanged, same as a receiver that isn't <see cref="string"/> — NOT because the driver rejects them the
+    /// same way it rejects the two ordinal members without a native recognizer: empirically, the driver's own
+    /// LINQ v3 provider silently EXECUTES these four culture-sensitive members (Ordinal-equivalent semantics,
+    /// not genuine culture-aware collation) instead of throwing. That's a pre-existing latent wrong-data risk
+    /// for genuinely culture-sensitive input, entirely inside the driver, unrelated to and unchanged by this
+    /// method — left unmatched here deliberately rather than silently reproducing it in a NEW native path.
     /// </summary>
     private static bool TryMatchRegexMethod(
         MethodCallExpression call,
@@ -590,6 +595,14 @@ internal sealed partial class MongoExpressionTranslator
 
         if (!TryTranslateValue(call.Arguments[0], out var separator))
             return false;
+
+        // Final-review fix (MINOR, real bug — finding 4): $concat treats ANY null/missing operand as nulling
+        // the WHOLE expression, same hazard the remarks above already call out for each ELEMENT — but the
+        // separator itself was left un-coalesced, so a null/parameterized-null separator (e.g.
+        // string.Join(nullSeparator, new[] { a, b, c })) nulled the entire result instead of degrading to
+        // .NET's own "null separator behaves like an empty one" semantics. Coalesced against "" exactly like
+        // each element already is, and reused (not re-coalesced) at every interleaved position below.
+        separator = new MongoCoalesceExpression(separator, new MongoConstantExpression(string.Empty, forSerialization: null));
 
         var elementsArg = call.Arguments[1];
         if (elementsArg is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)

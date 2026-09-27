@@ -388,7 +388,7 @@ Customers.{ "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName",
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : "$ContactName" }, 0] }, "then" : "\u0000", "else" : { "$substrCP" : ["$ContactName", 0, 1] } } }, "A"] } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : { "$ifNull" : ["$ContactName", ""] } }, 0] }, "then" : "\u0000", "else" : { "$substrCP" : [{ "$ifNull" : ["$ContactName", ""] }, 0, 1] } } }, "A"] } } }
             """);
     }
 
@@ -398,7 +398,7 @@ Customers.{ "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName",
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : "$ContactName" }, 0] }, "then" : "\u0000", "else" : { "$substrCP" : ["$ContactName", { "$subtract" : [{ "$strLenCP" : "$ContactName" }, 1] }, 1] } } }, "s"] } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : { "$ifNull" : ["$ContactName", ""] } }, 0] }, "then" : "\u0000", "else" : { "$substrCP" : [{ "$ifNull" : ["$ContactName", ""] }, { "$subtract" : [{ "$strLenCP" : { "$ifNull" : ["$ContactName", ""] } }, 1] }, 1] } } }, "s"] } } }
             """);
     }
 
@@ -463,7 +463,7 @@ Customers.{ "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName",
 
         AssertMql(
             """
-Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$CompanyName", ""] }, "|", { "$ifNull" : ["foo", ""] }, "|", { "$ifNull" : [null, ""] }, "|", { "$ifNull" : ["bar", ""] }] }, "Around the Horn|foo||bar"] } } }
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$CompanyName", ""] }, { "$ifNull" : ["|", ""] }, { "$ifNull" : ["foo", ""] }, { "$ifNull" : ["|", ""] }, { "$ifNull" : [null, ""] }, { "$ifNull" : ["|", ""] }, { "$ifNull" : ["bar", ""] }] }, "Around the Horn|foo||bar"] } } }
 """);
     }
 
@@ -1933,7 +1933,7 @@ OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$ContactTitle" } }, "Owner"] } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$ContactTitle", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, "Owner"] } } }
             """);
     }
 
@@ -1951,19 +1951,14 @@ OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "
     {
         await base.TrimStart_with_char_array_argument_in_predicate(async);
 
-#if EF8 || EF9
-        // EF8/EF9: string.TrimStart(char[]) in a Where predicate now goes native ($ltrim) instead of
-        // falling back to driver-LINQ's regex-based lookaround trick — different MQL, same results.
+        // string.TrimStart(char[]) in a Where predicate now goes native ($ltrim) instead of falling back to
+        // driver-LINQ's regex-based lookaround trick — different MQL, same results. This whole file is
+        // already #if EF8 || EF9-guarded (only EF10 dropped it entirely, in favor of StringTranslationsMongoTest),
+        // so there is no separate EF10 baseline variant to branch on here.
         AssertMql(
             """
             Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$ContactTitle", "chars" : "Ow" } }, "ner"] } } }
             """);
-#else
-        AssertMql(
-            """
-            Customers.{ "$match" : { "ContactTitle" : { "$regularExpression" : { "pattern" : "^[Ow]*(?=[^Ow])ner$", "options" : "s" } } } }
-            """);
-#endif
     }
 
     public override async Task TrimEnd_without_arguments_in_predicate(bool async)
@@ -1972,7 +1967,7 @@ OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$ContactTitle" } }, "Owner"] } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$ContactTitle", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, "Owner"] } } }
             """);
     }
 
@@ -1990,38 +1985,28 @@ OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "
     {
         await base.TrimEnd_with_char_array_argument_in_predicate(async);
 
-#if EF8 || EF9
-        // EF8/EF9: string.TrimEnd(char[]) in a Where predicate now goes native ($rtrim) instead of
-        // falling back to driver-LINQ's regex-based lookbehind trick — different MQL, same results.
+        // string.TrimEnd(char[]) in a Where predicate now goes native ($rtrim) instead of falling back to
+        // driver-LINQ's regex-based lookbehind trick — different MQL, same results. This whole file is
+        // already #if EF8 || EF9-guarded (only EF10 dropped it entirely, in favor of StringTranslationsMongoTest),
+        // so there is no separate EF10 baseline variant to branch on here.
         AssertMql(
             """
             Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$ContactTitle", "chars" : "er" } }, "Own"] } } }
             """);
-#else
-        AssertMql(
-            """
-            Customers.{ "$match" : { "ContactTitle" : { "$regularExpression" : { "pattern" : "^Own(?<=[^er])[er]*$", "options" : "s" } } } }
-            """);
-#endif
     }
 
     public override async Task Trim_without_argument_in_predicate(bool async)
     {
         await base.Trim_without_argument_in_predicate(async);
 
-#if EF8 || EF9
-        // EF8/EF9: string.Trim() in a Where predicate now goes native ($trim) instead of falling back
-        // to driver-LINQ's regex-based lookaround trick — different MQL, same results.
+        // string.Trim() in a Where predicate now goes native ($trim) instead of falling back to
+        // driver-LINQ's regex-based lookaround trick — different MQL, same results. This whole file is
+        // already #if EF8 || EF9-guarded (only EF10 dropped it entirely, in favor of StringTranslationsMongoTest),
+        // so there is no separate EF10 baseline variant to branch on here.
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$ContactTitle" } }, "Owner"] } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$ContactTitle", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, "Owner"] } } }
             """);
-#else
-        AssertMql(
-            """
-            Customers.{ "$match" : { "ContactTitle" : { "$regularExpression" : { "pattern" : "^\\s*(?!\\s)Owner(?<!\\s)\\s*$", "options" : "s" } } } }
-            """);
-#endif
     }
 
     public override async Task Trim_with_char_argument_in_predicate(bool async)

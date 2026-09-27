@@ -221,10 +221,13 @@ public class MongoExpressionTranslatorStringOperatorTests
     public void Join_over_array_literal_with_null_element_translates_to_ifNull_wrapped_interleaved_concat()
     {
         // EF-322 Task 6: string.Join("|", new[] { c.Text, foo, (string?)null, "bar" }) — a field, a captured
-        // local (constant-folded), a literal null, and a string constant. Pins two things: (1) the separator
-        // is interleaved BETWEEN each pair of elements, not just prefixed/appended, and (2) every element is
+        // local (constant-folded), a literal null, and a string constant. Pins three things: (1) the separator
+        // is interleaved BETWEEN each pair of elements, not just prefixed/appended, (2) every element is
         // wrapped in a MongoCoalesceExpression (rendered $ifNull) so the null element contributes "" rather
-        // than nulling out the whole $concat (the hazard this task's plan calls out explicitly).
+        // than nulling out the whole $concat (the hazard this task's plan calls out explicitly), and (3, final-
+        // review fix — finding 4) the separator itself is ALSO wrapped in a MongoCoalesceExpression the same
+        // way, so a null/parameterized-null separator degrades the same way rather than nulling the whole
+        // $concat.
         var translator = BuildTranslator();
         var parameter = Expression.Parameter(typeof(Widget), "w");
         var textAccess = Expression.Property(parameter, nameof(Widget.Text));
@@ -251,7 +254,10 @@ public class MongoExpressionTranslatorStringOperatorTests
 
         foreach (var i in expectedSeparatorIndexes)
         {
-            var separator = Assert.IsType<MongoConstantExpression>(concat.Operands[i]);
+            var separatorCoalesce = Assert.IsType<MongoCoalesceExpression>(concat.Operands[i]);
+            var separatorFallback = Assert.IsType<MongoConstantExpression>(separatorCoalesce.Right);
+            Assert.Equal(string.Empty, separatorFallback.Value);
+            var separator = Assert.IsType<MongoConstantExpression>(separatorCoalesce.Left);
             Assert.Equal("|", separator.Value);
         }
 
@@ -266,6 +272,32 @@ public class MongoExpressionTranslatorStringOperatorTests
         Assert.Equal("foo", ((MongoConstantExpression)((MongoCoalesceExpression)concat.Operands[2]).Left).Value);
         Assert.Null(((MongoConstantExpression)((MongoCoalesceExpression)concat.Operands[4]).Left).Value);
         Assert.Equal("bar", ((MongoConstantExpression)((MongoCoalesceExpression)concat.Operands[6]).Left).Value);
+    }
+
+    [Fact]
+    public void Join_with_null_separator_wraps_separator_in_ifNull_too()
+    {
+        // Final-review fix — finding 4: string.Join(null, new[] { "a", "b" }) — a literal null separator.
+        // Before the fix, only the ELEMENTS were coalesced against "", so a null separator would null out
+        // every interleaved position and the whole $concat via $concat's own null-propagation. The separator
+        // operand must be wrapped in a MongoCoalesceExpression exactly like each element.
+        var translator = BuildTranslator();
+        var joinCall = Expression.Call(
+            null,
+            typeof(string).GetMethod(nameof(string.Join), [typeof(string), typeof(string[])])!,
+            Expression.Constant(null, typeof(string)),
+            Expression.NewArrayInit(typeof(string), Expression.Constant("a"), Expression.Constant("b")));
+
+        Assert.True(translator.TryTranslateValue(joinCall, out var result));
+        var concat = Assert.IsType<MongoConcatExpression>(result);
+
+        // 2 elements + 1 interleaved separator = 3 operands; the separator is operand index 1.
+        Assert.Equal(3, concat.Operands.Count);
+        var separatorCoalesce = Assert.IsType<MongoCoalesceExpression>(concat.Operands[1]);
+        var separatorFallback = Assert.IsType<MongoConstantExpression>(separatorCoalesce.Right);
+        Assert.Equal(string.Empty, separatorFallback.Value);
+        var separator = Assert.IsType<MongoConstantExpression>(separatorCoalesce.Left);
+        Assert.Null(separator.Value);
     }
 
     [Fact]

@@ -668,7 +668,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$String" } }, "Boston  "] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$String", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, "Boston  "] } } }
 """);
     }
 
@@ -698,7 +698,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$String" } }, "  Boston"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$String", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, "  Boston"] } } }
 """);
     }
 
@@ -728,7 +728,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$String" } }, "Boston"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$String", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, "Boston"] } } }
 """);
     }
 
@@ -1079,7 +1079,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle" } } }, { "$mat
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$String", ""] }, "|", { "$ifNull" : ["foo", ""] }, "|", { "$ifNull" : [null, ""] }, "|", { "$ifNull" : ["bar", ""] }] }, "Seattle|foo||bar"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$String", ""] }, { "$ifNull" : ["|", ""] }, { "$ifNull" : ["foo", ""] }, { "$ifNull" : ["|", ""] }, { "$ifNull" : [null, ""] }, { "$ifNull" : ["|", ""] }, { "$ifNull" : ["bar", ""] }] }, "Seattle|foo||bar"] } } }
 """);
     }
 
@@ -1184,7 +1184,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["A", "B", 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : "$String" }, 0] }, "then" : "\u0000", "else" : { "$substrCP" : ["$String", 0, 1] } } }, "S"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : { "$ifNull" : ["$String", ""] } }, 0] }, "then" : "\u0000", "else" : { "$substrCP" : [{ "$ifNull" : ["$String", ""] }, 0, 1] } } }, "S"] } } }
 """);
     }
 
@@ -1194,7 +1194,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : "$String" }, 0] }, "then" : "\u0000", "else" : { "$substrCP" : ["$String", { "$subtract" : [{ "$strLenCP" : "$String" }, 1] }, 1] } } }, "e"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : { "$ifNull" : ["$String", ""] } }, 0] }, "then" : "\u0000", "else" : { "$substrCP" : [{ "$ifNull" : ["$String", ""] }, { "$subtract" : [{ "$strLenCP" : { "$ifNull" : ["$String", ""] } }, 1] }, 1] } } }, "e"] } } }
 """);
     }
 

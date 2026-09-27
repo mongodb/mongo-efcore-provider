@@ -354,7 +354,7 @@ internal sealed class MongoQueryLanguageRenderer
                 break;
 
             case MongoParameterExpression parameter:
-                body = placeholders.CreateRegexPlaceholder(parameter.Name, regex.Kind);
+                body = placeholders.CreateRegexPlaceholder(parameter.Name, regex.Kind, regex.CaseInsensitive);
                 break;
 
             default:

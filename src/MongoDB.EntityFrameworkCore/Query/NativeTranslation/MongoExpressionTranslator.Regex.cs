@@ -29,10 +29,11 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// The forward shape — <c>Regex.IsMatch(o.String, "^S")</c>, a field-valued input against a constant pattern
 /// — is NOT this method's concern: it already succeeds today via the driver-LINQ v3 fallback (there is no
 /// dedicated native recognizer for it, and none is added here — see
-/// <c>StringTranslationsMongoTest.Regex_IsMatch</c>'s existing baseline). This method exists ONLY to add the
-/// reversed shape, which currently fails outright in every <c>MongoQueryMode</c> (tagged EF-X104 in
-/// <c>StringTranslationsMongoTest.Regex_IsMatch_constant_input</c>) — the driver's own LINQ v3 provider has no
-/// translation for it either.
+/// <c>StringTranslationsMongoTest.Regex_IsMatch</c>'s existing baseline). This method exists to add a NATIVE
+/// translation for the reversed shape (<c>StringTranslationsMongoTest.Regex_IsMatch_constant_input</c>), which
+/// previously fell back to driver-LINQ and failed there too — the driver's own LINQ v3 provider has no
+/// translation for it either. It now succeeds natively, rendered via the aggregation-expression
+/// <c>$regexMatch</c> operator (see below).
 /// <para>
 /// <b>Why the reversed shape needs a genuinely different rendering, not just swapped operands.</b> MongoDB's
 /// query-dialect <c>$regularExpression</c> BSON type (what the forward shape's fallback, and every other

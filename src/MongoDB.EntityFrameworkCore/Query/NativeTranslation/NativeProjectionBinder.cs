@@ -1033,7 +1033,7 @@ internal static class NativeProjectionBinder
             && (value is MongoSizeExpression or MongoFilteredSizeExpression or MongoConvertExpression
                     or MongoConditionalExpression or MongoDatePartExpression or MongoDateTimeOffsetLocalExpression
                     or MongoElementRefExpression or MongoDateAddExpression or MongoCoalesceExpression
-                    or MongoMathExpression
+                    or MongoMathExpression or MongoTrimExpression or MongoStringFirstOrLastExpression
                 || (value is MongoConstantExpression or MongoParameterExpression
                     && NativeSlotPopulator.TryProbeBareValueRenders(
                         value, NativeSlotPopulator.UnwrapBoxingToObjectType(leafExpression)))
@@ -2088,6 +2088,17 @@ internal static class NativeProjectionBinder
             case MongoMathExpression when IsArrayFreeComputedSubtree(leaf):
                 break;
 
+            // Gate 1c3 (final-review fix, finding 5 — missed optimization, not a correctness bug):
+            // Trim()/TrimStart()/TrimEnd() and FirstOrDefault()/LastOrDefault() bare-projection top nodes
+            // (`Select(b => b.String.Trim())`, `Select(b => b.String.FirstOrDefault())`) — same subtree-safety
+            // story as gate 1c2 (Math): Source/Chars could itself contain a nested size node, so this arm gets
+            // the same IsArrayFreeComputedSubtree protection. Previously missing from this allow-list entirely,
+            // so these shapes silently fell back to driver-LINQ instead of going native — results were already
+            // correct (driver-LINQ produces the same answer), this was purely a missed-native-translation gap,
+            // mirroring the MongoMathExpression gap commit 37f615e5 fixed.
+            case MongoTrimExpression or MongoStringFirstOrLastExpression when IsArrayFreeComputedSubtree(leaf):
+                break;
+
             // Gate 1d — a coalesce (`??`) top node, rendered as $ifNull. Same subtree-safety story as gates 1b/
             // 1c: either operand of a chained coalesce (`a ?? b ?? c` nests on the right — see
             // MongoCoalesceExpression's own remarks) could itself contain a nested size node, so
@@ -2248,6 +2259,9 @@ internal static class NativeProjectionBinder
             MongoDatePartExpression datePart => IsArrayFreeComputedSubtree(datePart.Operand),
             MongoDateTimeOffsetLocalExpression local => IsArrayFreeComputedSubtree(local.Operand),
             MongoMathExpression math => math.Operands.All(IsArrayFreeComputedSubtree),
+            MongoTrimExpression trim
+                => IsArrayFreeComputedSubtree(trim.Source) && (trim.Chars is null || IsArrayFreeComputedSubtree(trim.Chars)),
+            MongoStringFirstOrLastExpression firstOrLast => IsArrayFreeComputedSubtree(firstOrLast.Source),
             MongoFieldExpression or MongoConstantExpression or MongoParameterExpression => true,
             // Everything else, including MongoSizeExpression and MongoFilteredSizeExpression — see the remarks:
             // the size kinds are excluded by this catch-all rather than by an arm of their own, deliberately.
