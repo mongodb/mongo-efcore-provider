@@ -119,24 +119,6 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
 
         using var db = new JoinScopeDbContext(database, ordersName, customersName, regionsName, mode);
 
-#if EF8 || EF9
-        // On EF8/EF9 this shape never reaches the native binder at all — see the class remarks and
-        // NativeJoinScopeProjectionBinder.cs (~line 290): an optional reference navigation lowers onto EF's
-        // internal LeftJoin shim, which NativeSlotPopulator's candidate-join arm doesn't recognize pre-EF10, so
-        // the whole join declines before any Select-side binder runs. MongoQueryMode.NativeOnly correctly
-        // forbids the driver-LINQ fallback this shape still needs there, so it must throw rather than execute;
-        // MongoQueryMode.Native (which allows the fallback) is unaffected and is exercised below like on EF10.
-        if (mode == MongoQueryMode.NativeOnly)
-        {
-            Assert.Throws<NativeTranslationNotSupportedException>(() =>
-                db.Set<Order>()
-                    .OrderBy(o => o.OrderNo)
-                    .Select(o => o.Customer != null ? o.Customer.Name : NoneSentinel)
-                    .ToList());
-            return;
-        }
-#endif
-
         var actual = db.Set<Order>()
             .OrderBy(o => o.OrderNo)
             .Select(o => o.Customer != null ? o.Customer.Name : NoneSentinel)
@@ -204,39 +186,8 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
             .Select(x => x.r != null ? x.r.Name : NoneSentinel)
             .ToList();
 
-#if EF8 || EF9
-        // On EF8/EF9 this shape never reaches the native binder at all -- a genuinely different, pre-existing,
-        // unrelated limitation to TryBindConditionalProjection's own depth handling: the second level's LeftJoin
-        // lowers onto EF's internal LeftJoin shim, which NativeSlotPopulator's candidate-join arm doesn't
-        // recognize pre-EF10, so the whole join declines before any Select-side binder runs, regardless of chain
-        // depth. MongoQueryMode.NativeOnly correctly forbids the driver-LINQ fallback this shape still needs
-        // there, so it must throw rather than execute.
-        if (mode == MongoQueryMode.NativeOnly)
-        {
-            Assert.Throws<NativeTranslationNotSupportedException>(() => runQuery());
-            return;
-        }
-
-        // GENUINE, SEPARATE data-correctness bug in the EF8/EF9 driver-LINQ fallback bridge (NOT the
-        // native-vs-fallback gap above, and confirmed to predate this whole feature branch). No JIRA ticket
-        // exists yet for either follow-up item this feature surfaced -- (1) the pre-existing chain-paging-
-        // deferral gap in DeferPipelineOpsPastConfirmedJoin/ConfirmEntireChain (a SEPARATE, narrower hazard that
-        // does not apply to this binder -- see the bare-scalar-leaf arm's comment in
-        // MongoQueryableMethodTranslatingExpressionVisitor.cs for the gap's own description), and (2) this
-        // driver-LINQ fallback bug for the two-level-chain shape below -- they are DIFFERENT bugs and should be
-        // filed as separate tickets rather than one. Once this shape falls back to driver-LINQ
-        // (MongoQueryMode.Native, on EF8/EF9 only), the second level's unmatched LeftJoin row comes back as a
-        // bare `null` instead of running the ternary's ELSE branch (`NoneSentinel`, i.e. "<none>"). Pinned
-        // explicitly here -- asserting the CURRENT, KNOWN-WRONG value -- so this goes loudly green-then-red (not
-        // silently skipped) the moment the underlying bridge bug is fixed or changes shape, per this repo's
-        // existing "pin the known deviation" convention (see NativeOwnedCollectionFilteredCountTests' own
-        // Assert.NotEqual(linqOracle, nativeOnly) pin).
-        var buggyActual = runQuery();
-        Assert.Equal(["Western Europe", null], buggyActual);
-        Assert.NotEqual(NoneSentinel, buggyActual[1]);
-#else
-        // On EF10+, NativeJoinScopeProjectionBinder.TryBindConditionalProjection is depth-agnostic (works for
-        // any scope.Levels.Count, exactly like TryBindProjection's own scalar/computed leaf arm for a chain) --
+        // NativeJoinScopeProjectionBinder.TryBindConditionalProjection is depth-agnostic (works for any
+        // scope.Levels.Count, exactly like TryBindProjection's own scalar/computed leaf arm for a chain) --
         // this genuine two-level chain goes native in BOTH modes and produces the CORRECT oracle-matching
         // result, the second level's null check firing for the dangling-region row.
         var actual = runQuery();
@@ -266,7 +217,111 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
         Assert.Equal(2, actual.Count);
         Assert.Equal("Western Europe", actual[0]);
         Assert.Equal(NoneSentinel, actual[1]);
-#endif
+    }
+
+    [Fact]
+    public void Bare_nav_null_check_ternary_over_a_two_level_chain_under_DriverLinq_pins_known_fallback_bug()
+    {
+        // EF-322 fixed this exact shape's Native/NativeOnly path (see the Theory above): it now goes native
+        // and produces the correct oracle-matching result, so it no longer exercises the driver-LINQ fallback
+        // bridge at all. That leaves this test as the ONLY remaining coverage of a separate, pre-existing,
+        // still-unticketed data-correctness bug in that bridge for a two-level LeftJoin chain under an
+        // EXPLICIT MongoQueryMode.DriverLinq: the second level's unmatched LeftJoin row comes back as a bare
+        // `null` instead of running the ternary's ELSE branch (NoneSentinel). Pinned explicitly — asserting
+        // the CURRENT, KNOWN-WRONG value — so this goes loudly green-then-red the moment the bridge bug is
+        // fixed or changes shape, per this repo's "pin the known deviation" convention.
+        var (ordersName, customersName, regionsName) =
+            CreateCollectionNames(nameof(Bare_nav_null_check_ternary_over_a_two_level_chain_under_DriverLinq_pins_known_fallback_bug));
+
+        var matchedRegionId = ObjectId.GenerateNewId();
+        var matchedCustomerId = ObjectId.GenerateNewId();
+        var unmatchedCustomerId = ObjectId.GenerateNewId();
+        var danglingRegionId = ObjectId.GenerateNewId();
+        var orderWithRegionId = ObjectId.GenerateNewId();
+        var orderWithoutRegionId = ObjectId.GenerateNewId();
+
+        using (var seed = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryMode.DriverLinq))
+        {
+            seed.Set<Region>().Add(new Region { Id = matchedRegionId, Name = "Western Europe" });
+            seed.Set<Customer>().AddRange(
+                new Customer { Id = matchedCustomerId, Name = "Alfreds", RegionId = matchedRegionId },
+                new Customer { Id = unmatchedCustomerId, Name = "Blauer", RegionId = danglingRegionId });
+            seed.Set<Order>().AddRange(
+                new Order { Id = orderWithRegionId, OrderNo = 1, CustomerId = matchedCustomerId },
+                new Order { Id = orderWithoutRegionId, OrderNo = 2, CustomerId = unmatchedCustomerId });
+            seed.SaveChanges();
+        }
+
+        using var db = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryMode.DriverLinq);
+
+        var buggyActual = db.Set<Order>()
+            .Join(db.Set<Customer>(), o => o.CustomerId, c => c.Id, (o, c) => new { o, c })
+            .GroupJoin(db.Set<Region>(), x => x.c.RegionId, r => r.Id, (x, rs) => new { x.o, x.c, rs })
+            .SelectMany(x => x.rs.DefaultIfEmpty(), (x, r) => new { x.o, x.c, r })
+            .OrderBy(x => x.o.OrderNo)
+            .Select(x => x.r != null ? x.r.Name : NoneSentinel)
+            .ToList();
+
+        Assert.Equal(["Western Europe", null], buggyActual);
+        Assert.NotEqual(NoneSentinel, buggyActual[1]);
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void OrderBy_bare_nav_null_check_ternary_matches_oracle(MongoQueryMode mode)
+    {
+        var (ordersName, customersName, regionsName) =
+            CreateCollectionNames(nameof(OrderBy_bare_nav_null_check_ternary_matches_oracle));
+
+        var matchedCustomerId = ObjectId.GenerateNewId();
+        var order1Id = ObjectId.GenerateNewId();
+        var order2Id = ObjectId.GenerateNewId();
+        var order3Id = ObjectId.GenerateNewId();
+        // A dangling FK: generated but never inserted into Customers, so the $lookup finds no match.
+        var danglingCustomerId = ObjectId.GenerateNewId();
+
+        using (var seed = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryMode.DriverLinq))
+        {
+            seed.Set<Customer>().Add(new Customer { Id = matchedCustomerId, Name = "Bravo" });
+            seed.Set<Order>().AddRange(
+                new Order { Id = order1Id, OrderNo = 1, CustomerId = matchedCustomerId },
+                new Order { Id = order2Id, OrderNo = 2, CustomerId = null },
+                new Order { Id = order3Id, OrderNo = 3, CustomerId = danglingCustomerId });
+            seed.SaveChanges();
+        }
+
+        using var db = new JoinScopeDbContext(database, ordersName, customersName, regionsName, mode);
+
+        var actual = db.Set<Order>()
+            .OrderBy(o => o.Customer != null ? o.Customer.Name : NoneSentinel)
+            .ThenBy(o => o.OrderNo)
+            .Select(o => o.OrderNo)
+            .ToList();
+
+        // Independent in-memory oracle over the same seeded rows, sharing no code with the provider.
+        var orderSeeds = new[]
+        {
+            new { OrderNo = 1, CustomerId = (ObjectId?)matchedCustomerId },
+            new { OrderNo = 2, CustomerId = (ObjectId?)null },
+            new { OrderNo = 3, CustomerId = (ObjectId?)danglingCustomerId }
+        };
+        var customerSeeds = new[] { new { Id = matchedCustomerId, Name = (string?)"Bravo" } };
+
+        var oracle = orderSeeds
+            .GroupJoin(customerSeeds, o => o.CustomerId, c => (ObjectId?)c.Id, (o, cs) => new { o, cs })
+            .SelectMany(x => x.cs.DefaultIfEmpty(), (x, c) => new { x.o, c })
+            .OrderBy(x => x.c != null ? x.c.Name : NoneSentinel)
+            .ThenBy(x => x.o.OrderNo)
+            .Select(x => x.o.OrderNo)
+            .ToList();
+
+        Assert.Equal(oracle, actual);
+        Assert.Equal(3, actual.Count);
+        // The sentinel "<none>" sorts BEFORE "Bravo" lexicographically ('<' is ASCII 60, 'B' is 66), so the
+        // two unmatched orders come first, tied on the sentinel and broken by OrderNo; "Bravo" (the one
+        // matched order) sorts last.
+        Assert.Equal([2, 3, 1], actual);
     }
 
     private static (string Orders, string Customers, string Regions) CreateCollectionNames(string testName)

@@ -18,6 +18,9 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
+using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Query;
+using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
@@ -218,8 +221,48 @@ internal static class NativeJoinScopeProjectionBinder
             // anyway for a depth-1 scope (a bare scope leaf rewrites to the synthetic scope parameter, which
             // resolves to no field) and is never even attempted for a depth-&gt;1 chain (see the comment on that
             // arm below) — so this check is about being explicit and stable rather than about reachability.
-            if (MongoTransparentScopeResolver.TryResolveScopeDepth(
-                    leafBody, rootParam, hopNames: ["Outer", "Inner"], sourceCount: scope.Levels.Count, out var scopeIndex))
+            //
+            // EF-322 Phase 2 Group B (root cause A): a whole-entity leaf that is ALSO the target of an
+            // Include/ThenInclude arrives here as an IncludeExpression wrapping ti.Outer/ti.Inner, not the
+            // bare member access itself — unwrap down to the OUTERMOST IncludeExpression's EntityExpression
+            // before checking the shape. A ThenInclude's own nested IncludeExpression (on NavigationExpression,
+            // not EntityExpression) is deliberately left untouched: it belongs to the Include machinery, not
+            // to scope resolution, and reaches the shaper fold below unchanged, exactly as it already does for
+            // a bare (non-join-scope) reference-Include chain. See the design doc's "Why the materialization
+            // side needs no change" section for why nothing downstream of this unwrap needs to change too.
+            //
+            // EF-322 (reference-Include materialization, root cause A3): a REFERENCE Include in that chain is
+            // admitted only when its target is itself a whole-entity leaf of this same join scope — the shape
+            // EF Core's nav-expansion produces for a cross-collection reference Include composed with a
+            // projection (`Orders.Include(o => o.Owner).Select(o => new { o, o.OwnerId })` lowers to a LeftJoin
+            // onto Owners with the Include's NavigationExpression being that join's own `ti.Inner`). The join's
+            // own $lookup IS the Include's lookup, so no separate registration is needed — only the level's
+            // Inner document must survive the $project (staged below exactly like a whole-entity Inner leaf).
+            // Any other reference Include (an owned/embedded reference, a nested ThenInclude on the reference's
+            // own target, or a target this scope does not produce) still declines the whole leaf, symmetric with
+            // BindResultMember's own check on the materialization side.
+            var unwrappedLeafBody = leafBody;
+            var includesResolvableInLeaf = true;
+            var referenceIncludeLevels = new List<MongoJoinScopeLevel>();
+            while (unwrappedLeafBody is IncludeExpression include)
+            {
+                if (include.Navigation is not { IsCollection: true })
+                {
+                    if (TryResolveReferenceIncludeLevel(mongoQ, scope, rootParam, include, out var referenceLevel))
+                    {
+                        referenceIncludeLevels.Add(referenceLevel);
+                    }
+                    else
+                    {
+                        includesResolvableInLeaf = false;
+                    }
+                }
+
+                unwrappedLeafBody = include.EntityExpression;
+            }
+
+            if (includesResolvableInLeaf && MongoTransparentScopeResolver.TryResolveScopeDepth(
+                    unwrappedLeafBody, rootParam, hopNames: ["Outer", "Inner"], sourceCount: scope.Levels.Count, out var scopeIndex))
             {
                 if (scopeIndex == 0)
                 {
@@ -233,46 +276,19 @@ internal static class NativeJoinScopeProjectionBinder
                         new MongoElementRefExpression(
                             MongoElementRefExpression.WholeRootDocumentPath, mongoQ.CollectionExpression.EntityType.ClrType)));
                 }
-                else
+                else if (!TryStageInnerLevel(scope.Levels[scopeIndex - 1], staged, seenAliases))
                 {
-                    var level = scope.Levels[scopeIndex - 1];
+                    return false;
+                }
 
-                    // Self-referential: alias AND path are both level.InnerPrefix.
-                    //
-                    // The fixed alias is claimed on `seenAliases` EXPLICITLY here rather than only implicitly
-                    // via the seed loop above. In normal operation this Add() returns FALSE — the alias is
-                    // already seeded from mongoQ.Projection, where RebindInnerShaperToOuterQuery registered the
-                    // inner entity's own EntityProjectionExpression under this very name — so its result is
-                    // deliberately NOT a decline signal. What it buys is that this arm no longer depends
-                    // silently on that three-file coupling (RebindInnerShaperToOuterQuery →
-                    // EntityProjectionExpression.Name → the seed loop) for the ORDINARY-leaf arm below to
-                    // decline a user member spelled exactly "_lookup_<Nav>".
-                    seenAliases.Add(level.InnerPrefix);
-
-                    // Dedup so a duplicated Inner leaf at the SAME level (e.g. `new { a = r, b = r }`) stages
-                    // this fixed alias only once — otherwise MongoQueryExpression/MongoPipelineFactory would
-                    // hard-crash on a duplicate $project field name under Native/NativeOnly (an explicit
-                    // DriverLinq builds no native pipeline, so it cannot crash there). Both members' bind-side
-                    // AddToProjection calls dedup to the same index by expression equality regardless, so both
-                    // read correctly. This is a per-LEVEL dedup key (level.InnerPrefix), not per-leaf — two
-                    // leaves naming the SAME level dedupe here; two leaves naming DIFFERENT levels each stage
-                    // (and later confirm) independently, which is exactly the chain-of-N generalization.
-                    //
-                    // ASSERTED, not assumed (final-review finding, depth-1): the already-staged entry must
-                    // really be a previous Inner leaf of THIS level. A bare `TrueForAll(p => p.Alias !=
-                    // level.InnerPrefix)` would treat ANY staged entry holding that alias as the dedup case and
-                    // SILENTLY SKIP the Inner leaf — a dropped value, not a decline — were the seeding coupling
-                    // above ever to break and let a user member named "_lookup_<Nav>" stage first. Declining
-                    // converts that latent silent drop into an explicit, visible fallback.
-                    var existingIndex = staged.FindIndex(p => p.Alias == level.InnerPrefix);
-                    if (existingIndex < 0)
-                    {
-                        staged.Add(new MongoProjection(
-                            level.InnerPrefix,
-                            new MongoElementRefExpression(level.InnerPrefix, level.InnerEntityType.ClrType)));
-                    }
-                    else if (staged[existingIndex].Expression is not MongoElementRefExpression existingRef
-                             || existingRef.Path != level.InnerPrefix)
+                // Each reference Include's target document (its backing level's Inner side) must survive the
+                // $project too, so the Include's own NavigationExpression — the join's Inner shaper, read by
+                // MongoProjectionBindingRemovingExpressionVisitor at the level's root-level "_lookup_<Nav>"
+                // field — has something to read. Staged exactly like a whole-entity Inner leaf of that level,
+                // sharing its per-level dedup (so `new { o, o.Owner }`-style duplicates emit the field once).
+                foreach (var referenceLevel in referenceIncludeLevels)
+                {
+                    if (!TryStageInnerLevel(referenceLevel, staged, seenAliases))
                     {
                         return false;
                     }
@@ -288,21 +304,13 @@ internal static class NativeJoinScopeProjectionBinder
             // leaves — this is a SEPARATE recognizer building the same MongoDocumentConstructionExpression
             // node, not a relaxation of that one's dotted-field decline.
             //
-            // EF10-ONLY IN PRACTICE, and not because of anything in this file. On EF8/EF9 an OPTIONAL
-            // reference navigation (the shape a reference Include produces) is lowered by EF's nav-expansion
-            // onto EF's own internal LeftJoin shim (MongoQueryableMethodTranslatingExpressionVisitor
-            // .Ef8Ef9LeftJoinMethod), and NativeSlotPopulator.PopulateNativeSlots' candidate-join arm only
-            // matches QueryableMethods.{Join,GroupJoin} plus — under `#if !EF8 && !EF9` — QueryableMethods
-            // .LeftJoin, which does not exist before EF10. The shim therefore falls through to that method's
-            // catch-all and calls MarkNotNativelyRepresentable() before ANY Select-side binder runs, so
-            // TryBindProjection is never even reached (MEASURED: HasUnsupportedOperator is already true when
-            // TranslateSelect's wrapped arm consults IsSingleEligibleNativeJoinScope on EF9, false on EF10).
-            // That gap is family-wide, not nesting-specific — on EF8/EF9 NO wrapped projection over an
-            // optional-reference join binds natively, including the flat `new { o.Total, o.Customer.Name }`
-            // shape that predates this arm. A REQUIRED reference navigation lowers to QueryableMethods.Join
-            // instead and does go native on all three EF versions, this arm included. Consequence for tests:
-            // a functional/spec test asserting NativeOnly SUCCESS for an optional-reference nested projection
-            // must be `#if !EF8 && !EF9`-guarded (or assert the throw), and the MQL baselines differ.
+            // EF-322: an OPTIONAL reference navigation (the shape a reference Include produces) is lowered by
+            // EF's nav-expansion onto EF's own internal LeftJoin shim under EF8/EF9
+            // (MongoQueryableMethodTranslatingExpressionVisitor.Ef8Ef9LeftJoinMethod). NativeSlotPopulator
+            // .PopulateNativeSlots' candidate-join arm now recognizes that shim (under `#if EF8 || EF9`)
+            // exactly like the public QueryableMethods.LeftJoin it recognizes under `#if !EF8 && !EF9`, so a
+            // wrapped projection over an optional-reference join binds natively on EF8/EF9 the same as on
+            // EF10 — no version-conditional guard needed here or in tests exercising this arm.
             if (scope.Levels.Count == 1
                 && leafBody.TryGetProjectionMembers(out var nestedMembers))
             {
@@ -476,6 +484,91 @@ internal static class NativeJoinScopeProjectionBinder
     }
 
     /// <summary>
+    /// Stages one join-scope level's whole Inner document under its FIXED, self-referential alias
+    /// (<see cref="MongoJoinScopeLevel.InnerPrefix"/>, both as the <c>$project</c> field name and the
+    /// <see cref="MongoElementRefExpression"/>'s path), deduplicated per level. Shared by the whole-entity Inner
+    /// leaf arm of <see cref="TryBindProjection"/> and by a reference Include whose target is that level's Inner
+    /// side. Returns <see langword="false"/> (decline the whole projection) only when the alias is already staged
+    /// by something that is NOT this level's own Inner reference.
+    /// </summary>
+    private static bool TryStageInnerLevel(
+        MongoJoinScopeLevel level, List<MongoProjection> staged, HashSet<string> seenAliases)
+    {
+        // The fixed alias is claimed on `seenAliases` EXPLICITLY here rather than only implicitly via
+        // TryBindProjection's seed loop. In normal operation this Add() returns FALSE — the alias is already
+        // seeded from mongoQ.Projection, where RebindInnerShaperToOuterQuery registered the inner entity's own
+        // EntityProjectionExpression under this very name — so its result is deliberately NOT a decline signal.
+        // What it buys is that the ORDINARY-leaf arm no longer depends silently on that three-file coupling
+        // (RebindInnerShaperToOuterQuery → EntityProjectionExpression.Name → the seed loop) to decline a user
+        // member spelled exactly "_lookup_<Nav>".
+        seenAliases.Add(level.InnerPrefix);
+
+        // Dedup so a duplicated Inner leaf at the SAME level (e.g. `new { a = r, b = r }`, or a whole-entity Inner
+        // leaf alongside a reference Include targeting the same level) stages this fixed alias only once —
+        // otherwise MongoQueryExpression/MongoPipelineFactory would hard-crash on a duplicate $project field name
+        // under Native/NativeOnly (an explicit DriverLinq builds no native pipeline, so it cannot crash there).
+        // Both members' bind-side AddToProjection calls dedup to the same index by expression equality
+        // regardless, so both read correctly. This is a per-LEVEL dedup key (level.InnerPrefix), not per-leaf —
+        // two leaves naming DIFFERENT levels each stage (and later confirm) independently.
+        //
+        // ASSERTED, not assumed (final-review finding, depth-1): the already-staged entry must really be a
+        // previous Inner reference of THIS level. A bare `TrueForAll(p => p.Alias != level.InnerPrefix)` would
+        // treat ANY staged entry holding that alias as the dedup case and SILENTLY SKIP the Inner document — a
+        // dropped value, not a decline — were the seeding coupling above ever to break and let a user member named
+        // "_lookup_<Nav>" stage first. Declining converts that latent silent drop into an explicit fallback.
+        var existingIndex = staged.FindIndex(p => p.Alias == level.InnerPrefix);
+        if (existingIndex < 0)
+        {
+            staged.Add(new MongoProjection(
+                level.InnerPrefix,
+                new MongoElementRefExpression(level.InnerPrefix, level.InnerEntityType.ClrType)));
+            return true;
+        }
+
+        return staged[existingIndex].Expression is MongoElementRefExpression existingRef
+               && existingRef.Path == level.InnerPrefix;
+    }
+
+    /// <summary>
+    /// Resolves a REFERENCE <see cref="IncludeExpression"/> wrapping a whole-entity join-scope leaf to the join
+    /// level whose own <c>$lookup</c> backs it (EF-322, reference-Include materialization). EF Core's
+    /// nav-expansion lowers a cross-collection reference Include into a Join/LeftJoin onto the target collection
+    /// and sets the Include's <see cref="IncludeExpression.NavigationExpression"/> to that join's Inner side
+    /// (<c>ti.Inner</c>); that join's <c>$lookup</c> therefore already IS the Include's lookup. Admitted only when
+    /// ALL of the following hold, otherwise the leaf declines (and the query falls back):
+    /// <list type="bullet">
+    /// <item>the navigation is a non-embedded (cross-collection) reference — an owned reference has no join;</item>
+    /// <item>the NavigationExpression is EXACTLY a whole-entity Inner leaf of some level of this scope (resolved by
+    /// parameter identity and member-name chain via <see cref="MongoTransparentScopeResolver.TryResolveScopeDepth"/>,
+    /// never by CLR type) — in particular, a nested ThenInclude on the reference's own target (an
+    /// <see cref="IncludeExpression"/> in this position) is NOT admitted;</item>
+    /// <item>that level's join resolved to the very same navigation the Include targets, so the joined document is
+    /// provably the Include's target rather than some unrelated join onto the same entity type.</item>
+    /// </list>
+    /// The materialization side (<c>MongoQueryableMethodTranslatingExpressionVisitor.BindResultMember</c>) relies
+    /// on this predicate having admitted the leaf: it rebinds the folded Inner shaper by index.
+    /// </summary>
+    private static bool TryResolveReferenceIncludeLevel(
+        MongoQueryExpression mongoQ, MongoJoinScope scope, ParameterExpression rootParam, IncludeExpression include,
+        [NotNullWhen(true)] out MongoJoinScopeLevel? level)
+    {
+        level = null;
+        if (include.Navigation is not INavigation { IsCollection: false } navigation
+            || navigation.IsEmbedded()
+            || !MongoTransparentScopeResolver.TryResolveScopeDepth(
+                include.NavigationExpression, rootParam, hopNames: ["Outer", "Inner"], sourceCount: scope.Levels.Count,
+                out var targetScopeIndex)
+            || targetScopeIndex == 0
+            || mongoQ.Joins[targetScopeIndex - 1].Navigation != navigation)
+        {
+            return false;
+        }
+
+        level = scope.Levels[targetScopeIndex - 1];
+        return true;
+    }
+
+    /// <summary>
     /// Attempts to populate the native <c>$project</c> slot for a BARE (non-wrapped) <c>Select</c> body that is
     /// exactly a ternary null-checking a join scope's Inner side and dereferencing it —
     /// <c>ti =&gt; ti.Inner != null ? ti.Inner.City : null</c>. Works at ANY chain depth
@@ -564,7 +657,12 @@ internal static class NativeJoinScopeProjectionBinder
     /// <c>TryTranslateSingleScope</c>'s own generic handling — fails SAFE (a decline, not a wrong translation),
     /// not a bug, but a real capability gap between the two same-purpose methods.
     /// </remarks>
-    private static bool TryTranslateConditionalBranch(
+    /// <summary>
+    /// Made <c>internal</c> (from <c>private</c>) so <see cref="NativeTranslation.NativeSlotPopulator"/>'s
+    /// conditional ORDER BY sort-key arm can reuse it for the identical branch-translation need (EF-322,
+    /// Phase 2 Group A) — this method's own logic is unchanged; only its visibility widened.
+    /// </summary>
+    internal static bool TryTranslateConditionalBranch(
         MongoJoinScope scope, ParameterExpression rootParam, Expression branch,
         [NotNullWhen(true)] out MongoExpression? result)
     {

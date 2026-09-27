@@ -2369,38 +2369,19 @@ Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", "ZZ"] } } }, { "$so
     public override async Task String_concat_with_navigation1(bool async)
     {
         await base.String_concat_with_navigation1(async);
-#if EF8 || EF9
-        // EF8/EF9: falls back to driver-LINQ — different MQL, same results. This optional-reference navigation
-        // join never goes native on EF8/EF9 — see NativeJoinScopeProjectionBinder.cs remarks /
-        // Manual_expression_tree_typed_null_equality's EF8/EF9 branch above for the family-wide gap.
-        AssertMql(
-            """
-Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : { "$concat" : ["$_v._outer.CustomerID", " ", "$_v._inner.City"] }, "_id" : 0 } }
-""");
-#else
         AssertMql(
             """
 Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : { "$concat" : ["$CustomerID", " ", "$_lookup_Customer.City"] }, "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task String_concat_with_navigation2(bool async)
     {
         await base.String_concat_with_navigation2(async);
-#if EF8 || EF9
-        // EF8/EF9: falls back to driver-LINQ — different MQL, same results. Same family-wide EF8/EF9 gap as
-        // String_concat_with_navigation1.
-        AssertMql(
-            """
-Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : { "$concat" : ["$_v._inner.City", " ", "$_v._inner.City"] }, "_id" : 0 } }
-""");
-#else
         AssertMql(
             """
 Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : { "$concat" : ["$_lookup_Customer.City", " ", "$_lookup_Customer.City"] }, "_id" : 0 } }
 """);
-#endif
     }
 
 #if EF8 || EF9
@@ -3679,23 +3660,10 @@ Customers.{ "$set" : { "__sort0" : { "$not" : [{ "$in" : ["$_id", []] }] } } }, 
     public override async Task Manual_expression_tree_typed_null_equality(bool async)
     {
         await base.Manual_expression_tree_typed_null_equality(async);
-#if EF8 || EF9
-        // EF8/EF9: falls back to driver-LINQ — different MQL, same results. This optional-reference navigation
-        // join never goes native on EF8/EF9 — EF's nav-expansion lowers it onto the internal LeftJoin shim
-        // (MongoQueryableMethodTranslatingExpressionVisitor.Ef8Ef9LeftJoinMethod), which
-        // NativeSlotPopulator's candidate-join arm doesn't recognize before Select-side binding runs (see
-        // NativeJoinScopeProjectionBinder.cs remarks for the family-wide gap). Same underlying cause as
-        // Include_with_complex_projection's EF8/EF9 branch.
-        AssertMql(
-            """
-Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : "$_v._inner.City", "_id" : 0 } }
-""");
-#else
         AssertMql(
             """
 Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : "$_lookup_Customer.City", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task Let_subquery_with_multiple_occurrences(bool async)

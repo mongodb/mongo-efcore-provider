@@ -408,21 +408,10 @@ Customers.
     {
         await base.GroupJoin_DefaultIfEmpty(async);
 
-#if EF8 || EF9
-        // See GroupJoin_DefaultIfEmpty_multiple's remarks: NativeSlotPopulator's candidate-join arm doesn't
-        // recognize EF8/EF9's internal LeftJoin shim, so this pre-existing, version-generic gap keeps the
-        // query on the driver-LINQ fallback there even though EF-TBD's left-outer/collection-navigation fix
-        // lets it go native on EF10.
-        AssertMql(
-            """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }
-""");
-#else
         AssertMql(
             """
 Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "c" : "$$ROOT", "_lookup_Orders" : "$_lookup_Orders", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task GroupJoin_DefaultIfEmpty_multiple(bool async)
@@ -436,24 +425,15 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
         // the latter, so the flattened call was declined before ever reaching TranslateLeftJoin. Once
         // MongoQueryableMethodTranslatingExpressionVisitor recognizes both forms, EF-375's join-flattening
         // fix (itself version-generic, no #if needed) applies identically on EF8/EF9/EF10 — the query now
-        // reaches TranslateLeftJoin on every version, but EF-TBD's left-outer/collection-navigation native
-        // eligibility fix is NOT version-generic: NativeSlotPopulator's candidate-join arm still doesn't
-        // recognize EF8/EF9's internal LeftJoin shim as a joining operator at all (see
-        // NativeJoinScopeProjectionBinder's remarks), so the query is marked non-native before eligibility is
-        // even consulted there. Only EF10 goes native; EF8/EF9 keep falling back, correctly.
+        // reaches TranslateLeftJoin on every version, and EF-322's candidate-join recognition fix means
+        // NativeSlotPopulator now recognizes EF8/EF9's internal LeftJoin shim there too, so this goes native
+        // on all three EF versions.
         await base.GroupJoin_DefaultIfEmpty_multiple(async);
 
-#if EF8 || EF9
-        AssertMql(
-            """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders_1" } }, { "$unwind" : { "path" : "$_lookup_Orders_1", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }
-""");
-#else
         AssertMql(
             """
 Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders_1" } }, { "$unwind" : { "path" : "$_lookup_Orders_1", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "c" : "$$ROOT", "_lookup_Orders" : "$_lookup_Orders", "_lookup_Orders_1" : "$_lookup_Orders_1", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task GroupJoin_DefaultIfEmpty2(bool async)
@@ -545,23 +525,12 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
 
     public override async Task GroupJoin_DefaultIfEmpty_Project(bool async)
     {
-        // Failed: Throws ExpressionNotSupportedException (query not translated)
         await base.GroupJoin_DefaultIfEmpty_Project(async);
-#if EF8 || EF9
-        // EF8/EF9: falls back to driver-LINQ — different MQL, same results. This LeftJoin
-        // (GroupJoin+SelectMany(DefaultIfEmpty)) shape never goes native on EF8/EF9 — see
-        // NativeJoinScopeProjectionBinder.cs remarks / NorthwindMiscellaneousQueryMongoTest's
-        // Manual_expression_tree_typed_null_equality EF8/EF9 branch for the family-wide gap.
-        AssertMql(
-            """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : "$_v._inner._id", "_id" : 0 } }
-""");
-#else
+
         AssertMql(
             """
 Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : "$_lookup_Orders._id", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task GroupJoin_SelectMany_subquery_with_filter(bool async)

@@ -563,7 +563,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$toLong" : { "$abs" : "$_id" } }, "_id" : 0 } }
+            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$abs" : "$_id" }, "_id" : 0 } }
             """);
     }
 
@@ -927,19 +927,11 @@ Orders.{ "$project" : { "OrderDate" : "$OrderDate", "_id" : 0 } }
 
     public override async Task Anonymous_projection_with_repeated_property_being_ordered_2(bool async)
     {
-#if EF8 || EF9
-        await base.Anonymous_projection_with_repeated_property_being_ordered_2(async);
-        AssertMql(
-            """
-Orders.{ "$sort" : { "CustomerID" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "A" : "$_v._inner._id", "B" : "$_v._outer.CustomerID", "_id" : 0 } }
-""");
-    #else
         await base.Anonymous_projection_with_repeated_property_being_ordered_2(async);
         AssertMql(
             """
 Orders.{ "$sort" : { "CustomerID" : 1 } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "A" : "$_lookup_Customer._id", "B" : "$CustomerID", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task Select_GetValueOrDefault_on_DateTime(bool async)
@@ -1571,12 +1563,6 @@ Customers.
 
     public override async Task Custom_projection_reference_navigation_PK_to_FK_optimization(bool async)
     {
-#if EF8 || EF9
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Custom_projection_reference_navigation_PK_to_FK_optimization(async));
-
-        AssertMql();
-#else
         // native-join-scope-nested-projection ticket: this shape (`new Order { OrderID, Customer = new
         // Customer { CustomerID = o.Customer.CustomerID, City = o.Customer.City }, OrderDate }`) is exactly
         // the design's in-scope case — a nested MemberInit leaf sourced from a join scope, mixed with
@@ -1588,7 +1574,6 @@ Customers.
             """
 Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "OrderID" : "$_id", "Customer" : { "CustomerID" : "$_lookup_Customer._id", "City" : "$_lookup_Customer.City" }, "OrderDate" : "$OrderDate", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task Projecting_Length_of_a_string_property_after_FirstOrDefault_on_correlated_collection(bool async)

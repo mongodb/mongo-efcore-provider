@@ -53,20 +53,6 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// well-understood LINQ-to-Objects semantics, sharing no code with the provider) and applies the SAME nested
 /// anonymous shape to the joined pair.
 /// </remarks>
-/// <remarks>
-/// <b>Why the <c>NativeOnly</c> expectations are <c>#if EF8 || EF9</c>-split.</b> The split is NOT specific
-/// to nested projections, and not a limitation of the binder arm under test. On EF8/EF9 an OPTIONAL reference
-/// navigation — the shape a reference <c>Include</c> produces — is lowered by EF's nav-expansion onto EF's own
-/// internal <c>LeftJoin</c> shim, and <c>NativeSlotPopulator.PopulateNativeSlots</c>' candidate-join arm
-/// matches only <c>QueryableMethods.{Join,GroupJoin}</c> plus, under <c>#if !EF8 &amp;&amp; !EF9</c>,
-/// <c>QueryableMethods.LeftJoin</c> — which does not exist before EF10. The shim therefore hits that method's
-/// catch-all and marks the select non-natively-representable BEFORE any Select-side binder runs, so
-/// <c>NativeJoinScopeProjectionBinder.TryBindProjection</c> is never reached at all. Consequently NO wrapped
-/// projection over an optional-reference join goes native on EF8/EF9 (including the flat
-/// <c>new { o.OrderNo, o.Customer.Name }</c> shape that long predates this feature), while a REQUIRED
-/// reference navigation lowers to <c>QueryableMethods.Join</c> and goes native on all three EF versions. See
-/// the same explanation, with the measurement, on the nested arm in <c>NativeJoinScopeProjectionBinder</c>.
-/// </remarks>
 [XUnitCollection("QueryTests")]
 public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
@@ -130,23 +116,6 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
         }
 
         using var db = new JoinScopeDbContext(database, ordersName, customersName, mode);
-
-#if EF8 || EF9
-        // On EF8/EF9 this shape never reaches the native binder at all — see the class remarks for the exact
-        // mechanism (EF's internal LeftJoin shim is not in NativeSlotPopulator's candidate-join arm before
-        // EF10). MongoQueryMode.NativeOnly correctly forbids the driver-LINQ fallback this shape still needs
-        // there, so it must throw rather than execute; MongoQueryMode.Native (which allows the fallback) is
-        // unaffected and is exercised below like on EF10.
-        if (mode == MongoQueryMode.NativeOnly)
-        {
-            Assert.Throws<NativeTranslationNotSupportedException>(() =>
-                db.Set<Order>().Include(o => o.Customer)
-                    .OrderBy(o => o.OrderNo)
-                    .Select(Selector)
-                    .ToList());
-            return;
-        }
-#endif
 
         var actual = db.Set<Order>().Include(o => o.Customer)
             .OrderBy(o => o.OrderNo)

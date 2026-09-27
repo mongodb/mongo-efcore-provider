@@ -557,6 +557,16 @@ internal sealed class MongoSelectLowerer
                 stages.Add(new MongoUnwindStage(lookup, lookup.PreserveNullAndEmptyArrays));
             }
             else if (lookup.IsNativeCollectionLookup
+                     // Mirrors the pipelined disjunct just below: a renamed lookup must still be
+                     // force-unwind-free and not FallbackOnly-kind before it's treated as a plain native
+                     // collection Include. Without this, a TPH-derived collection Include target (whose
+                     // LookupExpression constructor stamps PipelineKind.FallbackOnly specifically to keep it
+                     // off the native path) that ALSO collided with a join on the same navigation would
+                     // render natively just because it got alias-renamed — reopening the exact FallbackOnly
+                     // guard the pipelined disjunct below deliberately enforces, and risking sibling-subtype
+                     // rows leaking in for that shape.
+                     || (lookup.RenamedToAvoidJoinCollision && !lookup.ForceUnwind
+                         && lookup.PipelineKind is LookupPipelineKind.None or LookupPipelineKind.NestedInclude or LookupPipelineKind.FilteredInclude)
                      || (lookup.Navigation is { IsCollection: true } pipelinedNav
                          && lookup.PipelineKind is LookupPipelineKind.NestedInclude or LookupPipelineKind.FilteredInclude
                          && !lookup.ForceUnwind
