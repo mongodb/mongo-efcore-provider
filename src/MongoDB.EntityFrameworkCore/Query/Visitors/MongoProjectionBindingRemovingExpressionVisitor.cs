@@ -904,6 +904,19 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     /// <see cref="NewExpression"/> with named <c>Members</c> (<c>new Book(id, title)</c> on a record-like type).
     /// </remarks>
     protected Expression BuildDocumentConstructionExpression(MongoDocumentConstructionExpression construction, string alias)
+        => BuildDocumentConstructionExpression(construction, [alias]);
+
+    /// <summary>
+    /// The path-aware sibling of the <c>(construction, alias)</c> overload above, used when this construction is
+    /// itself NESTED inside an outer one (EF-322, e.g. <c>Mid = new Mid { Inner = new Inner { Name = ..., Value =
+    /// g.Sum(...) } } }</c>) — <paramref name="path"/> is every dotted segment from the document ROOT down to
+    /// (and including) THIS construction's own <c>$project</c> alias, since <see cref="MongoAggregationExpressionRenderer"/>
+    /// renders a <see cref="MongoDocumentConstructionExpression"/> value RECURSIVELY (a nested member's own
+    /// nested construction becomes a genuinely nested BSON sub-document, not a dotted top-level field) — reading
+    /// a further-nested member back must walk the SAME number of real sub-document levels, not collapse them
+    /// into one 2-segment <c>[alias, memberName]</c> path the way a single-level construction's own members can.
+    /// </summary>
+    private Expression BuildDocumentConstructionExpression(MongoDocumentConstructionExpression construction, string[] path)
     {
         switch (construction.OriginalExpression)
         {
@@ -915,7 +928,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         var (memberName, value) = construction.Members[i];
                         var member = memberInit.Bindings.First(b => b.Member.Name == memberName).Member;
                         bindings[i] = Expression.Bind(
-                            member, ReadDocumentConstructionMemberTyped(construction, alias, memberName, value, member));
+                            member, ReadDocumentConstructionMemberTyped(construction, path, memberName, value, member));
                     }
 
                     return Expression.MemberInit(memberInit.NewExpression, bindings);
@@ -928,7 +941,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     {
                         var (memberName, value) = construction.Members[i];
                         arguments[i] = ReadDocumentConstructionMemberTyped(
-                            construction, alias, memberName, value, newExpression.Members[i]);
+                            construction, path, memberName, value, newExpression.Members[i]);
                     }
 
                     return Expression.New(newExpression.Constructor!, arguments, newExpression.Members);
@@ -940,20 +953,63 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     }
 
     private Expression ReadDocumentConstructionMemberTyped(
-        MongoDocumentConstructionExpression construction, string alias, string memberName, MongoExpression value,
+        MongoDocumentConstructionExpression construction, string[] path, string memberName, MongoExpression value,
         MemberInfo member)
     {
-        var field = (MongoFieldExpression)value;
         var memberType = member switch
         {
             PropertyInfo property => property.PropertyType,
             FieldInfo fieldInfo => fieldInfo.FieldType,
-            _ => field.Property.ClrType
+            _ => value is MongoFieldExpression fieldForType ? fieldForType.Property.ClrType : value.Type
         };
 
-        var read = ReadDocumentConstructionMember(construction, alias, memberName, field, memberType);
+        // A plain top-level field has its own IProperty/serializer for correct BSON representation (EF-447's
+        // own, narrower scope) — it can only ever occur at path DEPTH 1 (EF-447's own recognizer only ever
+        // produces a MongoFieldExpression member for a construction reached directly off the selector body, not
+        // for one nested inside a GroupBy nested construction), so `path[0]` (the leaf's own single top-level
+        // $project alias) reproduces this branch's ORIGINAL (pre-EF-322) `alias` argument exactly.
+        //
+        // A further-nested construction (EF-322 Review Focus: doubly-nested) recurses into the path-aware
+        // overload with THIS member's own name appended — see that overload's own remarks for why depth cannot
+        // collapse into one segment.
+        //
+        // Anything else (an accumulator's flattened output, a g.Key/g.Key.Sub reference, or a constant — all
+        // GroupBy-produced shapes EF-447 never needed to handle) has no single backing property, so it reads
+        // generically at the VALUE's OWN natively-translated type (<paramref name="value"/>.Type — e.g. decimal
+        // for a Sum accumulator whose call site is `g.Sum(o => (decimal)o.Amount)`) rather than the member's
+        // DECLARED type. This matters when the two differ (Odata_groupby_empty_key's own `Value` member is
+        // declared `object`): CreateTypeSerializer has no sensible scalar serializer for a bare `object` CLR
+        // type — asking it to deserialize directly AT `object` falls through to its generic
+        // BsonClassMapSerializer branch and yields the WRONG runtime representation (a raw
+        // MongoDB.Bson.Decimal128, not a decimal) instead of throwing. Reading at the value's own natural type
+        // first, then converting/boxing to the declared member type below, is exactly what an ordinary
+        // top-level bare/computed accumulator alias already gets for free from the ordinary EF Core shaper tree
+        // (a Convert(decimalSum, object) node the compiler emits for the `object`-typed assignment) — this
+        // generic path must replicate that same two-step, not skip straight to the declared type.
+        Expression read = value switch
+        {
+            MongoFieldExpression field => ReadDocumentConstructionMember(construction, path[0], memberName, field, memberType),
+            MongoDocumentConstructionExpression nested => BuildDocumentConstructionExpression(nested, [..path, memberName]),
+            _ => ReadDocumentConstructionMemberGeneric(construction, path, memberName, value.Type)
+        };
+
         return read.Type == memberType ? read : Expression.Convert(read, memberType);
     }
+
+    /// <summary>
+    /// Reads a NON-field, NON-further-nested-construction member (an accumulator's own flattened output, a
+    /// nested g.Key/g.Key.Sub reference, or an ordinary computed/constant value) generically by element path —
+    /// the same property-free mechanism a top-level bare/computed projection alias already uses
+    /// (<see cref="MongoDB.EntityFrameworkCore.Storage.BsonBinding.CreateGetElementValueAtPath"/>), since none
+    /// of these member kinds has a single backing <see cref="IProperty"/>/serializer the field-aware
+    /// <see cref="ReadDocumentConstructionMember"/> overload needs. <paramref name="readType"/> is the value's
+    /// OWN natively-translated type, not necessarily the (possibly-widened, e.g. `object`) declared member
+    /// type — see <see cref="ReadDocumentConstructionMemberTyped"/>'s own remarks for why that distinction
+    /// matters here.
+    /// </summary>
+    protected virtual Expression ReadDocumentConstructionMemberGeneric(
+        MongoDocumentConstructionExpression construction, string[] path, string memberName, Type readType)
+        => BsonBinding.CreateGetElementValueAtPath(DocParameter, [..path, memberName], readType);
 
     /// <summary>
     /// Reads one member of a <see cref="MongoDocumentConstructionExpression"/> leaf (EF-447) from the current

@@ -2008,7 +2008,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$project" : { "_ctorArg0" : 
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { }, "__agg0" : { "$sum" : { "$toDecimal" : "$_id" } } } }, { "$project" : { "Container" : { "Name" : "TotalAmount", "Value" : "$__agg0" }, "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { }, "_nestedAgg1" : { "$sum" : "$_id" } } }, { "$project" : { "Container" : { "Name" : { "$literal" : "TotalAmount" }, "Value" : "$_nestedAgg1" }, "_id" : 0 } }
             """);
     }
 

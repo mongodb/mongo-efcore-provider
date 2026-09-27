@@ -454,23 +454,33 @@ internal sealed class MongoSelectDefinition
     /// <param name="construction">The staged node, when one is found.</param>
     /// <remarks>
     /// <para>
-    /// ONE lookup for BOTH bind-side consumers — <c>MongoProjectionBindingExpressionVisitor
-    /// .TryGetNativeDocumentConstructionLeaf</c> (the plain-root EF-447 leaf) and
-    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.BindResultMember</c> (the join-scope nested leaf).
-    /// They were two near-identical alias scans with DIFFERENT admission rules — the second omitted the
+    /// ONE lookup for THREE bind-side consumers — <c>MongoProjectionBindingExpressionVisitor
+    /// .TryGetNativeDocumentConstructionLeaf</c> (the plain-root EF-447 leaf),
+    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.BindResultMember</c> (the join-scope nested leaf),
+    /// and <c>BindGroupMember</c> (the GroupBy-projection nested-construction leaf, EF-322). They were two
+    /// near-identical alias scans with DIFFERENT admission rules — the second omitted the
     /// <see cref="NativeRoute.Projection"/> check, the CLR-type check, and the alias-override mapping — which
     /// is precisely the shape a future silent-wrong-data bug takes: the looser scan matching a staged node the
     /// stricter one would have refused, and reading it back under a member it does not describe. Unified here
     /// (final-review Finding 3) on the STRICTER rule set; the join-scope caller is only ever reached after
     /// <c>NativeJoinScopeProjectionBinder.TryBindProjection</c> has returned true, which sets
     /// <see cref="Route"/> to <see cref="NativeRoute.Projection"/> and stages the node under the member's own
-    /// name, so tightening it is behavior-preserving there.
+    /// name, so tightening it is behavior-preserving there. The route check also admits
+    /// <see cref="NativeRoute.GroupBy"/>: a nested-construction GroupBy projection member is staged into this
+    /// SAME <see cref="Projection"/> list by <c>NativeGroupByBinder.TryBindGroupProjection</c>'s flatten
+    /// (exactly like the join-scope leaf's own staging), but <see cref="Route"/> resolves to
+    /// <see cref="NativeRoute.GroupBy"/> rather than <see cref="NativeRoute.Projection"/> for a
+    /// <see cref="Grouping"/>-bearing select (see <see cref="Route"/>'s own ternary, which checks
+    /// <see cref="Grouping"/> before <c>_projections.Count</c>) — so admitting only
+    /// <see cref="NativeRoute.Projection"/> would silently refuse the GroupBy caller's otherwise-identical
+    /// lookup.
     /// </para>
     /// <para>
     /// Deliberately looks the answer up in <see cref="Projection"/> (the emit side's own committed result)
     /// rather than re-deriving admissibility, so the bind side can never admit a shape the emit side declined.
-    /// The recognition predicates themselves live in <c>NativeProjectionBinder.TryGetDocumentConstructionLeaf</c>
-    /// and <c>NativeJoinScopeProjectionBinder</c>'s nested arm.
+    /// The recognition predicates themselves live in <c>NativeProjectionBinder.TryGetDocumentConstructionLeaf</c>,
+    /// <c>NativeJoinScopeProjectionBinder</c>'s nested arm, and <c>NativeGroupByBinder
+    /// .TryBindNestedGroupProjectionConstruction</c>.
     /// </para>
     /// </remarks>
     internal bool TryGetDocumentConstructionProjection(
@@ -478,7 +488,7 @@ internal sealed class MongoSelectDefinition
     {
         construction = null;
 
-        if (Route != NativeRoute.Projection || memberName is null)
+        if (Route is not (NativeRoute.Projection or NativeRoute.GroupBy) || memberName is null)
         {
             return false;
         }

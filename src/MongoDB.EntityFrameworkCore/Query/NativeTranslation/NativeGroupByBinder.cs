@@ -332,6 +332,7 @@ internal static class NativeGroupByBinder
         var accumulators = new List<MongoGroupAccumulator>();
         var flatten = new List<MongoProjection>();
         var isBareBodyKeyMember = false; // EF-322 SP4: tracks whether a bare body was bound as a bare key member
+        var nestedAccumulatorCounter = 0;
         foreach (var (memberName, valueExpr) in bindings)
         {
             if (TryGetKeyMemberPath(valueExpr, groupingParameter, keyParts, isComposite, out var keyPath))
@@ -349,6 +350,14 @@ internal static class NativeGroupByBinder
             {
                 accumulators.Add(acc);
                 flatten.Add(new MongoProjection(memberName, flattenRead));
+                continue;
+            }
+
+            if (TryBindNestedGroupProjectionConstruction(
+                    valueExpr, groupingParameter, keyParts, isComposite, translator, accumulators,
+                    ref nestedAccumulatorCounter, out var construction))
+            {
+                flatten.Add(new MongoProjection(memberName, construction));
                 continue;
             }
 
@@ -436,6 +445,92 @@ internal static class NativeGroupByBinder
         }
 
         return false;
+    }
+
+    // Recognizes a nested construction (a NewExpression/MemberInitExpression, e.g.
+    // `Container = new LastInChain { Name = "x", Value = g.Sum(...) }`) as a projection member's own value.
+    // Each of its OWN members is resolved through the SAME three-way dispatch the outer per-member loop uses
+    // (key access, accumulator, computed/constant), recursing into this SAME method for a further-nested
+    // construction. An accumulator found here allocates its own top-level $group output field — exactly like
+    // a top-level accumulator member already does — since an accumulator can only run inside $group, never
+    // inside a later $project's literal sub-document; `accumulators` is the SAME list the outer loop threads
+    // into select.Grouping, and `nestedAccumulatorCounter` guarantees the synthetic field names this method
+    // allocates are distinct from each other and from the outer loop's own top-level member names for any
+    // ordinary member set. A user member literally named the same as a synthetic name (e.g. `_nestedAgg1`) is a
+    // contrived, extremely unlikely edge case this does NOT guard against — it fails loudly at $group execution
+    // time (`InvalidOperationException: Duplicate element name`), not silently, so it is left unhandled.
+    //
+    // This shape never reaches the "mixed" (late-fallback) read path: a TryBindGroupProjection failure (of
+    // which this method declining is one cause, via NativeGroupByBinder's own caller in
+    // MongoQueryableMethodTranslatingExpressionVisitor.VisitProjection's GroupByShaperExpression branch) calls
+    // MarkNotNativelyRepresentable(), which sets MongoSelectDefinition's private _hasUnsupportedOperator flag.
+    // Route's own ternary (MongoSelectDefinition.cs's Route getter) checks
+    // `_hasUnsupportedOperator || HasUnconfirmedCandidateJoin ? NativeRoute.Fallback` FIRST, before its
+    // `Grouping != null ? NativeRoute.GroupBy` arm, so a decline here forces the WHOLE query to
+    // NativeRoute.Fallback (full driver-LINQ fallback), never NativeRoute.GroupBy with a partially-bound
+    // projection. And when TryBindGroupProjection instead SUCCEEDS, MongoShapedQueryCompilingExpressionVisitor's
+    // NativeRoute.GroupBy branch always builds the plain MongoProjectionBindingRemovingExpressionVisitor with no
+    // `createFallbackBindingRemover` option (unlike its NativeRoute.Projection branch, which passes one when a
+    // join-scope or document-construction leaf needs the mixed reader) — so a Grouping-bearing
+    // MongoSelectDefinition can never route through MongoMixedProjectionBindingRemovingExpressionVisitor either
+    // way. Structurally all-native-or-all-fallback, confirmed by reading (not assuming) both call sites.
+    private static bool TryBindNestedGroupProjectionConstruction(
+        Expression expr,
+        ParameterExpression groupingParameter,
+        IReadOnlyList<MongoGroupingKeyPart> keyParts,
+        bool isComposite,
+        MongoExpressionTranslator translator,
+        List<MongoGroupAccumulator> accumulators,
+        ref int nestedAccumulatorCounter,
+        [NotNullWhen(true)] out MongoDocumentConstructionExpression? result)
+    {
+        result = null;
+        expr = Unwrap(expr);
+
+        if (!expr.TryGetProjectionMembers(out var nestedMembers))
+            return false;
+
+        var translatedMembers = new List<(string, MongoExpression)>();
+        foreach (var (nestedMemberName, nestedValueRaw) in nestedMembers)
+        {
+            var nestedValue = Unwrap(nestedValueRaw);
+
+            if (TryGetKeyMemberPath(nestedValue, groupingParameter, keyParts, isComposite, out var keyPath))
+            {
+                if (keyPath == null)
+                    return false; // bare g.Key over a composite/zero-part key inside a nested construction
+
+                translatedMembers.Add((nestedMemberName, new MongoElementRefExpression(keyPath, nestedValue.Type)));
+                continue;
+            }
+
+            var syntheticField = $"_nestedAgg{nestedAccumulatorCounter++}";
+            if (TryBindAccumulator(
+                    nestedValue, syntheticField, groupingParameter, keyParts, isComposite, translator,
+                    out var acc, out var flattenRead))
+            {
+                accumulators.Add(acc);
+                translatedMembers.Add((nestedMemberName, flattenRead));
+                continue;
+            }
+
+            if (TryBindNestedGroupProjectionConstruction(
+                    nestedValue, groupingParameter, keyParts, isComposite, translator, accumulators,
+                    ref nestedAccumulatorCounter, out var deeperConstruction))
+            {
+                translatedMembers.Add((nestedMemberName, deeperConstruction));
+                continue;
+            }
+
+            if (!TryTranslateGroupProjectionExpression(
+                    nestedValue, groupingParameter, keyParts, isComposite, translator, out var computed))
+                return false;
+
+            translatedMembers.Add((nestedMemberName, computed));
+        }
+
+        result = new MongoDocumentConstructionExpression(expr, translatedMembers);
+        return true;
     }
 
     // EF-322 SP4: translates a Select-projection member's value as a COMPUTED expression tree — a ternary or

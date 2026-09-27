@@ -145,12 +145,16 @@ internal static class MongoAggregationExpressionRenderer
             MongoMathExpression math => RenderMath(math, placeholders, elementVariable),
             MongoQuantifierExpression quantifier => RenderQuantifier(quantifier, placeholders, elementVariable),
             // A constructed nested sub-document leaf (EF-447, `new Book { Id = e.Id, Title = e.Title }`).
-            // Each member renders through this SAME Render call, recursively, so a nested field ref renders as
-            // "$ElementName" (an aggregation-expression field path) exactly like any other computed leaf value —
-            // never a bare unprefixed name, which $project would otherwise misread as an inclusion flag.
+            // Each member renders through RenderBranch, not the bare Render call — a nested constant/parameter
+            // member (first possible as of EF-322's GroupBy nested-construction slice; EF-447's own usage only
+            // ever produced MongoFieldExpression members) needs the SAME $literal-wrapping a top-level $project
+            // value already gets, or MongoDB misreads a bare number/bool as an inclusion/exclusion flag and a
+            // bare "$"-prefixed string as a field-path reference. A field ref itself renders unaffected (only
+            // MongoConstantExpression/MongoParameterExpression get wrapped) as "$ElementName" exactly like any
+            // other computed leaf value — never a bare unprefixed name.
             MongoDocumentConstructionExpression construction
                 => new BsonDocument(construction.Members.Select(
-                    m => new BsonElement(m.MemberName, Render(m.Value, placeholders, elementVariable)))),
+                    m => new BsonElement(m.MemberName, RenderBranch(m.Value, placeholders, elementVariable)))),
             MongoConcatExpression concat
                 => new BsonDocument("$concat",
                     new BsonArray(concat.Operands.Select(o => Render(o, placeholders, elementVariable)))),

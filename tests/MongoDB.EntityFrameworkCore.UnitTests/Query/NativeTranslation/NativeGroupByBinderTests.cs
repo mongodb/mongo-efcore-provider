@@ -134,6 +134,25 @@ public class NativeGroupByBinderTests
         public int Value { get; set; }
     }
 
+    // EF-322: a nested-construction GroupBy projection member — `Container = new NestedContainer { Name = "x",
+    // Value = g.Sum(...) } }` — the last SP7-descoped Odata_groupby_empty_key shape.
+    private class NestedContainer
+    {
+        public string Name { get; set; } = "";
+        public int Value { get; set; }
+    }
+
+    private class NestedWrapper
+    {
+        public NestedContainer Container { get; set; } = null!;
+    }
+
+    private class TwoNestedWrapper
+    {
+        public NestedContainer First { get; set; } = null!;
+        public NestedContainer Second { get; set; } = null!;
+    }
+
     private static MongoQueryExpression TestQuery()
     {
         using var db = SingleEntityDbContext.Create<Order>();
@@ -2014,5 +2033,89 @@ public class NativeGroupByBinderTests
         // The comparison must read the accumulator's OWN flattened alias, never the GroupBy key's field.
         var left = Assert.IsType<MongoElementRefExpression>(comparison.Left);
         Assert.Equal(bareLeafAlias, left.Path);
+    }
+
+    // ── TryBindNestedGroupProjectionConstruction (EF-322 follow-on to SP7) ─────────────────────────────────
+
+    [Fact]
+    public void Nested_construction_projection_member_binds_group()
+    {
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, object>> proj =
+            g => new NestedWrapper
+            {
+                Container = new NestedContainer { Name = "x", Value = g.Sum(o => o.Amount) }
+            };
+
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+
+        var projection = mongoQ.Select.Projection.Single(p => p.Alias == "Container");
+        var construction = Assert.IsType<MongoDocumentConstructionExpression>(projection.Expression);
+        Assert.Equal(2, construction.Members.Count);
+
+        Assert.Equal("Name", construction.Members[0].MemberName);
+        Assert.IsType<MongoConstantExpression>(construction.Members[0].Value);
+
+        Assert.Equal("Value", construction.Members[1].MemberName);
+        var elementRef = Assert.IsType<MongoElementRefExpression>(construction.Members[1].Value);
+
+        // "_nestedAgg1", not "_nestedAgg0": TryBindNestedGroupProjectionConstruction allocates a synthetic
+        // field name (incrementing nestedAccumulatorCounter) BEFORE attempting TryBindAccumulator for every
+        // non-key member, including "Name" (a plain constant, which fails accumulator binding and falls
+        // through to TryTranslateGroupProjectionExpression) — so "Name" consumes index 0 even though it never
+        // becomes an accumulator. Harmless (still globally unique — see the two-sibling test below for the
+        // no-collision guarantee this is actually pinning), just not contiguous per-accumulator.
+        Assert.Equal("_nestedAgg1", elementRef.Path);
+
+        Assert.Contains(mongoQ.Select.Grouping!.Accumulators, a => a.OutputField == "_nestedAgg1");
+    }
+
+    [Fact]
+    public void Nested_construction_member_referencing_per_element_value_declines_whole_projection()
+    {
+        // A per-element (non-`g`) reference mixed into the SAME nested construction as an accumulator — the
+        // outer `o` is NOT the grouping parameter, so TryBindGroupProjection must decline the WHOLE outer
+        // projection (return false), never a partial/wrong nested read.
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, object>> proj =
+            g => new NestedWrapper
+            {
+                Container = new NestedContainer { Name = g.First().Country, Value = g.Sum(o => o.Amount) }
+            };
+
+        Assert.False(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+        Assert.Null(mongoQ.Select.Grouping);
+    }
+
+    [Fact]
+    public void Two_sibling_nested_constructions_use_distinct_synthetic_accumulator_field_names()
+    {
+        // Two DIFFERENT top-level members, each with its own nested accumulator — the synthetic field-name
+        // counter must not collide between them.
+        var mongoQ = BoundScalarKeyQuery();
+        Expression<Func<IGrouping<string, Order>, object>> proj =
+            g => new TwoNestedWrapper
+            {
+                First = new NestedContainer { Name = "a", Value = g.Sum(o => o.Amount) },
+                Second = new NestedContainer { Name = "b", Value = g.Count() }
+            };
+
+        Assert.True(NativeGroupByBinder.TryBindGroupProjection(mongoQ, proj, out _));
+
+        var firstConstruction = Assert.IsType<MongoDocumentConstructionExpression>(
+            mongoQ.Select.Projection.Single(p => p.Alias == "First").Expression);
+        var secondConstruction = Assert.IsType<MongoDocumentConstructionExpression>(
+            mongoQ.Select.Projection.Single(p => p.Alias == "Second").Expression);
+
+        var firstRef = Assert.IsType<MongoElementRefExpression>(firstConstruction.Members[1].Value);
+        var secondRef = Assert.IsType<MongoElementRefExpression>(secondConstruction.Members[1].Value);
+
+        // The counter is shared across BOTH sibling constructions (threaded via the outer loop's own
+        // `nestedAccumulatorCounter`) and also advances once for each construction's non-accumulator "Name"
+        // constant member (see the single-construction test's own remarks) — so the two actual accumulator
+        // fields land on "_nestedAgg1"/"_nestedAgg3", not "_nestedAgg0"/"_nestedAgg1". What this test actually
+        // pins is the no-collision guarantee, not the specific indices.
+        Assert.NotEqual(firstRef.Path, secondRef.Path);
+        Assert.Equal(2, mongoQ.Select.Grouping!.Accumulators.Count);
     }
 }
