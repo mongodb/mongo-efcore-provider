@@ -913,8 +913,9 @@ public class MongoQueryLanguageRendererTests
 
         var rendered = new MongoQueryLanguageRenderer().Render(pred, new PlaceholderTable());
 
+        // The parameter is the lower side of $gt, so the comparison is the second conjunct of its null guard.
         var expr = rendered.AsBsonDocument["$expr"].AsBsonDocument;
-        var size = expr["$gt"].AsBsonArray[0].AsBsonDocument;
+        var size = expr["$and"].AsBsonArray[1].AsBsonDocument["$gt"].AsBsonArray[0].AsBsonDocument;
         Assert.Equal(
             BsonDocument.Parse("{ $size: { $ifNull: [ '$Posts', [] ] } }"),
             size);

@@ -1106,7 +1106,7 @@ Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null,
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "City" : "$City" } } }, { "$project" : { "City" : "$_id.City", "_id" : 0 } }
+            Customers.{ "$group" : { "_id" : { "City" : { "$ifNull" : ["$City", null] } } } }, { "$project" : { "City" : "$_id.City", "_id" : 0 } }
             """);
     }
 
@@ -1117,7 +1117,7 @@ Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null,
         // Ordering not preserved by distinct when ordering columns not projected.
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$group" : { "_id" : { "City" : "$City" } } }, { "$project" : { "City" : "$_id.City", "_id" : 0 } }
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$group" : { "_id" : { "City" : { "$ifNull" : ["$City", null] } } } }, { "$project" : { "City" : "$_id.City", "_id" : 0 } }
             """);
     }
 
@@ -1127,7 +1127,7 @@ Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null,
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "Country" : "$Country" } } }, { "$project" : { "Country" : "$_id.Country", "_id" : 0 } }, { "$sort" : { "Country" : 1 } }
+            Customers.{ "$group" : { "_id" : { "Country" : { "$ifNull" : ["$Country", null] } } } }, { "$project" : { "Country" : "$_id.Country", "_id" : 0 } }, { "$sort" : { "Country" : 1 } }
             """);
     }
 
@@ -1147,7 +1147,7 @@ Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null,
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "CustomerID" : "$_id" } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "_id" : 0 } }, { "$sort" : { "CustomerID" : 1 } }
+            Customers.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$_id", null] } } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "_id" : 0 } }, { "$sort" : { "CustomerID" : 1 } }
             """);
     }
 
@@ -1167,7 +1167,7 @@ Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null,
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "City" : "$City" } } }, { "$project" : { "City" : "$_id.City", "_id" : 0 } }, { "$count" : "v" }
+            Customers.{ "$group" : { "_id" : { "City" : { "$ifNull" : ["$City", null] } } } }, { "$project" : { "City" : "$_id.City", "_id" : 0 } }, { "$count" : "v" }
             """);
     }
 

@@ -32,6 +32,17 @@ group a key or Select reached through a required reference navigation, or compos
 `Join`/self-join result. This needs `NativeGroupByBinder` to cooperate with the native join-scope machinery
 (EF-322, in flight on another branch) — **deferred**, own follow-up design once that work lands.
 
+The 6 deferred methods were delivered by `docs/superpowers/plans/2026-09-28-native-groupby-over-join-scope.md`
+(`MongoSelectDefinition.GroupByJoinScope`), which also carried nine `AssertTranslationFailed` overrides native
+as a knock-on: `GroupBy_optional_navigation_member_Aggregate`, `GroupBy_principal_key_property_optimization`,
+`GroupBy_with_group_key_access_thru_nested_navigation`, `GroupJoin_GroupBy_Aggregate_2`,
+`GroupJoin_GroupBy_Aggregate_3`, `GroupJoin_GroupBy_Aggregate_4`, `GroupJoin_GroupBy_Aggregate_5`, and
+`GroupBy_Min_Where_optional_relationship`/`_2` (the latter two mode-split on EF10: native under default, still
+declining under `NativeOnly` because the post-group `Where` isn't native yet; on EF8/EF9 they decline in every
+mode, because a pre-existing driver-LINQ bug throws for this left-outer-join shape regardless of mode). Paging
+recorded ahead of a non-1:1 grouped join declines rather than defers — deferring it past the `$lookup` would
+silently change group counts.
+
 This design covers the remaining **30 methods**, split into 9 independently shippable slices (SP1–SP9),
 stacked in the order below (each depends on the previous landing, per this repo's stacked-PR convention —
 squash to `NativeQueryOngoing`, one squashed commit per slice).

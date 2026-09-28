@@ -1025,9 +1025,9 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     //
     // Oracle: in-memory LINQ over the same Expression object (`selector` server-side vs `selector.Compile()`
     // over materialized entities). Valid here because the predicate is `p.Rank > threshold` over ranks of 5 and
-    // -5 with no missing/null Rank field — the agreeing half of the BSON-total-order divergence (see the "gt"
-    // row of FilteredCountSelectors). The ragged states here are array-level, which $ifNull and EF both answer
-    // as 0. A `<`-family predicate would not be oracle-checkable this way.
+    // -5 with no missing/null Rank field, so the DriverLinq legs (whose $filter is not null-guarded) agree too (see
+    // the "gt" row of FilteredCountSelectors). The ragged states here are array-level, which $ifNull and EF both
+    // answer as 0.
     [Fact]
     public void Bare_filtered_count_projection_with_a_captured_parameter_goes_native_in_every_mode()
     {
@@ -1143,11 +1143,12 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     // BSON total order is missing < null < numbers:
     // "gt" (p.Rank > 0): null/missing > 0 is false, matching LINQ's lifted null semantics.
     // "eq"/"ne": equality against a non-null constant agrees.
-    // "and" (p.Rank > 0 && p.Rank < 6): contains "<" but the "> 0" conjunct masks the divergence.
-    // "field_to_field" (p.Rank > p.Other): agrees only in this direction; p.Rank < p.Other diverges like "lt".
+    // "and" (p.Rank > 0 && p.Rank < 6): the "< 6" conjunct is null-guarded; the "> 0" conjunct already excludes null.
+    // "field_to_field" (p.Rank > p.Other): the lower side (p.Other) is null-guarded.
     // "arithmetic" (p.Rank + 1 > 0): gt-family; agrees.
     //
-    // Diverging predicates ("lt", "or", "null_check") are accepted and documented in the divergence tests below.
+    // "<"-family predicates are covered by GuardedRelationalSelectors below; "null_check" (missing vs null, not
+    // relational) still diverges and is pinned by its own test.
     public static IEnumerable<object[]> FilteredCountSelectors() =>
     [
         ["gt", (Expression<Func<Blog, TitleCount>>)(b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank > 0) })],
@@ -1241,29 +1242,215 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         Assert.Equal(expectedMultiMixedN, nativeOnly.Single(r => r.Item1 == "multi_mixed").Item2);
     }
 
-    // Accepted, documented divergence: a relational element predicate over a nullable leaf diverges from
-    // in-memory LINQ on ragged data because $filter's cond is not type-bracketed — BSON orders
-    // missing < null < numbers. Native and DriverLinq agree with each other. No rendering change, null-guard or
-    // decline.
-    //
-    // On multi_mixed (5, -5, null, missing):
-    //   "lt" (p.Rank < 0): LINQ N=1; native N=3 (null and missing sort below every number).
-    //   "or" (p.Rank > 4 || p.Rank < -4): LINQ N=2; native N=4 — the same divergence, unmasked via a disjunct.
-    [Fact]
-    public void Filtered_count_relational_operator_diverges_from_in_memory_linq_on_ragged_data_by_owner_ruling()
+    // Asserts NativeOnly equals in-memory LINQ, pins the multi_mixed count, and pins DriverLinq's (still divergent)
+    // multi_mixed count, so a change on either path is noticed.
+    private void AssertMatchesLinqOracleWhileDriverLinqDiverges(
+        IMongoCollection<Blog> collection, Expression<Func<Blog, TitleCount>> selector,
+        int expectedMultiMixedN, int driverLinqMultiMixedN)
     {
-        var collection = Seed(
-            nameof(Filtered_count_relational_operator_diverges_from_in_memory_linq_on_ragged_data_by_owner_ruling),
-            DifferentialRows());
+        List<(string, int)> linqOracle;
+        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        {
+            linqOracle = db.Entities.AsNoTracking().ToList()
+                .Select(selector.Compile()).Select(r => (r.Title, r.N)).OrderBy(r => r.Item1).ToList();
+        }
 
-        AssertDivergesFromLinqOracle(
-            collection, b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank < 0) }, expectedMultiMixedN: 3);
-        AssertDivergesFromLinqOracle(
-            collection, b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank > 4 || p.Rank < -4) }, expectedMultiMixedN: 4);
+        List<(string, int)> nativeOnly;
+        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        {
+            nativeOnly = db.Entities.AsNoTracking().Select(selector).ToList()
+                .Select(r => (r.Title, r.N)).OrderBy(r => r.Item1).ToList();
+        }
+
+        List<(string, int)> driverLinq;
+        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
+        {
+            driverLinq = db.Entities.AsNoTracking().Select(selector).ToList()
+                .Select(r => (r.Title, r.N)).OrderBy(r => r.Item1).ToList();
+        }
+
+        Assert.Equal(linqOracle, nativeOnly);
+        Assert.Equal(expectedMultiMixedN, nativeOnly.Single(r => r.Item1 == "multi_mixed").Item2);
+        Assert.Equal(driverLinqMultiMixedN, driverLinq.Single(r => r.Item1 == "multi_mixed").Item2);
     }
 
-    // Accepted, documented divergence (same disposition as the relational test; separate only because the
-    // predicate class is equality). "null_check" (p.Rank == null): LINQ N=2 on multi_mixed (null and missing both
+    // A relational element predicate over a nullable leaf follows C# lifted semantics (null < c is false): the
+    // renderer null-guards the lower operand inside $filter's cond, as everywhere else in the aggregation dialect.
+    // The owner reversed the earlier "accepted divergence" ruling on 2026-09-28 in favor of C# semantics.
+    // DriverLinq still diverges: its unguarded $filter counts null and missing, which BSON orders below every number.
+    //
+    // On multi_mixed (5, -5, null, missing):
+    //   "lt" (p.Rank < 0): LINQ and native N=1; DriverLinq N=3.
+    //   "or" (p.Rank > 4 || p.Rank < -4): LINQ and native N=2; DriverLinq N=4.
+    [Fact]
+    public void Filtered_count_relational_operator_matches_in_memory_linq_on_ragged_data()
+    {
+        var collection = Seed(
+            nameof(Filtered_count_relational_operator_matches_in_memory_linq_on_ragged_data),
+            DifferentialRows());
+
+        AssertMatchesLinqOracleWhileDriverLinqDiverges(
+            collection, b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank < 0) },
+            expectedMultiMixedN: 1, driverLinqMultiMixedN: 3);
+        AssertMatchesLinqOracleWhileDriverLinqDiverges(
+            collection, b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank > 4 || p.Rank < -4) },
+            expectedMultiMixedN: 2, driverLinqMultiMixedN: 4);
+    }
+
+    // Relational element predicates whose lower operand may be null. Each row: name, selector, the hand-computed
+    // multi_mixed (5, -5, null, missing) count under C# semantics.
+    public static IEnumerable<object[]> GuardedRelationalSelectors()
+    {
+        var threshold = 0;
+        return
+        [
+            ["lt", (Expression<Func<Blog, TitleCount>>)(b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank < 0) }), 1],
+            ["lte", (Expression<Func<Blog, TitleCount>>)(b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank <= -5) }), 1],
+            // Constant on the left: the lower side is the Right operand.
+            ["flipped_gt", (Expression<Func<Blog, TitleCount>>)(b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => 0 > p.Rank) }), 1],
+            ["flipped_gte", (Expression<Func<Blog, TitleCount>>)(b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => -5 >= p.Rank) }), 1],
+            ["field_to_field_lt", (Expression<Func<Blog, TitleCount>>)(b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank < p.Other) }), 1],
+            ["parameter_lt", (Expression<Func<Blog, TitleCount>>)(b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank < threshold) }), 1],
+            // !(null < 0) is true in C#: the $not-wrapped guarded pair must be the exact complement (5, null, missing).
+            ["negated_lt", (Expression<Func<Blog, TitleCount>>)(b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => !(p.Rank < 0)) }), 3],
+            // Correlated: goes through the two-scope element translator (outer b.Title renders at the root).
+            ["correlated_lt", (Expression<Func<Blog, TitleCount>>)(b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank < 0 && p.Title != b.Title) }), 1],
+            // >/>= with the field on the left: the lower side is a constant, so no guard and no change.
+            ["gt", (Expression<Func<Blog, TitleCount>>)(b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank > 4) }), 1],
+            ["gte", (Expression<Func<Blog, TitleCount>>)(b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank >= 5) }), 1]
+        ];
+    }
+
+    [Theory]
+    [MemberData(nameof(GuardedRelationalSelectors))]
+    public void Filtered_count_relational_element_predicate_equals_the_in_memory_oracle(
+        string name, Expression<Func<Blog, TitleCount>> selector, int expectedMultiMixedN)
+    {
+        var collection = Seed($"guarded_{name}", DifferentialRows());
+
+        List<(string, int)> expected;
+        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        {
+            expected = db.Entities.AsNoTracking().ToList()
+                .Select(selector.Compile()).Select(r => (r.Title, r.N)).OrderBy(r => r.Item1).ToList();
+        }
+
+        List<(string, int)> actual;
+        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        {
+            actual = db.Entities.AsNoTracking().Select(selector).ToList()
+                .Select(r => (r.Title, r.N)).OrderBy(r => r.Item1).ToList();
+        }
+
+        // Hand oracle first, so agreement with a silently-wrong in-memory oracle cannot pass.
+        Assert.Equal(expectedMultiMixedN, expected.Single(r => r.Item1 == "multi_mixed").Item2);
+        Assert.Equal(expected, actual);
+    }
+
+    // The Where spelling ($expr over $size of $filter) renders the same element-scoped cond.
+    [Fact]
+    public void Filtered_count_relational_element_predicate_in_where_excludes_null_and_missing_elements()
+    {
+        var collection = Seed(
+            nameof(Filtered_count_relational_element_predicate_in_where_excludes_null_and_missing_elements),
+            DifferentialRows());
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+
+        // C#: exactly one element below 0 in multi_mixed (-5), multi_mixed_no_ragged (-5) and single_no_match (-7).
+        // multi_none_match has two. Unguarded, multi_mixed would count 3.
+        var titles = db.Entities.AsNoTracking().Where(b => b.Posts.Count(p => p.Rank < 0) == 1).ToList()
+            .Select(b => b.Title).OrderBy(t => t).ToList();
+
+        Assert.Equal(["multi_mixed", "multi_mixed_no_ragged", "single_no_match"], titles);
+    }
+
+    // The guard references the element-scoped field ($$e.Rank), exactly as the comparison does, and a >= with a
+    // constant lower side is emitted unguarded.
+    [Fact]
+    public void Filtered_count_element_guard_references_the_element_scoped_field()
+    {
+        var collection = Seed(
+            nameof(Filtered_count_element_guard_references_the_element_scoped_field), DifferentialRows());
+
+        using (var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spy))
+        {
+            _ = db.Entities.AsNoTracking().Select(b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank < 0) }).ToList();
+            var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+            Assert.Contains("""{ "$and" : [{ "$gt" : ["$$e.Rank", null] }, { "$lt" : ["$$e.Rank", 0] }] }""", mql);
+        }
+
+        using (var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, BlogModel, out var spy))
+        {
+            _ = db.Entities.AsNoTracking().Select(b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank >= 5) }).ToList();
+            var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+            Assert.Contains("""{ "$gte" : ["$$e.Rank", 5] }""", mql);
+            Assert.DoesNotContain("null]", mql);
+        }
+    }
+
+    // ---- Quantifiers over ragged elements ----
+    //
+    // An uncorrelated Any/All renders a query-dialect $elemMatch (already type-bracketed; untouched). A correlated
+    // one (the `p.Title != b.Title` conjunct is always true, since PostDoc writes Title "p") renders
+    // $anyElementTrue/$allElementsTrue over a $map, whose "in" carries the element-scoped guard. Hand oracle only:
+    // DriverLinq throws on the missing/null arrays and, on the rest, treats null/missing Rank as below 0.
+    private static BsonDocument[] QuantifierRows() =>
+    [
+        Row("only_ragged", new BsonArray { PostDoc(rank: null, heading: "a"), NoRankPostDoc("b") }),
+        Row("neg_null", new BsonArray { PostDoc(rank: -5, heading: "a"), PostDoc(rank: null, heading: "b") }),
+        Row("neg_missing", new BsonArray { PostDoc(rank: -5, heading: "a"), NoRankPostDoc("b") }),
+        Row("all_neg", new BsonArray { PostDoc(rank: -5, heading: "a"), PostDoc(rank: -6, heading: "b") }),
+        Row("pos_neg", new BsonArray { PostDoc(rank: 5, heading: "a"), PostDoc(rank: -5, heading: "b") }),
+        Row("empty", new BsonArray()),
+        Row("missing", null),
+        Row("null", BsonNull.Value)
+    ];
+
+    // Each row: name, predicate, hand-computed C# answer (titles, sorted).
+    public static TheoryData<string, Expression<Func<Blog, bool>>, string[]> RaggedQuantifierCases() => new()
+    {
+        // null < 0 is false: a row whose only candidates are null/missing has no match.
+        { "any_lt", b => b.Posts.Any(p => p.Rank < 0), ["all_neg", "neg_missing", "neg_null", "pos_neg"] },
+        { "correlated_any_lt", b => b.Posts.Any(p => p.Rank < 0 && p.Title != b.Title), ["all_neg", "neg_missing", "neg_null", "pos_neg"] },
+        // [-5, null] is false: null < 0 is false. A missing guard or an inverted negation shows up here.
+        { "all_lt", b => b.Posts.All(p => p.Rank < 0), ["all_neg", "empty", "missing", "null"] },
+        { "correlated_all_lt", b => b.Posts.All(p => p.Rank < 0 && p.Title != b.Title), ["all_neg", "empty", "missing", "null"] },
+        { "correlated_all_flipped", b => b.Posts.All(p => 0 > p.Rank && p.Title != b.Title), ["all_neg", "empty", "missing", "null"] },
+        // !All ≡ Any(!pred): the negator flips the kind and $not-wraps the guarded pair.
+        { "negated_correlated_all_lt", b => !b.Posts.All(p => p.Rank < 0 && p.Title != b.Title), ["neg_missing", "neg_null", "only_ragged", "pos_neg"] },
+        { "negated_correlated_any_lt", b => !b.Posts.Any(p => p.Rank < 0 && p.Title != b.Title), ["empty", "missing", "null", "only_ragged"] },
+        // >= with the field on the left: constant lower side, unguarded, unchanged.
+        { "correlated_all_gte", b => b.Posts.All(p => p.Rank >= -6 && p.Title != b.Title), ["all_neg", "empty", "missing", "null", "pos_neg"] },
+        { "correlated_any_gt", b => b.Posts.Any(p => p.Rank > 0 && p.Title != b.Title), ["pos_neg"] },
+    };
+
+    [Theory]
+    [MemberData(nameof(RaggedQuantifierCases))]
+    public void Quantifier_over_ragged_elements_equals_the_hand_and_in_memory_oracles(
+        string name, Expression<Func<Blog, bool>> predicate, string[] expected)
+    {
+        var collection = Seed($"quant_{name}", QuantifierRows());
+
+        List<string> linqOracle;
+        using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
+        {
+            linqOracle = db.Entities.AsNoTracking().ToList()
+                .Where(predicate.Compile()).Select(b => b.Title).OrderBy(t => t, StringComparer.Ordinal).ToList();
+        }
+
+        List<string> actual;
+        using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
+        {
+            actual = db.Entities.AsNoTracking().Where(predicate).ToList()
+                .Select(b => b.Title).OrderBy(t => t, StringComparer.Ordinal).ToList();
+        }
+
+        Assert.Equal(expected, linqOracle);
+        Assert.Equal(expected, actual);
+    }
+
+    // Accepted, documented divergence, unaffected by the relational null guard because the predicate class is
+    // equality. "null_check" (p.Rank == null): LINQ N=2 on multi_mixed (null and missing both
     // materialize as null); native/DriverLinq N=1 — only the explicit null matches `{$eq: ["$$e.Rank", null]}`.
     //
     // Mechanism: one BSON total order serves $eq and relational operators alike; a missing field has

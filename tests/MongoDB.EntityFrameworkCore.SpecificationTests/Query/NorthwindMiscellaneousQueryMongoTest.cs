@@ -1969,7 +1969,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "CustomerID" : "$CustomerID" } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "_id" : 0 } }
+            Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] } } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "_id" : 0 } }
             """);
     }
 
@@ -2009,7 +2009,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "Id" : "$CustomerID", "Count" : "$_id" } } }, { "$project" : { "Id" : "$_id.Id", "Count" : "$_id.Count", "_id" : 0 } }
+Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "Id" : { "$ifNull" : ["$CustomerID", null] }, "Count" : "$_id" } } }, { "$project" : { "Id" : "$_id.Id", "Count" : "$_id.Count", "_id" : 0 } }
 """);
     }
 
@@ -3020,7 +3020,7 @@ Employees.{ "$lookup" : { "from" : "Employees", "localField" : "_id", "foreignFi
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "CustomerID" : "$_id" } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "_id" : 0 } }, { "$match" : { "CustomerID" : "ALFKI" } }
+            Customers.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$_id", null] } } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "_id" : 0 } }, { "$match" : { "CustomerID" : "ALFKI" } }
             """);
     }
 
@@ -3030,7 +3030,7 @@ Employees.{ "$lookup" : { "from" : "Employees", "localField" : "_id", "foreignFi
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "CustomerID" : "$_id" } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "_id" : 0 } }, { "$sort" : { "CustomerID" : 1 } }
+            Customers.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$_id", null] } } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "_id" : 0 } }, { "$sort" : { "CustomerID" : 1 } }
             """);
     }
 
@@ -3040,7 +3040,7 @@ Employees.{ "$lookup" : { "from" : "Employees", "localField" : "_id", "foreignFi
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "CustomerID" : "$_id" } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "_id" : 0 } }, { "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$count" : "v" }
+            Customers.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$_id", null] } } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "_id" : 0 } }, { "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$count" : "v" }
             """);
     }
 
@@ -3050,7 +3050,7 @@ Employees.{ "$lookup" : { "from" : "Employees", "localField" : "_id", "foreignFi
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "A" : { "$concat" : ["$_id", "$City"] } } } }, { "$project" : { "A" : "$_id.A", "_id" : 0 } }, { "$match" : { "$expr" : { "$eq" : ["$A", { "$literal" : "ALFKIBerlin" }] } } }
+            Customers.{ "$group" : { "_id" : { "A" : { "$ifNull" : [{ "$concat" : ["$_id", "$City"] }, null] } } } }, { "$project" : { "A" : "$_id.A", "_id" : 0 } }, { "$match" : { "$expr" : { "$eq" : ["$A", { "$literal" : "ALFKIBerlin" }] } } }
             """);
     }
 
@@ -3060,7 +3060,7 @@ Employees.{ "$lookup" : { "from" : "Employees", "localField" : "_id", "foreignFi
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "A" : { "$concat" : ["$_id", "$City"] } } } }, { "$project" : { "A" : "$_id.A", "_id" : 0 } }, { "$sort" : { "A" : 1 } }
+            Customers.{ "$group" : { "_id" : { "A" : { "$ifNull" : [{ "$concat" : ["$_id", "$City"] }, null] } } } }, { "$project" : { "A" : "$_id.A", "_id" : 0 } }, { "$sort" : { "A" : 1 } }
             """);
     }
 
@@ -3070,7 +3070,7 @@ Employees.{ "$lookup" : { "from" : "Employees", "localField" : "_id", "foreignFi
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "A" : { "$concat" : ["$_id", "$City"] } } } }, { "$project" : { "A" : "$_id.A", "_id" : 0 } }, { "$match" : { "A" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$count" : "v" }
+            Customers.{ "$group" : { "_id" : { "A" : { "$ifNull" : [{ "$concat" : ["$_id", "$City"] }, null] } } } }, { "$project" : { "A" : "$_id.A", "_id" : 0 } }, { "$match" : { "A" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$count" : "v" }
             """);
     }
 
@@ -3099,7 +3099,7 @@ Customers.{ "$set" : { "__sort0" : { "$concat" : ["$_id", "$City"] } } }, { "$so
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "Property" : "$_id" } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$match" : { "Property" : "ALFKI" } }
+            Customers.{ "$group" : { "_id" : { "Property" : { "$ifNull" : ["$_id", null] } } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$match" : { "Property" : "ALFKI" } }
             """);
     }
 
@@ -3109,7 +3109,7 @@ Customers.{ "$set" : { "__sort0" : { "$concat" : ["$_id", "$City"] } } }, { "$so
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "Property" : "$_id" } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$sort" : { "Property" : 1 } }
+            Customers.{ "$group" : { "_id" : { "Property" : { "$ifNull" : ["$_id", null] } } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$sort" : { "Property" : 1 } }
             """);
     }
 
@@ -3119,7 +3119,7 @@ Customers.{ "$set" : { "__sort0" : { "$concat" : ["$_id", "$City"] } } }, { "$so
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "Property" : "$_id" } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$match" : { "Property" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$count" : "v" }
+            Customers.{ "$group" : { "_id" : { "Property" : { "$ifNull" : ["$_id", null] } } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$match" : { "Property" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$count" : "v" }
             """);
     }
 
@@ -3129,7 +3129,7 @@ Customers.{ "$set" : { "__sort0" : { "$concat" : ["$_id", "$City"] } } }, { "$so
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "Property" : { "$concat" : ["$_id", "$City"] } } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$match" : { "$expr" : { "$eq" : ["$Property", { "$literal" : "ALFKIBerlin" }] } } }
+            Customers.{ "$group" : { "_id" : { "Property" : { "$ifNull" : [{ "$concat" : ["$_id", "$City"] }, null] } } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$match" : { "$expr" : { "$eq" : ["$Property", { "$literal" : "ALFKIBerlin" }] } } }
             """);
     }
 
@@ -3139,7 +3139,7 @@ Customers.{ "$set" : { "__sort0" : { "$concat" : ["$_id", "$City"] } } }, { "$so
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "Property" : { "$concat" : ["$_id", "$City"] } } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$sort" : { "Property" : 1 } }
+            Customers.{ "$group" : { "_id" : { "Property" : { "$ifNull" : [{ "$concat" : ["$_id", "$City"] }, null] } } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$sort" : { "Property" : 1 } }
             """);
     }
 
@@ -3149,7 +3149,7 @@ Customers.{ "$set" : { "__sort0" : { "$concat" : ["$_id", "$City"] } } }, { "$so
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "Property" : { "$concat" : ["$_id", "$City"] } } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$match" : { "Property" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$count" : "v" }
+            Customers.{ "$group" : { "_id" : { "Property" : { "$ifNull" : [{ "$concat" : ["$_id", "$City"] }, null] } } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$match" : { "Property" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$count" : "v" }
             """);
     }
 
@@ -3988,7 +3988,7 @@ Customers.{ "$match" : { } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { "$ne" : "DRACD" } }] } }, { "$group" : { "_id" : { "City" : "$City" } } }, { "$project" : { "City" : "$_id.City", "_id" : 0 } }, { "$set" : { "__sort0" : { "$indexOfCP" : ["$City", { "$literal" : "c" }] } } }, { "$sort" : { "__sort0" : 1, "City" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 5 }
+Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { "$ne" : "DRACD" } }] } }, { "$group" : { "_id" : { "City" : { "$ifNull" : ["$City", null] } } } }, { "$project" : { "City" : "$_id.City", "_id" : 0 } }, { "$set" : { "__sort0" : { "$indexOfCP" : ["$City", { "$literal" : "c" }] } } }, { "$sort" : { "__sort0" : 1, "City" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 5 }
 """);
     }
 

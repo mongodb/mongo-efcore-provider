@@ -808,7 +808,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "México D.F." } }, { "$group" : { "_id" : { "CompanyName" : "$CompanyName" } } }, { "$project" : { "CompanyName" : "$_id.CompanyName", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "CompanyName" : "$CompanyName", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : true } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "City" : "México D.F." } }, { "$group" : { "_id" : { "CompanyName" : { "$ifNull" : ["$CompanyName", null] } } } }, { "$project" : { "CompanyName" : "$_id.CompanyName", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "CompanyName" : "$CompanyName", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : true } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -818,7 +818,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "México D.F." } }, { "$group" : { "_id" : { "CompanyName" : "$CompanyName" } } }, { "$project" : { "CompanyName" : "$_id.CompanyName", "_id" : 0 } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "CompanyName" : "$CompanyName", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "City" : "México D.F." } }, { "$group" : { "_id" : { "CompanyName" : { "$ifNull" : ["$CompanyName", null] } } } }, { "$project" : { "CompanyName" : "$_id.CompanyName", "_id" : 0 } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "CompanyName" : "$CompanyName", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -829,7 +829,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "México D.F." } }, { "$group" : { "_id" : { "CompanyName" : "$CompanyName" } } }, { "$project" : { "CompanyName" : "$_id.CompanyName", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "CompanyName" : "$CompanyName", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : false } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$match" : { "City" : "México D.F." } }, { "$group" : { "_id" : { "CompanyName" : { "$ifNull" : ["$CompanyName", null] } } } }, { "$project" : { "CompanyName" : "$_id.CompanyName", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : true }, "_b" : { "$literal" : false } } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$match" : { "ContactTitle" : "Owner" } }, { "$project" : { "CompanyName" : "$CompanyName", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$project" : { "_id" : 0, "_doc" : "$_id", "_a" : { "$literal" : false }, "_b" : { "$literal" : true } } }] } }, { "$group" : { "_id" : "$_doc", "_a" : { "$max" : "$_a" }, "_b" : { "$max" : "$_b" } } }, { "$match" : { "_a" : true, "_b" : false } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 

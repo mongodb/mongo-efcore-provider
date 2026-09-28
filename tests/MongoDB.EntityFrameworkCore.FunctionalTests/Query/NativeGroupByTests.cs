@@ -2927,4 +2927,247 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         Assert.Equal(expected.CapturedParameter, nativeOnly.CapturedParameter);
         Assert.Equal(expected.Sum, nativeOnly.Sum);
     }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // Relational comparisons over a possibly-null group operand. In the aggregation dialect null (and missing) orders
+    // below every value, so a bare $lt/$lte answers true for null, where C# lifted semantics (null < c) answer false.
+    // Expectations are hand-computed: driver-LINQ gets several of these wrong (noted per test), so it is only used as
+    // an oracle where it is right.
+    // ---------------------------------------------------------------------------------------------------------------
+
+    private class RankedOwner
+    {
+        public ObjectId Id { get; set; }
+        public string Name { get; set; } = "";
+        public string Region { get; set; } = "";
+        public int? Rank { get; set; }
+    }
+
+    // By Name: Alice 7, Bob {null, null} (all-null group), Cara 150, Dan 50, Eve {null, 20} (Max 20).
+    // By Region: North {7, 150}, South {null, null}, East {50, null, 20}.
+    // By Rank: 7, 20, 50, 150 (one row each) and null (Bob, Bob, Eve).
+    private static RankedOwner[] SeedRankedOwners() =>
+    [
+        new() { Id = ObjectId.GenerateNewId(), Name = "Alice", Region = "North", Rank = 7 },
+        new() { Id = ObjectId.GenerateNewId(), Name = "Bob", Region = "South", Rank = null },
+        new() { Id = ObjectId.GenerateNewId(), Name = "Bob", Region = "South", Rank = null },
+        new() { Id = ObjectId.GenerateNewId(), Name = "Cara", Region = "North", Rank = 150 },
+        new() { Id = ObjectId.GenerateNewId(), Name = "Dan", Region = "East", Rank = 50 },
+        new() { Id = ObjectId.GenerateNewId(), Name = "Eve", Region = "East", Rank = null },
+        new() { Id = ObjectId.GenerateNewId(), Name = "Eve", Region = "East", Rank = 20 },
+    ];
+
+    private List<T> RunRanked<T>(MongoQueryMode mode, string name, Func<IQueryable<RankedOwner>, List<T>> query)
+    {
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + mode
+            + Guid.NewGuid().ToString("N")[..8];
+        var collection = database.MongoDatabase.GetCollection<RankedOwner>(collectionName);
+        collection.InsertMany(SeedRankedOwners());
+
+        using var db = SingleEntityDbContext.Create(
+            collection,
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
+
+        return query(db.Entities);
+    }
+
+    [Fact]
+    public void Having_less_than_over_an_all_null_accumulator_excludes_the_group()
+    {
+        // Bob's Max is null: null < 100 is false. Driver-LINQ includes Bob (for < and <= alike), so the hand oracle
+        // is the only check.
+        var result = RunRanked(MongoQueryMode.NativeOnly, nameof(Having_less_than_over_an_all_null_accumulator_excludes_the_group),
+            q => q.GroupBy(o => o.Name)
+                .Where(g => g.Max(x => x.Rank) < 100)
+                .Select(g => new { g.Key, M = g.Max(x => x.Rank) })
+                .AsEnumerable().OrderBy(x => x.Key)
+                .Select(x => (x.Key, x.M)).ToList());
+
+        Assert.Equal([("Alice", (int?)7), ("Dan", 50), ("Eve", 20)], result);
+    }
+
+    [Fact]
+    public void Having_less_than_or_equal_and_constant_on_the_left_exclude_the_all_null_group()
+    {
+        var name = nameof(Having_less_than_or_equal_and_constant_on_the_left_exclude_the_all_null_group);
+
+        var lessOrEqual = RunRanked(MongoQueryMode.NativeOnly, name + "Le",
+            q => q.GroupBy(o => o.Name).Where(g => g.Max(x => x.Rank) <= 50)
+                .Select(g => new { g.Key, C = g.Count() })
+                .AsEnumerable().Select(x => x.Key).OrderBy(k => k).ToList());
+        Assert.Equal(["Alice", "Dan", "Eve"], lessOrEqual);
+
+        // 100 > Max flips to Max < 100.
+        var flippedGreater = RunRanked(MongoQueryMode.NativeOnly, name + "Gt",
+            q => q.GroupBy(o => o.Name).Where(g => 100 > g.Max(x => x.Rank))
+                .Select(g => new { g.Key, C = g.Count() })
+                .AsEnumerable().Select(x => x.Key).OrderBy(k => k).ToList());
+        Assert.Equal(["Alice", "Dan", "Eve"], flippedGreater);
+
+        // 50 >= Max flips to Max <= 50.
+        var flippedGreaterOrEqual = RunRanked(MongoQueryMode.NativeOnly, name + "Ge",
+            q => q.GroupBy(o => o.Name).Where(g => 50 >= g.Max(x => x.Rank))
+                .Select(g => new { g.Key, C = g.Count() })
+                .AsEnumerable().Select(x => x.Key).OrderBy(k => k).ToList());
+        Assert.Equal(["Alice", "Dan", "Eve"], flippedGreaterOrEqual);
+    }
+
+    [Fact]
+    public void Terminal_count_after_a_having_less_than_over_a_nullable_accumulator_excludes_the_all_null_group()
+    {
+        // The P05 shape. Driver-LINQ answers 4 (Bob counted), so the hand oracle is the only check.
+        var result = RunRanked(MongoQueryMode.NativeOnly,
+            nameof(Terminal_count_after_a_having_less_than_over_a_nullable_accumulator_excludes_the_all_null_group),
+            q => new List<int> { q.GroupBy(o => o.Name).Where(g => g.Max(x => x.Rank) < 100).Count() });
+
+        Assert.Equal([3], result);
+    }
+
+    [Fact]
+    public void Terminal_all_over_a_nullable_accumulator_is_false_for_an_all_null_group()
+    {
+        // All renders the negated comparison: !(null < 100) is true, so Bob's group fails All. Cara (150) is filtered
+        // out so Bob is the only failing group. Driver-LINQ answers true (it $not-wraps the same bare $lt), so the hand
+        // oracle is the only check.
+        var name = nameof(Terminal_all_over_a_nullable_accumulator_is_false_for_an_all_null_group);
+        var withBob = RunRanked(MongoQueryMode.NativeOnly, name + "B",
+            q => new List<bool> { q.Where(o => o.Name != "Cara").GroupBy(o => o.Name).All(g => g.Max(x => x.Rank) < 100) });
+        Assert.Equal([false], withBob);
+
+        var withoutBob = RunRanked(MongoQueryMode.NativeOnly, name + "N",
+            q => new List<bool>
+            {
+                q.Where(o => o.Name != "Cara" && o.Name != "Bob").GroupBy(o => o.Name).All(g => g.Max(x => x.Rank) < 100)
+            });
+        Assert.Equal([true], withoutBob);
+    }
+
+    [Fact]
+    public void Post_group_bare_accumulator_alias_all_is_false_for_an_all_null_group()
+    {
+        // The bare-accumulator-alias branch of MongoExpressionTranslator compares the flattened output field, and
+        // NativeGroupByBinder.TryNegateGroupComparison $not-wraps it for All.
+        var name = nameof(Post_group_bare_accumulator_alias_all_is_false_for_an_all_null_group);
+        var result = NativeModeAssert.NativeAndParity(mode => RunRanked(mode, name,
+            q => new List<bool>
+            {
+                q.Where(o => o.Name != "Cara").GroupBy(o => o.Name).Select(g => g.Max(x => x.Rank)).All(v => v < 100)
+            }));
+        Assert.Equal([false], result);
+    }
+
+    [Fact]
+    public void Post_group_bare_accumulator_alias_where_declines_cleanly()
+    {
+        // A Where over the bare accumulator alias (EF's normalization of Count(pred)) isn't native. Pinned so the null
+        // handling is re-checked when it becomes native.
+        var name = nameof(Post_group_bare_accumulator_alias_where_declines_cleanly);
+        var result = NativeModeAssert.DeclinesCleanly(mode => RunRanked(mode, name,
+            q => new List<int> { q.GroupBy(o => o.Name).Select(g => g.Max(x => x.Rank)).Count(v => v < 100) }));
+        Assert.Equal([3], result);
+    }
+
+    [Fact]
+    public void Post_group_named_accumulator_alias_all_is_false_for_an_all_null_group()
+    {
+        // Not folded into the terminal All path: the Select is kept, so this goes through the post-group aggregate
+        // path, which compares the flattened "M" alias in a $match after the $project. Driver-LINQ gets this shape
+        // right (it renders the query-dialect { M: { $not: { $lt: 100 } } }), unlike the terminal All in
+        // Terminal_all_over_a_nullable_accumulator_is_false_for_an_all_null_group, hence full parity here.
+        var name = nameof(Post_group_named_accumulator_alias_all_is_false_for_an_all_null_group);
+        var result = NativeModeAssert.NativeAndParity(mode => RunRanked(mode, name,
+            q => new List<bool>
+            {
+                q.Where(o => o.Name != "Cara").GroupBy(o => o.Name)
+                    .Select(g => new { g.Key, M = g.Max(x => x.Rank) }).All(x => x.M < 100)
+            }));
+        Assert.Equal([false], result);
+    }
+
+    [Fact]
+    public void Greater_than_equal_and_not_equal_over_a_nullable_accumulator_stay_correct()
+    {
+        var name = nameof(Greater_than_equal_and_not_equal_over_a_nullable_accumulator_stay_correct);
+
+        List<int> Run(MongoQueryMode mode) =>
+        [
+            RunRanked(mode, name + "Gt", q => new List<int> { q.GroupBy(o => o.Name).Where(g => g.Max(x => x.Rank) > 10).Count() })[0],
+            RunRanked(mode, name + "Eq", q => new List<int> { q.GroupBy(o => o.Name).Where(g => g.Max(x => x.Rank) == 7).Count() })[0],
+            RunRanked(mode, name + "Ne", q => new List<int> { q.GroupBy(o => o.Name).Where(g => g.Max(x => x.Rank) != 7).Count() })[0],
+            RunRanked(mode, name + "Null", q => new List<int> { q.GroupBy(o => o.Name).Where(g => g.Max(x => x.Rank) == null).Count() })[0],
+            RunRanked(mode, name + "NotNull", q => new List<int> { q.GroupBy(o => o.Name).Where(g => g.Max(x => x.Rank) != null).Count() })[0],
+        ];
+
+        // > 10: Cara, Dan, Eve. == 7: Alice. != 7: Bob (null != 7), Cara, Dan, Eve. == null: Bob. != null: the other 4.
+        var result = NativeModeAssert.NativeAndParity(Run);
+        Assert.Equal([3, 1, 4, 1, 4], result);
+    }
+
+    [Fact]
+    public void Having_less_than_over_a_nullable_key_excludes_the_null_key_group()
+    {
+        var name = nameof(Having_less_than_over_a_nullable_key_excludes_the_null_key_group);
+        var result = NativeModeAssert.NativeAndParity(mode => RunRanked(mode, name,
+            q => q.GroupBy(o => o.Rank).Where(g => g.Key < 100)
+                .Select(g => new { g.Key, C = g.Count() })
+                .AsEnumerable().OrderBy(x => x.Key)
+                .Select(x => (x.Key, x.C)).ToList()));
+        Assert.Equal([((int?)7, 1), (20, 1), (50, 1)], result);
+
+        var nullKey = NativeModeAssert.NativeAndParity(mode => RunRanked(mode, name + "Null",
+            q => q.GroupBy(o => o.Rank).Where(g => g.Key == null)
+                .Select(g => new { g.Key, C = g.Count() })
+                .AsEnumerable().Select(x => (x.Key, x.C)).ToList()));
+        Assert.Equal([((int?)null, 3)], nullKey);
+    }
+
+    [Fact]
+    public void Per_element_accumulator_condition_over_a_nullable_property_does_not_count_null()
+    {
+        // South is {null, null}: null < 60 is false, so 0. East is {50, null, 20}: 2. Driver-LINQ counts the nulls
+        // (South 2, East 3), so the hand oracle is the only check.
+        var result = RunRanked(MongoQueryMode.NativeOnly,
+            nameof(Per_element_accumulator_condition_over_a_nullable_property_does_not_count_null),
+            q => q.GroupBy(o => o.Region)
+                .Select(g => new { g.Key, C = g.Count(x => x.Rank < 60), Mirrored = g.Count(x => 61 > x.Rank + 1) })
+                .AsEnumerable().OrderBy(x => x.Key)
+                .Select(x => (x.Key, x.C, x.Mirrored)).ToList());
+
+        // Mirrored keeps its operand order ($gt: [61, {$add: [Rank, 1]}]), so the nullable operand is the right-hand,
+        // lower side of $gt: the guard must follow the operator, not the position.
+        Assert.Equal([("East", 2, 2), ("North", 1, 1), ("South", 0, 0)], result);
+    }
+
+    [Fact]
+    public void Key_only_accumulator_condition_over_a_nullable_key_does_not_count_the_null_key()
+    {
+        // g.Count(x => g.Key < 100) counts every element when the key passes, none otherwise. Driver-LINQ answers 0
+        // for every group, so the hand oracle is the only check.
+        var result = RunRanked(MongoQueryMode.NativeOnly,
+            nameof(Key_only_accumulator_condition_over_a_nullable_key_does_not_count_the_null_key),
+            q => q.GroupBy(o => o.Rank)
+                .Select(g => new { g.Key, C = g.Count(x => g.Key < 100) })
+                .AsEnumerable().OrderBy(x => x.Key)
+                .Select(x => (x.Key, x.C)).ToList());
+
+        Assert.Equal([((int?)null, 0), (7, 1), (20, 1), (50, 1), (150, 0)], result);
+    }
+
+    [Fact]
+    public void Projection_ternary_over_a_nullable_key_treats_null_as_not_less()
+    {
+        // Driver-LINQ answers 1 for the null key, so the hand oracle is the only check.
+        var result = RunRanked(MongoQueryMode.NativeOnly,
+            nameof(Projection_ternary_over_a_nullable_key_treats_null_as_not_less),
+            q => q.GroupBy(o => o.Rank)
+                .Select(g => new { g.Key, F = g.Key < 100 ? 1 : 0 })
+                .AsEnumerable().OrderBy(x => x.Key)
+                .Select(x => (x.Key, x.F)).ToList());
+
+        Assert.Equal([((int?)null, 0), (7, 1), (20, 1), (50, 1), (150, 0)], result);
+    }
 }

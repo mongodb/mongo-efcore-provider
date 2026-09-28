@@ -778,8 +778,10 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
 
         db.Entities.AsNoTracking().Where(b => b.Posts.Count > threshold).ToList();
 
-        // One fragment rather than separate Contains checks, so the nesting order of $expr/$size/$ifNull is pinned.
-        spy.AssertExecutedMqlContains("{ \"$expr\" : { \"$gt\" : [{ \"$size\" : { \"$ifNull\" : [\"$Posts\", []] } }, { \"$literal\" : 1 }] } }");
+        // One fragment rather than separate Contains checks, so the nesting order of $expr/$size/$ifNull is pinned. The
+        // parameter is the lower side of $gt, so it carries the aggregation dialect's null guard (see
+        // MongoAggregationExpressionRenderer.MayBeNull).
+        spy.AssertExecutedMqlContains("{ \"$expr\" : { \"$and\" : [{ \"$gt\" : [{ \"$literal\" : 1 }, null] }, { \"$gt\" : [{ \"$size\" : { \"$ifNull\" : [\"$Posts\", []] } }, { \"$literal\" : 1 }] }] } }");
     }
 
     [Fact]

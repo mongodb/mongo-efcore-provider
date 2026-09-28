@@ -946,6 +946,50 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     }
 
     /// <summary>
+    /// The join scope a <c>GroupBy</c> may resolve through, or <see langword="null"/> to keep root-entity resolution.
+    /// Pure: unlike <see cref="IsSingleEligibleNativeJoinScope"/> it never defers recorded ops, so it's safe to call
+    /// before the grouping has bound. Called before <c>IsGroupBy</c> is set.
+    /// </summary>
+    /// <remarks>
+    /// Paging recorded ahead of the grouped join is kept only when every join is 1:1 (a left-outer reference
+    /// navigation), so it commutes with the <c>$lookup</c>. Any other paging declines instead of being deferred past
+    /// the <c>$lookup</c>. Deferral is acceptable for a projection (it differs only for dangling references), but here
+    /// it would silently change group counts. Chains decline on any paging (the snapshot gap at the bare-value arm of
+    /// <see cref="TranslateSelect"/>). The key selector's parameter must be the join's <c>TransparentIdentifier</c>:
+    /// an entity-typed parameter can't be routed by <see cref="MongoGroupElementTranslator"/>, and the root translator
+    /// would resolve its members by name against the outer entity. Defence in depth: nav-expansion folds a result
+    /// selector that projected one side (<c>(o, w) =&gt; w</c>) into the GroupBy as <c>ti =&gt; ti.Inner.X</c>, so no
+    /// shape is known to reach a non-<c>TransparentIdentifier</c> parameter over a join scope.
+    /// </remarks>
+    internal static MongoJoinScope? TryGetGroupByJoinScope(MongoQueryExpression mongoQueryExpression, LambdaExpression keySelector)
+    {
+        var select = mongoQueryExpression.Select;
+        if (select.JoinScope is not { } scope
+            || !keySelector.Parameters[0].Type.IsTransparentIdentifierType()
+            || scope.Levels.Count != mongoQueryExpression.Joins.Count
+            || select.HasUnsupportedOperator
+            || select.HasTerminalOperator
+            || select.UnwindSource != null
+            || select.Cardinality != null
+            // ConfirmEntireChain isn't idempotent (it counts confirmations), so a second confirm must be unreachable.
+            || select.HasConfirmedJoinLookup
+            || mongoQueryExpression.Joins.Any(j => j.Lookup is null))
+        {
+            return null;
+        }
+
+        if (select.HasPaging
+            && (scope.Levels.Count > 1
+                || select.JoinInnerAccessConfirmed
+                || !mongoQueryExpression.AreAllJoinsRowCountPreserving()))
+        {
+            return null;
+        }
+
+        return scope;
+    }
+
+    /// <summary>
     /// Returns <see langword="true"/> when <paramref name="selector"/> is a transparent-identifier
     /// selector produced by a Join/GroupJoin/LeftJoin rewrite — i.e. the body constructs an anonymous
     /// object whose fields are the outer and inner parameters without further transformation.
@@ -1982,7 +2026,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         LambdaExpression? elementSelector, LambdaExpression? resultSelector)
     {
         // The base TranslateGroupBy is abstract, so the grouped query is built here. Native supports only
-        // GroupBy(key).Select(aggregate); a non-null resultSelector or an unbindable key marks non-native.
+        // GroupBy(key).Select(aggregate), over the root collection or an eligible join scope
+        // (TryGetGroupByJoinScope); a non-null resultSelector or an unbindable key marks non-native.
         var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
 
         // A GroupBy over an existing grouping/distinct terminal must not rebind by default: TryBindGroupKey would
@@ -2001,6 +2046,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // both $group stages in order. Only TryBindGroupProjection/TryBindDistinctFromProjection leave Grouping
         // set here (TryBindGroupTerminalAggregate also sets Cardinality, ending the query).
         var hasFinalizedPriorGrouping = mongoQueryExpression.Select.Grouping != null;
+
+        // Decided before IsGroupBy is set (which makes HasTerminalOperator true). A nested GroupBy over a finalized
+        // grouping resolves against the prior stage's alias, never a join scope.
+        var groupByJoinScope = hadTerminalGrouping || hasFinalizedPriorGrouping
+            ? null
+            : TryGetGroupByJoinScope(mongoQueryExpression, keySelector);
 
         // Set unconditionally so TranslateJoinCore can detect a join over a grouped source.
         mongoQueryExpression.Select.IsGroupBy = true;
@@ -2025,6 +2076,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 // stage's aliases.
                 mongoQueryExpression.ClearReadProjectionForNestedGroupBy();
             }
+
+            mongoQueryExpression.Select.GroupByJoinScope = groupByJoinScope;
 
             if (resultSelector != null
                 || !NativeGroupByBinder.TryBindGroupKey(mongoQueryExpression, keySelector))

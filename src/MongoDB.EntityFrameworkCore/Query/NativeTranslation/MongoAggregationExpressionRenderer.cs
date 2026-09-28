@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using MongoDB.Bson;
@@ -811,7 +812,25 @@ internal static class MongoAggregationExpressionRenderer
             right = MissingAsNullWhenComparedToNull(binary.Right, binary.Left, right);
         }
 
-        return new BsonDocument(op, new BsonArray { left, right });
+        var rendered = new BsonDocument(op, new BsonArray { left, right });
+
+        // Relational null-ordering guard (disjoint from the ==/!= missing-as-null rule above). Element-scoped
+        // predicates ($filter cond, quantifier $map "in") are guarded too: the reused operand is already rendered
+        // against the element variable ($$e.<field>), and a missing element field fails `$gt: [missing, null]` just
+        // as a missing document field does.
+        //
+        // The guard reuses the operand's final rendered value (cloned, so the two positions don't share one
+        // instance) rather than rendering it again, so a parameter operand keeps a single placeholder-table entry.
+        return LowerRelationalOperand(binary) is { } lower && MayBeNull(lower)
+            ? new BsonDocument("$and", new BsonArray
+            {
+                new BsonDocument("$gt", new BsonArray
+                {
+                    (ReferenceEquals(lower, binary.Left) ? left : right).DeepClone(), BsonNull.Value
+                }),
+                rendered
+            })
+            : rendered;
     }
 
     // $eq/$ne don't equate a missing field with null (the query dialect's { field: null } does, and so does .NET,
@@ -824,6 +843,54 @@ internal static class MongoAggregationExpressionRenderer
                or MongoElementRefExpression { NullSafe: false, Path: not MongoElementRefExpression.WholeRootDocumentPath }
             ? new BsonDocument("$ifNull", new BsonArray { rendered, BsonNull.Value })
             : rendered;
+
+    // The operand on the "less" side of a relational comparison: the Left of </<=, the Right of >/>=. Null for any
+    // other operator.
+    //
+    // The aggregation dialect orders null (and missing) below every value, so `$lt: [null, 5]`, `$lte: [null, null]`,
+    // `$gt: [5, null]` and `$gte: [null, null]` are all true, where C# lifted comparison semantics answer false for
+    // any null operand. Only the less side can make a relational operator wrongly true (a non-null lower side never
+    // orders below a null or missing greater side), so RenderBinary conjoins `$gt: [lower, null]` (true exactly when
+    // the lower operand is neither null nor missing; missing orders below null) whenever that side may be null. Structural here rather than at each
+    // construction site, so every aggregation-dialect comparison (HAVING $match, $cond inside $group, $project
+    // ternaries, $expr fall-through) gets it. Negation stays exact: every negator $not-wraps a relational operator,
+    // and the guard is inside the wrapped node, so the complement of the guarded pair is exactly C#'s !(a < b).
+    private static MongoExpression? LowerRelationalOperand(MongoBinaryExpression binary)
+        => binary.Operator switch
+        {
+            MongoBinaryOperator.LessThan or MongoBinaryOperator.LessThanOrEqual => binary.Left,
+            MongoBinaryOperator.GreaterThan or MongoBinaryOperator.GreaterThanOrEqual => binary.Right,
+            _ => null
+        };
+
+    /// <summary>
+    /// Whether <paramref name="node"/> may evaluate to null or missing in the aggregation dialect, judged
+    /// conservatively from its CLR type (a nullable value type or a reference type) and from null-propagating
+    /// operators over such an operand. A non-null constant never does; a query parameter always may (its value is
+    /// only known at execution).
+    /// </summary>
+    internal static bool MayBeNull(MongoExpression node)
+        => node switch
+        {
+            MongoConstantExpression constant => constant.Value is null,
+            // Rendered as $ifNull: [field, null], so it is null (never missing) when absent.
+            MongoFieldExpression { NullSafe: true } or MongoElementRefExpression { NullSafe: true } => true,
+            MongoParameterExpression => true,
+            // Arithmetic ($add/$subtract/..., $trunc of $divide) propagates a null operand.
+            MongoBinaryExpression { Operator: not (MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse
+                or MongoBinaryOperator.Equal or MongoBinaryOperator.NotEqual or MongoBinaryOperator.LessThan
+                or MongoBinaryOperator.LessThanOrEqual or MongoBinaryOperator.GreaterThan
+                or MongoBinaryOperator.GreaterThanOrEqual) } arithmetic
+                => IsNullableClrType(arithmetic.Type) || MayBeNull(arithmetic.Left) || MayBeNull(arithmetic.Right),
+            // $toX, $year/$month/..., and the math operators all return null for a null input.
+            MongoConvertExpression convert => IsNullableClrType(convert.Type) || MayBeNull(convert.Operand),
+            MongoDatePartExpression datePart => MayBeNull(datePart.Operand),
+            MongoMathExpression math => IsNullableClrType(math.Type) || math.Operands.Any(MayBeNull),
+            _ => IsNullableClrType(node.Type)
+        };
+
+    private static bool IsNullableClrType(Type type)
+        => !type.IsValueType || Nullable.GetUnderlyingType(type) is not null;
 
     private static void CheckLogicalOperandSerialization(MongoExpression operand)
     {
