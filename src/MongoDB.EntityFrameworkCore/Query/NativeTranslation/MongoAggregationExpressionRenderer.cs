@@ -22,71 +22,49 @@ using MongoDB.EntityFrameworkCore.Serializers;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// Renders a dialect-agnostic <see cref="MongoExpression"/> subtree to a MongoDB
-/// <em>aggregation expression</em> (the body that sits inside <c>{ $expr: … }</c>).
-/// Used only for subtrees that have no correct query-dialect rendering (field-to-field
-/// comparisons, arithmetic operands); the query renderer wraps the result in <c>$expr</c>.
+/// Renders a <see cref="MongoExpression"/> subtree to an aggregation expression (the body inside
+/// <c>{ $expr: … }</c>), for subtrees with no correct query-dialect rendering.
 /// </summary>
 internal static class MongoAggregationExpressionRenderer
 {
     /// <summary>
-    /// Renders <paramref name="node"/> to an aggregation-expression <see cref="BsonValue"/>
-    /// (the body that sits inside <c>{ $expr: … }</c>).
+    /// Renders <paramref name="node"/> to an aggregation-expression <see cref="BsonValue"/>.
     /// </summary>
     /// <param name="node">The root <see cref="MongoExpression"/> subtree to render.</param>
     /// <param name="placeholders">
-    /// Receives one entry per <see cref="MongoParameterExpression"/> encountered.
-    /// Each entry's corresponding sentinel is embedded in the returned <see cref="BsonValue"/>.
+    /// Receives one entry per <see cref="MongoParameterExpression"/>; its sentinel is embedded in the result.
     /// </param>
     /// <param name="elementVariable">
-    /// The <c>$filter</c>/<c>$map</c> <c>as</c> variable name currently in scope, or <see langword="null"/> at
-    /// the document root. When non-null, a field reference renders as <c>"$$" + elementVariable + "." + path</c>
-    /// instead of <c>"$" + path</c> — the enclosing document is no longer addressable as <c>$path</c> once a
-    /// <see cref="MongoFilteredSizeExpression"/>'s <c>$filter</c> has bound the element to a variable. Every
-    /// pre-existing call site omits this (it defaults to <see langword="null"/>), which is what keeps their
-    /// emitted MQL byte-identical.
+    /// The <c>$filter</c>/<c>$map</c> <c>as</c> variable in scope, or <see langword="null"/> at the document root.
+    /// When set, field refs render as <c>"$$var.path"</c>, since the element is no longer addressable as
+    /// <c>$path</c>.
     /// </param>
     /// <returns>
-    /// A <see cref="BsonValue"/> representing the aggregation-expression body.
+    /// The aggregation-expression body.
     /// </returns>
     /// <exception cref="NativeTranslationNotSupportedException">
-    /// Thrown for any node type or operator not handled by this renderer.
+    /// Thrown for any node type or operator this renderer doesn't handle.
     /// </exception>
     public static BsonValue Render(MongoExpression node, PlaceholderTable placeholders, string? elementVariable = null)
         => node switch
         {
-            // NullSafe mirrors the MongoElementRefExpression{NullSafe:true} arm just below, for the same
-            // reason: see MongoFieldExpression.NullSafe's own remarks.
+            // See MongoFieldExpression.NullSafe.
             MongoFieldExpression { NullSafe: true } nullSafeField
                 => new BsonDocument("$ifNull", new BsonArray { FieldRef(nullSafeField.ElementName, elementVariable), BsonNull.Value }),
             MongoFieldExpression field => FieldRef(field.ElementName, elementVariable),
-            // NullSafe wraps a MISSING element the same as an explicitly-stored null (see the node's own
-            // remarks) — needed for an owned-nav null-equality check, where $expr's own $eq does not
-            // otherwise treat "missing" and "null" alike the way the ordinary query dialect does.
+            // Treats a missing element like null (needed for owned-nav null checks: $expr's $eq doesn't).
             MongoElementRefExpression { NullSafe: true } nullSafeElementRef
                 => new BsonDocument("$ifNull", new BsonArray { FieldRef(nullSafeElementRef.Path, elementVariable), BsonNull.Value }),
             MongoElementRefExpression elementRef => FieldRef(elementRef.Path, elementVariable),
-            // Always at document root, REGARDLESS of elementVariable — see the node's own remarks.
+            // Always at document root, regardless of elementVariable.
             MongoOuterFieldExpression outer => FieldRef(outer.ElementName, elementVariable: null),
-            // EF-322: the ONLY consumer today is a Select-side join-scope null-check ternary
-            // (`ti.Inner != null ? ti.Inner.City : null`) whose Test is rendered here as the MongoConditionalExpression's
-            // "if" — see NativeJoinScopeProjectionBinder.TryBindConditionalProjection. LookupAlias is a plain top-level
-            // field name (the $lookup's own "as"), so it renders through the same FieldRef helper as any other field.
+            // Used for a Select-side join-scope null-check ternary (`ti.Inner != null ? ti.Inner.City : null`;
+            // see NativeJoinScopeProjectionBinder.TryBindConditionalProjection).
             //
-            // Wrapped in $ifNull, mirroring the NullSafe MongoElementRefExpression arm just above and for the
-            // EXACT SAME reason: after a $lookup + $unwind(preserveNullAndEmptyArrays: true), an unmatched row's
-            // LookupAlias field is genuinely MISSING (unset), not an explicit BSON null — and $eq/$ne in the
-            // aggregation-EXPRESSION dialect (unlike the query dialect's {field: null}) do NOT treat missing and
-            // null alike; BSON's Missing type sorts strictly below Null, so a bare $ne against an unmatched row's
-            // missing field evaluates true (wrongly reporting "present"). MEASURED against a real server: without
-            // the $ifNull normalization, an unmatched left-joined row's null-check comes back true and the
-            // ternary picks the WRONG (IfTrue) branch, itself reading a now-missing nested field, which $project
-            // then drops from the output entirely rather than emitting the intended IfFalse value — silently
-            // wrong data, not a translation failure. $ifNull(missing, null) => null and $ifNull(<doc>, null) =>
-            // <doc>, so the wrapped comparison is correct for both the matched and unmatched cases.
-            // Always at document root, REGARDLESS of elementVariable — a $lookup alias is always a ROOT-level
-            // field by construction (this node is never produced/read inside a $filter/$map element scope),
-            // exactly like the MongoOuterFieldExpression arm above (final-review fix, M4).
+            // $ifNull-wrapped: after $lookup + $unwind(preserveNullAndEmptyArrays), an unmatched row's alias is
+            // missing, and aggregation $eq/$ne don't equate missing with null, so a bare $ne answers "present"
+            // and the ternary picks the wrong branch — silently wrong data. Always root-level: a $lookup alias
+            // is never inside a $filter/$map element scope.
             MongoLookupNullCheckExpression lookupNullCheck
                 => new BsonDocument(lookupNullCheck.IsNotNull ? "$ne" : "$eq",
                     new BsonArray
@@ -97,8 +75,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoConstantExpression or MongoParameterExpression => MongoValueRenderer.RenderValue(node, placeholders),
             MongoBinaryExpression binary => RenderBinary(binary, placeholders, elementVariable),
             MongoSizeExpression size => RenderSize(size, elementVariable),
-            // EF-322: $avg/$max/$min/$sum as an ARRAY-expression operator (over the $addToSet accumulator's
-            // own output field), not a $group accumulator — see the node's own remarks.
+            // Array-expression $avg/$max/$min/$sum over an $addToSet output, not a $group accumulator.
             MongoArrayReduceExpression arrayReduce
                 => new BsonDocument(arrayReduce.OperatorName, FieldRef(arrayReduce.FieldName, elementVariable)),
             MongoFilteredSizeExpression filtered => RenderFilteredSize(filtered, placeholders, elementVariable),
@@ -146,34 +123,20 @@ internal static class MongoAggregationExpressionRenderer
             MongoTrimExpression trim => RenderTrim(trim, placeholders, elementVariable),
             MongoStringFirstOrLastExpression firstOrLast => RenderStringFirstOrLast(firstOrLast, placeholders, elementVariable),
             MongoQuantifierExpression quantifier => RenderQuantifier(quantifier, placeholders, elementVariable),
-            // A constructed nested sub-document leaf (EF-447, `new Book { Id = e.Id, Title = e.Title }`).
-            // Each member renders through RenderBranch, not the bare Render call — a nested constant/parameter
-            // member (first possible as of EF-322's GroupBy nested-construction slice; EF-447's own usage only
-            // ever produced MongoFieldExpression members) needs the SAME $literal-wrapping a top-level $project
-            // value already gets, or MongoDB misreads a bare number/bool as an inclusion/exclusion flag and a
-            // bare "$"-prefixed string as a field-path reference. A field ref itself renders unaffected (only
-            // MongoConstantExpression/MongoParameterExpression get wrapped) as "$ElementName" exactly like any
-            // other computed leaf value — never a bare unprefixed name.
+            // Constructed nested sub-document (`new Book { Id = e.Id, Title = e.Title }`). Members go through
+            // RenderBranch so constants/parameters get $literal-wrapped as at top level; otherwise MongoDB reads a
+            // bare number/bool as an inclusion flag and a "$"-prefixed string as a field path.
             MongoDocumentConstructionExpression construction
                 => new BsonDocument(construction.Members.Select(
                     m => new BsonElement(m.MemberName, RenderBranch(m.Value, placeholders, elementVariable)))),
             MongoConcatExpression concat
                 => new BsonDocument("$concat",
                     new BsonArray(concat.Operands.Select(o => Render(o, placeholders, elementVariable)))),
-            // EF-322 (Include_collection_with_conditional_order_by): admits ANY Term shape, not just a
-            // field-to-field one. Every CanRender caller (see its own remarks) is already inside an
-            // $expr/$addFields/$sort/quantifier scope with no $regularExpression alternative available — a
-            // top-level $match predicate never reaches this renderer at all, since a constant/parameter-term
-            // regex is handled entirely by the separate query-dialect path (MongoQueryLanguageRenderer) before
-            // it would. So there is no fallback disposition being preserved by declining a constant/parameter
-            // term here; it must render exactly like the field-to-field case.
+            // Any Term shape: callers are all in aggregation scopes with no $regularExpression alternative
+            // (top-level $match regexes are rendered by MongoQueryLanguageRenderer instead).
             MongoRegexExpression regex => RenderRegexAsExpr(regex, placeholders, elementVariable),
-            // A constructed-tuple comparison operand (EF-322 follow-up) — a literal MQL array of the tuple's
-            // per-member values, each rendered through this SAME Render call exactly like any other computed
-            // value (a field ref, a constant, a nested computation). Unlike MongoValueListExpression (which
-            // is deliberately NOT top-level-renderable — see its own remarks), this node exists ONLY as a
-            // top-level $eq/$ne operand, so it is wired into the ordinary dispatch rather than a dedicated
-            // $in-only helper.
+            // Constructed-tuple comparison operand: an MQL array of the per-member values. Only ever a top-level
+            // $eq/$ne operand, unlike MongoValueListExpression.
             MongoTupleExpression tuple
                 => new BsonArray(tuple.Elements.Select(e => Render(e, placeholders, elementVariable))),
             _ => throw new NativeTranslationNotSupportedException(
@@ -184,28 +147,15 @@ internal static class MongoAggregationExpressionRenderer
     /// Returns whether <see cref="Render"/> would render <paramref name="node"/> without throwing.
     /// </summary>
     /// <remarks>
-    /// <b>This method and <see cref="Render"/> must be changed together.</b> It is the aggregation-dialect
-    /// counterpart of <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>, and exists for the same
-    /// reason: a caller that builds a node the renderer cannot express turns a clean translate-time decline
-    /// into a render-time throw.
+    /// Must be changed together with <see cref="Render"/>. Aggregation-dialect counterpart of
+    /// <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>: lets callers decline at translate time instead
+    /// of throwing at render time.
     /// <para>
-    /// <b>Scope (EF-365).</b> The sole caller is
-    /// <c>NativeSlotPopulator.TryTranslateComputedSortKey</c>, where the gate is load-bearing because a
-    /// computed sort key's <c>$set</c> body has no fallback disposition of its own. It is NOT a general
-    /// "decline anything unrenderable" rule: the filtered-count branch of
-    /// <see cref="MongoExpressionTranslator"/> deliberately does <em>not</em> consult it, because for that
-    /// shape a render-time throw is caught by <c>TryBuildPipeline</c> and lands on a working driver-LINQ
-    /// fallback, while a translate-time decline lands on a hard <c>InvalidOperationException</c> in every
-    /// query mode. Before adding a call to this method, check which of those two dispositions the caller
-    /// actually has.
-    /// </para>
-    /// <para>
-    /// <b>EF-413:</b> <c>MongoInExpression</c> (client-collection <c>Contains</c>, rendered as the array-form
-    /// <c>{ $in: [needle, haystack] }</c>, negation via an enclosing <c>$not</c>) and
-    /// <c>MongoUnaryExpression{Not}</c> (rendered as <c>{ $not: [ &lt;operand&gt; ] }</c> over any operand this
-    /// method itself admits) both have aggregation-dialect arms now, so a client-collection <c>Contains</c> or
-    /// a unary <c>Not</c> in a computed sort key (gated via <c>NativeSlotPopulator.TryTranslateComputedSortKey</c>)
-    /// goes native instead of declining to fallback.
+    /// Only consult it where a render-time throw has no fallback (e.g.
+    /// <c>NativeSlotPopulator.TryTranslateComputedSortKey</c>). The filtered-count branch of
+    /// <see cref="MongoExpressionTranslator"/> deliberately doesn't: its render-time throw is caught by
+    /// <c>TryBuildPipeline</c> and falls back to driver-LINQ, whereas a translate-time decline hard-fails in every
+    /// mode.
     /// </para>
     /// </remarks>
     public static bool CanRender(MongoExpression node)
@@ -213,15 +163,9 @@ internal static class MongoAggregationExpressionRenderer
         {
             MongoFieldExpression or MongoElementRefExpression or MongoOuterFieldExpression or MongoLookupNullCheckExpression => true,
             MongoConstantExpression or MongoParameterExpression => true,
-            // EF-396 (review fix): $and/$or evaluate a BARE operand by TRUTHINESS, not by CLR boolean value —
-            // the same hazard the Not arm below already guards against for its own bare-field operand. Without
-            // this dedicated arm, the generic MongoBinaryExpression arm's CanRender(Left)/CanRender(Right) would
-            // recurse into the unconditional `MongoFieldExpression => true` case above and admit a
-            // value-converted/non-default-represented bool field used bare inside &&/||, which renders
-            // successfully but answers the WRONG boolean (e.g. a HasConversion<string>() bool stored as "N",
-            // a non-empty — therefore truthy — string regardless of the CLR value false). See
-            // CanRenderLogicalOperand for the exact rule; a comparison-result operand (x.Age > 5) is unaffected
-            // and safe, since a comparison already produces a genuine computed boolean.
+            // $and/$or test a bare operand by truthiness, so a value-converted bool field (e.g. stored as "N",
+            // a truthy string) would render but answer wrong. See CanRenderLogicalOperand; comparison-result
+            // operands are safe.
             MongoBinaryExpression { Operator: MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse } logical
                 => CanRenderLogicalOperand(logical.Left) && CanRenderLogicalOperand(logical.Right),
             MongoBinaryExpression binary
@@ -230,12 +174,8 @@ internal static class MongoAggregationExpressionRenderer
             MongoFilteredSizeExpression filtered => CanRender(filtered.ElementPredicate),
             MongoInExpression inExpr => CanRenderInValues(inExpr.Values),
             MongoComputedInExpression computedIn => CanRender(computedIn.Needle) && CanRenderInValues(computedIn.Values),
-            // A bare-field operand must ALSO be default-serialized — mirrors RenderUnary's own render-time
-            // guard (EF-413 review fix), so the two can never disagree: CanRender=true must mean Render
-            // actually succeeds AND answers correctly, not merely "doesn't throw". Checked via
-            // TryGetBareFieldProperty (final-review fix), which matches BOTH MongoFieldExpression and
-            // MongoOuterFieldExpression — a bare outer-scoped bool under Not has the exact same
-            // truthiness hazard as an ordinary bare field.
+            // A bare-field operand (MongoFieldExpression or MongoOuterFieldExpression) must be default-serialized,
+            // matching RenderUnary's render-time guard, so CanRender=true means Render answers correctly.
             MongoUnaryExpression { Operator: MongoUnaryOperator.Not } unary
                 => CanRender(unary.Operand)
                     && !MongoExpressionTranslator.IsUnsafeTruthinessRoot(unary.Operand, out _),
@@ -254,43 +194,26 @@ internal static class MongoAggregationExpressionRenderer
             MongoStringFirstOrLastExpression firstOrLast => CanRender(firstOrLast.Source),
             MongoQuantifierExpression quantifier => CanRender(quantifier.ArrayPath) && CanRender(quantifier.ElementPredicate),
             MongoConcatExpression concat => concat.Operands.All(CanRender),
-            // Answers true unconditionally for StartsWith/EndsWith/Contains/IsMatch — this relies on
-            // RenderRegexAsExpr's switch over MongoRegexKind staying exhaustive for those 4 members (its `_`
-            // arm throws and is otherwise unreachable). Adding a new MongoRegexKind member requires adding it
-            // to BOTH that switch and here at the same time, or this would wrongly admit a Kind that Render
-            // then throws on. Admits ANY Term shape for StartsWith/EndsWith/Contains (EF-322) — see the
-            // matching comment on Render's arm above for why a constant/parameter term has no fallback
-            // disposition to preserve at any of this method's call sites. IsMatch's Term is always a
-            // MongoConstantExpression<string> by construction (TryTranslateRegexIsMatch's own gate).
-            // `Like` is EXCLUDED here deliberately: it has no $expr rendering (a LIKE pattern needs
-            // wildcard-to-regex conversion, not a literal substring search like $indexOfCP), and
-            // MongoExpressionTranslator.Like.cs only ever produces one in a $match-dialect position — but if
-            // that ever changes (e.g. a future negated-Like-inside-a-projection shape), this must decline
-            // rather than let RenderRegexAsExpr's default throw arm surface as a crash instead of a graceful
-            // decline-to-fallback.
+            // Relies on RenderRegexAsExpr's switch staying exhaustive for these four kinds; a new MongoRegexKind
+            // must be added to both. Any Term shape is admitted (see Render's arm). IsMatch's Term is always a
+            // constant string (TryTranslateRegexIsMatch). Like is excluded: it has no $expr rendering, so it must
+            // decline here rather than crash in RenderRegexAsExpr.
             MongoRegexExpression { Kind: MongoRegexKind.Like } => false,
             MongoRegexExpression regex => CanRender(regex.Field) && CanRender(regex.Term),
             MongoTupleExpression tuple => tuple.Elements.All(CanRender),
-            // EF-322 follow-up: a constructed nested sub-document leaf (mirrors Render's own arm above).
-            // Previously missing — Render already had an arm for it, so this used to be a "renderer wider
-            // than classifier" gap; closing it lets a computed-needle Contains whose item is a composite
-            // anonymous-type tuple (`ids.Contains(new { Id1 = ..., Id2 = ... })`) go native.
+            // Constructed nested sub-document (mirrors Render's arm), e.g. a composite anonymous-type needle in
+            // `ids.Contains(new { Id1 = ..., Id2 = ... })`.
             MongoDocumentConstructionExpression construction => construction.Members.All(m => CanRender(m.Value)),
             _ => false
         };
 
-    // A logical (&&/||) operand is TRUTHINESS-tested by $and/$or when it is a bare stored value, so a bare
-    // field operand must ALSO be default-serialized (mirrors the Not arm above and RenderUnary's own
-    // render-time guard, EF-413). A nested AndAlso/OrElse recurses back through this same check for ITS OWN
-    // operands (so `!(a && (b && c))` is checked all the way down); anything else — a comparison result, a
-    // constant, a parameter — is a genuine computed/opaque value and falls through to the ordinary CanRender.
+    // $and/$or truthiness-test a bare stored operand, so a bare field operand must be default-serialized
+    // (mirrors the Not arm and RenderUnary). Nested AndAlso/OrElse recurse; comparisons, constants and
+    // parameters fall through to CanRender.
     private static bool CanRenderLogicalOperand(MongoExpression node)
         => node switch
         {
-            // TryGetBareFieldProperty (final-review fix) matches BOTH MongoFieldExpression and
-            // MongoOuterFieldExpression — a bare outer-scoped bool used as an &&/|| operand is truthiness-
-            // tested exactly the same way an ordinary bare field is; missing the outer-scoped sibling here
-            // was the CRITICAL finding from EF-421's final review.
+            // Covers MongoOuterFieldExpression too — an outer-scoped bool has the same truthiness hazard.
             MongoFieldExpression or MongoOuterFieldExpression
                 => !MongoExpressionTranslator.IsUnsafeTruthinessRoot(node, out _),
             MongoBinaryExpression { Operator: MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse } nested
@@ -302,9 +225,7 @@ internal static class MongoAggregationExpressionRenderer
         => values is MongoConstantExpression { Value: System.Collections.IEnumerable } or MongoParameterExpression
             or MongoValueListExpression;
 
-    // Exactly the operators RenderBinary's own switch maps below — every MongoBinaryOperator member, as it
-    // happens (RenderBinary has no unmapped member today), but this must be re-checked against RenderBinary's
-    // switch whenever either changes, not assumed to track the enum automatically.
+    // Must match RenderBinary's switch (currently every MongoBinaryOperator); re-check when either changes.
     private static bool IsRenderableOperator(MongoBinaryOperator op)
         => op is MongoBinaryOperator.Equal
             or MongoBinaryOperator.NotEqual
@@ -321,18 +242,13 @@ internal static class MongoAggregationExpressionRenderer
             or MongoBinaryOperator.IntegerDivide
             or MongoBinaryOperator.Modulo;
 
-    // Inside a $filter's cond the enclosing document is no longer addressable as "$path" — the element is bound to
-    // a variable, so a field of it is "$$<var>.<path>". elementVariable is null everywhere else, which is what
-    // keeps every pre-existing call site's emitted MQL byte-identical.
+    // Inside a $filter/$map the element is bound to a variable, so its fields are "$$<var>.<path>".
     private static BsonValue FieldRef(string path, string? elementVariable)
         => elementVariable is null ? "$" + path : "$$" + elementVariable + "." + path;
 
-    // A $cond/$ifNull BRANCH gets the SAME $literal-wrapping RenderProject/RenderAddFields already apply to a
-    // bare TOP-LEVEL constant/parameter — MongoDB reads an unwrapped string starting with "$" as a field-path
-    // reference, not a literal value, and a $cond "then"/"else" or $ifNull operand is exactly as vulnerable to
-    // this misread as a top-level projected value is. Without this, `g.Key ?? "$Year"` silently returns null
-    // instead of the literal string "$Year", and a captured parameter whose runtime value happens to start
-    // with "$" can throw at execution time.
+    // A $cond/$ifNull branch gets the same $literal wrap as a top-level projected constant/parameter: an
+    // unwrapped "$"-prefixed string is read as a field path, so `g.Key ?? "$Year"` would return null (or a
+    // "$"-prefixed parameter value could throw).
     private static BsonValue RenderBranch(MongoExpression node, PlaceholderTable placeholders, string? elementVariable)
     {
         var rendered = Render(node, placeholders, elementVariable);
@@ -341,8 +257,7 @@ internal static class MongoAggregationExpressionRenderer
             : rendered;
     }
 
-    // MongoDB's $dayOfWeek returns 1 (Sunday)..7 (Saturday); .NET's DayOfWeek enum is 0 (Sunday)..6 (Saturday).
-    // The subtraction is mandatory, not defensive — omitting it silently shifts every day of the week by one.
+    // $dayOfWeek is 1 (Sunday)..7; .NET DayOfWeek is 0..6. Omitting the subtraction shifts every day by one.
     private static BsonValue RenderDatePart(MongoDatePartExpression node, PlaceholderTable placeholders, string? elementVariable)
     {
         var operand = Render(node.Operand, placeholders, elementVariable);
@@ -415,14 +330,8 @@ internal static class MongoAggregationExpressionRenderer
         };
     }
 
-    // Final-review fix (IMPORTANT — real regression vs. the pre-existing driver-LINQ fallback): MQL's
-    // $trim/$ltrim/$rtrim take a "chars" option that is semantically identical to .NET's Trim(char[]) "strip
-    // any of these chars" contract, but MongoDB's OWN default whitespace set (used when "chars" is omitted)
-    // is NOT the same set as .NET's char.IsWhiteSpace — most notably, MongoDB's default treats U+0000 (NUL) as
-    // whitespace, while char.IsWhiteSpace does not. For the zero-arg .NET overload (Chars is null) this must
-    // render an EXPLICIT "chars" option containing exactly the code points char.IsWhiteSpace considers
-    // whitespace (Unicode category Zs, plus U+0009-000D/U+0085), so an embedded-NUL or other MongoDB-only
-    // "whitespace" character is left alone, matching .NET semantics instead of MongoDB's own default.
+    // MongoDB's default $trim whitespace set differs from char.IsWhiteSpace (e.g. it includes U+0000), so the
+    // zero-arg overload (Chars is null) renders an explicit "chars" with .NET's whitespace set.
     private static BsonValue RenderTrim(MongoTrimExpression node, PlaceholderTable placeholders, string? elementVariable)
     {
         var op = node.Side switch
@@ -444,15 +353,9 @@ internal static class MongoAggregationExpressionRenderer
     }
 
     /// <summary>
-    /// Every code point <see cref="char.IsWhiteSpace(char)"/> considers whitespace (Unicode category Zs, plus
-    /// the ASCII control characters U+0009 tab through U+000D carriage-return), computed once at type-init and
-    /// cached — deliberately NOT recomputed per-query. Used as the explicit <c>$trim</c>/<c>$ltrim</c>/
-    /// <c>$rtrim</c> <c>"chars"</c> option for the zero-arg <c>Trim()</c>/<c>TrimStart()</c>/<c>TrimEnd()</c>
-    /// overload, so the native translation matches .NET's whitespace set rather than MongoDB's own (which
-    /// additionally treats U+0000 as whitespace). U+2028 (LINE SEPARATOR) and U+2029 (PARAGRAPH SEPARATOR)
-    /// can't be written as ordinary <c>\u</c> string escapes here — the C# lexer treats them as actual line
-    /// terminators even inside a non-verbatim string literal (<c>CS1010</c>) — so the whole set is built from
-    /// <c>char</c> values instead of a string literal.
+    /// Every code point <see cref="char.IsWhiteSpace(char)"/> accepts, used as the explicit <c>$trim</c>
+    /// <c>"chars"</c> for zero-arg <c>Trim()</c>/<c>TrimStart()</c>/<c>TrimEnd()</c>. Built from <c>char</c> values
+    /// because U+2028/U+2029 are line terminators even inside a C# string literal (<c>CS1010</c>).
     /// </summary>
     private static readonly string DotNetWhitespaceChars = new(
     [
@@ -461,29 +364,14 @@ internal static class MongoAggregationExpressionRenderer
         (char)0x2028 /* LINE SEPARATOR */, (char)0x2029 /* PARAGRAPH SEPARATOR */, ' ', ' ', '　'
     ]);
 
-    // Empty-safe char extraction (EF-322 Task 4) — see MongoStringFirstOrLastExpression's own remarks for the
-    // empirically-confirmed contract this composes: $substrCP answers "" for an out-of-range but NON-NEGATIVE
-    // start, but a NEGATIVE start (what Last's strLenCP-1 would compute for an empty source) is a hard server
-    // error, so both kinds gate on strLenCP(Source) == 0 up front via $cond rather than letting $substrCP see
-    // one. $cond short-circuits (confirmed empirically), so the untaken branch's $substrCP never actually runs.
-    // BOTH branches render as a one-character BSON STRING (review fix, EF-322 Task 4) — the "then" (empty)
-    // branch is the literal string "\0", NOT an Int32 zero: a genuinely non-empty Source whose real first/last
-    // character IS '\0' (a legal embedded-NUL string) renders through the "else"/$substrCP branch as the
-    // one-character STRING "\0", so mixing representations would make a comparison against '\0' cross BSON
-    // type brackets (String vs Int32) and silently answer wrong for that case. See the node's own remarks.
-    // Source (and its $strLenCP) are each rendered once and the resulting BsonValue reused at every position
-    // that needs it, matching RenderEndsWithAsExpr's own reuse-without-$let precedent for a cheap,
-    // side-effect-free operand.
+    // Empty-safe char extraction (see MongoStringFirstOrLastExpression): a negative $substrCP start (Last on an
+    // empty string) is a server error, so both kinds gate on strLenCP == 0 via $cond (which short-circuits).
+    // Both branches yield a one-char string — the empty branch is "\0", not Int32 0 — so a comparison against
+    // '\0' never crosses BSON type brackets. Source and its $strLenCP are rendered once and reused.
     private static BsonValue RenderStringFirstOrLast(
         MongoStringFirstOrLastExpression node, PlaceholderTable placeholders, string? elementVariable)
     {
-        // Final-review fix (MINOR, real bug): $strLenCP is a hard server error for a missing/null source
-        // ("$strLenCP requires a string argument, found: null"), so a null/missing string FIELD (as opposed to
-        // a genuinely empty string, which this method already handles) used to crash the whole aggregate at
-        // execution time instead of degrading gracefully. $ifNull to "" first — the untaken $cond branch below
-        // never runs $substrCP against the real (possibly null) source, only against this coalesced value — so
-        // a null/missing source now degrades to exactly the same empty-string/'\0' default-char behavior
-        // already established for a genuinely empty string.
+        // $strLenCP errors on a null/missing source, so coalesce to "" first; null then behaves like empty.
         var source = new BsonDocument("$ifNull", new BsonArray { Render(node.Source, placeholders, elementVariable), "" });
         var length = new BsonDocument("$strLenCP", source);
         var isEmpty = new BsonDocument("$eq", new BsonArray { length, 0 });
@@ -527,10 +415,8 @@ internal static class MongoAggregationExpressionRenderer
             _ => throw new NativeTranslationNotSupportedException($"Unhandled {nameof(MongoDateAddUnit)} '{unit}'.")
         };
 
-    // A missing or explicitly-null array makes $size a hard server error that aborts the whole aggregate, so an
-    // EMBEDDED array path is wrapped in $ifNull (count 0 — what LINQ answers for a missing embedded array). A
-    // $lookup output alias is always an array, so that path keeps the plain form and its committed spec
-    // baselines stay byte-identical. See MongoSizeExpression's remarks.
+    // $size over a missing or null array is a server error, so an embedded path is $ifNull-wrapped (count 0, as
+    // LINQ answers). A $lookup alias is always an array and keeps the plain form. See MongoSizeExpression.
     private static BsonValue RenderSize(MongoSizeExpression size, string? elementVariable)
         => size.NullSafe
             ? new BsonDocument("$size",
@@ -540,27 +426,19 @@ internal static class MongoAggregationExpressionRenderer
     private static BsonValue RenderFilteredSize(
         MongoFilteredSizeExpression node, PlaceholderTable placeholders, string? elementVariable)
     {
-        // Each nesting level needs its own variable name. Deriving it from the enclosing one ("e", "ee", "eee")
-        // keeps them distinct without threading a counter, and keeps every name lowercase-initial, as the
-        // server requires of a $filter `as` name.
+        // Per-level variable names ("e", "ee", "eee") stay distinct without a counter and lowercase-initial, as
+        // the server requires of an `as` name.
         var variable = elementVariable is null ? "e" : elementVariable + "e";
 
-        // Final-review fix: $filter's own "cond" is evaluated by TRUTHINESS (same hazard as $and/$or/$not),
-        // but a BARE ElementPredicate root (e.g. Count(p => b.Flag), no comparison/Not/&&/|| wrapping it) skips
-        // every OTHER truthiness guard in this file — RenderBinary's CheckLogicalOperandSerialization only
-        // fires when Render actually dispatches into an AndAlso/OrElse node, and RenderUnary's guard only fires
-        // for a Not — neither runs when the WHOLE predicate is nothing but a bare field. Checked here,
-        // render-time (not translate-time), per this call's own established EF-413 design: a translate-time
-        // decline hard-fails this shape in EVERY mode (no alternate representation for a filtered count),
-        // while this render-time throw is caught by TryBuildPipeline as a graceful driver-LINQ fallback.
+        // $filter's cond is truthiness-tested, and a bare-field predicate (Count(p => b.Flag)) bypasses the
+        // AndAlso/OrElse/Not guards. Checked at render time: a translate-time decline would hard-fail in every
+        // mode, whereas this throw is caught by TryBuildPipeline as a driver-LINQ fallback.
         CheckBooleanRootSerialization(node.ElementPredicate);
 
         return new BsonDocument("$size",
             new BsonDocument("$filter", new BsonDocument
             {
-                // $ifNull is MANDATORY: $filter over a missing or explicitly-null array is a hard server error
-                // that aborts the whole aggregate command. [] yields 0, which is what LINQ answers for a missing
-                // array.
+                // $filter over a missing or null array is a server error; [] yields 0, as LINQ answers.
                 { "input", new BsonDocument("$ifNull", new BsonArray { FieldRef(node.ArrayPath, elementVariable), new BsonArray() }) },
                 { "as", variable },
                 { "cond", Render(node.ElementPredicate, placeholders, variable) }
@@ -570,28 +448,18 @@ internal static class MongoAggregationExpressionRenderer
     private static BsonValue RenderQuantifier(
         MongoQuantifierExpression node, PlaceholderTable placeholders, string? elementVariable)
     {
-        // Same nesting-variable convention as RenderFilteredSize: each nesting level gets its own $map `as`
-        // name, derived from the enclosing one, so nested quantifiers/filters never collide.
+        // Per-level `as` names, as in RenderFilteredSize.
         var variable = elementVariable is null ? "e" : elementVariable + "e";
 
-        // Final-review fix (CRITICAL — silent wrong-data risk): $anyElementTrue/$allElementsTrue evaluate every
-        // mapped-to "in" result by TRUTHINESS, exactly like $and/$or/$not. A BARE ElementPredicate root (e.g.
-        // `b.Posts.Any(p => b.Flag)`, with no comparison/Not/&&/|| around it) is the one shape none of this
-        // file's other truthiness guards catch: the translate-time CanRender check at this node's construction
-        // site (MongoExpressionTranslator.TranslateNode's quantifier arm) admits ANY bare field unconditionally
-        // via CanRender's own top arm, and a bare field's Render (FieldRef) has no guard of its own — so a
-        // value-converted/non-default-represented bare bool (e.g. HasConversion<string>() storing "False", a
-        // non-empty — therefore truthy — string) would otherwise render successfully and silently answer the
-        // WRONG boolean for every row. Checked here as render-time defense-in-depth (mirroring RenderUnary's/
-        // RenderBinary's own pattern for the same hazard).
+        // $anyElementTrue/$allElementsTrue truthiness-test each "in" result, and a bare-field predicate
+        // (`b.Posts.Any(p => b.Flag)`) passes CanRender unchecked, so a value-converted bool (stored as "False",
+        // truthy) would silently answer wrong for every row. Guard at render time.
         CheckBooleanRootSerialization(node.ElementPredicate);
 
         var map = new BsonDocument("$map", new BsonDocument
         {
-            // $ifNull is MANDATORY, same reasoning as RenderFilteredSize/RenderSize: $map over a missing or
-            // explicitly-null array is a hard server error. [] yields a $map result of [], and
-            // $anyElementTrue/$allElementsTrue over [] answer false/true respectively — exactly LINQ's
-            // Any/All-over-an-empty-sequence semantics.
+            // $map over a missing or null array is a server error; over [] $anyElementTrue/$allElementsTrue
+            // answer false/true, matching LINQ Any/All on an empty sequence.
             { "input", new BsonDocument("$ifNull", new BsonArray { Render(node.ArrayPath, placeholders, elementVariable), new BsonArray() }) },
             { "as", variable },
             { "in", Render(node.ElementPredicate, placeholders, variable) }
@@ -601,29 +469,16 @@ internal static class MongoAggregationExpressionRenderer
         return new BsonDocument(op, map);
     }
 
-    // Mirrors the C# driver's own LINQ v3 aggregation-expression translation for string.StartsWith/Contains/
-    // EndsWith (StartsWithContainsOrEndsWithMethodToAggregationExpressionTranslator.CreateAst) exactly, so a
-    // field-to-field term (no query-dialect form — MongoDB's $regularExpression pattern must be a literal, not
-    // another field) renders byte-identically to the pre-existing driver-LINQ fallback for this shape. No
-    // $ifNull guarding: the driver's own translation has none either, so matching it is parity, not a new
-    // behavior — see this feature's own design notes. (This byte-identity claim is for the UN-negated test only:
-    // the negated case still diverges in SHAPE from the fallback — native emits `$expr:{"$not":[...]}}` where
-    // the old fallback emitted `$nor:[{"$expr":...}]` — logically identical but not byte-for-byte, which per this
-    // project's AGENTS.md is not a contract concern since MQL shape is not contract.)
+    // Mirrors the driver's StartsWithContainsOrEndsWithMethodToAggregationExpressionTranslator.CreateAst, for
+    // field-to-field terms that have no query-dialect form ($regularExpression needs a literal pattern). No
+    // $ifNull guarding, matching the driver.
     private static BsonValue RenderRegexAsExpr(MongoRegexExpression regex, PlaceholderTable placeholders, string? elementVariable)
     {
         var field = Render(regex.Field, placeholders, elementVariable);
         var term = Render(regex.Term, placeholders, elementVariable);
 
-        // Final-review fix (CRITICAL — silent wrong-data risk): unlike the query-dialect $regularExpression
-        // path (RenderRegex), $indexOfCP/$strLenCP have no case-insensitive mode of their own — there is no
-        // "options" operand to set. StartsWith/Contains/EndsWith's OrdinalIgnoreCase term was previously
-        // silently dropped here (rendered as if case-sensitive) for every $expr-dialect term shape (field-to-
-        // field, and any constant/parameterized term reached via this renderer rather than RenderRegex's own
-        // query-dialect form). Fold both operands through $toLower first — this only changes results when
-        // regex.CaseInsensitive is true, so the pre-existing case-sensitive path (the vast majority of calls)
-        // is unaffected byte-for-byte. IsMatch is excluded: it renders via $regexMatch below, which has its own
-        // native "options" operand and needs no folding.
+        // $indexOfCP/$strLenCP have no case-insensitive option, so an OrdinalIgnoreCase term folds both
+        // operands through $toLower. IsMatch is excluded: $regexMatch has its own "options".
         if (regex.CaseInsensitive && regex.Kind != MongoRegexKind.IsMatch)
         {
             field = new BsonDocument("$toLower", field);
@@ -637,12 +492,9 @@ internal static class MongoAggregationExpressionRenderer
             MongoRegexKind.Contains
                 => new BsonDocument("$gte", new BsonArray { new BsonDocument("$indexOfCP", new BsonArray { field, term }), 0 }),
             MongoRegexKind.EndsWith => RenderEndsWithAsExpr(field, term),
-            // Regex.IsMatch(constantInput, fieldPattern) — reversed-argument shape. Field holds the resolved
-            // PATTERN field, Term holds the fixed input string (roles swapped relative to the 3 kinds above —
-            // see MongoRegexKind.IsMatch's own remarks), so this is the one arm where "field" below is fed to
-            // $regexMatch's "regex" operand and "term" to its "input" operand. $regexMatch's regex operand,
-            // unlike $regularExpression's pattern, may itself be a field-valued expression, which is exactly
-            // why this kind renders here rather than via RenderRegex's query-dialect $regularExpression.
+            // Regex.IsMatch(constantInput, fieldPattern): roles are swapped (see MongoRegexKind.IsMatch), so
+            // Field feeds $regexMatch's "regex" and Term its "input". $regexMatch accepts a field-valued regex,
+            // which $regularExpression does not.
             MongoRegexKind.IsMatch => new BsonDocument("$regexMatch", new BsonDocument
             {
                 { "input", term },
@@ -655,14 +507,8 @@ internal static class MongoAggregationExpressionRenderer
         return regex.Negated ? new BsonDocument("$not", new BsonArray { test }) : test;
     }
 
-    // start = strLenCP(field) - strLenCP(term); true iff start >= 0 AND indexOfCP(field, term, start) == start.
-    // Bound ONCE via $let (EF-322 Task 2 review fix — the driver's own CreateAst binds it via
-    // AstExpression.Let/UseVarIfNotSimple, not by re-rendering it twice), so this is byte-identical to the
-    // pre-existing driver-LINQ fallback's own MQL for this shape rather than merely logically equivalent to
-    // it. The driver's OUTER $let (which would bind the string/substring operands themselves) always collapses
-    // away for this call site specifically: UseVarIfNotSimple only introduces a variable for a NON-simple
-    // operand, and `field`/`term` here are always simple field paths — never a computed sub-expression — so
-    // only the inner "start" $let ever survives to be rendered.
+    // start = strLenCP(field) - strLenCP(term); true iff start >= 0 and indexOfCP(field, term, start) == start.
+    // "start" is bound once via $let, matching the driver's CreateAst output.
     private static BsonValue RenderEndsWithAsExpr(BsonValue field, BsonValue term)
     {
         var start = new BsonDocument("$subtract", new BsonArray
@@ -688,15 +534,9 @@ internal static class MongoAggregationExpressionRenderer
         });
     }
 
-    // Shared render-time guard for any position where MongoDB evaluates a WHOLE sub-expression's result by
-    // TRUTHINESS (a $filter's own "cond", or a quantifier's $map "in") rather than via an operator that
-    // produces a genuine computed boolean. Unlike CheckLogicalOperandSerialization (which the AndAlso/OrElse
-    // dispatch in RenderBinary already applies to ITS OWN Left/Right whenever one is actually rendered), a
-    // BARE field root reaches neither RenderBinary nor RenderUnary at all — Render's own dispatch just returns
-    // its raw field ref — so this is the one guard that must be invoked explicitly, by the two callers whose
-    // whole ElementPredicate sits in such a position. Nested AndAlso/OrElse/Not underneath need no extra
-    // recursion here: when Render actually descends into one, RenderBinary/RenderUnary already re-check their
-    // own operands using the identical TryGetBareFieldProperty rule.
+    // Guard for positions that truthiness-test a whole sub-expression ($filter cond, quantifier $map "in"). A
+    // bare-field root reaches neither RenderBinary nor RenderUnary, so these callers must invoke it explicitly;
+    // nested AndAlso/OrElse/Not re-check their own operands.
     private static void CheckBooleanRootSerialization(MongoExpression node)
     {
         if (MongoExpressionTranslator.IsUnsafeTruthinessRoot(node, out var property))
@@ -718,9 +558,7 @@ internal static class MongoAggregationExpressionRenderer
         return inExpr.Negated ? new BsonDocument("$not", new BsonArray { inDoc }) : inDoc;
     }
 
-    // The computed-needle sibling of RenderIn above: the needle renders through the ordinary recursive
-    // Render (a $concat, a field, etc.) rather than FieldRef-by-element-name, since there is no single
-    // field path to key on.
+    // Computed-needle variant of RenderIn: the needle renders through Render (no single field path).
     private static BsonValue RenderComputedIn(
         MongoComputedInExpression computedIn, PlaceholderTable placeholders, string? elementVariable)
     {
@@ -744,11 +582,8 @@ internal static class MongoAggregationExpressionRenderer
             }
             case MongoParameterExpression parameter:
             {
-                // A null ForSerialization means there is no backing IProperty — reached only via a
-                // COMPUTED needle's values (TranslateInValuesRaw), so RawElementType carries the needle's CLR
-                // type instead; pick a default (representation-less) serializer for it. An ordinary bare-field
-                // MongoInExpression never reaches this null branch — TranslateInValues always supplies a real
-                // property.
+                // No backing property: only for a computed needle (TranslateInValuesRaw), so use a default
+                // serializer for RawElementType.
                 var elementSerializer = parameter.ForSerialization is not null
                     ? BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization).Serializer
                     : parameter.RawElementType is not null
@@ -771,39 +606,20 @@ internal static class MongoAggregationExpressionRenderer
         }
     }
 
-    // Aggregation-dialect Not: { $not: [ <expr> ] }. Renderable for any operand CanRender admits — unlike the
-    // query dialect's RenderUnary, there is no query-native/bare-field special case here: this renderer only ever
-    // runs inside $expr, where $not's array-form operator applies uniformly to every renderable operand.
+    // Aggregation-dialect Not: { $not: [ <expr> ] }, for any operand CanRender admits (always inside $expr).
     private static BsonValue RenderUnary(MongoUnaryExpression unary, PlaceholderTable placeholders, string? elementVariable)
     {
         if (unary.Operator != MongoUnaryOperator.Not)
             throw new NativeTranslationNotSupportedException($"Unsupported unary operator '{unary.Operator}'.");
 
-        // EF-413 (review fix): $not is TRUTHINESS-based (only false/null/0/undefined are falsy), so negating a
-        // value-converted/non-default-represented bool FIELD directly would render successfully but answer the
-        // WRONG boolean — e.g. a HasConversion<string>() bool stored as "True"/"False", both non-empty (truthy)
-        // strings regardless of the CLR value. Refuse to render rather than silently answer wrong.
+        // $not is truthiness-based, so negating a value-converted bool field directly (e.g. stored as
+        // "True"/"False", both truthy) would answer wrong; refuse to render. Only a bare field (including
+        // MongoOuterFieldExpression) is checked: $not over a comparison result is always correct.
         //
-        // Deliberately narrow — only a BARE FIELD operand is checked, not any operand AllFieldsDefaultSerialized
-        // would walk (a comparison, say). $not over a $eq/$gt/etc. RESULT is always safe regardless of the
-        // comparison's own operands' serialization: that result is a genuine computed boolean, not a raw stored
-        // value being truthiness-tested, so a recursive check here would over-decline an already-correct shape
-        // (e.g. `!(x.A == x.B)` for two non-default-serialized fields is fine — $eq compares converted forms
-        // for EQUALITY, which is representation-agnostic, and $not then negates that real boolean correctly).
-        //
-        // This is a RENDER-time throw, deliberately not a translate-time decline: it is the only gate for a
-        // filtered collection count's element predicate (MongoExpressionTranslator's count branch is
-        // deliberately gate-free — see its own remarks), where a translate-time null return instead hard-fails
-        // the WHOLE leaf in every query mode. Throwing here is caught by
-        // MongoShapedQueryCompilingExpressionVisitor.TryBuildPipeline for Native/DriverLinq (a graceful
-        // driver-LINQ fallback) and surfaces as-is under NativeOnly. For a computed SORT KEY, this operand
-        // shape is already declined earlier and more cheaply by
-        // NativeSlotPopulator.TryTranslateComputedSortKey's CanRender/AllFieldsDefaultSerialized gate, so this
-        // check never actually fires on that path — it exists here for the position that has no such gate.
-        // TryGetBareFieldProperty (final-review fix) matches BOTH MongoFieldExpression and
-        // MongoOuterFieldExpression — a bare OUTER-scoped bool under Not has the exact same truthiness hazard
-        // as an ordinary bare field; missing that sibling here was one of the three (really four) sites the
-        // EF-421 final review found checking MongoFieldExpression alone.
+        // Render-time rather than translate-time: this is the only gate for a filtered count's element predicate,
+        // where a translate-time decline hard-fails in every mode, while this throw is caught by TryBuildPipeline
+        // (driver-LINQ fallback) and surfaces as-is under NativeOnly. Computed sort keys are already declined
+        // earlier by NativeSlotPopulator.TryTranslateComputedSortKey.
         if (MongoExpressionTranslator.IsUnsafeTruthinessRoot(unary.Operand, out var notProperty))
         {
             throw new NativeTranslationNotSupportedException(
@@ -816,23 +632,17 @@ internal static class MongoAggregationExpressionRenderer
 
     private static BsonValue RenderBinary(MongoBinaryExpression binary, PlaceholderTable placeholders, string? elementVariable)
     {
-        // EF-396 (review fix): render-time defense-in-depth, mirroring RenderUnary's own bare-field guard
-        // (EF-413). Some callers — MongoExpressionTranslator's filtered-count element-predicate path is
-        // deliberately gate-free (see RenderUnary's remarks) — invoke Render directly without going through
-        // CanRender first, so the correctness check must also live here, not only in CanRenderLogicalOperand.
-        // Nested AndAlso/OrElse operands recurse into this same check naturally, because Render's own
-        // dispatch routes any nested MongoBinaryExpression back through RenderBinary.
+        // Render-time counterpart of CanRenderLogicalOperand, for callers that skip CanRender (the filtered-count
+        // path; see RenderUnary). Nested AndAlso/OrElse recurse through RenderBinary.
         if (binary.Operator is MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse)
         {
             CheckLogicalOperandSerialization(binary.Left);
             CheckLogicalOperandSerialization(binary.Right);
         }
 
-        // C# integer division truncates toward zero; MQL's $divide always yields a double. $trunc over the
-        // $divide is what reconciles them — and it is not merely cosmetic: without it an integral projection
-        // member fails to DESERIALIZE (FormatException, "Truncation resulted in data loss"), and an integral
-        // comparison answers off-by-one for any non-exact quotient. See MongoBinaryOperator.IntegerDivide for
-        // why the integral-ness decision is made at translate time rather than from the operands here.
+        // C# integer division truncates; $divide yields a double. Without $trunc an integral member fails to
+        // deserialize ("Truncation resulted in data loss") and integral comparisons are off by one. See
+        // MongoBinaryOperator.IntegerDivide for why integral-ness is decided at translate time.
         if (binary.Operator == MongoBinaryOperator.IntegerDivide)
         {
             return new BsonDocument("$trunc",
@@ -869,8 +679,7 @@ internal static class MongoAggregationExpressionRenderer
 
     private static void CheckLogicalOperandSerialization(MongoExpression operand)
     {
-        // TryGetBareFieldProperty (final-review fix) matches BOTH MongoFieldExpression and
-        // MongoOuterFieldExpression — see RenderUnary's and CanRenderLogicalOperand's matching comments above.
+        // Matches MongoOuterFieldExpression too; see RenderUnary.
         if (MongoExpressionTranslator.IsUnsafeTruthinessRoot(operand, out var logicalProperty))
         {
             throw new NativeTranslationNotSupportedException(

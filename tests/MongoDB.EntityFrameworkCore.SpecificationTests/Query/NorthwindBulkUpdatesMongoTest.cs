@@ -140,9 +140,7 @@ public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<Northw
         => AssertTranslationFailed(() => base.Delete_Intersect(async));
 
     // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; SelectMany unsupported EF-X016
-    // EF-347 slice 5: the underlying reference SelectMany now declines with NotSupportedException
-    // (whole-inner-entity guard) instead of EF's generic InvalidOperationException; still unsupported,
-    // only the exception type changed, so use the lenient helper rather than the strict local one.
+    // The reference SelectMany declines with NotSupportedException (whole-inner-entity guard).
     public override Task Delete_SelectMany(bool async)
         => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Delete_SelectMany(async), typeof(NotSupportedException));
 
@@ -257,18 +255,12 @@ public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<Northw
     public override Task Update_Concat_set_constant(bool async)
         => Assert.ThrowsAnyAsync<Exception>(() => base.Update_Concat_set_constant(async));
 
-    // Fails: EF-347 -- the source's whole-entity, terminal Except now translates (goes native), so the
-    // conformance asserter's before/after snapshot read actually executes the $unionWith pipeline, which the
-    // server rejects inside the multi-document transaction the asserter (and the two-phase bulk path) runs
-    // in ("Stage not supported inside of a multi-document transaction: $unionWith") -- a runtime
-    // MongoCommandException rather than the provider's own compile-time bulk-source rejection. Same root
-    // cause as Update_Concat_set_constant/Update_Union_set_constant just above; still a genuine failure
-    // either way EF-X002.
+    // Fails: the Except source goes native, so the $unionWith pipeline runs inside the asserter's
+    // multi-document transaction and the server rejects it (MongoCommandException) EF-X002.
     public override Task Update_Except_set_constant(bool async)
         => Assert.ThrowsAnyAsync<Exception>(() => base.Update_Except_set_constant(async));
 
-    // Fails: EF-347 -- see Update_Except_set_constant immediately above; the same now-native whole-entity
-    // Intersect source hits the identical $unionWith-inside-a-transaction rejection EF-X002.
+    // Fails: same $unionWith-inside-a-transaction rejection as Update_Except_set_constant EF-X002.
     public override Task Update_Intersect_set_constant(bool async)
         => Assert.ThrowsAnyAsync<Exception>(() => base.Update_Intersect_set_constant(async));
 
@@ -324,9 +316,7 @@ public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<Northw
         => base.Update_Where_OrderBy_set_constant(async);
 
     // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; SelectMany unsupported EF-X016
-    // EF-347 slice 5: the underlying reference SelectMany now declines with NotSupportedException
-    // (whole-inner-entity guard) instead of EF's generic InvalidOperationException; still unsupported,
-    // only the exception type changed, so use the lenient helper rather than the strict local one.
+    // The reference SelectMany declines with NotSupportedException (whole-inner-entity guard).
     public override Task Update_Where_SelectMany_set_null(bool async)
         => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Update_Where_SelectMany_set_null(async), typeof(NotSupportedException));
 

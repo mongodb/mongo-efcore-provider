@@ -48,9 +48,6 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Intersect_non_entity(bool async)
     {
-        // EF-395: a bare-scalar-projection operand (Select(c => c.CustomerID)) now goes native for
-        // Intersect/Except too (IsPlainProjectedSelect no longer declines on IsBareProjection), so this no
-        // longer hard-fails translation.
         await base.Intersect_non_entity(async);
 
         AssertMql(
@@ -67,8 +64,6 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Intersect(bool async)
     {
-        // EF-347: a whole-entity, terminal Intersect over the same entity type now goes native (source-
-        // tagging $unionWith pipeline) instead of hard-failing translation.
         await base.Intersect(async);
 
         AssertMql(
@@ -99,9 +94,6 @@ public class NorthwindSetOperationsQueryMongoTest : NorthwindSetOperationsQueryT
 
     public override async Task Except(bool async)
     {
-        // EF-347: a whole-entity, terminal Except over the same entity type now goes native (source-tagging
-        // $unionWith pipeline) instead of hard-failing translation. Was previously tagged "Cross-document
-        // navigation access issue EF-216" (Except hard-failed unconditionally pre-EF-347).
         await base.Except(async);
 
         AssertMql(
@@ -715,10 +707,6 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
     public override async Task Except_non_entity(bool async)
     {
-        // EF-395: a bare-scalar-projection operand (Select(c => c.CustomerID)) now goes native for
-        // Intersect/Except too (IsPlainProjectedSelect no longer declines on IsBareProjection), so this no
-        // longer hard-fails translation. Was previously tagged "Cross-document navigation access issue
-        // EF-216" (Except hard-failed unconditionally pre-EF-347).
         await base.Except_non_entity(async);
 
         AssertMql(
@@ -729,14 +717,8 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
     public override async Task Except_simple_followed_by_projecting_constant(bool async)
     {
-        // A trailing Select(constant) after a whole-entity terminal Except now goes fully native: the bare
-        // constant leaf is admitted by NativeProjectionBinder's widened node-kind gate and $literal-wrapped by
-        // MongoPipelineFactory.RenderProject. Unlike an OPERAND carrying a constant leaf (see
-        // MongoQueryableMethodTranslatingExpressionVisitor.HasShaperUnsafeConstantLeaf's remarks), a TRAILING
-        // projection composed AFTER the combine is safe: its value doesn't vary per row regardless of which
-        // operand contributed that row, so the shaper's compile-time-embedded constant is correct for every
-        // row of the combined stream by construction. This also fixes what used to be a genuine dead end --
-        // Except has NO driver-LINQ fallback at all, so before this the whole query hard-failed at execution.
+        // A constant projected after the combine is safe (unlike a constant leaf in an operand, see
+        // HasShaperUnsafeConstantLeaf): it is the same for every row whichever operand contributed it.
         await base.Except_simple_followed_by_projecting_constant(async);
 
         AssertMql(
@@ -821,10 +803,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
     public override async Task Intersect_on_distinct(bool async)
     {
-        // EF-322: a projected Distinct() as an Intersect operand now goes native too (IsPlainDistinctSelect).
-        // Unlike Union/Concat, Intersect/Except have NO driver-LINQ fallback at all, so this used to hard-fail
-        // translation in every mode — now it succeeds and, per AssertQuery's in-memory-oracle comparison
-        // inside base.Intersect_on_distinct, returns the CORRECT result.
+        // Projected Distinct() operand (IsPlainDistinctSelect); Intersect/Except have no driver-LINQ fallback.
         await base.Intersect_on_distinct(async);
 
         AssertMql(
@@ -845,8 +824,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
     public override async Task Except_on_distinct(bool async)
     {
-        // EF-322: a projected Distinct() as an Except operand now goes native too (IsPlainDistinctSelect) —
-        // same rationale as Intersect_on_distinct above.
+        // Projected Distinct() operand (IsPlainDistinctSelect); see Intersect_on_distinct.
         await base.Except_on_distinct(async);
 
         AssertMql(
@@ -950,13 +928,8 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
     private static Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
         => MongoSpecTestHelpers.AssertNoMultiCollectionQuerySupportAsync(query);
 
-    // A GroupBy/aggregate shape the native translator does not support must fail as a *translation*
-    // failure, but the exact exception depends on the query mode and how far the driver-LINQ fallback
-    // gets: NativeTranslationNotSupportedException under MongoQueryMode.NativeOnly; an EF
-    // InvalidOperationException (CoreStrings.TranslationFailed or an internal guard) or a driver
-    // translation exception under the default Native mode. Data-assertion failures are NOT accepted so a
-    // future wrong-data regression still turns the test red.
-    // These three are the only exception types actually observed across the flipped GroupBy spec suites.
+    // Unsupported shapes must fail as a translation failure; the exception type depends on query mode and how
+    // far the driver-LINQ fallback gets. Data-assertion failures are not accepted, so wrong data stays red.
     protected new static Task AssertTranslationFailed(Func<Task> query)
         => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 }

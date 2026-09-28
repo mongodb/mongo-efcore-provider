@@ -20,50 +20,25 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// <see cref="MongoExpressionTranslator"/> —
-/// <c>System.Text.RegularExpressions.Regex.IsMatch(input, pattern)</c>, REVERSED-argument shape only: a
-/// compile-time-constant <c>input</c> tested against a document-field-valued <c>pattern</c> (e.g.
-/// <c>Regex.IsMatch("Seattle", o.String)</c>).
+/// <see cref="MongoExpressionTranslator"/> — the reversed <c>Regex.IsMatch(input, pattern)</c> shape: a constant
+/// <c>input</c> tested against a field-valued <c>pattern</c> (e.g. <c>Regex.IsMatch("Seattle", o.String)</c>).
+/// The forward shape is handled by the driver-LINQ fallback.
 /// </summary>
 /// <remarks>
-/// The forward shape — <c>Regex.IsMatch(o.String, "^S")</c>, a field-valued input against a constant pattern
-/// — is NOT this method's concern: it already succeeds today via the driver-LINQ v3 fallback (there is no
-/// dedicated native recognizer for it, and none is added here — see
-/// <c>StringTranslationsMongoTest.Regex_IsMatch</c>'s existing baseline). This method exists to add a NATIVE
-/// translation for the reversed shape (<c>StringTranslationsMongoTest.Regex_IsMatch_constant_input</c>), which
-/// previously fell back to driver-LINQ and failed there too — the driver's own LINQ v3 provider has no
-/// translation for it either. It now succeeds natively, rendered via the aggregation-expression
-/// <c>$regexMatch</c> operator (see below).
 /// <para>
-/// <b>Why the reversed shape needs a genuinely different rendering, not just swapped operands.</b> MongoDB's
-/// query-dialect <c>$regularExpression</c> BSON type (what the forward shape's fallback, and every other
-/// <see cref="MongoRegexKind"/> member, render as) requires a literal pattern — it can never read the pattern
-/// from a document field. The reversed shape's pattern IS a document field, so it can only be expressed via
-/// the aggregation-expression <c>$regexMatch</c> operator, whose <c>regex</c> operand may itself be an
-/// arbitrary expression (including a field reference). This is why the built <see cref="MongoRegexExpression"/>
-/// uses <see cref="MongoRegexKind.IsMatch"/> — a dedicated kind, aggregation-dialect only — rather than
-/// reusing one of the existing three query-dialect kinds with swapped Field/Term roles.
-/// </para>
-/// <para>
-/// <b>Scope, deliberately narrow — mirrors <see cref="TryTranslateLike"/>'s own discipline:</b>
+/// The query-dialect <c>$regularExpression</c> requires a literal pattern, so a field-valued pattern needs the
+/// aggregation <c>$regexMatch</c> operator; hence the dedicated, aggregation-only
+/// <see cref="MongoRegexKind.IsMatch"/> rather than swapping operands on an existing kind.
 /// </para>
 /// <list type="bullet">
-/// <item><c>input</c> (the first argument) must be a compile-time-constant <see langword="string"/>. A
-/// field-valued or otherwise computed <c>input</c> is a different, not-yet-supported shape and declines here
-/// (falls back to driver-LINQ, which fails the same way it always has).</item>
-/// <item><c>pattern</c> (the second argument) must resolve, via <see cref="TryResolveMember"/>, to a plain
-/// <see langword="string"/> field — not an outer-scoped reference (out of this plan's scope, same restriction
-/// as every other EF-421/EF-322 regex recognizer) and not a computed expression (MongoDB's <c>$regexMatch</c>
-/// COULD technically accept a computed <c>regex</c> operand, but this plan does not extend that far).</item>
-/// <item>The optional third argument, if present, must be a compile-time-constant <see cref="RegexOptions"/>
-/// restricted to <see cref="RegexOptions.None"/> or <see cref="RegexOptions.IgnoreCase"/> — the only two
-/// <c>$regexMatch</c> can reproduce without a culture-aware or multiline/singleline semantics mismatch. Any
-/// other flag (or combination) declines, exactly mirroring <c>TryMatchRegexMethod</c>'s own
-/// <see cref="System.StringComparison"/> restriction for StartsWith/EndsWith/Contains.</item>
+/// <item><c>input</c> must be a constant <see langword="string"/>.</item>
+/// <item><c>pattern</c> must resolve via <see cref="TryResolveMember"/> to a plain <see langword="string"/> field
+/// (not outer-scoped, not computed).</item>
+/// <item>Options, if present, must be a constant <see cref="RegexOptions.None"/> or
+/// <see cref="RegexOptions.IgnoreCase"/>, the only ones <c>$regexMatch</c> reproduces faithfully.</item>
 /// </list>
 /// <para>
-/// <b>Malformed field-valued patterns are a genuine, inherent server-error risk</b> — not something this
-/// recognizer can or should guard against; see <see cref="MongoRegexKind.IsMatch"/>'s own remarks.
+/// A malformed field-valued pattern is an inherent server-error risk; see <see cref="MongoRegexKind.IsMatch"/>.
 /// </para>
 /// </remarks>
 internal sealed partial class MongoExpressionTranslator

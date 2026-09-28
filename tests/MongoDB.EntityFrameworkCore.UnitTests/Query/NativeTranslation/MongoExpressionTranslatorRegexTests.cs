@@ -23,9 +23,9 @@ using Xunit;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// EF-322 (Task 3): the <see cref="StringComparison"/>-taking overload of
-/// <c>string.StartsWith</c>/<c>EndsWith</c>/<c>Contains</c>. <see cref="StringComparison.Ordinal"/> and
-/// <see cref="StringComparison.OrdinalIgnoreCase"/> translate natively; every culture-based member declines.
+/// The <see cref="StringComparison"/> overload of <c>string.StartsWith</c>/<c>EndsWith</c>/<c>Contains</c>:
+/// <see cref="StringComparison.Ordinal"/> and <see cref="StringComparison.OrdinalIgnoreCase"/> translate natively;
+/// culture-based members decline.
 /// </summary>
 public class MongoExpressionTranslatorRegexTests
 {

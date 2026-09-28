@@ -81,33 +81,23 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     // Set false in that case so AppendLookupStages skips them. Defaults true (lookups are appended).
     private bool _appendForceUnwindLookups = true;
 
-    // Lookups this EXECUTION must emit somewhere BELOW the tail of the pipeline, because
-    // StripJoinForLookup reattached user-composed operators above them that read their output fields. Held
-    // here, not written back onto the shared (compile-time) LookupExpression objects. See IsInjectedEarly.
+    // Lookups this execution must emit below the pipeline tail, because StripJoinForLookup reattached
+    // user-composed operators above them that read their output fields. Held per execution, not written back
+    // onto the shared compile-time LookupExpression objects. See IsInjectedEarly.
     private readonly HashSet<LookupExpression> _injectedEarlyLookups = [];
 
-    // Where each of those groups is emitted, keyed by REFERENCE on the node it is emitted immediately
-    // ABOVE. Each entry is one-shot: Visit removes it before recursing, so it cannot re-enter itself.
-    //
-    // Usually there is a single entry, keyed on the join chain's base source - the expression the innermost
-    // join was applied to, i.e. everything the user composed BELOW the joins. When an operator is
-    // INTERLEAVED BETWEEN two joins there is one entry per reattachment boundary instead, so a Skip/Take
-    // written between two joins is emitted between their two $lookup stages rather than above both of them.
+    // Where each group is emitted, keyed by reference on the node it is emitted immediately above. One-shot:
+    // Visit removes the entry before recursing. Usually a single entry on the join chain's base source; an
+    // operator interleaved between two joins gets one entry per boundary, so e.g. a Skip/Take between two
+    // joins lands between their $lookup stages.
     private readonly Dictionary<Expression, List<LookupExpression>> _injectAboveNodeLookups =
         new(ReferenceEqualityComparer.Instance);
 
     /// <summary>
-    /// Verifies that every node recorded in <see cref="_injectAboveNodeLookups"/> was actually reached
-    /// during the translation walk.
+    /// Verifies every node in <see cref="_injectAboveNodeLookups"/> was reached during the walk. Should be
+    /// unreachable, but otherwise the lookups (also excluded from <c>AppendLookupStages</c>) would vanish and
+    /// the query would silently return unjoined rows.
     /// </summary>
-    /// <remarks>
-    /// If one was not, the lookups recorded against it were never emitted — and because
-    /// <c>IsInjectedEarly</c> also excludes them from <c>AppendLookupStages</c>, the join's
-    /// <c>$lookup</c>/<c>$unwind</c> pair would vanish from the pipeline entirely and the query would
-    /// silently return unjoined rows. That should be unreachable: the nodes are captured from the tree this
-    /// same visitor is about to walk. This is cheap insurance that the failure is loud if it ever is
-    /// reachable, since the symptom would otherwise be wrong data rather than an error.
-    /// </remarks>
     private void AssertAllEarlyLookupInjectionsFired()
     {
         if (_injectAboveNodeLookups.Count > 0)
@@ -151,20 +141,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         // For explicit Join queries with pending lookups, strip the join and use $lookup instead.
         // Otherwise rewrite any Include-generated LeftJoin into Queryable.Join + LeftJoinResult so the
         // driver's pipeline translator (which has no LeftJoin translator) accepts it.
-        // NOTE: unlike Translate below, this method does NOT call GuardAgainstUnstrippableForceUnwindJoin
-        // when the strip fails. That guard covers the WHOLE-ENTITY path (Translate, below); the
-        // MIXED-projection path reached from here is knowingly ungated, not immune by construction. A
-        // pure/PLAIN projected query's member accesses are translated by the driver's own LINQ v3 provider
-        // directly against whatever document shape the actually-executed pipeline produces, so it genuinely
-        // has no pre-built shape commitment to mismatch — but a MIXED projection (one containing an entity
-        // reference LINQ v3 cannot translate) reached through TranslateProjected also reads
-        // MongoQueryExpression.UsesDriverJoinFields, and that shaper IS pre-built the same way the
-        // whole-entity one is. Guarding this call site the same way Translate is guarded would turn a
-        // correct, pre-existing fallback (a nested-aggregate GroupBy shape that ReattachComposedOperator
-        // cannot rebuild, relying on the driver rendering the surviving joins natively despite a pending
-        // ForceUnwind lookup) into a spurious InvalidOperationException. So a mixed-projection shape
-        // sharing this exact vulnerability, should one ever surface, is not yet covered by any guard here —
-        // a known gap, not a verified-safe one.
+        // Unlike Translate, no GuardAgainstUnstrippableForceUnwindJoin here: it would break a correct fallback
+        // (a nested-aggregate GroupBy that ReattachComposedOperator can't rebuild, where the driver renders the
+        // surviving joins). Plain projections have no pre-built shape to mismatch, but a mixed projection's
+        // shaper does (via UsesDriverJoinFields) — a known, unguarded gap.
         Expression expressionToTranslate;
         if (_pendingLookups.Count > 0)
         {
@@ -192,14 +172,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// <param name="efQueryExpression">The captured EF method chain to rewrite as driver-LINQ.</param>
     /// <param name="resultCardinality">The query's result cardinality.</param>
     /// <param name="guardUnstrippableForceUnwindJoin">
-    /// Whether a failed <see cref="StripJoinForLookup"/> with a <c>ForceUnwind</c> lookup pending should fail
-    /// translation (see <see cref="GuardAgainstUnstrippableForceUnwindJoin"/>). <see langword="true"/> for the
-    /// READ path, whose whole-entity shaper is pre-built assuming the flat <c>_lookup_&lt;Nav&gt;</c> shape and
-    /// so genuinely can mismatch. <see langword="false"/> for the BULK path
-    /// (<c>MongoShapedQueryCompilingExpressionVisitor.BuildIdDocumentQuery</c>, which reuses this same
-    /// translate call to fetch raw <c>BsonDocument</c>s for <c>ExecuteUpdate</c>/<c>ExecuteDelete</c>): there
-    /// is no shaper on that path, so the guard's premise doesn't hold and it would be a pure false-positive
-    /// throw surface there.
+    /// Whether to apply <see cref="GuardAgainstUnstrippableForceUnwindJoin"/>. <see langword="false"/> for the
+    /// bulk <c>ExecuteUpdate</c>/<c>ExecuteDelete</c> id-document path, which has no shaper to mismatch.
     /// </param>
     public MethodCallExpression Translate(
         Expression? efQueryExpression,
@@ -274,16 +248,11 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
     public override Expression? Visit(Expression? expression)
     {
-        // The join-replacing $lookup/$unwind stages go here: directly above the node StripJoinForLookup
-        // recorded them against. That is the base source the innermost join was applied to, so anything the
-        // user composed BELOW the joins (notably Skip/Take/Distinct, whose result depends on how many rows
-        // reach them) still runs first, while the operators StripJoinForLookup reattached ABOVE the joins
-        // see the flattened lookup fields. When an operator is INTERLEAVED BETWEEN two joins there is one
-        // recorded node per reattachment boundary, so each join's lookup lands on the correct side of the
-        // interleaved operator.
+        // Emit the join-replacing $lookup/$unwind stages directly above the recorded node, so operators
+        // composed below the joins (Skip/Take/Distinct depend on row count) run first and the reattached
+        // operators above see the flattened lookup fields. See _injectAboveNodeLookups.
         if (expression != null && _injectAboveNodeLookups.Remove(expression, out var lookupsHere))
         {
-            // The entry was removed above, so the recursive Visit cannot re-enter here (one-shot).
             var translatedNode = Visit(expression)!;
             return EmitLookupStages(translatedNode, lookupsHere);
         }
@@ -341,9 +310,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 if (instanceRewrite != null)
                     return instanceRewrite;
 
-                // Plain C# returns false here (e.g. ((int?)1).Equals((ulong)2)); left untouched, the driver's
-                // Equals translator instead tries to serialize the RHS with the LHS's serializer and throws
-                // (EF-221). Fold to the correct constant instead.
+                // Plain C# returns false here (e.g. ((int?)1).Equals((ulong)2)); the driver's Equals translator
+                // would instead serialize the RHS with the LHS's serializer and throw. Fold to false.
                 if (ExpressionExtensionMethods.IsAlwaysFalseAcrossTypeMismatch(instanceEqualsCall.Object!, instanceEqualsCall.Arguments[0]))
                     return Expression.Constant(false);
 
@@ -368,8 +336,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                     return Expression.Equal(left.RemoveObjectConvert(), right.RemoveObjectConvert());
                 }
 
-                // Same mismatched-type fold as the instance-call case above (EF-221): object.Equals(a, b)
-                // with genuinely incompatible simple types (e.g. int vs ulong) is always false in plain C#.
+                // Same mismatched-type fold as the instance-call case above.
                 if (ExpressionExtensionMethods.AreMismatchedExactEqualityTypes(
                         Nullable.GetUnderlyingType(left.Type) ?? left.Type,
                         Nullable.GetUnderlyingType(right.Type) ?? right.Type))
@@ -499,11 +466,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                     return navCall.ConvertIfRequired(memberExpression.Type);
                 }
 
-            // Rewrite DateTimeOffset.DateTime/.Year/.Date/etc member access into a UTC-field +
-            // Offset-field reconstruction that the driver's own DateTime member translator can
-            // then handle natively. Works around CSHARP-5296: the driver's DateTimeOffsetSerializer
-            // does not implement IBsonDocumentSerializer, so member access directly off a
-            // DateTimeOffset-typed expression fails in the driver's LINQ translator. See EF-218.
+            // Rebuild DateTimeOffset.DateTime/.Year/.Date/etc from the UTC and Offset fields so the driver's
+            // DateTime member translator can handle it. See DateTimeOffsetComponentMembers (CSHARP-5296).
             case MemberExpression { Expression: { } dateTimeOffsetSource } dateTimeOffsetMember
                 when dateTimeOffsetSource.Type == typeof(DateTimeOffset)
                      && DateTimeOffsetComponentMembers.Contains(dateTimeOffsetMember.Member.Name):
@@ -530,11 +494,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                     var localDateTime = Expression.Call(utcField, DateTimeAddMinutesMethodInfo,
                         Expression.Convert(offsetField, typeof(double)));
 
-                    // NOTE: .LocalDateTime is deliberately translated identically to .DateTime (both use the
-                    // value's stored Offset) — true .NET semantics need the *executing machine's* time zone,
-                    // which isn't available in server-side aggregation. Also: the "DateTime" sub-field is
-                    // millisecond-truncated (sub-ms ticks lost vs. client-side eval via "Ticks"), and the
-                    // reconstructed Kind is always Utc, not Unspecified/Local — don't call .ToLocalTime() on it.
+                    // .LocalDateTime is translated like .DateTime (stored Offset) — the executing machine's time
+                    // zone isn't available server-side. The "DateTime" sub-field is millisecond-truncated, and the
+                    // reconstructed Kind is always Utc — don't call .ToLocalTime() on it.
                     return dateTimeOffsetMember.Member.Name is nameof(DateTimeOffset.DateTime) or nameof(DateTimeOffset.LocalDateTime)
                         ? localDateTime
                         : Expression.MakeMemberAccess(localDateTime, typeof(DateTime).GetProperty(dateTimeOffsetMember.Member.Name)!);
@@ -593,10 +555,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
             var entityType = _queryContext.Context.Model.FindEntityType(_source.Type.TryGetItemType()!);
 
-            // The guard/member/index resolution lives in VectorSearchStageBuilder.Resolve, reflection-free, so
-            // its exceptions surface unwrapped exactly as they always have. See that type's remarks - the split
-            // between Resolve and CreateStage is what keeps the observable exceptions identical across the
-            // driver-LINQ bridge and the native path.
+            // Resolve is reflection-free so its exceptions surface unwrapped, identical to the native path.
+            // See VectorSearchStageBuilder.
             var resolved = VectorSearchStageBuilder.Resolve(
                 entityType, _source.Type, propertyExpression, options, _queryContext.QueryLogger);
 
@@ -717,10 +677,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     private static readonly MethodInfo EFPropertyMethodInfo =
         typeof(EF).GetMethod(nameof(EF.Property))!;
 
-    // The element name comes from the shared constant, NOT a literal: MongoSelectLowerer requires this stage to
-    // be byte-identical to the native path's own (MongoPipelineFactory renders the same document from the same
-    // constant), and a literal here meant renaming ScoreField would compile clean while silently desyncing the
-    // two paths.
+    // Uses the shared constant, not a literal: MongoSelectLowerer requires this stage to be byte-identical to
+    // the one MongoPipelineFactory renders for the native path.
     private static readonly BsonDocument AddScoreField =
         new("$addFields",
             new BsonDocument
@@ -747,10 +705,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return sizeRewrite;
         }
 
-        // A bare/unfiltered embedded (owned) collection-navigation Count, e.g. `b.Posts.Count`, lowered by
-        // EF Core to Queryable.Count(Queryable.AsQueryable(EF.Property(shaper, "Posts"))). See
-        // TryRewriteEmbeddedCollectionNavigationCount for why this needs a null/missing-safe normalization
-        // the driver's own rendering of a bare Count (a server-side $size) doesn't provide.
+        // Bare embedded-collection Count (`b.Posts.Count`); see TryRewriteEmbeddedCollectionNavigationCount.
         if (TryRewriteEmbeddedCollectionNavigationCount(node, out var embeddedCountRewrite))
         {
             return embeddedCountRewrite;
@@ -767,9 +722,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
     /// <summary>
     /// Rewrites a bare embedded (owned) collection-navigation <c>Count</c>/<c>LongCount</c> (e.g.
-    /// <c>b.Posts.Count</c>) into <c>Enumerable.Count</c> over a <c>??</c>-normalized array read — needed
-    /// because the driver's bare-Count translation is a server-side <c>$size</c>, which throws on a
-    /// missing or null array (unlike a predicated Count, translated as null-tolerant <c>$map</c>/<c>$sum</c>).
+    /// <c>b.Posts.Count</c>) into <c>Enumerable.Count</c> over a <c>??</c>-normalized array read, because the
+    /// driver renders a bare Count as <c>$size</c>, which throws on a missing or null array.
     /// </summary>
     private bool TryRewriteEmbeddedCollectionNavigationCount(MethodCallExpression node, out Expression result)
     {
@@ -791,9 +745,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return false;
         }
 
-        // Narrow to genuinely embedded (owned) collection navigations only: AsQueryable(...) also shows
-        // up wrapping other enumerable sources (e.g. an IGrouping in a GroupBy/Union pipeline) that are
-        // not a document field read at all, so rewriting unconditionally miscompiles those shapes.
+        // Embedded collection navigations only: AsQueryable(...) also wraps non-field sources (e.g. an
+        // IGrouping), which rewriting would miscompile.
         if (asQueryableCall.Arguments[0] is not MethodCallExpression efPropertyCall
             || !efPropertyCall.Method.IsEFPropertyMethod()
             || efPropertyCall.Arguments[1] is not ConstantExpression { Value: string propertyName }
@@ -824,12 +777,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     /// <summary>
-    /// Rewrites <c>source.Take(0)</c> (constant or parameterized) into <c>source.Where(_ => false)</c>.
-    /// The driver's <c>AstLimitStage</c> rejects a limit of 0 (EF-254) — a MongoDB <c>$limit</c> stage of 0
-    /// is meaningless server-side, so the driver's guard is correct and shouldn't be relaxed. The provider
-    /// already knows the concrete count by translation time (EF query parameters are resolved to constants
-    /// upstream of this visitor), so it can short-circuit to the equivalent empty-result shape itself
-    /// without ever emitting <c>$limit</c>.
+    /// Rewrites <c>source.Take(0)</c> (constant or parameterized) into <c>source.Where(_ => false)</c>, since
+    /// the driver rejects <c>$limit: 0</c>. Parameters are already resolved to constants by this point.
     /// </summary>
     private Expression? TryRewriteZeroTake(MethodCallExpression node)
     {
@@ -869,28 +818,12 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         new(StringComparer.Ordinal) { "Union", "Concat", "Except", "Intersect" };
 
     /// <summary>
-    /// Defence-in-depth only — called from <see cref="Translate"/> (the WHOLE-ENTITY shaper path) and only
-    /// when its <c>guardUnstrippableForceUnwindJoin</c> argument is set (the bulk path clears it: there is
-    /// no shaper on that path, so this guard's premise does not hold there). Never called from
-    /// <see cref="TranslateProjected"/> (see the note at that call site for why the same guard there would
-    /// turn a correct, pre-existing fallback into a regression).
-    /// <para>
-    /// When a <c>ForceUnwind</c> lookup is pending, the whole-entity shaper is built (at translation time,
-    /// via <see cref="Expressions.MongoQueryExpression.UsesDriverJoinFields"/>) assuming the FLAT
-    /// <c>_lookup_&lt;Nav&gt;</c> document shape, regardless of whether <see cref="StripJoinForLookup"/>
-    /// later actually manages to strip the join out of this execution's captured chain. A failed strip is
-    /// safe to fall through on only while the surviving join's composed operators still operate on the
-    /// join's own <c>TransparentIdentifier</c> (the shape <see cref="TransparentIdentifierToLookupFieldRewriter"/>
-    /// knows how to rewrite) — not when a composed operator's lambda is written directly against the
-    /// already-flattened root type (guarded against separately in <see cref="ReattachComposedOperator"/>).
-    /// </para>
-    /// <para>
-    /// This guard exists so that if a not-yet-found gap in <see cref="ReattachComposedOperator"/>/
-    /// <see cref="TransparentIdentifierToLookupFieldRewriter"/> lets a strip fail while a <c>ForceUnwind</c>
-    /// lookup is pending for a WHOLE-ENTITY query, the shaper mismatch fails cleanly (an
-    /// <see cref="InvalidOperationException"/>, in every <see cref="Infrastructure.MongoQueryMode"/>) rather
-    /// than reaching the shaper and throwing an unrelated-looking BSON-materialization exception.
-    /// </para>
+    /// Defence in depth for the whole-entity path (<see cref="Translate"/>; not the bulk path, not
+    /// <see cref="TranslateProjected"/>). With a <c>ForceUnwind</c> lookup pending, the shaper is pre-built
+    /// (<see cref="Expressions.MongoQueryExpression.UsesDriverJoinFields"/>) for the flat
+    /// <c>_lookup_&lt;Nav&gt;</c> shape whether or not <see cref="StripJoinForLookup"/> succeeds. If a strip
+    /// fails, this throws <see cref="InvalidOperationException"/> rather than letting the shaper hit a confusing
+    /// BSON-materialization error.
     /// </summary>
     private void GuardAgainstUnstrippableForceUnwindJoin(Expression? stripped, Expression efQueryExpression)
     {

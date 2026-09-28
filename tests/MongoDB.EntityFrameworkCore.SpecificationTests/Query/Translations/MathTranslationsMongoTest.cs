@@ -538,14 +538,8 @@ public class MathTranslationsMongoTest : MathTranslationsTestBase<MongoBasicType
     }
     public override async Task Acosh()
     {
-        // Math.Acosh(x) returns NaN for x < 1 in .NET (so the comparison is silently false and the row is
-        // excluded), but MongoDB's $acosh operator throws a hard server error for the same out-of-domain
-        // input instead of producing a NaN-like value. BasicTypesData's fixed seed data includes a Double
-        // value (-8.5) that violates Acosh's [1, inf) domain — and this is the SAME MongoDB server-side
-        // operator regardless of whether the pipeline was built natively or via driver-LINQ fallback, so this
-        // cannot be made to pass against this seeded data on any translation path. Not a regression — a
-        // permanent semantic mismatch between .NET Math and MongoDB math operators for domain-restricted
-        // functions, flagged in this plan's own ledger (Tasks 1 and 7).
+        // .NET's Math.Acosh returns NaN for x < 1 (row excluded), but MongoDB's $acosh throws a server error, and
+        // the seed data includes -8.5. Same operator on every translation path, so this can't pass on this data.
         var exception = await Assert.ThrowsAsync<MongoCommandException>(() => base.Acosh());
         Assert.Contains("cannot apply $acosh", exception.Message);
     }
@@ -600,8 +594,7 @@ public class MathTranslationsMongoTest : MathTranslationsTestBase<MongoBasicType
     }
     public override async Task Atanh()
     {
-        // Same permanent domain mismatch as Acosh above: MongoDB's $atanh throws for input outside [-1, 1]
-        // (BasicTypesData's seeded Double 8.6 violates it), where .NET's Math.Atanh returns NaN instead.
+        // Same domain mismatch as Acosh: $atanh throws outside [-1, 1] (seed has 8.6); Math.Atanh returns NaN.
         var exception = await Assert.ThrowsAsync<MongoCommandException>(() => base.Atanh());
         Assert.Contains("cannot apply $atanh", exception.Message);
     }
@@ -715,14 +708,9 @@ public class MathTranslationsMongoTest : MathTranslationsTestBase<MongoBasicType
     }
 
     /// <summary>
-    /// Review-focus regression: the upstream <c>Round_with_digits_*</c>/<c>Round_*</c> tests' seeded data
-    /// (<c>BasicTypesData</c>) has no value that actually distinguishes .NET's default
-    /// <see cref="MidpointRounding.ToEven"/> (8.5 → 8) from <see cref="MidpointRounding.AwayFromZero"/>
-    /// (8.5 → 9) — its only midpoint, -9.5, rounds to -10 under either mode, and this whole EF-322 phase's
-    /// own final review flagged that "MongoDB's <c>$round</c> agrees with .NET's default rounding" was
-    /// asserted on documentation, not evidence. <c>b.Double - b.Double + 8.5</c> (not a compile-time
-    /// constant — EF cannot fold it client-side, so this genuinely exercises the server's <c>$round</c>)
-    /// produces exactly 8.5 for every row regardless of seeded value, giving a real midpoint case.
+    /// The upstream seed data has no midpoint that distinguishes <see cref="MidpointRounding.ToEven"/> (8.5 → 8)
+    /// from <see cref="MidpointRounding.AwayFromZero"/> (8.5 → 9). <c>b.Double - b.Double + 8.5</c> can't be folded
+    /// client-side, so it exercises the server's <c>$round</c> on a real midpoint.
     /// </summary>
     [Fact]
     public async Task Round_agrees_with_dotnet_default_midpoint_rounding_for_a_genuine_midpoint_value()

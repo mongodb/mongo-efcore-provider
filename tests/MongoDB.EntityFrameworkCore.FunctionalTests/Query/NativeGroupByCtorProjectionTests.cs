@@ -38,8 +38,7 @@ public class NativeGroupByCtorProjectionTests(TemporaryDatabaseFixture database)
         public decimal Total { get; set; }
     }
 
-    // A ctor-only DTO — no member named "key"/"count" matches a constructor parameter of the same name by
-    // the compiler's rules, so NewExpression.Members is null for `new CustomerOrderSummary(g.Key, g.Count())`.
+    // Ctor-only DTO: NewExpression.Members is null for `new CustomerOrderSummary(g.Key, g.Count())`.
     private class CustomerOrderSummary
     {
         public string CustomerId { get; }
@@ -52,8 +51,7 @@ public class NativeGroupByCtorProjectionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    // A ctor-only DTO wrapping ONLY the key, with no aggregate at all — the exact shape EF Core's own
-    // GroupBy_nominal_type_count spec test uses.
+    // Ctor-only DTO wrapping only the key, no aggregate (the shape of EF's GroupBy_nominal_type_count).
     private class CustomerIdOnly
     {
         public string CustomerId { get; }
@@ -64,27 +62,17 @@ public class NativeGroupByCtorProjectionTests(TemporaryDatabaseFixture database)
         }
     }
 
-    // A MemberInitExpression (object-initializer) DTO key — new NominalType { A = ..., B = ... } — as opposed
-    // to the existing ctor-only DTO tests above, whose keys are all plain scalar members.
+    // Object-initializer (MemberInitExpression) DTO key.
     private class CustomerEmployeeKey
     {
         public string CustomerId { get; set; } = "";
         public int EmployeeId { get; set; }
     }
 
-    // EF-322 SP7 fix-wave (Finding C1): a MemberInitExpression key DTO whose bound member's stored BSON
-    // element name is renamed away from its CLR member name via [BsonElement] — the shape that must decline
-    // (fall back to driver-LINQ) rather than crash g.Key's own readback. Deliberately TWO field-ref members
-    // (unlike the original single-member version of this fixture): a round-2 re-review probe
-    // (Probe_two_field_ref_member_init_key_driver_linq, run manually against DriverLinq mode and then
-    // removed) showed a two-field-ref MemberInit key with NO literal constant passes cleanly under
-    // driver-LINQ. The earlier "$group does not support inclusion-style expressions" failure this fixture
-    // used to route around was NOT caused by having 2+ members — it was caused by a LITERAL CONSTANT bound
-    // into one of the key parts (see CustomerEmployeeKey's `EmployeeId = 0` usage above, a pre-existing,
-    // unrelated MongoEFToLinqTranslatingExpressionVisitor bridge gap for a literal mixed into $group._id,
-    // orthogonal to element renaming and out of scope here). Using two real field-ref members lets this
-    // test's fallback assertions prove C1's guard checks EVERY bound member (not just the first) end-to-end,
-    // not just at the unit level.
+    // MemberInit key with a member whose element name is renamed via [BsonElement]; must decline rather than
+    // crash g.Key's readback. Two field-ref members so the guard is shown to check every member. (A literal
+    // constant in the key, like `EmployeeId = 0` above, would hit a separate driver-LINQ bridge gap:
+    // "$group does not support inclusion-style expressions".)
     private class RenamedElementCustomerKey
     {
         [BsonElement("cid")]
@@ -115,11 +103,8 @@ public class NativeGroupByCtorProjectionTests(TemporaryDatabaseFixture database)
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
             });
 
-        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
-        // here proves the ctor-only DTO result selector went native. The OrderBy is applied client-side via
-        // AsEnumerable() — a server-side OrderBy composed directly on a GroupBy().Select() result is a
-        // separate, pre-existing gap (every native GroupBy test in NativeGroupByTests.cs follows the same
-        // AsEnumerable().OrderBy() pattern) unrelated to the ctor-only DTO shape this test targets.
+        // Success under NativeOnly proves native. OrderBy is client-side because a server-side OrderBy over
+        // GroupBy().Select() is a separate gap.
         var results = db.Entities
             .GroupBy(o => o.CustomerId)
             .Select(g => new CustomerOrderSummary(g.Key, g.Count()))
@@ -154,8 +139,7 @@ public class NativeGroupByCtorProjectionTests(TemporaryDatabaseFixture database)
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
             });
 
-        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
-        // here proves the MemberInitExpression key selector went native.
+        // Success under NativeOnly proves native.
         var results = db.Entities
             .GroupBy(o => new CustomerEmployeeKey { CustomerId = o.CustomerId, EmployeeId = 0 })
             .Select(g => new { Sum = g.Sum(o => o.Total), g.Key })
@@ -173,20 +157,9 @@ public class NativeGroupByCtorProjectionTests(TemporaryDatabaseFixture database)
     [Fact]
     public void GroupBy_select_with_member_init_dto_key_with_renamed_element_declines_to_driver_linq()
     {
-        // Final-review fix (Finding C1): a MemberInitExpression DTO key whose bound member's stored BSON
-        // element name differs from its own CLR member name (here, CustomerId is stored as "cid" via
-        // [BsonElement]) must DECLINE the native shape — admitting it would write $group._id under the CLR
-        // name ("CustomerId") while g.Key's own driver class-map readback expects the element name ("cid"),
-        // crashing with FormatException. Proves the decline two ways: NativeOnly throws
-        // NativeTranslationNotSupportedException, and default (Native) mode falls back cleanly and returns
-        // the SAME results as DriverLinq mode (no crash, no silently wrong data).
-        //
-        // Round-2 (re-review): the key has TWO field-ref members (CustomerId renamed, EmployeeId not) rather
-        // than one, so this end-to-end test — not just the unit test — proves the guard inspects every bound
-        // member, not just the first it encounters. A round-2 probe confirmed a two-field-ref MemberInit key
-        // with no literal constant passes cleanly under driver-LINQ, so this widening doesn't reintroduce the
-        // orthogonal "inclusion-style expressions" gap (that gap needs a literal constant in the key, per
-        // CustomerEmployeeKey's `EmployeeId = 0` usage above).
+        // Native would write $group._id under the CLR name ("CustomerId") while g.Key's class-map readback
+        // expects "cid", crashing with FormatException. NativeOnly must throw; Native must fall back and match
+        // DriverLinq.
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(
             UniqueCollectionName(nameof(GroupBy_select_with_member_init_dto_key_with_renamed_element_declines_to_driver_linq)));
         coll.InsertMany([
@@ -253,8 +226,7 @@ public class NativeGroupByCtorProjectionTests(TemporaryDatabaseFixture database)
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
             });
 
-        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
-        // here proves the zero-aggregate, ctor-only DTO key projection went native.
+        // Success under NativeOnly proves native.
         var results = db.Entities
             .GroupBy(o => o.CustomerId)
             .Select(g => new CustomerIdOnly(g.Key))

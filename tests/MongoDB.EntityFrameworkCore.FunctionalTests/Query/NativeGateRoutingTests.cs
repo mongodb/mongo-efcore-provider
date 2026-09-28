@@ -28,22 +28,10 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-323 native-gate <b>parity</b> regression tests. Each test probes the branch's real risk class —
-/// <em>mis-routing</em>: the compile-time gate claiming a query is native-eligible when the native
-/// pipeline cannot faithfully reproduce the driver-LINQ semantics.
-/// <para>
-/// Every shape is exercised three ways:
-/// <list type="number">
-///   <item><b>Parity</b> — run the SAME query under <see cref="MongoQueryMode.Native"/> and under
-///   <see cref="MongoQueryMode.DriverLinq"/>; assert the results are equal (catches a divergence whether
-///   the query went native or fell back).</item>
-///   <item><b>Routing probe</b> — run it under <see cref="MongoQueryMode.NativeOnly"/> and assert whichever
-///   is the actual current behavior (succeeds = went native; throws
-///   <see cref="NativeTranslationNotSupportedException"/> = fell back), documenting + locking the routing.</item>
-/// </list>
-/// </para>
-/// MQL shape cannot prove a query went native (native and driver-LINQ filter/sort/paging pipelines are
-/// structurally identical), so <see cref="MongoQueryMode.NativeOnly"/> is the only reliable routing signal.
+/// Native-gate parity tests for mis-routing: the gate claiming a query is native-eligible when the native
+/// pipeline can't reproduce driver-LINQ semantics. Each shape gets a parity test (same results under
+/// <see cref="MongoQueryMode.Native"/> and <see cref="MongoQueryMode.DriverLinq"/>) and a routing test under
+/// <see cref="MongoQueryMode.NativeOnly"/>, the only reliable routing signal (MQL shape can't prove it).
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
@@ -64,9 +52,8 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
             });
 
     /// <summary>
-    /// Runs <paramref name="query"/> under <see cref="MongoQueryMode.Native"/> and under
-    /// <see cref="MongoQueryMode.DriverLinq"/> against the same collection and asserts the two
-    /// result sequences are equal (order-sensitive). This is the core mis-routing check.
+    /// Asserts <paramref name="query"/> returns equal (order-sensitive) results under
+    /// <see cref="MongoQueryMode.Native"/> and <see cref="MongoQueryMode.DriverLinq"/>.
     /// </summary>
     private void AssertParity<T, TResult>(
         IMongoCollection<T> collection,
@@ -86,9 +73,8 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     }
 
     /// <summary>
-    /// Runs <paramref name="query"/> under <see cref="MongoQueryMode.NativeOnly"/> and reports whether it
-    /// went native (returns <see langword="true"/>) or fell back (throws
-    /// <see cref="NativeTranslationNotSupportedException"/>, returns <see langword="false"/>).
+    /// Returns whether <paramref name="query"/> runs under <see cref="MongoQueryMode.NativeOnly"/> (false if it
+    /// throws <see cref="NativeTranslationNotSupportedException"/>).
     /// </summary>
     private bool WentNative<T, TResult>(
         IMongoCollection<T> collection,
@@ -115,9 +101,8 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     //  Shape A — value-converter / BsonRepresentation-backed properties in Where / OrderBy
     // ════════════════════════════════════════════════════════════════════════════════════════════
 
-    // A.1 — string property stored as ObjectId via [BsonRepresentation] / HasBsonRepresentation.
-    //       The native renderer must serialize the string constant through the property serializer so it
-    //       becomes an ObjectId in the $match (not a string), matching driver-LINQ.
+    // A.1 — string property stored as ObjectId. The constant must serialize through the property serializer so
+    //       the $match compares an ObjectId, not a string.
 
     private class StringIdEntity
     {
@@ -195,8 +180,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void A_enum_as_string_order_by_parity()
     {
         var collection = SeedEnum(nameof(A_enum_as_string_order_by_parity));
-        // OrderBy a string-converted enum: native sorts on the stored string ("Active" < "Closed" < "Suspended"),
-        // which must match the driver-LINQ ordering. ThenBy Name to make the order deterministic for ties.
+        // Native sorts on the stored string ("Active" < "Closed" < "Suspended"); ThenBy Name breaks ties.
         AssertParity(collection,
             q => q.OrderBy(e => e.Status).ThenBy(e => e.Name).Select(e => e.Name), EnumModel);
     }
@@ -205,14 +189,9 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void A_enum_as_string_where_equals_routing()
     {
         var collection = SeedEnum(nameof(A_enum_as_string_where_equals_routing));
-        // UNLOCKED (EF-403 slice A1, Task 5): this used to lock the fallback by name. EF emits the comparison
-        // as `(int)e.Status == (int)Status.Active`, i.e. a Convert of the member to the enum's own underlying
-        // type. That is now recognized as an IDENTITY-LIKE convert (MongoExpressionTranslator.HasNumericConvert
-        // / IsIdentityLikeConvert): the comparison happens on the SAME stored value, so the field ref is the
-        // stored field unchanged and the constant KEEPS the property's own serializer (rendering "Active", not
-        // the raw underlying int) — which is what lets the query go native and still match the string-stored
-        // rows. Values are unaffected by the routing change; see A_enum_as_string_where_equals_parity, which
-        // must stay green either way.
+        // EF emits `(int)e.Status == (int)Status.Active`; the convert to the enum's underlying type is identity-like
+        // (IsIdentityLikeConvert), so the constant keeps the property's serializer and renders "Active", matching
+        // the string-stored rows.
         Assert.True(WentNative(collection, q => q.Where(e => e.Status == Status.Active).ToList(), EnumModel));
     }
 
@@ -287,8 +266,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void B_owned_subproperty_where_equals_routing()
     {
         var collection = SeedAddress(nameof(B_owned_subproperty_where_equals_routing));
-        // Locked routing (EF-322 Task 2): an owned sub-property predicate now resolves to a dotted document
-        // path ("Address.City") via MongoExpressionTranslator.TryResolveOwnedFieldPath and goes native.
+        // An owned sub-property resolves to a dotted path ("Address.City") via TryResolveOwnedFieldPath.
         Assert.True(WentNative(collection, q => q.Where(e => e.Address.City == "NYC").ToList(), AddressModel));
     }
 
@@ -296,8 +274,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void B_owned_subproperty_order_by_routing()
     {
         var collection = SeedAddress(nameof(B_owned_subproperty_order_by_routing));
-        // Locked routing (EF-322 Task 2): an owned sub-property sort key now goes native, same mechanism as
-        // the predicate case above.
+        // An owned sub-property sort key goes native, same mechanism as the predicate.
         Assert.True(WentNative(collection,
             q => q.OrderBy(e => e.Address.City).ThenBy(e => e.Name).ToList(), AddressModel));
     }
@@ -306,34 +283,16 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void B_owned_subproperty_projection_now_goes_native()
     {
         var collection = SeedAddress(nameof(B_owned_subproperty_projection_now_goes_native));
-        // EF-322 Task 2 wires the owned dotted-path resolver into the ONE shared member-resolution gate,
-        // MongoExpressionTranslator.TryResolveMember/TryTranslateField — the same gate NativeProjectionBinder's
-        // TryTranslateLeaf already calls for a plain member-access projection leaf. As a verified-correct side
-        // effect (see the parity test below), a single owned-scalar leaf in an anonymous-type projection
-        // (e.Address.City) now ALSO goes native, even though full projection support is a later task's scope.
-        // This was previously a locked fallback boundary; the boundary has genuinely moved, not regressed.
+        // A single owned-scalar leaf (e.Address.City) goes native through the shared TryResolveMember gate that
+        // NativeProjectionBinder.TryTranslateLeaf uses; see the parity test below.
         Assert.True(WentNative(collection, q => q.Select(e => new { e.Address.City }), AddressModel));
     }
 
     [Fact]
-    // RENAMED (final-review Finding 4): this test's old name, B_owned_entity_projection_falls_back_under_
-    // NativeOnly, contradicted what it actually asserts — the shape DOES go native under NativeOnly; the test
-    // only verifies you can't TRACK the result. See the body comment below for the full history.
     public void B_owned_entity_projection_tracking_query_throws_EFCore_guard()
     {
-        // RE-POINTED (EF-441): projecting the whole owned entity (e.Address) as a BARE body used to fall back
-        // (the leaf was a navigation, not a scalar field, and no arm admitted it at all). EF-441 gave the owned
-        // single-reference navigation entity leaf its own native arm in NativeProjectionBinder, so this single-
-        // leaf wrapped projection now genuinely goes native. That exposes a DIFFERENT, pre-existing, mode-
-        // independent EF Core restriction this test happens to sit on: a TRACKING query (no AsNoTracking) that
-        // projects an owned entity without its owner cannot be tracked, so EF Core's own
-        // ShapedQueryCompilingExpressionVisitor.InjectStructuralTypeMaterializers guard rejects it — MEASURED to
-        // throw the identical InvalidOperationException under Native, DriverLinq, and (pre-EF-441) NativeOnly
-        // alike on the unmodified base commit too, so this is not a behavior change this feature introduces; per
-        // this repo's versioning rubric, only the exception TYPE under NativeOnly changing (from
-        // NativeTranslationNotSupportedException to this InvalidOperationException) is observable, and that is
-        // explicitly excluded from "breaking" for an already-illegal query. Re-pointed to assert EF Core's own
-        // exception rather than weakened or deleted.
+        // Projecting the whole owned entity (e.Address) goes native, but a tracking query projecting an owned entity
+        // without its owner is rejected by EF Core's InjectStructuralTypeMaterializers guard in every mode.
         var collection = SeedAddress(nameof(B_owned_entity_projection_tracking_query_throws_EFCore_guard));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, AddressModel);
 
@@ -343,9 +302,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    // POSITIVE companion (final-review Finding 4): nothing previously pinned that the lone-leaf shape
-    // `new { e.Address }` actually goes native under NativeOnly once tracking is out of the way
-    // (AsNoTracking sidesteps the EF Core tracking guard the test above exercises).
+    // `new { e.Address }` goes native under NativeOnly once AsNoTracking sidesteps the EF Core tracking guard.
     public void B_owned_entity_projection_no_tracking_goes_native_under_NativeOnly()
     {
         var collection = SeedAddress(nameof(B_owned_entity_projection_no_tracking_goes_native_under_NativeOnly));
@@ -357,7 +314,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void B_owned_subproperty_projection_parity()
     {
         var collection = SeedAddress(nameof(B_owned_subproperty_projection_parity));
-        // Correctness under the fallback path: results must still match driver-LINQ.
+        // Results must match driver LINQ.
         AssertParity(collection,
             q => q.OrderBy(e => e.Name).Select(e => new { e.Name, e.Address.City }), AddressModel);
     }
@@ -410,10 +367,8 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void C_tph_base_predicate_parity()
     {
         var collection = SeedTph(nameof(C_tph_base_predicate_parity));
-        // Query over the base set with a predicate: the base set returns ALL discriminator values, so the
-        // only filter is on Name. Both "Felix" rows (one Cat, one Dog) must come back, in the same order.
-        // Materialize whole entities (a server-side projection of GetType()/string-concat is not supported on
-        // either path) and compute the type tag client-side so the comparison still distinguishes Cat from Dog.
+        // The base set has no implicit discriminator, so both "Felix" rows (Cat and Dog) return in the same order.
+        // Type tags are computed client-side (GetType() isn't server-translatable on either path).
         AssertParity(collection,
             q => q.Where(b => b.Name == "Felix").OrderBy(b => b.Id).AsEnumerable()
                 .Select(b => b.Name + ":" + b.GetType().Name),
@@ -424,8 +379,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void C_tph_base_predicate_routing()
     {
         var collection = SeedTph(nameof(C_tph_base_predicate_routing));
-        // Locked routing: a base-set predicate carries no implicit discriminator, so the native $match on
-        // Name is faithful — it goes native.
+        // A base-set predicate carries no implicit discriminator, so the native $match on Name is faithful.
         Assert.True(WentNative(collection,
             q => q.Where(b => b.Name == "Felix").OrderBy(b => b.Id).ToList(), TphModel));
     }
@@ -434,10 +388,8 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void C_tph_oftype_derived_parity()
     {
         var collection = SeedTph(nameof(C_tph_oftype_derived_parity));
-        // OfType<Cat>() narrows by the implicit discriminator predicate. If the native pipeline dropped that
-        // predicate it would return Dog rows (and the shaper would mis-materialize). Parity must hold: only
-        // the two Cats come back, never a Dog. Compute the projection client-side (AsEnumerable) so the test
-        // probes routing/discriminator correctness, not server-side projection support.
+        // OfType<Cat>() adds the implicit discriminator predicate; dropping it would return Dog rows. Projection is
+        // client-side so the test probes discriminator correctness only.
         AssertParity(collection,
             q => q.OfType<Cat>().OrderBy(c => c.Name).AsEnumerable().Select(c => c.Name + ":" + c.Whiskers),
             TphModel);
@@ -447,15 +399,13 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void C_tph_oftype_derived_routing()
     {
         var collection = SeedTph(nameof(C_tph_oftype_derived_routing));
-        // Locked routing (EF-347): OfType<TDerived>() now builds a discriminator $eq/$in conjunct into the
-        // native Predicate slot (TryBuildDiscriminatorPredicate) instead of unconditionally calling
-        // MarkNotNativelyRepresentable(), so a representable TPH narrowing goes native.
+        // OfType<TDerived>() builds a discriminator $eq/$in into the native predicate (TryBuildDiscriminatorPredicate).
         Assert.True(WentNative(collection,
             q => q.OfType<Cat>().OrderBy(c => c.Name).ToList(), TphModel));
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Shape D — native projection pushdown (EF-331): terminal anonymous member-access Select
+    //  Shape D — native projection pushdown: terminal anonymous member-access Select
     // ════════════════════════════════════════════════════════════════════════════════════════════
 
     private class Customer
@@ -495,9 +445,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     [Fact]
     public void D_arithmetic_computed_projection_runs_native_under_NativeOnly()
     {
-        // Locked routing (EF-347): a numeric arithmetic computed leaf (c.Age * 2) now renders as a computed
-        // $project operator document, so NativeOnly succeeds rather than throwing. Parity + value assertions
-        // prove the shared binder wiring materializes the correct doubled values, not just "did not throw".
+        // A numeric arithmetic leaf (c.Age * 2) renders as a computed $project; values prove the doubled result.
         var collection = SeedCustomer(nameof(D_arithmetic_computed_projection_runs_native_under_NativeOnly));
 
         Assert.True(WentNative(collection, q => q.Select(c => new { c.Name, Doubled = c.Age * 2 })));
@@ -514,9 +462,8 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     [Fact]
     public void D_string_computed_projection_throws_under_NativeOnly()
     {
-        // Only numeric arithmetic computed leaves (EF-347) and string CONCATENATION (EF-448, see
-        // NativeStringConcatTests) go native; a string-method-call leaf (ToUpper) has no native translation,
-        // so NativeOnly still forbids the driver-LINQ fallback and throws.
+        // Only numeric arithmetic and string concatenation (see NativeStringConcatTests) computed leaves go native;
+        // ToUpper has no native translation, so NativeOnly throws.
         var collection = SeedCustomer(nameof(D_string_computed_projection_throws_under_NativeOnly));
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
@@ -527,9 +474,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     [Fact]
     public void D_renamed_alias_projection_runs_native_under_NativeOnly_and_carries_correct_values()
     {
-        // EF-331: proves the alias -> element indirection ({ Renamed: "$Name" }) reads back correctly under
-        // the renamed member. Under NativeOnly a driver-LINQ fallback would throw; success proves the
-        // $project went native, and the value assertions prove the alias correctly maps to the source field.
+        // The alias -> element indirection ({ Renamed: "$Name" }) reads back under the renamed member.
         var collection = SeedCustomer(nameof(D_renamed_alias_projection_runs_native_under_NativeOnly_and_carries_correct_values));
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
@@ -554,9 +499,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     [Fact]
     public void D_member_init_dto_projection_runs_native_under_NativeOnly_and_carries_correct_values()
     {
-        // EF-331: covers the MemberInitExpression arm of the projection translator (distinct from the
-        // anonymous-type arm exercised above). Under NativeOnly a driver-LINQ fallback would throw;
-        // success proves the $project went native for a named-DTO member-init projection.
+        // The MemberInitExpression (named DTO) arm, distinct from the anonymous-type arm.
         var collection = SeedCustomer(nameof(D_member_init_dto_projection_runs_native_under_NativeOnly_and_carries_correct_values));
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
@@ -573,13 +516,10 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Shape E — native projection that emits the _id output field (EF-331 $project _id-suppression)
+    //  Shape E — native projection that emits the _id output field
     // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  MongoPipelineFactory.RenderProject suppresses the default _id ({ _id: 0 }) UNLESS the projection
-    //  deliberately emits an "_id" output field. Every other projection test exercises only the suppress
-    //  branch; this shape projects the key member (whose element name is literally "_id"), so the emitted
-    //  $project contains an "_id" entry and the suppression is correctly skipped. Load-bearing + otherwise
-    //  untested.
+    //  RenderProject suppresses the default _id ({ _id: 0 }) unless the projection emits an "_id" output
+    //  field. Projecting the key member (element name "_id") is the only test of the non-suppress branch.
 
     private class KeyedDoc
     {
@@ -603,9 +543,7 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     {
         var collection = SeedKeyedDoc(nameof(E_projected_id_member_runs_native_under_NativeOnly_and_preserves_id), out var ids);
 
-        // Under NativeOnly a driver-LINQ fallback would throw; success proves the $project went native.
-        // Because the projected member is the key (element name "_id"), the emitted $project carries an
-        // "_id" field and the _id-suppression branch is skipped — the values below prove _id round-trips.
+        // The projected key emits an "_id" field, skipping suppression; the values prove _id round-trips.
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
         var results = db.Entities
             .OrderBy(e => e.Name)

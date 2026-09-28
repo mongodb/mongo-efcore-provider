@@ -26,9 +26,9 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// Unit tests for <see cref="NativeSelectManyBinder"/>, which recognizes the INNER-<c>Select</c> form of an
-/// owned-collection <c>SelectMany</c> — <c>o => o.Items.AsQueryable().Select(i => new {...})</c> — and binds
-/// it to a native <c>$unwind</c> + <c>$project</c> (EF-347 slice 3, Task 2).
+/// Unit tests for <see cref="NativeSelectManyBinder"/>, which binds the inner-<c>Select</c> form of an
+/// owned-collection <c>SelectMany</c> — <c>o => o.Items.AsQueryable().Select(i => new {...})</c> — to a native
+/// <c>$unwind</c> + <c>$project</c>, plus the transparent-identifier and reference-navigation forms.
 /// </summary>
 public class NativeSelectManyBinderTests
 {
@@ -37,8 +37,8 @@ public class NativeSelectManyBinderTests
         public string Name { get; set; } = "";
         public decimal Price { get; set; }
 
-        // EF-422: a nested OWNED collection on the unwound element, so a computed leaf can contain a
-        // MongoSizeExpression (i.Notes.Count) — the one node kind the bare `_v` tier must refuse.
+        // A nested owned collection on the unwound element, so a computed leaf can contain a MongoSizeExpression
+        // (i.Notes.Count) — the node kind the bare `_v` tier must refuse.
         public List<Note> Notes { get; set; } = [];
     }
 
@@ -68,10 +68,8 @@ public class NativeSelectManyBinderTests
         using var db = SingleEntityDbContext.Create<Owner>(mb =>
         {
             mb.Entity<Owner>().OwnsMany(o => o.Items, ib => ib.OwnsMany(i => i.Notes));
-            // MongoRelationshipDiscoveryConvention defaults any navigation target not already registered as
-            // its own independent entity type to OWNED (embedded) — the document-DB norm. Registering Tag
-            // explicitly (with its own key + FK-based relationship) is what makes Owner.Tags a genuine
-            // reference (non-owned) collection navigation, for the "reference nav is rejected" test below.
+            // MongoRelationshipDiscoveryConvention makes any unregistered navigation target owned. Registering
+            // Tag with its own key and FK makes Owner.Tags a genuine reference collection navigation.
             mb.Entity<Tag>();
             mb.Entity<Owner>().HasMany(o => o.Tags).WithOne().HasForeignKey(t => t.OwnerId);
         });
@@ -79,8 +77,8 @@ public class NativeSelectManyBinderTests
         return new MongoQueryExpression(entityType);
     }
 
-    // Builds the collectionSelector lambda while letting the compiler infer the anonymous projection type —
-    // mirrors the probe's confirmed shape: Queryable.Select(Queryable.AsQueryable(o.Nav), innerLambda).
+    // Builds the collectionSelector lambda with an inferred anonymous projection type, in EF's shape:
+    // Queryable.Select(Queryable.AsQueryable(o.Nav), innerLambda).
     private static LambdaExpression Build<TResult>(Expression<Func<Owner, IQueryable<TResult>>> expr) => expr;
 
     // ── Success cases ────────────────────────────────────────────────────────────
@@ -173,9 +171,8 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void Body_not_nested_select_returns_false()
     {
-        // The deferred explicit-result-selector form: collectionSelector's body is just the bare
-        // AsQueryable() call, with the real projection (if any) living in a SEPARATE subsequent Select —
-        // out of scope for this binder (Task 3+), so it must be rejected here.
+        // Explicit-result-selector form: the body is the bare AsQueryable() call and the projection lives in a
+        // separate trailing Select, which this entry point doesn't handle.
         var mongoQ = TestQuery();
         Expression<Func<Owner, IQueryable<Item>>> collectionSelector = o => o.Items.AsQueryable();
 
@@ -216,10 +213,9 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void Inner_where_correlated_beyond_outer_binds_with_expr_filter()
     {
-        // A user filter referencing the OUTER owner (i.Name == o.Name) now goes native: the correlated
-        // conjunct is two-scope-translated (inner field prefixed with the unwind path, outer field at document
-        // root) and stored on Filter as a field-to-field comparison the renderer emits as $expr. Item.Name
-        // shadows Owner.Name, so routing MUST be by parameter identity, not name.
+        // A filter referencing the outer owner (i.Name == o.Name) goes native as a field-to-field $expr: inner
+        // field prefixed with the unwind path, outer at root. Item.Name shadows Owner.Name, so scopes must be
+        // resolved by parameter identity, not name.
         var mongoQ = TestQuery();
         var collectionSelector = Build((Owner o) =>
             o.Items.AsQueryable().Where(i => i.Name == o.Name).Select(i => new { o.Name, i.Price }));
@@ -243,10 +239,10 @@ public class NativeSelectManyBinderTests
         Assert.True(NativeSelectManyBinder.TryBind(mongoQ, collectionSelector));
         var and = Assert.IsType<MongoBinaryExpression>(mongoQ.Select.UnwindSource!.Filter);
         Assert.Equal(MongoBinaryOperator.AndAlso, and.Operator);
-        // inner-only conjunct: inner field prefixed
+        // Inner-only conjunct: inner field prefixed.
         var left = Assert.IsType<MongoBinaryExpression>(and.Left);
         Assert.Equal("Items.Name", Assert.IsType<MongoFieldExpression>(left.Left).ElementName);
-        // correlated conjunct: inner prefixed vs outer root
+        // Correlated conjunct: inner prefixed vs. outer at root.
         var right = Assert.IsType<MongoBinaryExpression>(and.Right);
         Assert.Equal("Items.Name", Assert.IsType<MongoFieldExpression>(right.Left).ElementName);
         Assert.Equal("Name", Assert.IsType<MongoOuterFieldExpression>(right.Right).ElementName);
@@ -255,8 +251,8 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void Inner_where_unsupported_correlated_operator_returns_false_without_mutation()
     {
-        // i.Name.ToUpper() == o.Name — the two-scope translation rejects the operator, so the bind declines
-        // cleanly with no partial mutation.
+        // i.Name.ToUpper() == o.Name — the two-scope translation rejects the operator, so the bind declines with no
+        // partial mutation.
         var mongoQ = TestQuery();
         var collectionSelector = Build((Owner o) =>
             o.Items.AsQueryable().Where(i => i.Name.ToUpper() == o.Name).Select(i => new { o.Name, i.Price }));
@@ -303,10 +299,9 @@ public class NativeSelectManyBinderTests
     }
 
     // ── TryBindTransparentIdentifierProjection: explicit-result-selector / query-syntax form ───────
-    // (EF-347 slice 4, Task 1). EF's nav-expansion for THIS form produces a SEPARATE trailing Select
-    // over a TransparentIdentifier(Outer, Inner) source — the projection leaves are nested member
-    // accesses ti.Outer.<m> / ti.Inner.<m> on a SINGLE ti parameter (not pre-folded), synthesized here
-    // explicitly since the real EF nav-expansion output isn't reachable from a unit test.
+    // Nav-expansion produces a separate trailing Select over a TransparentIdentifier(Outer, Inner): leaves are
+    // ti.Outer.<m> / ti.Inner.<m> on a single ti parameter. Synthesized here, since the real nav-expansion output
+    // isn't reachable from a unit test.
 
     private class TransparentIdentifier
     {
@@ -471,12 +466,10 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void TryBindTransparentIdentifierProjection_chain_deeper_than_source_count_returns_false()
     {
-        // ti3.Outer.Outer.Outer.Name — 3 "Outer" hops under a 2-source chain (a would-be 3rd-nesting-level
-        // leaf). TryResolveScopeDepth must reject path.Count > sourceCount before even checking the hop
-        // pattern. This is the unit-level proof of the same boundary Task 5's functional 3-level decline test
-        // exercises end-to-end (there, the shape never even reaches this binder — the QMTEV carve-out's own
-        // IsSingleReferenceUnwindTerminalOnly check already declines a 3rd chained SelectMany; this test
-        // isolates the projection-binder half of that boundary in case the two are ever exercised separately).
+        // ti3.Outer.Outer.Outer.Name — 3 "Outer" hops under a 2-source chain. TryResolveScopeDepth must reject
+        // path.Count > sourceCount before checking the hop pattern. End-to-end, the QMTEV's
+        // IsSingleReferenceUnwindTerminalOnly check declines a third SelectMany before this binder is reached;
+        // this isolates the binder half of that boundary.
         var mongoQ = TestQuery();
         mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
         var tagsNav = mongoQ.CollectionExpression.EntityType.FindNavigation(nameof(Owner.Tags))!;
@@ -547,12 +540,10 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void TryBindTransparentIdentifierProjection_cross_scope_computed_leaf_binds_each_operand_in_its_own_scope()
     {
-        // EF-422. A leaf mixing an OUTER-scope numeric member (o.Rank) and an INNER-scope numeric member
-        // (i.Price) spans two distinct scopes in one arithmetic leaf, so the single-scope binder's
-        // ScopeRerootingVisitor sets CrossScope and declines. The cross-scope fallback then translates each
-        // operand against ITS OWN scope: the outer operand stays at the document root ("Rank"), the inner one
-        // is prefixed with the unwind path ("Items.Price"). Asserting BOTH element names is the whole point —
-        // a binder that mis-scoped either side would still produce a $multiply of two fields.
+        // An arithmetic leaf mixing outer (o.Rank) and inner (i.Price) scopes: the single-scope
+        // ScopeRerootingVisitor sets CrossScope and declines, and the cross-scope fallback translates each operand
+        // against its own scope. Both element names are asserted because a mis-scoped side would still yield a
+        // $multiply of two fields.
         var mongoQ = TestQuery();
         mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
@@ -576,10 +567,9 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void TryBindTransparentIdentifierProjection_cross_scope_leaf_with_a_constant_operand_binds()
     {
-        // EF-422. `(o.Rank * i.Price) + 1` — the cross-scope subtree is now an OPERAND of the top-level node,
-        // so it exercises TryTranslateScopedOperand's recursion, and `1` exercises its scope-free arm (an
-        // operand with no scope-rooted member at all, which the single-scope binder still refuses as a whole
-        // LEAF — see the _constant_only_leaf_ test below).
+        // `(o.Rank * i.Price) + 1`: the cross-scope subtree is an operand, exercising TryTranslateScopedOperand's
+        // recursion, and `1` its scope-free arm (which the single-scope binder still refuses as a whole leaf —
+        // see the constant-only leaf test).
         var mongoQ = TestQuery();
         mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
@@ -605,10 +595,8 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void TryBindTransparentIdentifierProjection_constant_only_leaf_still_returns_false()
     {
-        // EF-422 guard. Factoring the re-rooting core out for the cross-scope path introduced a
-        // `requireScopeRooted` switch; the single-scope entry point must still pass `true`, so a leaf with NO
-        // scope-rooted member anywhere (2 * 3) keeps declining rather than pushing a constant-only $project
-        // leaf down. Flipping that flag to false is what this test discriminates.
+        // The single-scope entry point must pass `requireScopeRooted: true`, so a leaf with no scope-rooted member
+        // (2 * 3) declines rather than pushing a constant-only $project leaf down.
         var mongoQ = TestQuery();
         mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
@@ -625,10 +613,9 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void TryBindTransparentIdentifierProjection_bare_computed_body_binds_under_the_synthetic_alias()
     {
-        // EF-422 part B. The ONE-arg `SelectMany(o => o.Items).Select(i => i.Price * 2)` shape folds to a BARE
-        // (non-`new {}`) computed body, `ti => ti.Inner.Price * 2`. It has no member name, so it binds under
-        // the reserved `_v` alias and reports that alias back to the caller (which needs it to build the
-        // by-alias shaper).
+        // One-arg `SelectMany(o => o.Items).Select(i => i.Price * 2)` folds to a bare computed body,
+        // `ti => ti.Inner.Price * 2`. With no member name it binds under the reserved `_v` alias and reports it
+        // back so the caller can build the by-alias shaper.
         var mongoQ = TestQuery();
         mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
@@ -648,7 +635,7 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void TryBindTransparentIdentifierProjection_bare_cross_scope_computed_body_binds()
     {
-        // EF-422. The two parts compose: a bare body that is ALSO cross-scope.
+        // A bare body that is also cross-scope.
         var mongoQ = TestQuery();
         mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
@@ -667,11 +654,9 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void TryBindTransparentIdentifierProjection_bare_computed_body_containing_a_count_returns_false()
     {
-        // EF-422. The bare `_v` tier mirrors NativeProjectionBinder's tier-2 arm 1b, whose boundary is a
-        // SUBTREE fact: a `$size` ANYWHERE under the body renders — on the un-stripped driver fallback — as a
-        // bare `$size`, which is a hard server error (not a wrong answer) against a missing or explicitly-null
-        // array. `ti.Inner.Notes.Count * 2` is an arithmetic top node with a size node underneath, so the
-        // top-node gate alone admits it and only the subtree check declines it.
+        // Mirrors NativeProjectionBinder's tier-2 subtree rule: a `$size` anywhere under the body renders as a
+        // bare `$size` on the un-stripped driver fallback, a server error on a missing or null array.
+        // `ti.Inner.Notes.Count * 2` has an arithmetic top node, so only the subtree check declines it.
         var mongoQ = TestQuery();
         mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
@@ -687,11 +672,9 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void TryBindTransparentIdentifierProjection_bare_member_access_body_still_returns_false()
     {
-        // EF-422 boundary. Only an ARITHMETIC bare body is admitted. A bare member access (`ti.Inner.Name`) is
-        // a path-addressable leaf whose alias would have to be its own document path for a late fallback to
-        // read it correctly (NativeProjectionBinder's tier 1) — a different contract from the `_v` tier — so
-        // it must keep declining. Without IsArithmeticComputedLeaf's gate on the bare arm, the member loop's
-        // FIRST branch would happily bind it under `_v`.
+        // Only an arithmetic bare body is admitted. A bare member access (`ti.Inner.Name`) is path-addressable,
+        // so its alias would have to be its own document path for a late fallback (tier 1), not `_v`. Without
+        // IsArithmeticComputedLeaf's gate the member loop's first branch would bind it under `_v`.
         var mongoQ = TestQuery();
         mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
@@ -706,8 +689,7 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void TryBindTransparentIdentifierProjection_root_scope_arithmetic_leaf_returns_true()
     {
-        // An all-outer (scope 0) arithmetic leaf is in-scope and takes a distinct no-prefix code path: root
-        // scope 0 gets no unwind-path prefix, unlike the inner-scope positive test's "Items.Price".
+        // An all-outer (scope 0) arithmetic leaf takes the no-prefix path, unlike the inner-scope "Items.Price".
         var mongoQ = TestQuery();
         mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
@@ -730,8 +712,8 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void TryBindTransparentIdentifierProjection_method_call_computed_leaf_returns_false()
     {
-        // A plain (non-Add) method call, e.g. .ToUpper(), has no MongoExpression translation at all —
-        // TranslateOperand's MethodCallExpression handling admits only Contains/Not, so this still declines.
+        // A plain method call like .ToUpper() has no translation here (TranslateOperand admits only
+        // Contains/Not), so this declines.
         var mongoQ = TestQuery();
         mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
@@ -749,9 +731,8 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void TryBindTransparentIdentifierProjection_cross_scope_string_concat_leaf_translates_to_concat()
     {
-        // String concatenation (ExpressionType.Add, Type == string) now translates via MongoConcatExpression
-        // instead of declining — mirrors the arithmetic cross-scope leaf test above (bare_cross_scope_computed
-        // and root_scope_arithmetic_leaf), just for a string-typed leaf.
+        // String concatenation (Add, Type == string) translates via MongoConcatExpression — the string-typed
+        // counterpart of the arithmetic leaf tests above.
         var mongoQ = TestQuery();
         mongoQ.Select.AddUnwindSource(MongoUnwindSource.Owned("Items", ItemEntityType(mongoQ)));
 
@@ -807,11 +788,9 @@ public class NativeSelectManyBinderTests
         Assert.Empty(mongoQ.Select.Projection);
     }
 
-    // ── TryBindReferenceNavUnwind: cross-collection reference SelectMany (EF-347 slice 5, Task 2) ────
+    // ── TryBindReferenceNavUnwind: cross-collection reference SelectMany ────
     // The reference collectionSelector is a correlated subquery — Queryable.Where(EntityQueryRootExpression
-    // <Target>, o => c.pk == o.fk) — NOT a bare nav, per the spike (.superpowers/sdd/explicit-selectmany-spike.md)
-    // and the design doc. Owner.Tags (a genuine reference collection nav, FK Tag.OwnerId) is reused as the
-    // reference-nav fixture here.
+    // <Target>, o => c.pk == o.fk) — not a bare nav. Owner.Tags (FK Tag.OwnerId) is the fixture.
 
     private static readonly System.Reflection.MethodInfo EfPropertyOfInt =
         typeof(EF).GetMethod(nameof(EF.Property))!.MakeGenericMethod(typeof(int));
@@ -822,8 +801,8 @@ public class NativeSelectManyBinderTests
     private static INavigation TagsNavigation(MongoQueryExpression mongoQ)
         => mongoQ.CollectionExpression.EntityType.FindNavigation(nameof(Owner.Tags))!;
 
-    // Queryable.Where(EntityQueryRootExpression<Tag>, predicate) — the spike-confirmed correlated-subquery
-    // shape a reference-nav SelectMany's collectionSelector normalizes to.
+    // Queryable.Where(EntityQueryRootExpression<Tag>, predicate) — the correlated-subquery shape a reference-nav
+    // SelectMany's collectionSelector normalizes to.
     private static LambdaExpression ReferenceCollectionSelector(
         IEntityType targetEntityType, ParameterExpression outerParam, LambdaExpression predicate)
     {
@@ -965,11 +944,9 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void TryBindReferenceNavUnwind_folded_inner_not_null_user_filter_is_not_silently_dropped()
     {
-        // EF-355. Where(root, fkPred && (t.Label != null)) is structurally identical to a legitimately
-        // null-guarded FK correlation EXCEPT for which key the null-check is on. Handing the whole predicate to
-        // NativeCorrelationMatcher would let its null-guard handling treat the USER conjunct as the FK's own
-        // guard and match on the equality alone — binding with Filter == null and silently returning ALL
-        // children. The user filter must survive (or the bind must decline), never be dropped silently.
+        // Where(root, fkPred && (t.Label != null)) looks like a null-guarded FK correlation except for which key
+        // is null-checked. If NativeCorrelationMatcher treated the user conjunct as the FK's guard, it would bind
+        // with Filter == null and silently return all children. The user filter must survive or the bind decline.
         var mongoQ = TestQuery();
         var tagNav = TagsNavigation(mongoQ);
         var outerParam = Expression.Parameter(typeof(Owner), "o");
@@ -991,8 +968,7 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void TryBindReferenceNavUnwind_folded_inner_not_null_user_filter_is_not_dropped_when_written_first()
     {
-        // Same as above with the conjunct order reversed ((t.Label != null) && fkPred) — conjunct order must
-        // not decide whether the user filter survives.
+        // Reversed conjunct order must not change whether the user filter survives.
         var mongoQ = TestQuery();
         var tagNav = TagsNavigation(mongoQ);
         var outerParam = Expression.Parameter(typeof(Owner), "o");
@@ -1014,9 +990,8 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void TryBindReferenceNavUnwind_null_guarded_fk_correlation_still_binds_unfiltered()
     {
-        // EF-355 no-regression: EF emits `(int?)o.Id != null && (int?)o.Id == t.OwnerId` when the outer key's
-        // CLR type is nullable. The guard is on the SAME key as the FK equality, so it is the correlation's own
-        // null-guard — the bind must still go native with NO element filter.
+        // EF emits `(int?)o.Id != null && (int?)o.Id == t.OwnerId` for a nullable outer key. That guard is on the
+        // FK's own key, so the bind must still go native with no element filter.
         var mongoQ = TestQuery();
         var tagNav = TagsNavigation(mongoQ);
         var outerParam = Expression.Parameter(typeof(Owner), "o");
@@ -1089,9 +1064,8 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void TryBindReferenceNavUnwind_correlated_beyond_fk_filter_binds_with_expr_filter()
     {
-        // A user filter referencing the OUTER entity beyond the FK (t.Label == o.Name) now goes native: the
-        // correlated conjunct is two-scope-translated (inner field prefixed, outer field at root) and stored on
-        // the Filter as a field-to-field comparison the renderer emits as $expr.
+        // A filter referencing the outer entity beyond the FK (t.Label == o.Name) goes native as a field-to-field
+        // $expr: inner field prefixed, outer at root.
         var mongoQ = TestQuery();
         var tagNav = TagsNavigation(mongoQ);
         var outerParam = Expression.Parameter(typeof(Owner), "o");
@@ -1111,8 +1085,7 @@ public class NativeSelectManyBinderTests
         Assert.Equal(MongoUnwindSourceKind.Reference, unwind.Kind);
         var bin = Assert.IsType<MongoBinaryExpression>(unwind.Filter);
         Assert.Equal(MongoBinaryOperator.Equal, bin.Operator);
-        // Inner field prefixed with the lookup scope; outer field at document root — resolved by parameter
-        // identity, so the shared-nothing scopes never conflate.
+        // Inner field prefixed with the lookup scope, outer at root — resolved by parameter identity.
         Assert.Equal("_lookup_Tags.Label", Assert.IsType<MongoFieldExpression>(bin.Left).ElementName);
         Assert.Equal("Name", Assert.IsType<MongoOuterFieldExpression>(bin.Right).ElementName);
     }
@@ -1145,8 +1118,8 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void TryBindReferenceNavUnwind_unsupported_correlated_operator_returns_false_without_mutation()
     {
-        // t.Label.ToUpper() == o.Name — the correlated conjunct uses an operator the translator rejects, so the
-        // two-scope translation fails and the bind declines cleanly with no partial mutation.
+        // t.Label.ToUpper() == o.Name — the two-scope translation rejects the operator, so the bind declines with
+        // no partial mutation.
         var mongoQ = TestQuery();
         var tagNav = TagsNavigation(mongoQ);
         var outerParam = Expression.Parameter(typeof(Owner), "o");
@@ -1194,10 +1167,8 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void TryBindReferenceNavUnwind_reference_source_flows_through_two_scope_projection_binder()
     {
-        // Proves the generalized InnerScopePath ("_lookup_Tags") flows unchanged through slice 4's
-        // TryBindTransparentIdentifierProjection — ti.Inner.<m> resolves against the inner scope with the
-        // lookup-alias prefix, ti.Outer.<m> resolves against the outer (root) scope, exactly as for an owned
-        // UnwindSource, just with a different (lookup-alias) InnerScopePath.
+        // The lookup InnerScopePath ("_lookup_Tags") flows through TryBindTransparentIdentifierProjection: ti.Inner
+        // resolves with the lookup-alias prefix and ti.Outer at root, as for an owned UnwindSource.
         var mongoQ = TestQuery();
         var tagNav = TagsNavigation(mongoQ);
         var lookup = new LookupExpression(tagNav, forceUnwind: true);
@@ -1222,11 +1193,10 @@ public class NativeSelectManyBinderTests
         Assert.Equal("_lookup_Tags.Label", Assert.IsType<MongoFieldExpression>(labelP.Expression).ElementName);
     }
 
-    // ── TryBindNestedReferenceNavUnwind: 2-level chained reference SelectMany (EF-347 nested-reference) ──
-    // Spike-confirmed (.superpowers/sdd/EF-347-nested-ref-spike.md): the SECOND SelectMany's collectionSelector
-    // is Queryable.Where(EntityQueryRootExpression<Leaf>, l => ti.Inner.Id == l.MidId) — the SAME correlated-
-    // subquery shape TryBindReferenceNavUnwind already parses, except the correlation's outer-key side is
-    // ti.Inner.<pk> (a transparent-identifier-rooted member chain), not a bare parameter.
+    // ── TryBindNestedReferenceNavUnwind: 2-level chained reference SelectMany ──
+    // The second SelectMany's collectionSelector is Queryable.Where(EntityQueryRootExpression<Leaf>,
+    // l => ti.Inner.Id == l.MidId) — the same correlated-subquery shape TryBindReferenceNavUnwind parses, except
+    // the outer-key side is a transparent-identifier member chain (ti.Inner.<pk>), not a bare parameter.
 
     private class NestedOwner
     {
@@ -1269,7 +1239,7 @@ public class NativeSelectManyBinderTests
         return new MongoQueryExpression(entityType);
     }
 
-    // Simulates level 1 already having bound (TryBindReferenceNavUnwind, unmodified, run against o.Mids).
+    // Simulates level 1 already bound (TryBindReferenceNavUnwind run against o.Mids).
     private static void BindLevel1(MongoQueryExpression mongoQ)
     {
         var midsNav = mongoQ.CollectionExpression.EntityType.FindNavigation(nameof(NestedOwner.Mids))!;
@@ -1283,7 +1253,7 @@ public class NativeSelectManyBinderTests
         => mongoQ.CollectionExpression.EntityType.FindNavigation(nameof(NestedOwner.Mids))!.TargetEntityType
             .FindNavigation(nameof(NestedMid.Leaves))!.TargetEntityType;
 
-    // Queryable.Where(EntityQueryRootExpression<Leaf>, l => ti.Inner.<pk> == l.<fk>) — the level-2 spike shape.
+    // Queryable.Where(EntityQueryRootExpression<Leaf>, l => ti.Inner.<pk> == l.<fk>) — the level-2 shape.
     private static LambdaExpression NestedLeavesCorrelatedSelector(IEntityType leafEntityType, ParameterExpression ti)
     {
         var lParam = Expression.Parameter(typeof(NestedLeaf), "l");
@@ -1319,8 +1289,7 @@ public class NativeSelectManyBinderTests
         Assert.Equal("_lookup_Mids._id", level2.Lookup.LocalField);
         Assert.Null(level2.Filter); // unfiltered — this slice's scope
 
-        // The lookup-dependency sort (MongoQueryExpression.GetPendingLookups, unmodified) must already order
-        // the level-1 lookup before level-2's — no lowering change needed for this.
+        // MongoQueryExpression.GetPendingLookups must order the level-1 lookup before level-2's.
         var lookups = mongoQ.Lookups;
         Assert.Equal(2, lookups.Count);
         Assert.Equal("_lookup_Mids", lookups[0].As);
@@ -1368,8 +1337,8 @@ public class NativeSelectManyBinderTests
     [Fact]
     public void TryBindNestedReferenceNavUnwind_returns_false_when_correlation_is_not_ti_inner_rooted()
     {
-        // l.MidId == l.MidId (a self-comparison on the inner param, not ti.Inner.<pk>) never resolves a
-        // navigation off the level-1 target — must decline, not crash or mis-bind.
+        // l.MidId == l.MidId (a self-comparison, not ti.Inner.<pk>) resolves no navigation off the level-1 target;
+        // must decline, not crash or mis-bind.
         var mongoQ = NestedTestQuery();
         BindLevel1(mongoQ);
         var ti = Expression.Parameter(typeof(OwnerMidTi), "ti");

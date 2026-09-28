@@ -24,11 +24,9 @@ using Xunit;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// EF-322 (Task 5): the REVERSED-argument shape of <see cref="Regex.IsMatch(string, string)"/> — a
-/// compile-time-constant input tested against a document-field-valued pattern (e.g.
-/// <c>Regex.IsMatch("Seattle", e.Text)</c>). The forward shape (field input, constant pattern) is untouched by
-/// this plan — see <c>MongoExpressionTranslatorRegexTests</c> for the sibling StartsWith/EndsWith/Contains
-/// coverage this mirrors.
+/// The reversed shape of <see cref="Regex.IsMatch(string, string)"/>: a constant input tested against a
+/// field-valued pattern (e.g. <c>Regex.IsMatch("Seattle", e.Text)</c>). See
+/// <c>MongoExpressionTranslatorRegexTests</c> for StartsWith/EndsWith/Contains.
 /// </summary>
 public class MongoExpressionTranslatorRegexIsMatchTests
 {
@@ -105,9 +103,8 @@ public class MongoExpressionTranslatorRegexIsMatchTests
         Assert.Null(result);
     }
 
-    // Forward shape (field input, constant pattern) is a DISTINCT, pre-existing shape this plan does not
-    // touch — it must keep declining here (it goes native nowhere in this codebase; it currently succeeds
-    // only via the driver-LINQ fallback, which this translator-level test cannot exercise).
+    // The forward shape (field input, constant pattern) declines here; it succeeds only via the driver-LINQ
+    // fallback, which this translator-level test can't exercise.
     [Fact]
     public void Field_input_against_constant_pattern_forward_shape_still_declines()
     {

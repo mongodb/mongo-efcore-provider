@@ -19,7 +19,6 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// A single output field of a native <c>$project</c> stage: an output element name (<paramref name="Alias"/>)
 /// paired with the dialect-neutral <see cref="MongoExpression"/> that produces its value.
 /// </summary>
-/// <param name="Alias">The output element name in the projected document — matches the projection alias the
-/// DOM shaper reads by (the anonymous-type / DTO member name).</param>
-/// <param name="Expression">The dialect-neutral source expression (e.g. a <see cref="MongoFieldExpression"/>).</param>
+/// <param name="Alias">The output element name; must match the alias the DOM shaper reads by.</param>
+/// <param name="Expression">The source expression.</param>
 internal readonly record struct MongoProjection(string Alias, MongoExpression Expression);

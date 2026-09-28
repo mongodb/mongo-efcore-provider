@@ -33,11 +33,10 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 internal static class NativeSlotPopulator
 {
     /// <summary>
-    /// Populates the native-translation slots on the <see cref="MongoQueryExpression"/> for the
-    /// seven slot-bearing operators: Where, OrderBy, OrderByDescending, ThenBy, ThenByDescending,
-    /// Skip, and Take.  Called from
-    /// <see cref="Visitors.MongoQueryableMethodTranslatingExpressionVisitor"/>'s VisitMethodCall
-    /// on the already-evaluated source.
+    /// Populates the native slots for the slot-bearing operators (Where, OrderBy/ThenBy[Descending], Skip, Take), and
+    /// records reducers, candidate joins and vector search. Called from
+    /// <see cref="Visitors.MongoQueryableMethodTranslatingExpressionVisitor"/>'s VisitMethodCall on the evaluated
+    /// source.
     /// </summary>
     internal static void PopulateNativeSlots(
         ShapedQueryExpression shapedQuery,
@@ -47,34 +46,23 @@ internal static class NativeSlotPopulator
         var mongoQ = (MongoQueryExpression)shapedQuery.QueryExpression;
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
 
-        // EF-449: a Where composed DIRECTLY on a BARE GroupBy(key) result (no intervening Select) is, in
-        // every reachable case, EF Core's own normalization of Any(pred)/Count(pred)/LongCount(pred) into
-        // Where(pred).Any()/.Count()/.LongCount() — Where's lambda parameter is typed IGrouping<TKey,
-        // TElement>, not the root entity, so the general Where arm below (which resolves member access
-        // against the ENTITY type) must not even attempt it. Stash the recognized group-level predicate
-        // (NativeGroupByBinder.TryBindGroupWherePredicate) on MongoSelectDefinition.PendingGroupPredicate for
-        // the terminal Count/LongCount/Any to pick up (NativeGroupByBinder.TryBindGroupTerminalAggregate) —
-        // deliberately BEFORE the general post-terminal guard immediately below, which would otherwise always
-        // mark this non-native (bare GroupBy already sets IsGroupBy unconditionally). An out-of-scope
-        // predicate shape (TryBindGroupWherePredicate returns false) still marks non-native, same as today.
+        // A Where directly on a bare GroupBy(key) is EF's normalization of Any/Count/LongCount(pred) into
+        // Where(pred).Any()/Count()/LongCount(); its parameter is the IGrouping, not the entity, so the general Where
+        // arm must not attempt it. Stash the group predicate (NativeGroupByBinder.TryBindGroupWherePredicate) for the
+        // terminal (TryBindGroupTerminalAggregate). Must run before the post-terminal guard below, which would always
+        // decline it.
         if (methodDefinition == QueryableMethods.Where
             && mongoQ.Select.PendingGroupKey != null && mongoQ.Select.Grouping == null)
         {
-            // EF-322 fix round: a Skip/Take already recorded into PendingGroupPaging earlier in this SAME
-            // chain (e.g. GroupBy(key).Skip(1).Where(g => g.Count() >= 2)) must decline rather than stash a
-            // HAVING comparison on top of it — MongoSelectLowerer always emits GroupHavingPredicate BEFORE
-            // GroupPagingOps regardless of LINQ arrival order, so admitting this would silently apply the
-            // HAVING filter before the paging that, in the actual LINQ chain, ran first. See this fix round's
-            // report for the reproducing probe query.
+            // Paging already recorded on the group (GroupBy(key).Skip(1).Where(...)) must decline: the lowerer emits
+            // GroupHavingPredicate before GroupPagingOps, so the filter would silently run before the paging.
             if (mongoQ.Select.PendingGroupPaging != null)
             {
                 mongoQ.Select.MarkNotNativelyRepresentable();
                 return;
             }
 
-            // A SECOND Where reaching here (mongoQ.Select.PendingGroupPredicate already set by a prior one)
-            // is out of scope — TryBindGroupWherePredicate has nowhere to put more than one stashed
-            // comparison, and overwriting it would silently drop the first Where's filter entirely.
+            // Only one group predicate can be stashed; overwriting it would silently drop the first Where.
             var wherePredicate = call.Arguments[1].UnwrapLambdaFromQuote();
             if (mongoQ.Select.PendingGroupPredicate != null
                 || !NativeGroupByBinder.TryBindGroupWherePredicate(mongoQ, wherePredicate))
@@ -82,31 +70,16 @@ internal static class NativeSlotPopulator
             return;
         }
 
-        // EF-TBD: OrderBy/OrderByDescending/ThenBy/ThenByDescending composed DIRECTLY on the still-ungrouped
-        // GroupBy(key) result — e.g. GroupBy(o => o.CustomerID).OrderBy(o => o.Count()).ThenBy(o => o.Key) —
-        // cannot be resolved here: an ordering aggregate (g.Count() etc.) needs a $group accumulator that does
-        // not exist yet (the $group is only built once the terminal Select runs). Defer the raw key selector
-        // onto MongoSelectDefinition.PendingGroupOrderings instead of declining; NativeGroupByBinder
-        // .TryBindGroupProjection resolves it once the Select arrives, and marks the query non-native itself
-        // (via its ordinary `return false` contract) if the ordering shape turns out to be unsupported.
-        // Scoped to Grouping == null (not yet finalized) so this can never fire for the OPPOSITE composition
-        // order (OrderBy composed AFTER the Select, over a projected alias) — that shape must keep falling
-        // through to the general guard below unchanged (see GroupBy_post_group_OrderBy_by_aggregate_matches_
-        // driver_linq in NativeGroupByTests). A GroupBy nested on an already-finalized prior grouping
-        // (PriorGrouping set — a projected Distinct or an ordinary prior GroupBy) is naturally excluded too,
-        // since Grouping stays non-null in that shape (set by SnapshotPriorGroupingForNestedGroupBy's sibling
-        // machinery) even before this carve-out's own Select runs — so this Grouping == null condition should
-        // not be loosened to "fix" that case; it is already excluded on purpose.
+        // OrderBy/ThenBy directly on the ungrouped GroupBy(key) result: an aggregate key (g.Count()) needs a $group
+        // accumulator that doesn't exist until the terminal Select, so defer the raw selector onto
+        // PendingGroupOrderings; NativeGroupByBinder.TryBindGroupProjection resolves it (or declines) then.
+        // Grouping == null deliberately excludes OrderBy composed after the Select (must hit the guard below; see
+        // GroupBy_post_group_OrderBy_by_aggregate_matches_driver_linq) and a GroupBy nested on a prior grouping.
         if (mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping == null && mongoQ.Select.PendingGroupKey != null
             && (methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.OrderByDescending
                 || methodDefinition == QueryableMethods.ThenBy || methodDefinition == QueryableMethods.ThenByDescending))
         {
-            // EF-322 fix round: a Skip/Take already recorded into PendingGroupPaging earlier in this SAME
-            // chain (e.g. GroupBy(key).Skip(1).OrderByDescending(k => k)) must decline rather than stash an
-            // ordering on top of it — MongoSelectLowerer always emits GroupOrderOp's sort BEFORE
-            // GroupPagingOps regardless of LINQ arrival order, so admitting this would silently apply the
-            // ordering before the paging that, in the actual LINQ chain, ran first (wrong rows/order). See
-            // this fix round's report for the reproducing probe query.
+            // Same hazard as the Where arm above: GroupOrderOp's sort is emitted before GroupPagingOps.
             if (mongoQ.Select.PendingGroupPaging != null)
             {
                 mongoQ.Select.MarkNotNativelyRepresentable();
@@ -124,14 +97,8 @@ internal static class NativeSlotPopulator
             return;
         }
 
-        // EF-322 SP6: Skip/Take composed DIRECTLY on the still-ungrouped GroupBy(key) result — e.g.
-        // GroupBy(o => o.CustomerID).Skip(0).Take(0) — mirrors the OrderBy/ThenBy carve-out immediately
-        // above, but needs NO deferred resolution: a paging count is always translatable right now via the
-        // SAME TranslateCountExpression helper the ordinary (non-GroupBy) Skip/Take arms below already use —
-        // it never references a $group accumulator that doesn't exist yet. Scoped to Grouping == null (not
-        // yet finalized) for the identical reason as the OrderBy/ThenBy carve-out: the OPPOSITE composition
-        // order (Skip/Take composed AFTER the terminal Select, over a finalized Grouping) must keep falling
-        // through unchanged into PostGroupOps, handled elsewhere.
+        // Skip/Take directly on the ungrouped GroupBy(key) result. Unlike ordering, the count translates immediately.
+        // Grouping == null as above: paging after the terminal Select goes to PostGroupOps elsewhere.
         if (mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping == null && mongoQ.Select.PendingGroupKey != null
             && (methodDefinition == QueryableMethods.Skip || methodDefinition == QueryableMethods.Take))
         {
@@ -149,31 +116,15 @@ internal static class NativeSlotPopulator
             return;
         }
 
-        // Post-group slot-operator guard. Once a GroupBy or projected Distinct has been seen on this query
-        // (IsGroupBy / IsDistinct — both bind the same degenerate-$group machinery), a slot operator applied
-        // after it — a Where (HAVING) / OrderBy / ThenBy / Skip / Take — operates over the grouped result,
-        // not the entity. Every arm below resolves member accesses against the ENTITY type, so a post-group
-        // predicate/sort whose member name collides with a real entity property (e.g. an aggregate alias
-        // "Amount" shadowing Entity.Amount) would resolve and emit a pre-$group $match/$sort, running before
-        // aggregation and silently returning wrong data. The native $group path does not support post-group
-        // operators, so mark the query non-native to force a clean driver-LINQ fallback (throws only under
-        // NativeOnly). Scoped to the seven slot operators only — the grouped Select/OfType and the
-        // reducer/aggregate arms are excluded, so the supported GroupBy(key).Select(aggregate) still goes
-        // native.
+        // Post-group guard. After a GroupBy or projected Distinct, a slot operator runs over the grouped result, but
+        // the arms below resolve members against the entity: an aggregate alias shadowing an entity property (e.g.
+        // "Amount") would emit a pre-$group $match/$sort and silently return wrong data. The grouped Select/OfType and
+        // reducer/aggregate arms aren't slot operators, so GroupBy(key).Select(aggregate) still goes native.
         //
-        // A set-op-only terminal is exempt: the seven slot operators composed after a set op fall through to
-        // their arms below and record into TrailingOps (MongoSelectDefinition.ActiveOps flips once
-        // SetOperation is attached), filtering/sorting/paging the combined result and emitting after the
-        // set-op stage. A GroupBy/Distinct/SelectMany terminal (or a mixed one) still trips this guard.
-        // EF-322 carve-out: any of the seven slot operators composed directly after a projected Distinct
-        // (IsDistinct, never a genuine IsGroupBy) is NOT the aggregate-alias hazard this guard exists for —
-        // TryBindDistinctFromProjection's key parts are the Distinct's own flattened output schema, so each arm
-        // below resolves against THAT instead of the entity (OrderBy/ThenBy via
-        // NativeGroupByBinder.TryResolveDistinctOrderingKey, falling through to
-        // MongoExpressionTranslator.DistinctAliasScope for a genuinely computed key; Where via
-        // MongoExpressionTranslator.DistinctAliasScope directly), declining (falling through to
-        // MarkNotNativelyRepresentable there) for anything else. Skip/Take have no field reference to get
-        // wrong at all, so they need no alias-aware treatment — just letting them through here is enough.
+        // Exempt: a set-op-only terminal (slot ops record into TrailingOps and run over the combined result), and a
+        // slot op directly after a projected Distinct, whose arms resolve against the Distinct's own output schema
+        // (NativeGroupByBinder.TryResolveDistinctOrderingKey / MongoExpressionTranslator.DistinctAliasScope) or
+        // decline; Skip/Take have no field reference at all.
         var isPostDistinctSlot = mongoQ.Select.IsDistinct && !mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping != null
             && IsSevenSlotOperator(methodDefinition);
 
@@ -184,42 +135,18 @@ internal static class NativeSlotPopulator
             return;
         }
 
-        // Post-CONFIRMED-JOIN slot-operator guard (EF-392). Structurally the same hazard as the post-group one
-        // above, at a different point in the pipeline: once a Select-side arm has confirmed a genuine two-sided
-        // join and registered its $lookup, Route is no longer Fallback and HasUnsupportedOperator is false, so
-        // a slot operator composed AFTER that Select would record into PipelineOps — which MongoSelectLowerer
-        // emits BEFORE the $lookup/$unwind. Over a 1:N collection-navigation $unwind that pages/filters the
-        // UN-joined outer rows (Join(...).Take(5) limits to five OWNERS, then expands them into N joined rows),
-        // and after the bare whole-entity-leaf arm it also resolves member names against the stale OUTER
-        // CollectionExpression.EntityType used to build `translator` above. Decline so the query falls back to
-        // driver-LINQ (throwing only under NativeOnly) instead of returning silently wrong rows.
+        // Post-confirmed-join guard. Once a Select has confirmed a join and registered its $lookup, a later slot
+        // operator would record into PipelineOps, which lower before the $lookup/$unwind: over a 1:N $unwind it
+        // pages/filters the un-joined outer rows, and members resolve against the stale outer entity type. Decline
+        // rather than return wrong rows. Not folded into HasTerminalOperator: that is also evaluated at join-recording
+        // time and would break reference-Include confirmation.
         //
-        // Deliberately NOT folded into HasTerminalOperator: that is evaluated at join-RECORDING time too,
-        // where it gates TryConfirmReferenceIncludeChain's own precondition and would break native
-        // reference-Include confirmation (tried and reverted earlier in EF-392, commit 4c7b852). This flag is
-        // set only at CONFIRMATION, which the Include path never reaches.
-        //
-        // DEFENCE-IN-DEPTH, NOT A LIVE GUARD — measured, and stated here so nobody re-derives it as load-
-        // bearing: EF Core's nav-expansion applies a join's result selector LAST (pending selector) and hoists
-        // a trailing Where ahead of it, so a slot operator normally reaches this method BEFORE the confirming
-        // Select. Instrumenting this exact branch across the whole functional suite (3018 tests) and the spec
-        // suite in both query modes (4613 × 2) produced ZERO hits; the sibling gate in
-        // NativeCardinalityBinder.TryBindReducer DID fire (twice). The forward ordering — the one that actually
-        // happens — is closed by the HasPaging/Cardinality conjuncts in
-        // MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope. Keep this branch
-        // anyway: it costs one predicate, and it is what stops the hazard the moment the ordering changes
-        // (a confirming arm that runs earlier, or an EF normalization change).
-        //
-        // Scoped to the seven slot operators, matching the guard above. Reverse needs no arm here: any sort
-        // recorded before a confirmed join is safe to flip regardless — an OrderBy over a join scope only ever
-        // translates against the ROOT scope (NativeJoinScopeTranslator.TryTranslateRootScopeOnly for a chain,
-        // depth 1's TryTranslateValue guarded by !ReferencesInnerScope otherwise; see the
-        // native-chained-join-scope plan), so it commutes with the join the same way an outer-side $match does
-        // — this is NOT rejected by HasUnsupportedOperator, unlike what an earlier version of this comment
-        // claimed (see JoinScopeWhereSlotPopulationTests / Chained_join_Where_OrderBy_Any_goes_native_under_NativeOnly
-        // for the pinned proof that a recorded sort reaches confirmation and still confirms correctly). The
-        // reducer arm's own gate lives in NativeCardinalityBinder.TryBindReducer; scalar AGGREGATES are
-        // deliberately not gated, because their $count/$group stage is emitted AFTER the lookup block.
+        // Defence in depth: EF's nav-expansion normally visits slot operators before the confirming Select, an ordering
+        // closed by IsSingleEligibleNativeJoinScope's HasPaging/Cardinality conjuncts. Kept in case that ordering
+        // changes. Reverse needs no arm: a sort recorded before a confirmed join translates against the root scope
+        // only, so it commutes with the join (see JoinScopeWhereSlotPopulationTests). Reducers are gated in
+        // NativeCardinalityBinder.TryBindReducer; scalar aggregates need no gate (their stage follows the lookup
+        // block).
         if (mongoQ.Select.HasConfirmedJoinLookup && IsSevenSlotOperator(methodDefinition))
         {
             mongoQ.Select.MarkNotNativelyRepresentable();
@@ -228,114 +155,62 @@ internal static class NativeSlotPopulator
 
         if (methodDefinition == QueryableMethods.Where)
         {
-            // PipelineOps are emitted verbatim in arrival order: a Where (-> $match) applied after paging is
-            // recorded after it too, and the lowerer emits ops in that same order — correct by MongoDB's
-            // sequential pipeline semantics. No canonical-order guard.
+            // PipelineOps lower in arrival order, so a Where after paging correctly runs after it.
             var predicate = call.Arguments[1].UnwrapLambdaFromQuote();
-            // EF-421: SelfParam identifies THIS predicate's own root parameter, so a nested correlated
-            // element predicate (Count(pred)/Any/All) whose free parameter is identical to it can be built
-            // as a two-scope translator instead of declining outright — see MongoExpressionTranslator.SelfParam.
+            // Lets a nested correlated element predicate over this same root parameter build a two-scope translator
+            // instead of declining — see MongoExpressionTranslator.SelfParam.
             translator.SelfParam = predicate.Parameters[0];
-            // EF-322: a Where composed directly after a projected Distinct (never a genuine IsGroupBy —
-            // NativeSlotPopulator's post-terminal carve-out only lets this through for IsDistinct) resolves its
-            // predicate against the Distinct's OWN flattened output alias, never the entity — see
-            // MongoExpressionTranslator.DistinctAliasScope's remarks for why the entity-scoped resolution must
-            // not even be attempted for this shape (a renamed projection member can share a name with a real,
-            // unrelated entity property).
+            // After a projected Distinct, resolve against its output alias, never the entity (a renamed member can
+            // collide with an unrelated entity property) — see MongoExpressionTranslator.DistinctAliasScope.
             if (mongoQ.Select.IsDistinct && !mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping is { } distinctScope)
                 translator.DistinctAliasScope = distinctScope;
             if (translator.TryTranslate(predicate.Body, out var predicateNode))
                 mongoQ.Select.AddPredicateConjunct(predicateNode);
-            // `customers.Contains(od.Order)` (EF Core's own Where_navigation_contains spec shape), arriving
-            // here as `customers.Contains(ti.Inner)` — EF's nav-expansion of the bare reference-navigation
-            // access. Structurally references Inner (so the Outer-only ReferencesInnerScope arm below would
-            // decline it), but semantically needs no $lookup at all: the navigation's own FK property already
-            // lives on the OUTER document. So this stays an Outer-side ($match-before-$lookup) predicate,
-            // like the arm above — it deliberately does NOT call MarkJoinInnerAccessConfirmedFromWhere,
-            // unlike every other Inner-referencing arm below, because it never reads the $lookup's joined
-            // field and has no ordering dependency on it. See NativeJoinScopeTranslator.TryMatchInnerListContains.
+            // `customers.Contains(ti.Inner)` (Where_navigation_contains): references Inner but needs no $lookup, since
+            // the FK lives on the outer document, so it stays an outer-side $match and deliberately doesn't call
+            // MarkJoinInnerAccessConfirmed. See NativeJoinScopeTranslator.TryMatchInnerListContains.
             else if (mongoQ.Select.JoinScope is { Levels.Count: 1 }
                      && mongoQ.Joins.Count == 1
                      && mongoQ.Joins[0].Navigation is { } containsNavigation
                      && NativeJoinScopeTranslator.TryMatchInnerListContains(
                          predicate.Parameters[0], predicate.Body, containsNavigation, out var innerListContainsNode))
                 mongoQ.Select.AddPredicateConjunct(innerListContainsNode);
-            // Outer-side-only: PipelineOps ($match) always lower BEFORE the $lookup stage that materializes
-            // the join's Inner side, so a Where reaching Inner would filter on a not-yet-joined field —
-            // NativeJoinScopeTranslator.ReferencesInnerScope declines that here, deferring Inner access to
-            // the Select-side binder (Task 5). See NativeJoinScopeTranslator.ReferencesInnerScope's remarks.
-            //
-            // WHY THIS GATE HAS FEWER CONJUNCTS THAN THE SELECT ARMS' SHARED ONE
-            // (MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope, which adds
-            // Joins.Count == 1, the key-selector/left-outer/collection-nav checks and !HasUnsupportedOperator):
-            // those conjuncts all protect the act of REGISTERING the join's $lookup, and this arm registers
-            // nothing — it only records a $match conjunct into PipelineOps. If the join is never confirmed the
-            // query routes to Fallback and that conjunct is discarded unused; if it IS confirmed, it was
-            // confirmed through the shared gate, so every one of those conjuncts held. The asymmetry is
-            // therefore deliberate: do NOT copy this shorter set to a registering call site, and do not weaken
-            // the Select arms' gate to match it.
+            // Outer-side only: $match ops lower before the $lookup, so a Where reaching Inner is left to the arms
+            // below. This gate is deliberately shorter than IsSingleEligibleNativeJoinScope: those conjuncts protect
+            // registering a $lookup, and this arm registers nothing (an unconfirmed join routes to Fallback, discarding
+            // the conjunct). Don't copy this shorter set to a registering call site.
             else if (mongoQ.Select.JoinScope is { Levels.Count: 1 } singleLevelScope
                      && !NativeJoinScopeTranslator.ReferencesInnerScope(predicate.Parameters[0], predicate.Body)
                      && NativeJoinScopeTranslator.TryTranslatePredicate(
                          singleLevelScope, predicate.Parameters[0], predicate.Body, out var joinPredicateNode))
                 mongoQ.Select.AddPredicateConjunct(joinPredicateNode);
-            // Chained (depth >= 2) join scope: only the root/outermost scope is resolvable here — any access
-            // to an Inner side at any depth defers to the Select-side binder, same rationale as the depth-1
-            // ReferencesInnerScope check above. TryTranslateRootScopeOnly enforces this by construction.
+            // Chained join scope: only the root scope is resolvable here; TryTranslateRootScopeOnly enforces it.
             else if (mongoQ.Select.JoinScope is { Levels.Count: > 1 } chainedScope
                      && NativeJoinScopeTranslator.TryTranslateRootScopeOnly(
                          chainedScope, predicate.Parameters[0], predicate.Body, valueMode: false, out var chainedPredicateNode))
                 mongoQ.Select.AddPredicateConjunct(chainedPredicateNode);
-            // A reference-Include's own null check (`Include(e => e.Manager).First(e => e.Manager == null)`,
-            // EF's nav-expansion producing `ti.Inner == null` over the Include-generated LeftJoin). DELIBERATELY
-            // does NOT call AddLookup/MarkReferenceIncludeConfirmed itself: EF's nav-expansion ALWAYS inserts a
-            // mandatory `Select(ti => ti.Outer)` unwrap AFTER a join's result — as the very NEXT operator here,
-            // since this Where's predicate is the pending selector's OWN precursor, not a user operator composed
-            // after the unwrap — and that unwrap's existing arm (IsTransparentIdentifierMemberAccessSelector +
-            // IsSingleEligibleNativeJoinScope, above in TranslateSelect) is what actually confirms/registers a
-            // reference-Include's join, whether or not a Where preceded it. Registering here TOO would double-
-            // count MarkReferenceIncludeConfirmed against the single candidate MarkSawCandidateReferenceIncludeJoin
-            // recorded, permanently tripping HasUnconfirmedCandidateJoin (measured; a first attempt at this arm
-            // did exactly that). This arm's only two jobs are (1) translate the predicate instead of declining,
-            // and (2) flip ActiveOps to PostJoinOps so this predicate — and the trailing First()'s own $limit,
-            // since the reducer is bound only after the confirming Select runs — land after the $lookup/$unwind
-            // once lowered, which is required for correctness: the null check IS the filter that decides
-            // "first", so it must run before, never after, the reducer's $limit. Joins.Count == 1 makes
-            // `mongoQ.Joins[0]` safe to read directly (JoinScope is recorded only for the first join, so "one
-            // join recorded" and "the scope describes it" are the same fact). The IsLeftOuter/non-collection
-            // conjunct is the one place this null check is even meaningful: an INNER join's $unwind drops an
-            // unmatched row entirely (preserveNullAndEmptyArrays: false), so `Inner == null` can never be true
-            // and `!= null` always is — a degenerate shape this declines rather than "succeeding" with a vacuous
-            // $match; a COLLECTION navigation's $unwind is 1:N, so "the joined field is null" doesn't mean what
-            // it means for a 1:1 reference.
+            // A reference-Include null check (`Include(e => e.Manager).First(e => e.Manager == null)` ->
+            // `ti.Inner == null`). Doesn't register the lookup: the Select(ti => ti.Outer) EF always synthesizes next
+            // confirms it, and registering here too would double-count MarkReferenceIncludeConfirmed and trip
+            // HasUnconfirmedCandidateJoin. It only translates the predicate and flips ActiveOps to PostJoinOps, so the
+            // check (and First()'s $limit) run after the $lookup/$unwind. Left-outer only: an inner join's $unwind
+            // drops unmatched rows, making the check vacuous; a collection navigation's 1:N $unwind has no single "is
+            // null" meaning.
             else if (mongoQ.Select.JoinScope != null
                      && mongoQ.Joins.Count == 1
                      && mongoQ.Joins[0] is { IsLeftOuter: true, Lookup: { Navigation.IsCollection: false } lookup }
                      && NativeJoinScopeTranslator.TryMatchInnerNullCheck(
                          predicate.Parameters[0], predicate.Body, out var isNotNull))
             {
-                // Flip BEFORE AddPredicateConjunct: see this arm's remarks above.
+                // Flip before AddPredicateConjunct so the conjunct lands in PostJoinOps.
                 mongoQ.Select.MarkJoinInnerAccessConfirmed();
                 mongoQ.Select.AddPredicateConjunct(new MongoLookupNullCheckExpression(lookup.As, isNotNull));
             }
-            // A GENERAL predicate reaching a single-level join's Inner side (`o.Customer.City != "London"`,
-            // EF's nav-expansion producing this over a LeftJoin the same way the null-check shape above does).
-            // TryTranslatePredicate is the SAME two-scope translator the Outer-only arm above already calls
-            // (guarded there by !ReferencesInnerScope) — its own remarks state mixed Outer/Inner predicates
-            // translate fine structurally, resolving an Inner member through JoinScope.Levels[0].InnerPrefix,
-            // the alias the $lookup this arm defers to will actually produce. So the only new work here is
-            // ROUTING: try the narrower null-check recognizer first (a bare entity-vs-null comparison is not a
-            // property path TryTranslatePredicate can represent, so it correctly declines that shape, but
-            // trying it first avoids wasting a translation attempt on the common null-check case), then this
-            // general arm for everything else. Same non-collection restriction as the null-check arm (a
-            // COLLECTION navigation's 1:N $unwind is a different, unexamined post-join filtering shape) but,
-            // unlike the null-check arm, no IsLeftOuter requirement: an inner join's $unwind already drops
-            // unmatched rows before this $match runs, which is correct for a general comparison (unlike the
-            // null-check's degenerate always-true/never-true concern, which does not apply here). Mirrors the
-            // null-check arm's own division of labor: does NOT call AddLookup/MarkReferenceIncludeConfirmed/
-            // MarkJoinLookupConfirmed — that stays owned by the trailing Select(ti => ti.Outer) EF's
-            // nav-expansion always synthesizes next, to avoid double-counting MongoSelectDefinition's
-            // confirmed/candidate join counters. See docs/superpowers/specs/2026-09-08-native-join-where-inner-scope-design.md.
+            // A general predicate reaching a single-level join's Inner side (`o.Customer.City != "London"`);
+            // TryTranslatePredicate resolves Inner members via JoinScope.Levels[0].InnerPrefix. The narrower null-check
+            // arm is tried first. Non-collection only (1:N post-join filtering is unexamined); no left-outer
+            // requirement, since dropping unmatched rows is correct for a general comparison. Join confirmation is left
+            // to the trailing Select(ti => ti.Outer), as in the null-check arm.
             else if (mongoQ.Select.JoinScope is { Levels.Count: 1 } innerScope
                      && mongoQ.Joins.Count == 1
                      && mongoQ.Joins[0].Lookup is { Navigation.IsCollection: false }
@@ -345,11 +220,8 @@ internal static class NativeSlotPopulator
                 mongoQ.Select.MarkJoinInnerAccessConfirmed();
                 mongoQ.Select.AddPredicateConjunct(innerPredicateNode);
             }
-            // EF-322: an unfiltered reference-collection-nav Count/LongCount compared against a value —
-            // `c.Orders.Count > 2`, or the identical shape EF Core substitutes into a Where composed after a
-            // projected Select. The general translator.TryTranslate attempt above always declines this shape
-            // (its owned-collection-count arm requires an embedded collection), so this is tried only once that
-            // has already failed. See docs/superpowers/specs/2026-09-27-native-reference-collection-count-predicate-design.md.
+            // An unfiltered reference-collection-nav count compared to a value (`c.Orders.Count > 2`), which
+            // translator.TryTranslate always declines (it handles only embedded collections).
             else if (NativeReferenceCollectionCountPredicateBinder.TryTranslate(
                          mongoQ, predicate.Parameters[0], predicate.Body, out var countPredicateNode))
             {
@@ -360,8 +232,7 @@ internal static class NativeSlotPopulator
         }
         else if (methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.OrderByDescending)
         {
-            // OrderBy STARTS a sort (replacing any existing one); ThenBy APPENDS to it. That is the only
-            // difference between this arm and the next, so both share PopulateSortSlot.
+            // OrderBy starts (replaces) a sort; ThenBy appends to it. Otherwise identical.
             PopulateSortSlot(
                 mongoQ, translator, call,
                 ascending: methodDefinition == QueryableMethods.OrderBy,
@@ -376,13 +247,9 @@ internal static class NativeSlotPopulator
         }
         else if (methodDefinition == QueryableMethods.Skip)
         {
-            // Repeated / non-canonical-order paging is natively representable: each Skip appends a $skip op
-            // at its arrival position, and the lowerer emits ops verbatim.
-            //
-            // Joins.Count == 0 here means this Skip is genuinely positioned BEFORE any join on this select
-            // (e.g. Customers.Take(1).GroupJoin(...)) — see MongoSelectDefinition.HasPagingRecordedBeforeAnyJoin
-            // for why that must never be deferred past a LATER join the same way EF's hoisted-forward
-            // Join(...).Select(...).Skip()/Take() shape safely is.
+            // Each Skip appends a $skip at its arrival position. With no join recorded yet, this paging precedes any
+            // join and must not be deferred past a later one — see
+            // MongoSelectDefinition.HasPagingRecordedBeforeAnyJoin.
             if (mongoQ.Joins.Count == 0)
                 mongoQ.Select.MarkPagingRecordedBeforeAnyJoin();
             PopulatePagingSlot(mongoQ, call, mongoQ.Select.AppendSkip);
@@ -418,11 +285,9 @@ internal static class NativeSlotPopulator
 #if !EF8 && !EF9
                  || methodDefinition == QueryableMethods.LeftJoin
 #else
-                 // EF8/EF9 lower a GroupJoin+DefaultIfEmpty pair — including EF's own nav-expansion of an
-                 // OPTIONAL reference Include — onto this same private shim rather than a public LeftJoin
-                 // method (see Ef8Ef9LeftJoinMethod's remarks). Recognize it here exactly like the EF10
-                 // public LeftJoin above, or every EF8/EF9 optional reference Include is marked non-native
-                 // before the join-scope binder ever runs (EF-322).
+                 // EF8/EF9 lower GroupJoin+DefaultIfEmpty (including an optional reference Include) onto this shim
+                 // instead of a public LeftJoin (see Ef8Ef9LeftJoinMethod); without this, every EF8/EF9 optional
+                 // reference Include would be marked non-native.
                  || MongoQueryableMethodTranslatingExpressionVisitor.IsEf8Ef9LeftJoinShim(call.Method)
 #endif
                 )
@@ -435,16 +300,9 @@ internal static class NativeSlotPopulator
         }
         else if (call.IsVectorSearch())
         {
-            // Binding the slot doubles as opening the native disposition: it reads
-            // `ContainsVectorSearch(captured) && Select.VectorSearch is null`, so a bound slot means "native"
-            // and "the lowerer has a $vectorSearch stage to emit" as one fact — bind or mark
-            // non-representable are the only two exits, so a native route with the stage never emitted
-            // (right row count, insertion order instead of score order, no exception) is unreachable by
-            // construction.
-            //
-            // This branch sits above the catch-all rather than in IsNativeRepresentableSlotOperator because
-            // that whitelist takes only a MethodInfo and there is no QueryableMethods constant for
-            // VectorSearch — it's recognized via the internal IsVectorSearch() extension instead.
+            // Binding the slot is what makes the route native, so a native route without a $vectorSearch stage (rows in
+            // insertion order, not score order) is unreachable: bind or decline are the only exits. Handled here rather
+            // than in IsNativeRepresentableSlotOperator because VectorSearch has no QueryableMethods constant.
             if (!NativeVectorSearchBinder.TryBind(mongoQ, call))
             {
                 mongoQ.Select.MarkNotNativelyRepresentable();
@@ -452,28 +310,15 @@ internal static class NativeSlotPopulator
         }
         else if (!IsNativeRepresentableSlotOperator(methodDefinition))
         {
-            // Any other top-level operator (Distinct, Cast, DefaultIfEmpty, scalar aggregates, cardinality
-            // reducers, Any/All, …) is not lowered into a native slot. Leaving the query "native-representable"
-            // would silently drop the operator on the native pipeline (e.g. a Distinct executed as the bare
-            // collection scan), so it is conservatively marked non-native. Select / OfType set the flag in their
-            // own Translate overrides. This is correctness-safe: the worst case is a missed native optimization
-            // and a fall back to the driver-LINQ path, never a wrong result.
+            // Any other operator isn't lowered into a slot; leaving the query native would silently drop it (e.g. a
+            // Distinct run as a bare collection scan). Select/OfType set the flag in their own Translate overrides.
             mongoQ.Select.MarkNotNativelyRepresentable();
         }
     }
 
-    // The seven slot operators whose native lowering (a $match / $sort / $skip / $limit) would be emitted
-    // BEFORE a stage they must run after — a $group when applied after a GroupBy, or the $lookup/$unwind when
-    // applied after a CONFIRMED genuine join. Both post-terminal guards in PopulateNativeSlots key off this
-    // same list. Deliberately excludes Select / OfType / GroupBy and the reducer / scalar-aggregate operators
-    // so the supported grouped Select is not marked non-native.
     /// <summary>
-    /// Records an <c>OrderBy</c>/<c>OrderByDescending</c>/<c>ThenBy</c>/<c>ThenByDescending</c> key as a sort
-    /// ordering via <paramref name="record"/>, trying in turn a plain field key, a computed key, a
-    /// single-level join-scope key, and a chained join-scope root-scope key, and marking the query non-native
-    /// if none translates. The four operators differ only in <paramref name="ascending"/> and in whether they
-    /// start or extend the sort, both of which are the caller's to supply — so all four candidate translations
-    /// live here once rather than being restated per operator.
+    /// Records an OrderBy/ThenBy[Descending] key via <paramref name="record"/>, trying each supported key shape in turn
+    /// and marking the query non-native if none translates.
     /// </summary>
     private static void PopulateSortSlot(
         MongoQueryExpression mongoQ,
@@ -485,17 +330,10 @@ internal static class NativeSlotPopulator
         var keySelector = call.Arguments[1].UnwrapLambdaFromQuote();
         translator.SelfParam = keySelector.Parameters[0];
 
-        // Post-Distinct ordering (EF-322): resolve against the Distinct's OWN flattened output alias, never
-        // the entity. NativeGroupByBinder.TryResolveDistinctOrderingKey handles the identity key (bare-scalar
-        // Distinct's OrderBy(c => c)) and a bare member naming one of the Distinct's own key parts — including
-        // a COMPUTED key part (EF-322 gap-2, e.g. Select(c => new { A = c.CustomerID + c.City })), which it
-        // resolves via a MongoElementRefExpression onto that part's flattened alias rather than an IProperty.
-        // Anything ELSE it declines — most notably a genuinely COMPUTED expression built from the key selector's
-        // own parameter (EF-322 gap-3, e.g. a bare-scalar Distinct's OrderBy(x => x.IndexOf(term))) — falls
-        // through to the SAME MongoExpressionTranslator.DistinctAliasScope mechanism Where/Count(pred) already
-        // use, letting TryTranslateComputedSortKey resolve it exactly like the non-Distinct case does. Either
-        // way, a member name that is not one of the Distinct's own key parts never falls through to the entity
-        // below, so a renamed projection member can never resolve against a colliding, unrelated entity property.
+        // Post-Distinct: resolve against the Distinct's own output (identity key or a named, possibly computed, key
+        // part) via TryResolveDistinctOrderingKey; otherwise fall through with DistinctAliasScope set so a computed key
+        // over the Distinct's output translates. A name outside the Distinct's key parts never resolves against the
+        // entity.
         if (mongoQ.Select.IsDistinct && !mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping is { } distinctGrouping)
         {
             if (NativeGroupByBinder.TryResolveDistinctOrderingKey(
@@ -517,52 +355,30 @@ internal static class NativeSlotPopulator
                  && NativeJoinScopeTranslator.TryTranslateValue(
                      singleLevelScope, keySelector.Parameters[0], keySelector.Body, out var joinSortKey))
             record(new MongoOrdering(joinSortKey, ascending));
-        // A sort key reaching a single-level join's Inner side (`o.OrderID`), e.g.
-        // `Customers.Join(Orders, ...).OrderBy(x => x.Inner.OrderID)`. Mirrors NativeSlotPopulator's Where
-        // Inner arm (docs/superpowers/specs/2026-09-08-native-join-where-inner-scope-design.md): translates
-        // via the same general-purpose two-scope TryTranslateValue the Outer-only arm above already calls
-        // (guarded there by !ReferencesInnerScope), then defers this sort — and anything recorded after it —
-        // into PostJoinOps so it lowers past the $lookup/$unwind block that materializes Inner.
-        //
-        // UNLIKE the Where arm, this is NOT restricted to a non-collection-navigation/reference lookup: a
-        // $sort changes neither row count nor row identity, so — unlike paging
-        // (docs/superpowers/specs/2026-09-22-native-post-join-paging-design.md), which DOES need to reason
-        // about 1:1-safety — sorting the post-$unwind rows is correct for ANY join cardinality, collection
-        // navigation or not. This matters in practice, not just in theory: the motivating test
-        // (Join_Customers_Orders_Skip_Take family) is `Customers.Join(Orders, c => c.CustomerID, o =>
-        // o.CustomerID, ...)`, whose Navigation resolves to Customer.Orders — a COLLECTION navigation
-        // (Lookup.IsReference is false) — not the reference nav Order.Customer, because TranslateJoinCore
-        // resolves the navigation from the OUTER (Customer) side's key selector. Requiring IsReference here
-        // (as Where's arm does) would keep this exact family declining. Joins.Count == 1 makes Joins[0] safe
-        // to read directly (JoinScope is only ever recorded for the first/only join at this depth); no
-        // further conjunct is needed; see
-        // docs/superpowers/specs/2026-09-23-native-join-orderby-inner-scope-design.md.
+        // Sort key reaching a single-level join's Inner side (`Join(...).OrderBy(x => x.Inner.OrderID)`), deferred into
+        // PostJoinOps so it lowers after the $lookup/$unwind. Unlike the Where Inner arm, collection navigations are
+        // allowed: a $sort changes neither row count nor identity, so it's correct for any join cardinality (and
+        // Customers.Join(Orders, ...) resolves to the Customer.Orders collection navigation).
         else if (mongoQ.Select.JoinScope is { Levels.Count: 1 } innerSortScope
                  && mongoQ.Joins.Count == 1
                  && NativeJoinScopeTranslator.TryTranslateValue(
                      innerSortScope, keySelector.Parameters[0], keySelector.Body, out var innerSortKey))
         {
-            // Relocate BEFORE flipping/recording: an earlier Outer-only key in this SAME chain (e.g.
-            // `OrderBy(o.OrderID).ThenBy(o.Customer.CustomerID)`) is still sitting in PipelineOps as a
-            // MongoSortOp — it must move into PostJoinOps too, so both keys end up in ONE $sort stage. See
-            // DeferTrailingSortPastConfirmedJoin's own remarks for why splitting them across two stages is a
-            // silent wrong-order bug, not just a cosmetic difference.
+            // Relocate first: an earlier outer-only key in the same chain is still a MongoSortOp in PipelineOps and
+            // must share this $sort stage, or the order is silently wrong. See DeferTrailingSortPastConfirmedJoin.
             mongoQ.Select.DeferTrailingSortPastConfirmedJoin();
             mongoQ.Select.MarkJoinInnerAccessConfirmed();
             record(new MongoOrdering(innerSortKey, ascending));
         }
-        // A CONDITIONAL sort key reaching a single-level join's Inner side (EF-322, Phase 2 Group A), e.g.
-        // `Orders.OrderBy(o => o.Customer != null ? o.Customer.City : "")`. The plain-value arm immediately
-        // above never matches a ConditionalExpression body (TryTranslateValue has no ternary handling), so
-        // this arm is checked next, not in place of it.
+        // A conditional Inner sort key (`o.Customer != null ? o.Customer.City : ""`); TryTranslateValue has no ternary
+        // handling, so the arm above never matches it.
         else if (mongoQ.Select.JoinScope is { Levels.Count: 1 } conditionalSortScope
                  && mongoQ.Joins.Count == 1
                  && TryTranslateConditionalSortKey(
                      mongoQ, conditionalSortScope, keySelector.Parameters[0], keySelector.Body,
                      out var conditionalSortKey))
         {
-            // Same relocate-then-confirm sequence as the plain-value Inner-access arm above, for the same
-            // reason: an earlier Outer-only key in this SAME chain must land in the same $sort stage.
+            // Same relocate-then-confirm sequence as above.
             mongoQ.Select.DeferTrailingSortPastConfirmedJoin();
             mongoQ.Select.MarkJoinInnerAccessConfirmed();
             record(new MongoOrdering(conditionalSortKey, ascending));
@@ -571,24 +387,11 @@ internal static class NativeSlotPopulator
                  && NativeJoinScopeTranslator.TryTranslateRootScopeOnly(
                      chainedScope, keySelector.Parameters[0], keySelector.Body, valueMode: true, out var chainedSortKey))
             record(new MongoOrdering(chainedSortKey, ascending));
-        // A sort key reaching through a multi-argument positional-ctor DTO Select projection, e.g.
-        // `Select(c => new CustomerListItem(c.CustomerID, c.City)).OrderBy(c => c.City)` — EF Core's own
-        // Northwind Member_binding_after_ctor_arguments_fails_with_client_eval shape. Nav-expansion's pending-
-        // selector mechanism composes the key selector as `x => new CustomerListItem(x.CustomerID, x.City).City`
-        // — a MemberExpression whose receiver re-BUILDS the same Members-null NewExpression the trailing Select
-        // will project — and, empirically (confirmed by tracing this exact query), visits OrderBy/Take BEFORE
-        // the trailing Select: MongoSelectDefinition.HasPositionalCtorProjectionShaper is still unset and
-        // Projection is still empty at this point, so there is no alias table to consult yet. EF's own
-        // ReplacingExpressionVisitor only folds `new T(...).Prop` back to the original ctor argument when
-        // NewExpression.Members is populated (anonymous types) — never for this ordinary named-type positional
-        // ctor — so this raw, unfoldable shape reaches here instead of the plain-field arm above.
-        //
-        // Resolved by translating the MATCHING constructor argument directly, rather than through any projection
-        // alias: since the argument is evaluated against the SAME root parameter the sort runs over, translating
-        // it in place is exactly equivalent to `new T(...).Prop` and needs no coordination with the (not yet
-        // populated) Select. Which argument matches Prop is not otherwise recoverable without IL/body analysis
-        // — this uses the ctor-parameter-name-matches-property-name convention (case-insensitive) this
-        // codebase's own ctor-DTO shapes (CustomerOrderSummary/CustomerListItem-style) already follow.
+        // Sort key through a positional-ctor DTO Select (Member_binding_after_ctor_arguments_fails_with_client_eval).
+        // Nav-expansion composes `x => new CustomerListItem(x.CustomerID, x.City).City` and visits it before the Select
+        // (no projection aliases yet); EF folds `new T(...).Prop` only when NewExpression.Members is set. Translate the
+        // matching ctor argument directly (same root parameter), matched by parameter name = property name, ignoring
+        // case.
         else if (keySelector.Body is MemberExpression { Expression: NewExpression { Members: null } ctorExpr, Member: PropertyInfo prop }
                  && ctorExpr.Constructor is { } ctor
                  && Array.FindIndex(
@@ -602,21 +405,11 @@ internal static class NativeSlotPopulator
     }
 
     /// <summary>
-    /// Attempts to translate a BARE nav-null-check ternary ORDER BY/THEN BY sort key reaching a single-level
-    /// join scope's Inner side — <c>o =&gt; o.Customer != null ? o.Customer.City : ""</c> — mirroring
-    /// <see cref="NativeJoinScopeProjectionBinder.TryBindConditionalProjection"/>'s SELECT-side recognizer for
-    /// the identical shape (structural null-check match via
-    /// <see cref="NativeJoinScopeTranslator.TryMatchScopeNullCheck"/>, branch translation via
-    /// <see cref="NativeJoinScopeProjectionBinder.TryTranslateConditionalBranch"/>), but NOT extracted into a
-    /// shared method with it: the two call sites confirm the join differently (
-    /// <see cref="NativeJoinScopeProjectionBinder.ConfirmEntireChain"/> for the SELECT case vs.
-    /// <see cref="MongoSelectDefinition.DeferTrailingSortPastConfirmedJoin"/> +
-    /// <see cref="MongoSelectDefinition.MarkJoinInnerAccessConfirmed"/> here), so the caller must stay in
-    /// control of the commit step. Declines (returns <see langword="false"/>, never throws) for a plain inner
-    /// <c>Join</c>'s degenerate "always true" null check and for a collection navigation's "no single
-    /// is-it-null answer" case — the same two guards <c>TryBindConditionalProjection</c> applies, re-derived
-    /// here since this is a different call site (see <c>JoinScopeOrderBySlotPopulationTests</c> for
-    /// both decline cases proven independently).
+    /// Translates a nav-null-check ternary sort key over a single-level join's Inner side
+    /// (<c>o =&gt; o.Customer != null ? o.Customer.City : ""</c>), mirroring
+    /// <see cref="NativeJoinScopeProjectionBinder.TryBindConditionalProjection"/>. Not shared with it because the two
+    /// confirm the join differently, so the caller owns the commit step. Declines an inner join's degenerate check and
+    /// a collection navigation (see <c>JoinScopeOrderBySlotPopulationTests</c>).
     /// </summary>
     private static bool TryTranslateConditionalSortKey(
         MongoQueryExpression mongoQ, MongoJoinScope scope, ParameterExpression rootParam, Expression body,
@@ -636,11 +429,8 @@ internal static class NativeSlotPopulator
         var checkedJoin = mongoQ.Joins[scopeIndex - 1];
         var level = scope.Levels[scopeIndex - 1];
 
-        // Degenerate-check guard: a plain inner Join drops an unmatched row entirely rather than unwinding it
-        // as an explicit null, so "Inner != null" is unconditionally true there (and "== null" unconditionally
-        // false) — not a real check. A collection navigation is a different shape (many joined rows, not a
-        // single nullable one) with no single "is it null" answer. Mirrors
-        // NativeJoinScopeProjectionBinder.TryBindConditionalProjection's identical guard.
+        // An inner join drops unmatched rows, so the check is constant; a collection navigation has no single
+        // "is null" answer. Same guard as TryBindConditionalProjection.
         if (!level.IsLeftOuter || checkedJoin.Navigation is { IsCollection: true })
         {
             return false;
@@ -658,9 +448,7 @@ internal static class NativeSlotPopulator
     }
 
     /// <summary>
-    /// Translates a value expression to a sort key exactly like the two leading arms of
-    /// <see cref="PopulateSortSlot"/> (plain field, then computed key) — factored out so the positional-ctor arm
-    /// can reuse both without duplicating the fallback chain.
+    /// Translates a value to a sort key as a plain field, else a computed key.
     /// </summary>
     private static bool TryTranslateSortKeyExpression(
         MongoExpressionTranslator translator, Expression valueExpression, [NotNullWhen(true)] out MongoExpression? sortKey)
@@ -695,6 +483,8 @@ internal static class NativeSlotPopulator
             record(count);
     }
 
+    // The slot operators whose native stage would be emitted before a $group (after GroupBy) or the $lookup/$unwind
+    // (after a confirmed join); both post-terminal guards in PopulateNativeSlots key off this list.
     private static bool IsSevenSlotOperator(MethodInfo methodDefinition)
         => methodDefinition == QueryableMethods.Where
            || methodDefinition == QueryableMethods.OrderBy
@@ -704,16 +494,9 @@ internal static class NativeSlotPopulator
            || methodDefinition == QueryableMethods.Skip
            || methodDefinition == QueryableMethods.Take;
 
-    // The operators PopulateNativeSlots lowers into a native slot. Everything else either sets the flag in its
-    // own Translate override (Select/OfType) or must drop off the native path (handled by the catch-all above).
-    //
-    // VectorSearch is deliberately absent: this predicate takes a MethodInfo, and VectorSearch has no
-    // QueryableMethods constant to compare against — it is recognized via the internal IsVectorSearch()
-    // extension instead, whose explicit branch above runs before the catch-all, so this whitelist never needs
-    // to hold it.
-    // The seven slot operators are a PREFIX of this list, by construction — expressed as a call rather than
-    // restated, so the two can no longer disagree. Keeping them as two independent copies was the "miss either
-    // half and the operator is silently dropped" trap the Query area AGENTS.md documents.
+    // The operators PopulateNativeSlots lowers natively; everything else sets the flag in its own Translate override
+    // (Select/OfType) or hits the catch-all. VectorSearch is recognized separately (no QueryableMethods constant).
+    // Built on IsSevenSlotOperator so the two lists can't disagree.
     internal static bool IsNativeRepresentableSlotOperator(MethodInfo methodDefinition)
         => IsSevenSlotOperator(methodDefinition)
            || methodDefinition == QueryableMethods.Select
@@ -746,10 +529,8 @@ internal static class NativeSlotPopulator
            || QueryableMethods.IsAverageWithoutSelector(methodDefinition)
            || QueryableMethods.IsAverageWithSelector(methodDefinition);
 
-    // Maps the six no-predicate cardinality-reducer QueryableMethods to their MongoReducerKind. The
-    // predicate-taking overloads are normalized by EF to Where(pred).First()/... before reaching here, so
-    // they are intentionally not matched — leaving them off means the catch-all in PopulateNativeSlots
-    // marks them non-native if one somehow arrives unnormalized.
+    // Only the no-predicate reducers: EF normalizes predicate overloads to Where(pred).First() etc., and an
+    // unnormalized one falls to the catch-all.
     private static bool TryGetReducerKind(MethodInfo methodDefinition, out MongoReducerKind kind)
     {
         if (methodDefinition == QueryableMethods.FirstWithoutPredicate)
@@ -809,60 +590,28 @@ internal static class NativeSlotPopulator
     }
 
     /// <summary>
-    /// Attempts to translate a computed (non-field) sort key. MQL <c>$sort</c> accepts field paths only, so
-    /// <see cref="MongoSelectLowerer"/> materializes the result into a synthetic field with <c>$set</c> and
-    /// removes it again with <c>$unset</c>.
+    /// Attempts to translate a computed (non-field) sort key. <c>$sort</c> accepts field paths only, so
+    /// <see cref="MongoSelectLowerer"/> materializes it into a synthetic field with <c>$set</c>/<c>$unset</c>.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The gate is <see cref="MongoAggregationExpressionRenderer.CanRender"/>, not
-    /// <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>: a <c>$set</c> body is an aggregation
-    /// expression, so a node kind that exists only in the query dialect can serve a predicate but can never
-    /// serve a computed sort key. Gating here turns that into a clean translate-time decline instead of a
-    /// render-time throw. Any future slice that introduces a new node kind reachable as a sort key must add
-    /// a matching arm to both <c>Render</c> and <c>CanRender</c> in
-    /// <see cref="MongoAggregationExpressionRenderer"/> (that file's own contract requires the two be changed
-    /// together) — not only to the query-dialect renderer.
+    /// Gated on <see cref="MongoAggregationExpressionRenderer.CanRender"/> (a <c>$set</c> body is an aggregation
+    /// expression), turning a query-dialect-only node into a translate-time decline rather than a render-time throw. A
+    /// new node kind reachable as a sort key needs arms in both <c>Render</c> and <c>CanRender</c>.
     /// </para>
     /// <para>
-    /// <see cref="MongoExpressionTranslator.TryTranslateValue"/> brings its own guard: an operand whose
-    /// property lacks default serialization is rejected, so a value-converted field cannot be sorted by its
-    /// raw stored order via a computed key. (A plain field sort key on such a property has no equivalent
-    /// guard.) It used to reject an integer-result division too; EF-434 replaced that with a truncating
-    /// translation (<see cref="MongoBinaryOperator.IntegerDivide"/>), so <c>OrderBy(c =&gt; c.A / c.B)</c> now
-    /// sorts by the C#-correct quotient natively.
+    /// <see cref="MongoExpressionTranslator.TryTranslateValue"/> rejects operands lacking default serialization, so a
+    /// value-converted field can't be sorted by raw stored order via a computed key (a plain field key has no such
+    /// guard).
     /// </para>
     /// <para>
-    /// <b>A bare top-level constant/parameter is a separate, value-level hazard <c>CanRender</c> cannot see</b>
-    /// — it is a node-kind check only. Two hazards are handled elsewhere/below: (1)
-    /// <see cref="MongoPipelineFactory"/>'s <c>RenderAddFields</c> <c>$literal</c>-wraps a bare
-    /// constant/parameter body, so an unwrapped <c>"$"</c>-prefixed string value can't render as a field path
-    /// instead of a literal; (2) a bare constant whose CLR type
-    /// <see cref="MongoDB.Bson.BsonValue.Create(object)"/> rejects (e.g. a custom struct) would otherwise
-    /// throw at pipeline-build time, outside the translator's usual fallback path.
-    /// <see cref="TryProbeBareValueRenders"/> below turns that into a clean decline by trial-rendering the
-    /// actual constant value, or, for a parameter, a default instance of its declared (nullable-unwrapped)
-    /// value type — a valid proxy because <c>BsonValue.Create</c>'s admission decision is keyed on the CLR
-    /// type, not the value.
+    /// A bare constant/parameter whose CLR type <see cref="MongoDB.Bson.BsonValue.Create(object)"/> rejects would throw
+    /// at pipeline-build time, which <c>CanRender</c> can't see; <see cref="TryProbeBareValueRenders"/> declines it.
+    /// (<c>RenderAddFields</c> separately <c>$literal</c>-wraps bare values so a <c>"$"</c> string isn't a field path.)
     /// </para>
     /// <para>
-    /// A reference-type parameter is handled by a narrow allowlist rather than a probe: a default reference
-    /// proxy is always <see langword="null"/>, which renders unconditionally and so can't discriminate, and
-    /// <c>BsonValue.Create</c> admits some reference types (e.g. an array/<c>List&lt;T&gt;</c>, mapped
-    /// structurally) but rejects others (<see cref="Uri"/>, <see cref="Version"/>, ordinary user classes) in
-    /// a way that can't be recognized from the declared type alone. Admission is restricted to the reference
-    /// types known to render for any value: <see cref="string"/> and <see cref="MongoDB.Bson.BsonValue"/>.
-    /// Declining an admissible shape only costs nativeness, never correctness.
-    /// </para>
-    /// <para>
-    /// <b>A filtered owned-collection count (<c>b.Posts.Count(p =&gt; ...)</c>) goes native as a sort key,</b>
-    /// even though its element predicate is not passed through the operand-serialization guard that would
-    /// catch a value-converted/non-default-represented comparison operand inside it (that guard only checks
-    /// the outer expression). Over a property with a non-default <c>BsonRepresentation</c>, this can compare
-    /// the raw stored representation rather than the CLR value inside the filter — but native and
-    /// driver-LINQ agree in that case, because the driver's own LINQ provider serializes the same comparison
-    /// constant through the same property serializer, so it is not a native-only divergence. An unfiltered
-    /// count (<c>MongoSizeExpression</c>) has no such comparison at all and is unaffected.
+    /// A filtered owned-collection count key skips the operand-serialization guard inside its element predicate; over a
+    /// non-default <c>BsonRepresentation</c> it compares the stored representation, but driver-LINQ does the same.
     /// </para>
     /// </remarks>
     private static bool TryTranslateComputedSortKey(
@@ -886,12 +635,10 @@ internal static class NativeSlotPopulator
     }
 
     /// <summary>
-    /// Strips top-level boxing-to-<see cref="object"/> <c>Convert</c> layers (e.g. <c>(object)i</c> over a
-    /// captured <c>int</c>) to recover the actual declared type of a bare value/parameter sort key, matching
-    /// what <c>MongoExpressionTranslator.TranslateOperand</c> itself unwraps unconditionally. Without this, a
-    /// boxed key's <c>Type</c> stays <see cref="object"/> and <see cref="TryProbeBareValueRenders"/> would
-    /// reject a <see cref="MongoParameterExpression"/> under its reference-type allowlist even though the
-    /// value underneath boxes cleanly.
+    /// Strips top-level boxing <c>Convert</c>-to-<see cref="object"/> layers to recover a bare sort key's declared
+    /// type, as <c>MongoExpressionTranslator.TranslateOperand</c> does; otherwise
+    /// <see cref="TryProbeBareValueRenders"/> would reject a boxed value-type parameter under its reference-type
+    /// allowlist.
     /// </summary>
     internal static Type UnwrapBoxingToObjectType(Expression e)
     {
@@ -903,20 +650,12 @@ internal static class NativeSlotPopulator
     }
 
     /// <summary>
-    /// Returns <see langword="false"/> only when <paramref name="translated"/> is a bare
-    /// <see cref="MongoConstantExpression"/> or <see cref="MongoParameterExpression"/> whose value would make
-    /// <see cref="MongoAggregationExpressionRenderer.Render"/> throw at pipeline-build time (see
-    /// <see cref="TryTranslateComputedSortKey"/>'s remarks). Anything else (a binary/size/field-ref node —
-    /// never a bare value) is trivially fine and returns <see langword="true"/> without probing.
+    /// Returns <see langword="false"/> only when <paramref name="translated"/> is a bare constant or parameter whose
+    /// value would make <see cref="MongoAggregationExpressionRenderer.Render"/> throw at pipeline-build time. A
+    /// constant is trial-rendered; a value-type parameter is probed with a default instance (<c>BsonValue.Create</c>
+    /// admission is keyed on CLR type, matching <c>MongoPipelineFactory.SerializeParameter</c>). Other nodes return
+    /// <see langword="true"/>.
     /// </summary>
-    /// <remarks>
-    /// Exact for a <see cref="MongoConstantExpression"/> — the value is known at translate time, so the real
-    /// render path runs on the real value. For a <see cref="MongoParameterExpression"/> it is a type-keyed
-    /// model of that same path rather than the value that will actually execute; it agrees with what
-    /// actually runs (<c>MongoPipelineFactory.SerializeParameter</c>) because a bare value parameter carries
-    /// no property serializer, so both paths reach <c>BsonValue.Create</c>, whose admission decision is keyed
-    /// on the CLR type rather than the value.
-    /// </remarks>
     internal static bool TryProbeBareValueRenders(MongoExpression translated, Type declaredType)
     {
         switch (translated)
@@ -925,11 +664,8 @@ internal static class NativeSlotPopulator
                 return TryRender(constant);
 
             case MongoParameterExpression:
-                // A default instance stands in for the (unknowable here) runtime value. Where the declared
-                // type is looser than the runtime one (e.g. an `object`-typed parameter boxing an int) this
-                // probe can over-decline a shape that would have rendered fine — costing nativeness only,
-                // never correctness. If SerializeParameter ever stops routing a bare value through
-                // BsonValue.Create, this probe must be re-pointed at whatever replaces it.
+                // A looser declared type (object boxing an int) may over-decline, costing nativeness only. Must track
+                // SerializeParameter's use of BsonValue.Create.
                 var underlying = Nullable.GetUnderlyingType(declaredType) ?? declaredType;
                 if (underlying.IsValueType)
                 {
@@ -937,10 +673,8 @@ internal static class NativeSlotPopulator
                     return TryRender(new MongoConstantExpression(sample, forSerialization: null));
                 }
 
-                // A reference type can't be probed (a default proxy is always null, which renders
-                // unconditionally) and BsonValue.Create maps a collection structurally element-by-element
-                // (int[] renders, Uri[] throws), so admission is restricted to reference types known to
-                // render for any value.
+                // A null default proxy can't discriminate, and BsonValue.Create maps collections element-wise (int[]
+                // renders, Uri[] throws), so allow only reference types that always render.
                 return underlying == typeof(string) || typeof(BsonValue).IsAssignableFrom(underlying);
 
             default:
@@ -956,9 +690,7 @@ internal static class NativeSlotPopulator
             }
             catch (Exception)
             {
-                // Broad catch deliberately: the question is exactly "does rendering this value throw", and
-                // any throw means decline and let the query fall back to driver-LINQ (or throw cleanly under
-                // NativeOnly) rather than crash uncaught at pipeline-build time.
+                // Any throw means decline (fallback, or a clean NativeOnly throw) rather than crash at build time.
                 return false;
             }
         }

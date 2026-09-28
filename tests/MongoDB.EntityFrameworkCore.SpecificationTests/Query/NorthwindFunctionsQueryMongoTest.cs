@@ -1949,10 +1949,6 @@ OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "
     {
         await base.TrimStart_with_char_array_argument_in_predicate(async);
 
-        // string.TrimStart(char[]) in a Where predicate now goes native ($ltrim) instead of falling back to
-        // driver-LINQ's regex-based lookaround trick — different MQL, same results. This whole file is
-        // already #if EF8 || EF9-guarded (only EF10 dropped it entirely, in favor of StringTranslationsMongoTest),
-        // so there is no separate EF10 baseline variant to branch on here.
         AssertMql(
             """
             Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$ContactTitle", "chars" : "Ow" } }, "ner"] } } }
@@ -1983,10 +1979,6 @@ OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "
     {
         await base.TrimEnd_with_char_array_argument_in_predicate(async);
 
-        // string.TrimEnd(char[]) in a Where predicate now goes native ($rtrim) instead of falling back to
-        // driver-LINQ's regex-based lookbehind trick — different MQL, same results. This whole file is
-        // already #if EF8 || EF9-guarded (only EF10 dropped it entirely, in favor of StringTranslationsMongoTest),
-        // so there is no separate EF10 baseline variant to branch on here.
         AssertMql(
             """
             Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$ContactTitle", "chars" : "er" } }, "Own"] } } }
@@ -1997,10 +1989,6 @@ OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "
     {
         await base.Trim_without_argument_in_predicate(async);
 
-        // string.Trim() in a Where predicate now goes native ($trim) instead of falling back to
-        // driver-LINQ's regex-based lookaround trick — different MQL, same results. This whole file is
-        // already #if EF8 || EF9-guarded (only EF10 dropped it entirely, in favor of StringTranslationsMongoTest),
-        // so there is no separate EF10 baseline variant to branch on here.
         AssertMql(
             """
             Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$ContactTitle", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, "Owner"] } } }
@@ -2032,9 +2020,6 @@ OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "
         await base.Order_by_length_twice(async);
 
 #if EF8 || EF9
-        // EF8/EF9: string.Length as a computed OrderBy key now lowers via a direct $set/$sort/$unset
-        // sequence (native sort-key computation) instead of the $project/$$ROOT/$replaceRoot wrapper —
-        // different MQL, same results.
         AssertMql(
             """
             Customers.{ "$set" : { "__sort0" : { "$strLenCP" : "$_id" }, "__sort1" : { "$strLenCP" : "$_id" } } }, { "$sort" : { "__sort0" : 1, "__sort1" : 1, "_id" : 1 } }, { "$unset" : ["__sort0", "__sort1"] }
@@ -2277,15 +2262,9 @@ Customers.
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
 
-    // Shadows the base helper: a shape the native translator does not support must fail as a
-    // *translation* failure, but the exact exception depends on the query mode and how far the driver-LINQ
-    // fallback gets. Under MongoQueryMode.NativeOnly the provider throws NativeTranslationNotSupportedException;
-    // under the default Native mode it falls back to driver-LINQ, which surfaces an EF InvalidOperationException
-    // (CoreStrings.TranslationFailed or an internal "VisitChildren" guard) or a driver translation exception
-    // (ExpressionNotSupportedException). All of these are accepted here.
-    // Data-assertion failures (Xunit assertion exceptions) are deliberately NOT accepted, so a future
-    // wrong-data regression in the fallback path still turns the test red rather than being masked.
-    // These three are the only exception types actually observed across the flipped GroupBy spec suites.
+    // Accepts any translation-failure exception (NativeTranslationNotSupportedException under NativeOnly, or the
+    // EF/driver exceptions the driver-LINQ fallback throws), but not assertion failures, so wrong-data
+    // regressions still fail.
     protected new static Task AssertTranslationFailed(Func<Task> query)
         => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 }

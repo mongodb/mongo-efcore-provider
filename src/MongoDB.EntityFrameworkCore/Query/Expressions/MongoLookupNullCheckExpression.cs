@@ -22,23 +22,17 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// (<c>e.Manager != null</c>) or absent (<c>e.Manager == null</c>), post-<c>$unwind</c>.
 /// </summary>
 /// <remarks>
-/// A deliberate SIBLING of <see cref="MongoFieldExpression"/> rather than that node reused with a
-/// null/placeholder <see cref="Microsoft.EntityFrameworkCore.Metadata.IProperty"/> — <see cref="LookupAlias"/>
-/// names a SYNTHETIC top-level field (<c>_lookup_&lt;Navigation&gt;</c>) that a <c>$lookup</c>+<c>$unwind</c>
-/// (with <c>preserveNullAndEmptyArrays: true</c>) materializes as an entire joined sub-document or an explicit
-/// <see langword="null"/> when no match existed, never a stored scalar property with a getter/value-converter
-/// of its own. Has both a query-dialect form (<c>RenderLookupNullCheck</c>, for the <c>Where</c>-position
-/// shape) and an aggregation-expression form (<c>MongoAggregationExpressionRenderer</c>, for the Select-side
-/// conditional-Test shape).
+/// A sibling of <see cref="MongoFieldExpression"/> rather than one with a placeholder
+/// <see cref="Microsoft.EntityFrameworkCore.Metadata.IProperty"/>: <see cref="LookupAlias"/> names a synthetic
+/// top-level field (<c>_lookup_&lt;Navigation&gt;</c>) that <c>$lookup</c>+<c>$unwind</c>
+/// (<c>preserveNullAndEmptyArrays: true</c>) fills with the joined sub-document or <see langword="null"/>, not a
+/// stored property with its own serializer. Renders in the query dialect (<c>RenderLookupNullCheck</c>, Where
+/// position) and the aggregation dialect (Select-side conditional Test).
 /// <para>
-/// Produced by <c>NativeJoinScopeTranslator.TryMatchInnerNullCheck</c> (the flat, depth-1, Where-only shape)
-/// and <c>TryMatchScopeNullCheck</c> (the depth-agnostic, Select-side shape), recognizing the
-/// EXACT shape <c>ti.Inner == null</c>/<c>!= null</c> (<c>ti</c> the join's own TransparentIdentifier
-/// parameter) at the top of a <c>Where</c> predicate — never nested under a <c>Not</c>, quantifier, or
-/// <c>$elemMatch</c>, so neither <see cref="Microsoft.EntityFrameworkCore.Metadata"/>-adjacent negation
-/// machinery (<c>MongoExpressionNegator</c>) nor <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>
-/// (nesting inside <c>$elemMatch</c>) need to recognize it; both fail closed on it via their existing
-/// catch-alls, correctly declining rather than mis-rendering.
+/// Produced by <c>NativeJoinScopeTranslator.TryMatchInnerNullCheck</c> (depth-1, Where only) and
+/// <c>TryMatchScopeNullCheck</c> (any depth, Select side) for exactly <c>ti.Inner == null</c>/<c>!= null</c>.
+/// Never nested under <c>Not</c>, a quantifier, or <c>$elemMatch</c>, so <c>MongoExpressionNegator</c> and
+/// <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c> fail closed on it via their catch-alls.
 /// </para>
 /// </remarks>
 internal sealed class MongoLookupNullCheckExpression(string lookupAlias, bool isNotNull) : MongoExpression

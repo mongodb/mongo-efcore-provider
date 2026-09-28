@@ -688,23 +688,9 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         Assert.Empty(actual.children);
     }
 
-    // RENAMED (EF-358) from "..._is_null_when_null" / "..._is_null_when_missing". The old names asserted a
-    // provider CONTRACT that never existed. Verified by measurement (EF-358 task-2-report.md addendum) and
-    // in source: pre-EF-358, the provider computed `null` for a missing or explicitly-null stored array on
-    // EVERY code path and never created a collection for that row at all — not just here. What actually
-    // produced the OLD "null" observed by these four tests was a SEPARATE mechanism, one layer up, in
-    // `MongoProjectionBindingRemovingExpressionVisitor.IncludeCollection` — the fixup EF Core's own
-    // auto-included `IncludeExpression` runs for every owned collection navigation (with or without an
-    // explicit `.Include()`). That method only calls `navigation.GetCollectionAccessor()!.GetOrCreate(entity,
-    // forMaterialization: true)` inside "if (relatedEntities != null)". Pre-fix, `relatedEntities` (the
-    // provider's computed value) was that same `null`, so the fixup was skipped ENTIRELY and the property was
-    // left exactly as the CLASS'S OWN field initializer set it — `null` for `SimpleNonNullableCollection` and
-    // `SimpleNullableCollection`, since neither declares `children { get; set; } = [];`. Had either class
-    // been written with that initializer, these tests would have observed "empty" even on the OLD code, for
-    // the IDENTICAL underlying null computation — i.e. the old assertions were pinning their own POCO's
-    // authoring style, not provider semantics. EF-358 removes that dependency: the provider now always
-    // materializes a real (possibly empty) collection, so the `IncludeCollection` fixup always runs and every
-    // class gets the same, uniform answer regardless of whether it wrote a defensive initializer.
+    // A missing or explicitly-null stored array materializes as an empty collection, whether or not the class
+    // declares a `= []` initializer: the provider always creates a collection, so the
+    // `MongoProjectionBindingRemovingExpressionVisitor.IncludeCollection` fixup always runs.
     [Theory]
     [InlineData(QueryTrackingBehavior.TrackAll)]
     [InlineData(QueryTrackingBehavior.NoTracking)]
@@ -775,11 +761,9 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         Assert.Empty(actual.children);
     }
 
-    // EF-358: the projection path (Select over a CollectionShaperExpression) used to disagree with whole-entity
-    // materialization for a missing or explicitly-null stored array — it produced a null CLR collection instead
-    // of an empty one. Owned-collection projections require AsNoTracking (EF Core cannot track an owned entity
-    // without its owner in the result), so this covers the same "missing"/"null" states as the whole-entity
-    // theories above, but through Select rather than whole-entity materialization.
+    // Same missing/null states as the whole-entity theories above, but through a Select over a
+    // CollectionShaperExpression, which must also yield an empty collection. AsNoTracking because EF Core can't
+    // track an owned entity without its owner.
     [Fact]
     public void OwnedEntity_collection_projection_is_empty_when_missing()
     {
@@ -804,11 +788,9 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         Assert.Empty(actual);
     }
 
-    // EF-358: a collection shaper nested inside another owned collection's item (FirstLevel.children[i].children)
-    // never gets a bound bsonArray variable — BsonDocumentInjectingExpressionVisitor doesn't recurse into a
-    // CollectionShaperExpression's InnerShaper — so it always takes the "else" branch that reads the BsonArray
-    // straight off the parent element via CreateGetBsonArray. That's a different code path from the root-level
-    // case above, so it needs its own missing/null coverage.
+    // A collection shaper nested in another owned collection's item (FirstLevel.children[i].children) has no
+    // bound bsonArray variable (BsonDocumentInjectingExpressionVisitor doesn't recurse into InnerShaper), so it
+    // reads the array via CreateGetBsonArray — a separate path needing its own missing/null coverage.
     [Fact]
     public void OwnedEntity_nested_collection_is_empty_when_grandchild_array_missing()
     {
@@ -1447,10 +1429,8 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [Fact]
     public void OwnedEntity_collection_can_be_tested_for_null()
     {
-        // The predicate `e.children == null` is unaffected by EF-358 — only the materialized value of the
-        // matched row flips from `null` to `[]`. `inserted` and `expected` must stay separate objects: setting
-        // `children = []` on `inserted` would write an empty array to the document instead of leaving the
-        // field unset, changing what gets seeded rather than just what gets asserted.
+        // `e.children == null` still matches the row with no stored field, but it materializes as `[]`. Keep
+        // `inserted` and `expected` separate: setting `children = []` on `inserted` would seed an empty array.
         var collection = database.CreateCollection<A>();
         var inserted = new A { _id = "1" };
         var expected = new A { _id = "1", children = [] };
@@ -1471,10 +1451,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [Fact]
     public void OwnedEntity_collection_field_can_be_tested_for_null()
     {
-        // Same reasoning as OwnedEntity_collection_can_be_tested_for_null immediately above: the predicate
-        // `e.children == null` is unaffected (still matches row "1" by its missing stored field); only the
-        // MATERIALIZED value flips from `null` to `[]` post-EF-358. `inserted` (children left unset) is what
-        // gets written, unchanged; `expected` (children = []) is the separate comparison value.
+        // See OwnedEntity_collection_can_be_tested_for_null.
         var collection = database.CreateCollection<AField>();
         var inserted = new AField { _id = "1" };
         var expected = new AField { _id = "1", children = [] };
@@ -1603,8 +1580,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         }
 
         {
-            // Assert the count is evaluated server-side (a $filter/$size over the array) rather than by
-            // materializing the owned CountPost entities and counting client-side.
+            // The count must be evaluated server-side ($filter/$size), not by materializing CountPost entities.
             var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
             using var db = SingleEntityDbContext.Create(collection, loggerFactory,
                 optionsBuilderAction: o => o.EnableSensitiveDataLogging());
@@ -1658,10 +1634,8 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             db.SaveChanges();
         }
 
-        // Deliberately a default *tracking* query (unlike EF-357's own tests, which required
-        // AsNoTracking): the bare Count must stay a server-side scalar, not a materialized owned-entity
-        // shaper, or EF Core's tracking-materializer rejects it ("owned entity without a corresponding
-        // owner").
+        // Tracking on purpose: the bare Count must stay a server-side scalar, or EF Core's tracking materializer
+        // rejects the owned-entity shaper ("owned entity without a corresponding owner").
         var (loggerFactory, spyLogger) = SpyLoggerProvider.Create();
         using var db2 = SingleEntityDbContext.Create(collection, loggerFactory,
             optionsBuilderAction: o => o.EnableSensitiveDataLogging());
@@ -1669,8 +1643,7 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         var counts = db2.Entities.OrderBy(e => e._id).Select(e => e.children.Count).ToList();
         Assert.Equal([2, 0, 0], counts);
 
-        // A null stored array must report 0, not throw: the driver renders a bare Count as a server-side
-        // $size, which rejects a null array, so this needs an $ifNull normalization first.
+        // A null stored array must report 0: $size rejects null, so an $ifNull normalization is needed.
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("$ifNull", message);
         Assert.Contains("$size", message);
@@ -1687,10 +1660,8 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
     [Fact]
     public void OwnedEntity_collection_bare_count_projection_over_missing_element_returns_zero()
     {
-        // A document where the array element is OMITTED entirely (not stored as BSON null) is a distinct
-        // case from an explicit null: in an aggregation expression a missing field is not equal to BSON
-        // null, so a plain null-equality guard does not catch it and $size still throws on "missing". Only
-        // $ifNull (which normalizes missing the same as null) handles both.
+        // A missing array is distinct from BSON null: a null-equality guard doesn't catch it and $size still
+        // throws. Only $ifNull handles both.
         var collection = database.CreateCollection<A>();
         database.GetCollection<BsonDocument>(collection.CollectionNamespace).InsertOne(new BsonDocument("_id", "1"));
 
@@ -1873,11 +1844,9 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         public DayOfWeek day { get; set; }
     }
 
-    // Write-side shapes for OwnedEntity_nested_collection_is_empty_when_grandchild_array_missing/null: mirror
-    // FirstLevel/SecondLevel but the SecondLevel-equivalent either omits its `children` element entirely
-    // (SecondLevelMissingChildren) or is written with it explicitly null (SecondLevelNullChildren), so the
-    // stored document's grandchild array is absent/null exactly as MissingNullableCollection does for the
-    // root-level case above. Read back through FirstLevel/SecondLevel/ThirdLevel, unchanged.
+    // Write-side shapes for the nested grandchild-array missing/null tests: like FirstLevel/SecondLevel, but
+    // `children` is omitted (SecondLevelMissingChildren) or null (SecondLevelNullChildren). Read back through
+    // FirstLevel/SecondLevel/ThirdLevel.
     private record FirstLevelWithMissingGrandchildren
     {
         public Guid _id { get; set; }

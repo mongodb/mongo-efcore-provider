@@ -40,9 +40,8 @@ public class StringTranslationsMongoTest : StringTranslationsTestBase<MongoBasic
     public virtual void Check_all_tests_overridden()
         => TestHelpers.AssertAllMethodsOverridden(GetType());
 
-    // Upstream StringTranslationsTestBase declares a test named "Equals" (a [ConditionalFact] on the base
-    // virtual method), which the xunit analyzer flags as colliding with object.Equals(object) by name.
-    // Suppressed rather than renamed since this override must match the base signature exactly.
+    // The base test is named "Equals", which xUnit1024 flags as colliding with object.Equals; the override
+    // can't be renamed.
 #pragma warning disable xUnit1024
     public override async Task Equals()
     {
@@ -481,16 +480,9 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
 """);
     }
 
-    // CurrentCulture(IgnoreCase)/InvariantCulture(IgnoreCase) have no culture-aware collation equivalent in
-    // MongoDB's $regularExpression, so our native translator correctly declines them — same as before Task
-    // 3, unaffected by Ordinal/OrdinalIgnoreCase now going native. But the decline still just falls through
-    // to the driver-LINQ v3 fallback, which (confirmed empirically, still true post-Task-3) accepts the
-    // StringComparison-taking overload without validating the culture member at all: no exception is thrown
-    // by AssertQuery(...), so base's own internal Assert.ThrowsAsync<InvalidOperationException> check (the
-    // same expectation every relational provider satisfies) fails with a ThrowsException. That's the actual
-    // gap signal here — asserted directly rather than via AssertTranslationFailed, since a ThrowsException
-    // isn't itself evidence of a translation rejection. This is a permanent, correct decline on our side
-    // (same convention as Where_bitwise_xor in the misc-roadmap doc) — not a gap to close.
+    // Culture-sensitive comparisons have no $regularExpression equivalent, so the native translator declines
+    // them (permanently). The driver-LINQ fallback then accepts the overload without checking the culture, so
+    // nothing throws and the base's Assert.ThrowsAsync<InvalidOperationException> fails with ThrowsException.
     public override async Task StartsWith_with_StringComparison_unsupported()
         => await Assert.ThrowsAsync<ThrowsException>(() => base.StartsWith_with_StringComparison_unsupported());
 
@@ -564,8 +556,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
 """);
     }
 
-    // See StartsWith_with_StringComparison_unsupported above — same permanent, correct decline, same
-    // ThrowsException-wrapping-a-ThrowsException gap signal.
+    // Same decline as StartsWith_with_StringComparison_unsupported.
     public override async Task EndsWith_with_StringComparison_unsupported()
         => await Assert.ThrowsAsync<ThrowsException>(() => base.EndsWith_with_StringComparison_unsupported());
 
@@ -637,8 +628,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
 """);
     }
 
-    // See StartsWith_with_StringComparison_unsupported above — same permanent, correct decline, same
-    // ThrowsException-wrapping-a-ThrowsException gap signal.
+    // Same decline as StartsWith_with_StringComparison_unsupported.
     public override async Task Contains_with_StringComparison_unsupported()
         => await Assert.ThrowsAsync<ThrowsException>(() => base.Contains_with_StringComparison_unsupported());
 
@@ -1056,7 +1046,6 @@ BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle" } } }, { "$mat
 """);
     }
 
-    // Excluded — depends on native GroupBy, other agents' active work:
     public override Task Join_over_non_nullable_column()
         // Fails: depends on native GroupBy (other agent's work) EF-149
         => AssertTranslationFailed(() => base.Join_over_non_nullable_column());
@@ -1093,7 +1082,6 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["$String",
 """);
     }
 
-    // Excluded — depends on native GroupBy, other agents' active work:
     public override Task Concat_aggregate()
         // Fails: depends on native GroupBy (other agent's work) EF-149
         => AssertTranslationFailed(() => base.Concat_aggregate());

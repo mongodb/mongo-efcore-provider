@@ -27,9 +27,8 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// A projected reference-collection-navigation LIST leaf (<c>Orders = c.Orders.ToList()</c>) — the
-/// translate-time recognizer's accept/decline matrix, mirroring
-/// <see cref="NativeCorrelatedReducerLeafTests"/>'s harness pattern.
+/// Accept/decline matrix for the projected reference-collection-navigation list leaf
+/// (<c>Orders = c.Orders.ToList()</c>), using <see cref="NativeCorrelatedReducerLeafTests"/>'s harness pattern.
 /// </summary>
 public class NativeProjectedCollectionListLeafTests
 {
@@ -121,31 +120,18 @@ public class NativeProjectedCollectionListLeafTests
     [Fact]
     public void Bare_ToHashSet_declines_because_EF_never_lowers_it_to_the_recognized_shape()
     {
-        // NOTE (review finding M8): TryTranslateProjectedCollectionNavigationList's own XML doc claims
-        // ".ToArray()/.ToHashSet() on [an ICollection<T>-declared navigation] ... reach the Where-wrapped
-        // shape" — mirroring Bare_ToArray_is_recognized (BindAccepted) for .ToHashSet() was expected to pass.
-        // It does not: EF Core's NavigationExpandingExpressionVisitor.VisitMethodCall only special-cases
-        // Enumerable.ToList/ToArray to unwrap a MaterializeCollectionNavigationExpression into the queryable
-        // Where-wrapped shape this recognizer (and the bind-side pass) requires — ToHashSet is not in that
-        // list, on ANY declared navigation type, so a projected `nav.ToHashSet()` leaf always arrives as an
-        // un-lowered MaterializeCollectionNavigationExpression and this recognizer safely declines it (falls
-        // back to driver-LINQ, correct data). Confirmed empirically against this EF version; see also
-        // ToArray_on_a_List_declared_navigation_declines_gracefully for the sibling List<T>-declared-nav case.
+        // EF's NavigationExpandingExpressionVisitor only unwraps MaterializeCollectionNavigationExpression for
+        // Enumerable.ToList/ToArray, so `nav.ToHashSet()` never reaches the Where-wrapped shape and the recognizer
+        // declines (driver-LINQ fallback, correct data).
         AssertDeclined(q => q.Select(c => new { c.Name, Orders = c.Orders.ToHashSet() }));
     }
 
     [Fact]
     public void ThenInclude_wrapped_shape_is_still_recognized()
     {
-        // NOTE: this harness only hands the SELECTOR to TryPopulateNativeProjection — it never runs the
-        // bind-side pass (MongoProjectionBindingExpressionVisitor.TryBindProjectedCollectionNavigation) that
-        // would register a separately-`.Include()`'d/`.ThenInclude()`'d navigation's OWN lookup. So this test
-        // does NOT exercise the AddLookup alias-dedup mechanism (a genuinely separate Include registration
-        // colliding with this leaf's own registration) — real dedup coverage lives in the spec/functional
-        // tests. What this DOES prove: `.ThenInclude()` wraps the projected nav's selector body in an
-        // `IncludeExpression` (`o => Include(o, ...)` rather than the plain identity `o => o`), and the
-        // recognizer still matches that wrapped shape via IsEntityMaterializingSelector's IncludeExpression
-        // unwrap loop.
+        // This harness never runs the bind-side pass, so it doesn't cover AddLookup alias dedup with a separate
+        // Include (spec/functional tests do). It proves the recognizer still matches a selector body wrapped in
+        // `IncludeExpression` by `.ThenInclude()`, via IsEntityMaterializingSelector's unwrap loop.
         var mongoQ = BindAccepted(q =>
             q.Include(c => c.Orders).ThenInclude(o => o.OrderDetails)
                 .Select(c => new { c.Name, Orders = c.Orders.ToList() }));
@@ -156,10 +142,8 @@ public class NativeProjectedCollectionListLeafTests
     [Fact]
     public void Two_list_leaves_over_the_same_navigation_decline()
     {
-        // The design spec describes two sibling list leaves over the SAME navigation as deduping; the shipped
-        // recognizer instead declines this combination (safely — it falls back to driver-LINQ with correct
-        // data). Both leaves derive the identical "_lookup_Orders" alias, and the second AddLookup-equivalent
-        // seenAliases.Add fails, so the whole projection declines rather than dedupe.
+        // Both leaves derive the same "_lookup_Orders" alias; the seenAliases.Add collision declines the whole
+        // projection (safe driver-LINQ fallback) rather than deduping.
         AssertDeclined(q => q.Select(c => new { A = c.Orders.ToList(), B = c.Orders.ToList() }));
     }
 
@@ -180,10 +164,8 @@ public class NativeProjectedCollectionListLeafTests
     {
         var mongoQ = BindAccepted(q => q.Select(c => new { c.Name, Orders = c.Orders.ToList() }));
 
-        // The array leaf's presence widens hasArrayLeaf, which (a) requires every sibling scalar leaf to be
-        // whole-document-readable (Name's alias equals its own element name, so it qualifies) and (b) retains
-        // the owner's "_id" alongside the requested aliases (see the commit block in TryPopulateNativeProjection) —
-        // so three projection members are expected here, not two.
+        // The array leaf sets hasArrayLeaf, which requires sibling scalars to be whole-document-readable (Name is) and
+        // retains the owner's "_id" (see TryPopulateNativeProjection's commit block), so three members are expected.
         Assert.Equal(3, mongoQ.Select.Projection.Count);
         Assert.Contains(mongoQ.Select.Projection, p => p.Alias == "Name");
         Assert.Contains(mongoQ.Select.Projection, p => p.Alias == "_lookup_Orders");
@@ -191,12 +173,9 @@ public class NativeProjectedCollectionListLeafTests
     }
 
     // ── A navigation declared as a concrete List<T> ─────────────────────────────────────────────────────────
-    // Separate small model: TryTranslateProjectedCollectionNavigationList's own remarks document that
-    // .ToArray()/.ToHashSet() on a List<T>-DECLARED navigation take a structurally different, earlier-collapsed
-    // nav-expanded shape (MaterializeCollectionNavigationExpression.ToArray()/.ToHashSet(), not the Where-wrapped
-    // one this recognizer matches) — confirmed empirically, not merely asserted in the comment. Verified here so
-    // this limitation stays proven rather than just documented: the recognizer must gracefully DECLINE (fall
-    // back to driver-LINQ), not throw or silently mis-translate.
+    // On a List<T>-declared navigation, .ToArray()/.ToHashSet() nav-expand to an earlier-collapsed
+    // MaterializeCollectionNavigationExpression shape, not the Where-wrapped one; the recognizer must decline, not
+    // throw or mis-translate.
 
     private class Vendor
     {
@@ -246,14 +225,11 @@ public class NativeProjectedCollectionListLeafTests
     }
 
     // ── Test infrastructure ─────────────────────────────────────────────────────────────────────────────────
-    // Mirrors NativeCorrelatedReducerLeafTests' own private harness classes (each test file in this directory
-    // keeps its own copy rather than sharing one) — do not reimplement, only copy.
+    // Per-file copy of NativeCorrelatedReducerLeafTests' harness classes.
 
     /// <summary>
-    /// Stands in for EF Core's own funcletization step: rewrites every CLOSURE capture (a member read off the
-    /// compiler-generated display-class constant the C# compiler emits for a captured local) into the EF query
-    /// parameter node that step would produce — a prefix-named <see cref="ParameterExpression"/> on EF8/EF9, a
-    /// <c>QueryParameterExpression</c> on EF10.
+    /// Stands in for EF's funcletization: rewrites each closure capture into the EF query parameter node (a
+    /// prefix-named <see cref="ParameterExpression"/> on EF8/EF9, a <c>QueryParameterExpression</c> on EF10).
     /// </summary>
     private sealed class ClosureCaptureParameterizer : ExpressionVisitor
     {
@@ -307,9 +283,8 @@ public class NativeProjectedCollectionListLeafTests
     }
 
     /// <summary>
-    /// A minimal queryable stub rooted in an <see cref="EntityQueryRootExpression"/>, so applied LINQ operators
-    /// build the same method-call chain EF's own preprocessing phase receives. Mirrors
-    /// <c>SlotPopulationTests.RootExpressionQueryable</c>/<c>NativeCorrelatedReducerLeafTests.RootExpressionQueryable</c>.
+    /// A queryable stub rooted in an <see cref="EntityQueryRootExpression"/>, so applied operators build the same
+    /// method-call chain EF's preprocessing receives.
     /// </summary>
     private sealed class RootExpressionQueryable<T>(Expression expression) : IOrderedQueryable<T>
     {

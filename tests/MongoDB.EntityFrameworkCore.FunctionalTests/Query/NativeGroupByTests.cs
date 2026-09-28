@@ -29,13 +29,10 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-344 native <c>GroupBy(key).Select(aggregate)</c> → <c>$group</c>. Proves that a supported grouped
-/// projection (scalar or composite key + Count/Sum) executes as a native aggregation pipeline and
-/// materializes correct rows, and that unsupported shapes (computed key, bare IGrouping)
-/// fall back to driver-LINQ under <see cref="MongoQueryMode.Native"/> yet throw
-/// <see cref="NativeTranslationNotSupportedException"/> under <see cref="MongoQueryMode.NativeOnly"/>.
-/// <see cref="MongoQueryMode.NativeOnly"/> is the "went native" signal (the emitted MQL is otherwise
-/// indistinguishable from the driver-LINQ fallback).
+/// Native <c>GroupBy(key).Select(aggregate)</c> → <c>$group</c>: supported grouped projections execute natively
+/// with correct rows; unsupported shapes fall back under <see cref="MongoQueryMode.Native"/> and throw
+/// <see cref="NativeTranslationNotSupportedException"/> under <see cref="MongoQueryMode.NativeOnly"/>, which is
+/// the "went native" signal (the MQL is otherwise indistinguishable from the fallback).
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -122,13 +119,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_computed_key_goes_native_under_native_only()
     {
-        // EF-322 SP1: a computed key (o.OrderDate.Year) is no longer a hard decline —
-        // NativeGroupByBinder.TryBindGroupKey now translates it via MongoExpressionTranslator.TryTranslateValue
-        // (the same general "any translatable value" method already used for accumulator operands), so this
-        // shape goes native and no longer throws under NativeOnly. This used to pin the opposite (a fallback
-        // decline); GroupBy_computed_key_runs_under_native (immediately below) already proves the same shape's
-        // DATA correctness under plain Native mode — this test's remaining job is just confirming NativeOnly
-        // doesn't throw.
+        // A computed key (o.OrderDate.Year) translates via TryTranslateValue, so NativeOnly doesn't throw.
+        // Data correctness: GroupBy_computed_key_runs_under_native.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_computed_key_goes_native_under_native_only));
 
@@ -188,16 +180,14 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
             .OrderBy(r => r.Key)
             .ToList();
 
-        // FR: 1 order, UK: 2 orders, US: 2 orders.
         Assert.Equal([("FR", 1), ("UK", 2), ("US", 2)], result.Select(r => (r.Key, r.Count)).ToArray());
     }
 
     [Fact]
     public void GroupBy_accumulator_with_dollar_prefixed_string_constant_operand_goes_native()
     {
-        // A bare string constant operand starting with "$" must be $literal-wrapped in the rendered $group
-        // accumulator — MongoDB otherwise reads an unwrapped leading-"$" string as a FIELD PATH, which would
-        // silently aggregate the wrong value instead of returning the literal string.
+        // A "$"-prefixed string constant operand must be $literal-wrapped in the $group accumulator, or MongoDB
+        // reads it as a field path and silently aggregates the wrong value.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_accumulator_with_dollar_prefixed_string_constant_operand_goes_native));
 
@@ -245,10 +235,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_bson_represented_key_falls_back()
     {
-        // A key with a non-default BsonRepresentation (enum stored as string) must NOT go native: the grouped
-        // shaper reads the group _id back through a generic CLR-type serializer, which cannot reproduce the
-        // string-stored enum — it would throw at materialization under Native, diverging from DriverLinq.
-        // The fix rejects such keys so the query falls back (throws only under NativeOnly).
+        // A key with a non-default BsonRepresentation (enum as string) must not go native: the grouped shaper
+        // reads _id through a CLR-type serializer and would throw at materialization. It falls back instead.
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(nameof(GroupBy_bson_represented_key_falls_back))
                              + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<Order>(collectionName);
@@ -262,7 +250,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
             seedDb.SaveChanges();
         }
 
-        // Native: falls back to driver-LINQ and returns correct results (parity with DriverLinq).
+        // Native: falls back and matches DriverLinq.
         using (var nativeDb = Make(collection, MongoQueryMode.Native, configure))
         {
             var result = nativeDb.Entities
@@ -284,12 +272,9 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_aggregate_over_a_non_grouping_source_falls_back_under_native_only()
     {
-        // The projected aggregate's SOURCE is a correlated subquery over the DbSet, NOT the grouping
-        // parameter g. It must NOT be bound to a $group accumulator (which would silently drop the subquery
-        // and return the group's row count); the whole shape must fall back to driver-LINQ. Under NativeOnly,
-        // fallback is disallowed, so it throws (the "did not go native" signal). Regression guard for the
-        // root-cause bug proven at the binder level in NativeGroupByBinderTests
-        // (Aggregate_over_non_grouping_source_returns_false / Sum_over_non_grouping_source_returns_false).
+        // The aggregate's source is a correlated subquery over the DbSet, not g. Binding it to a $group
+        // accumulator would silently return the group's row count, so the shape must fall back (throw under
+        // NativeOnly). Binder-level: NativeGroupByBinderTests.*_over_non_grouping_source_returns_false.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_aggregate_over_a_non_grouping_source_falls_back_under_native_only));
 
@@ -303,11 +288,9 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_combined_with_Join_throws_clean_translation_failure_under_native()
     {
-        // A GroupBy combined with a Join projecting a non-entity result (here the joined Region entity) is a
-        // shape the native path cannot represent AND whose driver-LINQ fallback silently returns WRONG data
-        // (the joined entity is empty for every grouped row). Unlike computed-key/operand grouping (which
-        // falls back to a CORRECT driver-LINQ execution under Native), this shape must fail cleanly rather
-        // than return wrong data. Mirrors the spec suite's GroupBy_Aggregate_Join. Regression guard for EF-344.
+        // GroupBy then a Join projecting the joined entity: not representable natively, and the driver-LINQ
+        // fallback silently returns empty joined entities, so it must fail cleanly. Mirrors the spec suite's
+        // GroupBy_Aggregate_Join.
         using var db = CreateGroupByJoinContext(MongoQueryMode.Native,
             nameof(GroupBy_combined_with_Join_throws_clean_translation_failure_under_native));
 
@@ -322,9 +305,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_combined_with_Join_still_runs_under_driver_linq()
     {
-        // The clean-failure applies only to Native/NativeOnly; explicit DriverLinq is the user's opt-in and
-        // must still execute the query through the driver-LINQ provider (results are the driver's concern),
-        // never throwing NativeTranslationNotSupportedException.
+        // The clean failure applies only to Native/NativeOnly; explicit DriverLinq still executes via the driver.
         using var db = CreateGroupByJoinContext(MongoQueryMode.DriverLinq,
             nameof(GroupBy_combined_with_Join_still_runs_under_driver_linq));
 
@@ -341,11 +322,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_over_a_joined_source_runs_correctly_under_native()
     {
-        // Reverse ordering of GroupBy_combined_with_Join: the Join comes FIRST, then a GroupBy over the join
-        // result with a SCALAR aggregate projection (Key + Max). Unlike the group-then-join shape (whose
-        // driver-LINQ fallback returns wrong data and must fail cleanly), this join-then-group shape falls
-        // back to driver-LINQ and returns CORRECT data (verified equal to explicit DriverLinq). It must NOT be
-        // forced to throw — the fallback-unsafe marker is scoped to group-then-join only. Guard for EF-344.
+        // Join-then-GroupBy with a scalar aggregate: the fallback returns correct data (equal to DriverLinq), so it
+        // must not be forced to throw — the fallback-unsafe marker is scoped to group-then-join.
         using var nativeDb = CreateGroupByJoinContext(MongoQueryMode.Native,
             nameof(GroupBy_over_a_joined_source_runs_correctly_under_native) + "N");
         using var driverDb = CreateGroupByJoinContext(MongoQueryMode.DriverLinq,
@@ -427,10 +405,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_plain_member_key_with_lone_count_goes_native()
     {
-        // A plain-member key with a LONE Count() and nothing else goes NATIVE: it is NOT fused by EF into a
-        // GroupBy(key, resultSelector) form, and Count() → $sum:1 is a supported accumulator. Succeeding under
-        // NativeOnly (with correct data) is the "went native" proof. Guard against re-introducing the incorrect
-        // "lone Count falls back" doc claim.
+        // A plain-member key with a lone Count() goes native: EF doesn't fuse it into GroupBy(key,
+        // resultSelector), and Count() → $sum: 1 is supported.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_plain_member_key_with_lone_count_goes_native));
 
@@ -447,11 +423,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_ef_property_key_goes_native_under_native_only()
     {
-        // EF-322 SP1: a grouping key expressed as EF.Property<T>(o, "…") — a MethodCallExpression — used to
-        // be a hard decline (NativeGroupByBinder.TryBindGroupKey's switch only recognized NewExpression/
-        // MemberExpression), falling back to driver-LINQ; under NativeOnly that meant a throw. TryBindGroupKey
-        // now routes through MongoExpressionTranslator.TryTranslateValue, which already resolves EF.Property
-        // the same way an ordinary member access does, so this goes native instead.
+        // An EF.Property<T>(o, "…") key translates via TryTranslateValue like an ordinary member access.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_ef_property_key_goes_native_under_native_only));
 
@@ -468,12 +440,9 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_accumulator_named_id_falls_back_and_matches_driver_linq()
     {
-        // A group projection whose accumulator member is literally "_id" makes the accumulator OutputField
-        // "_id" — which collides with the reserved $group id field (the $group document already carries the
-        // grouping key under "_id"). Before the guard this threw a BsonDocument duplicate-key exception at
-        // pipeline BUILD (an unhandled crash, not a clean fallback). The guard rejects the shape so it falls
-        // back to driver-LINQ under Native (correct results, parity with DriverLinq) and throws
-        // NativeTranslationNotSupportedException — never a MongoDB.Bson duplicate-key error — under NativeOnly.
+        // An accumulator member named "_id" collides with $group's key field; unguarded it throws a BSON
+        // duplicate-key error at pipeline build. Must fall back under Native (matching DriverLinq) and throw
+        // NativeTranslationNotSupportedException under NativeOnly.
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
@@ -500,12 +469,9 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_HAVING_on_aggregate_alias_colliding_with_property_matches_driver_linq()
     {
-        // The repro (EF-344 review). A post-group Where (HAVING) whose predicate references an aggregate
-        // ALIAS ("Amount") that COLLIDES with a real entity property name ("Amount"). Before the guard, the
-        // post-group Where was resolved against the ENTITY type by member name and emitted a PRE-$group
-        // $match on the raw Amount field — the filter ran BEFORE aggregation (returning US=200, the single
-        // 2021 row, instead of the aggregated US=300) → silently wrong data under Native. The guard forces a
-        // clean driver-LINQ fallback so Native == DriverLinq.
+        // A post-group Where (HAVING) on an aggregate alias ("Amount") that collides with an entity property.
+        // Resolved by member name against the entity, it would emit a pre-$group $match on the raw field
+        // (US=200 instead of 300) — silently wrong. Must fall back so Native == DriverLinq.
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
@@ -530,9 +496,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_HAVING_on_non_colliding_alias_matches_driver_linq()
     {
-        // Same HAVING shape but the aggregate alias ("Total") does NOT collide with any entity property.
-        // This already fell back today (member resolution against the entity type happens to fail), but
-        // it must stay a clean fallback — locked in as parity so a future translator change that starts
+        // Same HAVING shape with a non-colliding alias ("Total"); pinned so a future translator change that starts
         // resolving the alias can't silently regress it.
         var seed = SeedOrders();
 
@@ -558,8 +522,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_post_group_OrderBy_by_aggregate_matches_driver_linq()
     {
-        // A post-group OrderBy over the grouped result (ordering by an aggregate alias). Must fall back
-        // cleanly and match DriverLinq — a native $sort emitted here would sort the wrong (pre-group) rows.
+        // Post-group OrderBy by an aggregate alias must fall back — a native $sort here would sort pre-group rows.
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
@@ -583,7 +546,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_post_group_Skip_Take_matches_driver_linq()
     {
-        // Post-group Skip/Take (paging) over the grouped result. Must fall back cleanly and match DriverLinq.
+        // Post-group Skip/Take must fall back cleanly and match DriverLinq.
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
@@ -609,9 +572,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_aggregate_Select_with_no_post_group_op_goes_native()
     {
-        // The supported shape (GroupBy(key).Select(aggregate) with NO post-group operator) must STILL go
-        // native after the guard — proven by succeeding under NativeOnly with correct data. If the guard
-        // were mis-scoped to fire for the aggregate Select itself, this would flip to fallback and throw.
+        // The supported shape with no post-group operator must still go native — if the post-group guard were
+        // mis-scoped to the aggregate Select itself, this would throw.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_aggregate_Select_with_no_post_group_op_goes_native));
 
@@ -630,9 +592,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_OrderBy_key_before_select_goes_native()
     {
-        // OrderBy composed BEFORE the terminal Select, over g.Key — the opposite composition order from
-        // GroupBy_post_group_OrderBy_by_aggregate_matches_driver_linq above (which orders AFTER Select, over a
-        // projected alias, and must keep falling back).
+        // OrderBy over g.Key before the terminal Select — the opposite order from
+        // GroupBy_post_group_OrderBy_by_aggregate_matches_driver_linq, which must fall back.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_OrderBy_key_before_select_goes_native));
 
@@ -650,11 +611,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_OrderBy_key_before_select_with_wrapped_key_only_no_aggregate_goes_native()
     {
-        // A pending ordering that resolves via a KEY access (not an aggregate) combined with a wrapped
-        // zero-accumulator projection — a newly-reachable shape (orderAccumulators stays empty here, so it
-        // isn't excluded by the guard's orderAccumulators.Count > 0 clause), confirmed correct by the final
-        // review: identical $sort-after-$group machinery to the already-shipped GroupBy_OrderBy_key_before_
-        // select_goes_native, just without an accumulator alongside the key.
+        // A key ordering with a wrapped zero-accumulator projection (orderAccumulators empty): same
+        // $sort-after-$group machinery as GroupBy_OrderBy_key_before_select_goes_native.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_OrderBy_key_before_select_with_wrapped_key_only_no_aggregate_goes_native));
 
@@ -670,9 +628,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_OrderBy_aggregate_before_select_goes_native()
     {
-        // Orders by the SAME aggregate the Select projects (Count) — the two accumulators are deliberately
-        // NOT de-duplicated (see NativeGroupByBinder.TryBindGroupProjection's remarks); this proves that's
-        // still correct, not just cheap.
+        // Orders by the same aggregate the Select projects; the two accumulators are intentionally not
+        // de-duplicated (see NativeGroupByBinder.TryBindGroupProjection) — pins that this is still correct.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_OrderBy_aggregate_before_select_goes_native));
 
@@ -692,8 +649,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_OrderBy_different_aggregate_before_select_goes_native()
     {
-        // Orders by Count() but projects Sum() — Count must still get its own $group accumulator even though
-        // it is never flattened into the output.
+        // Orders by Count() but projects Sum(): Count still needs its own $group accumulator.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_OrderBy_different_aggregate_before_select_goes_native));
 
@@ -754,9 +710,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_OrderBy_computed_expression_before_select_falls_back_under_native_only()
     {
-        // A computed ordering expression (not a bare g.Key or a plain accumulator) is out of
-        // NativeGroupByBinder.TryBindAccumulator's scope — must decline cleanly, not crash or silently drop
-        // the ordering.
+        // A computed ordering expression is outside TryBindAccumulator's scope — must decline cleanly, not crash
+        // or drop the ordering.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_OrderBy_computed_expression_before_select_falls_back_under_native_only));
 
@@ -770,11 +725,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_Skip_before_select_goes_native_under_native_only()
     {
-        // EF-322 SP6: this pin previously asserted the OPPOSITE — that Skip/Take composed DIRECTLY on the
-        // ungrouped GroupBy result (before the terminal Select) were explicitly out of scope and must
-        // decline. That is now this task's own target shape, so it goes native instead. An explicit OrderBy
-        // anchors group order (a bare $group's own document order is otherwise unspecified) so this pin
-        // stays deterministic.
+        // Skip/Take directly on the GroupBy result (before the terminal Select) goes native. The OrderBy anchors
+        // group order, which a bare $group leaves unspecified.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_Skip_before_select_goes_native_under_native_only));
 
@@ -793,8 +745,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_OrderBy_replacing_prior_OrderBy_before_select_uses_only_the_second()
     {
-        // A second OrderBy (not ThenBy) composed on the ungrouped GroupBy result REPLACES the first sort key
-        // entirely — matches ordinary (non-GroupBy) OrderBy.OrderBy semantics elsewhere in this provider.
+        // A second OrderBy (not ThenBy) on the GroupBy result replaces the first sort key.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_OrderBy_replacing_prior_OrderBy_before_select_uses_only_the_second));
 
@@ -806,9 +757,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
             .Select(g => new { g.Key, Count = g.Count() })
             .ToList();
 
-        // If the first OrderBy leaked through, FR/UK/US (Country-ascending) would come first regardless of
-        // Count. Correct (replaced) behavior sorts by Count first: FR(1), then UK(2)/US(2) tie-broken by
-        // Country.
+        // If the first OrderBy leaked through, Country order would win; replaced behavior sorts by Count first.
         Assert.Equal(
             [("FR", 1), ("UK", 2), ("US", 2)],
             result.Select(r => (r.Key, r.Count)).ToArray());
@@ -838,8 +787,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_after_source_side_OrderBy_goes_native()
     {
-        // OrderBy composed on the SOURCE, before GroupBy — order doesn't affect a scalar aggregate's result,
-        // so this is a pure no-op ahead of the $group, but must still translate (not decline).
+        // OrderBy on the source before GroupBy doesn't affect a scalar aggregate, but must still translate.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_after_source_side_OrderBy_goes_native));
 
@@ -885,16 +833,15 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
             .ToList();
 
         // Ascending by Amount: 25(UK), 50(UK), 100(US), 200(US), 300(FR). Take(3) keeps 25(UK), 50(UK), 100(US).
-        // FR has zero surviving rows, so it produces NO group at all (correct GroupBy semantics, not a bug).
+        // FR has no surviving rows, so no group.
         Assert.Equal([75m, 100m], result.OrderBy(x => x).ToList());
     }
 
     [Fact]
     public void GroupBy_after_source_side_OrderBy_reasserted_after_Skip_goes_native()
     {
-        // Mirrors EF Core's own GroupBy_with_order_by_skip_and_another_order_by: an OrderBy/ThenBy, a Skip,
-        // then the SAME OrderBy/ThenBy re-asserted (a common EF Core pattern for stable pagination before
-        // further composition) — all still before the GroupBy.
+        // Mirrors EF Core's GroupBy_with_order_by_skip_and_another_order_by: OrderBy/ThenBy, Skip, then the same
+        // OrderBy/ThenBy again, all before the GroupBy.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_after_source_side_OrderBy_reasserted_after_Skip_goes_native));
 
@@ -909,7 +856,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
             .ToList();
 
         // Country then Amount ascending: FR/300, UK/25, UK/50, US/100, US/200. Skip(1) drops FR/300.
-        // Remaining: UK=75, US=300. FR has zero surviving rows — no group for it.
+        // Remaining: UK=75, US=300; no group for FR.
         Assert.Equal([75m, 300m], result.OrderBy(x => x).ToList());
     }
 
@@ -963,22 +910,15 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     }
 
     // ---------------------------------------------------------------------------------------------------
-    // EF-344 pass-2 regression: a scalar aggregate / cardinality reducer applied AFTER a finalized
-    // GroupBy(key).Select(anon) reaches NativeCardinalityBinder.TryBindAggregate / TryBindReducer, which
-    // (before the guard) had NO IsGroupBy check. It set Cardinality on an already-grouped select; Route
-    // then flipped to ScalarAggregate while the lowerer's grouping branch still ran, emitting a
-    // [$group, $project] pipeline with no terminal $count/aggregate stage — the scalar shaper then read a
-    // nonexistent "v" element and crashed with KeyNotFoundException instead of the documented graceful
-    // driver-LINQ fallback. The guard makes every post-group cardinality operator fall back cleanly,
-    // symmetric to the post-group slot-operator guard in NativeSlotPopulator.
+    // Scalar aggregates / reducers after a finalized GroupBy(key).Select(anon) must fall back. Unguarded,
+    // Cardinality on a grouped select flips Route to ScalarAggregate while the lowerer still emits
+    // [$group, $project] with no terminal stage, so the scalar shaper crashes with KeyNotFoundException ("v").
     // ---------------------------------------------------------------------------------------------------
 
     [Fact]
     public void GroupBy_then_Count_matches_driver_linq()
     {
-        // THE REPRO. Post-group Count() over GroupBy(key).Select(anon). Pre-guard this crashed with
-        // KeyNotFoundException ("Element 'v' not found.") under Native; the guard forces a clean fallback so
-        // Native == DriverLinq (== 3 groups: US, UK, FR).
+        // Post-group Count() over GroupBy(key).Select(anon): must fall back so Native == DriverLinq (3 groups).
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native, nameof(GroupBy_then_Count_matches_driver_linq) + "N");
@@ -1095,9 +1035,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_then_First_matches_driver_linq()
     {
-        // A post-group reducer (First). Before the guard this "worked" via Route=GroupBy + EF base reduction;
-        // after guarding TryBindReducer it falls back — still correct. A stable OrderBy makes the pick
-        // deterministic so Native and DriverLinq compare a single well-defined row.
+        // A post-group reducer (First) falls back and stays correct. The OrderBy makes the pick deterministic.
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native, nameof(GroupBy_then_First_matches_driver_linq) + "N");
@@ -1121,8 +1059,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_then_Single_matches_driver_linq()
     {
-        // A post-group Single over a filtered-to-one grouped result. Falls back after the reducer guard —
-        // still correct (parity with DriverLinq).
+        // A post-group Single over a filtered-to-one grouped result falls back and matches DriverLinq.
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native, nameof(GroupBy_then_Single_matches_driver_linq) + "N");
@@ -1145,8 +1082,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_then_Any_matches_driver_linq()
     {
-        // Post-group Any. Did not crash pre-guard (presence-only path) but must stay correct after the guard
-        // flips it to fallback.
+        // Post-group Any falls back and stays correct.
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native, nameof(GroupBy_then_Any_matches_driver_linq) + "N");
@@ -1166,10 +1102,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_then_scalar_aggregate_goes_native()
     {
-        // EF-149 generalized the post-group terminal-aggregate carve-out (previously bare-scalar-Select-only)
-        // to any ordinary GroupBy(key).Select(aggregate), so this now goes native rather than declining — see
-        // that commit's NativeCardinalityBinder changes. Still must not crash with KeyNotFoundException (the
-        // original pre-guard bug) or return the wrong count.
+        // The post-group terminal-aggregate carve-out covers any GroupBy(key).Select(aggregate), so this goes
+        // native; it must not crash with KeyNotFoundException or return the wrong count.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_then_scalar_aggregate_goes_native));
 
@@ -1184,21 +1118,12 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void Select_after_GroupBy_is_unsupported_and_never_returns_silent_null_data()
     {
-        // A second projected Select applied AFTER a native GroupBy(key).Select(aggregate) must NEVER silently
-        // go native and return null-valued rows. Structural hazard (guarded in TranslateSelect's non-grouped
-        // projection branch): the second Select reaches that branch (the shaper is no longer a
-        // GroupByShaperExpression — the grouped-aggregate Select already replaced it), bypassing the IsGroupBy
-        // slot/cardinality guards; without the guard TryPopulateNativeProjection would APPEND its field-ref onto
-        // the grouped Projection while Grouping is still set, and the lowerer would emit a flatten $project over
-        // fields gone after the $group → nulls.
-        //
-        // In practice this provider cannot build a shaper reading a prior grouped/anonymous projection's members
-        // (MongoProjectionBindingExpressionVisitor throws on the nested ProjectionBindingExpression BEFORE the
-        // gate), so the shape is UNSUPPORTED and throws during translation in EVERY mode — Native, DriverLinq,
-        // NativeOnly alike. The property this locks in: Native does NOT diverge from DriverLinq by silently
-        // returning null rows — both fail identically (no wrong/null data). The supported single grouped Select
-        // (GroupBy(k).Select(aggregate) with no further Select) still goes native — see
-        // GroupBy_aggregate_Select_with_no_post_group_op_goes_native.
+        // A second projected Select after a native GroupBy(key).Select(aggregate) bypasses the IsGroupBy guards
+        // (the shaper is no longer a GroupByShaperExpression). Unguarded, TryPopulateNativeProjection would append
+        // onto the grouped Projection and the lowerer would read fields gone after $group → null rows.
+        // In practice the shape throws during translation in every mode (MongoProjectionBindingExpressionVisitor
+        // can't bind the nested ProjectionBindingExpression); this pins that Native fails identically to
+        // DriverLinq rather than returning null rows.
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
@@ -1214,12 +1139,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     }
 
     // ---------------------------------------------------------------------------------------------------
-    // EF-449: GroupBy(key).{Count()|LongCount()|Any()|Any(pred)|All(pred)|Count(pred)|LongCount(pred)} with
-    // NO intervening Select — the EF Core spec suite's "GroupBy_without_aggregate" family
-    // (NorthwindGroupByQueryTestBase). Previously an unimplemented native shape (bare GroupBy sets
-    // IsGroupBy unconditionally, so NativeCardinalityBinder.TryBindAggregate's post-terminal guard always
-    // declined it) that silently fell back to driver-LINQ under Native. Succeeding under NativeOnly with
-    // correct data is the "went native" proof for each shape.
+    // GroupBy(key).{Count()|LongCount()|Any()|Any(pred)|All(pred)|Count(pred)|LongCount(pred)} with no
+    // intervening Select — the spec suite's "GroupBy_without_aggregate" family. NativeOnly success is the proof.
     // ---------------------------------------------------------------------------------------------------
 
     [Fact]
@@ -1336,10 +1257,9 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_then_bare_Count_after_Skip_declines_instead_of_silently_dropping_paging()
     {
-        // EF-322 fix round critical finding #1: GroupBy(key).Skip(1).Count() used to SILENTLY DROP the Skip
-        // and count every group instead of the paged subset — the bare-terminal-aggregate path
-        // (TryBindGroupTerminalAggregate) has no mechanism to apply paging before the $count. Must decline
-        // under NativeOnly and, under Native, match driver-LINQ's correct (paged) count exactly.
+        // GroupBy(key).Skip(1).Count(): the bare-terminal-aggregate path (TryBindGroupTerminalAggregate) can't
+        // page before $count and would silently count every group. Must decline under NativeOnly and match
+        // driver-LINQ's paged count under Native.
         var seed = SeedOrders(); // US, UK, FR — 3 distinct Country groups
         using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
             nameof(GroupBy_then_bare_Count_after_Skip_declines_instead_of_silently_dropping_paging) + "D");
@@ -1359,10 +1279,9 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_Skip_then_HAVING_declines_instead_of_misordering()
     {
-        // EF-322 fix round critical finding #2: GroupBy(key).Skip(1).Where(g => g.Count() >= 2) used to apply
-        // the HAVING filter BEFORE the Skip regardless of LINQ arrival order (MongoSelectLowerer always emits
-        // GroupHavingPredicate ahead of GroupPagingOps) — the wrong evaluation order. Must decline under
-        // NativeOnly and, under Native, match driver-LINQ's correct (Skip-then-filter) result exactly.
+        // GroupBy(key).Skip(1).Where(g => g.Count() >= 2): the lowerer emits GroupHavingPredicate before
+        // GroupPagingOps, which would filter before skipping. Must decline under NativeOnly and match driver-LINQ
+        // under Native.
         var seed = SeedOrders(); // US(2), UK(2), FR(1)
         using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
             nameof(GroupBy_Skip_then_HAVING_declines_instead_of_misordering) + "D");
@@ -1407,8 +1326,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_then_Any_with_compound_predicate_falls_back_under_native_only()
     {
-        // Out of EF-449's scope: a compound (&&) predicate over more than one group-level aggregate. Must
-        // fall back cleanly (throws under NativeOnly), not be mistranslated.
+        // A compound (&&) predicate over multiple group-level aggregates is out of scope; must fall back, not
+        // be mistranslated.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_then_Any_with_compound_predicate_falls_back_under_native_only));
 
@@ -1419,10 +1338,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_aggregate_projection_with_count_still_goes_native_after_guard()
     {
-        // Positive guard: the supported GroupBy(key).Select(anonymous-with-Count) projection is bound by the
-        // GroupBy projection path (TryBindGroupProjection), NOT the cardinality binder — so the cardinality
-        // guard must NOT touch it. Succeeding under NativeOnly (with correct data) is the "went native" proof
-        // that the cardinality-binder change didn't disturb the projection path. Seed => US=2, UK=2, FR=1.
+        // GroupBy(key).Select(anonymous-with-Count) is bound by TryBindGroupProjection, not the cardinality
+        // binder, so the cardinality guard must not touch it. Seed => US=2, UK=2, FR=1.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_aggregate_projection_with_count_still_goes_native_after_guard));
 
@@ -1436,13 +1353,9 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         Assert.Equal([("FR", 1), ("UK", 2), ("US", 2)], result.Select(r => (r.Key, r.Count)).ToArray());
     }
 
-    // EF-322: g.Select(e => e.Field).Distinct().<Op>() as a GroupBy accumulator — Count/LongCount/Average/Max
-    // over the DISTINCT projected values within each group, not every row. $addToSet collects the distinct
-    // values per group; the flatten projection reduces the resulting array ($size for Count/LongCount, $avg/
-    // $max as an array-expression operator for the others). Seed: UK has TWO rows both with Year=2020 (a
-    // genuine duplicate), so distinct Years for UK = {2020} (count 1, not 2) — this is load-bearing: it would
-    // be WRONG (count 2) if Distinct were silently dropped and this fell through to an ordinary $sum:1/$avg/
-    // $max over every row instead of the distinct set.
+    // g.Select(e => e.Field).Distinct().<Op>() as a GroupBy accumulator: $addToSet collects distinct values per
+    // group, then $size/$avg/$max reduces the array. UK has two rows with Year=2020, so its distinct count is 1;
+    // a dropped Distinct would give 2.
     [Fact]
     public void GroupBy_Select_with_distinct_aggregate_goes_native_and_dedups()
     {
@@ -1518,8 +1431,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_Select_with_distinct_aggregate_over_computed_selector_falls_back_under_native_only()
     {
-        // A computed selector (not a bare member access) inside the Distinct is out of scope, matching the
-        // pre-existing ordinary-accumulator guard for a computed Sum/Min/Max/Average operand.
+        // A computed selector inside the Distinct is out of scope, like a computed Sum/Min/Max/Average operand.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_Select_with_distinct_aggregate_over_computed_selector_falls_back_under_native_only));
 
@@ -1533,7 +1445,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_empty_key_bare_aggregate_goes_native()
     {
-        // GroupBy(o => new { }) groups every row into ONE group — a degenerate/zero-part key.
+        // GroupBy(o => new { }) puts every row in one group (zero-part key).
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_empty_key_bare_aggregate_goes_native));
 
@@ -1549,11 +1461,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_empty_key_with_Key_readback_matches_driver_linq()
     {
-        // EF-322 SP7 (Task 2): a bare g.Key readback over a zero-part key now goes native (TryGetKeyMemberPath
-        // no longer unconditionally declines it) — resolving to the group's own empty "_id" document, the
-        // correct readback for an empty anonymous-type key. Updated from this test's previous form (which
-        // asserted a NativeOnly THROW here) now that the shape is native-eligible; still differentially
-        // verified against driver-LINQ per the Native == DriverLinq invariant.
+        // A bare g.Key over a zero-part key goes native, reading the group's empty "_id" document. Checked
+        // against driver-LINQ.
         var seed = SeedOrders();
 
         using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
@@ -1588,8 +1497,6 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_empty_key_bare_Key_readback_goes_native));
 
-        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
-        // here proves the bare g.Key read over a zero-part key went native.
         var results = db.Entities
             .GroupBy(o => new { })
             .Select(g => new { g.Key, Sum = g.Sum(o => o.Amount) })
@@ -1602,18 +1509,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_empty_key_Where_on_bare_Key_goes_native()
     {
-        // Review Focus: a zero-part key's g.Key reaching the HAVING/terminal-predicate path
-        // (TryBindGroupSideOperand) with an EMPTY keyParts list must not crash.
-        //
-        // Deviation from the plan brief's literal test body: the brief asserted Assert.Single(results) here,
-        // reasoning that "g.Key == null" is semantically non-restrictive. Running this differentially against
-        // driver-LINQ shows both agree on ZERO rows — "g.Key == null" IS restrictive: an anonymous-type
-        // instance is never null, so the predicate is false for the (one) group and correctly filters it out,
-        // both natively (comparing the group's "_id": {} to null — not equal) and via the driver-LINQ
-        // fallback. Asserting Assert.Single would have been a genuine behavioral regression, not a match for
-        // this plan's Native == DriverLinq invariant. The crash-avoidance goal (no IndexOutOfRangeException
-        // from an empty keyParts list reaching TryBindGroupSideOperand) is unaffected — proven below by the
-        // NativeOnly leg completing without throwing.
+        // A zero-part key's g.Key reaching TryBindGroupSideOperand with empty keyParts must not crash.
+        // "g.Key == null" is restrictive (an anonymous instance is never null), so both modes return zero rows.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_empty_key_Where_on_bare_Key_goes_native));
 
@@ -1629,18 +1526,12 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_empty_key_Where_on_bare_Key_against_non_null_value_declines_to_driver_linq()
     {
-        // EF-322 SP7 fix-wave (Finding I1): a zero-part key's g.Key resolves to "_id" (Task 2) with no single
-        // backing property to serialize the comparison's OTHER side against. Admitting a comparison against
-        // anything other than a literal null here would defer a crash to pipeline-RENDER time (the generic
-        // BsonValue.Create fallback throwing ArgumentException for a non-BSON-mappable CLR value) instead of
-        // declining cleanly at bind time. `sentinel` is captured (not a literal), so it lowers to a
-        // closure-field member access / query parameter, never a ConstantExpression — the same "captured
-        // value, not a literal" shape SP1's own Guid-key tests already establish lowers this way.
+        // A zero-part key's g.Key has no backing property to serialize the other side against, so comparing it
+        // to anything but a literal null must decline at bind time rather than crash at render time
+        // (BsonValue.Create ArgumentException). `sentinel` is captured, so it lowers to a parameter.
         var seed = SeedOrders();
-        // Same (compiler-shared, zero-member) anonymous type as the GroupBy key below, NOT upcast to
-        // `object` — comparing against an `object`-typed sentinel instead hits an unrelated, pre-existing
-        // driver-LINQ bridge bug (InvalidCastException serializing an `object`-typed constant through the
-        // anonymous type's OWN serializer), which is not what this test is pinning.
+        // Same compiler-shared anonymous type as the key, not upcast to `object` — an `object`-typed sentinel
+        // hits an unrelated driver-LINQ bridge InvalidCastException.
         var sentinel = new { };
 
         List<decimal> Run(SingleEntityDbContext<Order> db) =>
@@ -1657,10 +1548,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
             nameof(GroupBy_empty_key_Where_on_bare_Key_against_non_null_value_declines_to_driver_linq) + "D");
 
         var native = Run(nativeDb);
-        // Both `g.Key` and `sentinel` serialize to the SAME empty BSON document ({}) — MongoDB (and the
-        // driver-LINQ fallback's own client-side evaluation) treats that as equal, so the single group
-        // matches. This test isn't pinning that outcome; it's pinning that reaching it doesn't CRASH, and
-        // that Native and DriverLinq modes agree (the Native == DriverLinq invariant).
+        // Both sides serialize to {}, which compare equal, so the one group matches. The point is no crash and
+        // Native == DriverLinq.
         Assert.Equal([675m], native);
         Assert.Equal(Run(driverDb), native);
 
@@ -1681,9 +1570,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_constructor_call_key_does_not_collapse_to_one_group()
     {
-        // Regression guard for the final-review finding: a constructor-call key (Members == null, same as a
-        // zero-member new{}) must NOT be mistaken for a degenerate empty key. Differential test — asserts the
-        // native and driver-LINQ ROW COUNTS match, since a row-count-blind assertion wouldn't have caught this.
+        // A constructor-call key (Members == null, like new{}) must not be mistaken for an empty key. Compares
+        // row counts, which a row-count-blind assertion would miss.
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
@@ -1747,14 +1635,9 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_dollar_prefixed_string_parameter_key_groups_by_literal_value_not_field()
     {
-        // Final-review fix: a captured-parameter (or constant) string key that happens to look like a field
-        // path ("$Country") used to render as $group's bare _id value UNWRAPPED — the server would then
-        // reinterpret it as a genuine field reference instead of the literal string, silently grouping by the
-        // Country FIELD instead of the literal value "$Country". MongoPipelineFactory.RenderKeyedGroup now
-        // $literal-wraps any constant/parameter key part, matching the identical existing convention for
-        // accumulator operands and $set values. Every seeded row shares this literal key, so a correct
-        // translation groups everything into exactly ONE group — a wrong (field-reinterpreted) grouping would
-        // instead produce one group per distinct Country (three groups, per SeedOrders' FR/UK/US rows).
+        // A constant/parameter string key that looks like a field path ("$Country") must be $literal-wrapped in
+        // $group's _id, or the server groups by the Country field instead. Every row shares the literal key, so
+        // the correct result is one group (field-reinterpreted grouping would give three).
         var groupKeyLiteral = "$Country";
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_dollar_prefixed_string_parameter_key_groups_by_literal_value_not_field));
@@ -1772,13 +1655,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_MemberInit_dto_key_goes_native_and_matches_driver_linq()
     {
-        // EF-322 SP7: a MemberInitExpression (DTO object-initializer) GroupBy key now IS a shape
-        // TryBindGroupKey builds as a genuine named composite key — its own MemberInitExpression case binds
-        // each MemberAssignment through TryBindKeyPartValue, the SAME helper the anonymous-type composite-key
-        // case already uses, so this now goes native (correct results, parity with DriverLinq) under Native,
-        // and succeeds rather than throwing under NativeOnly. (Previously this fell back to driver-LINQ under
-        // Native and threw NativeTranslationNotSupportedException under NativeOnly — see git history for that
-        // superseded behavior and its own FormatException-avoidance backstory.)
+        // A MemberInitExpression (DTO initializer) key binds as a named composite key via TryBindKeyPartValue,
+        // like the anonymous-type case, and goes native.
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
@@ -1802,8 +1680,6 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(GroupBy_MemberInit_dto_key_goes_native_and_matches_driver_linq) + "O");
 
-        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
-        // here proves the MemberInitExpression key selector went native.
         var nativeOnly = nativeOnlyDb.Entities
             .GroupBy(o => new GroupKeyDto { Year = o.Year, Country = o.Country })
             .Select(g => new { g.Key.Year, g.Key.Country, Count = g.Count() })
@@ -1823,10 +1699,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_HAVING_on_accumulator_before_select_goes_native_under_native_only()
     {
-        // EF-322 SP2: a Where composed BETWEEN GroupBy(key) and the terminal Select (a true HAVING clause,
-        // referencing g.Count() on the IGrouping directly) — distinct from this file's existing
-        // GroupBy_HAVING_on_..._matches_driver_linq tests, whose Where runs AFTER the Select over the
-        // flattened alias instead (a different, already-working shape).
+        // A true HAVING: Where between GroupBy(key) and the terminal Select, on g.Count() — distinct from the
+        // GroupBy_HAVING_on_..._matches_driver_linq tests, whose Where runs after the Select.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_HAVING_on_accumulator_before_select_goes_native_under_native_only));
 
@@ -1861,9 +1735,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_HAVING_on_Guid_key_matches_driver_linq()
     {
-        // Final-review fix: a HAVING key comparison against a Guid key used to throw
-        // ArgumentException(".NET type System.Guid cannot be mapped to a BsonValue") under Native — the
-        // comparison's constant now serializes through the key's own property, matching driver-LINQ.
+        // A HAVING comparison against a Guid key must serialize the constant through the key's property, or
+        // Native throws ArgumentException (Guid cannot be mapped to a BsonValue).
         var idA = Guid.NewGuid();
         var idB = Guid.NewGuid();
         var seed = new[]
@@ -1903,10 +1776,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void Nested_GroupBy_preserves_first_level_HAVING_matches_driver_linq()
     {
-        // Final-review fix: SnapshotPriorGroupingForNestedGroupBy used to move Grouping/Projection aside for
-        // a nested GroupBy but leave GroupHavingPredicate behind — the outer GroupBy's own TryBindGroupProjection
-        // then unconditionally overwrote it with its own (here, absent) HAVING, silently dropping the FIRST
-        // GroupBy's filter and returning every group instead of just the ones that passed HAVING.
+        // SnapshotPriorGroupingForNestedGroupBy must carry GroupHavingPredicate aside with Grouping/Projection;
+        // otherwise the outer GroupBy overwrites it and silently drops the first GroupBy's filter.
         var seed = new[]
         {
             new Order { Id = ObjectId.GenerateNewId(), Country = "US" },
@@ -1932,9 +1803,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
                 .Select(r => (r.Key, r.Count)).ToArray();
 
         var native = Run(nativeDb);
-        // Without the fix: FR's group survives the (silently dropped) first HAVING too, so the SECOND
-        // GroupBy sees three {Country,C} rows (C=2,2,1) instead of two (C=2,2) — producing an EXTRA group
-        // for C=1. With the fix: only {US,2} and {UK,2} survive, both fold into ONE group keyed by C=2.
+        // If the first HAVING were dropped, FR's C=1 group would produce an extra outer group. Correct: only
+        // {US,2} and {UK,2} survive, folding into one group keyed by C=2.
         Assert.Equal([(2, 2)], native);
         Assert.Equal(Run(driverDb), native);
     }
@@ -1942,12 +1812,9 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void Nested_GroupBy_after_first_level_paging_declines_instead_of_dropping_the_paging()
     {
-        // EF-322 fix round: the first GroupBy's own Skip is recorded into GroupPagingOps, but
-        // SnapshotPriorGroupingForNestedGroupBy only moves Grouping/Projection/GroupHavingPredicate aside —
-        // GroupPagingOps stays behind, and the outer GroupBy's own TryBindGroupProjection call unconditionally
-        // resets GroupPagingOps from its own (empty) PendingGroupPaging, silently discarding the first
-        // GroupBy's paging. Must decline under NativeOnly and, under Native, match driver-LINQ exactly rather
-        // than silently including the skipped group.
+        // The first GroupBy's Skip lives in GroupPagingOps, which SnapshotPriorGroupingForNestedGroupBy doesn't
+        // move aside, so the outer TryBindGroupProjection would reset it and silently drop the paging. Must
+        // decline under NativeOnly and match driver-LINQ under Native.
         var seed = SeedOrders(); // US: 2 orders, UK: 2 orders, FR: 1 order
 
         (int Key, int Count)[] Run(SingleEntityDbContext<Order> db) =>
@@ -1965,10 +1832,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
             nameof(Nested_GroupBy_after_first_level_paging_declines_instead_of_dropping_the_paging) + "D");
         var driverLinq = Run(driverDb);
-        // FR (C=1) dropped by Skip(1); UK(C=2) and US(C=2) remain, folding into ONE group keyed by C=2. The
-        // discriminator that actually catches the bug (paging silently dropped, so all 3 Country groups reach
-        // the outer GroupBy instead of 2) is the total row count the outer grouping sees: 2 with paging
-        // correctly applied, 3 without (which would instead produce two outer groups, {C=2: 2, C=1: 1}).
+        // FR (C=1) is dropped by Skip(1); UK and US (C=2) fold into one group. Without paging all three would
+        // reach the outer GroupBy, giving {C=2: 2, C=1: 1}.
         Assert.Equal([(2, 2)], driverLinq);
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
@@ -1984,11 +1849,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_HAVING_with_query_parameter_value_matches_driver_linq()
     {
-        // Final-review coverage gap: every other HAVING test in this file uses a literal constant for the
-        // comparison's non-key/non-accumulator side — this one uses a genuine captured local, which EF Core's
-        // real query pipeline parameterizes (unlike a hand-built unit-test expression tree, this goes through
-        // EF's actual ParameterExtractingExpressionVisitor), exercising the MongoParameterExpression arm of
-        // TryTranslateComparisonConstant, not just the MongoConstantExpression one.
+        // A captured local (parameterized by EF's real pipeline) as the comparison's non-key side, exercising
+        // TryTranslateComparisonConstant's MongoParameterExpression arm.
         var minCount = 1;
         var seed = SeedOrders();
 
@@ -2064,8 +1926,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
                 .Select(r => (r.Key, r.Total)).ToArray();
 
         var native = Run(nativeDb);
-        // SeedOrders: US 100+200, UK 50+25, FR 300 (see this file's own SeedOrders). Only amounts > 60
-        // contribute: US=100+200=300, UK=0 (both 50 and 25 excluded), FR=300.
+        // SeedOrders: US 100+200, UK 50+25, FR 300. Only amounts > 60 count: US=300, UK=0, FR=300.
         Assert.Equal([("FR", 300m), ("UK", 0m), ("US", 300m)], native);
         Assert.Equal(Run(driverDb), native);
 
@@ -2099,9 +1960,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
                 .Select(r => (r.Label, r.Total)).ToArray();
 
         var native = Run(nativeDb);
-        // SeedOrders: US 100+200=300 (domestic). GroupBy(Country) still groups UK and FR SEPARATELY (the
-        // ternary only relabels each group's projection; it does not merge groups), so UK (50+25=75) and FR
-        // (300) each surface as their own "international" row, not combined into 375.
+        // US 100+200=300 (domestic). UK (75) and FR (300) stay separate groups — the ternary only relabels.
         Assert.Equal([("domestic", 300m), ("international", 75m), ("international", 300m)], native);
         Assert.Equal(Run(driverDb), native);
 
@@ -2135,9 +1994,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
                 .Select(r => (r.Locality, r.Count)).ToArray();
 
         var native = Run(nativeDb);
-        // SeedOrders: FR has 1 row, UK has 2, US has 2 — Country is never null in this fixture, so the
-        // coalesce's fallback branch is never actually taken, but the SHAPE is still exercised and proven
-        // equivalent to the driver-LINQ fallback.
+        // Country is never null here, so the coalesce fallback isn't taken; this proves the shape matches
+        // driver-LINQ.
         Assert.Equal([("FR", 1), ("UK", 2), ("US", 2)], native);
         Assert.Equal(Run(driverDb), native);
 
@@ -2155,13 +2013,9 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_projection_ternary_on_Guid_key_comparison_matches_driver_linq()
     {
-        // SP4 final-review fix: TryTranslateGroupProjectionConditionOrValue's key-vs-constant comparison arms
-        // (the PROJECTION-side ternary test, as opposed to HAVING's TryBindGroupSideOperand or the
-        // accumulator-condition arm) used to translate the comparison's constant with forSerialization: null —
-        // the exact bug class already fixed once for HAVING (GroupBy_HAVING_on_Guid_key_matches_driver_linq)
-        // and for a Count(predicate) accumulator condition (a unit test) — throwing
-        // ArgumentException(".NET type System.Guid cannot be mapped to a BsonValue") under Native instead of
-        // returning the correct rows.
+        // A projection-side ternary's key-vs-constant comparison (TryTranslateGroupProjectionConditionOrValue)
+        // must serialize the constant through the key's property, or Native throws ArgumentException for a Guid.
+        // Same bug class as GroupBy_HAVING_on_Guid_key_matches_driver_linq.
         var idA = Guid.NewGuid();
         var idB = Guid.NewGuid();
         var seed = new[]
@@ -2202,14 +2056,9 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_coalesce_projection_dollar_prefixed_literal_matches_driver_linq()
     {
-        // SP4 final-review fix: a "$"-prefixed constant used as a $ifNull/$cond BRANCH used to render
-        // unwrapped, so MongoDB read the string as a field-path reference instead of the literal value it is —
-        // under Native, `g.Key ?? "$Year"` silently returned null instead of the literal string "$Year" for
-        // the null-keyed group. Country is nullable at the metadata level (no NRT-derived Required convention
-        // in this project) — reused rather than adding a new field, seeding one row with a null Country to
-        // exercise the coalesce's fallback branch for real (the pre-existing
-        // GroupBy_coalesce_projection_over_key_matches_driver_linq test's own SeedOrders fixture never has a
-        // null Country, so it only proves the SHAPE, never the fallback value itself).
+        // A "$"-prefixed constant as a $ifNull/$cond branch must be $literal-wrapped, or `g.Key ?? "$Year"`
+        // returns null for the null-keyed group. One row has a null Country to exercise the fallback value
+        // (GroupBy_coalesce_projection_over_key_matches_driver_linq only covers the shape).
         var seed = new[]
         {
             new Order { Id = ObjectId.GenerateNewId(), Country = null! },
@@ -2249,9 +2098,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [InlineData(MongoQueryMode.NativeOnly)]
     public void Bare_accumulator_then_outer_Min_goes_native(MongoQueryMode mode)
     {
-        // MinMax_after_GroupBy_aggregate's exact shape: GroupBy(key).Select(g => g.Sum(...)).Min() — a
-        // bare, no-selector Min() reducing the ALREADY-flattened per-group Sum. Per-country sums: US=300,
-        // UK=75, FR=300 — Min is 75.
+        // MinMax_after_GroupBy_aggregate's shape: GroupBy(key).Select(g => g.Sum(...)).Min() over the flattened
+        // per-group sums (US=300, UK=75, FR=300) — 75.
         var seed = SeedOrders();
         using var db = CreateContext(seed, mode, nameof(Bare_accumulator_then_outer_Min_goes_native) + mode);
 
@@ -2280,9 +2128,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void Bare_accumulator_then_outer_Min_over_empty_source_throws()
     {
-        // Review Focus: Min()/Max() over an empty result must keep BuildEmptyBehavior's existing contract —
-        // decimal is non-nullable, so this throws InvalidOperationException, matching in-memory LINQ and the
-        // driver-LINQ fallback, not silently returning default(decimal).
+        // Min()/Max() over an empty non-nullable result must throw InvalidOperationException (BuildEmptyBehavior),
+        // matching LINQ, not return default(decimal).
         using var db = CreateContext([], MongoQueryMode.NativeOnly, nameof(Bare_accumulator_then_outer_Min_over_empty_source_throws));
 
         Assert.Throws<InvalidOperationException>(() =>
@@ -2292,9 +2139,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void Bare_accumulator_then_outer_Sum_still_declines_under_NativeOnly()
     {
-        // Review Focus: Task 2 deliberately scopes its new binder condition to Min/Max only — a selector-less
-        // Sum()/Average() in the SAME position must keep declining (falling back), not silently be admitted
-        // as an untested side effect of widening isPostGroupTerminalAggregate.
+        // The selector-less post-group carve-out is Min/Max only; Sum()/Average() in the same position must
+        // keep falling back.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Bare_accumulator_then_outer_Sum_still_declines_under_NativeOnly));
 
@@ -2326,12 +2172,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [InlineData(MongoQueryMode.NativeOnly)]
     public void GroupBy_repeated_Skip_on_bare_result_goes_native(MongoQueryMode mode)
     {
-        // Review Focus: repeated Skip on a bare GroupBy result must accumulate in arrival order, not
-        // overwrite. Skip(1) then Skip(1) again over 3 distinct countries (US/UK/FR) skips 1+1=2, leaving 1.
-        // An explicit OrderBy pins WHICH one survives deterministically — MongoDB's own $group with no $sort
-        // has unspecified row order (confirmed flaky without this: the same query against the same data can
-        // return groups in a different order run to run), so asserting a specific surviving key/count
-        // requires fixing the order first. FR, UK, US ascending — Skip(1).Skip(1) drops FR and UK, leaving US.
+        // Repeated Skip on a bare GroupBy result must accumulate in arrival order (1+1=2 of 3). The OrderBy is
+        // required because $group row order is unspecified (flaky without it). FR, UK dropped; US remains.
         var seed = SeedOrders();
         using var db = CreateContext(seed, mode, nameof(GroupBy_repeated_Skip_on_bare_result_goes_native) + mode);
 
@@ -2351,14 +2193,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_Select_then_Skip_0_take_0_unaffected_by_pending_paging_carveout()
     {
-        // Review Focus: paging composed AFTER the terminal Select (the OPPOSITE order) is NOT natively
-        // supported for a genuine GroupBy — PostGroupOps' own EF-322 carve-out is scoped to a projected
-        // Distinct only (see NativeSlotPopulator's isPostDistinctSlot: "!mongoQ.Select.IsGroupBy"), so this
-        // shape still cleanly declines (falls back, throwing under NativeOnly) exactly as before this task.
-        // Deviation from the brief's literal Step 9 text, which described this as an "ALREADY-supported,
-        // pre-existing PostGroupOps shape" that should return Assert.Empty — running it showed that premise
-        // is false for a genuine GroupBy; this task's own carve-out (pre-Select only) must not be the thing
-        // that changes that, which is exactly what this test now proves.
+        // Paging after the terminal Select isn't native for a genuine GroupBy (the PostGroupOps carve-out is for
+        // projected Distinct only — see NativeSlotPopulator's isPostDistinctSlot), so this falls back.
         var seed = SeedOrders();
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(GroupBy_Select_then_Skip_0_take_0_unaffected_by_pending_paging_carveout));
@@ -2372,10 +2208,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
                 .ToArray());
     }
 
-    // EF-322: nested-construction GroupBy projection member — a Select-projection member whose own value is a
-    // fresh NewExpression/MemberInitExpression (e.g. `Container = new LastInChain { Name = "x", Value =
-    // g.Sum(...) }`), the last SP7-descoped Odata_groupby_empty_key shape (see NativeGroupByBinderTests and
-    // NorthwindGroupByQueryMongoTest.Odata_groupby_empty_key).
+    // Nested-construction GroupBy projection members (e.g. `Container = new LastInChain { Name = "x", Value =
+    // g.Sum(...) }`), as in NorthwindGroupByQueryMongoTest.Odata_groupby_empty_key. See NativeGroupByBinderTests.
     private class NestedAggregateContainer
     {
         public string Name { get; set; } = "";
@@ -2398,8 +2232,6 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(GroupBy_select_with_nested_construction_projection_member_goes_native));
 
-        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
-        // here proves the nested construction went native.
         var result = db.Entities
             .GroupBy(o => new { })
             .Select(g => new NestedAggregateWrapper
@@ -2424,9 +2256,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(GroupBy_select_with_nested_construction_referencing_per_element_value_declines_cleanly));
 
-        // A per-element reference (o.Country via g.First()) mixed into the SAME nested construction as an
-        // accumulator — the outer o is NOT the grouping parameter, so this must decline the WHOLE projection,
-        // not partially translate it.
+        // A per-element reference (o.Country via g.First()) beside an accumulator in the same nested
+        // construction isn't the grouping parameter — must decline the whole projection.
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities
                 .GroupBy(o => new { })
@@ -2483,10 +2314,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         public NestedAggregateContainer Inner { get; set; } = null!;
     }
 
-    // Nests BOTH accumulators inside the SAME construction (Container), not as two top-level Select members —
-    // two SIBLING top-level accumulators already go through the outer per-member loop's own top-level dispatch
-    // without ever reaching TryBindNestedGroupProjectionConstruction, so that shape would not exercise this
-    // plan's own two-accumulator synthetic-field-naming path at all.
+    // Both accumulators nested in the same construction (sibling top-level accumulators never reach
+    // TryBindNestedGroupProjectionConstruction), exercising the two-accumulator synthetic field naming.
     [Fact]
     public void GroupBy_select_with_two_nested_accumulators_uses_distinct_synthetic_fields()
     {
@@ -2526,14 +2355,9 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         public int Count { get; set; }
     }
 
-    // Final-review fix (Critical regression): a CONSTANT or PARAMETER member sitting alongside an accumulator
-    // inside a MongoDocumentConstructionExpression used to render through MongoAggregationExpressionRenderer's
-    // plain Render (no $literal wrapping), rather than RenderBranch (which DOES $literal-wrap a constant/
-    // parameter, exactly like an ordinary top-level $project value already gets). This is the first shape to put
-    // constant/parameter members into a MongoDocumentConstructionExpression — EF-447's own prior usage only ever
-    // produced MongoFieldExpression members, which have no $literal hazard. Each [Fact] below pins one member
-    // shape the reviewer found broken: a bare number/bool misread as a $project inclusion/exclusion flag, and a
-    // "$"-prefixed string misread as a field-path reference.
+    // Constant/parameter members beside an accumulator in a MongoDocumentConstructionExpression must render via
+    // RenderBranch ($literal-wrapped), not plain Render: $project misreads a bare number/bool as an
+    // inclusion/exclusion flag and a "$"-prefixed string as a field path.
     private class NestedConstantContainer
     {
         public string DollarString { get; set; } = "";
@@ -2552,8 +2376,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_select_with_nested_construction_dollar_prefixed_string_constant_matches_driver_linq()
     {
-        // Regression: a "$"-prefixed string constant member used to read back null — MongoDB's $project reads
-        // an unwrapped "$Country" as a field-path reference, not the literal string.
+        // A "$"-prefixed string constant member must read back as the literal, not a field path.
         var seed = new[]
         {
             new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 10 },
@@ -2608,13 +2431,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_select_with_nested_construction_int_constant_matches_in_memory_linq()
     {
-        // Regression: an int constant member used to throw InvalidOperationException ("Document element '...'
-        // is missing but required") because the bare integer was misread by $project as an inclusion flag.
-        //
-        // NOT compared against DriverLinq: the C# driver's own LINQ v3 translation of a bare numeric member here
-        // has the SAME missing-$literal-wrap bug (a bare int is likewise misread as an inclusion/exclusion flag
-        // by $project), so it is not a valid oracle for this specific shape — see Query/AGENTS.md's "No
-        // driver-LINQ oracle for some shapes" invariant. The oracle here is genuine in-memory LINQ instead.
+        // An int constant member must not be misread as a $project inclusion flag ("element is missing").
+        // Oracle is in-memory LINQ: driver LINQ v3 has the same missing-$literal bug here.
         var seed = new[]
         {
             new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 10 },
@@ -2663,12 +2481,8 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_select_with_nested_construction_literal_zero_constant_matches_in_memory_linq()
     {
-        // Regression: a literal 0 member used to throw MongoCommandException ("Invalid $project :: Cannot do
-        // exclusion on field ... in inclusion projection") — 0 is misread as an EXCLUSION flag.
-        //
-        // NOT compared against DriverLinq: the driver's own LINQ v3 translation hits the EXACT SAME server-side
-        // ambiguity for a bare literal 0 (MongoCommandException, not merely a wrong value), so it cannot serve
-        // as this shape's oracle — see Query/AGENTS.md's "No driver-LINQ oracle for some shapes" invariant.
+        // A literal 0 member must not be misread as an exclusion flag (MongoCommandException). Driver LINQ v3
+        // hits the same server error, so it can't be the oracle.
         var seed = new[]
         {
             new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 10 },
@@ -2717,10 +2531,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_select_with_nested_construction_bool_constant_matches_in_memory_linq()
     {
-        // Regression: a bool constant member misrenders the same way as the int/zero cases above.
-        //
-        // NOT compared against DriverLinq for the same reason as the int/zero cases: the driver's own LINQ v3
-        // translation of a bare bool member here shares the same missing-$literal-wrap bug.
+        // A bool constant member has the same hazard; driver LINQ v3 shares the bug, so no DriverLinq oracle.
         var seed = new[]
         {
             new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 10 },
@@ -2769,11 +2580,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_select_with_nested_construction_captured_parameter_matches_in_memory_linq()
     {
-        // Regression: a captured parameter member (not just a literal constant) hit the SAME missing-$literal
-        // bug as the constant cases above — the reviewer's probe reported a NullReferenceException for this
-        // shape specifically.
-        //
-        // NOT compared against DriverLinq for the same reason as the int/zero/bool cases above.
+        // A captured parameter member has the same missing-$literal hazard; no DriverLinq oracle, as above.
         var seed = new[]
         {
             new Order { Id = ObjectId.GenerateNewId(), Country = "US", Amount = 10 },

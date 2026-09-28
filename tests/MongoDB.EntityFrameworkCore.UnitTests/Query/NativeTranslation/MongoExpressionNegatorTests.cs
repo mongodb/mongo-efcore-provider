@@ -22,7 +22,7 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// Unit tests for <see cref="MongoExpressionNegator"/>, which produces the EXACT logical complement of a
+/// Unit tests for <see cref="MongoExpressionNegator"/>, which produces the exact logical complement of a
 /// translated predicate, or declines.
 /// </summary>
 public class MongoExpressionNegatorTests
@@ -45,7 +45,7 @@ public class MongoExpressionNegatorTests
         public List<string> Tags { get; set; } = [];
     }
 
-    // A property of the owned COLLECTION ELEMENT type (Post), for building element-relative field refs.
+    // A property of the owned collection element type (Post), for element-relative field refs.
     private static IProperty GetPostProperty(string propertyName)
     {
         using var db = SingleEntityDbContext.Create<Blog>(mb => mb.Entity<Blog>().OwnsMany(b => b.Posts));
@@ -80,18 +80,14 @@ public class MongoExpressionNegatorTests
         Assert.Equal(BsonDocument.Parse("{ Rank: 5 }"), RenderOf(negated));
     }
 
-    // NOTE: the brief specified a single [Theory]/[InlineData(MongoBinaryOperator..., ...)] here, but
-    // MongoBinaryOperator is internal and a public [Theory] method cannot expose an internal type in its
-    // signature (CS0051) while the class itself stays public — public is required to match every sibling
-    // test class's convention in this directory (needed for xUnit discovery either way). Split into four
-    // [Fact]s carrying the identical assertions instead.
+    // Four [Fact]s rather than a [Theory]: MongoBinaryOperator is internal, and a public test method can't expose
+    // it in its signature (CS0051).
 
     private static void AssertRelationalOperatorIsNotWrappedNeverInverted(MongoBinaryOperator op, string mql)
     {
-        // The whole safety argument of this slice: $gt and $lte do NOT partition the value space (neither
-        // matches a missing or null field), so inverting them would report All == true for a document whose
-        // element lacks the field, where LINQ says false. $not over the operator document IS the exact
-        // complement. Deleting the $not-wrap in favour of an inversion must make this test red.
+        // $gt and $lte don't partition the value space (neither matches a missing or null field), so inverting
+        // would make All report true for an element lacking the field where LINQ says false. $not over the
+        // operator document is the exact complement.
         Assert.True(MongoExpressionNegator.TryNegate(Comparison(op), out var negated));
         var unary = Assert.IsType<MongoUnaryExpression>(negated);
         Assert.Equal(MongoUnaryOperator.Not, unary.Operator);
@@ -155,10 +151,8 @@ public class MongoExpressionNegatorTests
         Assert.Equal(BsonDocument.Parse("{ Rank: { $nin: [1, 2] } }"), RenderOf(negated));
     }
 
-    // EF-322: a MongoInExpression over a MongoValueListExpression (per-element independently-parameterized
-    // $in values) must flip Negated exactly like the constant-enumerable case above — TryFlipNegatedFlag
-    // passes Values through unchanged regardless of its shape, so this pins that the value-list shape is not
-    // silently dropped by the query-dialect gate TryNegate applies first.
+    // An $in over a MongoValueListExpression (per-element parameterized values) must flip Negated like the
+    // constant-enumerable case, and not be dropped by TryNegate's query-dialect gate.
     [Fact]
     public void In_over_value_list_flips_to_nin()
     {
@@ -185,13 +179,9 @@ public class MongoExpressionNegatorTests
         Assert.Equal("p1", placeholders.Entries[1].Name);
     }
 
-    // EF-382 review fix: MongoArrayContainsExpression's negator arm (MongoExpressionNegator.cs:174-178) had
-    // zero test coverage — mutation-checked by the reviewer, deleting the arm or forgetting to flip Negated
-    // left every suite green. Reached via All(p => p.ArrayField.Contains(c)), which negates the element
-    // predicate to build the negated $elemMatch (MongoExpressionTranslator's quantifier arm) — NOT via the
-    // Not-flip path at MongoExpressionTranslator.cs:360, which only sees the shape when EF's own
-    // AllAnyToContainsRewritingExpressionVisitor rewrites a top-level All/Any BEFORE translation (the two
-    // tests already covering that path never reach the negator at all).
+    // MongoArrayContainsExpression's negator arm. Reached via All(p => p.ArrayField.Contains(c)), which negates
+    // the element predicate to build a negated $elemMatch — not via the top-level Not path, which only sees this
+    // shape after EF's AllAnyToContainsRewritingExpressionVisitor and never reaches the negator.
     [Fact]
     public void Array_contains_flips_negated()
     {
@@ -206,16 +196,15 @@ public class MongoExpressionNegatorTests
         Assert.True(flipped.Negated);
         Assert.Equal(BsonDocument.Parse("{ Tags: { $ne: \"keep\" } }"), RenderOf(negated));
 
-        // Double negation round-trips to the exact original (Negated is an idempotent flip).
+        // Double negation round-trips to the original.
         Assert.True(MongoExpressionNegator.TryNegate(flipped, out var doubleNegated));
         Assert.False(Assert.IsType<MongoArrayContainsExpression>(doubleNegated).Negated);
         Assert.Equal(BsonDocument.Parse("{ Tags: \"keep\" }"), RenderOf(doubleNegated));
     }
 
-    // Full end-to-end shape the reviewer traced: Posts.All(p => p.Tags.Contains("keep")) →
-    // { Posts: { $not: { $elemMatch: { Tags: { $ne: "keep" } } } } }. All(pred) negates the element
-    // predicate (this is where the arm above actually fires inside the real translation pipeline, not just
-    // in isolation) and wraps in a negated $elemMatch.
+    // End to end: Posts.All(p => p.Tags.Contains("keep")) →
+    // { Posts: { $not: { $elemMatch: { Tags: { $ne: "keep" } } } } }. All(pred) negates the element predicate
+    // (firing the arm above in the real pipeline) and wraps in a negated $elemMatch.
     [Fact]
     public void All_over_array_contains_negates_via_the_new_arm_and_renders_the_expected_elem_match()
     {
@@ -251,13 +240,10 @@ public class MongoExpressionNegatorTests
         Assert.True(Assert.IsType<MongoRegexExpression>(negated).Negated);
     }
 
-    // EF-322 Task 1 fix round: a field-to-field MongoRegexExpression (Term is itself a MongoFieldExpression,
-    // e.g. `c.ContactName.StartsWith(c.ContactName)` — the shape All_top_level_column produces) fails
-    // IsQueryDialectRenderable by design (Mongo's $regularExpression pattern must be a literal, never another
-    // field). TryNegate special-cases it, mirroring the MongoQuantifierExpression exception below, because its
-    // one negation call site (NativeCardinalityBinder's root-level All(pred) arm) places the negated node in a
-    // top-level $match conjunct, where $expr is legal. The negation itself is unaffected by Term's shape — it's
-    // still just TryFlipNegatedFlag's regex arm (flip Negated, Term unchanged).
+    // A field-to-field MongoRegexExpression (e.g. `c.ContactName.StartsWith(c.ContactName)`) fails
+    // IsQueryDialectRenderable ($regularExpression needs a literal pattern). TryNegate special-cases it, like
+    // MongoQuantifierExpression, because its only negation call site (NativeCardinalityBinder's root-level
+    // All(pred) arm) puts it in a top-level $match conjunct, where $expr is legal. Negation just flips Negated.
     [Fact]
     public void Regex_with_field_to_field_term_negates_despite_not_being_query_dialect_renderable()
     {
@@ -284,10 +270,9 @@ public class MongoExpressionNegatorTests
         Assert.True(Assert.IsType<MongoElemMatchExpression>(negated).Negated);
     }
 
-    // EF-421 Task 7 review fix: MongoQuantifierExpression (the CORRELATED Any/All node — see its own remarks)
-    // has no Negated flag; $anyElementTrue/$allElementsTrue are each other's De Morgan dual, so negation
-    // flips Kind and recurses into ElementPredicate instead. Exercised by NativeCardinalityBinder's root-level
-    // All(pred) arm, where pred.Body can itself be (or contain) a correlated Any/All translated to this node.
+    // MongoQuantifierExpression (correlated Any/All) has no Negated flag: $anyElementTrue/$allElementsTrue are
+    // De Morgan duals, so negation flips Kind and recurses into ElementPredicate. Reached from
+    // NativeCardinalityBinder's root-level All(pred) arm.
     [Fact]
     public void Quantifier_Any_negates_to_All_with_the_negated_element_predicate()
     {
@@ -316,7 +301,7 @@ public class MongoExpressionNegatorTests
         var negatedQuantifier = Assert.IsType<MongoQuantifierExpression>(negated);
         Assert.Equal(MongoExpressionTranslator.MongoQuantifierKind.Any, negatedQuantifier.Kind);
         Assert.Same(quantifier.ArrayPath, negatedQuantifier.ArrayPath);
-        // A relational operator is $not-wrapped, not inverted — same rule as everywhere else in this file.
+        // A relational operator is $not-wrapped, not inverted.
         var negatedElement = Assert.IsType<MongoUnaryExpression>(negatedQuantifier.ElementPredicate);
         Assert.Equal(MongoUnaryOperator.Not, negatedElement.Operator);
     }
@@ -340,12 +325,9 @@ public class MongoExpressionNegatorTests
     [Fact]
     public void Quantifier_negation_declines_when_the_element_predicate_has_no_exact_complement()
     {
-        // No approximation: a declining element predicate must decline the whole quantifier negation, not
-        // produce a quantifier whose ElementPredicate is left un-negated (which would be silently wrong,
-        // not just conservative). A field-to-field/outer-field comparison is NOT the right shape to prove
-        // this with — see the Field_to_field_within_a_quantifier... test below, which shows that shape now
-        // negates exactly (Equal/relational still partition/wrap the same way inside the quantifier's own
-        // aggregation-expression $map). Arithmetic is not a predicate at all, so it is the genuine decline.
+        // A declining element predicate must decline the whole negation; a quantifier with an un-negated
+        // ElementPredicate would be silently wrong. Arithmetic (not a predicate) is used because field-to-field
+        // comparisons now negate exactly inside a quantifier (see Field_to_field_within_a_quantifier...).
         var rank = GetPostProperty(nameof(Post.Rank));
         var arithmetic = new MongoBinaryExpression(
             MongoBinaryOperator.Add,
@@ -360,12 +342,9 @@ public class MongoExpressionNegatorTests
         Assert.Null(negated);
     }
 
-    // EF-421 Task 7 review fix: this is the exact shape a correlated quantifier's ElementPredicate is built
-    // from (p.Field == b.Field, both sides a field ref — the outer one would be a MongoOuterFieldExpression
-    // in the real translator output, but the negator's new comparison3 case treats any non-query-dialect-
-    // native comparison shape identically, so a second bare field stands in fine here). This is NOT admitted
-    // by the ordinary (IsQueryNativeComparison-gated) comparison case — proving the new, wider case is what
-    // makes this negate, not the pre-existing one.
+    // A correlated quantifier's ElementPredicate shape (p.Field == b.Field; in real output the outer side is a
+    // MongoOuterFieldExpression, but the negator treats any non-query-dialect comparison alike). Only the wider
+    // in-aggregation comparison case admits it, not the ordinary IsQueryNativeComparison-gated one.
     [Fact]
     public void Field_to_field_comparison_inside_a_quantifier_element_predicate_negates_exactly()
     {
@@ -375,8 +354,7 @@ public class MongoExpressionNegatorTests
             new MongoFieldExpression(rank, "Rank"),
             new MongoFieldExpression(rank, "Rank"));
 
-        // Sanity: the bare comparison, in isolation, still declines through the ordinary gated path (this is
-        // the pre-existing, unchanged invariant the $elemMatch-building call sites rely on).
+        // The bare comparison alone still declines through the gated path, which $elemMatch call sites rely on.
         Assert.False(MongoExpressionNegator.TryNegate(fieldToField, out _));
 
         var quantifier = new MongoQuantifierExpression(
@@ -391,14 +369,10 @@ public class MongoExpressionNegatorTests
         Assert.Equal(MongoBinaryOperator.NotEqual, negatedElement.Operator);
     }
 
-    // Code-review finding (Task 7 fix round 2): comparison3 (the wider, non-query-dialect-native comparison
-    // case) must be STRUCTURALLY unreachable outside the quantifier's own ElementPredicate recursion, not
-    // merely unreached by today's IsQueryDialectRenderable shape. Proven two ways: a bare top-level
-    // field-to-field comparison (already covered above) AND — the case that would actually catch a future
-    // regression, since AndAlso/OrElse recurse internally — the SAME shape nested inside a conjunction
-    // reached from the top-level public TryNegate entry point. If inAggregationContext ever failed to
-    // propagate as `false` through that recursion (or comparison3's `when` guard were ever dropped), this
-    // would start succeeding with a silently-wrong-for-$elemMatch result instead of declining.
+    // The wider in-aggregation comparison case must be structurally unreachable outside a quantifier's
+    // ElementPredicate recursion. Tested with the shape nested in a conjunction reached from the public TryNegate:
+    // if inAggregationContext stopped propagating as false through AndAlso/OrElse, this would succeed with a
+    // result that is wrong for $elemMatch.
     [Fact]
     public void Field_to_field_comparison_nested_in_a_top_level_conjunction_still_declines()
     {
@@ -417,9 +391,8 @@ public class MongoExpressionNegatorTests
     [Fact]
     public void Bare_Any_elem_match_flips_to_exists_false()
     {
-        // Bare Any() IS "Count >= 1", represented as exactly that (not a MongoElemMatchExpression) — see
-        // MongoElemMatchExpression's remarks. !Any() needs no dedicated handling: the negator inverts >= to <,
-        // giving Count < 1, which renders through the same array-index existence form.
+        // Bare Any() is represented as "Count >= 1" (see MongoElemMatchExpression). !Any() inverts to Count < 1,
+        // rendered through the same array-index existence form.
         var bareAny = new MongoBinaryExpression(
             MongoBinaryOperator.GreaterThanOrEqual,
             new MongoSizeExpression("Comments", typeof(int), nullSafe: true),
@@ -445,9 +418,8 @@ public class MongoExpressionNegatorTests
     [Fact]
     public void Nullable_bool_field_declines()
     {
-        // The guard is `!field.Property.IsNullable`: a nullable bool field is NOT admitted as a bare
-        // predicate by the translator in the first place (a nullable bool used as a predicate is ambiguous
-        // between false and null/missing), so its negation must decline rather than guess.
+        // Guarded by `!field.Property.IsNullable`: a nullable bool isn't admitted as a bare predicate (false vs.
+        // null/missing is ambiguous), so its negation must decline.
         var optionalFlag = GetPostProperty(nameof(Post.OptionalFlag));
         var field = new MongoFieldExpression(optionalFlag, "OptionalFlag");
 
@@ -468,10 +440,8 @@ public class MongoExpressionNegatorTests
     [Fact]
     public void Field_to_field_comparison_declines()
     {
-        // No query-dialect rendering ⇒ no query-dialect COMPLEMENT. This must decline in the negator itself,
-        // not downstream: mirroring Equal→NotEqual here would produce a node RenderNode sends to the $expr
-        // catch-all, and $expr inside $elemMatch is a HARD SERVER ERROR — an execution-time throw rather than
-        // a clean fallback.
+        // No query-dialect rendering means no query-dialect complement. Must decline here: a mirrored node would go
+        // to the $expr catch-all, and $expr inside $elemMatch is a server error, not a clean fallback.
         var rank = GetPostProperty(nameof(Post.Rank));
         var fieldToField = new MongoBinaryExpression(
             MongoBinaryOperator.GreaterThan,
@@ -513,10 +483,8 @@ public class MongoExpressionNegatorTests
     [Fact]
     public void Parameterized_regex_term_is_query_dialect_renderable_and_negates_by_flipping()
     {
-        // A parameterized regex term is now query-dialect-renderable (it defers its escape/anchor to a
-        // placeholder sentinel resolved at Build time — see RenderRegex/PlaceholderTable.CreateRegexPlaceholder),
-        // so TryNegate's outer gate admits it and TryNegateCore's `case MongoRegexExpression regex:` flips
-        // Negated unconditionally, same as for a constant term.
+        // A parameterized regex term is query-dialect-renderable (escape/anchor deferred to a placeholder resolved
+        // at Build time — see PlaceholderTable.CreateRegexPlaceholder), so it negates like a constant term.
         var heading = GetPostProperty(nameof(Post.Heading));
         var regex = new MongoRegexExpression(
             new MongoFieldExpression(heading, "Heading"),
@@ -532,9 +500,8 @@ public class MongoExpressionNegatorTests
     [Fact]
     public void Every_successful_negation_is_query_dialect_renderable_and_renders_without_expr()
     {
-        // THE OUTPUT-DOMAIN INVARIANT. This negation is emitted inside $elemMatch, where $expr is a hard
-        // server error, so a negator that produced a node the renderer sent to the $expr catch-all would make
-        // the whole query throw at execution time under Native as well as NativeOnly.
+        // Output-domain invariant: negations are emitted inside $elemMatch, where $expr is a server error, so no
+        // negation may produce a node the renderer sends to the $expr catch-all.
         var rank = GetPostProperty(nameof(Post.Rank));
         var heading = GetPostProperty(nameof(Post.Heading));
         var flag = GetPostProperty(nameof(Post.Flag));
@@ -551,15 +518,13 @@ public class MongoExpressionNegatorTests
             new MongoInExpression(new MongoFieldExpression(rank, "Rank"), new MongoConstantExpression(new[] { 1 }, rank), negated: false),
             new MongoRegexExpression(new MongoFieldExpression(heading, "Heading"), MongoRegexKind.Contains, new MongoConstantExpression("a", heading), negated: false),
             new MongoElemMatchExpression("Comments", Comparison(MongoBinaryOperator.Equal, 1), negated: false),
-            // Bare Any() IS "Count >= 1" — still a member of the supported set, just expressed as a count
-            // comparison rather than a MongoElemMatchExpression (see MongoElemMatchExpression's remarks).
+            // Bare Any() as "Count >= 1" (see MongoElemMatchExpression).
             new MongoBinaryExpression(
                 MongoBinaryOperator.GreaterThanOrEqual,
                 new MongoSizeExpression("Comments", typeof(int), nullSafe: true),
                 new MongoConstantExpression(1, null)),
             new MongoUnaryExpression(MongoUnaryOperator.Not, Comparison(MongoBinaryOperator.GreaterThan)),
             new MongoFieldExpression(flag, "Flag"),
-            // EF-382: MongoArrayContainsExpression must also stay in the output-domain invariant's coverage.
             new MongoArrayContainsExpression(
                 new MongoFieldExpression(GetPostProperty(nameof(Post.Tags)), "Tags"),
                 new MongoConstantExpression(new BsonString("keep"), forSerialization: null),
@@ -582,23 +547,17 @@ public class MongoExpressionNegatorTests
             new MongoSizeExpression("Posts", typeof(int), nullSafe: true),
             new MongoConstantExpression(threshold, null));
 
-    // NOTE ON TEST SHAPE: `MongoBinaryOperator` is internal, and a public [Theory] method cannot expose an
-    // internal type in its signature (CS0051) while the test class stays public. This file already solved that
-    // — see the four `Relational_operators_are_not_wrapped_never_inverted_*` [Fact]s, each delegating to a
-    // private helper. Follow that established idiom; do NOT try [Theory]/[InlineData] or a [MemberData]
-    // returning `TheoryData<MongoBinaryOperator, …>` (same accessibility problem).
-
-    // THE EXCEPTION TO THE RELATIONAL RULE. A count comparison renders as { "path.k": { $exists: … } }, and
-    // $exists DOES partition the document set — every document either has path.k or does not. So inverting the
-    // operator is the EXACT complement here, unlike a relational comparison on a scalar field, where
-    // { $gt: 5 } and { $lte: 5 } both fail to match a missing field and inversion would silently mis-answer
-    // All(). Same test, opposite answer, because the rendered form differs.
+    // Count-comparison tests use [Fact]s + a private helper rather than [Theory], for the CS0051 reason above.
+    //
+    // The exception to the relational rule: a count comparison renders as { "path.k": { $exists: … } }, and
+    // $exists partitions the document set, so inverting the operator is the exact complement — unlike
+    // { $gt: 5 } / { $lte: 5 } on a scalar, which both miss a missing field.
     private static void AssertCountComparisonIsInvertedNotWrapped(
         MongoBinaryOperator op, MongoBinaryOperator expected)
     {
         Assert.True(MongoExpressionNegator.TryNegate(Count(op, 2), out var negated));
 
-        // A MongoBinaryExpression with the inverted operator — NOT a MongoUnaryExpression($not) wrap.
+        // An inverted-operator MongoBinaryExpression, not a $not wrap.
         var comparison = Assert.IsType<MongoBinaryExpression>(negated);
         Assert.Equal(expected, comparison.Operator);
         Assert.IsType<MongoSizeExpression>(comparison.Left);
@@ -637,10 +596,8 @@ public class MongoExpressionNegatorTests
     [Fact]
     public void The_admitted_count_set_is_closed_under_inversion()
     {
-        // The safety property that makes delegating the rule to the negator sound: every inverse of an
-        // admissible count comparison is ITSELF admissible, so the negator can never hand the renderer a form
-        // the classifier rejects. Written as one property test over the whole admitted set rather than a Fact
-        // per row — the claim IS "for all of these", and a per-row failure message keeps it diagnosable.
+        // Every inverse of an admissible count comparison is itself admissible, so the negator never hands the
+        // renderer a form the classifier rejects. One property test over the whole admitted set.
         (MongoBinaryOperator Op, int Threshold)[] admitted =
         [
             (MongoBinaryOperator.GreaterThan, 0), (MongoBinaryOperator.GreaterThan, 5),
@@ -660,7 +617,7 @@ public class MongoExpressionNegatorTests
             Assert.True(MongoExpressionNegator.TryNegate(original, out var negated), because);
             Assert.True(MongoQueryLanguageRenderer.IsQueryDialectRenderable(negated), because);
 
-            // Involution: negating twice returns the original operator.
+            // Involution: negating twice returns the original.
             Assert.True(MongoExpressionNegator.TryNegate(negated, out var twice), because);
             Assert.Equal(op, Assert.IsType<MongoBinaryExpression>(twice).Operator);
         }
@@ -669,9 +626,9 @@ public class MongoExpressionNegatorTests
     [Fact]
     public void A_parameterized_count_comparison_declines()
     {
-        // The negator's entry gate is IsQueryDialectRenderable, and the $expr tier is not query dialect.
-        // Inversion WOULD be exact there (both $expr operands are always numbers, thanks to $ifNull), so this
-        // is an accepted coverage gap — !(Count > @param) falls back — not a correctness compromise.
+        // The negator's entry gate is IsQueryDialectRenderable, and the $expr tier isn't query dialect. Inversion
+        // would be exact there (operands are numbers via $ifNull), so !(Count > @param) falling back is a coverage
+        // gap, not a correctness issue.
         var parameterized = new MongoBinaryExpression(
             MongoBinaryOperator.GreaterThan,
             new MongoSizeExpression("Posts", typeof(int), nullSafe: true),
@@ -706,7 +663,7 @@ public class MongoExpressionNegatorTests
     [Fact]
     public void Negation_is_an_involution_on_the_supported_set()
     {
-        // ¬¬X must render identically to X. A rule that is not an exact complement generally fails this.
+        // ¬¬X must render identically to X; a non-exact complement generally fails this.
         var flag = GetPostProperty(nameof(Post.Flag));
         MongoExpression[] inputs =
         [
@@ -715,7 +672,6 @@ public class MongoExpressionNegatorTests
             new MongoBinaryExpression(MongoBinaryOperator.AndAlso, Comparison(MongoBinaryOperator.Equal, 1), Comparison(MongoBinaryOperator.GreaterThan, 2)),
             new MongoElemMatchExpression("Comments", Comparison(MongoBinaryOperator.Equal, 1), negated: false),
             new MongoFieldExpression(flag, "Flag"),
-            // EF-382: MongoArrayContainsExpression must also stay in the involution invariant's coverage.
             new MongoArrayContainsExpression(
                 new MongoFieldExpression(GetPostProperty(nameof(Post.Tags)), "Tags"),
                 new MongoConstantExpression(new BsonString("keep"), forSerialization: null),

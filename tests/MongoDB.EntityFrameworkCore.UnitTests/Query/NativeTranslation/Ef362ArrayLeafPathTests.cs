@@ -27,16 +27,9 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// EF-362: the array-leaf admissibility rule after its root-declared conjunct was replaced by a ROOT-RELATIVE
-/// DOCUMENT PATH. <see cref="NativeProjectionBinder.IsNativeArrayProjectionLeaf"/> is the ONE predicate the
-/// emit side and the shaper side share, so the whole widening is decided here.
-/// <para>
-/// These cases exist at unit level rather than functionally because two of them are not reachable through
-/// ordinary LINQ at all: a collection nested inside a collection cannot be written as a projection leaf
-/// (<c>b.Posts.Comments</c> is not a member access — <c>Posts</c> is a sequence), and neither can a two-hop
-/// <c>OwnsOne</c> chain be exercised for its path SHAPE independently of its values. The functional surface is
-/// <c>Ef362OwnedHopArrayProjectionTests</c>.
-/// </para>
+/// Array-leaf admissibility by root-relative document path. <see cref="NativeProjectionBinder.IsNativeArrayProjectionLeaf"/>
+/// is the one predicate the emit and shaper sides share. Unit-level because some shapes (a collection inside a
+/// collection) aren't expressible in LINQ; the functional surface is <c>Ef362OwnedHopArrayProjectionTests</c>.
 /// </summary>
 public class Ef362ArrayLeafPathTests
 {
@@ -105,23 +98,21 @@ public class Ef362ArrayLeafPathTests
     [Fact]
     public void A_root_declared_array_is_admitted_under_its_own_element_name_exactly_as_before()
     {
-        // The pre-EF-362 case, unchanged: the derived path for a root-declared navigation IS the containing
-        // element name, so nothing about the existing shapes moves.
+        // Root-declared navigation: the derived path is the containing element name, as before.
         var (root, _) = BuildModel();
         var rootNotes = Navigation(root, nameof(Blog.RootNotes));
 
         Assert.True(NativeProjectionBinder.IsNativeArrayProjectionLeaf(rootNotes, root, "RootNotes"));
         Assert.False(NativeProjectionBinder.IsNativeArrayProjectionLeaf(rootNotes, root, "Home.RootNotes"));
-        // The renamed-alias narrowing, which EF-362 does not touch.
+        // Renamed-alias narrowing still applies.
         Assert.False(NativeProjectionBinder.IsNativeArrayProjectionLeaf(rootNotes, root, "P"));
     }
 
     [Fact]
     public void An_owned_reference_hop_is_admitted_only_under_its_full_dotted_path()
     {
-        // THE widening. The alias must be the full path, not the last segment — the last segment is what the
-        // anonymous type's member name would be, and reading by it against either a projected or an
-        // un-projected document misses.
+        // Alias must be the full path, not the last segment (the anonymous member name), which would miss on both
+        // projected and un-projected documents.
         var (root, _) = BuildModel();
         var home = root.FindNavigation(nameof(Blog.Home))!.TargetEntityType;
         var notes = Navigation(home, nameof(Home.Notes));
@@ -133,7 +124,7 @@ public class Ef362ArrayLeafPathTests
     [Fact]
     public void Two_owned_reference_hops_are_admitted_under_the_whole_chain()
     {
-        // The walk is not special-cased to one hop; each additional single embedded reference adds a segment.
+        // Each additional single embedded reference adds a segment.
         var (root, _) = BuildModel();
         var home = root.FindNavigation(nameof(Blog.Home))!.TargetEntityType;
         var wing = home.FindNavigation(nameof(Home.Wing))!.TargetEntityType;
@@ -147,13 +138,8 @@ public class Ef362ArrayLeafPathTests
     [Fact]
     public void An_array_under_a_COLLECTION_hop_is_declined_at_every_spelling()
     {
-        // The intermediate-hop constraint, and the reason it is not merely tidiness: `Posts` is an ARRAY, so
-        // "Posts.Comments" has no dotted read — a segment walk hits a BsonArray where it needs a BsonDocument.
-        // Not reachable through ordinary LINQ (a collection is not a member access), which is exactly why it is
-        // pinned here.
-        //
-        // MUTATION: drop TryGetRootRelativeArrayPath's `owner.IsCollection` check and the first assertion goes
-        // green — i.e. the emit side would start aliasing an unreadable path.
+        // `Posts` is an array, so "Posts.Comments" has no dotted read (the walk hits a BsonArray). Dropping
+        // TryGetRootRelativeArrayPath's `owner.IsCollection` check makes this fail.
         var (root, _) = BuildModel();
         var post = root.FindNavigation(nameof(Blog.Posts))!.TargetEntityType;
         var comments = Navigation(post, nameof(Post.Comments));
@@ -165,8 +151,8 @@ public class Ef362ArrayLeafPathTests
     [Fact]
     public void An_element_with_its_own_eager_navigation_is_still_declined_under_a_hop_too()
     {
-        // The EF-360 conjunct is orthogonal to the path and must keep applying after the widening: `Post` owns
-        // `Comments`, so even at its own (admissible) root-declared path it is declined.
+        // The owns-a-collection conjunct still applies: `Post` owns `Comments`, so it is declined even at its
+        // root-declared path.
         var (root, _) = BuildModel();
         var posts = Navigation(root, nameof(Blog.Posts));
 
@@ -174,7 +160,7 @@ public class Ef362ArrayLeafPathTests
         Assert.False(NativeProjectionBinder.IsNativeArrayProjectionLeaf(posts, root, "Posts"));
     }
 
-    // ── EF-412: the array leaf's sibling sweep is what keeps a "$$ROOT" leaf out of the strip path ────────
+    // ── The array leaf's sibling sweep keeps a "$$ROOT" leaf out of the strip path ────────
 
     /// <summary>DTO for the whole-root-entity + owned-hop-array selector under test.</summary>
     private class RootAndNotes
@@ -183,7 +169,7 @@ public class Ef362ArrayLeafPathTests
         public List<Note> Notes { get; set; } = null!;
     }
 
-    /// <summary>The positive CONTROL's DTO: a whole-document-readable scalar sibling instead of the root leaf.</summary>
+    /// <summary>Positive-control DTO: a whole-document-readable scalar sibling instead of the root leaf.</summary>
     private class TitleAndNotes
     {
         public string Title { get; set; } = "";
@@ -191,13 +177,9 @@ public class Ef362ArrayLeafPathTests
     }
 
     /// <summary>
-    /// Builds `b => new TDto { &lt;first leaf&gt;, Notes = b.Home.Notes }` in the shape EF's own nav-expansion
-    /// produces — the owned collection wrapped in a <see cref="MaterializeCollectionNavigationExpression"/> over
-    /// `EF.Property(...).AsQueryable()`, which is the ONLY spelling
-    /// <see cref="NativeProjectionBinder.TryTranslateLeaf"/>'s array branch recognizes. Built by hand because
-    /// these tests call the binder directly, without the preprocessing that would synthesize it; a source-spelled
-    /// `b.Home.Notes` member access would decline for the unrelated reason that it is not that node kind, and the
-    /// test would then prove nothing about the sibling sweep.
+    /// Builds `b => new TDto { &lt;first leaf&gt;, Notes = b.Home.Notes }` in the nav-expanded shape
+    /// (<see cref="MaterializeCollectionNavigationExpression"/> over `EF.Property(...).AsQueryable()`), the only form
+    /// <see cref="NativeProjectionBinder.TryTranslateLeaf"/>'s array branch recognizes.
     /// </summary>
     private static (MongoQueryExpression Query, LambdaExpression Selector) OwnedHopArraySelector(bool wholeRootLeaf)
     {
@@ -229,21 +211,11 @@ public class Ef362ArrayLeafPathTests
     [Fact]
     public void A_whole_root_entity_leaf_beside_an_owned_hop_array_leaf_declines_the_whole_projection()
     {
-        // WHY THIS EXISTS (final-review finding F3): EF-412 makes a whole-ROOT-entity leaf translate to a
-        // MongoElementRefExpression("$ROOT"), and the safety property nobody had tested is that such a leaf can
-        // never coexist with a DOCUMENT-PATH alias override — the one thing that makes
-        // MongoShapedQueryCompilingExpressionVisitor.ShouldStripBareProjectionOnFallback strip the $project and
-        // hand WHOLE documents to a visitor whose ReadsUnprojectedDocuments is false, which cannot read a
-        // "$$ROOT" alias. For a wrapped body that override can only come from an owned-ARRAY leaf, and admitting
-        // an array leaf forces IsWholeDocumentReadableLeaf over every sibling — which requires a
-        // MongoFieldExpression and therefore rejects the "$ROOT" element ref. So the WHOLE projection must
-        // decline, and nothing may be committed to the select on the way out (a PARTIAL admission would be the
-        // actual hazard: an array leaf registered with its "Home.Notes" override, and a $$ROOT leaf beside it).
-        //
-        // MUTATION, MEASURED: widening IsWholeDocumentReadableLeaf to also admit a MongoElementRefExpression
-        // (`leaf is MongoElementRefExpression || leaf is MongoFieldExpression field`) flips the first assertion
-        // below to True — the projection is then admitted with a "$$ROOT" leaf beside a "Home.Notes" override.
-        // So this test discriminates the predicate, it does not merely observe a decline that has other causes.
+        // A whole-root leaf ("$ROOT" element ref) must never coexist with a document-path alias override: that
+        // override triggers ShouldStripBareProjectionOnFallback, handing whole documents to a visitor that can't
+        // read a "$$ROOT" alias. Admitting an array leaf requires every sibling to pass IsWholeDocumentReadableLeaf,
+        // which rejects the element ref, so the whole projection must decline with nothing partially committed.
+        // Widening IsWholeDocumentReadableLeaf to admit MongoElementRefExpression makes this fail.
         var (query, selector) = OwnedHopArraySelector(wholeRootLeaf: true);
 
         Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(query, selector));
@@ -257,11 +229,8 @@ public class Ef362ArrayLeafPathTests
     [Fact]
     public void The_same_owned_hop_array_leaf_beside_a_whole_document_readable_scalar_is_admitted()
     {
-        // THE POSITIVE CONTROL, and it is not decoration: without it the decline above could equally be caused
-        // by this harness failing to build a recognizable array leaf at all, and the test would be vacuous.
-        // Swapping ONLY the sibling leaf (root parameter → `b.Title`, a top-level field whose alias equals its
-        // own element name) admits the identical array leaf, under its full dotted document path — so the
-        // decline above is attributable to the $$ROOT sibling and nothing else.
+        // Positive control: swapping only the sibling (to `b.Title`) admits the same array leaf at its full dotted
+        // path, so the decline above is caused by the $$ROOT sibling and not a harness problem.
         var (query, selector) = OwnedHopArraySelector(wholeRootLeaf: false);
 
         Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(query, selector));

@@ -45,8 +45,8 @@ public class MongoSelectLowererTests
         return new MongoQueryExpression(entityType);
     }
 
-    // A query over the same StubEntity, but with a property mapped onto the FIRST synthetic sort field
-    // name the allocator would otherwise hand out — EF-401 slice B collision-guard fixture.
+    // StubEntity with a property mapped onto the first synthetic sort field name ("__sort0"), for the
+    // collision guard.
     private static MongoQueryExpression TestSelectWithReservedElementName()
     {
         using var db = SingleEntityDbContext.Create<StubEntity>(
@@ -55,7 +55,7 @@ public class MongoSelectLowererTests
         return new MongoQueryExpression(entityType);
     }
 
-    // ── Fix round 1, Minor 1 / IMPORTANT: fixtures pinning the OTHER two arms of TopLevelElementNames ──
+    // ── Fixtures for the other two arms of TopLevelElementNames ──
 
     private class OwnedThing
     {
@@ -69,9 +69,8 @@ public class MongoSelectLowererTests
         public OwnedThing Owned { get; set; } = new();
     }
 
-    // A query whose entity type has an OWNED navigation whose containing element name is the FIRST
-    // synthetic sort field name the allocator would otherwise hand out — pins the EMBEDDED-NAVIGATION arm
-    // of TopLevelElementNames specifically (distinct from the scalar-property arm the fixture above pins).
+    // An owned navigation whose containing element name is "__sort0" — pins TopLevelElementNames' embedded-
+    // navigation arm.
     private static MongoQueryExpression TestSelectWithReservedEmbeddedElementName()
     {
         using var db = SingleEntityDbContext.Create<StubEntityWithOwned>(
@@ -92,10 +91,8 @@ public class MongoSelectLowererTests
         public ComplexThing Complex { get; set; } = new();
     }
 
-    // A query whose entity type has a COMPLEX property renamed to the FIRST synthetic sort field name the
-    // allocator would otherwise hand out — pins the COMPLEX-PROPERTY arm of TopLevelElementNames (the
-    // IMPORTANT fix-round-1 finding: GetProperties() does not see a ComplexProperty's own top-level
-    // document slot, mirroring the precedent at IsWholeElementRepresentable's third guard arm).
+    // A complex property renamed to "__sort0" — pins TopLevelElementNames' complex-property arm
+    // (GetProperties() doesn't see a ComplexProperty's top-level slot; cf. IsWholeElementRepresentable).
     private static MongoQueryExpression TestSelectWithReservedComplexElementName()
     {
         using var db = SingleEntityDbContext.Create<StubEntityWithComplex>(mb =>
@@ -105,9 +102,8 @@ public class MongoSelectLowererTests
         return new MongoQueryExpression(entityType);
     }
 
-    // Resolves a real mapped property of the given query's entity type into a MongoFieldExpression —
-    // EF-401 slice B: a genuine field key, as opposed to the MongoConstantExpression placeholder several
-    // pre-existing tests in this file use.
+    // Resolves a real mapped property into a MongoFieldExpression (a genuine field key, unlike the
+    // MongoConstantExpression placeholders some tests use).
     private static MongoFieldExpression FieldRef(MongoQueryExpression query, string name)
     {
         var property = query.CollectionExpression.EntityType.FindProperty(name)!;
@@ -131,9 +127,9 @@ public class MongoSelectLowererTests
         return query;
     }
 
-    // ── Reference-collection fixture (EF-347 slice 5, Task 3) ───────────────────
-    // A genuine cross-collection reference nav (FK-based HasMany/WithOne), distinct from the owned
-    // (embedded) Items fixture Test 15 uses — needed to build a ForceUnwind-collection LookupExpression.
+    // ── Reference-collection fixture ───────────────────
+    // A cross-collection reference nav (FK-based HasMany/WithOne), distinct from the owned Items fixture Test 15
+    // uses — needed to build a ForceUnwind-collection LookupExpression.
 
     private class ReferenceChild
     {
@@ -345,10 +341,8 @@ public class MongoSelectLowererTests
 
         var stages = new MongoSelectLowerer().Lower(query);
 
-        // GroupOrderOp's key ("Count") is a MongoElementRefExpression naming the $group stage's OWN accumulator
-        // output field — already a top-level field the instant $group runs, not a value that needs computing —
-        // so AppendSortStages emits a bare $sort directly on it, same as it would for a MongoFieldExpression.
-        // No $addFields/$unset bracket is needed (or emitted).
+        // GroupOrderOp's key names the $group's own accumulator output, already a top-level field, so a bare
+        // $sort is emitted with no $addFields/$unset bracket.
         Assert.Collection(stages,
             s => Assert.IsType<MongoGroupStage>(s),
             s => Assert.IsType<MongoSortStage>(s),
@@ -429,12 +423,10 @@ public class MongoSelectLowererTests
             s => Assert.IsType<MongoUnionWithStage>(s));
     }
 
-    // ── EF-397: a collection-Include $lookup on a SET-OP query is emitted AFTER the set-op stage ──
+    // ── A collection-Include $lookup on a set-op query is emitted after the set-op stage ──
     //
-    // The stage-order fact the feature rests on, pinned here in isolation from the end-to-end tests in
-    // NativeSetOpsTests. Emitted at the ordinary step-2 position it would precede the $unionWith and so join
-    // only source1's rows — the operand pipeline nested inside the $unionWith lowers from
-    // OperandSelect.PipelineOps alone and never carries a lookup.
+    // At the ordinary position it would precede the $unionWith and join only source1's rows; the operand
+    // pipeline lowers from OperandSelect.PipelineOps alone and never carries a lookup. End-to-end: NativeSetOpsTests.
 
     [Fact]
     public void SetOp_defers_the_collection_lookup_until_after_the_union_stage()
@@ -458,9 +450,8 @@ public class MongoSelectLowererTests
     [Fact]
     public void SetOp_emits_the_deferred_lookup_after_trailing_ops_and_before_the_projection()
     {
-        // The deferred block keeps the SAME relative slot the non-set-op path gives it: ops -> $lookup ->
-        // $project. A trailing Take must therefore page the combined stream BEFORE the join runs (so only
-        // surviving rows are joined), and the $project must still see the joined array.
+        // The deferred block keeps its relative slot: ops -> $lookup -> $project. A trailing Take pages the
+        // combined stream before the join, and the $project still sees the joined array.
         var (query, navigation) = TestReferenceSelect();
         var lookup = new LookupExpression(navigation);
         query.AddLookup(lookup);
@@ -482,8 +473,8 @@ public class MongoSelectLowererTests
     [Fact]
     public void Non_set_op_lookup_position_is_unchanged()
     {
-        // The complement of the two tests above: with no set op the lookup still lands at step 2, right
-        // after the ops and before the projection. Pins that the deferral is scoped to set-op queries only.
+        // With no set op the lookup stays right after the ops and before the projection: the deferral is
+        // set-op only.
         var (query, navigation) = TestReferenceSelect();
         var lookup = new LookupExpression(navigation);
         query.AddLookup(lookup);
@@ -498,7 +489,7 @@ public class MongoSelectLowererTests
             s => Assert.IsType<MongoProjectStage>(s));
     }
 
-    // ── Test 15: Owned-collection SelectMany unwind lowers to $unwind then $project (EF-347 slice 3) ──
+    // ── Test 15: Owned-collection SelectMany unwind lowers to $unwind then $project ──
 
     [Fact]
     public void UnwindSource_lowers_to_unwind_then_project_stage_in_order()
@@ -521,10 +512,9 @@ public class MongoSelectLowererTests
             });
     }
 
-    // ── Owned whole-element SelectMany lowers to $unwind then $replaceRoot (EF-347 bare-owned) ──
-    // The naive $replaceRoot alone is insufficient (owned keys are shadow properties not in the
-    // document), so WholeElement drives the $unwind to also carry the array ordinal via
-    // includeArrayIndex (MongoReplaceRootStage.OrdinalField) for the following $replaceRoot to merge in.
+    // ── Owned whole-element SelectMany lowers to $unwind then $replaceRoot ──
+    // Owned keys are shadow properties not stored in the document, so the $unwind also carries the array ordinal
+    // via includeArrayIndex (MongoReplaceRootStage.OrdinalField) for the $replaceRoot to merge in.
 
     [Fact]
     public void WholeElement_UnwindSource_lowers_to_unwind_then_replaceRoot_stage_in_order()
@@ -547,16 +537,14 @@ public class MongoSelectLowererTests
     }
 
     // ── Test 16: Reference-collection SelectMany unwind lowers to $lookup → $unwind → $project
-    // (EF-347 slice 5, Task 3). Distinct from Test 15 (Owned): AppendLookupStages (stage 5) already
-    // appends the $lookup+$unwind for a Reference UnwindSource BEFORE the UnwindSource block runs,
-    // so no MongoUnwindFieldStage should ever appear for this Kind.
+    // AppendLookupStages already appends $lookup+$unwind for a Reference UnwindSource, so no
+    // MongoUnwindFieldStage should appear for this Kind.
 
     [Fact]
     public void Reference_UnwindSource_lowers_to_lookup_then_unwind_then_project_stage_in_order()
     {
         var (query, navigation) = TestReferenceSelect();
-        // A reference-collection SelectMany flatten is inner-join semantics — mirrors what
-        // NativeSelectManyBinder sets explicitly at its own registration sites.
+        // Inner-join semantics, as NativeSelectManyBinder sets at its registration sites.
         var lookup = new LookupExpression(navigation, forceUnwind: true) { PreserveNullAndEmptyArrays = false };
         query.AddLookup(lookup);
         query.Select.AddUnwindSource(MongoUnwindSource.Reference(
@@ -585,16 +573,13 @@ public class MongoSelectLowererTests
         Assert.DoesNotContain(stages, s => s is MongoUnwindFieldStage);
     }
 
-    // Test 17: bare whole reference-ENTITY SelectMany (EF-347 ref-bare-entity slice). Like Test 16,
-    // AppendLookupStages emits $lookup + $unwind(preserve:false) first; then WholeElement drives a PLAIN
-    // $replaceRoot (no $mergeObjects — a reference entity has a real stored key), and there is NO trailing
-    // $project (Projection is empty for a whole-entity result).
+    // Test 17: bare whole reference-entity SelectMany. AppendLookupStages emits $lookup + $unwind(preserve:false);
+    // then a plain $replaceRoot (no $mergeObjects — a reference entity has a stored key) and no trailing $project.
     [Fact]
     public void WholeElement_Reference_UnwindSource_lowers_to_lookup_then_unwind_then_plain_replaceRoot()
     {
         var (query, navigation) = TestReferenceSelect();
-        // A reference-collection SelectMany flatten is inner-join semantics — mirrors what
-        // NativeSelectManyBinder sets explicitly at its own registration sites.
+        // Inner-join semantics, as NativeSelectManyBinder sets at its registration sites.
         var lookup = new LookupExpression(navigation, forceUnwind: true) { PreserveNullAndEmptyArrays = false };
         query.AddLookup(lookup);
         var unwind = MongoUnwindSource.Reference(
@@ -620,10 +605,8 @@ public class MongoSelectLowererTests
             });
     }
 
-    // Task 4: filtered-inner reference SelectMany (o.Refs.Where(r => r.Total > 100)). Mirrors the
-    // WholeElement_Reference_UnwindSource test immediately above, plus a Filter set on the unwind — the
-    // lowerer must emit a $match for it after the reference $unwind (already appended by AppendLookupStages)
-    // and before the $replaceRoot.
+    // Filtered-inner reference SelectMany (o.Refs.Where(r => r.Total > 100)): the Filter's $match goes after the
+    // reference $unwind and before the $replaceRoot.
     [Fact]
     public void Reference_unwind_with_filter_emits_match_after_unwind_before_terminal()
     {
@@ -648,10 +631,9 @@ public class MongoSelectLowererTests
         Assert.True(replaceRootIndex > matchIndex, "filter $match must precede the $replaceRoot");
     }
 
-    // EF-449: a reference-collection-nav First/FirstOrDefault projection leaf tags its LookupExpression
-    // with PipelineKind == CorrelatedReducer (the $lookup's own sub-pipeline already narrows to 0-or-1
-    // matches). AppendLookupStages must emit $lookup + a LEFT-OUTER $unwind for it, rather than falling
-    // through to the final else's NativeTranslationNotSupportedException.
+    // A reference-collection-nav First/FirstOrDefault projection leaf is tagged PipelineKind.CorrelatedReducer
+    // (its sub-pipeline narrows to 0-or-1). AppendLookupStages must emit $lookup + a left-outer $unwind rather
+    // than throwing NativeTranslationNotSupportedException.
     [Fact]
     public void AppendLookupStages_emits_lookup_and_left_outer_unwind_for_CorrelatedReducer()
     {
@@ -672,15 +654,11 @@ public class MongoSelectLowererTests
             });
     }
 
-    // A reference Include whose target carries a trailing COLLECTION ThenInclude (e.g.
-    // Orders.Include(o => o.Customer.Orders)) — the "flat multi-lookup" shape
-    // MongoProjectionBindingExpressionVisitor's collection-Include handling already prefixes the
-    // collection lookup's LocalField/As with the confirmed reference lookup's own alias
-    // ("_lookup_Mid.Something"/"_lookup_Mid._lookup_Leaves"). AppendLookupStages must accept this
-    // TRANSITIVE collection lookup as a plain $lookup (no $unwind, array kept nested under the
-    // reference's own alias) rather than falling through to the final else's
-    // NativeTranslationNotSupportedException — the same disposition IsNativeCollectionLookup already
-    // gets for a ROOT-level collection Include, just reached through an intermediate reference.
+    // A reference Include with a trailing collection ThenInclude (Orders.Include(o => o.Customer.Orders)): the
+    // collection lookup's LocalField/As are prefixed with the reference lookup's alias
+    // ("_lookup_Mid.Something"/"_lookup_Mid._lookup_Leaves"). AppendLookupStages must accept this transitive
+    // collection lookup as a plain $lookup (no $unwind, nested under the reference's alias), like a root-level
+    // collection Include.
 
     private class TransitiveLeaf
     {
@@ -755,21 +733,16 @@ public class MongoSelectLowererTests
         Assert.Single(stages.OfType<MongoUnwindStage>());
     }
 
-    // Task 4 fix round (review finding C1): AddLookup's dedup-by-alias must MERGE a later, pipeline-bearing
-    // registration INTO the existing entry, never swap the list slot for the incoming object outright. A
-    // swap silently discards every attribute the two-argument (As/HasPipeline) dedup check doesn't look at
-    // -- ForceUnwind, PreserveNullAndEmptyArrays, InjectAfterRoot -- which matters because ANOTHER feature
-    // can hold its own reference to the original object (e.g. JoinInfo.Lookup) that a swap would silently
-    // orphan. This test pins all three attributes surviving, plus object identity, plus the incoming
-    // pipeline actually landing on the survivor.
+    // AddLookup's dedup-by-alias must merge a later pipeline-bearing registration into the existing entry, not
+    // swap the slot: a swap loses ForceUnwind, PreserveNullAndEmptyArrays and InjectAfterRoot, and orphans other
+    // holders of the original object (e.g. JoinInfo.Lookup).
     [Fact]
     public void AddLookup_merges_a_pipeline_bearing_registration_into_the_existing_entry_without_losing_its_own_attributes()
     {
         var (query, navigation) = TestReferenceSelect();
 
-        // The FIRST registration: bare (no pipeline), but carrying attributes a swap would lose --
-        // ForceUnwind/PreserveNullAndEmptyArrays (as a join's own JoinInfo.Lookup registration would) and
-        // InjectAfterRoot (as a projected-Count leaf's registration would).
+        // First registration: no pipeline, but with attributes a swap would lose (as a join's JoinInfo.Lookup or
+        // a projected-Count leaf would register).
         var existing = new LookupExpression(navigation, forceUnwind: true)
         {
             PreserveNullAndEmptyArrays = false,
@@ -777,33 +750,26 @@ public class MongoSelectLowererTests
         };
         query.AddLookup(existing);
 
-        // The SECOND registration: same alias (same navigation), bare constructor but carrying a pipeline --
-        // mirrors a ThenInclude's nested $lookup arriving after a join/Count's bare placeholder.
+        // Second registration: same alias, carrying a pipeline (like a ThenInclude's nested $lookup).
         var incoming = new LookupExpression(navigation) { PipelineKind = LookupPipelineKind.NestedInclude };
         incoming.PipelineStages.Add(new BsonDocument("$match", new BsonDocument("x", 1)));
         query.AddLookup(incoming);
 
         var stored = Assert.Single(query.GetPendingLookups());
 
-        // MUTATION: reverting to "_pendingLookups[existingIndex] = lookup" (a swap) fails every assertion
-        // below except the pipeline ones -- the survivor would be `incoming` instead of `existing`, with
-        // ForceUnwind/PreserveNullAndEmptyArrays/InjectAfterRoot all reverted to their bare defaults.
         Assert.Same(existing, stored);
         Assert.True(stored.ForceUnwind);
         Assert.False(stored.PreserveNullAndEmptyArrays);
         Assert.True(stored.InjectAfterRoot);
 
-        // The incoming pipeline must still land on the survivor -- a merge that preserves attributes but
-        // drops the very pipeline the dedup exists to protect would just trade one bug for another.
+        // The incoming pipeline must still land on the survivor.
         Assert.True(stored.HasPipeline);
         Assert.Equal(LookupPipelineKind.NestedInclude, stored.PipelineKind);
         Assert.Single(stored.PipelineStages);
     }
 
-    // EF-347 filtered-inner OWNED SelectMany. Mirrors the reference filter test above but for an owned
-    // $unwind: the lowerer's Filter $match block is kind-agnostic, so it must emit the $match after the
-    // owned $unwind and before the $project (projected form) / $replaceRoot (whole-element form) with NO
-    // production change — proving the owned reuse claim.
+    // Filtered-inner owned SelectMany: the kind-agnostic Filter $match goes after the owned $unwind and before
+    // the $project / $replaceRoot.
     [Fact]
     public void Owned_UnwindSource_with_filter_lowers_match_after_unwind_before_project()
     {
@@ -840,7 +806,7 @@ public class MongoSelectLowererTests
         Assert.True(replaceRootIndex > matchIndex, "filter $match must precede the $replaceRoot");
     }
 
-    // ── EF-347 slice B: trailing ops emit AFTER the set-op stage; cardinality falls through ──
+    // ── Trailing ops emit after the set-op stage; cardinality falls through ──
 
     [Fact]
     public void Trailing_ops_lower_after_the_set_op_stage()
@@ -876,14 +842,14 @@ public class MongoSelectLowererTests
 
         var stages = new MongoSelectLowerer().Lower(query);
 
-        // set-difference stage (Intersect/Except) → $count. The lowerer must NOT early-return after the
-        // set-op stage — it must fall through to the Cardinality block.
+        // set-difference stage (Intersect/Except) → $count. The lowerer must not return early after the set-op
+        // stage.
         Assert.Collection(stages,
             s => Assert.IsType<MongoSetDifferenceStage>(s),
             s => Assert.IsType<MongoCountStage>(s));
     }
 
-    // ── EF-401 (stream 1, slice B): a computed sort key lowers to $set → $sort → $unset ─────────
+    // ── A computed sort key lowers to $set → $sort → $unset ─────────
 
     [Fact]
     public void Computed_sort_key_lowers_to_set_sort_unset()
@@ -911,9 +877,8 @@ public class MongoSelectLowererTests
     [Fact]
     public void A_sort_with_only_field_keys_emits_a_bare_sort_and_no_set()
     {
-        // LOAD-BEARING, not tidiness. MEASURED (spike §6.2): a $set in front of a $sort disqualifies
-        // index-backed sorting EVEN WHEN every sort key is a plain indexed field path — {$sort:{A:1}} is
-        // IXSCAN A_1, and the identical sort preceded by an unrelated $set is a COLLSCAN.
+        // A $set before a $sort disqualifies index-backed sorting even when every key is an indexed field path
+        // ({$sort:{A:1}} is IXSCAN; the same sort after a $set is COLLSCAN).
         var query = TestSelect();
         query.Select.StartOrReplaceSort(new MongoOrdering(FieldRef(query, "A"), Ascending: true));
 
@@ -965,8 +930,7 @@ public class MongoSelectLowererTests
     [Fact]
     public void Synthetic_names_are_stable_across_repeated_lowering_of_the_same_query()
     {
-        // The prototype used a process-global counter and emitted __sort3 on one spec case and __sort4 on its
-        // async twin (MEASURED, spike §2.1) — which would make every committed AssertMql baseline unstable.
+        // Names must be deterministic, or AssertMql baselines differ between sync and async twins.
         var first = new MongoSelectLowerer().Lower(BuildComputedSortQuery());
         var second = new MongoSelectLowerer().Lower(BuildComputedSortQuery());
 
@@ -974,10 +938,8 @@ public class MongoSelectLowererTests
             Assert.IsType<MongoAddFieldsStage>(first[0]).Fields[0].Alias,
             Assert.IsType<MongoAddFieldsStage>(second[0]).Fields[0].Alias);
 
-        // Minor 4 (fix round 1): the assertion above uses two DIFFERENT lowerer instances, so it would also
-        // pass for a counter promoted to an INSTANCE field on MongoSelectLowerer — it only pins per-run
-        // stability, not per-INVOCATION allocation. Calling Lower TWICE on the SAME instance pins the
-        // stronger, actually-intended property: the allocator is rebuilt fresh every Lower call.
+        // Two instances only pin per-run stability; the same instance lowering twice pins that the allocator is
+        // rebuilt on every Lower call.
         var lowerer = new MongoSelectLowerer();
         var third = lowerer.Lower(BuildComputedSortQuery());
         var fourth = lowerer.Lower(BuildComputedSortQuery());
@@ -990,8 +952,8 @@ public class MongoSelectLowererTests
     [Fact]
     public void A_synthetic_name_colliding_with_a_mapped_element_name_is_skipped()
     {
-        // $set OVERWRITES a same-named field silently — the same hazard IsWholeElementRepresentable's
-        // sentinel-collision guard exists for on the owned bare-element path ($mergeObjects).
+        // $set silently overwrites a same-named field (the hazard IsWholeElementRepresentable guards on the owned
+        // $mergeObjects path).
         var query = TestSelectWithReservedElementName();   // maps a property to element name "__sort0"
 
         query.Select.StartOrReplaceSort(new MongoOrdering(Sum(), Ascending: true));
@@ -1004,10 +966,7 @@ public class MongoSelectLowererTests
     [Fact]
     public void A_synthetic_name_colliding_with_an_owned_navigations_containing_element_name_is_skipped()
     {
-        // Minor 1 (fix round 1): pins the EMBEDDED-NAVIGATION arm of TopLevelElementNames specifically.
-        // The sibling scalar-property collision test's own mutation (ignore the WHOLE reserved set) does
-        // not discriminate WHICH arm actually populates it — deleting only the navigation loop leaves this
-        // test red while the scalar-property test stays green, and vice versa.
+        // Pins the embedded-navigation arm of TopLevelElementNames independently of the scalar-property arm.
         var query = TestSelectWithReservedEmbeddedElementName();   // owned nav's containing element name is "__sort0"
 
         query.Select.StartOrReplaceSort(new MongoOrdering(Sum(), Ascending: true));
@@ -1020,12 +979,8 @@ public class MongoSelectLowererTests
     [Fact]
     public void A_synthetic_name_colliding_with_a_complex_propertys_element_name_is_skipped()
     {
-        // IMPORTANT (fix round 1): TopLevelElementNames originally omitted complex properties entirely —
-        // IEntityType.GetProperties() does not see a ComplexProperty's own top-level document slot, the
-        // same hazard IsWholeElementRepresentable's third guard arm
-        // (MongoQueryableMethodTranslatingExpressionVisitor) exists for on the owned $mergeObjects path.
-        // Not reachable today (the populator declines every computed key), but becomes reachable the moment
-        // Task 3 lands.
+        // GetProperties() doesn't see a ComplexProperty's top-level slot — the hazard IsWholeElementRepresentable's
+        // third guard arm covers on the owned $mergeObjects path.
         var query = TestSelectWithReservedComplexElementName();   // complex property's element name is "__sort0"
 
         query.Select.StartOrReplaceSort(new MongoOrdering(Sum(), Ascending: true));
@@ -1035,17 +990,16 @@ public class MongoSelectLowererTests
         Assert.NotEqual("__sort0", Assert.Single(Assert.IsType<MongoAddFieldsStage>(stages[0]).Fields).Alias);
     }
 
-    // ── EF-408: the two gaps the collision guard used to carry as "accepted but unverified" ──────────
+    // ── Collision guard: TPH derived types and set-op operand types ──────────
 
     private class StubEntityDerived : StubEntity
     {
         public int Special { get; set; }
     }
 
-    // A query over the TPH BASE type whose DERIVED sibling maps a property onto the first synthetic sort
-    // field name. Every TPH type shares one collection and one top-level document namespace, but
-    // IEntityType.GetProperties() on the base never returns a derived type's own declared members — so the
-    // reserved set has to walk GetDerivedTypesInclusive() (EF-408 gap 2).
+    // A query over the TPH base whose derived sibling maps a property onto "__sort0". TPH types share one document
+    // namespace, but GetProperties() on the base omits derived members, so the reserved set must walk
+    // GetDerivedTypesInclusive().
     private static MongoQueryExpression TestSelectWithReservedDerivedElementName()
     {
         using var db = SingleEntityDbContext.Create<StubEntity>(
@@ -1060,10 +1014,8 @@ public class MongoSelectLowererTests
         public string Other { get; set; } = "";
     }
 
-    // An outer query whose OWN entity type reserves nothing, paired with a set-op operand entity type that
-    // maps a property onto the first synthetic sort field name (EF-408 gap 1). A projected-operand set op
-    // does not require the operands to share an entity type, and the operand's ops lower through the SAME
-    // allocator into the nested $unionWith pipeline.
+    // An outer entity type reserving nothing, with a set-op operand type mapping a property onto "__sort0". The
+    // operand's ops lower through the same allocator into the nested $unionWith pipeline.
     private static (MongoQueryExpression Query, IEntityType OperandEntityType) TestSelectWithReservedOperandElementName()
     {
         using var db = SingleEntityDbContext.Create<StubEntity>(
@@ -1075,10 +1027,8 @@ public class MongoSelectLowererTests
     [Fact]
     public void A_synthetic_name_colliding_with_a_TPH_derived_types_element_name_is_skipped()
     {
-        // EF-408 gap 2, MEASURED reachable end-to-end (NativeComputedSortTests
-        // .Synthetic_sort_field_does_not_clobber_a_TPH_derived_types_own_element): the $set clobbered the
-        // derived type's real element and the trailing $unset then removed it from the document entirely,
-        // so the derived row failed to materialize under the default Native mode.
+        // End-to-end (NativeComputedSortTests.Synthetic_sort_field_does_not_clobber_a_TPH_derived_types_own_element):
+        // the $set clobbered the derived element and $unset removed it, so derived rows failed to materialize.
         var query = TestSelectWithReservedDerivedElementName();
 
         query.Select.StartOrReplaceSort(new MongoOrdering(Sum(), Ascending: true));
@@ -1091,9 +1041,8 @@ public class MongoSelectLowererTests
     [Fact]
     public void A_synthetic_name_colliding_with_a_set_op_operands_own_element_name_is_skipped()
     {
-        // EF-408 gap 1, MEASURED reachable end-to-end (NativeComputedSortTests
-        // .Synthetic_sort_field_does_not_clobber_a_set_op_operands_own_element). The OUTER type reserves
-        // nothing here, so only reading the OPERAND's entity type can keep this allocation off "__sort0".
+        // End-to-end: NativeComputedSortTests.Synthetic_sort_field_does_not_clobber_a_set_op_operands_own_element.
+        // Only reading the operand's entity type can keep this allocation off "__sort0".
         var (query, operandEntityType) = TestSelectWithReservedOperandElementName();
 
         var operand = new MongoSelectDefinition();
@@ -1109,10 +1058,8 @@ public class MongoSelectLowererTests
             Assert.Single(Assert.IsType<MongoAddFieldsStage>(union.OperandStages[0]).Fields).Alias);
     }
 
-    // ── Minor 3 (fix round 1): the allocator must be SHARED across all three AppendSelectOpStages call
-    // sites — a regression passing a fresh allocator at either the set-op operand's PipelineOps or the
-    // post-set-op TrailingOps would produce a DUPLICATE "__sort0" that no existing test would catch (all
-    // six pre-round-1 slice-B tests drive only the outer query's own PipelineOps). ─────────────────────
+    // ── The allocator is shared across all three AppendSelectOpStages call sites ─────────────────────
+    // (outer, set-op operand, trailing); a fresh allocator at any of them would produce a duplicate "__sort0".
 
     [Fact]
     public void Computed_sort_in_a_set_op_operand_gets_a_distinct_synthetic_name_from_the_outer_querys()
@@ -1135,10 +1082,8 @@ public class MongoSelectLowererTests
         var union = Assert.IsType<MongoUnionWithStage>(stages[3]);
         var operandAddFields = Assert.IsType<MongoAddFieldsStage>(union.OperandStages[0]);
 
-        // The $unset must be INSIDE the operand's nested pipeline, and this is the one test that reaches a
-        // set-op operand at all — so it is the only place that can pin it. The $unset exists specifically for
-        // set-op hygiene: a synthetic field left on the operand's documents would fold into Union's own
-        // $group{_id:"$$ROOT"} dedup key and change set semantics.
+        // The $unset must be inside the operand's nested pipeline: a synthetic field left on operand documents
+        // would join Union's $group{_id:"$$ROOT"} dedup key and change set semantics.
         Assert.IsType<MongoUnsetStage>(union.OperandStages[2]);
 
         var outerName = Assert.Single(outerAddFields.Fields).Alias;
@@ -1172,11 +1117,9 @@ public class MongoSelectLowererTests
         Assert.NotEqual(outerName, trailingName);
     }
 
-    // EF-322: Last()/LastOrDefault() with no explicit OrderBy has no MQL "take the last row" form via a sort
-    // flip (there is no sort to flip), but it's still natively representable via the same
-    // $group{_id:null,_last:{$last:"$$ROOT"}} + $replaceRoot pattern the driver-LINQ fallback already relies
-    // on for this exact shape (its own baseline MQL, captured under NorthwindIncludeQueryMongoTest
-    // .Include_collection_with_last_no_orderby).
+    // Last()/LastOrDefault() with no OrderBy has no sort to flip, but is native via
+    // $group{_id:null,_last:{$last:"$$ROOT"}} + $replaceRoot, as the driver-LINQ fallback does (see
+    // NorthwindIncludeQueryMongoTest.Include_collection_with_last_no_orderby).
     [Fact]
     public void Last_with_no_explicit_order_binds_natively_via_group_last_and_replace_root()
     {

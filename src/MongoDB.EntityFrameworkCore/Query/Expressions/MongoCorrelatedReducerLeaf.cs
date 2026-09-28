@@ -16,20 +16,13 @@
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// Records the empty-input semantics for a projection leaf built by
-/// <c>NativeProjectionBinder.TryGetCorrelatedReducerLeaf</c> (EF-449) — a reference-collection-nav
-/// <c>First</c>/<c>FirstOrDefault</c> reduced to a scalar member inside a projection, e.g.
+/// A projection leaf built by <c>NativeProjectionBinder.TryGetCorrelatedReducerLeaf</c>: a reference-collection
+/// nav <c>First</c>/<c>FirstOrDefault</c> reduced to a scalar member, e.g.
 /// <c>animal.IdentificationMethods.FirstOrDefault().Method</c>.
 /// </summary>
 /// <remarks>
-/// The <c>$lookup</c>'s <c>$unwind</c> is ALWAYS left-outer (see
-/// <c>MongoSelectLowerer.AppendLookupStages</c>'s <see cref="LookupPipelineKind.CorrelatedReducer"/> branch), so
-/// the emitted pipeline is identical for both reducers; <see cref="ThrowOnEmpty"/> is what distinguishes
-/// <c>First</c> (must throw when no element matched) from <c>FirstOrDefault</c> (a missing unwound field already
-/// reads back as the member's own default, so no extra work is needed). Keeping the distinction on the READ side
-/// rather than in the join shape is deliberate: an inner <c>$unwind</c> would drop the whole principal row, which
-/// is not what <c>First</c> means inside a projection — the principal row must survive and the reduction itself
-/// must throw.
+/// The <c>$unwind</c> is always left-outer, so both reducers emit the same pipeline; <see cref="ThrowOnEmpty"/>
+/// makes <c>First</c> throw on the read side. An inner <c>$unwind</c> would wrongly drop the principal row.
 /// </remarks>
 /// <param name="Alias">The <c>$project</c> alias this leaf's value is emitted under.</param>
 /// <param name="Lookup">The <c>$lookup</c> (with its <c>$match</c>/<c>$sort</c>/<c>$limit:1</c> sub-pipeline)

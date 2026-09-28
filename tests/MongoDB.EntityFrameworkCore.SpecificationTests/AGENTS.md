@@ -29,12 +29,8 @@ re-points here for the shared fixtures; per-area test folders under `FunctionalT
 
 ## Test infrastructure
 
-- **Connection bootstrap** (`Utilities/TestServer.cs`). Default server: `MONGODB_URI`, else a
-  `TestContainersTestServer`. Atlas (`IsAtlas`) server: `ATLAS_URI`, else likewise. Image is
-  `mongodb/mongodb-atlas-local` (Atlas-capable, Search Index Management), so Atlas tests run for real. Cached
-  with double-checked locking — each test *process* boots its own container on a random port.
-  **Recommended: leave both vars unset** so the run is self-contained and separate processes stay isolated.
-  `ATLAS_URI="Disabled"` skips Atlas tests. A plain `mongod` can't run Atlas Search.
+- **Connection bootstrap** (`Utilities/TestServer.cs`) — see root `AGENTS.md`. The container server is cached
+  per test *process* (random port). `ATLAS_URI="Disabled"` skips Atlas tests.
 - **Per-test isolation.** `TemporaryDatabaseFixtureBase.InitializeAsync()` gets a unique name from
   `TestDatabaseNamer.GetUniqueDatabaseName()`. `DisposeAsync` is a no-op — no automatic teardown; stale
   `Test*` databases are removed only by manually running `DatabaseCleaner.CleanDatabase`. Test methods get a
@@ -44,11 +40,10 @@ re-points here for the shared fixtures; per-area test folders under `FunctionalT
 
 | Variable | Effect |
 |---|---|
-| `MONGODB_URI` / `ATLAS_URI` | Point at an external server instead of a container. |
 | `MONGODB_EF_NATIVE_ONLY=1` | Flips every spec context to `MongoQueryMode.NativeOnly`, so a would-be fallback throws instead. A full run is a "what actually goes native" report. |
-| `CRYPT_SHARED_LIB_PATH` | Required for CSFLE/Queryable Encryption tests; unset ⇒ skip silently. |
 | `EF_TEST_REWRITE_BASELINES=1` | Regenerates `AssertMql` baselines in place (see below). |
-| `DRIVER_VERSION` | Overrides the C# driver version (CI forward-compat testing). |
+
+Connection, encryption, and driver-version variables: see root `AGENTS.md`.
 
 ## Specification-tests anchor
 
@@ -80,12 +75,6 @@ rebuild and rerun without the var to confirm green. Caveats:
 - Truncates at 9 statements; only works when it can resolve the test's source file+line from the stack trace.
 - **Can corrupt files or mis-place output** — always `git diff` and rebuild before trusting it.
 
-## EF multi-version targeting
-
-Define constants: `EF8`, `EF9`, `EF10`. Common patterns: `#if EF8` (legacy seeding/customizer interface),
-`#if EF8 || EF9`, `#if !EF8` / `#if !EF8 && !EF9`. EF8/EF9 target `net8.0`, EF10 targets `net10.0`. `/test-all`
-builds and tests all three in parallel.
-
 ## Test-area subfolder mirror
 
 Test folders mirror `src/`. When you touch an area, check the matching folder:
@@ -113,16 +102,12 @@ Special concerns under `FunctionalTests/`: `Encryption/` (gated on `CRYPT_SHARED
 - **MQL assertions are field-order-sensitive** — a new translator branch often needs baselines updated across
   many spec tests.
 - **MQL shape does not prove a query went native** — see `Query/AGENTS.md`. Use `NativeOnly`.
-- **Unit tests use plain xUnit `Assert.*`** — no FluentAssertions.
-- **Encryption tests skip silently** when `CRYPT_SHARED_LIB_PATH` is unset.
 - **EF-version `#if`s in tests are easy to miss locally** — CI runs all three; `/test-all` is the local
   equivalent.
 - **Compiled-model generated output** regenerates from design-time tests; check `Design/Generated/EF{8,9,10}/`
   after a `Mongo:*` annotation change.
 
 ## How to test
-
-Run with `MONGODB_URI` and `ATLAS_URI` unset (Docker required) for an isolated container per run.
 
 ```bash
 # Full functional suite for one EF version

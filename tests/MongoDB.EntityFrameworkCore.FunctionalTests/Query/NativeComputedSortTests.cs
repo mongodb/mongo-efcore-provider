@@ -30,14 +30,13 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-401, stream 1 slice B — makes a COMPUTED (non-field) <c>OrderBy</c>/<c>ThenBy</c> key go native. MQL
-/// <c>$sort</c> only accepts field paths, so <see cref="MongoDB.EntityFrameworkCore.Query.NativeTranslation.MongoSelectLowerer"/>
-/// brackets the sort in a synthetic <c>$set</c> ... <c>$unset</c> pair (Task 2); this class proves the populator
-/// fall-through (Task 3) actually reaches that machinery, end to end, against a real server.
+/// Computed (non-field) <c>OrderBy</c>/<c>ThenBy</c> keys. <c>$sort</c> only accepts field paths, so
+/// <see cref="MongoDB.EntityFrameworkCore.Query.NativeTranslation.MongoSelectLowerer"/> brackets the sort in a
+/// synthetic <c>$set</c> ... <c>$unset</c> pair; these tests run that end to end against a real server.
 /// </summary>
 /// <remarks>
-/// <b>Every case asserts ORDER, never a row count</b> — a dropped <c>$sort</c> (mutation 2 in the task brief)
-/// still returns the right rows, just in insertion order, so a count-only assertion cannot discriminate it.
+/// Every case asserts order, never just a row count: a dropped <c>$sort</c> still returns the right rows, in
+/// insertion order.
 /// </remarks>
 [XUnitCollection("QueryTests")]
 public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -49,14 +48,12 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         public int B { get; set; }
         public string Label { get; set; } = "";
 
-        // EF-413's Not fixture (case 24 below). Defaults to false for every row seeded by the other cases in
-        // this class, so adding it here does not disturb any pre-existing expectation.
+        // Used by case 24 (Not); false for every other seeded row.
         public bool Flag { get; set; }
     }
 
-    // The TPH pair for case 2 (DOM shaper) — a base with a derived sibling makes StreamingEligibility.IsEligible
-    // false for the base type (GetDirectlyDerivedTypes().Any()), exactly the NativeTransactionAndCancellationTests
-    // precedent.
+    // TPH pair for case 2: a derived sibling makes StreamingEligibility.IsEligible false for the base type, so the
+    // DOM shaper is exercised.
     public class SortDomItem
     {
         public ObjectId Id { get; set; }
@@ -70,8 +67,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         public string Extra { get; set; } = "";
     }
 
-    // Case 17's owned-collection fixture (Minor 3, fix round 1) — an unfiltered owned-collection Count as a
-    // computed sort key. A separate, minimally-scoped entity: the main SortItem fixture has no collection nav.
+    // Case 17: an unfiltered owned-collection Count as a computed sort key.
     public class PostOwner
     {
         public ObjectId Id { get; set; }
@@ -88,10 +84,8 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     private static readonly Action<ModelBuilder> PostOwnerModel =
         mb => mb.Entity<PostOwner>().OwnsMany(x => x.Posts, p => p.HasKey(i => i.PostId));
 
-    // Case 20's owned-collection fixture (the final fix wave) — the element's int Code is STORED AS A STRING
-    // (HasBsonRepresentation(BsonType.String)), which is what makes a FILTERED count's element predicate compare
-    // the raw stored representation LEXICOGRAPHICALLY rather than numerically. Separate from PostOwner above so
-    // case 17's unfiltered-count fixture keeps default serialization and cannot be confused with this one.
+    // Case 20: the element's int Code is stored as a string, so a filtered count's element predicate compares the
+    // stored representation lexicographically. Kept separate so case 17's fixture keeps default serialization.
     public class CodeOwner
     {
         public ObjectId Id { get; set; }
@@ -112,11 +106,8 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             p.Property(i => i.Code).HasBsonRepresentation(BsonType.String);
         });
 
-    // Case 15's probe type (Important 1, fix round 1) — a struct with no BSON representation at all
-    // (MongoDB.Bson.BsonValue.Create rejects it; an enum round-trips fine, MEASURED separately). No C#
-    // literal syntax can embed a non-enum, non-primitive struct as a genuine ConstantExpression (a captured
-    // LOCAL of this type would instead take EF's PARAMETER path via closure-field extraction), so the query
-    // is built by hand below via Expression.Constant.
+    // Case 15: a struct with no BSON representation (BsonValue.Create rejects it). A captured local would take
+    // EF's parameter path, so the query is built by hand with Expression.Constant.
     private struct UnrenderableSortKey
     {
         public int X { get; set; }
@@ -124,9 +115,8 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
 
     // ── The main fixture ────────────────────────────────────────────────────────────────────────
     //
-    // Four rows, seeded in this (insertion) order, chosen so the five orders below are ALL MUTUALLY DISTINCT
-    // sequences — a fixture where two of them coincided would silently weaken every case that relies on the
-    // difference (a dropped $sort, or a sort on the wrong key, would then still "pass"):
+    // Chosen so the five orders below are mutually distinct; if two coincided, a dropped $sort or a sort on the
+    // wrong key could still pass:
     //
     //   insertion order (as inserted)     : R1, R2, R3, R4   -> Label: pC, pA, pD, pB
     //   A     order (ascending A)         : R3, R2, R1, R4   -> Label: pD, pA, pC, pB
@@ -134,9 +124,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     //   sum   order (ascending A+B)       : R3, R1, R4, R2   -> Label: pD, pC, pB, pA
     //   label order (ascending, alpha)    : R2, R4, R1, R3   -> Label: pA, pB, pC, pD
     //
-    // All five are distinct permutations of {R1,R2,R3,R4} (verified by hand when this fixture was designed).
-    // Every Label shares the prefix "p" so a parameterized Where(x => x.Label.StartsWith(prefix)) leg (case 13)
-    // selects all four rows and can be compared against the same sum-ordered expectation the unfiltered cases use.
+    // Every Label starts with "p", so case 13's Where(x => x.Label.StartsWith(prefix)) selects all four rows.
     //
     //   Row   A    B    Label   A+B
     //   R1    9    1    pC      10
@@ -155,21 +143,19 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     private static readonly string[] MainSumOrderLabels = ["pD", "pC", "pB", "pA"];
     private static readonly int[] MainSumOrderA = [1, 9, 14, 2];
 
-    // A-ascending expectation for MainRows, by Label: R3, R2, R1, R4 (case 14, fix round 1).
+    // A-ascending expectation for MainRows, by Label: R3, R2, R1, R4 (case 14).
     private static readonly string[] MainAOrderLabels = ["pD", "pA", "pC", "pB"];
 
     // insertion-order expectation for MainRows.
     private static readonly string[] MainInsertionOrderLabels = ["pC", "pA", "pD", "pB"];
 
-    // label-ascending (alphabetical) expectation for MainRows — also what Label.ToUpper() ascending produces,
-    // since ToUpper() is a monotonic, case-uniform transform over this fixture's labels.
+    // label-ascending expectation for MainRows; also Label.ToUpper() ascending over these labels.
     private static readonly string[] MainLabelOrderLabels = ["pA", "pB", "pC", "pD"];
 
     // ── The tie fixture (cases 6, 7, 8) ─────────────────────────────────────────────────────────
     //
-    // Four rows with TWO deliberate ties: T2/T4 tie on A (=3, for case 6's OrderBy(A).ThenBy(A+B)), and T1/T3
-    // tie on A+B (=10, for cases 7/8's OrderBy(A+B).ThenBy(...)). Without a genuine tie the secondary key in
-    // each of those cases would be inert — able to translate correctly while silently never being EXERCISED.
+    // Two deliberate ties, so each secondary key is actually exercised: T2/T4 tie on A (=3, case 6) and T1/T3 tie
+    // on A+B (=10, cases 7/8).
     //
     //   Row   A    B    Label   A+B   A*B
     //   T1    6    4    tC      10    24
@@ -192,8 +178,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         var collection = Seed(nameof(Computed_sort_over_a_whole_entity_streams));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // Assert the streaming premise directly — this is the shape the spike's central question was about,
-        // and the one-pass materializer's forward name-dispatch must SkipValue() the synthetic sort field.
+        // The one-pass materializer's forward name-dispatch must SkipValue() the synthetic sort field.
         var entityType = db.Model.FindEntityType(typeof(SortItem))!;
         Assert.True(StreamingEligibility.IsEligible(entityType));
 
@@ -210,8 +195,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         var collection = SeedDom(nameof(Computed_sort_over_a_DOM_entity));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, b => b.Entity<SortDomItemDerived>());
 
-        // Assert both premises: a derived sibling exists, and that alone makes the base type ineligible for
-        // the one-pass streaming materializer — this genuinely exercises the DOM shaper, not the streaming one.
+        // A derived sibling makes the base type ineligible for streaming, so this exercises the DOM shaper.
         var entityType = db.Model.FindEntityType(typeof(SortDomItem))!;
         Assert.True(entityType.GetDirectlyDerivedTypes().Any());
         Assert.False(StreamingEligibility.IsEligible(entityType));
@@ -237,9 +221,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(MainSumOrderLabels, result.Select(r => r.Label));
         Assert.Equal(MainSumOrderA, result.Select(r => r.A));
 
-        // No synthetic field leaks into the result: the anonymous type only ever has Label/A (a structural
-        // guarantee), and the MQL itself shows the $unset removing the synthetic field BEFORE the final
-        // $project — which only emits Label/A (never a "__sort*" key).
+        // No synthetic field leaks: the $unset precedes the final $project, which has no "__sort*" key.
         var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
         Assert.Contains("$set", mql);
         Assert.Contains("$unset", mql);
@@ -261,10 +243,8 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             .Skip(1).Take(2)
             .ToList();
 
-        // Sum order is [pD, pC, pB, pA]; Skip(1).Take(2) => [pC, pB] (rows R1, R4).
-        // Insertion order is [pC, pA, pD, pB]; the same Skip(1).Take(2) there would be [pA, pD] (rows R2, R3) —
-        // a COMPLETELY DIFFERENT pair of rows, not merely a reordering of the same two — asserted explicitly
-        // below so a dropped $sort (which would silently fall back to insertion order) cannot pass by accident.
+        // Sum order [pD, pC, pB, pA] → [pC, pB]. Insertion order would give a different pair ([pA, pD]), so a
+        // dropped $sort can't pass by accident.
         var labels = result.Select(x => x.Label).ToList();
         Assert.Equal(["pC", "pB"], labels);
         Assert.Equal([9, 14], result.Select(x => x.A));
@@ -286,13 +266,13 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(4, entries.Count);
         Assert.All(entries, e => Assert.Equal(EntityState.Unchanged, e.State));
 
-        // Re-running returns the SAME instances (identity resolution) — reference equality, position by position.
+        // Re-running returns the same instances (identity resolution).
         var second = db.Entities.OrderBy(x => x.A + x.B).ToList();
         Assert.Equal(first.Count, second.Count);
         for (var i = 0; i < first.Count; i++)
             Assert.Same(first[i], second[i]);
 
-        // Mutate + SaveChanges round-trips without ever writing a synthetic sort element back to the document.
+        // SaveChanges must not write a synthetic sort element back to the document.
         var mutated = first[0];
         var mutatedId = mutated.Id;
         mutated.Label += "_mutated";
@@ -338,7 +318,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         var order = result.Select(x => x.Label).ToList();
         Assert.Equal(["tB", "tA", "tC", "tD"], order);
 
-        // Explicitly different from case 6's order over the SAME four rows.
+        // Differs from case 6's order over the same four rows.
         Assert.NotEqual(["tB", "tD", "tC", "tA"], order);
     }
 
@@ -359,7 +339,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(["tB", "tC", "tA", "tD"], result.Select(x => x.Label));
     }
 
-    // ── 9. Constant sort key goes native — the A3 bare-constant shape ──────────────────────────────
+    // ── 9. Constant sort key goes native ──────────────────────────────────────────────────────────
 
     [Fact]
     public void Constant_sort_key_goes_native()
@@ -367,16 +347,9 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         var collection = Seed(nameof(Constant_sort_key_goes_native));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // A bare .ThenBy(Label) is deliberate, not decoration. Every row ties on the constant PRIMARY key, so
-        // an assertion pinned only to that primary key cannot tell "the $sort ran and left every row tied" from
-        // "the $sort was silently dropped" — both leave the rows in whatever order the (unsorted) cursor
-        // produces, which for a freshly-seeded collection happens to BE insertion order. Chaining a real field
-        // as the secondary key forces $sort to do observable work: with the $set/$sort/$unset bracket intact,
-        // the whole row set collapses to the SECONDARY key's order (label-ascending); with $sort dropped
-        // (mutation 2), it silently reverts to insertion order instead — which this fixture made deliberately
-        // different from label order, so the two are distinguishable. (Verified as a genuine tripwire: an
-        // earlier version of this test asserted only insertion order over a bare `OrderBy(x => 1)` and did NOT
-        // go red under the "drop the $sort" mutation, for exactly the reason above.)
+        // The .ThenBy(Label) is load-bearing: every row ties on the constant key, so without a secondary a
+        // dropped $sort is indistinguishable (a fresh collection returns insertion order). With it, rows come back
+        // in label order, which this fixture makes differ from insertion order.
         var result = db.Entities.AsNoTracking().OrderBy(x => 1).ThenBy(x => x.Label).ToList();
 
         Assert.Equal(MainLabelOrderLabels, result.Select(x => x.Label));
@@ -390,8 +363,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         var collection = Seed(nameof(Parameterized_sort_key_goes_native));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // Same reasoning as case 9's comment: the .ThenBy(Label) is what makes a dropped $sort observable
-        // rather than accidentally matching insertion order.
+        // As in case 9, the .ThenBy(Label) makes a dropped $sort observable.
         var capturedLocal = 7;
         var result = db.Entities.AsNoTracking().OrderBy(x => capturedLocal).ThenBy(x => x.Label).ToList();
 
@@ -435,9 +407,8 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     {
         var collection = Seed(nameof(Parameterized_where_leg));
 
-        // A captured local inside string.StartsWith is natively representable (it defers its escape/anchor
-        // to a placeholder sentinel resolved at Build time), so this — including the computed OrderBy — goes
-        // fully native under the DEFAULT Native mode.
+        // A captured local in StartsWith is natively representable (placeholder sentinel resolved at Build
+        // time), so this goes fully native under default Native mode.
         var prefix = "p";
         using var db = CreateContext(collection, MongoQueryMode.Native);
 
@@ -446,14 +417,13 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             .OrderBy(x => x.A + x.B)
             .ToList();
 
-        // Every label shares the "p" prefix, so the filter selects all four rows — the same expectation as the
-        // unfiltered sum-ordered case.
+        // The "p" prefix selects all four rows, so the expectation matches the unfiltered case.
         Assert.Equal(MainSumOrderLabels, result.Select(x => x.Label));
         Assert.Equal(MainSumOrderA, result.Select(x => x.A));
     }
 
     // ── 14. A "$"-prefixed string constant sort key ties, it does not sort by the named field ──────
-    // (fix round 1, Important 1 — the $literal-wrap fix in MongoPipelineFactory.RenderAddFields)
+    // (the $literal wrap in MongoPipelineFactory.RenderAddFields)
 
     [Fact]
     public void Dollar_prefixed_string_sort_key_does_not_get_interpreted_as_a_field_path()
@@ -461,12 +431,8 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         var collection = Seed(nameof(Dollar_prefixed_string_sort_key_does_not_get_interpreted_as_a_field_path));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // "$Label" is a LITERAL string, not a field reference — every row ties on it, so the secondary key
-        // (A ascending) is what actually determines the order. If RenderAddFields ever again emitted this
-        // bare (unwrapped), MongoDB would read "$Label" as a FIELD PATH and sort by the REAL Label field
-        // instead — which, over this fixture, produces the alphabetical Label order, a DIFFERENT sequence
-        // from the A-order asserted below (see the fixture comment's "label order" vs "A order" rows) — so
-        // the two dispositions are distinguishable, not coincidentally equal.
+        // "$Label" is a literal string, so every row ties and A decides the order. Unwrapped, MongoDB would read it
+        // as a field path and sort by Label, a different sequence over this fixture.
         var result = db.Entities.AsNoTracking().OrderBy(x => "$Label").ThenBy(x => x.A).ToList();
 
         var labels = result.Select(x => x.Label).ToList();
@@ -475,39 +441,33 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     }
 
     // ── 15. A bare constant whose CLR type has no BSON representation declines instead of throwing ──
-    // (fix round 1, Important 1 — the adjacent risk the reviewer flagged: MongoDB.Bson.BsonValue.Create
-    // rejects a custom struct with an uncaught ArgumentException; MEASURED separately that an enum is fine)
+    // (BsonValue.Create throws ArgumentException for a custom struct; an enum is fine)
 
     [Fact]
     public void Unrenderable_constant_type_sort_key_declines_instead_of_throwing()
     {
         var collection = Seed(nameof(Unrenderable_constant_type_sort_key_declines_instead_of_throwing));
 
-        // X = 5 (never 0/default) — a falsy 0 int field independently trips the DRIVER's own OrderBy-constant
-        // translation into the unrelated "$project ... exclusion on field X in inclusion projection" ambiguity
-        // this codebase's AGENTS.md notes document for a bare 0/false projection leaf (MEASURED: the same
-        // MongoCommandException fires on the graceful FALLBACK with X = 0, unrelated to this fix). X = 5 avoids
-        // that so the fallback leg genuinely exercises "declines cleanly, then falls back to correct rows".
+        // X = 5, not 0: a falsy 0 trips the driver's unrelated "exclusion on field X in inclusion projection"
+        // error on the fallback leg.
         var param = Expression.Parameter(typeof(SortItem), "x");
         var keySelector = Expression.Lambda<Func<SortItem, UnrenderableSortKey>>(
             Expression.Constant(new UnrenderableSortKey { X = 5 }), param);
 
-        // Native: declines cleanly and falls back to driver-LINQ — correct rows (every row ties on the
-        // constant key, so order is unconstrained), never an uncaught ArgumentException escaping from
-        // BsonValue.Create at pipeline-build time.
+        // Native: declines and falls back to correct rows (all tie, so order is unconstrained) rather than
+        // letting BsonValue.Create's ArgumentException escape at pipeline-build time.
         using var native = CreateContext(collection, MongoQueryMode.Native);
         var nativeResult = Queryable.OrderBy(native.Entities.AsNoTracking(), keySelector).ToList();
         Assert.Equal(4, nativeResult.Count);
 
-        // NativeOnly: the coverage instrument — a clean decline, never the raw ArgumentException.
+        // NativeOnly: a clean decline, never the raw ArgumentException.
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => Queryable.OrderBy(nativeOnly.Entities.AsNoTracking(), keySelector).ToList());
     }
 
     // ── 16. A value-sensitive parameterized computed key — pins substitution AND the rendered value ──
-    // (fix round 1, Important 2 — cases 9/10's ThenBy(Label) makes (parameter, Label) observationally
-    // identical to (Label) alone, so neither pins that the parameter sentinel is actually substituted)
+    // (cases 9/10's ThenBy(Label) would mask a parameter sentinel that was never substituted)
 
     [Fact]
     public void Parameterized_computed_sort_key_value_is_correctly_substituted()
@@ -515,10 +475,8 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         var collection = Seed(nameof(Parameterized_computed_sort_key_value_is_correctly_substituted));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // factor = -1 inverts the A-ascending order into A-descending. If the $literal-wrapped sentinel were
-        // never substituted (the $set body staying the raw sentinel document), every row would tie on it and
-        // this would silently degrade to INSERTION order instead — a different sequence from both A-ascending
-        // and A-descending over this fixture — so a stale sentinel is caught, not just "no ThenBy to mask it".
+        // factor = -1 gives A-descending. An unsubstituted sentinel would make every row tie, yielding insertion
+        // order instead, which differs from both A orders here.
         var factor = -1;
         var result = db.Entities.AsNoTracking().OrderBy(x => x.A * factor).ToList();
 
@@ -529,7 +487,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.NotEqual(MainInsertionOrderLabels, labels);
     }
 
-    // ── 17. An unfiltered owned-collection Count is a computed sort key too (Minor 3, fix round 1) ──
+    // ── 17. An unfiltered owned-collection Count as a computed sort key ────────────────────────────
 
     [Fact]
     public void Unfiltered_owned_collection_count_sort_key_goes_native()
@@ -537,9 +495,8 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         var collection = database.MongoDatabase.GetCollection<PostOwner>(
             UniqueCollectionName(nameof(Unfiltered_owned_collection_count_sort_key_goes_native)));
 
-        // Seeded through the EF context itself (SaveChanges), not a raw driver InsertMany of the POCO — the
-        // owned collection's shadow owner-key element is written by the PROVIDER's own entity serializer,
-        // which a direct driver-level InsertMany of the CLR type bypasses entirely.
+        // Seeded via SaveChanges: the owned collection's shadow owner-key element is written by the provider's
+        // serializer, which a raw driver InsertMany bypasses.
         using (var seedDb = CreateContext(collection, MongoQueryMode.Native, PostOwnerModel))
         {
             seedDb.Entities.AddRange(
@@ -551,17 +508,15 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, PostOwnerModel);
 
-        // Insertion order is [pB, pA, pC]; Count-ascending (0, 1, 2) is [pA, pC, pB] — a different sequence,
-        // so this cannot pass by a dropped $sort silently matching insertion order.
+        // Insertion order [pB, pA, pC] differs from Count-ascending [pA, pC, pB].
         var result = db.Entities.AsNoTracking().OrderBy(x => x.Posts.Count).ToList();
 
         Assert.Equal(["pA", "pC", "pB"], result.Select(x => x.Label));
     }
 
-    // ── 18. A parameterized Where leg over the PROJECTION shape (Minor 5, fix round 1) ───────────────
-    // Case 13 only exercises the late-decline route for the whole-entity shape; a projection is this
-    // codebase's recorded silent-failure mode for an alias miss (see NativeBareProjectionTests), so the
-    // computed-sort-then-projection shape needs its own late-decline leg too.
+    // ── 18. A parameterized Where leg over the projection shape ────────────────────────────────────
+    // A projection is where an alias miss fails silently (see NativeBareProjectionTests), so the
+    // computed-sort-then-projection shape gets its own late-decline leg alongside case 13.
 
     [Fact]
     public void Parameterized_where_leg_for_computed_sort_then_projection()
@@ -580,13 +535,10 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(MainSumOrderA, result.Select(r => r.A));
     }
 
-    // ── 19. A REFERENCE-TYPE parameter sort key declines instead of throwing at EXECUTION time ──────
-    // (EF-401 Task 4, carried item (a).) The probe guard cannot see a parameter's runtime value, and a
-    // default reference-type proxy is always null, so a Uri/Version/custom-class parameter reached
-    // MongoPipelineFactory.SerializeParameter -> BsonValue.Create and threw an uncaught ArgumentException
-    // at EXECUTION time, outside any compile-time fallback. MEASURED at this slice's base commit: Native
-    // returned correct rows there. That made it a regression under the DEFAULT mode, so the guard now
-    // declines a bare reference-type parameter unless it is a string (or a BsonValue).
+    // ── 19. A reference-type parameter sort key declines instead of throwing at execution time ─────
+    // The probe guard can't see a parameter's runtime value, so a Uri/Version/custom-class parameter would reach
+    // MongoPipelineFactory.SerializeParameter -> BsonValue.Create and throw ArgumentException at execution, past
+    // any fallback. The guard declines a bare reference-type parameter unless it's a string (or BsonValue).
 
     [Fact]
     public void Reference_type_parameter_sort_key_declines_instead_of_throwing_at_execution_time()
@@ -595,9 +547,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
 
         var uri = new Uri("http://example.com/");
 
-        // Native: declines cleanly and falls back to driver-LINQ. Every row ties on the constant-per-
-        // execution key, so ThenBy(Label) fixes the order and the assertion is not a row COUNT (which
-        // cannot discriminate a dropped sort — see this class's header).
+        // Native: declines and falls back. Every row ties on the key, so ThenBy(Label) fixes the order.
         using (var native = CreateContext(collection, MongoQueryMode.Native))
         {
             var labels = native.Entities.AsNoTracking()
@@ -606,7 +556,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             Assert.Equal(MainLabelOrderLabels, labels);
         }
 
-        // NativeOnly: a clean decline, never the raw ArgumentException from BsonValue.Create.
+        // NativeOnly: a clean decline, never the raw ArgumentException.
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(
@@ -615,9 +565,8 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
                     .Select(x => x.Label).ToList());
         }
 
-        // The control that makes the decline narrow rather than a blanket reference-type rejection: a
-        // STRING parameter is on the allowlist and still goes native. Without this leg the guard could be
-        // widened to "decline every reference type" and nothing here would notice.
+        // Control: a string parameter is allowlisted and still goes native, so the guard can't silently widen
+        // to "decline every reference type".
         var label = "zz";
         using (var stringNativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
         {
@@ -629,9 +578,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     }
 
     // ── 20. OrderByDescending with a computed PRIMARY key ─────────────────────────────────────────
-    // Cases 1–19 only ever reach OrderByDescending through case 8's ThenByDescending. Same code path
-    // (NativeSlotPopulator's OrderBy/OrderByDescending arm, ascending: false) and the direction is unit-pinned,
-    // so this is breadth rather than a new mechanism — but the primary-key spelling had no functional case.
+    // Breadth: the only other descending case is case 8's ThenByDescending.
 
     [Fact]
     public void Computed_sort_descending_primary_key()
@@ -641,46 +588,33 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
 
         var result = db.Entities.AsNoTracking().OrderByDescending(x => x.A + x.B).ToList();
 
-        // A+B DESCENDING is the exact reverse of the ascending expectation: R2(25), R4(17), R1(10), R3(3).
+        // A+B descending: R2(25), R4(17), R1(10), R3(3).
         var labels = result.Select(x => x.Label).ToList();
         Assert.Equal(MainSumOrderLabels.Reverse(), labels);
 
-        // Distinct from BOTH the ascending order (a lost/ignored direction flag) and insertion order (a dropped
-        // $sort) over this fixture, so neither degradation can pass as this expectation.
+        // Distinct from both ascending order (ignored direction) and insertion order (dropped $sort).
         Assert.NotEqual(MainSumOrderLabels, labels);
         Assert.NotEqual(MainInsertionOrderLabels, labels);
     }
 
     // ── 21. A FILTERED owned-collection Count goes native as a sort key ──────────────────────────
-    // A DECLINE FOR THIS SHAPE WAS SHIPPED (commit e09fee45) AND THEN REVERTED. Read this before proposing
-    // another one. The decline's premise was that a filtered count's element predicate escapes
-    // MongoExpressionTranslator.AllFieldsDefaultSerialized, so an operand stored under a non-default
-    // BsonRepresentation compares in its RAW stored form and "silently reorders under Native where the
-    // pre-slice driver-LINQ fallback was correct". The first half is true; the CLAIM IS MEASURED FALSE, and
-    // legs 2-4 below are what pin the refutation:
+    // A filtered count's element predicate escapes MongoExpressionTranslator.AllFieldsDefaultSerialized, so an
+    // operand with a non-default BsonRepresentation compares in its raw stored form. Don't decline for that:
+    // driver-LINQ serializes the constant through the same property serializer and returns the same order, so
+    // this is the accepted-divergence family (Native == DriverLinq, both differ from CLR), consistent with
+    // MongoFilteredSizeExpression in predicate and projection position:
     //
-    //   native (no decline)  -> [cA, cB, cC]      explicit DriverLinq -> [cA, cB, cC]      in-memory -> [cB, cC, cA]
+    //   native -> [cA, cB, cC]      explicit DriverLinq -> [cA, cB, cC]      in-memory -> [cB, cC, cA]
     //
-    // The two SERVER-SIDE paths agree — the driver's own LINQ provider serializes the comparison constant
-    // through the very same property serializer — so this is the EF-359 accepted-divergence family, not wrong
-    // data, and this branch's oracle is Native == DriverLinq. EF-359 itself shipped this very node kind
-    // (MongoFilteredSizeExpression) NATIVE in predicate and projection position under an explicit owner ruling
-    // to "accept and document" the CLR divergence, so declining it in SORT position created an inconsistency
-    // rather than removing one, and cost the common case (a filtered count over default-serialized operands)
-    // for no measured correctness benefit. Case 17 is the unfiltered-count sibling; it was never in scope.
-    //
-    // KEEP LEGS 3 AND 4. They are the record of the refutation. Leg 1 is the routing pin: with a decline
-    // re-added it goes red there and NOWHERE ELSE, because a decline changes routing only and no value.
+    // Leg 1 is the routing pin (a decline would fail only there); legs 3 and 4 document why a decline is wrong.
     [Fact]
     public void Filtered_owned_collection_count_sort_key_goes_native()
     {
         var collection = database.MongoDatabase.GetCollection<CodeOwner>(
             UniqueCollectionName(nameof(Filtered_owned_collection_count_sort_key_goes_native)));
 
-        // Code is stored as a STRING, and the seeded values are chosen so lexical and numeric order DISAGREE
-        // for the predicate `Code > 5`:  "6" > "5" lexically AND 6 > 5 numerically (agree), but "10" < "5"
-        // lexically while 10 > 5 numerically (disagree). So each owner's count differs between the two
-        // semantics, and the three counts are all distinct under each — no ties to mask a wrong answer:
+        // Code is stored as a string; for `Code > 5`, "10" < "5" lexically while 10 > 5 numerically, so each
+        // owner's count differs between the two semantics, with no ties under either:
         //
         //   Owner   codes          CLR count (Code > 5)   raw-string count ("Code" > "5")
         //   cA      10, 10, 10     3                      0
@@ -691,13 +625,8 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         //   IN-MEMORY (CLR)      asc : cB(1), cC(2), cA(3)  ->  [cB, cC, cA]
         //   SERVER-SIDE (raw)    asc : cA(0), cB(1), cC(2)  ->  [cA, cB, cC]
         //
-        // All three sequences are distinct. MEASURED: BOTH server-side paths — native and the driver's own LINQ
-        // provider — return the server-side sequence, so the legs below assert THAT, and the in-memory sequence
-        // is asserted only as the divergence it is.
-        //
-        // Seeded through the EF context (SaveChanges), like case 17: the owned collection's shadow owner-key
-        // element and the string BSON representation are both written by the PROVIDER's own serializer, which a
-        // raw driver-level InsertMany of the CLR type bypasses.
+        // Seeded via SaveChanges (like case 17) so the provider's serializer writes the owner key and string
+        // representation.
         using (var seedDb = CreateContext(collection, MongoQueryMode.Native, CodeOwnerModel))
         {
             seedDb.Entities.AddRange(
@@ -719,16 +648,13 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             seedDb.SaveChanges();
         }
 
-        // The premise, asserted rather than assumed: Code really is stored as a BSON string. Without this the
-        // whole fixture could silently degrade into an ordinary numeric one and the test would pass vacuously.
+        // Premise: Code really is stored as a BSON string, otherwise the test passes vacuously.
         var raw = collection.Database.GetCollection<BsonDocument>(collection.CollectionNamespace.CollectionName);
         var storedCodes = raw.Find(Builders<BsonDocument>.Filter.Empty).ToList()
             .SelectMany(d => d["Posts"].AsBsonArray.Select(p => p["Code"])).ToList();
         Assert.All(storedCodes, c => Assert.Equal(BsonType.String, c.BsonType));
 
-        // LEG 1 — NativeOnly: the routing pin, and the ONLY leg that discriminates a decline. MEASURED: with a
-        // decline re-added this query throws NativeTranslationNotSupportedException here, and every other leg
-        // stays green — a decline changes routing only, never a value.
+        // Leg 1 — NativeOnly: the routing pin; a decline would throw here and leave every other leg green.
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, CodeOwnerModel))
         {
             var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking()
@@ -738,7 +664,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             Assert.Equal(["cA", "cB", "cC"], nativeOnlyLabels);
         }
 
-        // LEG 2 — default Native: the same server-side order.
+        // Leg 2 — default Native: the same server-side order.
         List<string> nativeLabels;
         using (var native = CreateContext(collection, MongoQueryMode.Native, CodeOwnerModel))
         {
@@ -749,11 +675,8 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
 
         Assert.Equal(["cA", "cB", "cC"], nativeLabels);
 
-        // LEG 3 — explicit DriverLinq, THE LOAD-BEARING LEG. It is what refutes the "native reorders where the
-        // fallback was correct" reading: the driver's own LINQ provider serializes the comparison constant
-        // through the SAME property serializer, so it answers identically. This is the branch's oracle
-        // (Native == DriverLinq). Delete this leg and the shipped-then-reverted decline looks like a wrong-data
-        // fix that was undone, which it is not.
+        // Leg 3 — explicit DriverLinq answers identically (same property serializer), so native is not reordering
+        // relative to the fallback.
         using (var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq, CodeOwnerModel))
         {
             var driverLabels = driverLinq.Entities.AsNoTracking()
@@ -763,11 +686,8 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             Assert.Equal(nativeLabels, driverLabels);
         }
 
-        // LEG 4 — the divergence, asserted rather than left implicit: BOTH server-side paths disagree with
-        // in-memory LINQ over the very same expression, which is the EF-359 accepted-divergence family (native
-        // and DriverLinq agree with each other; both differ from the CLR). Not something this slice introduced
-        // — a filtered count's element predicate is equally unguarded in predicate and projection position —
-        // and not something a sort-position decline would have fixed.
+        // Leg 4 — both server-side paths differ from in-memory LINQ: the accepted divergence, which a
+        // sort-position decline wouldn't fix.
         using (var oracleDb = CreateContext(collection, MongoQueryMode.Native, CodeOwnerModel))
         {
             var inMemory = oracleDb.Entities.AsNoTracking().ToList()
@@ -779,11 +699,9 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         }
     }
 
-    // ── 22-24. EF-413: MongoInExpression / MongoUnaryExpression{Not} computed sort keys go native ──
-    // Before EF-413, MongoAggregationExpressionRenderer had no arm for MongoInExpression or
-    // MongoUnaryExpression, so TryTranslateComputedSortKey's CanRender gate declined these shapes and they
-    // fell back rather than going native via the synthetic $set/$sort/$unset bracket every other computed
-    // sort key uses.
+    // ── 22-24. MongoInExpression / MongoUnaryExpression{Not} computed sort keys ─────────────────────
+    // Require MongoAggregationExpressionRenderer arms for both, or TryTranslateComputedSortKey's CanRender gate
+    // declines.
 
     [Fact]
     public void Computed_sort_key_using_client_collection_Contains_goes_native()
@@ -793,8 +711,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
 
         var favored = new[] { "pA", "pD" };
 
-        // Sort ascending by list membership (false < true): non-favored labels sort first. ThenBy(Label)
-        // makes a dropped $sort observable rather than silently matching insertion order.
+        // Ascending by membership (false < true); ThenBy(Label) makes a dropped $sort observable.
         var result = db.Entities.AsNoTracking()
             .OrderBy(x => favored.Contains(x.Label))
             .ThenBy(x => x.Label)
@@ -812,9 +729,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
 
         var favored = new[] { "pA", "pD" };
 
-        // !list.Contains(...) collapses to a NEGATED MongoInExpression at translate time (see
-        // MongoExpressionTranslator's Not case), so this exercises RenderIn's Negated=true ($not:[$in:...])
-        // branch specifically, distinct from the un-negated case above.
+        // !list.Contains(...) becomes a negated MongoInExpression, exercising RenderIn's $not:[$in:...] branch.
         var result = db.Entities.AsNoTracking()
             .OrderBy(x => !favored.Contains(x.Label))
             .ThenBy(x => x.Label)
@@ -838,10 +753,8 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         ]);
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // !x.Flag over a non-nullable bool FIELD translates to a genuine MongoUnaryExpression{Not} (distinct
-        // from the Contains/$in collapse above) — see MongoExpressionTranslator's Not case, final fallthrough.
-        // Ascending on !Flag (false < true): Flag==true rows sort first, Flag==false rows sort last.
-        // ThenBy(Label) makes a dropped $sort observable.
+        // !x.Flag over a bool field is a genuine MongoUnaryExpression{Not} (not the $in collapse above).
+        // Ascending on !Flag puts Flag==true rows first; ThenBy(Label) makes a dropped $sort observable.
         var result = db.Entities.AsNoTracking()
             .OrderBy(x => !x.Flag)
             .ThenBy(x => x.Label)
@@ -850,31 +763,12 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(["pX", "pZ", "pW", "pY"], result.Select(x => x.Label));
     }
 
-    // ── 25. CODE-REVIEW FIX (EF-413): Not over a VALUE-CONVERTED bool must decline, never answer wrong ──────
-    // Before this fix, MongoExpressionTranslator.AllFieldsDefaultSerialized's catch-all waved a
-    // MongoUnaryExpression{Not} through unconditionally, so a value-converted bool's `!` reached
-    // MongoAggregationExpressionRenderer.RenderUnary — a raw-field `{ $not: [...] }`, which is
-    // TRUTHINESS-based (only false/null/0/undefined are falsy). Both converted values below ("Y"/"N") are
-    // non-empty strings, i.e. BOTH truthy, so the un-gated renderer would answer `!Flag == false` for EVERY
-    // row regardless of the real CLR value — silently WRONG data under Native, not merely a missed
-    // optimization, and (MEASURED, temporarily reverting the fix) genuinely ties every row on that wrong
-    // constant, degrading the sort to insertion order.
-    //
-    // With the fix, AllFieldsDefaultSerialized's new MongoUnaryExpression arm makes TryTranslateComputedSortKey
-    // (via TryTranslateValue) decline this at TRANSLATE time, before either renderer runs. MEASURED (not
-    // assumed): the fallback this lands on does NOT itself correctly re-serialize a negated converted bool
-    // either — the MongoDB driver's own LINQ v3 provider renders `!x.Flag` in a computed-key/$project context
-    // as the SAME raw-field `{ $not: "$Flag" }`, independent of this provider's translator entirely. So for
-    // THIS specific position, Native and explicit DriverLinq now AGREE with each other post-fix (both still
-    // diverge from the true CLR answer) — the same "native == driver-LINQ, an accepted divergence, not wrong
-    // data" pattern this file's own
-    // <see cref="Filtered_owned_collection_count_sort_key_goes_native"/> already established for a filtered
-    // count's comparison operand. The correctness bar this fix actually restores is: (1) NativeOnly must
-    // NEVER silently succeed with wrong data — it must decline cleanly instead (verified below); and (2)
-    // Native must never independently compute a WORSE, differently-wrong answer than the existing fallback
-    // (verified below: Native now equals DriverLinq, whereas before the fix Native disagreed with DriverLinq,
-    // which is the real defect this closes). Fully fixing the residual driver-level limitation is out of
-    // scope for EF-413 (it lives in the MongoDB C# driver's own LINQ provider, not this translator).
+    // ── 25. Not over a value-converted bool must decline, never answer wrong ──────────────────────────
+    // A raw-field { $not: [...] } is truthiness-based and both converted values ("Y"/"N") are truthy, so rendering
+    // it natively would tie every row on a wrong constant. MongoExpressionTranslator.AllFieldsDefaultSerialized
+    // therefore declines a MongoUnaryExpression over a non-default-serialized field. Driver-LINQ itself renders
+    // the same raw { $not: "$Flag" } here, so Native == DriverLinq is the bar (accepted divergence, as in
+    // Filtered_owned_collection_count_sort_key_goes_native); NativeOnly must decline rather than succeed wrongly.
 
     public class ConvertedFlagItem
     {
@@ -883,10 +777,8 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         public bool Flag { get; set; }
     }
 
-    // Custom (not the built-in) converter, deliberately: both stored values ("Y"/"N") are non-empty strings —
-    // i.e. BOTH truthy under MongoDB's own $not — so a raw-field $not is wrong for every Flag==false row, not
-    // just some of them (a converter that happened to map false to "" or "0" would only demonstrate the bug
-    // on some rows, which is a weaker pin).
+    // Both stored values are non-empty strings (truthy under $not), so a raw-field $not is wrong for every
+    // Flag==false row, not just some.
     private static readonly Action<ModelBuilder> ConvertedFlagModel =
         mb => mb.Entity<ConvertedFlagItem>().Property(x => x.Flag)
             .HasConversion(v => v ? "Y" : "N", v => v == "Y");
@@ -913,9 +805,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
                 .ToList().Select(x => x.Label).ToList();
         }
 
-        // NativeOnly: a clean decline (NativeTranslationNotSupportedException), NEVER silently-wrong data —
-        // this is the load-bearing assertion the code review flagged. Before the fix, this line failed:
-        // NativeOnly SUCCEEDED and silently returned the wrong (insertion-order-degenerate) rows.
+        // NativeOnly: a clean decline, never silently-wrong data.
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, ConvertedFlagModel))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() =>
@@ -924,10 +814,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
                     .ToList());
         }
 
-        // Native must agree with the fallback it declines TO, not silently diverge from it. Before the fix,
-        // Native computed the wrong-and-DIFFERENT-from-DriverLinq answer (every row tied and fell back to
-        // insertion order) because it rendered the Not natively instead of declining; after the fix it
-        // declines and inherits whatever DriverLinq itself answers.
+        // Native declines and so agrees with the DriverLinq fallback.
         Assert.Equal(RunLabels(MongoQueryMode.DriverLinq), RunLabels(MongoQueryMode.Native));
     }
 
@@ -961,13 +848,11 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         return database.MongoDatabase.GetCollection<SortDomItem>(collectionName);
     }
 
-    // ── EF-408: the synthetic $set sort field must not clobber a real mapped element ────────────────
+    // ── The synthetic $set sort field must not clobber a real mapped element ────────────────────────
     //
-    // The SyntheticSortFieldAllocator reserves the root entity type's top-level element names because $set
-    // silently OVERWRITES a same-named field (and the trailing $unset then REMOVES it). Its doc comment used
-    // to record two gaps as "accepted but unverified"; EF-408 measured BOTH reachable and closed them. The
-    // two tests below are the end-to-end pins, run under NativeOnly so a driver-LINQ fallback cannot mask
-    // them; MongoSelectLowererTests has the matching allocator-level unit tests.
+    // $set silently overwrites a same-named field (and the trailing $unset removes it), so
+    // SyntheticSortFieldAllocator must avoid every reachable element name. Both tests run under NativeOnly;
+    // MongoSelectLowererTests has the allocator-level unit tests.
 
     public class ClashItem
     {
@@ -977,9 +862,8 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         public string Label { get; set; } = "";
     }
 
-    // The TPH derived sibling. Special is mapped onto "__sort0" — the FIRST synthetic sort field name the
-    // allocator hands out — and is declared ONLY here, so IEntityType.GetProperties() on ClashItem never
-    // returns it.
+    // Special is mapped onto "__sort0", the first synthetic name, and declared only on the derived type, so
+    // ClashItem's GetProperties() never returns it.
     public class ClashItemDerived : ClashItem
     {
         public int Special { get; set; }
@@ -988,11 +872,8 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     [Fact]
     public void Synthetic_sort_field_does_not_clobber_a_TPH_derived_types_own_element()
     {
-        // EF-408 gap 2. Before the fix, this query emitted $set{__sort0: {$add:[A,B]}} → $sort → $unset
-        // __sort0, which OVERWROTE and then DELETED the derived row's real "__sort0" element: the query
-        // failed with InvalidOperationException("Document element is missing for required non-nullable
-        // property 'Special'") — silent data loss for a nullable property, a crash for this one — under the
-        // DEFAULT Native mode. MEASURED before/after on this exact fixture.
+        // A TPH derived type's own "__sort0" element must be reserved too; otherwise $set/$unset clobbers it
+        // (a crash for this required property, silent data loss for a nullable one).
         var name = UniqueCollectionName(nameof(Synthetic_sort_field_does_not_clobber_a_TPH_derived_types_own_element));
         database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
         [
@@ -1009,19 +890,17 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             database.MongoDatabase.GetCollection<ClashItem>(name), MongoQueryMode.NativeOnly, out var spy,
             mb => mb.Entity<ClashItemDerived>().Property(x => x.Special).HasElementName("__sort0"));
 
-        // NativeOnly: reaching a result at all proves the query genuinely went native (a fallback throws
-        // NativeTranslationNotSupportedException here).
+        // NativeOnly: a fallback would throw here.
         var rows = db.Entities.AsNoTracking().OrderBy(x => x.A + x.B).ToList();
 
-        // Order is asserted, never just the count — a dropped $sort still returns every row (A+B: 3, 10, 25).
+        // Order, not just count (A+B: 3, 10, 25).
         Assert.Equal(["pD", "pC", "pA"], rows.Select(x => x.Label));
 
-        // The derived row's own element survived intact rather than being clobbered by the sort key (25).
+        // The derived row's own element survived.
         var derived = Assert.IsType<ClashItemDerived>(Assert.Single(rows.OfType<ClashItemDerived>()));
         Assert.Equal(42, derived.Special);
 
-        // And the pipeline really did allocate a DIFFERENT synthetic name (the guard skipped "__sort0"),
-        // rather than the row surviving for some unrelated reason.
+        // The allocator skipped "__sort0".
         var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
         Assert.Contains("__sort1", mql);
     }
@@ -1040,20 +919,16 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         public int X { get; set; }
         public int Y { get; set; }
 
-        // Mapped onto "__sort0" — the operand's own top-level namespace, invisible from the outer query's
-        // root entity type.
+        // Mapped onto "__sort0": the operand's own namespace, invisible from the outer query's root type.
         public string Clash { get; set; } = "";
     }
 
     [Fact]
     public void Synthetic_sort_field_does_not_clobber_a_set_op_operands_own_element()
     {
-        // EF-408 gap 1. A PROJECTED-operand set op does not require the operands to share an entity type
-        // (TryTranslateSetOperation's projected branch checks ProjectionShapesMatch only), and the operand's
-        // own ops lower through the SAME SyntheticSortFieldAllocator into the nested $unionWith pipeline. So
-        // a computed sort on the operand allocated "__sort0" — reserved against the ROOT type only — and
-        // $set/$unset destroyed the operand's real "__sort0" element BEFORE its own $project read it. The
-        // measured pre-fix symptom was InvalidOperationException("Document element 'N' is missing...").
+        // A projected-operand set op needn't share an entity type, and the operand's ops lower through the same
+        // SyntheticSortFieldAllocator into the nested $unionWith pipeline, so the operand's element names must be
+        // reserved too, or $set/$unset destroys its "__sort0" before its $project reads it.
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var mains = UniqueCollectionName(nameof(Synthetic_sort_field_does_not_clobber_a_set_op_operands_own_element)) + "M" + suffix;
         var others = UniqueCollectionName(nameof(Synthetic_sort_field_does_not_clobber_a_set_op_operands_own_element)) + "O" + suffix;
@@ -1070,7 +945,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
 
         using var db = new SetOpElementNameContext(database, mains, others, MongoQueryMode.NativeOnly);
 
-        // NativeOnly again: a fallback would throw rather than mask the collision.
+        // NativeOnly: a fallback would throw rather than mask the collision.
         var rows = db.Mains.AsNoTracking().Select(m => new {N = m.Name})
             .Union(db.Others.AsNoTracking().OrderBy(o => o.X + o.Y).Select(o => new {N = o.Clash}))
             .AsEnumerable()
@@ -1129,8 +1004,7 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // MQL-capture idiom mirrored from NativeBareProjectionTests: FunctionalTests has no TestMqlLoggerFactory /
-    // AssertMql (those live in the SpecificationTests project), so MQL is captured through SpyLoggerProvider.
+    // FunctionalTests has no TestMqlLoggerFactory/AssertMql, so MQL is captured through SpyLoggerProvider.
     private static SingleEntityDbContext<T> CreateContextWithLogging<T>(
         IMongoCollection<T> collection, MongoQueryMode mode, out SpyLoggerProvider spyLogger,
         Action<ModelBuilder>? modelBuilderAction = null)

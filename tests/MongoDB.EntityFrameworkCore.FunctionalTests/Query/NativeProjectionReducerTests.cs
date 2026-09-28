@@ -28,20 +28,16 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-427: two independent gaps in the native projection-binding visitor.
+/// Projection-binding fallbacks that must not crash:
 ///
-/// Item 1 — the bare (no-predicate) <c>First</c>/<c>FirstOrDefault</c>/<c>Single</c>/<c>SingleOrDefault</c>/
-/// <c>Any</c> reducers over a materialized owned-collection navigation leaf (e.g.
-/// <c>Select(b => b.Posts.First().Heading)</c>) used to hard-fail with a raw BCL <see cref="ArgumentException"/>
-/// in every <see cref="MongoQueryMode"/> — the same stranded-rebuild gap the sibling Count/LongCount arms in
-/// <see cref="NativeOwnedCollectionCountTests"/> already fixed for those two methods, but never extended to
-/// these five siblings. This is a graceful CLIENT-SIDE fold once fixed (Native, not NativeOnly — this shape
-/// does not become natively $project-representable, it just stops crashing).
+/// Bare <c>First</c>/<c>FirstOrDefault</c>/<c>Single</c>/<c>SingleOrDefault</c>/<c>Any</c> over a materialized
+/// owned-collection leaf (e.g. <c>Select(b => b.Posts.First().Heading)</c>) fold client-side under
+/// <see cref="MongoQueryMode.Native"/>, like the Count/LongCount arms in <see cref="NativeOwnedCollectionCountTests"/>;
+/// they are not natively representable.
 ///
-/// Item 2 — a filtered <c>Count(pred)</c> reachable from the projection root only through a pure
-/// arithmetic/cast spine (e.g. <c>Select(b => b.Posts.Count(p => p.Rank > 0) * 2)</c>) used to hard-fail with
-/// <see cref="InvalidOperationException"/> in every mode, because the rebuild arm required the Count call to
-/// BE the selector body via <c>ReferenceEquals</c>. Widened via <c>IsReachableThroughArithmeticSpine</c>.
+/// A filtered <c>Count(pred)</c> under a pure arithmetic/cast spine (e.g.
+/// <c>Select(b => b.Posts.Count(p => p.Rank > 0) * 2)</c>) is rebuilt via <c>IsReachableThroughArithmeticSpine</c>
+/// rather than requiring the Count to be the selector body.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -97,10 +93,8 @@ public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : I
         return database.MongoDatabase.GetCollection<Blog>(coll.CollectionNamespace.CollectionName);
     }
 
-    // Every blog carries at least one post, and one blog carries EXACTLY one post ("only"), the other carries
-    // two ("multi") — so First/FirstOrDefault (any post count > 0), Single/SingleOrDefault (behind a
-    // Where(Count == 1)/Where(Count <= 1) filter, per the ticket's own repro) and Any all have a non-empty
-    // result set to assert against from the SAME seed.
+    // One blog with exactly one post ("only") and one with two ("multi"), so First/FirstOrDefault, Single/
+    // SingleOrDefault (behind Where(Count == 1)/Where(Count <= 1)) and Any all have results from the same seed.
     private IMongoCollection<Blog> SeedForReducers(string name)
         => Seed(
             name,
@@ -115,8 +109,7 @@ public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : I
     public void Bare_collection_reducer_projection_leaf_no_longer_throws(string reducerName)
     {
         var collection = SeedForReducers(reducerName);
-        // Native, not NativeOnly: this shape stays a graceful client-side fold, like the adjacent
-        // Count/LongCount arms this task's rebuild arms sit next to.
+        // Native, not NativeOnly: a client-side fold, like the Count/LongCount arms.
         using var db = CreateContext(collection, MongoQueryMode.Native, BlogModel);
 
         var query = reducerName switch
@@ -130,15 +123,9 @@ public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : I
             _ => throw new InvalidOperationException()
         };
 
-        // Previously threw ArgumentException from Expression.Call's own BCL argument-assignability
-        // validation (List<Post> is not assignable to IQueryable<Post>) before this fix.
-        //
-        // EXACT expected values, not just non-emptiness: a fold that returns the WRONG element (e.g. last
-        // instead of first, or null) must fail this. The seed rows are inserted "only" then "multi" and read
-        // back via a plain collection scan with no $sort (this shape is a native whole-entity fetch + a
-        // CLIENT-SIDE fold, not a sorted query), so natural/insertion order is what First/FirstOrDefault see:
-        // "only" (single post "solo") then "multi" (posts "first","second"). Single/SingleOrDefault are
-        // filtered down to the ONE qualifying blog ("only") regardless of order.
+        // Exact values, so a fold returning the wrong element (last, or null) fails. There is no $sort (whole-entity
+        // fetch + client-side fold), so First sees insertion order: "only" ("solo") then "multi" ("first",
+        // "second"). Single/SingleOrDefault are filtered to the one qualifying blog.
         var expected = reducerName switch
         {
             "First" or "FirstOrDefault" => new[] { "solo", "first" },
@@ -150,11 +137,8 @@ public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : I
         Assert.Equal(expected, result);
     }
 
-    // A dedicated seed for Any: unlike First/FirstOrDefault (which would throw InvalidOperationException on
-    // Enumerable.First over an EMPTY materialized list) and Single/SingleOrDefault (filtered to exactly one
-    // qualifying row by the test's own Where clause), Any() is well-defined over an empty collection and
-    // needs one in the fixture to actually discriminate a real Any() from a hardcoded `true` — mirroring how
-    // Ef425InterposedCollectionOperatorTests deliberately seeds an empty array for the same reason.
+    // Any needs an empty collection in the fixture to distinguish a real Any() from a hardcoded `true` (First
+    // would throw on an empty list, and Single is filtered to one row), so it gets its own seed.
     private IMongoCollection<Blog> SeedForAny(string name)
         => Seed(
             name,
@@ -170,36 +154,24 @@ public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : I
 
         var result = db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Posts.Any()).ToList();
 
-        // Alphabetical order by Title: empty, multi, only. A hardcoded `true` (instead of a real Any() fold)
-        // would pass a Contains(true, result) check against this same seed but fails THIS exact-array
-        // assertion on the "empty" row.
+        // By Title: empty, multi, only. A hardcoded `true` fails on the "empty" row.
         Assert.Equal([false, true, true], result);
     }
 
     [Fact]
     public void Filtered_count_as_operand_of_arithmetic_no_longer_hard_fails()
     {
-        // b.Posts.Count(p => p.Rank > 0) * 2 — the Count call is an OPERAND of `*`, not the selector body
-        // itself, so ReferenceEquals(methodCallExpression, _translatedRootExpression) used to fail and this
-        // arm declined with no graceful fallback (EF-427 item 2), hard-failing with InvalidOperationException
-        // in every mode.
-        //
-        // MEASURED DISPOSITION AFTER THE FIX, corrected from this task's own brief (which predicted a
-        // NativeOnly PASS): NativeProjectionBinder's own arithmetic-leaf gate
-        // (IsArrayFreeComputedSubtree) is a SEPARATE, untouched component that already declines any
-        // arithmetic subtree containing a filtered count — this task only fixes the FALLBACK shaper crash in
-        // MongoProjectionBindingExpressionVisitor, not that native-$project admission gate. So this shape's
-        // Route stays Fallback (measured: NativeOnly still throws NativeTranslationNotSupportedException
-        // below), exactly mirroring the sibling UNFILTERED arithmetic form's own documented asymmetry
-        // ("Select(b => b.Posts.Count * 2) is a graceful decline with correct values in the two fallback
-        // modes") — the filtered spelling now behaves the same way, just no longer a hard crash.
+        // The Count call is an operand of `*`, not the selector body, so the fallback shaper must reach it through
+        // the arithmetic spine. It still isn't native: NativeProjectionBinder's IsArrayFreeComputedSubtree declines
+        // any arithmetic subtree containing a filtered count, so Route stays Fallback (NativeOnly throws), like the
+        // unfiltered `b.Posts.Count * 2`.
         var collection = Seed(
             nameof(Filtered_count_as_operand_of_arithmetic_no_longer_hard_fails),
             Row("none", PostDoc(-1, "a")),
             Row("one", PostDoc(1, "a"), PostDoc(-1, "b")),
             Row("two", PostDoc(1, "a"), PostDoc(2, "b")));
 
-        // Alphabetical order by Title: none, one, two.
+        // By Title: none, one, two.
         int[] expected = [0, 2, 4];
 
         using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
@@ -218,8 +190,7 @@ public class NativeProjectionReducerTests(TemporaryDatabaseFixture database) : I
             Assert.Equal(expected, results);
         }
 
-        // Positively pins that this shape is NOT natively $project-representable — it is a graceful
-        // CLIENT-SIDE fold, not a native-execution proof (see the disposition note above).
+        // Pins that this shape is a client-side fold, not natively $project-representable.
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(

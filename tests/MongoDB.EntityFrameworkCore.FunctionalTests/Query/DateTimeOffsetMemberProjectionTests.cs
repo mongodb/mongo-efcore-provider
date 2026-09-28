@@ -144,9 +144,8 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
         using var db = SingleEntityDbContext.Create(CreateSeededCollection());
 
         // DateTimeOffset.UtcNow.Year reaches TryResolveDateTimeOffsetElementAccess as a static MemberExpression
-        // with a null Expression. A prior version null-forgave that and threw NullReferenceException; the fix
-        // falls through to `return false` instead, letting the query translate/evaluate normally. The
-        // regression guarded against is specifically the NullReferenceException, not any particular exception.
+        // with a null Expression, which must decline rather than throw NullReferenceException. Only the NRE is
+        // asserted against.
         var exception = Record.Exception(() => db.Entities.Select(e => DateTimeOffset.UtcNow.Year).Single());
 
         Assert.False(exception is NullReferenceException,
@@ -165,9 +164,8 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
 
         Assert.Equal(TestValue.DateTime, result);
 
-        // Confirms the rewrite actually renders as a server-side aggregation expression (reading the
-        // stored DateTime/Offset sub-fields and reconstructing via $dateAdd) rather than silently
-        // falling back to client-side evaluation and coincidentally producing the right value.
+        // Proves the member renders server-side ($dateAdd over the stored sub-fields) rather than evaluating
+        // client-side and coincidentally producing the right value.
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("Executed MQL query", message);
         Assert.Contains("\"$dateAdd\"", message);
@@ -209,10 +207,8 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
 
         Assert.Equal(TestValue.UtcDateTime, result.UtcDateTime);
 
-        // LocalDateTime is translated identically to DateTime (using the value's own stored offset),
-        // not the query-executing machine's system time zone — see the doc comment on that translation
-        // in MongoEFToLinqTranslatingExpressionVisitor.cs. Assert against TestValue.DateTime (not
-        // TestValue.LocalDateTime, which would be flaky/machine-timezone-dependent).
+        // LocalDateTime translates like DateTime (stored offset, not the machine's time zone; see
+        // MongoEFToLinqTranslatingExpressionVisitor), so assert against TestValue.DateTime.
         Assert.Equal(TestValue.DateTime, result.LocalDateTime);
     }
 }

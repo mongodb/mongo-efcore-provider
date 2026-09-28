@@ -85,13 +85,10 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     });
 
     /// <summary>
-    /// Whether <paramref name="alias"/> names a reference-collection-nav <c>First</c> projection leaf (EF-449,
-    /// as opposed to its <c>FirstOrDefault</c> sibling) that must throw <see cref="InvalidOperationException"/>
-    /// rather than read a CLR default when the underlying navigation matched no row. Looks the answer up against
-    /// <see cref="MongoQueryExpression.CorrelatedReducerLeaves"/> — the emit side's own committed result — by
-    /// ALIAS only, keyed purely on <see cref="MongoCorrelatedReducerLeaf.ThrowOnEmpty"/>, so it can never
-    /// mis-fire for any other projection leaf kind (arithmetic, plain field, owned nav, or this leaf's own
-    /// FirstOrDefault sibling, which never registers a leaf with ThrowOnEmpty set).
+    /// Whether <paramref name="alias"/> names a reference-collection-nav <c>First</c> leaf that must throw
+    /// <see cref="InvalidOperationException"/> when the navigation matched no row. Looked up by alias against
+    /// <see cref="MongoQueryExpression.CorrelatedReducerLeaves"/>, keyed on
+    /// <see cref="MongoCorrelatedReducerLeaf.ThrowOnEmpty"/>, so no other leaf kind is affected.
     /// </summary>
     private bool TryGetThrowOnEmptyCorrelatedReducerLeaf(string? alias, out MongoCorrelatedReducerLeaf? leaf)
     {
@@ -114,18 +111,11 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     }
 
     /// <summary>
-    /// Whether <paramref name="alias"/> names a reference-collection-nav <c>FirstOrDefault</c> projection leaf
-    /// (EF-449) whose reduced member is a NON-NULLABLE VALUE type (an enum, <c>int</c>, <c>bool</c>,
-    /// <c>DateTime</c> …). Such a leaf needs an explicit default-on-empty read: when the navigation matched no
-    /// row the alias is MISSING from the projected document, and
-    /// <see cref="BsonBinding.GetElementValue{T}"/> THROWS ("Document element 'X' is missing but required") for
-    /// a non-nullable <c>T</c> rather than yielding <c>default(T)</c> — MEASURED, see
-    /// <c>NativeCorrelatedReducerProjectionTests.FirstOrDefault_over_a_non_nullable_int_member_reads_as_default_for_an_empty_collection</c>.
-    /// A nullable-typed member (a reference type, or <c>Nullable&lt;T&gt;</c>) needs nothing here — that read
-    /// already yields <c>null</c>, which IS its <c>default(T)</c>. Looked up by ALIAS against the emit side's own
-    /// committed <see cref="MongoQueryExpression.CorrelatedReducerLeaves"/>, exactly like its
-    /// <see cref="TryGetThrowOnEmptyCorrelatedReducerLeaf"/> sibling, so no other projection leaf kind can be
-    /// affected — and the two are mutually exclusive by <see cref="MongoCorrelatedReducerLeaf.ThrowOnEmpty"/>.
+    /// Whether <paramref name="alias"/> names a reference-collection-nav <c>FirstOrDefault</c> leaf whose reduced
+    /// member is a non-nullable value type. With no matching row the alias is missing, and
+    /// <see cref="BsonBinding.GetElementValue{T}"/> throws for a non-nullable <c>T</c> instead of yielding
+    /// <c>default(T)</c> (see <c>NativeCorrelatedReducerProjectionTests</c>). Nullable members already read as
+    /// null. Mutually exclusive with <see cref="TryGetThrowOnEmptyCorrelatedReducerLeaf"/>.
     /// </summary>
     private bool IsDefaultOnEmptyCorrelatedReducerLeaf(string? alias, Type leafType)
     {
@@ -146,11 +136,9 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     }
 
     /// <summary>
-    /// True when <paramref name="document"/> has no element named <paramref name="elementName"/>, or that
-    /// element's value is BSON null. Used by the EF-449 <c>First()</c> throw-on-empty check above: a left-outer
-    /// <c>$unwind</c> over an unmatched <c>$lookup</c> sub-pipeline leaves the lookup field null, and a dotted-
-    /// path read through it ("$_lookup_Nav.Member") evaluates to MISSING in a <c>$project</c> stage — either
-    /// state means "no related row" for this leaf's alias.
+    /// True when <paramref name="document"/> lacks <paramref name="elementName"/> or it is BSON null. A left-outer
+    /// <c>$unwind</c> over an unmatched <c>$lookup</c> leaves the lookup field null, and a dotted read through it
+    /// is missing in <c>$project</c>; either means "no related row".
     /// </summary>
     internal static bool IsElementAbsentOrNull(BsonDocument document, string elementName)
         => !document.TryGetValue(elementName, out var value) || value.IsBsonNull;
@@ -177,32 +165,20 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         return DocParameter;
                     }
 
-                    // A CONSTRUCTED sub-entity leaf (EF-447, `new { Book = new Book { Id = e.Id, ... } }`) —
-                    // rebuild the CLR object, reading each member NESTED under this leaf's own $project alias
-                    // (e.g. "Book.Id"), which is where the native $project actually put it (see
-                    // MongoAggregationExpressionRenderer's MongoDocumentConstructionExpression case). The mixed
-                    // visitor overrides ReadDocumentConstructionMember to read each member from its own NATURAL
-                    // root-relative document path instead, for the whole-un-projected-document shape it runs
-                    // over — see BuildDocumentConstructionExpression's own remarks.
+                    // A constructed sub-entity leaf (`new { Book = new Book { Id = e.Id } }`): rebuild the object
+                    // from members nested under this leaf's $project alias ("Book.Id"). The mixed visitor overrides
+                    // ReadDocumentConstructionMember to read natural paths off whole documents instead.
                     if (projection.Expression is MongoDocumentConstructionExpression construction)
                     {
                         return BuildDocumentConstructionExpression(construction, projection.Alias);
                     }
 
-                    // The FirstOrDefault mirror of the First() throw-on-empty branch further below (EF-449): for a
-                    // NON-NULLABLE VALUE-TYPE reduced member, "no related row" leaves this leaf's alias MISSING
-                    // and an ordinary raw alias read THROWS ("Document element 'X' is missing but required")
-                    // instead of yielding default(T) — which is FirstOrDefault()'s own LINQ contract. Emit the
-                    // default explicitly for the absent/null case. A nullable-typed member needs nothing here:
-                    // its raw read already yields null, which IS its default.
+                    // FirstOrDefault over a non-nullable value-type member: with no related row the alias is missing
+                    // and a raw read throws, so emit default(T) explicitly for absent/null.
                     //
-                    // Placed BEFORE the numeric-cast branch below, deliberately: the nullable-widened shape this
-                    // covers (EF-449, `Convert(nav.Select(m => Convert(m.Rank, int?)).FirstOrDefault(), int)`) is
-                    // registered on the bind side as the whole UnaryExpression{Convert} node — the same
-                    // registration a genuine numeric-cast leaf uses — so that branch would otherwise claim it
-                    // first and emit the unconditional raw read. Keyed by ALIAS against the emit side's own
-                    // committed CorrelatedReducerLeaves, so it cannot claim any other leaf kind, cast or
-                    // otherwise.
+                    // Must precede the numeric-cast branch: the nullable-widened shape
+                    // (`Convert(nav.Select(m => Convert(m.Rank, int?)).FirstOrDefault(), int)`) is registered as a
+                    // Convert node, which that branch would otherwise claim. Keyed by alias, so no other leaf matches.
                     if (IsDefaultOnEmptyCorrelatedReducerLeaf(projection.Alias, projectionBindingExpression.Type))
                     {
                         return Expression.Condition(
@@ -213,56 +189,26 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                                 DocParameter, projection.Alias, projectionBindingExpression.Type));
                     }
 
-                    // A native numeric-cast projection leaf
-                    // (`new { X = (int)x.D }`) is registered on the WRITE side as the whole
-                    // UnaryExpression{Convert} node (see MongoProjectionBindingExpressionVisitor.Visit), and the
-                    // $project alias holds the CONVERTED value ($toInt/$toLong/$toDouble/$toDecimal), never the
-                    // underlying member's own raw stored representation. The comment immediately below this
-                    // block — "aliased projections that introduce a Convert... go through the LINQ V3 push-down
-                    // path and never reach this visitor" — predates this feature and is no longer true for a
-                    // NATIVELY-representable cast leaf specifically: TryResolveFieldAccess unconditionally calls
-                    // RemoveConvert(), which would strip this Convert, resolve the PRE-CAST member's own
-                    // property, and either mis-deserialise the converted value through that property's own
-                    // (pre-cast) serializer or trip the type-mismatch guard below and crash at shaper-compile
-                    // time in EVERY query mode (not merely under NativeOnly) — turning a legitimate, correct
-                    // native shape into a hard regression. Route it through the raw alias read instead, exactly
-                    // like an arithmetic/count computed leaf (the branch below this one, reached when
-                    // fieldAccess.Property is null).
-                    //
-                    // This branch is reachable ONLY for a leaf the EMIT side already admitted, and the emit
-                    // side (NativeProjectionBinder.TryTranslateLeaf) can never admit one backed by a
-                    // value-converted or non-default-BsonRepresentation field — TryTranslateValue's Guard B
-                    // (AllFieldsDefaultSerialized) recurses through the Convert into the field and declines it
-                    // at TRANSLATE time, so a converted property's cast never reaches this raw read with the
-                    // WRONG (converted) value in hand. See that gate's own comment for the full dependency;
-                    // it is recorded here too because this branch's own correctness rests on it.
+                    // A native numeric-cast leaf (`new { X = (int)x.D }`) holds the converted value under its alias.
+                    // TryResolveFieldAccess would strip the Convert and read via the pre-cast property's serializer
+                    // (or trip the type-mismatch guard below in every mode), so use the raw alias read like other
+                    // computed leaves. Safe because the emit side's Guard B (AllFieldsDefaultSerialized) never admits
+                    // a cast over a value-converted or non-default-representation field.
                     if (projection.Expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked })
                     {
                         return BsonBinding.CreateGetElementValue(DocParameter, projection.Alias, projectionBindingExpression.Type);
                     }
 
-                    // Native string-to-char-sequence projection leaf: the WRITE side
-                    // (NativeProjectionBinder.TryTranslateLeaf, MongoProjectionBindingExpressionVisitor.Visit)
-                    // pushed down only the raw string field under this alias — MongoDB has no native
-                    // char/char-sequence BSON representation — and registered the WHOLE
-                    // AsEnumerable()/ToList()/ToArray() call as this leaf's projection mapping. Read the raw
-                    // string back through the ordinary property-aware path (so a value converter / non-default
-                    // BsonRepresentation on the source property still applies), then rebuild the ORIGINAL call
-                    // with its single argument replaced by that raw read: the compiled shaper lambda performs
-                    // the actual char-sequence materialization at execution time exactly as
-                    // `Enumerable.ToList(rawString)` would in memory, since `string` implements
-                    // `IEnumerable<char>`. The mixed shaper does the same thing against a whole, un-projected
-                    // document — see MongoMixedProjectionBindingRemovingExpressionVisitor
-                    // .TryBindStringSequenceLeaf, which is what keeps an explicit MongoQueryMode.DriverLinq (and
-                    // any other route into that shaper) correct for this leaf.
+                    // Native string-to-char-sequence leaf: only the raw string was pushed down (BSON has no
+                    // char-sequence form) and the whole AsEnumerable/ToList/ToArray call was registered. Read the
+                    // string through the property-aware path (so converters apply) and re-apply the call to it.
+                    // The mixed shaper's counterpart is TryBindStringSequenceLeaf.
                     if (projection.Expression is MethodCallExpression stringSequenceCall
                         && NativeProjectionBinder.IsStringSequenceMaterializationCall(stringSequenceCall)
                         && TryResolveFieldAccess(stringSequenceCall.Arguments[0]).Property is { } stringSequenceProperty)
                     {
-                        // The emit side only admits this leaf over a string-typed field
-                        // (IsStringSequenceMaterializationCall requires the call's source expression to be typed
-                        // `string`), so a non-string property here means the resolver and the emit side have
-                        // disagreed about which member this leaf reads.
+                        // The emit side admits this leaf only over a string-typed source, so anything else means
+                        // the resolver and emit side disagree about the member.
                         Debug.Assert(stringSequenceProperty.ClrType == typeof(string),
                             $"String-sequence projection leaf resolved to non-string property "
                             + $"'{stringSequenceProperty.Name}' of type '{stringSequenceProperty.ClrType}'.");
@@ -278,17 +224,13 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     // outer type could differ from the property's CLR type. In practice it never
                     // does at this call site: aliased projections that introduce a Convert (e.g.
                     // `new { X = (long)p.intProp }`) go through the LINQ V3 push-down path and
-                    // never reach this visitor — see ProjectionAnalyzer.CanPushDown. (That claim now
-                    // holds only for a NON-natively-representable Convert leaf; the native cast case
-                    // is intercepted above, before this comment's invariant is ever consulted.) The
-                    // assert below pins the invariant so a future change that violates it fails loudly
-                    // rather than mis-deserialising via the wrong property's serializer.
+                    // never reach this visitor — see ProjectionAnalyzer.CanPushDown. (Native cast leaves are
+                    // intercepted above.) The assert below pins the invariant so a future change that
+                    // violates it fails loudly rather than mis-deserialising via the wrong property's serializer.
                     //
-                    // Nullability can differ in EITHER direction, and both are legitimate: the binding type can
-                    // be the nullable form of a non-nullable property (widening), or — since TryResolveFieldAccess
-                    // now peels a `Nullable<T>.Value` leaf (EF-402) — the property can be the NULLABLE form of a
-                    // non-nullable binding type (`x.Converted.Value` binds as `int` against a `Converted` property
-                    // typed `int?`). Unwrap both sides before comparing so either direction is accepted.
+                    // Nullability may differ in either direction: a nullable binding over a non-nullable property,
+                    // or (via the Nullable<T>.Value peel) `x.Converted.Value` as `int` over an `int?` property.
+                    // Unwrap both sides before comparing.
                     var fieldAccess = TryResolveFieldAccess(projection.Expression);
                     if (fieldAccess.Property != null)
                     {
@@ -316,26 +258,10 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                             : Expression.Convert(valueExpression, projectionBindingExpression.Type);
                     }
 
-                    // A reference-collection-nav First().Member projection leaf (EF-449) — as opposed to its
-                    // FirstOrDefault() sibling, which needs no special handling here at all (see the ordinary
-                    // fallback read below): First() must THROW when the source collection was empty, matching
-                    // Enumerable.First()'s own contract, rather than silently reading a CLR default. The $lookup's
-                    // own array/unwind field (leaf.Lookup.As) does not itself survive the native $project (only
-                    // this leaf's own alias does — confirmed empirically, see
-                    // NativeCorrelatedReducerProjectionTests), so the only observable signal in the row this
-                    // visitor actually reads is whether the ALIAS itself is present: a left-outer $unwind
-                    // (preserveNullAndEmptyArrays: true) over a $lookup sub-pipeline that matched nothing leaves
-                    // the lookup field null, and a dotted-path read through a null parent
-                    // ("$_lookup_Nav.Member") evaluates to MISSING in a $project stage — which is exactly the
-                    // "no related row" case this check exists to catch. (A matched row whose own Member happens
-                    // to be null/absent would otherwise be indistinguishable from "no related row" by this
-                    // alias-only check — NativeProjectionBinder.TryGetCorrelatedReducerLeaf closes that gap by
-                    // declining First() (not FirstOrDefault(), which never throws) up front for a NULLABLE-typed
-                    // reduced member, so every leaf that reaches this branch has a non-nullable member type and
-                    // "alias missing/null" here can only mean "no related row matched" — EF-449 fix.) Keyed
-                    // purely by ALIAS, gated to ThrowOnEmpty leaves only, so every other projection leaf kind
-                    // (arithmetic, plain field, owned nav, FirstOrDefault's own leaf, …) is completely
-                    // unaffected.
+                    // Reference-collection-nav First().Member: must throw on an empty source like Enumerable.First().
+                    // Only the alias survives $project, and it is missing/null exactly when no related row matched.
+                    // A matched row with a null member can't be confused with that because
+                    // NativeProjectionBinder.TryGetCorrelatedReducerLeaf declines First() over nullable members.
                     if (TryGetThrowOnEmptyCorrelatedReducerLeaf(projection.Alias, out _))
                     {
                         return Expression.Condition(
@@ -368,10 +294,8 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     {
                         case ProjectionBindingExpression projectionBindingExpression:
                             var projection = GetProjection(projectionBindingExpression);
-                            // Both array-projection node kinds are admissible: a navigation-driven
-                            // ObjectArrayProjectionExpression (a projected reference collection) and an
-                            // ArrayAliasProjectionExpression (a native $project alias). Anything that is not
-                            // an array projection is a translation failure, not an unchecked-cast crash.
+                            // ObjectArrayProjectionExpression and ArrayAliasProjectionExpression are both
+                            // admissible; anything else is a translation failure, not a cast crash.
                             if (projection.Expression is not IArrayProjectionExpression fromProjection)
                             {
                                 throw new InvalidOperationException(CoreStrings.TranslationFailed(extensionExpression.Print()));
@@ -397,23 +321,13 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     {
                         // Nested collection inside a parent collection item (ThenInclude on
                         // collection-then-collection). Read the BsonArray from the parent document by its
-                        // DOCUMENT-PATH field name.
+                        // document-path field name.
                         //
-                        // An ALIAS-addressed array (ArrayAliasProjectionExpression) has no document-path field
-                        // name at all — its ArrayFieldName is always null — so it must never reach here. It
-                        // cannot: this branch is reached only when VisitBinary did NOT register a bsonArrayN
-                        // variable for the node, i.e. when BsonDocumentInjectingExpressionVisitor never emitted
-                        // an assignment for this collection shaper, which happens only for a shaper NESTED
-                        // inside another collection shaper's InnerShaper (that visitor's
-                        // CollectionShaperExpression case returns without visiting children). An alias-addressed
-                        // array is created only for a TOP-LEVEL leaf of a terminal native projection, never
-                        // nested. The `?? throw` makes a future violation LOUD rather than a silent null field
-                        // name, which would read the wrong array with no exception at all.
-                        //
-                        // It resolves BEFORE the _projectionBindings lookup below, deliberately: on the native
-                        // projection route the root RootReferenceExpression is NOT registered there, so an
-                        // alias-addressed array reaching this branch would otherwise die in that indexer with a
-                        // bare KeyNotFoundException — losing this diagnostic entirely.
+                        // An alias-addressed array (ArrayAliasProjectionExpression) has a null ArrayFieldName and
+                        // can't reach here: this branch handles only collection shapers nested inside another's
+                        // InnerShaper, and alias-addressed arrays are only top-level native projection leaves. The
+                        // `?? throw` makes a violation loud, and resolves before the _projectionBindings lookup
+                        // (where it would otherwise be a bare KeyNotFoundException).
                         var arrayFieldName = arrayProjection.ArrayFieldName
                                              ?? throw new InvalidOperationException(
                                                  CoreStrings.TranslationFailed(extensionExpression.Print()));
@@ -423,21 +337,13 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         arrayName = arrayFieldName;
                     }
 
-                    // Normalize a MISSING or explicitly-BSON-null stored array to an EMPTY BsonArray, so the
-                    // shaper below enumerates nothing and PopulateCollection returns an EMPTY collection rather than
-                    // null. Empty-not-null is EF Core's contract for a collection navigation, and without this the
-                    // result depends on the POCO's field initializer (IncludeCollection skips GetOrCreate when the
-                    // related-entity sequence is null). The empty collection is built by PopulateCollection through the
-                    // navigation's OWN IClrCollectionAccessor, so a non-List navigation (HashSet<T>, a custom
-                    // collection) gets the right CLR type for free.
+                    // Normalize a missing or BSON-null stored array to an empty BsonArray, so the collection is empty
+                    // rather than null (EF Core's contract; otherwise the result depends on the POCO's initializer).
+                    // PopulateCollection uses the navigation's own IClrCollectionAccessor, so HashSet<T> etc. work.
                     //
-                    // The coalesce MUST stay here, at the point of use, and NOT be folded into either assignment site:
-                    // VisitBinary below hard-casts a BsonDocument/BsonArray assignment's right-hand side to
-                    // UnaryExpression (the Expression.TypeAs that BsonDocumentInjectingExpressionVisitor emits), so a
-                    // Coalesce there throws InvalidCastException for every shaper in every query mode.
-                    //
-                    // Note TypeAs yields null both for an ABSENT element and for a present-but-not-an-array element, so
-                    // this treats the two alike; both produced null before, so that is not a regression.
+                    // Must stay here at the point of use: VisitBinary hard-casts assignment RHS to UnaryExpression
+                    // (see the contract note there), so a Coalesce at the assignment would throw in every mode.
+                    // TypeAs is null for absent and non-array elements alike.
                     bsonArrayExpression = Expression.Coalesce(bsonArrayExpression, Expression.New(typeof(BsonArray)));
 
                     var jObjectParameter = Expression.Parameter(typeof(BsonDocument), arrayName + "Object");
@@ -532,12 +438,9 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     string? fieldName = null;
                     var fieldRequired = true;
 
-                    // CONTRACT with BsonDocumentInjectingExpressionVisitor: the right-hand side of a
-                    // BsonDocument/BsonArray variable assignment is always an Expression.TypeAs — a
-                    // UnaryExpression — so this cast is safe. If that visitor ever needs a different node
-                    // shape there (a Coalesce, a New), this cast must be widened in the SAME change, or every
-                    // entity and collection shaper throws InvalidCastException in every query mode — which is
-                    // why the missing/null-array normalization above lives at its point of use instead.
+                    // Contract with BsonDocumentInjectingExpressionVisitor: the RHS is always an Expression.TypeAs.
+                    // Changing that node shape requires widening this cast in the same change, or every entity and
+                    // collection shaper throws InvalidCastException.
                     var projectionExpression = ((UnaryExpression)binaryExpression.Right).Operand;
                     if (projectionExpression is ProjectionBindingExpression projectionBindingExpression)
                     {
@@ -557,20 +460,8 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         innerAccessExpression = arrayProjectionExpression.AccessExpression;
                         _projectionBindings[projectionExpression] = parameterExpression;
 
-                        // ArrayFieldName is null for an alias-addressed array, in which case fieldName was
-                        // already set from projection.Alias above (the ProjectionBindingExpression branch) —
-                        // that IS the alias, and it is the same name the emit side derived from the same
-                        // ProjectionMember.
-                        //
-                        // NEITHER implementation of IArrayProjectionExpression can currently reach this throw,
-                        // and that is worth stating so nobody reads it as a live failure mode:
-                        // ObjectArrayProjectionExpression's constructor already `?? throw`s when Name would be
-                        // null, so its ArrayFieldName is non-null by construction; and ArrayAliasProjectionExpression
-                        // (whose ArrayFieldName is ALWAYS null) is only ever reached through the
-                        // ProjectionBindingExpression branch above, which has already set fieldName from
-                        // projection.Alias. The guard is kept anyway because it is free and fails LOUD: a future
-                        // node kind, or a future route to this one that skips the alias resolution, would
-                        // otherwise silently read the wrong array rather than say so.
+                        // For an alias-addressed array fieldName was already set from projection.Alias above. No
+                        // current IArrayProjectionExpression reaches the throw; it guards a future node kind or route.
                         fieldName ??= arrayProjectionExpression.ArrayFieldName
                                       ?? throw new InvalidOperationException(
                                           CoreStrings.TranslationFailed(binaryExpression.Print()));
@@ -596,17 +487,10 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                                 // that element rather than the absolute query root.
                                 innerAccessExpression = GetCrossCollectionRootDocument(crossCollectionAccess);
                                 fieldName = GetCrossCollectionFieldName(crossCollectionAccess);
-                                // fieldRequired = false is also what makes a native LeftJoin's unmatched Inner
-                                // row (a dangling-FK dependent row with no matching principal) read as a plain
-                                // null reference navigation, with no exception, for a whole-entity Inner leaf in
-                                // a join projection (EF-444 Task 3). MongoSelectLowerer already emits
-                                // preserveNullAndEmptyArrays: true for a left-outer REFERENCE navigation (as
-                                // opposed to a left-outer COLLECTION navigation, which is a hard-coded false and
-                                // handled by a separate, still-declining conjunct elsewhere), so the joined field
-                                // is simply absent from the document for an unmatched row; requiring it here
-                                // would turn that absence into a spurious exception instead of EF Core's own
-                                // null-reference-navigation convention. No new code was needed to get this right
-                                // — see NativeJoinTests.LeftJoin_unmatched_inner_row_reads_as_null_reference_navigation.
+                                // fieldRequired = false also makes a native LeftJoin's unmatched Inner row read as a
+                                // null reference navigation: the joined field is absent for an unmatched row, and
+                                // requiring it would throw. See
+                                // NativeJoinTests.LeftJoin_unmatched_inner_row_reads_as_null_reference_navigation.
                                 fieldRequired = false;
                                 break;
                             // Embedded sub-document access: the navigation is always present here because
@@ -625,9 +509,8 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                                 break;
                             case RootReferenceExpression:
                                 innerAccessExpression = DocParameter;
-                                // On the FALLBACK route the shaper is handed WHOLE, un-projected documents, so a
-                                // whole-root-entity leaf's "$$ROOT" alias names no element and must resolve to the
-                                // document itself rather than a non-existent "c" field.
+                                // On the fallback route documents are whole and un-projected, so "$$ROOT" resolves
+                                // to the document itself rather than a non-existent field.
                                 if (ReadsUnprojectedDocuments && IsWholeRootEntityAlias(fieldName))
                                 {
                                     fieldName = null;
@@ -757,21 +640,13 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         {
             var entityType = (IReadOnlyEntityType)property.DeclaringType;
 
-            // Bare-owned whole-element SelectMany: the shaper is re-rooted at THIS owned
-            // element (via $replaceRoot — see MongoShapedQueryCompilingExpressionVisitor's WholeElement branch),
-            // which merged the owner key + array ordinal into the re-rooted document under sentinel field
-            // names, specifically so the owned key materializes NON-NULL (EF Core's own no-tracking null-key
-            // guard rejects a partially-null owned key). Read those sentinel fields directly
-            // instead of falling through to the ordinary owner/ordinal-mapping lookup below, which has no entry
-            // for a re-rooted document (the query root — CollectionExpression.EntityType — is always a
-            // document-root type, so entityType == _rootEntityType is true here ONLY in this re-rooted
-            // whole-element case, making it a safe discriminator).
+            // Re-rooted whole-element owned SelectMany ($replaceRoot; see MongoShapedQueryCompilingExpressionVisitor):
+            // the owner key and ordinal were merged in under sentinel fields so the owned key materializes non-null.
+            // entityType == _rootEntityType only in this case, since the query root is always a document root.
             if (entityType == _rootEntityType)
             {
-                // Both sentinels live nested one level UNDER the single reserved ShadowField wrapper the
-                // $mergeObjects adds (EF-428), so this is a two-segment path read, not a top-level element
-                // read. CreateGetElementValueAtPath walks the segments; CreateGetElementValue would look
-                // "__mongoef_shadow.__ownerKey" up as one literal document key and find nothing.
+                // The sentinels are nested under the ShadowField wrapper, so this is a two-segment path read;
+                // CreateGetElementValue would treat "__mongoef_shadow.__ownerKey" as one literal key.
                 string[] sentinelPath =
                 [
                     MongoReplaceRootStage.ShadowField,
@@ -894,27 +769,17 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         => _queryExpression.Projection[GetProjectionIndex(projectionBindingExpression)];
 
     /// <summary>
-    /// Rebuilds the CLR object a <see cref="MongoDocumentConstructionExpression"/> leaf (EF-447) represents,
-    /// reading each member's value via <see cref="ReadDocumentConstructionMember"/> (overridden by the mixed
-    /// visitor to read a different physical location — see that method's remarks).
+    /// Rebuilds the CLR object a <see cref="MongoDocumentConstructionExpression"/> leaf represents (a
+    /// <see cref="MemberInitExpression"/> or a <see cref="NewExpression"/> with named members), reading each
+    /// member via <see cref="ReadDocumentConstructionMember"/>.
     /// </summary>
-    /// <remarks>
-    /// Supports the same two shapes <c>NativeProjectionBinder.TryGetDocumentConstructionLeaf</c> recognizes on
-    /// the emit side — a <see cref="MemberInitExpression"/> (<c>new Book { Id = ... }</c>) or a
-    /// <see cref="NewExpression"/> with named <c>Members</c> (<c>new Book(id, title)</c> on a record-like type).
-    /// </remarks>
     protected Expression BuildDocumentConstructionExpression(MongoDocumentConstructionExpression construction, string alias)
         => BuildDocumentConstructionExpression(construction, [alias]);
 
     /// <summary>
-    /// The path-aware sibling of the <c>(construction, alias)</c> overload above, used when this construction is
-    /// itself NESTED inside an outer one (EF-322, e.g. <c>Mid = new Mid { Inner = new Inner { Name = ..., Value =
-    /// g.Sum(...) } } }</c>) — <paramref name="path"/> is every dotted segment from the document ROOT down to
-    /// (and including) THIS construction's own <c>$project</c> alias, since <see cref="MongoAggregationExpressionRenderer"/>
-    /// renders a <see cref="MongoDocumentConstructionExpression"/> value RECURSIVELY (a nested member's own
-    /// nested construction becomes a genuinely nested BSON sub-document, not a dotted top-level field) — reading
-    /// a further-nested member back must walk the SAME number of real sub-document levels, not collapse them
-    /// into one 2-segment <c>[alias, memberName]</c> path the way a single-level construction's own members can.
+    /// Path-aware overload for a construction nested inside another. <paramref name="path"/> runs from the
+    /// document root through this construction's own alias; nested constructions render as real sub-documents,
+    /// so reads must walk every level rather than a two-segment <c>[alias, memberName]</c> path.
     /// </summary>
     private Expression BuildDocumentConstructionExpression(MongoDocumentConstructionExpression construction, string[] path)
     {
@@ -963,29 +828,12 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             _ => value is MongoFieldExpression fieldForType ? fieldForType.Property.ClrType : value.Type
         };
 
-        // A plain top-level field has its own IProperty/serializer for correct BSON representation (EF-447's
-        // own, narrower scope) — it can only ever occur at path DEPTH 1 (EF-447's own recognizer only ever
-        // produces a MongoFieldExpression member for a construction reached directly off the selector body, not
-        // for one nested inside a GroupBy nested construction), so `path[0]` (the leaf's own single top-level
-        // $project alias) reproduces this branch's ORIGINAL (pre-EF-322) `alias` argument exactly.
+        // A plain field uses its own IProperty/serializer; it only occurs at depth 1, so `path[0]` is the alias.
+        // A nested construction recurses with this member's name appended.
         //
-        // A further-nested construction (EF-322 Review Focus: doubly-nested) recurses into the path-aware
-        // overload with THIS member's own name appended — see that overload's own remarks for why depth cannot
-        // collapse into one segment.
-        //
-        // Anything else (an accumulator's flattened output, a g.Key/g.Key.Sub reference, or a constant — all
-        // GroupBy-produced shapes EF-447 never needed to handle) has no single backing property, so it reads
-        // generically at the VALUE's OWN natively-translated type (<paramref name="value"/>.Type — e.g. decimal
-        // for a Sum accumulator whose call site is `g.Sum(o => (decimal)o.Amount)`) rather than the member's
-        // DECLARED type. This matters when the two differ (Odata_groupby_empty_key's own `Value` member is
-        // declared `object`): CreateTypeSerializer has no sensible scalar serializer for a bare `object` CLR
-        // type — asking it to deserialize directly AT `object` falls through to its generic
-        // BsonClassMapSerializer branch and yields the WRONG runtime representation (a raw
-        // MongoDB.Bson.Decimal128, not a decimal) instead of throwing. Reading at the value's own natural type
-        // first, then converting/boxing to the declared member type below, is exactly what an ordinary
-        // top-level bare/computed accumulator alias already gets for free from the ordinary EF Core shaper tree
-        // (a Convert(decimalSum, object) node the compiler emits for the `object`-typed assignment) — this
-        // generic path must replicate that same two-step, not skip straight to the declared type.
+        // Anything else (accumulator output, g.Key reference, constant) reads at the value's own translated type,
+        // then converts to the declared member type. Reading directly at a declared `object` type (e.g.
+        // Odata_groupby_empty_key's `Value`) would yield a raw Decimal128 instead of a decimal.
         Expression read = value switch
         {
             MongoFieldExpression field => ReadDocumentConstructionMember(construction, path[0], memberName, field, memberType),
@@ -997,29 +845,19 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     }
 
     /// <summary>
-    /// Reads a NON-field, NON-further-nested-construction member (an accumulator's own flattened output, a
-    /// nested g.Key/g.Key.Sub reference, or an ordinary computed/constant value) generically by element path —
-    /// the same property-free mechanism a top-level bare/computed projection alias already uses
-    /// (<see cref="MongoDB.EntityFrameworkCore.Storage.BsonBinding.CreateGetElementValueAtPath"/>), since none
-    /// of these member kinds has a single backing <see cref="IProperty"/>/serializer the field-aware
-    /// <see cref="ReadDocumentConstructionMember"/> overload needs. <paramref name="readType"/> is the value's
-    /// OWN natively-translated type, not necessarily the (possibly-widened, e.g. `object`) declared member
-    /// type — see <see cref="ReadDocumentConstructionMemberTyped"/>'s own remarks for why that distinction
-    /// matters here.
+    /// Reads a member with no single backing <see cref="IProperty"/> (accumulator output, g.Key reference, computed
+    /// or constant value) by element path. <paramref name="readType"/> is the value's own translated type, not the
+    /// possibly-widened declared type.
     /// </summary>
     protected virtual Expression ReadDocumentConstructionMemberGeneric(
         MongoDocumentConstructionExpression construction, string[] path, string memberName, Type readType)
         => BsonBinding.CreateGetElementValueAtPath(DocParameter, [..path, memberName], readType);
 
     /// <summary>
-    /// Reads one member of a <see cref="MongoDocumentConstructionExpression"/> leaf (EF-447) from the current
-    /// document. The base (native) implementation reads the member NESTED under the leaf's own <c>$project</c>
-    /// alias (<c>"{alias}.{memberName}"</c>) — where the native <c>$project</c> actually placed it (see
-    /// <see cref="MongoDB.EntityFrameworkCore.Query.NativeTranslation.MongoAggregationExpressionRenderer"/>'s
-    /// <see cref="MongoDocumentConstructionExpression"/> case). <see cref="MongoMixedProjectionBindingRemovingExpressionVisitor"/>
-    /// overrides this to read <paramref name="field"/>'s own NATURAL root-relative document path instead, since
-    /// that visitor only ever runs over WHOLE, un-projected documents that never had this leaf's alias applied
-    /// to them at all.
+    /// Reads one member of a <see cref="MongoDocumentConstructionExpression"/> leaf. The native implementation
+    /// reads <c>"{alias}.{memberName}"</c>, where the native <c>$project</c> put it;
+    /// <see cref="MongoMixedProjectionBindingRemovingExpressionVisitor"/> overrides it to read
+    /// <paramref name="field"/>'s natural path off whole, un-projected documents.
     /// </summary>
     protected virtual Expression ReadDocumentConstructionMember(
         MongoDocumentConstructionExpression construction, string alias, string memberName, MongoFieldExpression field,
@@ -1087,13 +925,9 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
         expression = expression.RemoveConvert();
 
-        // Nullable<T>.Value: `x.Score.Value` is a MemberExpression whose OWN receiver (`x.Score`) is the member
-        // access that actually names the stored field — `.Value` only changes the CLR type, never the element
-        // read. Peeling it here, before Member/Expression are split apart below, mirrors
-        // MongoExpressionTranslator.TryResolveMember's emit-side peel so both sides resolve to the same
-        // IProperty/serializer for this leaf (EF-402). Without this peel, `memberExpression.Member` below is the
-        // "Value" PropertyInfo itself — never a real mapped property on any entity — so FindProperty always
-        // misses and the caller falls through to a raw alias read that discards the property's value converter.
+        // Peel Nullable<T>.Value (`x.Score.Value`): the receiver names the stored field. Mirrors
+        // MongoExpressionTranslator.TryResolveMember so both sides resolve the same IProperty; otherwise FindProperty
+        // misses and the raw alias read drops the value converter.
         if (expression is MemberExpression { Member.Name: nameof(Nullable<int>.Value), Expression: { } valueReceiver }
             && Nullable.GetUnderlyingType(valueReceiver.Type) is not null)
         {

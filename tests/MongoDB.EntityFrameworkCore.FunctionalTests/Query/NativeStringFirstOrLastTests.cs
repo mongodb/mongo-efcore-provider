@@ -26,14 +26,10 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// <c>string.FirstOrDefault()</c>/<c>LastOrDefault()</c> against a real server — specifically the review-fix
-/// regression this pins (EF-322 Task 4): a genuinely EMPTY source and a genuinely NON-EMPTY source whose real
-/// first/last character IS <c>'\0'</c> (a legal embedded-NUL string, e.g. <c>"\0abc"</c>) must BOTH compare
-/// equal to the literal <c>'\0'</c> — an earlier revision rendered the empty-source branch as a BSON Int32
-/// zero while the non-empty <c>$substrCP</c> branch produced a one-character BSON STRING, so a row with a
-/// genuine embedded-NUL first/last character silently compared UNEQUAL to <c>'\0'</c> (crossing BSON type
-/// brackets: MongoDB never considers a number equal to a string). See
-/// <c>MongoStringFirstOrLastExpression</c>'s own remarks for the fix.
+/// <c>string.FirstOrDefault()</c>/<c>LastOrDefault()</c> against a real server. An empty string and one whose
+/// first/last character is an embedded <c>'\0'</c> must both equal <c>'\0'</c>, which requires both
+/// <c>$cond</c> branches to produce the same BSON type (a number never equals a string). See
+/// <c>MongoStringFirstOrLastExpression</c>.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeStringFirstOrLastTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -72,9 +68,7 @@ public class NativeStringFirstOrLastTests(TemporaryDatabaseFixture database) : I
     [Fact]
     public void FirstOrDefault_equals_ordinary_char_still_matches_oracle()
     {
-        // Regression guard alongside the embedded-NUL fix above: an ordinary (non-NUL) literal comparison
-        // must keep working exactly as it did before the fix (both $cond branches now agree on the SAME BSON
-        // type — a one-character string — so this shape's rendering hasn't otherwise changed).
+        // An ordinary (non-NUL) literal comparison.
         var collection = Seed(
             nameof(FirstOrDefault_equals_ordinary_char_still_matches_oracle),
             ("empty", ""),
@@ -91,14 +85,8 @@ public class NativeStringFirstOrLastTests(TemporaryDatabaseFixture database) : I
         public string? S { get; set; }
     }
 
-    // Final-review fix (MINOR, real bug — finding 3): $strLenCP is a hard MongoDB server error for a
-    // missing/null string argument, so FirstOrDefault()/LastOrDefault() over a null/missing string FIELD
-    // (as opposed to a genuinely empty string, which the class-level remarks above already cover) used to
-    // crash the whole query at execution time instead of degrading gracefully to the same '\0' default the
-    // empty-string case already produces. There is no working client-side .NET oracle for this shape —
-    // string.FirstOrDefault()/LastOrDefault() on a genuinely null string reference throws
-    // ArgumentNullException, so AssertWhereMatchesOracle's predicate.Compile() leg can't be reused here — this
-    // asserts the expected row set by hand instead.
+    // $strLenCP is a server error for a null/missing argument; a null field must yield '\0' like an empty
+    // string. No client-side oracle (FirstOrDefault on a null string throws), so expected rows are hand-written.
     [Fact]
     public void FirstOrDefault_equals_null_char_on_null_field_no_longer_throws_a_server_error()
     {
@@ -156,18 +144,14 @@ public class NativeStringFirstOrLastTests(TemporaryDatabaseFixture database) : I
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // `predicate` MUST be Expression<Func<...>>, never a plain Func delegate — see NativeStringConcatTests'
-    // own remarks on why a Func parameter here would silently pull every row into memory instead of
-    // exercising the native translation at all.
+    // `predicate` must be an Expression; a Func would silently filter client-side and bypass translation.
     private static void AssertWhereMatchesOracle(IMongoCollection<Row> collection, Expression<Func<Row, bool>> predicate)
     {
         using var oracleDb = CreateContext(collection, MongoQueryMode.Native);
         var oracle = oracleDb.Entities.AsNoTracking().ToList().Where(predicate.Compile()).Select(x => x.Label)
             .OrderBy(x => x, StringComparer.Ordinal).ToList();
 
-        // OrderBy(comparer) is applied AFTER ToList() (client-side, LINQ-to-Objects) — a server-translated
-        // IQueryable.OrderBy with a custom IComparer has no MQL translation and throws, so the comparer-based
-        // ordering must happen only once the rows are already materialized, exactly like the oracle leg above.
+        // OrderBy(comparer) runs after ToList(); a custom IComparer has no MQL translation.
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().Where(predicate).Select(x => x.Label).ToList()
             .OrderBy(x => x, StringComparer.Ordinal).ToList();

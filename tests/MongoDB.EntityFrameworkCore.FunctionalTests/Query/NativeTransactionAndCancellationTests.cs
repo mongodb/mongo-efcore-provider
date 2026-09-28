@@ -29,19 +29,9 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-323 coverage for the native query path in two runtime contexts that the unit/MQL-shape tests
-/// cannot exercise:
-/// <list type="bullet">
-///   <item><b>Inside an explicit transaction.</b> A native query run while a <see cref="IDbContextTransaction"/>
-///   is open must bind the ambient driver session, so it sees the transaction's view and returns the correct
-///   rows. Asserted under <see cref="MongoQueryMode.Native"/>, with a parity check against
-///   <see cref="MongoQueryMode.DriverLinq"/> inside a transaction.</item>
-///   <item><b>Async cancellation mid-stream.</b> The native enumerator must observe a cancelled
-///   <see cref="CancellationToken"/> per <c>MoveNext</c>, so a token cancelled partway through async
-///   enumeration stops the stream with an <see cref="OperationCanceledException"/>.</item>
-/// </list>
-/// Both require a replica set; the <c>mongodb/mongodb-atlas-local</c> testcontainer provides a single-node
-/// replica set (transactions enabled).
+/// The native query path inside an explicit transaction (it must bind the ambient session) and under async
+/// cancellation mid-stream (the enumerator checks the token per <c>MoveNext</c>). Both need a replica set, which the
+/// <c>mongodb/mongodb-atlas-local</c> container provides.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture database)
@@ -134,13 +124,8 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
     [Fact]
     public void NativeOnly_query_inside_transaction_sees_own_uncommitted_write()
     {
-        // EF-323: the existing tx tests seed data BEFORE BeginTransaction, so a dropped Session
-        // assignment on the native executable query would stay green (it would just read the
-        // already-committed pre-transaction data from outside the session). This test seeds a row
-        // INSIDE the transaction and then queries natively inside the SAME transaction: the query only
-        // sees the uncommitted write if the native Aggregate genuinely runs on the transaction's
-        // ambient session (read-your-own-writes). If session propagation were dropped, the native
-        // Aggregate would run outside the session and never observe the uncommitted insert.
+        // Seeds inside the transaction, so the native query only sees the row if it runs on the ambient session
+        // (read-your-own-writes). Pre-transaction seeding wouldn't catch a dropped Session assignment.
         var collection = SeedRange(nameof(NativeOnly_query_inside_transaction_sees_own_uncommitted_write), 3);
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
@@ -171,12 +156,8 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
         public int Value { get; set; }
     }
 
-    // A TPH discriminator hierarchy makes the base entity type non-streaming-eligible
-    // (StreamingEligibility.IsEligible returns false whenever GetDirectlyDerivedTypes().Any()),
-    // so the shaper compiles as DOM rather than the forward-only RawBsonDocument reader. Combined
-    // with an explicit transaction, this exercises the non-streaming `collection.Aggregate(session,
-    // pipeline)` branch in MongoClientWrapper.Execute (as opposed to the RawBsonDocument streaming
-    // branch exercised by the other tests in this file).
+    // TPH makes the base type non-streaming-eligible, so this covers the DOM `collection.Aggregate(session,
+    // pipeline)` branch of MongoClientWrapper.Execute rather than the RawBsonDocument streaming branch.
     private class SpecialDiscriminatedItem : DiscriminatedItem
     {
         public string Note { get; set; } = "";
@@ -214,16 +195,13 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
 
         using var db = CreateDiscriminatedContext(collection, MongoQueryMode.NativeOnly);
 
-        // Sanity-check the premise: the base entity type has a derived sibling, so
-        // StreamingEligibility.IsEligible must be false and the DOM (non-streaming) shaper is used.
+        // Premise: a derived type makes StreamingEligibility.IsEligible false, so the DOM shaper is used.
         var entityType = db.Model.FindEntityType(typeof(DiscriminatedItem))!;
         Assert.True(entityType.GetDirectlyDerivedTypes().Any());
 
         using var tx = db.Database.BeginTransaction();
 
-        // Under NativeOnly a fallback would throw; success proves the native Aggregate ran via the
-        // non-streaming `collection.Aggregate(session, pipeline)` branch (BsonDocument, not
-        // RawBsonDocument) against the ambient session inside the transaction.
+        // Under NativeOnly a fallback would throw; success proves the non-streaming native branch ran in the session.
         var result = db.Entities
             .Where(x => x.Value >= 2)
             .OrderBy(x => x.Value)

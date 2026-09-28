@@ -26,10 +26,8 @@ using Xunit;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.Expressions;
 
 /// <summary>
-/// <c>MongoQueryExpression.ApplyProjection</c>'s alias derivation — site A of EF-322 step 3a's four
-/// alias-derivation sites. It normally uses the projection member's own name; when the emit side registered
-/// an override on <see cref="MongoSelectDefinition"/> (and only while the query is still on the projection
-/// route) it uses that instead.
+/// <c>MongoQueryExpression.ApplyProjection</c>'s alias derivation: normally the projection member's own name, or
+/// the override registered on <see cref="MongoSelectDefinition"/> while the query is still on the projection route.
 /// </summary>
 public class MongoQueryExpressionApplyProjectionTests
 {
@@ -64,9 +62,8 @@ public class MongoQueryExpressionApplyProjectionTests
     [Fact]
     public void An_empty_override_table_leaves_a_bare_member_with_a_null_alias()
     {
-        // The constructor installs the root EntityProjectionExpression under the EMPTY ProjectionMember —
-        // the same "no last member" shape a bare selector body produces — so with no override registered the
-        // alias must still come out null, exactly as before step 3a.
+        // The root EntityProjectionExpression sits under the empty ProjectionMember (the bare-selector shape), so
+        // with no override the alias is null.
         var queryExpression = new MongoQueryExpression(ProductEntityType());
         MakeProjectionRoute(queryExpression);
 
@@ -98,16 +95,15 @@ public class MongoQueryExpressionApplyProjectionTests
 
         queryExpression.ApplyProjection();
 
-        // Site A reads the alias only; the tier exists for the late-fallback strip, not for this site.
+        // ApplyProjection reads the alias only; the tier matters for the late-fallback strip, not here.
         Assert.Equal("_v", Assert.Single(queryExpression.Projection).Alias);
     }
 
     [Fact]
     public void An_override_is_ignored_once_Route_left_Projection_via_Fallback()
     {
-        // The hazard this guard closes: the emit side registers an override, then a later operator marks the
-        // query non-native. Site A must revert to the pre-3a derivation rather than alias a $project that is
-        // no longer going to be emitted.
+        // The emit side registers an override, then a later operator marks the query non-native: the alias must
+        // revert rather than name a $project that won't be emitted.
         var queryExpression = new MongoQueryExpression(ProductEntityType());
         MakeProjectionRoute(queryExpression);
         queryExpression.Select.AddProjectionAliasOverride(
@@ -124,8 +120,8 @@ public class MongoQueryExpressionApplyProjectionTests
     [Fact]
     public void An_override_is_ignored_once_Route_flipped_to_GroupBy()
     {
-        // The measured shape of the same hazard: a projected Distinct clears Projection, installs a Grouping
-        // and flips Route to GroupBy AFTER the emit side already committed its override.
+        // Real-world shape of the same hazard: a projected Distinct clears Projection, installs a Grouping and flips
+        // Route to GroupBy after the emit side committed its override.
         var queryExpression = new MongoQueryExpression(ProductEntityType());
         MakeProjectionRoute(queryExpression);
         queryExpression.Select.AddProjectionAliasOverride(
@@ -171,8 +167,7 @@ public class MongoQueryExpressionApplyProjectionTests
     [Fact]
     public void A_named_member_takes_its_registered_override()
     {
-        // Not reached by step 3a itself (which only ever registers the bare sentinel), but this is the shape
-        // EF-362 needs: a named member whose emitted element name is its full document path.
+        // A named member whose emitted element name is its full document path.
         var entityType = ProductEntityType();
         var queryExpression = new MongoQueryExpression(entityType);
         MakeProjectionRoute(queryExpression);
@@ -193,16 +188,12 @@ public class MongoQueryExpressionApplyProjectionTests
                     new EntityProjectionExpression(entityType, new RootReferenceExpression(entityType))
             });
 
-    // ── Task 4 fix-round tests (review finding I3): the guard narrowing that replaced the original
-    // "if (Projection.Any()) return;" early-out. Both tests below are mutation-discriminating against the
-    // TWO halves of that guard independently — see each test's own comment for which half it pins.
+    // The two halves of ApplyProjection's "already has projection entries" guard; each test below pins one half.
 
     /// <summary>
-    /// Simulates the reference-collection-list array leaf's OWN <c>AddToProjection</c> call
-    /// (<c>MongoProjectionBindingExpressionVisitor.TryBindProjectedCollectionNavigation</c>), made
-    /// independently of <c>ApplyProjection</c> and BEFORE it ever runs -- distinct from
-    /// <see cref="MakeProjectionRoute"/>, which only populates <c>Select.Projection</c> (a different list,
-    /// used purely to compute <c>Route</c>) and never touches <c>MongoQueryExpression.Projection</c> itself.
+    /// Simulates the reference-collection-list array leaf's own <c>AddToProjection</c> call, made before
+    /// <c>ApplyProjection</c> runs. Unlike <see cref="MakeProjectionRoute"/>, this populates
+    /// <c>MongoQueryExpression.Projection</c> itself.
     /// </summary>
     private static void SimulateArrayLeafProjectionRegistration(MongoQueryExpression queryExpression)
         => queryExpression.AddToProjection(Expression.Constant("array-leaf-placeholder"), "Orders");
@@ -210,14 +201,9 @@ public class MongoQueryExpressionApplyProjectionTests
     [Fact]
     public void A_scalar_sibling_mapping_is_flattened_even_when_Projection_is_already_non_empty()
     {
-        // Simulates the EF-322 Task 1/4 hazard directly: a reference-collection-list array leaf calls
-        // AddToProjection on its OWN array shaper independently of this method, so Projection is already
-        // non-empty by the time this runs -- but a plain scalar sibling leaf's ProjectionMember mapping
-        // (RemapToNamedMember) still needs flattening into a Constant(int), or GetProjectionIndex throws
-        // ("Operation is not valid due to the current state of the object") at compile time.
-        // MUTATION: reverting the guard to "if (Projection.Any()) return;" (the pre-fix condition) makes
-        // this test fail -- the sibling's mapping stays the raw, non-constant EntityProjectionExpression
-        // RemapToNamedMember installed, never reaching a ConstantExpression at all.
+        // Projection is already non-empty (array leaf), but a scalar sibling's ProjectionMember mapping still needs
+        // flattening to a Constant(int), or GetProjectionIndex throws at compile time. Fails if the guard reverts
+        // to "if (Projection.Any()) return;".
         var entityType = ProductEntityType();
         var queryExpression = new MongoQueryExpression(entityType);
         MakeProjectionRoute(queryExpression);
@@ -237,16 +223,10 @@ public class MongoQueryExpressionApplyProjectionTests
     [Fact]
     public void A_sibling_mapping_is_NOT_flattened_once_Route_has_left_Projection()
     {
-        // The narrower half of the SAME guard (review finding, and a real regression this fix caused and
-        // then fixed once already): once Route has left Projection (the native binder correctly declined
-        // this shape and it falls back), a non-constant _projectionMapping entry must NOT be flattened here
-        // even though Projection already has entries from elsewhere -- unconditionally flattening it is what
-        // let NorthwindSelectQueryMongoTest.Custom_projection_reference_navigation_PK_to_FK_optimization (a
-        // shape the native projection binder correctly declines) silently succeed via the mixed/fallback
-        // shaper instead of throwing the NotSupportedException AssertTranslationFailed requires.
-        // MUTATION: dropping the "|| Select.Route != NativeRoute.Projection" disjunct (flattening whenever
-        // there's anything to flatten, regardless of Route) makes this test fail -- the mapping gets
-        // flattened into a ConstantExpression anyway.
+        // Once Route has left Projection (native declined, falls back), a non-constant mapping must not be
+        // flattened even though Projection has entries; otherwise
+        // NorthwindSelectQueryMongoTest.Custom_projection_reference_navigation_PK_to_FK_optimization silently
+        // succeeds instead of throwing. Fails if the "|| Select.Route != NativeRoute.Projection" disjunct is dropped.
         var entityType = ProductEntityType();
         var queryExpression = new MongoQueryExpression(entityType);
         MakeProjectionRoute(queryExpression);
@@ -257,7 +237,7 @@ public class MongoQueryExpressionApplyProjectionTests
 
         queryExpression.ApplyProjection();
 
-        // Unchanged -- only the pre-existing array-leaf-placeholder entry; nothing new was flattened in.
+        // Only the pre-existing array-leaf placeholder entry; nothing new was flattened in.
         Assert.Single(queryExpression.Projection);
         var mappedMember = new ProjectionMember().Append(typeof(Product).GetProperty(nameof(Product.Name))!);
         var mapped = queryExpression.GetMappedProjection(mappedMember);

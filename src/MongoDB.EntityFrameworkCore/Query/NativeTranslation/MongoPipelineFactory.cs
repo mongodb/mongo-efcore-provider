@@ -26,22 +26,16 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// Translates a typed <see cref="MongoPipelineStage"/> list into a cached template of stage slots and
-/// binds per-execution parameter values via
-/// <see cref="Build(IReadOnlyDictionary{string, object})"/> /
+/// Renders a typed <see cref="MongoPipelineStage"/> list once per compiled query into a template of stage slots,
+/// then binds per-execution parameter values via <see cref="Build(IReadOnlyDictionary{string, object})"/> /
 /// <see cref="Build(in MongoNativeBuildContext)"/>.
 /// </summary>
 /// <remarks>
-/// Constructed once per compiled query via <see cref="Create"/>: the stage-walk renders each stage to a
-/// <see cref="BsonDocument"/>, baking constants inline and recording parameter sites as placeholder sentinels
-/// in a shared <see cref="PlaceholderTable"/>. A slot is normally such a rendered, immutable document; it may
-/// instead be <em>deferred</em> — a builder invoked at Build time — for a stage whose BSON <em>shape</em>
-/// (not just its values) depends on runtime state and so can't be expressed as a sentinel. A deferred slot
-/// requires <see cref="Build(in MongoNativeBuildContext)"/>; the parameter-values-only overload throws rather
-/// than emit a pipeline with a hole. At execution time, Build clones the template and substitutes every
-/// sentinel with the serialized runtime value (constants are already baked and untouched); substitution also
-/// runs over a deferred slot's freshly built document, so anything it embeds via the shared
-/// <see cref="PlaceholderTable"/> resolves in the same pass.
+/// Constants are baked inline; parameters become sentinels in a shared <see cref="PlaceholderTable"/> that Build
+/// substitutes in a cloned template. A slot whose BSON shape (not just values) depends on runtime state is
+/// deferred to a builder run at Build time; its output goes through the same substitution pass. Deferred slots
+/// require <see cref="Build(in MongoNativeBuildContext)"/>; the values-only overload throws rather than emit a
+/// pipeline with a hole.
 /// </remarks>
 internal sealed class MongoPipelineFactory
 {
@@ -65,15 +59,10 @@ internal sealed class MongoPipelineFactory
     }
 
     /// <summary>
-    /// One slot of the compiled pipeline template: either a <see cref="BsonDocument"/> rendered once at
-    /// <see cref="Create"/> time, or a builder deferred to
-    /// <see cref="Build(in MongoNativeBuildContext)"/> time.
+    /// One template slot: a <see cref="BsonDocument"/> rendered at <see cref="Create"/> time, or a builder
+    /// deferred to <see cref="Build(in MongoNativeBuildContext)"/> for a stage whose key set depends on runtime
+    /// state.
     /// </summary>
-    /// <remarks>
-    /// Deferral exists for a stage whose document SHAPE depends on runtime state — which keys are present
-    /// at all, not just which values they carry — so the compile-time template cannot represent it and a
-    /// value sentinel cannot substitute for it.
-    /// </remarks>
     internal readonly struct StageSlot
     {
         private readonly BsonDocument? _document;
@@ -85,25 +74,16 @@ internal sealed class MongoPipelineFactory
             _builder = builder;
         }
 
-        /// <summary>A slot holding a document rendered at compile time.</summary>
         internal static StageSlot Rendered(BsonDocument document) => new(document, null);
 
-        /// <summary>A slot whose document is constructed per execution, at Build time.</summary>
         internal static StageSlot Deferred(Func<MongoNativeBuildContext, BsonDocument> builder) => new(null, builder);
 
-        /// <summary>Whether this slot's document is built per execution rather than baked at compile time.</summary>
         internal bool IsDeferred => _builder is not null;
 
-        /// <summary>
-        /// Deep-clones the baked template document, so per-execution substitution never mutates the template.
-        /// Only valid when <see cref="IsDeferred"/> is <see langword="false"/>.
-        /// </summary>
+        /// <summary>Deep-clones the template document so substitution never mutates it. Not for deferred slots.</summary>
         internal BsonDocument CloneDocument() => (BsonDocument)_document!.DeepClone();
 
-        /// <summary>
-        /// Invokes the deferred builder to construct this execution's document.
-        /// Only valid when <see cref="IsDeferred"/> is <see langword="true"/>.
-        /// </summary>
+        /// <summary>Runs the deferred builder. Only for deferred slots.</summary>
         internal BsonDocument Build(in MongoNativeBuildContext context) => _builder!(context);
     }
 
@@ -112,12 +92,8 @@ internal sealed class MongoPipelineFactory
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// Renders each stage in <paramref name="stages"/> to a <see cref="BsonDocument"/> using one
-    /// shared <see cref="PlaceholderTable"/>, then returns a <see cref="MongoPipelineFactory"/>
-    /// that can bind parameter values per execution.
+    /// Renders <paramref name="stages"/> into a template sharing one <see cref="PlaceholderTable"/>.
     /// </summary>
-    /// <param name="stages">The typed pipeline stages produced by the lowerer.</param>
-    /// <param name="renderer">The renderer used to emit <c>$match</c> bodies and scalar values.</param>
     public static MongoPipelineFactory Create(
         IReadOnlyList<MongoPipelineStage> stages,
         MongoQueryLanguageRenderer renderer)
@@ -140,13 +116,9 @@ internal sealed class MongoPipelineFactory
         return new MongoPipelineFactory(template, placeholders);
     }
 
-    // Renders an operand sub-pipeline's stages. Mostly one document per stage, but a RIGHT-NESTED set-op
-    // operand (A.Concat(B.Union(C))) puts a MongoUnionWithStage INSIDE another one's operand stages, and
-    // that expands to two documents for a Union link ($unionWith + the dedup pair). RenderStage returns a
-    // single document and has no case for the set-op stages, so nested ones must be expanded here —
-    // routing them through RenderStage instead would hit its switch default. Everything else delegates
-    // unchanged, which keeps a deferred stage (only $vectorSearch, which a set-op operand can never carry)
-    // failing closed rather than being silently rendered without its placeholder.
+    // Renders an operand sub-pipeline. A right-nested set op (A.Concat(B.Union(C))) puts a set-op stage inside
+    // an operand; it expands to several documents, so it's handled here rather than by single-document
+    // RenderStage. Anything else, including a deferred stage, goes to RenderStage and fails closed there.
     private static IEnumerable<BsonDocument> RenderOperandStages(
         IEnumerable<MongoPipelineStage> stages,
         MongoQueryLanguageRenderer renderer,
@@ -192,9 +164,8 @@ internal sealed class MongoPipelineFactory
                 }),
             MongoReplaceRootStage replaceRoot => new BsonDocument("$replaceRoot",
                 new BsonDocument("newRoot", replaceRoot.MergeOwnerKeySentinels
-                    // The sentinels are nested under ONE reserved wrapper field. A real stored property can
-                    // therefore only collide with the single ShadowField name, never with OwnerKeyField/
-                    // OrdinalField individually — those are no longer top-level keys of the merged document.
+                    // Sentinels are nested under one reserved wrapper field, so a stored property can only
+                    // collide with ShadowField, not OwnerKeyField/OrdinalField.
                     ? new BsonDocument("$mergeObjects", new BsonArray
                     {
                         "$" + replaceRoot.NewRoot,
@@ -215,20 +186,15 @@ internal sealed class MongoPipelineFactory
             MongoAddFieldsStage addFields => RenderAddFields(addFields, placeholders),
             MongoUnsetStage unset => RenderUnset(unset),
             MongoCountStage count => new BsonDocument("$count", count.OutputField),
-            // The $vectorSearch score companion: a fixed document, so nothing about it is deferred. It is a
-            // payload-free marker stage precisely so this BSON lives here rather than in the lowerer.
+            // The $vectorSearch score companion: a fixed document, not deferred.
             MongoVectorSearchScoreStage => new BsonDocument("$addFields",
                 new BsonDocument(MongoVectorSearchScoreStage.ScoreField,
                     new BsonDocument("$meta", "vectorSearchScore"))),
             MongoGroupAccumulatorStage group => RenderGroup(group, placeholders),
             MongoGroupStage keyedGroup => RenderKeyedGroup(keyedGroup, placeholders),
-            // EF-322: the first half of the whole-entity Distinct() dedup pattern — mirrors the literal BSON
-            // RenderUnionWith already emits for Union's own dedup, just via a dedicated marker stage instead
-            // of a MongoGrouping (which models a NAMED key plus accumulators, neither of which apply here).
+            // First half of the whole-entity Distinct() dedup, same BSON as RenderUnionWith's Union dedup.
             MongoGroupByRootStage => new BsonDocument("$group", new BsonDocument("_id", "$$ROOT")),
-            // EF-322: the first half of the Last()/LastOrDefault()-with-no-explicit-order reducer pattern —
-            // mirrors the literal BSON MongoGroupByRootStage emits just above, just keying an accumulator
-            // field ("_last") off "$$ROOT" instead of grouping by it.
+            // First half of the unordered Last()/LastOrDefault() pattern.
             MongoLastRowStage => new BsonDocument("$group",
                 new BsonDocument { { "_id", BsonNull.Value }, { "_last", new BsonDocument("$last", "$$ROOT") } }),
             _ => throw new NativeTranslationNotSupportedException(
@@ -240,18 +206,14 @@ internal sealed class MongoPipelineFactory
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// Builds the deferred slot for a <c>$vectorSearch</c> stage: the pre-filter is rendered now, at
-    /// compile time, into the shared placeholder table; everything else is constructed per execution.
+    /// Builds the deferred slot for <c>$vectorSearch</c>: the pre-filter is rendered now into the shared
+    /// placeholder table; the rest is built per execution.
     /// </summary>
     /// <remarks>
-    /// Deferral is necessary because the body's shape — whether <c>exact</c>/<c>numCandidates</c> is present
-    /// at all, and which index is used — depends on a runtime <c>VectorQueryOptions</c>, which no value
-    /// sentinel can express. The driver's own stage builder is reused (rather than hand-writing the body)
-    /// because it derives <c>numCandidates</c> from the runtime <c>limit</c> when left null, which keeps the
-    /// emitted MQL identical to the driver-LINQ path's. The pre-filter is rendered once here so a parameter
-    /// inside it lands in the same <see cref="PlaceholderTable"/> as every other stage's and resolves in
-    /// Build's ordinary substitution pass; it is deep-cloned per execution because that pass rewrites
-    /// sentinels in place.
+    /// Deferred because the presence of <c>exact</c>/<c>numCandidates</c> and the index depend on runtime
+    /// <c>VectorQueryOptions</c>. The driver's stage builder is reused so <c>numCandidates</c> is derived from
+    /// <c>limit</c> exactly as on the driver-LINQ path. The pre-filter is deep-cloned per execution because
+    /// substitution rewrites sentinels in place.
     /// </remarks>
     private static Func<MongoNativeBuildContext, BsonDocument> CreateVectorSearchBuilder(
         MongoVectorSearch search,
@@ -266,8 +228,7 @@ internal sealed class MongoPipelineFactory
         {
             var entityType = search.EntityType;
 
-            // Resolved via NativeQueryParameter, which bridges the EF8/EF9-vs-EF10 query-parameter node
-            // difference, exactly as the driver-LINQ bridge's own ParamValue<T> does.
+            // NativeQueryParameter bridges the EF8/EF9-vs-EF10 query-parameter node difference.
             var queryVector = (QueryVector)ResolveVectorSearchArgument(search.QueryVectorArgument, context.ParameterValues)!;
             var limit = (int)ResolveVectorSearchArgument(search.LimitArgument, context.ParameterValues)!;
             var options = (VectorQueryOptions?)ResolveVectorSearchArgument(search.OptionsArgument, context.ParameterValues);
@@ -281,9 +242,8 @@ internal sealed class MongoPipelineFactory
             context.AdditionalState[MongoExecutableQuery.VectorQueryProperty] = resolved.Member;
             context.AdditionalState[MongoExecutableQuery.VectorQueryIndexName] = resolved.Options.IndexName!;
 
-            // A BsonDocumentFilterDefinition, not the bridge's ExpressionFilterDefinition, since the
-            // pre-filter is already rendered; the driver embeds it verbatim so its sentinels ride through to
-            // the substitution pass.
+            // The pre-filter is already rendered; the driver embeds a BsonDocumentFilterDefinition verbatim, so
+            // its sentinels survive to the substitution pass.
             object? filterDefinition = preFilterTemplate is null
                 ? null
                 : Activator.CreateInstance(
@@ -299,8 +259,7 @@ internal sealed class MongoPipelineFactory
     }
 
     /// <summary>
-    /// Resolves one <c>VectorSearch</c> argument node to its runtime value: an EF query parameter is looked
-    /// up in this execution's parameter values; a constant is read directly.
+    /// Resolves a <c>VectorSearch</c> argument (query parameter or constant) to its runtime value.
     /// </summary>
     private static object? ResolveVectorSearchArgument(
         Expression argument,
@@ -319,8 +278,7 @@ internal sealed class MongoPipelineFactory
         if (argument is ConstantExpression constant)
             return constant.Value;
 
-        // The slot is only ever populated for argument nodes of one of the two shapes above; anything else
-        // must have been declined at binding time.
+        // Other shapes are declined at binding time.
         throw new NativeTranslationNotSupportedException(
             $"A VectorSearch argument must be a query parameter or a constant; got '{argument.NodeType}'.");
     }
@@ -336,9 +294,8 @@ internal sealed class MongoPipelineFactory
         var body = new BsonDocument();
         foreach (var ordering in stage.Orderings)
         {
-            // A computed key arrives here already rewritten by the lowerer into a MongoElementRefExpression
-            // naming the synthetic field its preceding $set wrote. $sort takes field paths, so both arms
-            // contribute a bare path, never a "$"-prefixed aggregation field reference.
+            // A computed key was rewritten by the lowerer to a MongoElementRefExpression naming the field its
+            // preceding $set wrote. $sort takes bare paths, never "$"-prefixed references.
             var path = ordering.KeySelector switch
             {
                 MongoFieldExpression field => field.ElementName,
@@ -362,11 +319,8 @@ internal sealed class MongoPipelineFactory
         {
             var rendered = MongoAggregationExpressionRenderer.Render(projection.Expression, placeholders);
 
-            // Unlike RenderAddFields, a bare constant/parameter CAN be this stage's whole projected value
-            // (a bare Select(x => 8), or one leaf of an anonymous projection admitted by
-            // NativeProjectionBinder's TryTranslateLeaf gate) — $project reads a bare value as an
-            // inclusion(1)/exclusion(0) flag rather than a literal, so it must be $literal-wrapped exactly
-            // like RenderAddFields already does, or a 0/false constant aborts the whole aggregate.
+            // $project reads a bare value as an inclusion/exclusion flag, so a constant/parameter leaf
+            // (Select(x => 8)) must be $literal-wrapped, or a 0/false constant aborts the aggregate.
             if (projection.Expression is MongoConstantExpression or MongoParameterExpression)
             {
                 rendered = new BsonDocument("$literal", rendered);
@@ -384,21 +338,9 @@ internal sealed class MongoPipelineFactory
         return new BsonDocument("$project", body);
     }
 
-    // $set (a.k.a. $addFields) adds computed fields, leaving existing ones alone. Unlike $project, a bare
-    // scalar here is a LITERAL, not an inclusion flag — which is what lets a constant sort key
-    // (OrderBy(x => 1)) render as { "__sort0" : 1 } and mean it.
-    //
-    // A top-level bare MongoConstantExpression/MongoParameterExpression body is $literal-wrapped:
-    // MongoAggregationExpressionRenderer.Render emits it unwrapped, and MongoDB reads an unwrapped string
-    // value starting with '$' as a FIELD PATH rather than a literal — so OrderBy(x => "$Label") (or a
-    // captured string parameter whose runtime value happens to start with '$') would otherwise silently sort
-    // by the named field instead of tying every row on the literal string. RenderProject wraps the same way
-    // for the same inclusion/exclusion-flag reason (see its own comment); the predicate ($expr) path shares
-    // this renderer too, but a bare constant is never a predicate's whole body.
-    //
-    // Substitution survives the wrap: SubstituteValue tests every BsonValue for a placeholder sentinel before
-    // recursing into it as a document, so a parameter sentinel nested inside { "$literal": <sentinel> } is
-    // still found and replaced, producing { "$literal": <runtime value> }.
+    // A bare constant/parameter value is $literal-wrapped: MongoDB reads an unwrapped string starting with '$'
+    // as a field path, so OrderBy(x => "$Label") (or such a parameter value) would silently sort by that field.
+    // SubstituteValue still finds a sentinel inside { "$literal": <sentinel> }.
     private static BsonDocument RenderAddFields(MongoAddFieldsStage stage, PlaceholderTable placeholders)
     {
         var body = new BsonDocument();
@@ -467,14 +409,8 @@ internal sealed class MongoPipelineFactory
         return new BsonDocument("$group", group);
     }
 
-    // EF-322 SP1 fix-pass: a constant/parameter key part (admitted once TryBindGroupKey started routing
-    // through TryTranslateValue) is rendered as $group's bare _id value or an _id sub-field — unlike an
-    // accumulator operand (which is always wrapped inside an operator document like {$sum: expr}, so a
-    // "$"-prefixed string operand can't be mistaken for a top-level field-path key), a raw string key value
-    // would otherwise be indistinguishable from a genuine field reference to the server, silently grouping by
-    // the WRONG thing instead of the literal value. $literal-wrap unconditionally for any constant/parameter,
-    // matching the identical, pre-existing convention this method already applies to accumulator operands
-    // (immediately below) and RenderAddFields applies to $set values.
+    // A constant/parameter key part is $literal-wrapped: a "$"-prefixed string as _id (or an _id sub-field)
+    // would otherwise be read as a field path and silently group by that field.
     private static BsonValue RenderKeyPart(MongoExpression fieldRef, PlaceholderTable placeholders)
     {
         var rendered = MongoAggregationExpressionRenderer.Render(fieldRef, placeholders);
@@ -495,13 +431,9 @@ internal sealed class MongoPipelineFactory
 
     private static BsonDocument RenderLookup(LookupExpression lookup)
     {
-        // EF-449's CorrelatedReducer kind needs the localField/foreignField+pipeline shape specifically —
-        // an indexable equality join PLUS a supplementary pipeline ($match/$sort/$limit:1) MongoDB
-        // supports combining directly, unlike LookupExpression.ToLookupStageDocument()'s let+pipeline
-        // shape (which correlates via $expr instead, because EF-450's NestedInclude kind has no single
-        // equality-comparable field of its own to hand to localField/foreignField at this level — it
-        // exists purely to carry a nested ThenInclude's own $lookup(s), matching the shape the driver-LINQ
-        // fallback bridge already emits for that kind).
+        // CorrelatedReducer uses localField/foreignField plus a pipeline ($match/$sort/$limit:1): an indexable
+        // equality join. ToLookupStageDocument's let+pipeline ($expr) shape is for kinds like NestedInclude,
+        // which have no single equality field at this level.
         if (lookup.PipelineKind == LookupPipelineKind.CorrelatedReducer)
         {
             var lookupDoc = new BsonDocument
@@ -521,8 +453,8 @@ internal sealed class MongoPipelineFactory
     private static BsonDocument RenderUnwind(LookupExpression lookup, bool preserveNullAndEmptyArrays)
         => lookup.ToUnwindStageDocument(preserveNullAndEmptyArrays);
 
-    // Renders a $unionWith over the operand's nested pipeline into the SAME placeholder table (so a
-    // parameter inside the operand substitutes at Build time), then, for Union, the full-document dedup.
+    // Renders $unionWith with the operand pipeline in the shared placeholder table, then, for Union, the
+    // full-document dedup.
     private static IEnumerable<BsonDocument> RenderUnionWith(
         MongoUnionWithStage stage,
         MongoQueryLanguageRenderer renderer,
@@ -545,13 +477,10 @@ internal sealed class MongoPipelineFactory
         }
     }
 
-    // Renders a synthesized Intersect/Except as a source-tagging pipeline. Both operands are the SAME
-    // collection, so full-document ($$ROOT) value-equality is well-defined. Each side is deduped and tagged
-    // (_a for the outer/first operand, _b for the inner/second), unioned, re-unified by full document
-    // ($group{_id:"$_doc"}), then discriminated by the final $match. Intersect keeps rows present in both
-    // (_a && _b); Except keeps rows in the first operand only (_a && !_b). The operand stages render into the
-    // SAME placeholder table (a parameter inside the operand substitutes at Build time). _a/_b are siblings
-    // of the wrapped document (under _doc), so they never collide with real entity fields.
+    // Intersect/Except as a source-tagging pipeline over the same collection (so $$ROOT equality is
+    // well-defined): dedup and tag each side (_a first, _b second), union, regroup by full document, then
+    // $match (Intersect: _a && _b; Except: _a && !_b). _a/_b sit beside _doc, so they can't collide with
+    // entity fields.
     private static IEnumerable<BsonDocument> RenderSetDifference(
         MongoSetDifferenceStage stage,
         MongoQueryLanguageRenderer renderer,
@@ -603,21 +532,14 @@ internal sealed class MongoPipelineFactory
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// Clones the compiled template and substitutes every placeholder sentinel with the
-    /// serialized runtime value for the corresponding entry in <see cref="_placeholders"/>.
+    /// Clones the template and substitutes every placeholder sentinel with its serialized runtime value.
     /// </summary>
-    /// <param name="parameterValues">
-    /// The named parameter values for this execution. Must contain an entry for every
-    /// parameter name recorded in <see cref="_placeholders"/>; a missing key is a bug
-    /// in the caller and throws <see cref="InvalidOperationException"/>.
-    /// </param>
-    /// <returns>A freshly materialized <see cref="BsonDocument"/> array ready to send to the server.</returns>
+    /// <param name="parameterValues">Must contain every parameter recorded in <see cref="_placeholders"/>.</param>
     /// <exception cref="InvalidOperationException">
-    /// The template contains a deferred stage slot, which cannot be built from parameter values alone.
+    /// A parameter is missing, or the template has a deferred slot (use <see cref="Build(in MongoNativeBuildContext)"/>).
     /// </exception>
     public BsonDocument[] Build(IReadOnlyDictionary<string, object?> parameterValues)
     {
-        // Fail loudly rather than emit a pipeline with a hole where the deferred stage should be.
         if (_hasDeferredSlot)
             throw new InvalidOperationException(
                 "MongoPipelineFactory.Build(parameterValues) cannot bind a template containing a deferred "
@@ -630,24 +552,15 @@ internal sealed class MongoPipelineFactory
         for (var i = 0; i < _template.Count; i++)
             result[i] = SubstituteDocument(_template[i].CloneDocument(), parameterValues);
 
-        // Validate/normalize paging bounds: MongoDB rejects $limit <= 0 and $skip < 0 server-side. A $skip < 0
-        // still throws the EF-correct exception (ArgumentOutOfRangeException) client-side; a $limit: 0 is
-        // rewritten to an always-false $match instead — see NormalizePagingStages' remarks.
         NormalizePagingStages(result);
 
         return result;
     }
 
     /// <summary>
-    /// Builds this execution's pipeline: constructs every deferred slot at its own stage position, clones
-    /// every baked slot, then substitutes every placeholder sentinel across the whole result.
+    /// Builds this execution's pipeline: runs deferred slots, clones baked ones, then substitutes sentinels
+    /// across the whole result (including deferred output, e.g. a vector-search pre-filter).
     /// </summary>
-    /// <param name="context">
-    /// The per-execution build state. Its <see cref="MongoNativeBuildContext.ParameterValues"/> must contain
-    /// an entry for every parameter name recorded in <see cref="_placeholders"/>; a missing key is a bug in
-    /// the caller and throws <see cref="InvalidOperationException"/>.
-    /// </param>
-    /// <returns>A freshly materialized <see cref="BsonDocument"/> array ready to send to the server.</returns>
     public BsonDocument[] Build(in MongoNativeBuildContext context)
     {
         var parameterValues = context.ParameterValues;
@@ -657,13 +570,8 @@ internal sealed class MongoPipelineFactory
         {
             var slot = _template[i];
 
-            // A deferred slot is constructed HERE, at its own stage position, because its document shape
-            // depends on this execution's state; a baked slot is cloned exactly as it always was.
             var document = slot.IsDeferred ? slot.Build(context) : slot.CloneDocument();
 
-            // Substitution then runs over the deferred document as well: whatever the deferred builder
-            // embeds may itself have been rendered at compile time into the SHARED PlaceholderTable (a
-            // vector-search pre-filter, for instance), so its sentinels must resolve in this same pass.
             result[i] = SubstituteDocument(document, parameterValues);
         }
 
@@ -673,15 +581,10 @@ internal sealed class MongoPipelineFactory
     }
 
     /// <summary>
-    /// A <c>$limit: 0</c> is meaningless to MongoDB's own <c>$limit</c> stage (EF-323) — validated and
-    /// rejected server-side, and previously rejected here too with a client-side <see
-    /// cref="ArgumentOutOfRangeException"/> for the same reason. That client-side reject reintroduced, for the
-    /// native path, exactly the gap EF-254 closed on the driver-LINQ bridge
-    /// (<c>MongoEFToLinqTranslatingExpressionVisitor.TryRewriteZeroTake</c>): a plain <c>Take(0)</c> should
-    /// answer an empty result, not abort. Rather than throw, a <c>$limit: 0</c> stage is rewritten in place to
-    /// the same always-false <c>$match</c> the driver-LINQ bridge's <c>Where(_ =&gt; false)</c> rewrite renders
-    /// — an impossible BSON type code makes every document fail the match regardless of its <c>_id</c>'s
-    /// actual type.
+    /// MongoDB rejects <c>$limit: 0</c>, but <c>Take(0)</c> must return empty, so it is rewritten to an
+    /// always-false <c>$match</c> (an impossible <c>$type</c>), as the driver-LINQ bridge does
+    /// (<c>MongoEFToLinqTranslatingExpressionVisitor.TryRewriteZeroTake</c>). Negative <c>$limit</c> or
+    /// <c>$skip</c> throws <see cref="ArgumentOutOfRangeException"/> client-side.
     /// </summary>
     private static void NormalizePagingStages(BsonDocument[] pipeline)
     {
@@ -729,7 +632,6 @@ internal sealed class MongoPipelineFactory
         BsonDocument doc,
         IReadOnlyDictionary<string, object?> parameterValues)
     {
-        // Work on the element list directly so we can replace in place.
         for (var i = 0; i < doc.ElementCount; i++)
         {
             var element = doc.GetElement(i);
@@ -763,16 +665,12 @@ internal sealed class MongoPipelineFactory
     {
         for (var i = 0; i < array.Count; i++)
         {
-            // Read the element ONCE: a lazily-materializing array (see below) hands back a fresh BsonValue
-            // per access, so re-reading it would defeat the reference check.
+            // Read once: a lazily-materializing array returns a fresh BsonValue per access.
             var element = array[i];
             var newValue = SubstituteValue(element, parameterValues);
 
-            // Assign only when the element was actually REPLACED (a sentinel), mirroring SubstituteDocument.
-            // Writing back an identical reference is a no-op for a normal array, but it THROWS for a
-            // read-only one — and a deferred slot can embed one: the driver renders a $vectorSearch
-            // queryVector as its own read-only QueryVectorBsonArray, whose elements are baked scalars with
-            // nothing to substitute.
+            // Assign only on replacement: writing to the driver's read-only $vectorSearch QueryVectorBsonArray
+            // throws.
             if (!ReferenceEquals(newValue, element))
                 array[i] = newValue;
         }
@@ -795,14 +693,9 @@ internal sealed class MongoPipelineFactory
                 $"MongoPipelineFactory.Build: parameter '{name}' (placeholder index {index}) "
                 + "is not present in parameterValues. This is a bug in the query compilation pipeline.");
 
-        // Entity-list-Contains rewrite (`customers.Contains(c)`): the raw parameter value is an ARRAY OF
-        // WHOLE ENTITY INSTANCES, not an array of the property's own values — extract the key member's own
-        // CLR value from EACH non-null element now, per execution, mirroring the single-entity extraction
-        // immediately below but per-element. A null element passes through as a BSON null rather than being
-        // extracted (GetGetter has nothing to read from a null instance) — see
-        // MongoExpressionTranslator.EntityEquality.cs's TryTranslateEntityListContains for why a null
-        // element is meaningful to keep rather than filter out. Checked BEFORE the single-entity branch
-        // immediately below, which would otherwise misinterpret this array as a single entity value.
+        // Entity-list Contains (`customers.Contains(c)`): the value is an array of entities; extract each key.
+        // Null elements stay BSON null (see MongoExpressionTranslator.TryTranslateEntityListContains). Must
+        // precede the single-entity branch, which would misread the array as one entity.
         if (entityMemberProperty is not null && isArray)
         {
             var getter = entityMemberProperty.GetGetter();
@@ -822,19 +715,13 @@ internal sealed class MongoPipelineFactory
             return array;
         }
 
-        // Entity-equality rewrite (`c == local`): the raw parameter value is a WHOLE ENTITY instance, not
-        // the value to compare — extract the key member's own CLR value from it now, per execution, mirroring
-        // the regexKind deferred-computation pattern immediately below. Applied before the regexKind/serializer
-        // branches so the extracted value flows through the ordinary serialization path unchanged.
+        // Entity equality (`c == local`): the value is an entity; extract its key before normal serialization.
         if (entityMemberProperty is not null && rawValue is not null)
             rawValue = entityMemberProperty.GetGetter().GetClrValue(rawValue);
 
-        // `args[0]`-shaped access into a query-parameter ARRAY (a compiled query's own array-typed lambda
-        // parameter, see NativeQueryParameter.TryGetParameterArrayElementIndex), OR a funcletized
-        // `Tuple.Create(...)` operand (see MongoExpressionTranslator.TupleEquality.cs's TryDecomposeTupleOperand):
-        // either way the raw parameter value is the WHOLE array/list or tuple, not the element to compare —
-        // extract that element now, per execution, since its value (and, for an array, even whether the index
-        // is in range) can't be known until the runtime value is known.
+        // `args[0]` into a compiled query's array parameter (NativeQueryParameter.TryGetParameterArrayElementIndex)
+        // or an element of a funcletized Tuple (MongoExpressionTranslator.TryDecomposeTupleOperand): the value is
+        // the whole list/tuple, so extract the element per execution.
         if (arrayElementIndex is int elementIndex)
         {
             rawValue = rawValue switch
@@ -847,9 +734,8 @@ internal sealed class MongoPipelineFactory
             };
         }
 
-        // A parameterized string.StartsWith/EndsWith/Contains term: the escape+anchor transform can only
-        // run now, per execution, since render (compile) time had no value to escape. Mirrors
-        // MongoQueryLanguageRenderer.RenderRegex's constant-term branch exactly, just deferred.
+        // Parameterized StartsWith/EndsWith/Contains: escape and anchor per execution, matching
+        // MongoQueryLanguageRenderer.RenderRegex's constant branch.
         if (regexKind is not null)
         {
             var pattern = MongoRegexPatternBuilder.BuildPattern((string)rawValue!, regexKind.Value);
@@ -860,8 +746,7 @@ internal sealed class MongoPipelineFactory
         if (serializer is null)
             return BsonValue.Create(rawValue);
 
-        // Array placeholder (a parameterized $in/$nin collection): serialize each element through
-        // the field's element serializer into a BsonArray.
+        // Parameterized $in/$nin collection: serialize each element with the element serializer.
         if (isArray)
         {
             var array = new BsonArray();
@@ -874,11 +759,8 @@ internal sealed class MongoPipelineFactory
             return array;
         }
 
-        // Coerce the CLR value to the serializer's expected type, then serialize through the shared
-        // "v"-wrapper block so a run-time parameter and a compile-time constant of the same value emit
-        // identical BSON. The compile-time path (MongoQueryLanguageRenderer.ToBsonValue) coerces to the
-        // property's ClrType; here we coerce to the serializer's ValueType — these differ for
-        // value-converted properties. No try/catch: the value was already validated at translation time.
+        // Coerces to the serializer's ValueType (which differs from the property ClrType the compile-time path
+        // uses when a value converter is present) and serializes via the shared path used for constants.
         rawValue = BsonValueSerializer.Coerce(serializer.ValueType, rawValue);
         return BsonValueSerializer.SerializeThroughWriter(serializer, rawValue);
     }

@@ -22,9 +22,7 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query.Expressions;
 
 public class ArrayAliasProjectionExpressionTests
 {
-    // A minimal model with one owned collection, built through a real ModelBuilder (via the established
-    // SingleEntityDbContext unit-test helper — see NativeSelectManyBinderTests for the same pattern) so the
-    // INavigation and IEntityType are genuine rather than mocked.
+    // Real (not mocked) model with one owned collection, built via SingleEntityDbContext.
     private static INavigation GetPostsNavigation()
     {
         using var db = SingleEntityDbContext.Create<Blog>(mb => mb.Entity<Blog>().OwnsMany(b => b.Posts));
@@ -42,9 +40,8 @@ public class ArrayAliasProjectionExpressionTests
         Assert.Equal(typeof(IEnumerable<Post>), sut.Type);
     }
 
-    // The node is alias-addressed, so it deliberately has NO document-path field name. This is what
-    // tells MongoProjectionBindingRemovingExpressionVisitor.VisitBinary to keep the alias it already
-    // resolved from the ProjectionExpression rather than substituting a navigation element name.
+    // No document-path field name: that is what makes MongoProjectionBindingRemovingExpressionVisitor.VisitBinary
+    // keep the resolved alias instead of substituting a navigation element name.
     [Fact]
     public void ArrayFieldName_is_null_because_the_array_is_addressed_by_projection_alias()
     {
@@ -76,8 +73,7 @@ public class ArrayAliasProjectionExpressionTests
         Assert.Equal(a.GetHashCode(), b.GetHashCode());
     }
 
-    // Equality must NOT collapse with the navigation-driven sibling: the two nodes address the same
-    // array by different mechanisms, and _projectionBindings is keyed on the node, so conflating them
+    // Must not equal the navigation-driven sibling: _projectionBindings is keyed on the node, so conflating them
     // would let a document-path read satisfy an alias lookup.
     [Fact]
     public void Is_not_equal_to_an_object_array_projection_for_the_same_navigation()

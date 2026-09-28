@@ -26,8 +26,8 @@ using Xunit;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// <c>string.FirstOrDefault()</c>/<c>LastOrDefault()</c> (EF-322 Task 4) — see
-/// <see cref="MongoStringFirstOrLastExpression"/>'s own remarks for the empty-string contract this pins.
+/// Translation of string <c>FirstOrDefault()</c>/<c>LastOrDefault()</c> and <c>string.Join</c>; see
+/// <see cref="MongoStringFirstOrLastExpression"/> for the empty-string contract.
 /// </summary>
 public class MongoExpressionTranslatorStringOperatorTests
 {
@@ -47,10 +47,8 @@ public class MongoExpressionTranslatorStringOperatorTests
     [Fact]
     public void FirstOrDefault_equality_against_char_literal_translates_without_toInt_wrap()
     {
-        // C# lowers char equality to int (`Convert(x.FirstOrDefault(), Int32) == 83`) — this pins that the
-        // translator unwraps that Convert and re-expresses the literal side as the matching one-character
-        // string, rather than emitting a $toInt that would crash the server against a non-numeral string
-        // (see TranslateComparisonCore's own remarks and MongoStringFirstOrLastExpression's remarks).
+        // C# lowers char equality to int (`Convert(x.FirstOrDefault(), Int32) == 83`); the translator must
+        // compare one-character strings instead, since $toInt on a non-numeral string is a server error.
         var translator = BuildTranslator();
         Expression<Func<Widget, bool>> pred = w => w.Text.FirstOrDefault() == 'S';
 
@@ -64,13 +62,8 @@ public class MongoExpressionTranslatorStringOperatorTests
     [Fact]
     public void LastOrDefault_equality_against_null_char_literal_translates_to_one_character_string()
     {
-        // The '\0' (default(char)) edge — review fix (EF-322 Task 4): the comparison's other side must be
-        // the one-character string "\0", NOT an Int32 zero. RenderStringFirstOrLast's own empty-source
-        // ("then") branch and its non-empty $substrCP ("else") branch must render the SAME BSON type, because
-        // a genuinely non-empty source whose real last character IS '\0' (a legal embedded-NUL string) takes
-        // the "else" branch and produces a one-character STRING — mixing an Int32 zero into the "then" branch
-        // would make that case's comparison cross BSON type brackets and wrongly answer false. See
-        // MongoStringFirstOrLastExpression's own remarks.
+        // '\0' must compare as the string "\0", not Int32 zero: a string ending in an embedded NUL yields a
+        // one-character string, and comparing it against an int would cross BSON types and answer false.
         var translator = BuildTranslator();
         Expression<Func<Widget, bool>> pred = w => w.Text.LastOrDefault() == '\0';
 
@@ -84,9 +77,7 @@ public class MongoExpressionTranslatorStringOperatorTests
     [Fact]
     public void FirstOrDefault_relational_comparison_against_char_literal_translates()
     {
-        // TranslateComparisonCore's char-comparison unwrap/re-express fix applies to EVERY comparison
-        // operator the general $expr fallback handles, not just Equal — pin a relational operator too
-        // (review coverage gap, EF-322 Task 4).
+        // The char-comparison rewrite applies to relational operators too, not just Equal.
         var translator = BuildTranslator();
         Expression<Func<Widget, bool>> pred = w => w.Text.FirstOrDefault() > 'a';
 
@@ -101,17 +92,9 @@ public class MongoExpressionTranslatorStringOperatorTests
     [Fact]
     public void FirstOrDefault_equality_against_a_parameterized_char_declines()
     {
-        // The OTHER side's runtime value isn't known at translate time for a genuine EF query PARAMETER
-        // (a captured/closed-over char in a real compiled query), so there is nothing to re-express in the
-        // one-character-string shape — TranslateComparisonCore must decline outright rather than let the
-        // original $toInt-wrapped form (which would crash the server against a non-numeral string) reach
-        // render/execution time (review coverage gap, EF-322 Task 4). Built by hand in the exact EF
-        // query-parameter node shape (see MongoExpressionTranslatorTests' own Test 16b precedent), including
-        // the SAME Convert(_, Int32) widening char-comparison lowering wraps both sides in, rather than a
-        // plain C# lambda — a closure-captured local in a hand-built Expression<Func<>> is a closure-class
-        // MemberExpression, not the EF query-parameter shape NativeQueryParameter recognizes, so it would
-        // decline for an unrelated reason (no query-parameter recognition at all) rather than exercising this
-        // method's own OTHER-side-not-constant branch.
+        // A query-parameter char can't be re-expressed as a string at translate time, so this must decline
+        // rather than emit the $toInt form. Built by hand in EF's query-parameter node shape: a lambda-captured
+        // local would be a closure MemberExpression and decline for an unrelated reason.
         var wParam = Expression.Parameter(typeof(Widget), "w");
         var firstOrDefaultCall = Expression.Call(
             typeof(Enumerable).GetMethods()
@@ -205,8 +188,7 @@ public class MongoExpressionTranslatorStringOperatorTests
     [Fact]
     public void FirstOrDefault_over_char_array_receiver_declines()
     {
-        // The receiver's static type is char[], not string — TryMatchStringFirstOrLastMethod requires the
-        // argument's Type to be exactly System.String, so this must not be misrecognized as the string shape.
+        // A char[] receiver must not be misrecognized as the string shape.
         var call = Expression.Call(
             typeof(Enumerable).GetMethods()
                 .Single(m => m.Name == nameof(Enumerable.FirstOrDefault) && m.GetParameters().Length == 1)
@@ -220,14 +202,9 @@ public class MongoExpressionTranslatorStringOperatorTests
     [Fact]
     public void Join_over_array_literal_with_null_element_translates_to_ifNull_wrapped_interleaved_concat()
     {
-        // EF-322 Task 6: string.Join("|", new[] { c.Text, foo, (string?)null, "bar" }) — a field, a captured
-        // local (constant-folded), a literal null, and a string constant. Pins three things: (1) the separator
-        // is interleaved BETWEEN each pair of elements, not just prefixed/appended, (2) every element is
-        // wrapped in a MongoCoalesceExpression (rendered $ifNull) so the null element contributes "" rather
-        // than nulling out the whole $concat (the hazard this task's plan calls out explicitly), and (3, final-
-        // review fix — finding 4) the separator itself is ALSO wrapped in a MongoCoalesceExpression the same
-        // way, so a null/parameterized-null separator degrades the same way rather than nulling the whole
-        // $concat.
+        // string.Join("|", new[] { w.Text, "foo", null, "bar" }): the separator is interleaved between elements,
+        // and every element and separator is $ifNull-wrapped so a null contributes "" instead of nulling the
+        // whole $concat.
         var translator = BuildTranslator();
         var parameter = Expression.Parameter(typeof(Widget), "w");
         var textAccess = Expression.Property(parameter, nameof(Widget.Text));
@@ -277,10 +254,7 @@ public class MongoExpressionTranslatorStringOperatorTests
     [Fact]
     public void Join_with_null_separator_wraps_separator_in_ifNull_too()
     {
-        // Final-review fix — finding 4: string.Join(null, new[] { "a", "b" }) — a literal null separator.
-        // Before the fix, only the ELEMENTS were coalesced against "", so a null separator would null out
-        // every interleaved position and the whole $concat via $concat's own null-propagation. The separator
-        // operand must be wrapped in a MongoCoalesceExpression exactly like each element.
+        // A null separator must be coalesced like the elements, or $concat's null-propagation nulls the result.
         var translator = BuildTranslator();
         var joinCall = Expression.Call(
             null,

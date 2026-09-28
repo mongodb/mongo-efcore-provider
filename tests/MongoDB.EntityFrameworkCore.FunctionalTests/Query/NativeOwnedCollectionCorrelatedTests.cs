@@ -27,9 +27,8 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-421: a correlated owned-collection element predicate — one referencing the immediately enclosing
-/// entity, e.g. <c>b.Posts.Count(p =&gt; p.Title == b.Title) &gt; 0</c> — now goes native via a two-scope
-/// translator, instead of declining to driver-LINQ.
+/// Correlated owned-collection element predicates — ones referencing the enclosing entity, e.g.
+/// <c>b.Posts.Count(p =&gt; p.Title == b.Title) &gt; 0</c> — translated natively via a two-scope translator.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -58,9 +57,8 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
 
     public class Post
     {
-        // DELIBERATELY COLLIDES with Blog.Title — a mis-scoped (element-scoped) resolution of `b.Title` would
-        // retarget at Post.Title and return the wrong rows, making this seed discriminating rather than
-        // vacuous. Mirrors NativeOwnedCollectionAllTests' identical seeding rationale.
+        // Deliberately collides with Blog.Title, so a mis-scoped (element-scoped) resolution of `b.Title` would
+        // return wrong rows rather than pass vacuously.
         public string Title { get; set; } = "";
         public int? Rank { get; set; }
     }
@@ -137,10 +135,8 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
     [Fact]
     public void Correlated_Any_and_All_are_correct_against_an_in_memory_oracle()
     {
-        // Differential check, mirroring NativeOwnedCollectionAllTests' own matrix pattern: the SAME
-        // expression evaluated in memory over materialized rows must agree with the native (NativeOnly)
-        // result — proving this isn't merely "doesn't throw" but answers the correct rows, including the
-        // empty-Posts / no-match / all-match / one-mismatch states.
+        // Differential check: the same expression evaluated in memory must agree with the NativeOnly result across
+        // the empty / no-match / all-match / one-mismatch states.
         var collection = Seed(nameof(Correlated_Any_and_All_are_correct_against_an_in_memory_oracle),
             ("same", [("same", 1), ("same", 2)]),
             ("mixed", [("mixed", 1), ("other", 2)]),
@@ -249,18 +245,10 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
     [Fact]
     public void Correlated_Count_predicate_inside_a_projection_leaf_goes_native()
     {
-        // A bare Any(pred) as a projection VALUE (as opposed to a Where PREDICATE) is not admitted by
-        // TranslateOperand/NativeProjectionBinder at all today — that is a separate, pre-existing, orthogonal
-        // gap (an uncorrelated bare Any projection leaf fails identically) and out of EF-421's scope. A
-        // COMPARISON leaf (`Count(pred) > 0`) is *also* not admitted — NativeProjectionBinder.TryTranslateLeaf's
-        // final gate only admits a bare MongoFilteredSizeExpression VALUE, not a MongoBinaryExpression wrapping
-        // one (that gate has no arm for a comparison operator at all, only the dedicated arithmetic-operator
-        // arm above it, which GreaterThan isn't). So this test instead projects the RAW `Count(pred)` value —
-        // exactly the admitted MongoFilteredSizeExpression leaf shape (the same one the sort-key test above
-        // already proves is SelfParam-aware, just via NativeSlotPopulator's OrderBy arm rather than
-        // NativeProjectionBinder's Select arm) — and derives ">0" client-side after materializing. This still
-        // proves SelfParam correctly reaches NativeProjectionBinder, the actual point of this test, without
-        // requiring new production capability for bare-quantifier-as-value or comparison-as-value.
+        // Neither a bare Any(pred) nor a comparison (`Count(pred) > 0`) is admitted as a projection value by
+        // NativeProjectionBinder.TryTranslateLeaf, so project the raw Count(pred) (an admitted
+        // MongoFilteredSizeExpression leaf) and derive ">0" client-side. This still proves SelfParam reaches
+        // NativeProjectionBinder.
         var collection = Seed(nameof(Correlated_Count_predicate_inside_a_projection_leaf_goes_native),
             ("match", [("match", 1)]),
             ("nomatch", [("x", 1)]));
@@ -289,9 +277,8 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
 
-        // Root-level All(pred) is itself a scalar-aggregate terminal (NativeCardinalityBinder.TryBindAggregate)
-        // whose OWN predicate lambda parameter becomes SelfParam for the translator that predicate is built
-        // with — so a correlated Any/All/Count(pred) NESTED inside it can match against that root b.
+        // Root-level All(pred) is a scalar-aggregate terminal whose own lambda parameter becomes SelfParam, so a
+        // correlated Any/All/Count(pred) nested inside it can match against that root b.
         var allBlogsHaveAMatchingPost = db.Entities.AsNoTracking()
             .All(b => b.Posts.Any(p => p.Title == b.Title));
 
@@ -301,12 +288,9 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
     [Fact]
     public void Root_level_All_of_an_explicitly_negated_correlated_Any_goes_native_and_matches_the_oracle()
     {
-        // Directly exercises MongoExpressionNegator's new MongoQuantifierExpression case (EF-421 Task 7
-        // review fix): NativeCardinalityBinder.TryBindAggregate's All arm translates this predicate to a
-        // MongoQuantifierExpression (from the OUTER `!` — the negator sees `!Any(pred)` first, not `Any(pred)`
-        // as in the sibling test above) and then negates the WHOLE predicate again to push it as a $match
-        // conjunct — so this specifically requires negating a quantifier that ALREADY carries a negated
-        // element predicate, unlike the sibling test's directly-translated bare Any.
+        // TryBindAggregate's All arm translates `!Any(pred)` to a MongoQuantifierExpression and then negates the
+        // whole predicate again, so MongoExpressionNegator must negate a quantifier that already carries a negated
+        // element predicate.
         var collection = Seed(nameof(Root_level_All_of_an_explicitly_negated_correlated_Any_goes_native_and_matches_the_oracle),
             ("same", [("same", 1), ("same", 2)]),
             ("mixed", [("mixed", 1), ("other", 2)]),
@@ -345,10 +329,9 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
         public int Rank { get; set; }
     }
 
-    // HasConversion<string>() stores a bool as the non-empty ("True"/"False") string — a value BOTH of which
-    // are truthy in MongoDB's truthiness sense, regardless of the underlying CLR value. This is exactly the
-    // hazard EF-421's final review found: MongoOuterFieldExpression (this bare Flag access, when correlated)
-    // was missing from three (really four) truthiness guards in MongoAggregationExpressionRenderer.
+    // HasConversion<string>() stores a bool as "True"/"False", both truthy in MongoDB regardless of the CLR value.
+    // A correlated bare Flag access (MongoOuterFieldExpression) must therefore be caught by the truthiness guards
+    // in MongoAggregationExpressionRenderer.
     private static readonly Action<ModelBuilder> ConvertedBoolBlogModel = mb =>
     {
         mb.Entity<ConvertedBoolBlog>().Property(b => b.Flag).HasConversion<string>();
@@ -362,8 +345,7 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
         {
             { "_id", ObjectId.GenerateNewId() },
             { "Title", "blog" },
-            // Written directly as the driver's own default bool->string conversion would ("True"/"False"),
-            // matching what HasConversion<string>() actually stores — both non-empty, hence truthy, strings.
+            // What HasConversion<string>() stores: non-empty, hence truthy, strings.
             { "Flag", flag.ToString() },
             { "Posts", new BsonArray(posts.Select(p => new BsonDocument { { "Title", p.Title }, { "Rank", p.Rank } })) }
         });
@@ -373,9 +355,8 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
     [Fact]
     public void Correlated_Any_over_a_bare_value_converted_outer_bool_declines_instead_of_answering_wrong()
     {
-        // b.Flag is FALSE (stored as the non-empty, hence truthy, string "False"). A raw-field
-        // $anyElementTrue over $map would truthiness-test that raw string and silently answer TRUE regardless
-        // of the actual CLR value — this must decline cleanly (NativeOnly throws) instead.
+        // b.Flag is false but stored as the truthy string "False"; $anyElementTrue over $map would silently answer
+        // true, so this must decline (NativeOnly throws).
         var collection = SeedConvertedBoolBlog(
             nameof(Correlated_Any_over_a_bare_value_converted_outer_bool_declines_instead_of_answering_wrong),
             flag: false, ("x", 1));
@@ -402,8 +383,7 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
     [Fact]
     public void Correlated_Any_over_an_AndAlso_wrapped_value_converted_outer_bool_declines_instead_of_answering_wrong()
     {
-        // b.Posts.Any(p => p.Rank > 1 && b.Flag) — the operand-of-&&/|| shape named explicitly in the review
-        // finding, exercising MongoAggregationExpressionRenderer.CanRenderLogicalOperand's fixed arm.
+        // The operand-of-&&/|| shape (MongoAggregationExpressionRenderer.CanRenderLogicalOperand).
         var collection = SeedConvertedBoolBlog(
             nameof(Correlated_Any_over_an_AndAlso_wrapped_value_converted_outer_bool_declines_instead_of_answering_wrong),
             flag: false, ("x", 2));
@@ -432,11 +412,8 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
     [Fact]
     public void Correlated_Any_and_All_over_a_missing_or_null_Posts_array_do_not_throw_and_match_the_oracle()
     {
-        // Final-review fix (Finding 5): the existing "empty" seed rows elsewhere in this file use a genuine
-        // empty BSON array ([]), never a MISSING Posts field or an explicit BsonNull — so the $ifNull wrapper
-        // MongoAggregationExpressionRenderer.RenderQuantifier documents as MANDATORY (a $map over a missing or
-        // null array is a hard server error, not just a wrong answer) has never actually been exercised by a
-        // test. This seeds both a document with NO "Posts" field at all and one with "Posts": null.
+        // Seeds a document with no "Posts" field and one with "Posts": null, exercising the $ifNull wrapper in
+        // MongoAggregationExpressionRenderer.RenderQuantifier ($map over a missing/null array is a server error).
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(
             UniqueCollectionName(nameof(Correlated_Any_and_All_over_a_missing_or_null_Posts_array_do_not_throw_and_match_the_oracle)));
         coll.InsertMany(
@@ -448,8 +425,7 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
 
-        // Any over a missing/null array is false (nothing to satisfy it); All is true (vacuously, no
-        // counter-example exists) — exactly LINQ's Any/All-over-empty-sequence semantics.
+        // LINQ over-empty semantics: Any is false, All is vacuously true.
         var anyResults = db.Entities.AsNoTracking()
             .Where(b => b.Posts.Any(p => p.Title == b.Title))
             .ToList();

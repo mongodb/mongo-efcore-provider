@@ -29,29 +29,18 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// <see cref="MongoExpressionTranslator"/> — member resolution. Resolves a member-access / <c>EF.Property</c>
-/// chain to an <see cref="IProperty"/> and its MongoDB document path, in every position (predicate, sort key
-/// and projection leaf all reach <see cref="MongoExpressionTranslator.TryResolveMember"/>).
+/// <see cref="MongoExpressionTranslator"/> — member resolution: resolves a member-access / <c>EF.Property</c> chain
+/// to an <see cref="IProperty"/> and its document path, for predicates, sort keys and projection leaves.
 /// </summary>
 /// <remarks>
-/// These members read the private scope state
-/// (<c>_entityType</c>/<c>_outerParam</c>/<c>_outerEntityType</c>/<c>_innerPrefix</c>), which is why this is
-/// a <c>partial</c> split rather than an extracted type: the by-name-retarget hazard documented on
-/// <see cref="TryResolveOwnedCollectionPath"/> is exactly a hazard about which scope a member resolves against.
+/// A <c>partial</c> rather than an extracted type because these members read the private scope state
+/// (<c>_entityType</c>/<c>_outerParam</c>/<c>_outerEntityType</c>/<c>_innerPrefix</c>).
 /// </remarks>
 internal sealed partial class MongoExpressionTranslator
 {
-    /// <summary>
-    /// Attempts to resolve a simple member-access expression to its <see cref="IProperty"/> and
-    /// the MongoDB document element name or path. Returns <see langword="false"/> for any property that
-    /// cannot be natively addressed. Composite-PK components are resolved via the <c>_id.&lt;element&gt;</c>
-    /// dotted path, since the serializer nests a composite key under a local <c>_id</c> scoped to whichever
-    /// entity type declares it — the document root's own composite key under the document's own top-level
-    /// <c>_id</c>, and a NESTED owned type's own explicit composite key (e.g. an OwnsOne configured with a
-    /// multi-property <c>HasKey</c>) under an <c>_id</c> local to that embedded subdocument. So this check is
-    /// unconditional on the declaring type's root-ness; see <see cref="TryResolveOwnedFieldPath"/>'s leaf
-    /// construction for the composed (scope-relative-prefix + local "_id.&lt;name&gt;" suffix) case.
-    /// </summary>
+    /// Resolves a member access to its <see cref="IProperty"/> and document path, or returns
+    /// <see langword="false"/> when it can't be natively addressed. Composite-PK components resolve to
+    /// <c>_id.&lt;element&gt;</c>; see <see cref="IsCompositeKeyComponent"/>.
     private bool TryResolveMember(
         Expression node, [NotNullWhen(true)] out IProperty? property, [NotNullWhen(true)] out string? fieldPath,
         out bool isOuter)
@@ -60,17 +49,10 @@ internal sealed partial class MongoExpressionTranslator
         fieldPath = null;
         isOuter = false;
 
-        // Peel Nullable<T>.Value: `x.A.Value` is a MemberExpression whose receiver is the member access we
-        // actually want, so without this it misses the fast path below and is handed to the owned dotted-path
-        // resolver, which walks hops requiring embedded navigations and declines. The peel is safe because the
-        // resolved property keeps its own nullability — `.Value` changes the CLR type, never the stored
-        // element — so the emitted field ref is identical to the one `x.A` produces.
-        //
-        // The `Nullable.GetUnderlyingType(...) is not null` conjunct is load-bearing, not a redundant sibling
-        // of the name test: a user type may declare its own member called `Value`, and when that user type is
-        // the CLR type of a mapped scalar property (a value-converted strongly-typed id, say), peeling it would
-        // resolve the receiver — silently answering a question about `x.Code` when the query asked about
-        // `x.Code.Value`, and bypassing the value converter while doing so. Pinned by
+        // Peel Nullable<T>.Value so `x.A.Value` takes the fast path below; safe because `.Value` changes the CLR
+        // type, not the stored element. The GetUnderlyingType check matters: a user type's own `Value` member
+        // (e.g. a value-converted strongly-typed id) must not be peeled, or `x.Code.Value` would silently resolve
+        // as `x.Code` and bypass the converter. Pinned by
         // MongoExpressionTranslatorTests.A_user_type_member_named_Value_is_NOT_peeled.
         while (node is MemberExpression { Member.Name: nameof(Nullable<int>.Value), Expression: { } nullableReceiver }
                && Nullable.GetUnderlyingType(nullableReceiver.Type) is not null)
@@ -78,21 +60,11 @@ internal sealed partial class MongoExpressionTranslator
             node = nullableReceiver;
         }
 
-        // EF-322 gap-3: a BARE-scalar Distinct's own key selector parameter (never a member access — the
-        // projected result IS the scalar directly, e.g. Select(o => o.Country).Distinct().OrderBy(x =>
-        // x.IndexOf(term))) resolves to the Distinct's sole flattened key part directly, by parameter IDENTITY
-        // against SelfParam — same discipline as every other SelfParam use in this file, never by name. Scoped
-        // to a SINGLE-key, FIELD-backed grouping (list-pattern match): a composite/named projection has real
-        // members to access instead (handled by the ordinary DistinctAliasScope branch below), and a computed
-        // sole key part has no IProperty this method could hand back (that shape, if it arises, still declines
-        // here and falls back to driver-LINQ, exactly like any other unsupported member access).
-        //
-        // Accumulators.Count == 0 is load-bearing, not redundant: a GroupBy(key).Select(g => g.Sum(...))
-        // scope ALSO has a single field-backed Key part (the group key), but there a bare SelfParam names the
-        // Select's accumulator output, not the key — that shape is resolved by
-        // TranslateComparisonCore's bare-accumulator-alias branch instead, which must run first for
-        // comparisons; this branch would otherwise wrongly bind the accumulator's value against the key's
-        // property serializer.
+        // A bare-scalar Distinct's parameter (`Select(o => o.Country).Distinct().OrderBy(x => x.IndexOf(term))`)
+        // resolves by identity to the sole field-backed key part. A computed sole key has no IProperty and
+        // declines. Accumulators.Count == 0 matters: after GroupBy(key).Select(g => g.Sum(...)) a bare SelfParam
+        // names the accumulator, not the key (handled by TranslateComparisonCore's bare-accumulator-alias branch),
+        // and binding it here would use the key's serializer.
         if (SelfParam is not null && ReferenceEquals(node, SelfParam)
             && DistinctAliasScope is { Accumulators.Count: 0, Key: [{ FieldRef: MongoFieldExpression soleField } soleKeyPart] })
         {
@@ -102,13 +74,8 @@ internal sealed partial class MongoExpressionTranslator
             return true;
         }
 
-        // Fast path: a top-level scalar access on the query parameter, in either spelling EF produces — a
-        // bare member (p.Foo) or the shadow-safe EF.Property<T>(p, "Foo") call. Both name one hop off the
-        // parameter and must resolve identically.
-        //
-        // Everything else — a member rooted on another hop, or a multi-hop EF.Property chain from owned-nav
-        // expansion — is delegated to the owned dotted-path resolver, which declines cleanly for any shape
-        // that is not a valid owned chain (including a single hop, which this fast path already handles).
+        // Fast path: one hop off a parameter, as p.Foo or EF.Property<T>(p, "Foo"). Everything else goes to the
+        // owned dotted-path resolver, which declines any shape that isn't a valid owned chain.
         ParameterExpression param;
         string memberName;
         switch (node)
@@ -118,11 +85,8 @@ internal sealed partial class MongoExpressionTranslator
                 memberName = me.Member.Name;
                 break;
 
-            // The EF.Property spelling, single hop only: EF.Property<T>(param, "Name"). Unwrap is applied to
-            // the receiver because EF's own nav-expansion emits a BARE parameter there while the C# compiler
-            // may wrap it in a Convert-to-object for EF.Property's `object entity` parameter — the two must
-            // resolve identically, and Unwrap strips exactly that. A receiver that is anything else after
-            // unwrapping is a MULTI-hop chain and belongs to the owned dotted-path resolver, unchanged.
+            // Single-hop EF.Property. Unwrap strips the Convert-to-object the compiler may add for EF.Property's
+            // `object` parameter (nav-expansion emits a bare parameter); anything else is a multi-hop chain.
             case MethodCallExpression call
                 when call.Method.IsEFPropertyMethod()
                      && call.Arguments is [var receiver, ConstantExpression { Value: string name }]
@@ -140,11 +104,9 @@ internal sealed partial class MongoExpressionTranslator
         // shared between the two scopes cannot be mis-routed.
         isOuter = _outerParam is not null && ReferenceEquals(param, _outerParam);
 
-        // EF-322: a post-Distinct predicate/sort-key member resolves against the Distinct's OWN flattened
-        // output schema (DistinctAliasScope), never the entity — see DistinctAliasScope's remarks. A member
-        // name that is not one of the Distinct's own key parts declines outright (does NOT fall through to
-        // the entity below): the whole point is that a projected member's name is independent of any
-        // real entity property of the same name, so falling through would silently resolve the wrong field.
+        // After a Distinct, members resolve against its flattened output (DistinctAliasScope), never the entity.
+        // An unmatched name declines rather than falling through, which would silently resolve a same-named
+        // entity property.
         if (!isOuter && DistinctAliasScope is { } distinctScope)
         {
             foreach (var part in distinctScope.Key)
@@ -180,21 +142,14 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
-    /// EF-322 gap-2: resolves a single-hop member access on a Distinct alias whose flattened key part is a
-    /// COMPUTED expression (e.g. <c>Select(c =&gt; new { A = c.CustomerID + c.City }).Distinct()</c>'s own
-    /// <c>A</c>), which <see cref="TryResolveMember"/> cannot express — that method hands back an
-    /// <see cref="IProperty"/>, and a computed key part has none. Used only by the small set of callers that
-    /// need nothing but the flattened document path (currently the StartsWith/EndsWith/Contains regex case in
-    /// <see cref="TryTranslate"/>'s main switch) — every other operator (equality, ordering, date/array
-    /// functions, …) still resolves a computed alias member through <see cref="TryResolveMember"/> alone and
-    /// correctly declines, since widening THAT method's IProperty-based contract to admit a property-less field
-    /// would touch every one of its ~10 call sites for a single narrow shape.
+    /// Resolves a single-hop member access on a Distinct alias whose key part is computed (e.g. <c>A</c> in
+    /// <c>Select(c =&gt; new { A = c.CustomerID + c.City }).Distinct()</c>), which <see cref="TryResolveMember"/>
+    /// can't express since there is no <see cref="IProperty"/>. Used only where a path suffices (the
+    /// StartsWith/EndsWith/Contains regex arm of <see cref="TryTranslate"/>); other operators decline.
     /// </summary>
     /// <remarks>
-    /// Declines whenever <see cref="DistinctAliasScope"/> is unset, the node is not a single-hop member access,
-    /// or the matched key part IS a plain field (that shape is already handled — and pinned — by
-    /// <see cref="TryResolveMember"/>'s own <see cref="DistinctAliasScope"/> branch, so the two must never both
-    /// claim the same member).
+    /// Declines for a plain-field key part, which <see cref="TryResolveMember"/> handles, so the two never both
+    /// claim a member.
     /// </remarks>
     private bool TryResolveDistinctAliasComputedField(
         Expression node, [NotNullWhen(true)] out MongoElementRefExpression? fieldRef)
@@ -213,15 +168,9 @@ internal sealed partial class MongoExpressionTranslator
             }
         }
 
-        // A member naming an ACCUMULATOR alias from a prior GroupBy(key).Select(aggregate) stage nested
-        // directly under a further GroupBy — e.g. .GroupBy(k).Select(g => new { g.Key, Count = g.Count() })
-        // .GroupBy(e => e.Key).Select(g => new { g.Key, Total = g.Sum(e => e.Count) }) — resolves to that
-        // accumulator's OWN flattened output field, the same top-level-pass-through mechanism as a computed
-        // key part above: the prior stage's flatten $project already wrote the accumulator's value under its
-        // own alias, so this stage's document has a top-level field of that exact name. An accumulator alias
-        // never has a backing IProperty (it is always a computed aggregate), so — unlike a key part — there is
-        // no companion branch in TryResolveMember to avoid double-claiming; every accumulator alias is
-        // resolved here. `scope.Accumulators` is empty for a plain Distinct, so this is a no-op there.
+        // An accumulator alias from a prior GroupBy(...).Select(aggregate) stage under a further GroupBy: the
+        // prior flatten $project wrote it as a top-level field. Accumulators never have an IProperty, so there's
+        // no overlap with TryResolveMember. Empty for a plain Distinct.
         foreach (var acc in scope.Accumulators)
         {
             if (acc.OutputField == me.Member.Name)
@@ -235,88 +184,35 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
-    /// Resolves a nested member/navigation access chain into an owned single-reference (OwnsOne) dotted
-    /// document path, e.g. <c>p.Address.City</c> → element path <c>"Address.City"</c> and the <c>City</c>
-    /// property. Each hop may be a <see cref="MemberExpression"/> (scalar access) or an
-    /// <c>EF.Property(root, "Nav")</c> call (the shadow-nav-safe form EF's nav-expansion rewrites owned-nav
-    /// access into); every non-leaf hop must resolve to an embedded single-reference navigation, and the chain
-    /// must be rooted at the query parameter with a mapped scalar leaf. Returns <see langword="false"/> (caller
-    /// falls back to driver-LINQ) for any other shape.
-    /// </summary>
-    /// <remarks>
-    /// <b>Scope-relative by construction (mirrors <see cref="TryResolveOwnedCollectionPath"/>).</b> The path is
-    /// built by joining each intermediate hop's own navigation <see cref="MongoEntityTypeExtensions.GetContainingElementName"/>,
-    /// relative to <c>_entityType</c> — NOT via <see cref="MongoEntityTypeExtensions.GetDocumentPath"/>, which
-    /// is always relative to the TRUE document root and would double-prefix when <c>_entityType</c> is itself a
-    /// non-root scope (e.g. an owned-collection-element translator built for a quantifier/<c>SelectMany</c>
-    /// element predicate, whose caller separately prefixes the result with the unwind path). Because the result
-    /// is relative to <c>_entityType</c>, it composes correctly whatever scope this translator was built on —
-    /// there is deliberately no <c>IsDocumentRoot</c> guard here, same reasoning as
-    /// <see cref="TryResolveOwnedCollectionPath"/>'s own remarks.
-    /// <para>
-    /// Two-scope mode (<c>_outerParam</c> set): a dotted chain rooted on the OUTER param resolves against
-    /// <c>_outerEntityType</c> (EF-421) — the root identity is checked the same way
-    /// <see cref="MongoExpressionTranslator.TryResolveMember"/> checks it for a single hop, never by name. A
-    /// dotted chain reached from an <c>_innerPrefix</c>-set (SelectMany-unwind) scope, or rooted on neither known
-    /// parameter, is still declined — that combination remains out of scope.
-    /// </para>
-    /// <para>
-    /// <b>Why accepting any <see cref="ParameterExpression"/> root is safe</b> (same hazard, same resolution,
-    /// as <see cref="TryResolveOwnedCollectionPath"/>'s own remarks on this point — EF-424 made this method
-    /// reachable from a non-root scope, so the hazard now applies here too). The walk below (<c>current is not
-    /// ParameterExpression</c>) does not check WHICH parameter roots the chain, so on its own it would resolve
-    /// a member rooted on an enclosing parameter against this translator's own (wrong) scope type. That shape
-    /// cannot reach here: the enclosing parameter is free in an element-predicate body, so the <c>Any</c>/<c>All</c>
-    /// arm's <see cref="ReferencesEnclosingScope"/> guard — and <see cref="NativeSelectManyBinder"/>'s own
-    /// parameter-identity-routed construction of the inner-filter translator — decline or correctly route any
-    /// cross-scope reference before a single-scope, element-typed child translator is ever constructed. At the
-    /// outermost level the only parameter in scope is the query parameter, so this is never actually reached
-    /// with a "wrong" parameter identity.
-    /// </para>
-    /// </remarks>
-    /// <summary>
-    /// The shared PREAMBLE of all three owned-path resolvers below: rejects an inner-prefixed scope, collects
-    /// the access chain's hop names root-first, requires a <see cref="ParameterExpression"/> root, resolves
-    /// WHICH scope that root names, and seeds the entity type to walk from.
+    /// Shared preamble of the owned-path resolvers: rejects an inner-prefixed scope, collects hop names root-first,
+    /// requires a <see cref="ParameterExpression"/> root, resolves which scope it names, and seeds the entity type.
     /// </summary>
     /// <param name="node">The member-access / <c>EF.Property</c> chain to walk.</param>
     /// <param name="minimumHops">
-    /// The fewest hops the calling resolver can act on — 2 where the leaf is a scalar under at least one
-    /// navigation (a single hop is <see cref="TryResolveMember"/>'s own fast path), 1 where the leaf is itself
-    /// the navigation.
+    /// 2 when the leaf is a scalar under a navigation (one hop is <see cref="TryResolveMember"/>'s fast path);
+    /// 1 when the leaf is itself the navigation.
     /// </param>
-    /// <param name="names">The hop names, ROOT-FIRST, on success.</param>
+    /// <param name="names">The hop names, root-first, on success.</param>
     /// <param name="scopeType">The entity type the first hop resolves against, on success.</param>
     /// <param name="isOuter">
-    /// Whether the chain is rooted on this translator's OUTER parameter (always <see langword="false"/> in
-    /// single-scope mode). Callers that cannot render an outer-scoped result must decline on it.
+    /// Whether the chain is rooted on the outer parameter. Callers that can't render an outer-scoped result must
+    /// decline on it.
     /// </param>
     /// <remarks>
     /// <para>
-    /// This was three near-identical copies, which had already diverged. It is the most invariant-critical code
-    /// in this file: the <c>isOuter</c> line is the "scope is resolved by parameter IDENTITY, never by member
-    /// name" rule from <c>Query/AGENTS.md</c>, whose failure mode is silently resolving a member against the
-    /// WRONG scope rather than declining. Two types sharing a property name (<c>Item.Name</c> vs
-    /// <c>Owner.Name</c>) is the standing regression test.
+    /// The <c>isOuter</c> line enforces "scope resolves by parameter identity, never member name"; getting it wrong
+    /// silently resolves against the wrong scope. Two types sharing a property name is the regression test.
     /// </para>
     /// <para>
-    /// <b>Scope-relative by construction.</b> Callers build their path by joining each hop navigation's own
-    /// <see cref="MongoEntityTypeExtensions.GetContainingElementName"/> relative to the seeded
-    /// <paramref name="scopeType"/> — never via <see cref="MongoEntityTypeExtensions.GetDocumentPath"/>, which
-    /// is relative to the TRUE document root and would double-prefix when the scope is itself nested (an
-    /// owned-collection-element translator built for a quantifier / <c>SelectMany</c> element predicate, whose
-    /// caller separately prefixes the result). That is why there is deliberately no <c>IsDocumentRoot</c> guard
-    /// anywhere in this family.
+    /// <b>Scope-relative.</b> Callers join each hop's <see cref="MongoEntityTypeExtensions.GetContainingElementName"/>
+    /// relative to <paramref name="scopeType"/>, never <see cref="MongoEntityTypeExtensions.GetDocumentPath"/>,
+    /// which is root-relative and would double-prefix in a nested element scope whose caller prefixes the result.
+    /// Hence no <c>IsDocumentRoot</c> guard anywhere in this family.
     /// </para>
     /// <para>
-    /// <b>Why accepting any <see cref="ParameterExpression"/> root is safe in single-scope mode.</b> The walk
-    /// does not check WHICH parameter roots the chain, so alone it would resolve a chain rooted on an enclosing
-    /// parameter against this translator's own (wrong) scope type. That shape cannot reach here: the enclosing
-    /// parameter is free in an element-predicate body, so the quantifier arm's
-    /// <see cref="ReferencesEnclosingScope"/> guard — and <see cref="NativeSelectManyBinder"/>'s own
-    /// parameter-identity-routed construction of the inner-filter translator — declines or correctly routes any
-    /// cross-scope reference before a single-scope, element-typed child translator is ever built. At the
-    /// outermost level the only parameter in scope is the query parameter.
+    /// <b>Any parameter root is accepted in single-scope mode</b> because a chain rooted on an enclosing parameter
+    /// can't reach here: the quantifier arm's <see cref="ReferencesEnclosingScope"/> guard and
+    /// <see cref="NativeSelectManyBinder"/>'s identity-routed construction decline or route it first.
     /// </para>
     /// </remarks>
     private bool TryBeginOwnedHopWalk(
@@ -330,9 +226,8 @@ internal sealed partial class MongoExpressionTranslator
         scopeType = null;
         isOuter = false;
 
-        // A chain reached from an INNER-prefixed scope (SelectMany's unwind prefix) declines: a dotted owned
-        // path reached from inside a SelectMany element, itself further correlated, is a different and still
-        // out-of-scope combination. Only the "root is the OUTER param" two-scope case is relativized.
+        // A chain inside a SelectMany element scope (inner prefix set) is out of scope; only the outer-param
+        // two-scope case is handled.
         if (_innerPrefix is not null)
             return false;
 
@@ -364,15 +259,8 @@ internal sealed partial class MongoExpressionTranslator
     /// appending each one's containing element name to <paramref name="segments"/> and advancing
     /// <paramref name="scopeType"/> to the last walked hop's target.
     /// </summary>
-    /// <remarks>
-    /// Shared by all three resolvers for their INTERMEDIATE hops; each then applies its own rule to the final
-    /// hop (a scalar property, a single-reference navigation, or a collection navigation). Declining here is
-    /// what rejects a cross-collection or owned-collection intermediate: an array intermediate has no single
-    /// dotted path to address, so a leaf underneath one (<c>b.Posts[..].Title</c> as a predicate/sort/projection
-    /// leaf) has no native form at all. An <c>Any</c>/<c>All</c> quantifier over the same collection is
-    /// <see cref="TryResolveOwnedCollectionPath"/>'s business and does go native — this decline does not cover
-    /// quantifiers.
-    /// </remarks>
+    /// Declining here rejects cross-collection and owned-collection intermediates: a leaf under an array has no
+    /// single dotted path. Quantifiers over such a collection go through <see cref="TryResolveOwnedCollectionPath"/>.
     private static bool TryWalkEmbeddedReferenceHops(
         List<string> names, int hopCount, ref IEntityType scopeType, List<string> segments)
     {
@@ -395,6 +283,11 @@ internal sealed partial class MongoExpressionTranslator
         return true;
     }
 
+    /// <summary>
+    /// Resolves an owned single-reference chain to a dotted field path, e.g. <c>p.Address.City</c> →
+    /// <c>"Address.City"</c>. Intermediate hops must be embedded single-reference navigations and the leaf a
+    /// mapped scalar.
+    /// </summary>
     private bool TryResolveOwnedFieldPath(
         Expression node, [NotNullWhen(true)] out IProperty? property, [NotNullWhen(true)] out string? fieldPath,
         out bool isOuter)
@@ -414,38 +307,23 @@ internal sealed partial class MongoExpressionTranslator
             return false;
 
         property = leaf;
-        // A composite-PK leaf nests under a LOCAL "_id" scoped to scopeType (the leaf's own declaring type),
-        // not the true document root's "_id" — so appending "_id.<name>" here as ONE more segment on top of
-        // the scope-relative hop prefix already accumulated above is exactly right (e.g. "Author._id.City"
-        // for a leaf whose OWN declaring type, reached via one hop, has an explicit composite key). See
-        // IsCompositeKeyComponent's remarks for why this holds regardless of scopeType's root-ness.
+        // A composite-PK leaf nests under an "_id" local to its declaring type, so append "_id.<name>" after the
+        // hop prefix (e.g. "Author._id.City").
         var leafElementName = IsCompositeKeyComponent(leaf) ? "_id." + leaf.GetElementName() : leaf.GetElementName();
         segments.Add(leafElementName);
         fieldPath = string.Join(".", segments);
         return true;
     }
 
-    /// <summary>
-    /// True when <paramref name="property"/> is a component of a composite primary key (2+ properties) — the
-    /// one case where a property's own element name does not address the stored field, because the
-    /// serializer nests a composite key under a LOCAL <c>_id</c> scoped to whichever entity type declares it:
-    /// <c>{ _id: { Key1, Key2 } }</c> at the document root, or e.g. <c>{ Author: { _id: { City, Country } } }</c>
-    /// for a NESTED owned type given its own explicit multi-property <c>HasKey</c> (verified: the serializer
-    /// nests an embedded "_id" in exactly this shape regardless of nesting depth, so this check is
-    /// deliberately unconditional on the declaring type's root-ness — EF-424).
-    /// </summary>
+    /// True when <paramref name="property"/> is a component of a composite primary key. The serializer nests such a
+    /// key under an <c>_id</c> local to the declaring type — <c>{ _id: { Key1, Key2 } }</c> at the root, or
+    /// <c>{ Author: { _id: { City, Country } } }</c> for an owned type with its own <c>HasKey</c> — at any depth.
     private static bool IsCompositeKeyComponent(IProperty property)
         => property.IsPrimaryKey() && property.FindContainingPrimaryKey()!.Properties.Count > 1;
 
-    /// <summary>
-    /// Resolves an ENTITY-TYPED comparison operand — the whole root entity (<c>c</c> in <c>c == null</c>) or an
-    /// owned/embedded single-reference navigation reached from it (<c>b.Address</c> in <c>b.Address == null</c>,
-    /// including a multi-hop chain like <c>b.Address.Recipient</c>) — to a <see cref="MongoElementRefExpression"/>
-    /// naming its document path. Used only by <see cref="TranslateComparison"/>'s entity-vs-null and
-    /// entity-vs-itself arms; NOT a general entity-operand resolver (no caller may compare the result against
-    /// anything other than a literal null, or against another identical entity-typed operand of the SAME
-    /// origin — see those callers' own remarks for why).
-    /// </summary>
+    /// Resolves an entity-typed comparison operand — the root entity (<c>c == null</c>) or an owned single-reference
+    /// navigation chain (<c>b.Address == null</c>) — to a <see cref="MongoElementRefExpression"/>. Only for
+    /// <see cref="TranslateComparison"/>'s entity-vs-null and entity-vs-itself arms.
     private bool TryResolveEntityTypedOperand(Expression node, [NotNullWhen(true)] out MongoElementRefExpression? elementRef)
     {
         if (SelfParam is not null && ReferenceEquals(node, SelfParam))
@@ -456,25 +334,18 @@ internal sealed partial class MongoExpressionTranslator
 
         if (TryResolveOwnedReferenceNavigationPath(node, out var navPath, out var navigation, out var navIsOuter))
         {
-            // An OUTER-scoped owned-nav path must decline, not resolve. The path this resolver returns is
-            // relative to the OUTER entity's own document root, but MongoElementRefExpression renders
-            // element-relative when an elementVariable is in scope ("$$this." + Path) — unlike
-            // MongoOuterFieldExpression, which is root-anchored precisely for this reason but requires a
-            // backing IProperty a navigation path does not have. Emitting the element ref anyway addressed a
-            // field on the ELEMENT (e.g. "$$this.Address" on a Post, which has no Address at all), and the
-            // NullSafe $ifNull then read that missing element as null — so `b.Posts.Any(p => b.Address == null)`
-            // answered TRUE for every row regardless of the stored value. There is no root-anchored
-            // element-ref node to emit instead today, so this shape belongs to driver-LINQ.
+            // An outer-scoped path must decline: MongoElementRefExpression renders element-relative ("$$this.")
+            // inside an element scope, so `b.Posts.Any(p => b.Address == null)` would read a missing field on the
+            // element and answer true for every row. MongoOuterFieldExpression is root-anchored but needs an
+            // IProperty.
             if (navIsOuter)
             {
                 elementRef = null;
                 return false;
             }
 
-            // nullSafe: true — unlike WholeRootDocumentPath, a real element path CAN be entirely missing from
-            // the stored document (an unset owned single-reference nav), and $expr's $eq does not treat that
-            // the same as an explicit null the way the query dialect's {field: null} does. See
-            // MongoElementRefExpression.NullSafe's own remarks.
+            // nullSafe: an unset owned nav is missing, and $expr's $eq doesn't treat missing as null. See
+            // MongoElementRefExpression.NullSafe.
             elementRef = new MongoElementRefExpression(navPath, navigation.TargetEntityType.ClrType, nullSafe: true);
             return true;
         }
@@ -483,15 +354,9 @@ internal sealed partial class MongoExpressionTranslator
         return false;
     }
 
-    /// <summary>
-    /// Resolves a nested member/navigation access chain whose LEAF hop is itself an owned/embedded
-    /// single-reference (OwnsOne) navigation — e.g. <c>b.Address</c> or <c>b.Address.Recipient</c> — to its own
-    /// dotted document path, mirroring <see cref="TryResolveOwnedFieldPath"/>'s walk but stopping ONE hop
-    /// earlier: every hop, INCLUDING the leaf, must resolve to an embedded single-reference navigation, since
-    /// the leaf here is the navigation itself, not a scalar property underneath it. Returns
-    /// <see langword="false"/> for a collection navigation, a reference (non-embedded) navigation, or a single
-    /// top-level hop off a non-parameter receiver.
-    /// </summary>
+    /// Resolves a chain whose leaf is itself an owned single-reference navigation (<c>b.Address</c>,
+    /// <c>b.Address.Recipient</c>) to its dotted document path. Every hop, including the leaf, must be an embedded
+    /// single reference.
     private bool TryResolveOwnedReferenceNavigationPath(
         Expression node, [NotNullWhen(true)] out string? path, [NotNullWhen(true)] out INavigation? navigation,
         out bool isOuter)
@@ -502,9 +367,7 @@ internal sealed partial class MongoExpressionTranslator
         if (!TryBeginOwnedHopWalk(node, minimumHops: 1, out var names, out var scopeType, out isOuter))
             return false;
 
-        // Unlike the two sibling resolvers, the LEAF here is itself a navigation, so EVERY hop — the last one
-        // included — must be an embedded single reference. Walk them all, tracking the final hop's own
-        // navigation, which is what this resolver reports.
+        // Every hop, including the last, must be an embedded single reference; report the last one.
         var segments = new List<string>(names.Count);
         INavigation? leafNavigation = null;
         foreach (var name in names)
@@ -529,43 +392,14 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
-    /// Resolves the SOURCE of an owned-collection quantifier (<c>b.Posts</c>, <c>b.Address.Notes</c>) to the
-    /// dotted document path of the embedded array — <b>relative to this translator's scope entity type</b> —
-    /// and yields the array's element entity type. Every non-final hop must be an embedded single-reference
-    /// navigation; the final hop must be an embedded collection navigation; the chain must be rooted at the
-    /// query parameter. Returns <see langword="false"/> (caller falls back to driver-LINQ) for anything else,
-    /// including a reference (non-embedded) navigation and a primitive collection property.
+    /// Resolves the source of an owned-collection quantifier (<c>b.Posts</c>, <c>b.Address.Notes</c>) to the dotted
+    /// path of the embedded array, relative to this translator's scope entity type, and its element type. Non-final
+    /// hops must be embedded single references and the final hop an embedded collection.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// <b>Why scope-relative</b> (same construction as <see cref="TryResolveOwnedFieldPath"/> uses for its
-    /// dotted-path leaf, EF-424): this method joins the hop navigations' own containing element names, so the
-    /// path is relative to <c>_entityType</c> by construction — never via
-    /// <see cref="MongoEntityTypeExtensions.GetDocumentPath"/>, which is always relative to the TRUE document
-    /// root and would double-prefix when <c>_entityType</c> is itself a non-root scope whose caller separately
-    /// prefixes the result. Neither this method nor <see cref="TryResolveOwnedFieldPath"/> has an
-    /// <c>IsDocumentRoot</c> guard — a scope-relative path composes correctly with
-    /// <see cref="MongoFieldPrefixRewriter"/> prepending rather than fighting it, and it is what makes a
-    /// nested <c>Any</c>-within-<c>Any</c> correct: the element-scoped child translator resolves the inner
-    /// array relative to the element, which is exactly what the enclosing <c>$elemMatch</c> expects.
-    /// </para>
-    /// <para>
-    /// Two-scope mode (<c>_outerParam</c> set): a chain rooted on the OUTER param resolves against
-    /// <c>_outerEntityType</c> (EF-421), by the same root-identity check as
-    /// <see cref="TryResolveOwnedFieldPath"/>. The array itself being reached through the outer scope
-    /// (a quantifier over an outer sibling collection) is left to the caller to decide — see
-    /// <see cref="MongoExpressionTranslator"/>'s quantifier/<c>Count</c> arms, which decline that combination.
-    /// A chain reached from an <c>_innerPrefix</c>-set (SelectMany-unwind) scope, or rooted on neither known
-    /// parameter, is still declined outright.
-    /// </para>
-    /// <para>
-    /// <b>Why accepting any <see cref="ParameterExpression"/> root is safe.</b> This walk does not check which
-    /// parameter roots the chain, so on its own it would resolve a source rooted on an enclosing parameter
-    /// (<c>b.Posts.Any(p =&gt; b.Posts.Any(q =&gt; …))</c>) against this translator's own scope type. That shape cannot
-    /// reach here: the enclosing parameter is free in the element-predicate body, so the <c>Any</c> arm's
-    /// <see cref="ReferencesEnclosingScope"/> guard declines the whole quantifier before the element-scoped child
-    /// translator is even constructed. At the outermost level the only parameter in scope is the query parameter.
-    /// </para>
+    /// The path is scope-relative (see <see cref="TryBeginOwnedHopWalk"/>), which composes with
+    /// <see cref="MongoFieldPrefixRewriter"/> and makes nested <c>Any</c>-within-<c>Any</c> correct. An outer-rooted
+    /// array is returned with <c>isOuter</c> set; the quantifier/<c>Count</c> arms decline that combination.
     /// </remarks>
     private bool TryResolveOwnedCollectionPath(
         Expression source,

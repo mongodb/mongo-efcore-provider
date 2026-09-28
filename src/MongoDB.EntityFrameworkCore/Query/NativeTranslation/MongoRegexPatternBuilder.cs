@@ -19,17 +19,15 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// Builds the escaped/anchored regex pattern text for a <see cref="MongoRegexExpression"/>'s search term,
-/// shared by <see cref="MongoQueryLanguageRenderer.RenderRegex"/> (a constant term, escaped at render/compile
-/// time) and <see cref="MongoPipelineFactory"/> (a parameterized term, escaped at Build/per-execution time —
-/// the term's actual value isn't known until then).
+/// Builds escaped/anchored regex pattern text for a <see cref="MongoRegexExpression"/> term. Shared by
+/// <see cref="MongoQueryLanguageRenderer.RenderRegex"/> (constant term) and <see cref="MongoPipelineFactory"/>
+/// (parameterized term, escaped per execution).
 /// </summary>
 internal static class MongoRegexPatternBuilder
 {
     /// <summary>
-    /// Escapes <paramref name="term"/> and wraps it with the anchors matching <paramref name="kind"/>,
-    /// producing the same pattern text the driver-LINQ v3 provider emits for
-    /// <c>string.StartsWith</c>/<c>EndsWith</c>/<c>Contains</c>.
+    /// Escapes <paramref name="term"/> and anchors it per <paramref name="kind"/>, matching the pattern driver-LINQ
+    /// v3 emits for <c>string.StartsWith</c>/<c>EndsWith</c>/<c>Contains</c>.
     /// </summary>
     public static string BuildPattern(string term, MongoRegexKind kind)
     {
@@ -47,12 +45,9 @@ internal static class MongoRegexPatternBuilder
     }
 
     /// <summary>
-    /// Converts a SQL LIKE pattern (<c>%</c> = any run of characters, <c>_</c> = any single character, every
-    /// other character literal) into a whole-string-anchored regex. No escape-character support — a LIKE call
-    /// using the 3-argument (escape-character) overload declines before reaching here (see
-    /// <c>MongoExpressionTranslator.Like.cs</c>); <c>[</c>/<c>]</c>/<c>^</c> character-class wildcards (SQL
-    /// Server-specific, not part of the pattern used by any currently-supported shape) are treated as literal
-    /// characters, matching ANSI LIKE rather than T-SQL's extended syntax.
+    /// Converts a SQL LIKE pattern (<c>%</c>, <c>_</c>) to a whole-string-anchored regex. No escape-character
+    /// support (the 3-argument overload declines in <c>MongoExpressionTranslator.Like.cs</c>); <c>[</c>/<c>]</c>/<c>^</c>
+    /// are literal, per ANSI LIKE rather than T-SQL.
     /// </summary>
     private static string BuildLikePattern(string term)
     {

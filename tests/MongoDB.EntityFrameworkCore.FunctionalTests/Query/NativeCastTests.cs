@@ -27,102 +27,38 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-403 (slice A1, Task 2) — the silent-wrong-order defect fix. Before this fix, <c>TryTranslateField</c>
-/// called the blanket <c>Unwrap</c>, which strips ANY <c>Convert</c>/<c>ConvertChecked</c> unconditionally, so
-/// a narrowing or signed/unsigned cast in a sort key was silently discarded and <c>$sort</c> ordered by the RAW
-/// STORED VALUE — a genuine order defect, not merely a missed optimization. These tests pin the fix: a
-/// narrowing cast now declines at <c>TryTranslateField</c> and falls through to slice B's
-/// <c>TryTranslateValue</c> path (which, because Task 3 has not shipped yet, also declines — so under
-/// <see cref="MongoQueryMode.NativeOnly"/> the query throws, and under the default <see cref="MongoQueryMode.Native"/>
-/// it falls back to driver-LINQ and returns the CORRECT order).
+/// Numeric/enum casts in sort keys, predicates and projections. A narrowing or signed/unsigned cast must never be
+/// silently stripped (that sorts/filters by the raw stored value); it either renders as an explicit
+/// <c>MongoConvertExpression</c> (<c>$toX</c>) or declines.
 /// </summary>
 /// <remarks>
-/// Cases 5–8 (Task 3) cover <c>MongoConvertExpression</c> — the <c>$toX</c> node that turns Task 2's decline
-/// into a render. Case 5 is the DIRECT continuation of case 1: the same narrowing sort key now goes native
-/// instead of declining. Case 6 covers the spike's §3.1 field-to-field/arithmetic-operand shapes. Case 7 pins
-/// that a cast to a target MQL cannot express (<c>short</c>/<c>uint</c>/<c>float</c>) still declines — the
-/// admissible set is bounded by MQL, not by taste. Case 8 pins the ONE thing this task must never soften:
-/// <c>MongoConvertExpression</c> must stay OUT of <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>,
-/// because <c>$expr</c> is a hard server error inside <c>$elemMatch</c>.
 /// <para>
-/// Cases 9–12 (Task 4) cover the OTHER decline site — <c>TranslateComparison</c>'s query-native branch and its
-/// <c>HasNumericConvert</c> guard, which the spike measures as carrying 3.5× the decline volume of
-/// <c>TranslateOperand</c>'s <c>Convert</c> branch. Case 9 is the silent-wrong-data pin (a fractional constant
-/// truncated to the stored integral type returns an extra row). Case 10 pins the emitted constant's type.
-/// Case 11 pins <c>Native == DriverLinq</c>. Case 12 is the fixture the spike did NOT have: it separates
-/// <c>HasDefaultKeySerialization</c> from "the property's CLR type is not an enum", which §11 left UNVERIFIED.
-/// Case 13 covers the OTHER sub-family that conjunct protects — a value-TRANSFORMING converter, whose failure
-/// mode is silently wrong rows rather than case 12's zero rows. Case 14 measures the one admitted pair that is
-/// NOT value-preserving (<c>long</c> → <c>double</c> above 2^53) and pins it as an EF-359-family accepted
-/// divergence: native equals driver-LINQ, and both differ from in-memory LINQ.
+/// Sort keys (cases 1–5): narrowing casts render via <c>$toInt</c>; casts MQL can't express (<c>short</c>,
+/// <c>uint</c>, <c>float</c>) decline, and the fallback fails loudly too. <c>MongoConvertExpression</c> must stay
+/// out of <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c> (case 8), because <c>$expr</c> is a server
+/// error inside <c>$elemMatch</c>.
 /// </para>
 /// <para>
-/// Cases 15–16 (Task 5) cover the SECOND arm added to <c>HasNumericConvert</c>'s classification —
-/// IDENTITY-LIKE converts (enum ↔ its own underlying type, <c>char</c> → <c>int</c>, boxing to <c>object</c>).
-/// Unlike the widening arm (cases 9–14), an identity-like convert must keep the PROPERTY's serializer for the
-/// constant, not the comparison's — that is how an enum-as-string constant renders as <c>"Active"</c> instead
-/// of a raw number. Case 15 is the enum case, asserting VALUES (not just routing) because it also flips the
-/// previously-locked <c>NativeGateRoutingTests.A_enum_as_string_where_equals_routing</c> pin. Case 16 covers
-/// <c>char</c> → <c>int</c> and boxing to <c>object</c>.
+/// Comparisons (cases 9–19): <c>TranslateComparison</c>'s query-native branch and its <c>HasNumericConvert</c>
+/// guard. Widening converts serialize the constant with the comparison's type; identity-like converts (enum ↔
+/// underlying type, <c>char</c> → <c>int</c>, boxing) keep the property's serializer, so an enum-as-string
+/// constant renders as <c>"Active"</c>. <c>HasDefaultKeySerialization</c> guards value converters (case 12
+/// zero rows, case 13 wrong rows). Case 14 (<c>long</c> → <c>double</c> above 2^53) is an accepted divergence:
+/// native equals driver-LINQ, both differ from in-memory LINQ.
 /// </para>
 /// <para>
-/// Cases 17–19 are Task 5 fix-round additions (see the branch history for detail): the sub-int-backed enum
-/// promotion gap, the enum-to-floating-cast crash-instead-of-decline fix, and a flag-precedence regression
-/// pin for boxing over a widening cast.
+/// Projection leaves (cases 20–26): wrapped and bare cast leaves go native (bare ones under the synthetic
+/// <c>_v</c> alias). The shaper must keep the <c>Convert</c> node when registering the leaf, or the value is read
+/// back through the pre-cast member's serializer (see <c>MongoProjectionBindingExpressionVisitor.Visit</c> and
+/// <c>MongoProjectionBindingRemovingExpressionVisitor.VisitExtension</c>). Casts over value-converted properties
+/// decline via <c>MongoExpressionTranslator.AllFieldsDefaultSerialized</c>.
 /// </para>
 /// <para>
-/// Cases 20–24 (Task 6) cover the PROJECTION-leaf gate — a cast as a <c>Select</c> leaf, both wrapped
-/// (<c>new { X = (int)x.D }</c>) and bare (<c>Select(x =&gt; (int)x.D)</c>). Widening the projection-leaf gate
-/// exposed the SAME class of A2-lesson defect the <c>EF.Property</c> slice found: the shaper-building visitor
-/// dropped the <c>Convert</c> node when registering the leaf, so the read side misread the converted value
-/// through the pre-cast member's own serializer; both sides are fixed together (see
-/// <c>MongoProjectionBindingExpressionVisitor.Visit</c> and
-/// <c>MongoProjectionBindingRemovingExpressionVisitor.VisitExtension</c>). Case 20 is the wrapped leaf going
-/// native; case 21 is its mandatory parameterized-<c>Where</c> late-decline leg. Case 22 is the bare leaf's
-/// graceful decline (no document path to alias a computed leaf under); case 23 is its parameterized-<c>Where</c>
-/// leg, mandatory because the bare-alias mechanism's failure mode elsewhere in this file is silent. Case 24
-/// mutation-verifies the node-kind gate: it is UNCONDITIONAL on <c>leafExpression</c>'s own shape (mirroring
-/// the count branch, not the arithmetic branch's structural pre-filter), so a BARE constant/parameter leaf —
-/// no cast involved at all — reaches it and translates to something other than
-/// <c>MongoConvertExpression</c> (a <c>MongoParameterExpression</c>) and must not be admitted.
-/// </para>
-/// <para>
-/// Cases 25–26 (Task 6, fix round 1) close two review findings. Case 25 pins the dependency on Guard B
-/// (<c>MongoExpressionTranslator.AllFieldsDefaultSerialized</c>) — a cast over a value-converted property (or
-/// one with a non-default <c>BsonRepresentation</c>) never reaches the raw-alias read case 20 installed; it
-/// declines at translate time, one layer up, and the fallback correctly applies the converter before casting.
-/// Case 26 pins a deliberate BOUNDARY, not a residual: a WIDENING cast (<c>(long)x.I</c>) is unwrapped entirely
-/// by <c>TranslateOperand</c> rather than wrapped in a <c>MongoConvertExpression</c>, so it still declines and
-/// falls back gracefully — admitting it would need its own measurement of what CLR type to read the raw field
-/// back as, deliberately not taken up in this round.
-/// </para>
-/// <para>
-/// Cases 27–29 (Task 7) cover the SITE-B FALL-THROUGH: <c>TranslateComparison</c>'s query-native branch no
-/// longer VETOES a comparison whose cast it cannot absorb — it declines only that branch, and control falls
-/// through to the general <c>$expr</c> path, where Task 3's <c>MongoConvertExpression</c> renders it.
-/// <b>Case 27 is the owner-ruled divergence pin, and the most important test in this file to read before
-/// changing anything here:</b> for a narrowing cast against a constant, native now returns the CLR answer and
-/// driver-LINQ returns a DIFFERENT one, deliberately — the OPPOSITE of the EF-359 accepted-divergence family
-/// that case 14 covers. Case 28 is the mirrored operand order (member on the right), which reaches the same
-/// fall-through through the second of the two classification sites, and emits without mirroring the operator.
-/// Case 29 pins the DISPOSITION of a narrowing cast over a value-converted property: it must not fall through
-/// to <c>$expr</c>. The silent-wrong-rows measurement behind that is real (see the case header), but
-/// <b>case 29 does not individually net EITHER guard, and the "load-bearing, not defence-in-depth" wording
-/// that used to sit here is withdrawn rather than annotated beside</b> — the fix round below moved the real
-/// guard down to <c>MongoExpressionTranslator.TranslateOperand</c>'s convert branch, which SUBSUMES
-/// <c>MongoExpressionTranslator.CanFallThroughToExpr</c> (MEASURED: forcing that method to return
-/// <c>true</c> turns 0 of 33 functional and 0 of 121 unit tests red). Case 30 is what individually nets the
-/// deeper guard. Case 18 also changed disposition in this task (its enum → floating shape now goes native
-/// rather than declining, correctly and with no divergence); see its own comment.
-/// </para>
-/// <para>
-/// Cases 30–31 (Task 7, fix round 1) close the SAME hazard one level down, on the FIELD-TO-FIELD shape, which
-/// case 29's site-scoped guard did not cover. Review traced it to Task 3 of this slice (<c>94101da5</c>,
-/// unreleased) rather than to EF-329, making it a within-slice REGRESSION to close rather than an inherited
-/// exposure to defer — MEASURED against the slice base, where the same query threw under default
-/// <c>Native</c> and, with Task 3's branch, silently returned a wrong row. The guard now sits on
-/// <c>TranslateOperand</c>'s own convert branch, so every caller inherits it; case 30 is the tripwire and
-/// case 31 the control that keeps it from being satisfied by declining every cast operand.
+/// <c>$expr</c> fall-through (cases 27–31): a comparison whose cast the query-native branch can't absorb falls
+/// through to the <c>$expr</c> path. <b>Case 27 is a deliberate divergence:</b> for a narrowing cast against a
+/// constant, native returns the CLR answer and driver-LINQ a different one. A narrowing cast over a value-converted
+/// property must not fall through; the guard is on <c>TranslateOperand</c>'s convert branch (case 30 is the
+/// tripwire, case 31 the control).
 /// </para>
 /// </remarks>
 [XUnitCollection("QueryTests")]
@@ -136,8 +72,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         public int I { get; set; }
     }
 
-    // Rows a..e. D is the double that makes truncation observable; I is the int that makes the signed/unsigned
-    // and narrowing reinterpretations observable.
+    // Rows a..e. D makes truncation observable; I makes signed/unsigned and narrowing reinterpretation observable.
     //
     //   a: D =  1.6, I =        1
     //   b: D =  1.4, I =        2
@@ -145,33 +80,16 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     //   d: D = -1.5, I =       -1          // negative: (uint) reinterprets it as huge
     //   e: D =  0.5, I =    50000          // > short.MaxValue AND >= 32768, so (short) wraps NEGATIVE
     //
-    // Every order below is COMPUTED from these seeded values (not copied from the task brief's own worked
-    // comment) — see the divergence note right after the table.
-    //
     // raw-D order (ascending by D):         d(-1.5), e(0.5), b(1.4), a(1.6), c(2.5)  -> d, e, b, a, c
     // (int)D order (ascending, truncating):  d(-1),  e(0),  {a,b}=1 tie, c(2)        -> d, e, a, b, c
-    //     (1.6 and 1.4 both truncate to 1 and tie — this is the genuine tie case 1 relies on. In-memory LINQ's
-    //     OrderBy is stable, so it resolves the tie to insertion order (a before b) on its own; but MongoDB's
-    //     $sort makes NO tie-order guarantee at all, so case 1's server-side legs (Native/DriverLinq/NativeOnly)
-    //     add an explicit .ThenBy(x => x.Label) tiebreaker — "a" < "b" alphabetically, so it resolves the SAME
-    //     way as insertion order here, but by a rule the server actually honors rather than one it doesn't.)
+    //     (a/b tie; $sort guarantees no tie order, so server-side legs add .ThenBy(x => x.Label).)
     // raw-I order (ascending by I):          d(-1), a(1), b(2), c(3), e(50000)       -> d, a, b, c, e
     // (uint)I order (ascending, unsigned reinterpretation):
     //     a=1, b=2, c=3, e=50000, d=4294967295 (unchecked (uint)(-1))                -> a, b, c, e, d
-    //     (a genuine REVERSAL versus raw-I order: d moves from FIRST to LAST.)
     // (short)I order (ascending, narrowing truncation to 16 bits):
-    //     a=1, b=2, c=3, d=-1, e=-15536 (50000 mod 65536 = 50000 >= 32768, so two's complement is 50000-65536)
-    //                                                                                -> e, d, a, b, c
-    //     (also a genuine REVERSAL versus raw-I order: e moves from LAST to FIRST.)
+    //     a=1, b=2, c=3, d=-1, e=-15536 (50000 - 65536)                              -> e, d, a, b, c
     //
-    // DIVERGENCE FROM THE TASK BRIEF'S OWN WORKED COMMENT, found by computing rather than copying: the brief
-    // seeded e's I as 70000 and asserted "(short) wraps NEGATIVE". That arithmetic is WRONG — 70000 mod 65536 =
-    // 4464, which is POSITIVE as a signed 16-bit value (bit 15 is not set), so (short)70000 does NOT go
-    // negative and the resulting (short)I order would be IDENTICAL to raw-I order (d, a, b, c, e) — a TIE with
-    // the raw order, not the genuine reversal the case is supposed to exercise. e's I is seeded here as 50000
-    // instead (50000 mod 65536 = 50000, which IS >= 32768, so it genuinely wraps to -15536), which reproduces
-    // exactly the final order the brief's own prose concluded ("e, d, a, b, c") — so the brief's SEED VALUE was
-    // wrong but its CONCLUSION was right; this fixture's arithmetic is what actually backs that conclusion.
+    // Both (uint) and (short) genuinely reorder versus raw-I. (A value like 70000 would not: (short)70000 = 4464.)
     private static readonly (string Label, double D, int I)[] Rows =
     [
         ("a", 1.6, 1),
@@ -194,24 +112,13 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     {
         var collection = Seed(nameof(Narrowing_cast_sort_key_no_longer_sorts_by_the_raw_value));
 
-        // Every server-side leg carries a .ThenBy(x => x.Label) tiebreaker. This is NOT decoration: (int)D
-        // genuinely ties a and b (both truncate to 1), and MongoDB's $sort does NOT guarantee any particular
-        // order among tied rows (the spike says so explicitly of this exact shape). In-memory LINQ's OrderBy
-        // IS stable, so without the tiebreaker the two oracles below could pass by accident of a stability
-        // guarantee the SERVER never makes, while native/DriverLinq could legally return the tied rows in
-        // either order and still be "correct" per MongoDB's own contract. The tiebreaker makes the expected
-        // order the ONLY correct order everywhere, so this test only fails on a genuine defect.
+        // .ThenBy(x => x.Label) breaks the a/b tie: $sort makes no tie-order guarantee, while in-memory OrderBy is
+        // stable, so without it the oracles could pass by accident.
         //
-        // The lambda is written out at every call site deliberately, rather than hoisted into a local — a
-        // local of type Func<Row,int> would bind IQueryable<Row>.OrderBy to Enumerable.OrderBy (LINQ-to-Objects)
-        // instead of Queryable.OrderBy (Expression<Func<Row,int>>, server-translated), silently pulling every
-        // row into memory and sorting client-side with NO OrderBy sent to the server at all — exactly the kind
-        // of defect this test exists to catch, self-inflicted.
+        // The lambda is written inline at every call site: a Func<Row,int> local would bind Enumerable.OrderBy and
+        // sort client-side, never sending the sort to the server.
 
-        // Under NativeOnly, (int)x.D declines at TryTranslateField (order-changing) and falls through to slice
-        // B's TryTranslateValue — which, as of Task 3, CONVERTS ($toInt) instead of declining, so NativeOnly now
-        // SUCCEEDS with the correct order (this used to assert a throw here; see
-        // Narrowing_cast_sort_key_now_goes_native for the dedicated routing + MQL-stage-shape pin for the flip).
+        // NativeOnly: TryTranslateField declines the order-changing cast and TryTranslateValue renders $toInt.
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
         var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking()
             .OrderBy(x => (int)x.D).ThenBy(x => x.Label).Select(x => x.Label).ToList();
@@ -223,14 +130,13 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             .OrderBy(x => (int)x.D).ThenBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(IntDOrder, driverLinqLabels);
 
-        // Oracle 2: in-memory LINQ over the same expression, evaluated over the same rows.
+        // Oracle 2: in-memory LINQ over the same rows.
         using var oracle = CreateContext(collection, MongoQueryMode.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList()
             .OrderBy(x => (int)x.D).ThenBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(IntDOrder, inMemoryLabels);
 
-        // The defect's pin: default Native mode must agree with both oracles, and must NOT reproduce the
-        // raw-D order the pre-fix code silently produced.
+        // Default Native must agree with both oracles and not produce the raw-D order.
         using var native = CreateContext(collection, MongoQueryMode.Native);
         var nativeLabels = native.Entities.AsNoTracking()
             .OrderBy(x => (int)x.D).ThenBy(x => x.Label).Select(x => x.Label).ToList();
@@ -250,23 +156,17 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => nativeOnly.Entities.AsNoTracking().OrderBy(x => (uint)x.I).ToList());
 
-        // Self-check the computed UIntIOrder against an in-memory LINQ oracle over the same expression, so the
-        // hand-computed order backing this case's "genuine REVERSAL" claim is verified by execution, not just
-        // asserted in a comment.
+        // Verify the hand-computed UIntIOrder by execution.
         using var oracle = CreateContext(collection, MongoQueryMode.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList()
             .OrderBy(x => (uint)x.I).Select(x => x.Label).ToList();
         Assert.Equal(UIntIOrder, inMemoryLabels);
         Assert.NotEqual(RawIOrder, inMemoryLabels);
 
-        // Under the default Native mode this falls back to driver-LINQ, and the driver refuses the shape too
-        // (it has no translation for a (uint) reinterpretation of a signed field) — the failure must be LOUD
-        // (an exception), never a silently different row order.
         using var native = CreateContext(collection, MongoQueryMode.Native);
-        // Loud, not silent: the driver itself has no translation for a (uint) reinterpretation of a signed
-        // field, so the fallback throws the driver's own ExpressionNotSupportedException rather than
-        // returning a (wrong) row order. Recorded by TYPE so a future change that turns this back into a
-        // silent wrong order is caught even if the exact message text drifts.
+        // The driver can't translate a (uint) reinterpretation of a signed field either, so the fallback throws
+        // ExpressionNotSupportedException rather than returning a wrong order. Asserted by type so a regression to
+        // a silent wrong order is caught.
         Assert.IsType<ExpressionNotSupportedException>(
             Record.Exception(() => native.Entities.AsNoTracking().OrderBy(x => (uint)x.I).ToList()));
 
@@ -286,7 +186,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => nativeOnly.Entities.AsNoTracking().OrderBy(x => (short)x.I).ToList());
 
-        // Self-check the computed ShortIOrder against an in-memory LINQ oracle, same reasoning as case 2.
+        // Verify the hand-computed ShortIOrder by execution.
         using var oracle = CreateContext(collection, MongoQueryMode.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList()
             .OrderBy(x => (short)x.I).Select(x => x.Label).ToList();
@@ -294,7 +194,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.NotEqual(RawIOrder, inMemoryLabels);
 
         using var native = CreateContext(collection, MongoQueryMode.Native);
-        // Same shape as case 2: loud, not silent, and the same exception TYPE (the driver's own decline).
+        // As case 2: loud, with the driver's own exception type.
         Assert.IsType<ExpressionNotSupportedException>(
             Record.Exception(() => native.Entities.AsNoTracking().OrderBy(x => (short)x.I).ToList()));
 
@@ -303,7 +203,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             Record.Exception(() => driverLinq.Entities.AsNoTracking().OrderBy(x => (short)x.I).ToList()));
     }
 
-    // ── 4. Widening and boxing cast sort keys — the control that stops the fix over-declining ──────
+    // ── 4. Widening and boxing cast sort keys — the control that stops over-declining ──────────────
 
     [Fact]
     public void Widening_cast_sort_keys_are_unchanged_and_native()
@@ -311,9 +211,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         var collection = Seed(nameof(Widening_cast_sort_keys_are_unchanged_and_native));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // Widening numeric conversions are order-preserving, so they still resolve to the raw field and stay
-        // native — and the resulting order is the RAW order (raw-I for the two widened-I keys, raw-D for the
-        // boxed-D key).
+        // Widening/boxing conversions are order-preserving, so they resolve to the raw field and stay native.
         Assert.Equal(
             RawIOrder,
             db.Entities.AsNoTracking().OrderBy(x => (double)x.I).Select(x => x.Label).ToList());
@@ -327,7 +225,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             db.Entities.AsNoTracking().OrderBy(x => (object)x.D).Select(x => x.Label).ToList());
     }
 
-    // ── 5. Narrowing (int)double cast sort key now CONVERTS — Task 3's continuation of case 1 ──────
+    // ── 5. Narrowing (int)double cast sort key renders $toInt ─────────────────────────────────────
 
     [Fact]
     public void Narrowing_cast_sort_key_now_goes_native()
@@ -335,29 +233,23 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         var logs = new List<string>();
         var collection = Seed(nameof(Narrowing_cast_sort_key_now_goes_native));
 
-        // Case 1 pinned the Task-2 decline (order-changing cast left in the tree by UnwrapOrderPreserving, so
-        // TryTranslateField declines). Task 3 does not change that decline — it changes what happens NEXT:
-        // NativeSlotPopulator's TryTranslateComputedSortKey fall-through now SUCCEEDS via TryTranslateValue,
-        // because TranslateOperand renders the cast as an explicit MongoConvertExpression ($toInt) instead of
-        // declining. Under NativeOnly this must now SUCCEED (not throw), with the identical (int)D order case
-        // 1 already computed and self-checked.
+        // TryTranslateField declines the cast (UnwrapOrderPreserving leaves it), then TryTranslateComputedSortKey
+        // succeeds via TryTranslateValue, rendering an explicit MongoConvertExpression ($toInt).
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, logs);
         var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking()
             .OrderBy(x => (int)x.D).ThenBy(x => x.Label).Select(x => x.Label).ToList();
 
         Assert.Equal(IntDOrder, nativeOnlyLabels);
 
-        // Stage-shape pin, NOT a routing proof — filter/sort/paging MQL can look the same whether native or
-        // driver-LINQ built it (see Query/AGENTS.md's "MQL shape cannot prove native" pitfall). The NativeOnly
-        // SUCCESS above is the actual routing proof; this only pins that a computed sort key lowers to the
-        // documented $set → $sort → $unset shape with an explicit $toInt body, not that it proves routing.
+        // Stage-shape pin only (MQL shape can't prove routing; NativeOnly success does): $set → $sort → $unset with
+        // an explicit $toInt body.
         var mql = Mql(logs);
         Assert.Contains("$set", mql);
         Assert.Contains("\"$toInt\"", mql);
         Assert.Contains("\"$D\"", mql);
     }
 
-    // ── 6. Field-to-field comparison with a cast goes native (spike §3.1) ──────────────────────────
+    // ── 6. Field-to-field comparison with a cast goes native ─────────────────────────────────────
 
     // f1 is a negative control (matches neither predicate below); f2/f3/f4 each discriminate one shape.
     private static readonly (string Label, double D, int I)[] ComparisonRows =
@@ -373,10 +265,10 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     {
         var collection = SeedComparisonRows(nameof(Field_to_field_comparison_with_a_cast_goes_native));
 
-        // Widening target (double): matches the driver's own rendering of this exact shape (spike P01).
+        // Widening target (double): matches the driver's own rendering of this shape.
         AssertCastComparisonGoesNative(collection, x => (double)x.I > x.D, ["f2"]);
 
-        // Narrowing target (int): a genuine value-changing cast, still renders explicitly (spike P05).
+        // Narrowing target (int): a genuine value-changing cast, rendered explicitly.
         AssertCastComparisonGoesNative(collection, x => (int)x.D > x.I, ["f3", "f4"]);
     }
 
@@ -413,9 +305,8 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     {
         var collection = SeedComparisonRows(nameof(Cast_to_an_unrenderable_target_still_declines));
 
-        // MQL has no $toShort/$toUInt/$toFloat — MongoConvertExpression.ToOperatorFor returns null for all
-        // three, so TranslateOperand declines rather than emitting an operator MQL cannot express. This is
-        // the SAME boundary the driver's own LINQ provider has (spike §3.2): the fallback fails LOUDLY too.
+        // MQL has no $toShort/$toUInt/$toFloat (MongoConvertExpression.ToOperatorFor returns null), so
+        // TranslateOperand declines. The driver has the same boundary, so the fallback fails loudly too.
         AssertCastComparisonDeclinesLoudly(collection, x => (short)x.I > x.I);
         AssertCastComparisonDeclinesLoudly(collection, x => (uint)x.I > (uint)x.I);
         AssertCastComparisonDeclinesLoudly(collection, x => (float)x.D > x.D);
@@ -428,8 +319,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => nativeOnly.Entities.AsNoTracking().Where(predicate).ToList());
 
-        // The driver refuses these shapes too, so the default-mode fallback fails LOUDLY — never a silently
-        // different row set (same disposition as cases 2/3's unrenderable sort-key targets).
+        // The driver refuses these too, so the default-mode fallback fails loudly, never a different row set.
         using var native = CreateContext(collection, MongoQueryMode.Native);
         Assert.IsType<ExpressionNotSupportedException>(
             Record.Exception(() => native.Entities.AsNoTracking().Where(predicate).ToList()));
@@ -460,14 +350,9 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     [Fact]
     public void Cast_inside_a_quantifier_element_predicate_declines()
     {
-        // The element predicate MUST be field-to-field (Weight vs Rank), not member-vs-constant: a
-        // member-vs-constant cast (`(int)p.Weight > 5`) is intercepted earlier by the UNRELATED, unchanged
-        // HasNumericConvert guard on the query-native comparison path and never reaches TranslateOperand's
-        // Convert branch at all — it would decline for the wrong reason and prove nothing about THIS task's
-        // exclusion. Weight vs Rank forces the general field-to-field path, which DOES build a
-        // MongoConvertExpression($toInt over Weight) — exactly the node IsQueryDialectRenderable must keep
-        // declining, because $expr (what MongoAggregationExpressionRenderer would render this as) is a hard
-        // server error inside $elemMatch.
+        // Field-to-field (Weight vs Rank), not member-vs-constant: `(int)p.Weight > 5` would be declined earlier by
+        // HasNumericConvert and prove nothing. This shape builds a MongoConvertExpression, which
+        // IsQueryDialectRenderable must decline because $expr is a server error inside $elemMatch.
         var collection = database.MongoDatabase.GetCollection<QuantBlog>(
             UniqueCollectionName(nameof(Cast_inside_a_quantifier_element_predicate_declines)));
         collection.InsertMany(
@@ -487,7 +372,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             () => nativeOnly.Entities.AsNoTracking()
                 .Where(b => b.Posts.Any(p => (int)p.Weight > p.Rank)).ToList());
 
-        // Correct results via the graceful fallback under the default Native mode.
+        // Default Native falls back and returns correct results.
         using var native = CreateQuantContext(collection, MongoQueryMode.Native);
         var titles = native.Entities.AsNoTracking()
             .Where(b => b.Posts.Any(p => (int)p.Weight > p.Rank)).Select(b => b.Title).ToList();
@@ -496,15 +381,9 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
     // ── 9. Cast inside an owned SelectMany inner filter — the MongoFieldPrefixRewriter pin ─────────
     //
-    // Step 9 mutation 2 (delete the MongoFieldPrefixRewriter.MongoConvertExpression case) turns NOTHING red
-    // anywhere else in the whole solution (unit + functional Query suites both stayed green under that
-    // mutation) — no OTHER committed test reaches Rewrite with a converted operand. This is the one that
-    // does: an owned SelectMany's inner filter is field-to-field (Weight vs Rank, forcing the same general
-    // TranslateOperand path case 8 uses, NOT the member-vs-constant HasNumericConvert intercept), so
-    // TryBuildOwnedInnerFilter's non-outer-referencing branch calls
-    // MongoFieldPrefixRewriter.Rewrite(expr, "Posts") on a tree containing a MongoConvertExpression. Without
-    // the case, Rewrite throws for a node kind it should have prefixed cleanly — at TRANSLATE time, uncaught
-    // by the lower/render fallback machinery (that catch only wraps lowering, which runs later).
+    // The only test reaching MongoFieldPrefixRewriter.Rewrite with a MongoConvertExpression: an owned SelectMany's
+    // field-to-field inner filter goes through TryBuildOwnedInnerFilter, which rewrites it with the "Posts"
+    // prefix. Without that case Rewrite throws at translate time, outside the lowering fallback's catch.
 
     [Fact]
     public void Cast_inside_an_owned_SelectMany_inner_filter_goes_native()
@@ -524,9 +403,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             }
         ]);
 
-        // The anonymous-type result selector is materialized as-is (a SECOND server-side Select chained after
-        // the SelectMany's own projection is a different, unrelated shape); the final Heading extraction runs
-        // client-side over the already-materialized rows.
+        // A second server-side Select after the SelectMany is a different shape; Heading is extracted client-side.
         using var nativeOnly = CreateQuantContext(collection, MongoQueryMode.NativeOnly);
         var results = nativeOnly.Entities.AsNoTracking()
             .SelectMany(b => b.Posts.Where(p => (int)p.Weight > p.Rank), (b, p) => new { p.Heading })
@@ -537,14 +414,9 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
     // ── 10. Incidental widening: a cast inside a FILTERED Count(pred) element predicate ────────────
     //
-    // Found in fix round 1 (branch review), not by design: TranslateOperand's count branch (EF-359) builds a
-    // MongoFilteredSizeExpression from the SAME element-scoped TryTranslate this task's cast handling now runs
-    // through, so `Posts.Count(p => (int)p.Weight > p.Rank)` — field-to-field, forcing the general path exactly
-    // as cases 8/9 do — now translates its element predicate to a MongoConvertExpression too, passes
-    // MongoAggregationExpressionRenderer.CanRender (Task 1's arm admits it), and goes native, in BOTH the
-    // predicate spelling (`Where(... > 1)`) and the projection spelling (`Select(... N = ...)`). Neither
-    // shape previously reached this: pre-Task-3, TranslateOperand's Convert branch always declined a
-    // type-changing cast, so the element predicate failed to translate and the whole filtered count declined.
+    // TranslateOperand's count branch builds a MongoFilteredSizeExpression from the same element-scoped
+    // TryTranslate, so a field-to-field cast in the element predicate becomes a MongoConvertExpression and goes
+    // native in both predicate and projection position.
 
     [Fact]
     public void Cast_inside_a_filtered_Count_element_predicate_goes_native()
@@ -591,7 +463,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             .ToList();
         Assert.Equal(["b2"], matchingTitles);
 
-        // Projection spelling — asserts VALUES for every row, not just routing.
+        // Projection spelling — asserts values for every row.
         using var nativeOnlyProjection = CreateQuantContext(collection, MongoQueryMode.NativeOnly);
         var counts = nativeOnlyProjection.Entities.AsNoTracking()
             .Select(b => new { b.Title, N = b.Posts.Count(p => (int)p.Weight > p.Rank) })
@@ -604,17 +476,11 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
     // ── 9. Widening cast on the member side of a member-vs-constant comparison ─────────────────────
     //
-    // Task 4's headline shape. TranslateComparison's query-native branch used to decline the WHOLE comparison
-    // via HasNumericConvert; it now tolerates a widening numeric layer and absorbs it (the emitted field ref is
-    // the stored field, exactly as for a bare `x.I >= 2.5` would-be comparison).
+    // TranslateComparison's query-native branch absorbs a widening numeric layer (the field ref is the stored
+    // field). The comparison then happens in the cast's type, so the constant must be serialized in that type:
+    // serializing with the property's serializer would truncate 2.5 to 2, emit {"I": {"$gte": 2}} and silently
+    // return an extra row. The truncated set is a superset of the correct one, so assert NotEqual explicitly.
     //
-    // THIS IS THE SILENT-WRONG-DATA PIN. Absorbing the cast moves the comparison from the STORED type (int) to
-    // the CAST's type (double/decimal). TranslateComparison serializes the constant with
-    // `forSerialization: leftProperty`, which coerces 2.5 to the property's CLR type — i.e. TRUNCATES it to 2 —
-    // emitting {"I": {"$gte": 2}} and returning one row too many, silently, under the DEFAULT Native mode.
-    // MEASURED with the spike's prototype (spike §6.2, probes P15/P17). The rows below are what discriminates:
-    // the truncated set is a strict superset of the correct one, so a row COUNT alone would not be enough —
-    // hence the explicit Assert.NotEqual against the truncated set.
     //
     //   Rows (I): a=1, b=2, c=3, d=-1, e=50000
     //   correct   (I >= 2.5): c, e
@@ -631,33 +497,29 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         AssertFractionalConstantRows(collection, x => (double)x.I >= 2.5);
         AssertFractionalConstantRows(collection, x => (decimal)x.I >= 2.5m);
 
-        // REVERSED OPERAND ORDER — the MIRRORED branch of TranslateComparison, which has its own separate
-        // HasNumericConvert call and its own separate TranslateValue call site. Without these two rows, reverting
-        // ONLY that branch's constant to the property serializer would reintroduce the exact truncation bug with
-        // nothing red anywhere: every other case in this file, and every unit case, puts the member on the LEFT.
-        // The shape is reachable — the provider carries `Mirror` precisely because EF does not normalise operand
-        // order — and the expected rows are identical, since `2.5 <= x` is the same predicate as `x >= 2.5`.
+        // Reversed operand order: the mirrored branch of TranslateComparison has its own HasNumericConvert and
+        // TranslateValue call sites, and nothing else puts the member on the right. `2.5 <= x` ≡ `x >= 2.5`.
         AssertFractionalConstantRows(collection, x => 2.5 <= (double)x.I);
         AssertFractionalConstantRows(collection, x => 2.5m <= (decimal)x.I);
     }
 
     private void AssertFractionalConstantRows(IMongoCollection<Row> collection, Expression<Func<Row, bool>> predicate)
     {
-        // Routing proof: NativeOnly SUCCEEDS (pre-Task-4 the whole comparison declined here and this threw).
+        // Routing proof: NativeOnly succeeds.
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
         var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(FractionalCorrect, nativeOnlyLabels);
         Assert.NotEqual(FractionalTruncated, nativeOnlyLabels);
 
-        // Default Native mode is where the wrong data would be silent — assert it there too.
+        // Default Native is where wrong data would be silent.
         using var native = CreateContext(collection, MongoQueryMode.Native);
         var nativeLabels = native.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(FractionalCorrect, nativeLabels);
         Assert.NotEqual(FractionalTruncated, nativeLabels);
 
-        // Oracle: in-memory LINQ over the SAME Expression object.
+        // Oracle: in-memory LINQ over the same Expression object.
         using var oracle = CreateContext(collection, MongoQueryMode.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList().AsQueryable()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
@@ -671,28 +533,22 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     {
         var collection = Seed(nameof(Widening_cast_comparison_emits_the_constant_in_the_comparison_type));
 
-        // Stage-shape pin, NOT a routing proof — case 9's NativeOnly success is the routing proof (see
-        // Query/AGENTS.md's "MQL shape cannot prove native" pitfall). What this pins is that the emitted
-        // constant is 2.5, not the 2 a stored-property serializer would coerce it to, and that it is
-        // BYTE-IDENTICAL to what the driver's own LINQ provider emits for the same shape.
+        // Stage-shape pin (case 9 is the routing proof): the constant is 2.5, not the property-coerced 2, and the
+        // MQL is byte-identical to driver-LINQ's.
         var nativeLogs = new List<string>();
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, nativeLogs);
         _ = nativeOnly.Entities.AsNoTracking().Where(x => (double)x.I >= 2.5).ToList();
         var nativeMql = MqlPipeline(nativeLogs);
 
-        // The whole $match document, not just the operator fragment — a strictly stronger positive assertion.
-        // (There is deliberately NO negative "does not contain the truncated form" assertion beside it: the
-        // truncated emission is `{ "$gte" : 2 }`, and every needle spelling one that CANNOT also match `2.5`
-        // is fragile against a formatting change. The positive assertion is the discriminator, and it is
-        // mutation-verified — forcing the property serializer turns this case red on exactly this line.)
+        // The whole $match document. No negative "truncated form" assertion: `{ "$gte" : 2 }` can't be matched
+        // robustly without also matching 2.5, and this positive assertion is sufficient.
         Assert.Contains("{ \"I\" : { \"$gte\" : 2.5 } }", nativeMql);
 
         var driverLogs = new List<string>();
         using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq, driverLogs);
         _ = driverLinq.Entities.AsNoTracking().Where(x => (double)x.I >= 2.5).ToList();
 
-        // Byte-identical to the driver's own rendering of the same shape (the log line's leading timestamp is
-        // stripped by MqlPipeline; both legs run against the same collection, so the rest is comparable).
+        // Byte-identical to driver-LINQ (MqlPipeline strips the log timestamp).
         Assert.Equal(MqlPipeline(driverLogs), nativeMql);
     }
 
@@ -724,16 +580,10 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
     // ── 12. The conjunct that separates "default-serialized" from "not an enum" ────────────────────
     //
-    // The spike left it UNVERIFIED (§6.2, §11) whether NativeGroupByBinder.HasDefaultKeySerialization is
-    // exactly the right conjunct for the constant rule, versus the cheaper "the property's CLR type is not an
-    // enum" — no fixture in the spike separated them. THIS ONE DOES, and it is why the shipped rule uses
-    // HasDefaultKeySerialization.
-    //
-    // `Coded` is a plain `int` (so "not an enum" is TRUE) carried through a VALUE CONVERTER to a string (so
-    // HasDefaultKeySerialization is FALSE). Under the shipped rule the constant keeps the PROPERTY serializer
-    // and renders as the string "2", matching what the stored field actually holds; under the "not an enum"
-    // rule it would render as the raw number 2, which MongoDB type-brackets against a string field so the
-    // query returns NO rows at all. The two rules therefore disagree on both the emitted MQL and the ROWS.
+    // Why the rule uses NativeGroupByBinder.HasDefaultKeySerialization rather than "the property's CLR type is not
+    // an enum". `Coded` is an int (not an enum) value-converted to a string (not default-serialized). The shipped
+    // rule keeps the property serializer and renders "2"; the "not an enum" rule would render 2, which MongoDB
+    // type-brackets against a string field and so returns no rows.
 
     private class ConvRow
     {
@@ -751,9 +601,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         var name = UniqueCollectionName(
             nameof(Widening_cast_comparison_over_a_value_converted_property_keeps_the_property_serializer));
 
-        // Seed through a BsonDocument handle, NOT through IMongoCollection<ConvRow>.InsertMany: the latter uses
-        // the DRIVER's own POCO serializer, which knows nothing about EF's value converter and would store
-        // `Coded` as an Int32 — the very stored shape this test needs to distinguish itself from.
+        // Seed as BsonDocument: the driver's POCO serializer ignores EF's converter and would store an Int32.
         database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
         [
             new BsonDocument { { "Label", "p" }, { "Coded", "1" } },
@@ -768,22 +616,17 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         var nativeLabels = nativeOnly.Entities.AsNoTracking()
             .Where(x => (long)x.Coded >= 2L).OrderBy(x => x.Label).Select(x => x.Label).ToList();
 
-        // The discriminator, asserted FIRST because it is the thing the two candidate conjuncts disagree on:
-        // the constant renders as the STRING "2" (the property serializer, i.e. the shipped rule) and NOT as
-        // the raw number 2 the "not an enum" rule would produce.
+        // Discriminator: the constant renders as the string "2" (property serializer), not the number 2.
         var mql = MqlPipeline(logs);
         Assert.Contains("\"$gte\" : \"2\"", mql);
 
-        // And the rows follow from it: a comparison over the STORED strings "1"/"2"/"3" — NOT the empty set a
-        // raw number would produce against a string-stored field (MongoDB type-brackets $gte). The seed is
-        // deliberately single-digit so the string ordering coincides with the numeric one; this case is about
-        // WHICH SERIALIZER renders the constant, not about value-converted comparison semantics in general.
+        // Rows follow: a comparison over the stored strings, not the empty set a number would give. Single-digit
+        // seed so string and numeric order coincide; this case is about which serializer renders the constant.
         Assert.Equal(["q", "r"], nativeLabels);
         Assert.NotEmpty(nativeLabels);
 
-        // Control: the UN-cast comparison — which never had a convert layer and so is untouched by this task —
-        // emits the identical constant. That is the property the rule preserves: absorbing a widening cast over
-        // a NON-default-serialized property must leave the constant exactly where it was.
+        // Control: the un-cast comparison emits the identical constant; absorbing a widening cast over a
+        // non-default-serialized property must not change it.
         var uncastLogs = new List<string>();
         using var uncast = CreateConvContext(collection, MongoQueryMode.NativeOnly, uncastLogs);
         var uncastLabels = uncast.Entities.AsNoTracking()
@@ -791,14 +634,10 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Contains("\"$gte\" : \"2\"", MqlPipeline(uncastLogs));
         Assert.Equal(nativeLabels, uncastLabels);
 
-        // THERE IS NO DRIVER-LINQ ORACLE FOR THIS SHAPE, measured rather than assumed: the driver's own LINQ
-        // provider fails building its numeric-conversion serializer over a ValueConverterSerializer ("Serializer
-        // class ValueConverterSerializer`2 does not implement IHasRepresentationSerializer", surfaced through a
-        // reflection Invoke), so explicit DriverLinq — and, before this task, the default Native mode's fallback
-        // — fails LOUDLY where native now answers. A loud throw becoming correct rows is an improvement, not a
-        // divergence. Asserted as "it threw", NOT by exception type: per the versioning rubric the exception
-        // type of an unsupported shape is not contract, and CI runs with a DRIVER_VERSION override, so pinning
-        // the driver's wrapper type would break on a driver bump for a fact this test does not depend on.
+        // No driver-LINQ oracle: the driver fails building its numeric-conversion serializer over a
+        // ValueConverterSerializer ("does not implement IHasRepresentationSerializer"), so DriverLinq throws where
+        // native answers. Asserted as "threw", not by type: unsupported-shape exception types aren't contract and
+        // CI overrides DRIVER_VERSION.
         using var driverLinq = CreateConvContext(collection, MongoQueryMode.DriverLinq);
         Assert.NotNull(Record.Exception(() => driverLinq.Entities.AsNoTracking()
             .Where(x => (long)x.Coded >= 2L).Select(x => x.Label).ToList()));
@@ -819,12 +658,8 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
     // ── 13. The OTHER sub-family the conjunct protects: a value-TRANSFORMING numeric converter ─────
     //
-    // Case 12 covers a RE-ENCODING converter (int stored as a string), whose failure mode is ZERO rows —
-    // MongoDB type-brackets a number against a string field, so the wrong rule fails loudly-ish. This case
-    // covers the sub-family that fails SILENTLY: `v => v * 2` keeps the stored form numeric, so the wrong rule
-    // emits a well-typed number that simply selects the WRONG ROWS. It is the clearest wrong-data story for
-    // the HasDefaultKeySerialization conjunct, and case 12's seed cannot tell it — that seed is single-digit
-    // by construction, so its string ordering coincides with its numeric one.
+    // Case 12's re-encoding converter fails with zero rows. A value-transforming converter (`v => v * 2`) keeps a
+    // numeric stored form, so the wrong rule emits a well-typed number that silently selects the wrong rows.
 
     private class ScaledRow
     {
@@ -842,9 +677,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         var name = UniqueCollectionName(
             nameof(Widening_cast_comparison_over_a_value_transforming_converter_returns_the_right_rows));
 
-        // Stored values are the CONVERTED (provider) form; the model values are half of them: p=1, q=2, r=3.
-        // Seeded through a BsonDocument handle for the reason case 12 records — the driver's own POCO
-        // serializer knows nothing about EF's converter and would store the model value unconverted.
+        // Stored values are the converted form (model p=1, q=2, r=3). Seeded as BsonDocument, as in case 12.
         database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
         [
             new BsonDocument { { "Label", "p" }, { "Scaled", 2 } },
@@ -859,21 +692,20 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         var nativeLabels = nativeOnly.Entities.AsNoTracking()
             .Where(x => (long)x.Scaled > 2L).OrderBy(x => x.Label).Select(x => x.Label).ToList();
 
-        // The constant goes through the converter: model 2 -> stored 4. The wrong rule would emit the raw 2.
+        // The constant goes through the converter (model 2 -> stored 4); the wrong rule would emit 2.
         Assert.Contains("\"$gt\" : 4", MqlPipeline(logs));
 
-        // And the rows follow: only the row whose MODEL value exceeds 2 (r, model 3 / stored 6). The wrong rule
-        // would compare stored values against 2 and return q as well — well-typed, plausible, and WRONG.
+        // Only r (model 3) exceeds 2; the wrong rule would also return q.
         Assert.Equal(["r"], nativeLabels);
         Assert.NotEqual(["q", "r"], nativeLabels);
 
-        // Oracle: materialize whole entities (which applies the converter on read) and filter in memory.
+        // Oracle: materialize (applying the converter) and filter in memory.
         using var oracle = CreateScaledContext(collection, MongoQueryMode.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList()
             .Where(x => (long)x.Scaled > 2L).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(["r"], inMemoryLabels);
 
-        // Same "no driver-LINQ oracle" story as case 12 — asserted as "it threw", not by exception type.
+        // No driver-LINQ oracle, as in case 12.
         using var driverLinq = CreateScaledContext(collection, MongoQueryMode.DriverLinq);
         Assert.NotNull(Record.Exception(() => driverLinq.Entities.AsNoTracking()
             .Where(x => (long)x.Scaled > 2L).Select(x => x.Label).ToList()));
@@ -892,14 +724,11 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── 14. The accepted divergence: (long)->(double) is admitted but is NOT value-preserving ──────
+    // ── 14. The accepted divergence: (long)->(double) is admitted but not value-preserving ──────────
     //
-    // (long, double) and (ulong, double) are in WideningNumericConversions and ToOperatorFor admits double, so
-    // this cast is ABSORBED — and above 2^53 IEEE round-to-nearest collapses distinct longs onto one double,
-    // so the comparison native performs (raw stored long vs. the double constant) is not the one C# performs
-    // (rounded long vs. the double constant). This test exists to MEASURE that, and to pin the property that
-    // actually matters for this branch: Native == DriverLinq. It is the EF-359 accepted-divergence family —
-    // native and driver-LINQ agree with each other and both differ from the CLR — not wrong data.
+    // (long, double) is in WideningNumericConversions, so the cast is absorbed; above 2^53 the server compares the
+    // raw long while C# compares the rounded double. Native == DriverLinq is what matters (accepted divergence:
+    // both differ from the CLR).
 
     private class LongRow
     {
@@ -922,28 +751,27 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             new LongRow { Label = "small", L = 1L }
         ]);
 
-        // Premise, asserted rather than assumed: the CLR really does round this long onto `rounded`.
+        // Premise: the CLR rounds this long onto `rounded`.
         Assert.Equal(rounded, (double)justAbove);
 
         using var nativeOnly = CreateLongContext(collection, MongoQueryMode.NativeOnly);
         var nativeLabels = nativeOnly.Entities.AsNoTracking()
             .Where(x => (double)x.L == rounded).OrderBy(x => x.Label).Select(x => x.Label).ToList();
 
-        // THE PROPERTY THAT MATTERS: native agrees with the driver, which absorbs the cast identically.
+        // Native agrees with the driver, which absorbs the cast identically.
         using var driverLinq = CreateLongContext(collection, MongoQueryMode.DriverLinq);
         var driverLinqLabels = driverLinq.Entities.AsNoTracking()
             .Where(x => (double)x.L == rounded).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(driverLinqLabels, nativeLabels);
 
-        // The CLR answers differently, because it rounds the OPERAND before comparing. Documented, not fixed.
+        // The CLR differs because it rounds the operand before comparing.
         using var oracle = CreateLongContext(collection, MongoQueryMode.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList()
             .Where(x => (double)x.L == rounded).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(["big"], inMemoryLabels);
         Assert.NotEqual(inMemoryLabels, nativeLabels);
 
-        // A value BELOW 2^53 is exactly representable, so every leg agrees there — this is the control that
-        // stops the case above being read as "long casts are broken".
+        // Control: below 2^53 every leg agrees.
         using var control = CreateLongContext(collection, MongoQueryMode.NativeOnly);
         Assert.Equal(
             ["small"],
@@ -960,17 +788,12 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── 15. IDENTITY-LIKE arm, part 1: enum ↔ underlying — the constant KEEPS the property serializer ──
+    // ── 15. Identity-like arm: enum ↔ underlying — the constant keeps the property serializer ─────
     //
-    // This is the enum-as-string shape that used to lock NativeGateRoutingTests.A_enum_as_string_where_equals_
-    // routing to the fallback. EF emits the comparison as `(int)e.Status == (int)Status.Active` — a Convert of
-    // the member to the enum's own underlying type — which HasNumericConvert now recognizes as IDENTITY-LIKE
-    // (not widening): the comparison happens on the SAME stored value, so the field ref is the stored field
-    // unchanged, but the constant must go through the PROPERTY's own serializer (the ValueConverterSerializer
-    // for HasConversion<string>()) to render "Active" rather than the raw underlying int 0. Getting this wrong
-    // — treating it like the widening arm and dropping the property serializer — would render the constant as
-    // a bare number, which MongoDB type-brackets against the string-stored field: the query would go native
-    // and silently match NOTHING. This case therefore asserts VALUES in all three modes, not just routing.
+    // EF emits `(int)e.Status == (int)Status.Active`. HasNumericConvert treats this as identity-like: the field ref
+    // is the stored field, but the constant must go through the property's serializer (ValueConverterSerializer
+    // for HasConversion<string>()) to render "Active". Treating it as widening would render 0, which MongoDB
+    // type-brackets against the string field, silently matching nothing. Asserts values in all modes.
 
     private enum Status { Active, Suspended, Closed }
 
@@ -989,9 +812,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     {
         var name = UniqueCollectionName(nameof(Enum_as_string_comparison_goes_native_and_returns_the_right_values));
 
-        // Seeded through a BsonDocument handle (same reason as cases 12/13): the driver's own POCO serializer
-        // knows nothing about EF's value converter and would store the enum as an Int32, the very stored shape
-        // this test needs to distinguish itself from.
+        // Seeded as BsonDocument (as cases 12/13) so the enum is stored as a string.
         database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
         [
             new BsonDocument { { "Label", "p" }, { "Status", "Active" } },
@@ -1002,17 +823,14 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
         var collection = database.MongoDatabase.GetCollection<EnumRow>(name);
 
-        // Routing proof: NativeOnly SUCCEEDS — before Task 5 this whole comparison declined at HasNumericConvert
-        // and NativeOnly threw NativeTranslationNotSupportedException (see the now-superseded comment on
-        // NativeGateRoutingTests.A_enum_as_string_where_equals_routing).
+        // Routing proof: NativeOnly succeeds (see NativeGateRoutingTests.A_enum_as_string_where_equals_routing).
         var logs = new List<string>();
         using var nativeOnly = CreateEnumContext(collection, MongoQueryMode.NativeOnly, logs);
         var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking()
             .Where(x => x.Status == Status.Active).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(["p", "r"], nativeOnlyLabels);
 
-        // The discriminator: the constant renders as the mapped STRING "Active", not the raw underlying int —
-        // this is exactly what the identity-like arm's "keep the property serializer" rule buys.
+        // Discriminator: the constant renders as the string "Active", not the underlying int.
         Assert.Contains("\"Status\" : \"Active\"", MqlPipeline(logs));
 
         // Default Native mode is where a dropped property serializer would silently match nothing.
@@ -1027,7 +845,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             .Where(x => x.Status == Status.Active).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(driverLinqLabels, nativeLabels);
 
-        // Oracle: in-memory LINQ over the same expression, evaluated over the same rows.
+        // Oracle: in-memory LINQ over the same rows.
         using var oracle = CreateEnumContext(collection, MongoQueryMode.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList()
             .Where(x => x.Status == Status.Active).OrderBy(x => x.Label).Select(x => x.Label).ToList();
@@ -1047,15 +865,10 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── 16. IDENTITY-LIKE arm, part 2: char -> int, and boxing to object ───────────────────────────
+    // ── 16. Identity-like arm: char -> int, and boxing to object ──────────────────────────────────
     //
-    // Neither of these has a value converter in play — they are plain unconverted properties — so unlike case
-    // 15 the constant's serialization context (property vs. comparison type) makes no OBSERVABLE difference to
-    // the emitted value here (a plain int/char round-trips identically either way). What these cases pin is
-    // that the comparison is ADMITTED at all (routing) rather than declining: neither `char -> int` nor
-    // `T -> object` is in WideningNumericConversions (that table holds primitive numeric pairs only — char's
-    // own widenings and any boxing conversion are deliberately excluded from it), so before Task 5 both shapes
-    // declined at HasNumericConvert.
+    // No value converter, so the serializer choice isn't observable; these pin that the comparison is admitted at
+    // all. Neither `char -> int` nor `T -> object` is in WideningNumericConversions.
 
     private class CharBoxRow
     {
@@ -1077,31 +890,20 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     {
         var collection = SeedCharBox(nameof(Char_and_boxing_converts_go_native));
 
-        // char -> int identity-like convert: (int)'A' == 65. A genuine numeric conversion (char to int is a
-        // value, not a reference, conversion), so the in-memory CLR oracle agrees with VALUE equality here —
-        // the full four-leg helper (including the CLR oracle) applies unchanged.
+        // char -> int: (int)'A' == 65, a value conversion, so the CLR oracle applies.
         AssertCharBoxComparisonGoesNative(collection, x => (int)x.Grade == 65, ["a"]);
 
-        // Boxing convert to object: (object)x.I == (object)2. Deliberately NOT run through the shared helper
-        // above — see AssertBoxingComparisonGoesNative for why the in-memory CLR oracle leg does not apply here.
+        // Boxing to object: no CLR oracle (see AssertBoxingComparisonGoesNative).
         AssertBoxingComparisonGoesNative(collection, x => (object)x.I == (object)2, ["b"]);
     }
 
-    // Boxing `==` is a REFERENCE-equality comparison in real C# (object.ReferenceEquals semantics for two
-    // freshly-boxed value-type operands, per the CLR's built-in `object`-to-`object` equality operator) — so
-    // `(object)x.I == (object)2` evaluated by ACTUAL in-memory LINQ compares two DIFFERENT boxed instances and
-    // is FALSE for every row, never matching even when the underlying values are equal. This is not a defect
-    // in the translator: the translator reinterprets the Convert+Equal shape structurally as a VALUE
-    // comparison (identical to what the driver's own LINQ provider does for this shape, and to what every
-    // other MEMBER-side identity-like convert in this file does), so native and driver-LINQ agree with EACH
-    // OTHER and both correctly differ from the CLR's own reference-equality answer — the SAME "native equals
-    // driver-LINQ, both differ from in-memory LINQ" shape as case 14's accepted divergence, just via a
-    // different mechanism (reference vs. value equality rather than lossy rounding). There is therefore no
-    // useful in-memory oracle leg for this sub-case; only Native == DriverLinq (and the routing proof) apply.
+    // Boxed `==` is reference equality in C#, so in-memory LINQ is false for every row. The translator (like the
+    // driver) treats Convert+Equal as value comparison, so native == driver-LINQ and both differ from the CLR — an
+    // accepted divergence like case 14. Only routing and Native == DriverLinq are asserted.
     private void AssertBoxingComparisonGoesNative(
         IMongoCollection<CharBoxRow> collection, Expression<Func<CharBoxRow, bool>> predicate, string[] expectedLabels)
     {
-        // Premise, asserted rather than assumed: the CLR really does answer differently here.
+        // Premise: the CLR really answers differently.
         var clrLabels = CharBoxRows.Select(r => new CharBoxRow { Label = r.Label, Grade = r.Grade, I = r.I })
             .AsQueryable().Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Empty(clrLabels);
@@ -1112,8 +914,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(expectedLabels, nativeOnlyLabels);
 
-        // THE property that matters: native agrees with the driver, which reinterprets the same shape the
-        // same (value-equality) way.
+        // Native agrees with the driver's value-equality reading.
         using var driverLinq = CreateCharBoxContext(collection, MongoQueryMode.DriverLinq);
         var driverLinqLabels = driverLinq.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
@@ -1134,7 +935,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(expectedLabels, nativeOnlyLabels);
 
-        // Native == DriverLinq == CLR, over the SAME Expression object for the in-memory leg.
+        // Native == DriverLinq == CLR, over the same Expression object for the in-memory leg.
         using var driverLinq = CreateCharBoxContext(collection, MongoQueryMode.DriverLinq);
         var driverLinqLabels = driverLinq.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
@@ -1168,15 +969,11 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── 17. IDENTITY-LIKE arm, fix round 1: a SUB-int-backed enum's promoted comparison goes native ──
+    // ── 17. Identity-like arm: a sub-int-backed enum's promoted comparison goes native ──────────────
     //
-    // Fix round 1 finding: C# promotes a short/byte/ushort/sbyte-backed enum's equality comparison to Int32 —
-    // a WIDENING of the enum's own underlying type, not an exact match — so the member-side Convert targets
-    // Int32, not the enum's own Int16. Every enum fixture elsewhere in this file (case 15's EnumRow.Status,
-    // Int32-backed) could never expose this, because an Int32-backed enum's promoted target IS its own
-    // underlying type (an exact match). This is the shape that cost this task 6 BuiltInDataTypesMongoTest
-    // specification cases on first delivery. No value converter here — this pins ROUTING, not the constant
-    // serializer (case 15 already pins that for the enum-as-string shape).
+    // C# promotes a short/byte/ushort/sbyte-backed enum comparison to Int32, so the member-side Convert targets
+    // Int32, not the enum's Int16 — a widening, which Int32-backed enums (case 15) never expose. Pins routing
+    // (exercised by BuiltInDataTypesMongoTest too).
 
     private enum ShortStatus : short { Active, Suspended, Closed }
 
@@ -1199,9 +996,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             new ShortEnumRow { Label = "r", Status = ShortStatus.Suspended }
         ]);
 
-        // Routing proof: NativeOnly succeeds — before the fix, the promoted Convert(m, Int32) target (not
-        // ShortStatus's own Int16) declined at HasNumericConvert and this threw
-        // NativeTranslationNotSupportedException.
+        // Routing proof: NativeOnly succeeds with the promoted Convert(m, Int32) target.
         using var nativeOnly = CreateShortEnumContext(collection, MongoQueryMode.NativeOnly);
         var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking()
             .Where(x => x.Status == ShortStatus.Suspended).OrderBy(x => x.Label).Select(x => x.Label).ToList();
@@ -1228,20 +1023,12 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── 18. IDENTITY-LIKE arm, fix round 2: enum -> floating must never CRASH ────────────────────
-    //        (Task 7: it no longer DECLINES either -- it goes native. The guard below is unchanged and
-    //         still netted; see the TASK 7 FLIP block after the fix-round-2 finding.)
+    // ── 18. Identity-like arm: enum -> floating must never crash ────────────────────────────────
     //
-    // Fix round 2 finding: for an int-backed enum, IsWideningNumericConvert(Int32, Double) is TRUE (that
-    // pair is a genuine C# implicit numeric widening for a plain int), so (double)x.Level >= n was wrongly
-    // admitted as identity-like by the enum arm's widening disjunct -- toleratedWideningTarget stays null
-    // (this is the ENUM arm, not the numeric-widening arm), so the flag-precedence fix from fix round 1 does
-    // NOT save it, and the constant kept the ENUM property's own serializer. BsonValueSerializer.Coerce's
-    // Enum.ToObject then throws ArgumentException for a non-integral value -- an UNCAUGHT crash under the
-    // DEFAULT Native mode, on a shape that declined cleanly (fell back to driver-LINQ, correct rows) before
-    // Task 5 ever touched this arm. The identity-like arm now restricts its widening disjunct to an
-    // INTEGRAL target (IsIntegerType) -- short/byte/ushort/sbyte -> Int32, the only promotion this arm
-    // exists for, are themselves integral, so the restriction costs nothing there and only closes this hole.
+    // IsWideningNumericConvert(Int32, Double) is true, so without restriction (double)x.Level >= n would be admitted
+    // as identity-like and the constant would keep the enum property's serializer; BsonValueSerializer.Coerce's
+    // Enum.ToObject then throws ArgumentException for 1.5, uncaught under default Native. The identity-like arm
+    // therefore only admits an integral widening target (IsIntegerType).
 
     private enum RankTier { Low, Medium, High }
 
@@ -1252,25 +1039,12 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         public RankTier Level { get; set; }
     }
 
-    // TASK 7 FLIP, recorded here rather than in a new case, because it is this case's OWN shape changing
-    // disposition. Task 7 turns the HasNumericConvert decline into a FALL-THROUGH to the general $expr path,
-    // and `(double)x.Level` is exactly such a decline -- so this shape is no longer a decline at all: it now
-    // goes NATIVE, emitting {$expr: {$gte: [{$toDouble: "$Level"}, 1.5]}} over the stored (int-backed) enum,
-    // and returns the same rows as in-memory LINQ and as driver-LINQ. The method was renamed from
-    // `Enum_to_floating_cast_declines_instead_of_crashing` accordingly.
+    // With that guard, HasNumericConvert declines the query-native branch and the comparison falls through to
+    // $expr, going native as {$expr: {$gte: [{$toDouble: "$Level"}, 1.5]}} with the same rows as in-memory LINQ and
+    // driver-LINQ. If the guard regressed, the query-native branch would crash; the Native leg below catches that.
     //
-    // THE FIX-ROUND-2 GUARD THIS CASE EXISTS FOR IS STILL LOAD-BEARING, AND THIS TEST STILL DISCRIMINATES IT.
-    // The crash it pins comes from the QUERY-NATIVE branch: if IsIdentityLikeConvert wrongly admitted
-    // enum -> double, HasNumericConvert would return FALSE, the query-native branch would be taken (never the
-    // $expr fall-through), the constant would keep the ENUM property's own serializer, and
-    // BsonValueSerializer.Coerce's Enum.ToObject would throw ArgumentException for a non-integral value --
-    // uncaught, under the DEFAULT Native mode. The `Assert.Equal(expectedLabels, nativeLabels)` leg below is
-    // what catches that; it does not depend on which of the two paths produced the rows, only on getting rows
-    // rather than a crash.
-    //
-    // The shape is SAFE to admit natively because RankTier is stored in its default (integral) form -- an
-    // enum carrying a non-default BsonRepresentation (enum-as-string) or a value converter is held back from
-    // the fall-through by Guard B (MongoExpressionTranslator.CanFallThroughToExpr); see case 29.
+    // Safe because RankTier is default-serialized; an enum with a non-default BsonRepresentation or a converter is
+    // held back from the fall-through (see case 29).
 
     [Fact]
     public void Enum_to_floating_cast_now_goes_native_and_still_never_crashes()
@@ -1287,24 +1061,20 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         // Fractional constant.
         AssertEnumToFloatingIsNativeAndCorrect(collection, x => (double)x.Level >= 1.5, ["c"]);
 
-        // Whole-number constant crashed IDENTICALLY before the fix-round-2 guard -- a fix that special-cased
-        // only a fractional value would still have been wrong here, so both are kept.
+        // A whole-number constant crashed the same way, so both are kept.
         AssertEnumToFloatingIsNativeAndCorrect(collection, x => (double)x.Level == 2.0, ["c"]);
     }
 
     private void AssertEnumToFloatingIsNativeAndCorrect(
         IMongoCollection<RankRow> collection, Expression<Func<RankRow, bool>> predicate, string[] expectedLabels)
     {
-        // Default Native mode: returns the correct rows. The pre-fix-round-2 behavior was an UNCAUGHT
-        // ArgumentException here, not merely a routing miss -- this is still the load-bearing assertion for
-        // the whole case, and it is unaffected by Task 7 changing WHICH path produces the rows.
+        // Default Native: correct rows, never an uncaught ArgumentException.
         using var native = CreateRankContext(collection, MongoQueryMode.Native);
         var nativeLabels = native.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(expectedLabels, nativeLabels);
 
-        // NativeOnly: since Task 7 this SUCCEEDS (it used to throw NativeTranslationNotSupportedException) --
-        // the routing proof that the $expr fall-through, not the driver-LINQ fallback, produced those rows.
+        // NativeOnly succeeds: the $expr fall-through, not the fallback, produced the rows.
         using var nativeOnly = CreateRankContext(collection, MongoQueryMode.NativeOnly);
         var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking()
             .Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList();
@@ -1328,17 +1098,12 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── 19. Flag-precedence fix round 1, at ROWS level: boxing must not mask widening's truncation guard ──
+    // ── 19. Flag precedence at the rows level: boxing must not mask widening's truncation guard ──────
     //
-    // MongoExpressionTranslatorTests.Boxing_over_a_widening_cast_lets_the_widening_arm_win_precedence (and its
-    // mirrored sibling) pin this at the NODE-SHAPE level (constant.ForSerialization is null). This case pins
-    // the same fix at the level that actually matters end to end: the RENDERED VALUE. Had the identity-like
-    // (boxing) layer wrongly won precedence, the constant would keep I's own (plain int) serializer, and
-    // MongoValueRenderer.ToBsonValue -> BsonValueSerializer.Coerce(int, 2.5) truncates it to 2 at RENDER time
-    // -- a step the unit test's translation-layer assertions cannot observe at all, since constant.Value stays
-    // 2.5 regardless of which arm won (see that test's corrected comment). The truncated constant would match
-    // row "b" (I=2); the correct (untruncated) comparison matches nothing, since no I value's widened double
-    // form equals 2.5 exactly.
+    // MongoExpressionTranslatorTests.Boxing_over_a_widening_cast_lets_the_widening_arm_win_precedence pins the node
+    // shape; this pins the rendered value. If the boxing (identity-like) layer won, the constant would keep I's int
+    // serializer and BsonValueSerializer.Coerce(int, 2.5) would truncate it to 2 at render time (invisible at the
+    // translation layer), matching row "b". The correct comparison matches nothing.
 
     [Fact]
     public void Boxing_over_a_widening_cast_precedence_returns_the_untruncated_row()
@@ -1347,8 +1112,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
         AssertBoxingOverWideningPrecedenceReturnsNoRows(collection, x => (object)(double)x.I == (object)2.5);
 
-        // Mirrored branch (member on the right) has its own separate HasNumericConvert /
-        // ConstantSerializationContext call site.
+        // Mirrored branch (member on the right) has its own HasNumericConvert / ConstantSerializationContext site.
         AssertBoxingOverWideningPrecedenceReturnsNoRows(collection, x => (object)2.5 == (object)(double)x.I);
     }
 
@@ -1358,9 +1122,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
         var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking().Where(predicate).Select(x => x.Label).ToList();
 
-        // The discriminator: if boxing had wrongly won, the constant would render as the TRUNCATED int 2 and
-        // match row "b" (I=2). Fixed behavior: widening wins, the constant stays 2.5, and no stored int
-        // equals it.
+        // If boxing won, the constant would render as 2 and match "b"; widening wins, so it stays 2.5.
         Assert.Empty(nativeOnlyLabels);
 
         using var native = CreateContext(collection, MongoQueryMode.Native);
@@ -1381,25 +1143,22 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── 20. Numeric-cast PROJECTION leaf — wrapped spelling goes native (EF-322 slice A1, Task 6) ──
+    // ── 20. Numeric-cast projection leaf — wrapped spelling goes native ──────────────────────────
     //
-    // NativeProjectionBinder.TryTranslateLeaf now admits a UnaryExpression{Convert} leaf gated on the
-    // RESULTING node kind being MongoConvertExpression, mirroring the count/arithmetic branches' own
-    // "renders as a DOCUMENT, so $project cannot misread it as an inclusion/exclusion flag" argument. This is
-    // also the A2-lesson audit target: MongoProjectionBindingExpressionVisitor.Visit registers the WHOLE
-    // Convert node (not just the operand) so the read side knows a CONVERTED value was projected, and
-    // MongoProjectionBindingRemovingExpressionVisitor reads it back RAW by alias instead of through the
-    // pre-cast member's own (mismatched) serializer.
+    // NativeProjectionBinder.TryTranslateLeaf admits a Convert leaf that translates to MongoConvertExpression (it
+    // renders as a document, so $project can't misread it as an inclusion/exclusion flag).
+    // MongoProjectionBindingExpressionVisitor.Visit registers the whole Convert node so
+    // MongoProjectionBindingRemovingExpressionVisitor reads the value raw by alias, not through the pre-cast
+    // member's serializer.
     //
-    // (int)D truncates toward zero, computed directly from the Rows table: a=1.6->1, b=1.4->1, c=2.5->2,
-    // d=-1.5->-1, e=0.5->0.
+    // (int)D: a=1.6->1, b=1.4->1, c=2.5->2, d=-1.5->-1, e=0.5->0.
 
     [Fact]
     public void Wrapped_cast_projection_leaf_goes_native()
     {
         var collection = Seed(nameof(Wrapped_cast_projection_leaf_goes_native));
 
-        // Routing proof: NativeOnly succeeds AND returns the correct (int)D values.
+        // Routing proof: NativeOnly succeeds and returns the correct (int)D values.
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking().OrderBy(x => x.Label)
             .Select(x => new { x.Label, X = (int)x.D }).ToList();
@@ -1422,11 +1181,9 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
     // ── 21. Wrapped numeric-cast PROJECTION leaf behind a parameterized predicate ──────────────────
     //
-    // `prefix` is a captured local: this shape now goes fully native under Native/NativeOnly (a parameterized
-    // StartsWith term is natively representable), so this proves Native and DriverLinq agree on the read.
-    // Carries BOTH a non-nullable and a NULLABLE cast-target leg (fix round 1, Minor 6) — the non-nullable
-    // leaf alone cannot discriminate a silent alias miss (it fails loudly instead), which is exactly why this
-    // file's own tests elsewhere mix nullable and non-nullable leaves.
+    // `prefix` is a captured local (natively representable), so Native and DriverLinq must agree on the read.
+    // Includes a nullable cast-target leg: a non-nullable leaf fails loudly on an alias miss, a nullable one
+    // silently.
 
     [Fact]
     public void Wrapped_cast_projection_leaf_behind_a_parameterized_predicate_returns_correct_values()
@@ -1447,11 +1204,8 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             .Select(x => new { x.Label, X = (int)x.D }).ToList();
         Assert.Equal(result.Select(r => (r.Label, r.X)), driverLinqResult.Select(r => (r.Label, r.X)));
 
-        // Fix round 1, Minor 6: a NULLABLE cast-target leg. The non-nullable leaf above fails LOUDLY on an
-        // alias miss (a required-property materialization exception), which is exactly why this branch's own
-        // recorded rule requires mixing a nullable leaf in alongside a non-nullable one -- an alias miss is
-        // SILENT for a nullable/reference leaf (BsonBinding's nullable arm returns null with no exception),
-        // and only a nullable leg can discriminate that failure mode on this late-decline route.
+        // Nullable leg: an alias miss is silent for a nullable leaf (BsonBinding returns null), so only this leg
+        // can detect it.
         var nullableResult = native.Entities.AsNoTracking()
             .Where(x => x.Label.StartsWith(prefix)).OrderBy(x => x.Label)
             .Select(x => new { x.Label, X = (int?)x.D }).ToList();
@@ -1464,38 +1218,21 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             nullableResult.Select(r => (r.Label, r.X)), driverLinqNullableResult.Select(r => (r.Label, r.X)));
     }
 
-    // ── 22. Numeric-cast PROJECTION leaf — bare spelling goes NATIVE (EF-322 slice A4, tier 2) ─────
+    // ── 22. Numeric-cast projection leaf — bare spelling goes native ──────────────────────────────
     //
-    // FLIPPED BY A4-1, and the previous disposition is recorded rather than deleted because the two are one
-    // fact seen from either side. Through step 3a this shape DECLINED: the bare arm derived its alias only via
-    // TryDeriveDocumentPathAlias, which admits a non-dotted MongoFieldExpression/MongoElementRefExpression and
-    // nothing else, and a MongoConvertExpression is backed by no document element at all. A4-1 adds the SECOND
-    // derivation (TryDeriveSyntheticAlias) for exactly the computed leaf kinds that render as an
-    // aggregation-operator DOCUMENT rather than a bare value — an arithmetic MongoBinaryExpression and this
-    // MongoConvertExpression — under the reserved `_v` alias and the Synthetic tier. The VALUES are unchanged;
-    // only the route is, which is what makes this test worth keeping in its flipped form.
-    //
-    // ONE OF THE SIX A4 DECLINE TRIPWIRES, and the only one A4-1 flipped rather than A4-3.
-    //
-    // A4-3 LEFT THIS ON SEQUENTIAL ASSERTIONS, on the grounds that it "already asserts" all three legs. THAT
-    // DEFENCE DOES NOT ANSWER THE OBJECTION AND THE FINAL REVIEW WAS RIGHT: asserting three legs is not running
-    // them. The NativeOnly value assertion ran FIRST, so any routing regression failed there and the
-    // explicit-DriverLinq leg below it — the leg the versioning rubric MANDATES, because the native default's
-    // carve-out is conditional on UseQueryMode(DriverLinq) restoring the previous path — never executed at all,
-    // and the failure report named only the NativeOnly symptom. Converted to the collect-then-assert convention
-    // this slice uses everywhere else (see NativeComputedBareProjectionTests.LegOutcome's remarks for why it is
-    // not a style preference).
+    // A MongoConvertExpression has no document element, so TryDeriveDocumentPathAlias can't alias it;
+    // TryDeriveSyntheticAlias gives computed leaves that render as an operator document the reserved `_v` alias
+    // (Synthetic tier). Legs are collected and asserted together so a regression reports every mode, including the
+    // DriverLinq escape hatch (see NativeComputedBareProjectionTests.LegOutcome).
 
     [Fact]
     public void Bare_cast_projection_leaf_goes_native_and_returns_correct_values()
     {
         var collection = Seed(nameof(Bare_cast_projection_leaf_goes_native_and_returns_correct_values));
 
-        // NativeOnly SUCCEEDING is the routing proof; the values it returns are the same ones the two fallback
-        // modes return, which is the actual contract. The DriverLinq leg is the rubric-level escape hatch:
-        // populating Projection flips ProjectionAnalyzer.CanPushDown, so under explicit DriverLinq the driver
-        // now renders this bare Select itself instead of folding it client-side — under its OWN `_v` alias,
-        // which is precisely the alias tier 2 reserved so that one alias-addressed shaper reads either pipeline.
+        // NativeOnly success is the routing proof; all modes must agree. Populating Projection flips
+        // ProjectionAnalyzer.CanPushDown, so under DriverLinq the driver renders this Select itself under its own
+        // `_v` alias, which is why that alias is reserved: one shaper reads either pipeline.
         var expected = "[1,1,2,-1,0]";
         var legs = new List<(string Leg, string Outcome)>();
 
@@ -1512,15 +1249,12 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 
     /// <summary>
-    /// Runs <paramref name="query"/> and describes what it did as a short string, so a caller can COLLECT every
-    /// leg's outcome and assert them together instead of aborting on the first.
+    /// Runs <paramref name="query"/> and describes the outcome as a short string, so callers can collect every leg
+    /// and assert them together.
     /// </summary>
     /// <remarks>
-    /// A local copy of <c>NativeComputedBareProjectionTests.LegOutcome</c> rather than a shared helper: the two
-    /// files have no common base and adding one for a six-line diagnostic would touch every case in both. The
-    /// duplication is deliberate and the two must stay behaviourally identical — a leg that DECLINES reports
-    /// <c>"declined"</c>, any other exception reports its type and first message line, and a sequence reports
-    /// its values, so a regression names what EVERY mode did rather than only the first one to fail.
+    /// Local copy of <c>NativeComputedBareProjectionTests.LegOutcome</c> (no shared base); keep them behaviourally
+    /// identical.
     /// </remarks>
     private static string LegOutcome(Func<object?> query)
     {
@@ -1543,13 +1277,9 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
     // ── 23. Bare numeric-cast PROJECTION leaf behind a parameterized predicate ─────────────────────
     //
-    // The MANDATORY late-decline leg, and A4-1 changes what it is a leg OF. Through step 3a the bare spelling
-    // declined at TRANSLATE time, so nothing here was ever late. Now the leaf IS admitted and the captured-local
-    // `StartsWith` is what declines — at RENDER time, after the alias-addressed shaper has already been
-    // committed. That is the only route in the suite where this slice's failure mode lives, and the failure mode
-    // is SILENT (Query/AGENTS.md's "A READ-SIDE ALIAS MISMATCH IS SILENT" note), so this asserts VALUES. It is
-    // correct only because the late-fallback strip is TIER-conditional and does NOT fire for a Synthetic
-    // override: the driver's own push-down stays in place and writes `_v`, which is what the shaper reads by.
+    // The leaf is admitted and the shaper reads the `_v` alias, so any late (render-time) decline must leave the
+    // driver's own push-down in place: the late-fallback strip is tier-conditional and skips Synthetic overrides.
+    // An alias mismatch is silent, so this asserts values.
 
     [Fact]
     public void Bare_cast_projection_leaf_behind_a_parameterized_predicate_returns_correct_values()
@@ -1557,9 +1287,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         var collection = Seed(nameof(Bare_cast_projection_leaf_behind_a_parameterized_predicate_returns_correct_values));
         var prefix = "a"; // a captured local, not a constant — a genuine query parameter
 
-        // Now goes fully native under NativeOnly too: a parameterized StartsWith term is natively
-        // representable (it defers its escape/anchor to a regex placeholder sentinel resolved at Build time),
-        // so the earlier render-time decline this test exercised no longer occurs.
+        // Goes fully native: a parameterized StartsWith is natively representable (placeholder sentinel).
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
         var nativeOnlyResult = nativeOnly.Entities.AsNoTracking()
             .Where(x => x.Label.StartsWith(prefix)).Select(x => (int)x.D).ToList();
@@ -1578,20 +1306,11 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
     // ── 24. The node-kind gate now admits a bare constant/parameter leaf too ────────────────────────
     //
-    // NativeProjectionBinder.TryTranslateLeaf's cast-leaf branch is UNCONDITIONAL on leafExpression's own
-    // top-level shape — it mirrors the owned-collection count branch's style, not the arithmetic branch's
-    // structural pre-filter, because MongoConvertExpression has exactly ONE construction site in the whole
-    // codebase (TranslateOperand's Convert branch, MongoExpressionTranslator.cs), so gating on the RESULTING
-    // node kind is sufficient on its own. A captured local reaches this exact branch, translating to a
-    // MongoParameterExpression, before ever reaching the arithmetic/count branches' own — differently gated
-    // — checks. That USED TO be a hazard: the emitted $project carried the bare value under alias "X"
-    // alongside the inclusion "Label", and a FALSY value (0) made $project read it as an EXCLUSION flag,
-    // aborting the aggregate. MongoPipelineFactory.RenderProject now $literal-wraps a bare
-    // MongoConstantExpression/MongoParameterExpression projection value (mirroring what RenderAddFields
-    // already did for $set), closing that hazard structurally — so TryTranslateLeaf's final catch-all
-    // (and TryDeriveSyntheticAlias's mirror gate) now admit both node kinds outright. See
-    // NativeOwnedCollectionCountTests.Constant_projection_leaf_is_safely_admitted_via_the_project_literal_wrap
-    // for the sibling count-branch pin covering the same 0/false hazard.
+    // TryTranslateLeaf's cast-leaf branch gates on the resulting node kind, so a captured local reaches it as a
+    // MongoParameterExpression. A bare falsy value (0) would make $project read it as an exclusion flag and abort
+    // the aggregate; MongoPipelineFactory.RenderProject $literal-wraps bare constant/parameter values (as
+    // RenderAddFields does for $set), so both node kinds are admitted. See
+    // NativeOwnedCollectionCountTests.Constant_projection_leaf_is_safely_admitted_via_the_project_literal_wrap.
 
     [Fact]
     public void Constant_leaf_now_goes_native_via_the_project_literal_wrap()
@@ -1618,18 +1337,12 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Equal(Rows.Select(r => r.Label).ToList(), driverLinqResult.Select(r => r.Label).ToList());
     }
 
-    // ── 25. Guard B closes a converted-property gap this gate would otherwise reopen (fix round 1) ──
+    // ── 25. A cast over a value-converted property declines ──────────────────────────────────────
     //
-    // IMPORTANT FINDING FROM REVIEW: a cast over a value-converted property (or one with a non-default
-    // BsonRepresentation) NEVER reaches the raw-alias read case 20's read-side fix installed. It declines at
-    // TRANSLATE time, one layer up: TryTranslateValue applies Guard B (AllFieldsDefaultSerialized), whose
-    // MongoConvertExpression arm recurses THROUGH the cast into the field, and HasDefaultKeySerialization
-    // rejects a converter (or a non-default BsonRepresentation) exactly as it does for the arithmetic/count/
-    // comparison gates elsewhere in this file. $toInt over the RAW STORED (converted) value is never emitted.
-    // This is the A5-precedent functional tripwire for that dependency (mirrors
-    // NativeNullableMemberTests.Value_converted_nullable_Value_projection_leaf_declines_instead_of_reading_the_raw_stored_value):
-    // it asserts an OUTCOME VALUE, not absence-of-throw, so a future edit that routes this leaf onto the raw-
-    // alias read is caught by the WRONG VALUE it returns, not merely a missing exception.
+    // TryTranslateValue's AllFieldsDefaultSerialized recurses through the MongoConvertExpression and
+    // HasDefaultKeySerialization rejects the converter, so $toInt over the raw stored value is never emitted. Asserts
+    // the outcome value (as NativeNullableMemberTests.Value_converted_nullable_Value_projection_leaf_declines_instead_of_reading_the_raw_stored_value
+    // does), so a regression shows the wrong value it returns.
 
     private class ConvertedWeightRow
     {
@@ -1647,23 +1360,15 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         var name = UniqueCollectionName(
             nameof(Cast_over_a_value_converted_property_declines_instead_of_reading_the_raw_stored_value));
 
-        // Stored value is the CONVERTED (provider) form; the model value is half of it: CLR Weight = 3.5,
-        // stored 7.0. (int)3.5 truncates to 3 -- the raw stored value 7.0 would truncate to 7, which is the
-        // discriminator a wrongly-admitted raw-alias read would expose.
+        // Model Weight = 3.5, stored 7.0: (int)3.5 = 3, while a raw-stored read would give 7.
         database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
         [
             new BsonDocument { { "Label", "p" }, { "Weight", 7.0 } }
         ]);
         var collection = database.MongoDatabase.GetCollection<ConvertedWeightRow>(name);
 
-        // The discriminating assertion, in the same "outcome string" style the A5 precedent
-        // (NativeNullableMemberTests.Value_converted_nullable_Value_projection_leaf_declines_instead_of_reading_the_raw_stored_value)
-        // uses: run under NativeOnly (which forces native routing with no fallback to land on) and describe
-        // the outcome as a STRING. Today Guard B declines the leaf and this throws. If a future edit relaxes
-        // Guard B, or adds a cast-leaf path that bypasses TryTranslateValue, the leaf would be admitted and
-        // NativeOnly would SUCCEED, returning the WRONG value (7, the raw stored value truncated) instead of
-        // the correct converted-then-cast value (3) -- and the failing assertion below would print exactly
-        // that wrong value, not merely report a missing exception.
+        // NativeOnly must decline. If the guard were bypassed it would succeed with the wrong value (7), and the
+        // assertion would print it.
         using var nativeOnly = CreateConvertedWeightContext(collection, MongoQueryMode.NativeOnly);
         var outcome = DescribeOutcome(
             () => nativeOnly.Entities.AsNoTracking()
@@ -1672,13 +1377,8 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             r => $"{r.Label}={r.X}");
         Assert.Equal("threw NativeTranslationNotSupportedException", outcome);
 
-        // There is also NO driver-LINQ oracle for this shape (measured, not assumed) -- the SAME
-        // "Serializer class ValueConverterSerializer`2 does not implement IHasRepresentationSerializer" limitation
-        // cases 12/13 measure for a numeric cast over a value-converted property in COMPARISON position also
-        // fires from PROJECTION position, under both Native (the declined leaf's fallback) and explicit
-        // DriverLinq. Asserted as "it threw", not by exception type or value, for the same reason cases 12/13
-        // are: there is no correct answer available to compare against on this route, only "did it avoid
-        // silently returning the wrong one" -- which the NativeOnly assertion above already covers.
+        // No driver-LINQ oracle: the ValueConverterSerializer limitation from cases 12/13 fires here too, under
+        // Native's fallback and DriverLinq. Asserted as "threw", not by type.
         using var native = CreateConvertedWeightContext(collection, MongoQueryMode.Native);
         Assert.NotNull(Record.Exception(() => native.Entities.AsNoTracking()
             .Select(x => new { x.Label, X = (int)x.Weight }).ToList()));
@@ -1688,10 +1388,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             .Select(x => new { x.Label, X = (int)x.Weight }).ToList()));
     }
 
-    // ONE outcome-describer for the whole file (Task 7 fix round 1 collapsed a second, near-identical copy
-    // into this). The row projector is an explicit parameter rather than a T.ToString() default so each
-    // caller keeps the exact wording its own recorded measurement quotes -- case 25's mutation was recorded
-    // as producing "returned p=7", and a formatting change here would silently invalidate that record.
+    // The row projector is explicit so each caller controls the exact wording its assertion quotes.
     private static string DescribeOutcome<T>(Func<List<T>> query, Func<T, string> format)
     {
         List<T> result;
@@ -1718,16 +1415,11 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── 26. EF-410: a WIDENING cast projection leaf now goes native (fix round 2) ─────────────────
+    // ── 26. A widening cast projection leaf goes native ────────────────────────────────────────────
     //
-    // Fix round 1 left this as a documented boundary: (long)x.I / (double)x.I are the COMMONEST numeric-cast
-    // projection shapes, and TranslateOperand's Convert branch UNWRAPS a widening conversion entirely rather
-    // than wrapping it in a MongoConvertExpression -- the resulting node kind is a bare MongoFieldExpression,
-    // indistinguishable by node kind alone from a leaf that was never cast at all. EF-410 closes this: the
-    // gate now also re-derives "was this leaf syntactically a cast" from the ORIGINAL (pre-translation)
-    // leafExpression, so this NativeOnly leg now SUCCEEDS instead of throwing. Updated in place, per the
-    // EF-335 precedent, rather than orphaned — it is still the correctness pin for this shape, just with the
-    // opposite expected disposition.
+    // TranslateOperand unwraps a widening conversion entirely, leaving a bare MongoFieldExpression that is
+    // indistinguishable by node kind from an uncast leaf, so the gate re-derives "was this a cast" from the original
+    // leafExpression.
 
     [Fact]
     public void Widening_cast_projection_leaf_now_goes_native()
@@ -1755,11 +1447,9 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             nativeResult.Select(r => (r.Label, r.X)).ToList(), driverLinqResult.Select(r => (r.Label, r.X)).ToList());
     }
 
-    // ── 26a. EF-410: a widening cast as a BARE (non-`new{}`) projection leaf now goes native too ────
+    // ── 26a. A widening cast as a bare (non-`new{}`) projection leaf goes native too ────────────────
     //
-    // TranslateOperand unwraps (long)x.I to a bare MongoFieldExpression (correct — see its own remarks), so the
-    // tier-2 bare-projection gate's post-translation node-kind check alone can't tell "was cast" from "was never
-    // cast". The fix re-derives that fact from the ORIGINAL leafExpression's own node kind instead.
+    // Same "was this a cast" re-derivation from the original leafExpression, for the bare-projection gate.
 
     [Fact]
     public void Widening_cast_bare_projection_leaf_goes_native()
@@ -1781,35 +1471,17 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             legs);
     }
 
-    // ── 27. THE OWNER RULING (Task 7): a narrowing cast vs. a CONSTANT now returns the CLR answer, and ─
-    //        DELIBERATELY DIVERGES FROM DRIVER-LINQ. DO NOT "CORRECT" THIS TOWARD THE DRIVER.
+    // ── 27. A narrowing cast vs. a constant returns the CLR answer and deliberately diverges from ────
+    //        driver-LINQ. Do not "correct" this toward the driver.
     //
-    // Task 7 turns TranslateComparison's query-native cast VETO into a fall-through: a cast the query-native
-    // branch cannot absorb no longer declines the whole comparison, it declines only that branch, and the
-    // general $expr path renders it as {$expr: {$gt: [{$toInt: "$D"}, 0]}}.
+    // The query-native branch can't absorb the cast, so the comparison falls through to $expr:
+    // {$expr: {$gt: [{$toInt: "$D"}, 0]}}. Driver-LINQ drops the cast and answers `x.D > 0`, also returning e
+    // (D = 0.5, (int)0.5 == 0). Native returns what C# returns, by design.
     //
-    // MEASURED, and this is the whole point of the case: the driver's own LINQ provider DROPS the narrowing
-    // cast on this shape and answers as though the predicate were `x.D > 0`, which returns e (D = 0.5, and
-    // (int)0.5 == 0, so C# excludes it). Native returns what C# returns. THE OWNER HAS RULED: take the
-    // CLR-correct answer and document the divergence.
-    //
-    // WHICH FAMILY THIS IS, stated because the two look alike and a future reader must not conflate them.
-    // This is the OPPOSITE of the EF-359 accepted-divergence family (e.g. case 14 in this same file, the
-    // long -> double widening above 2^53, and the filtered-Count ragged-data rows in
-    // NativeOwnedCollectionFilteredCountTests): there, native and driver-LINQ AGREE WITH EACH OTHER and both
-    // differ from in-memory LINQ, so the CLR is the odd one out and "accept and document" means accepting a
-    // server-semantics answer. HERE it is the reverse — native agrees with the CLR and driver-LINQ is the odd
-    // one out, i.e. native is deliberately MORE CORRECT than the path it replaces. So the instinct that fires
-    // on seeing "native != DriverLinq" ("restore parity with the driver") would, for THIS shape, be a
-    // regression from a correct answer to a wrong one.
-    //
-    // TWO CONSEQUENCES, recorded here (and in TranslateComparison's own remarks) rather than merely lived
-    // with, because they weaken two arguments this branch has leaned on elsewhere:
-    //   (1) "query results are unchanged" is NO LONGER a blanket argument for making the native path the
-    //       default — this is a result change, under the DEFAULT Native mode, for a shape that until this
-    //       task fell back;
-    //   (2) UseQueryMode(MongoQueryMode.DriverLinq) NO LONGER restores the same answer for this shape. It
-    //       restores the driver's answer, which for a narrowing cast against a constant is the CLR-wrong one.
+    // This is the opposite of the accepted-divergence family (case 14, NativeOwnedCollectionFilteredCountTests),
+    // where native and driver-LINQ agree and the CLR is the odd one out. Here driver-LINQ is the odd one out, so
+    // restoring parity would be a regression. Consequences: this is a result change under default Native, and
+    // UseQueryMode(MongoQueryMode.DriverLinq) restores the driver's (CLR-wrong) answer, not the same one.
 
     [Fact]
     public void Narrowing_cast_vs_constant_returns_the_CLR_answer_and_diverges_from_driver_linq()
@@ -1822,31 +1494,27 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         // The driver's answer, with the cast dropped: D > 0 additionally admits e (0.5).
         string[] driverLabels = ["a", "b", "c", "e"];
 
-        // Routing proof: NativeOnly has no fallback to land on, so succeeding at all proves the fall-through
-        // reached the $expr path rather than declining the comparison.
+        // Routing proof: NativeOnly succeeding means the fall-through reached $expr.
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
         Assert.Equal(
             clrLabels,
             nativeOnly.Entities.AsNoTracking().Where(x => (int)x.D > 0)
                 .OrderBy(x => x.Label).Select(x => x.Label).ToList());
 
-        // LEG 1 — native, under the DEFAULT mode, returns the CLR rows.
+        // Leg 1 — default Native returns the CLR rows.
         using var native = CreateContext(collection, MongoQueryMode.Native);
         var nativeLabels = native.Entities.AsNoTracking().Where(x => (int)x.D > 0)
             .OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(clrLabels, nativeLabels);
 
-        // LEG 2 — in-memory LINQ over the SAME expression, evaluated over the same rows, agrees.
+        // Leg 2 — in-memory LINQ over the same expression agrees.
         using var oracle = CreateContext(collection, MongoQueryMode.Native);
         var inMemoryLabels = oracle.Entities.AsNoTracking().ToList().Where(x => (int)x.D > 0)
             .OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(clrLabels, inMemoryLabels);
 
-        // LEG 3 — explicit DriverLinq returns its OWN, DIFFERENT rows. Asserted POSITIVELY (the exact row set
-        // the driver produces), not merely as "not equal to native": a bare Assert.NotEqual would still pass
-        // if the driver started returning some third, unrelated answer, and would not record WHAT the
-        // divergence is. The NotEqual below is kept as well, so the test states the divergence itself and not
-        // only the two row sets that happen to differ today.
+        // Leg 3 — DriverLinq's own rows, asserted positively (a bare NotEqual would accept any third answer) and
+        // with NotEqual to state the divergence.
         using var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq);
         var driverLabels_ = driverLinq.Entities.AsNoTracking().Where(x => (int)x.D > 0)
             .OrderBy(x => x.Label).Select(x => x.Label).ToList();
@@ -1856,13 +1524,8 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
 
     // ── 28. The MIRRORED operand order reaches the SAME fall-through ────────────────────────────────
     //
-    // TranslateComparison classifies converts in TWO places -- the member-left branch and the mirrored
-    // member-right branch -- and Task 7 changes the decline into a fall-through in BOTH. This case is the
-    // member-RIGHT half: `0 < (int)x.D` is the same predicate written the other way round. Note the $expr
-    // path deliberately does NOT mirror the operator (operand order matters inside $expr), so this is a
-    // genuinely different code path to the one case 27 exercises, not a spelling of it.
-    //
-    // The divergence is the same one, and is deliberate and owner-ruled for the same reason (see case 27).
+    // `0 < (int)x.D`: the member-right classification site. The $expr path doesn't mirror the operator (operand
+    // order matters there), so this is a different code path from case 27. Same deliberate divergence.
 
     [Fact]
     public void Mirrored_narrowing_cast_vs_constant_also_returns_the_CLR_answer()
@@ -1894,42 +1557,24 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             .OrderBy(x => x.Label).Select(x => x.Label).ToList();
         Assert.Equal(driverLabels, driverLinqLabels);
 
-        // The same non-vacuity leg case 27 carries: state the DIVERGENCE itself, not only two row sets that
-        // happen to differ today. Without it, a future change that made both sides return the driver's answer
-        // would only be caught by the clrLabels assertions above -- which is enough, but leaves the test
-        // silent about the thing it exists to record.
+        // States the divergence itself, as in case 27.
         Assert.NotEqual(nativeLabels, driverLinqLabels);
     }
 
-    // ── 29. GUARD B holds the fall-through back from a value-converted property (Task 7) ─────────────
+    // ── 29. A narrowing cast over a value-converted property must not fall through to $expr ─────────
     //
-    // WHAT THIS CASE PINS IS THE SHAPE'S DISPOSITION, not either individual guard -- the earlier
-    // "load-bearing, not defence-in-depth" wording here was about CanFallThroughToExpr and is WITHDRAWN,
-    // because the fix round below moved the real guard down to TranslateOperand's own convert branch and
-    // MEASURED that CanFallThroughToExpr nets nothing on its own (forcing it to return true turns 0 of 33
-    // functional and 0 of 121 unit tests red -- see its XML remarks). Under that mutation the deeper guard
-    // catches this case; under the mirror mutation CanFallThroughToExpr does. Case 30 is the test that
-    // individually nets the deeper guard.
-    //
-    // The silent-wrong-rows measurement behind the guard is still real, and is why the decline exists at all:
-    // on the tree with Task 7's fall-through in place and NO guard anywhere, the NativeOnly leg below
-    // "returned p" -- one row where ZERO is correct -- because the emitted
-    // {$expr: {$gt: [{$toInt: "$Weight"}, 3]}} reads the RAW STORED value (7.0 -> 7 > 3 is true) instead of
-    // the converted CLR value (3.5 -> 3, and 3 > 3 is false). Under the DEFAULT Native mode too, since the
-    // query is natively representable and never reaches the fallback.
-    //
-    // Structured as an OUTCOME STRING rather than Assert.Throws, following the same A5/Task-6 precedent case
-    // 25 uses: a future regression that re-admits the leaf fails with the actual WRONG ROWS printed in the
-    // assertion message, not merely "no exception was thrown".
+    // Pins the disposition, not an individual guard: the effective guard is TranslateOperand's convert branch
+    // (case 30 nets it alone); MongoExpressionTranslator.CanFallThroughToExpr is redundant with it. Without any
+    // guard, {$expr: {$gt: [{$toInt: "$Weight"}, 3]}} reads the raw stored 7.0 instead of the model 3.5 and
+    // silently returns a row where zero is correct, under default Native too. Uses an outcome string so a
+    // regression prints the wrong rows.
 
     [Fact]
     public void Narrowing_cast_comparison_over_a_value_converted_property_still_declines()
     {
         var name = UniqueCollectionName(
             nameof(Narrowing_cast_comparison_over_a_value_converted_property_still_declines));
-        // CLR Weight = 3.5 (stored 7.0, the converted/provider form). (int)3.5 == 3, so `> 3` is FALSE --
-        // ZERO rows is the correct answer. A raw read of the stored 7.0 truncates to 7, so `> 3` would be
-        // TRUE -- one row, and that row is the discriminator.
+        // Model Weight = 3.5 (stored 7.0): (int)3.5 > 3 is false, so zero rows is correct; a raw read gives one.
         database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
         [
             new BsonDocument { { "Label", "p" }, { "Weight", 7.0 } }
@@ -1942,14 +1587,8 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             label => label);
         Assert.Equal("threw NativeTranslationNotSupportedException", outcome);
 
-        // As cases 12/13 and 25 already measure, there is NO working driver-LINQ oracle for a numeric cast
-        // over a value-converted property in comparison position either (the
-        // "ValueConverterSerializer`2 does not implement IHasRepresentationSerializer" limitation), so both
-        // the fallback route and explicit DriverLinq throw. Asserted as "it threw", not by type or value:
-        // there is no correct answer available on this route to compare against, only "did it avoid silently
-        // returning the wrong one" -- which the NativeOnly assertion above is what actually covers. This is
-        // also exactly the pre-Task-7 behaviour, so the guard RESTORES this shape's disposition rather than
-        // giving it a new one.
+        // No working driver-LINQ oracle (the ValueConverterSerializer limitation of cases 12/13/25), so both the
+        // fallback and DriverLinq throw. Asserted as "threw"; the NativeOnly assertion is the real check.
         using var native = CreateConvertedWeightContext(collection, MongoQueryMode.Native);
         Assert.NotNull(Record.Exception(() => native.Entities.AsNoTracking()
             .Where(x => (int)x.Weight > 3).Select(x => x.Label).ToList()));
@@ -1959,20 +1598,11 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             .Where(x => (int)x.Weight > 3).Select(x => x.Label).ToList()));
     }
 
-    // ── 30. The WITHIN-SLICE regression case 29's guard did NOT cover: field-to-field (fix round 1) ──
+    // ── 30. The same hazard on the field-to-field shape ────────────────────────────────────────────
     //
-    // Case 29 guards the member-vs-CONSTANT fall-through this task added. Review found the SAME mechanism
-    // open one level down, on the FIELD-TO-FIELD shape, and traced it to Task 3 of this slice (94101da5,
-    // unreleased) rather than to EF-329 -- so it was a within-slice REGRESSION to close, not an inherited
-    // exposure to defer. MEASURED, `Where(x => (int)x.Weight > x.Other)`, CLR Weight 3.5 (stored 7.0) vs
-    // Other 5, correct answer ZERO rows ((int)3.5 == 3, and 3 > 5 is false):
-    //
-    //   slice base fd6bd8ba   : NativeOnly threw, default Native THREW, in-memory []
-    //   HEAD before this fix  : NativeOnly returned [p], default Native RETURNED [p]   <-- WRONG, and SILENT
-    //   after this fix        : NativeOnly threw, default Native threw (as at the base)
-    //
-    // Note the failure mode is strictly worse than case 29's: there is no cast-vs-constant subtlety here, it
-    // is simply the $toX reading the provider value where the model value was meant.
+    // `Where(x => (int)x.Weight > x.Other)`, model Weight 3.5 (stored 7.0) vs Other 5: correct answer is zero rows.
+    // Without the guard on TranslateOperand's convert branch, $toInt reads the stored 7.0 and silently returns p
+    // under NativeOnly and default Native.
 
     private class ConvertedWeightPairRow
     {
@@ -1995,16 +1625,14 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         ]);
         var collection = database.MongoDatabase.GetCollection<ConvertedWeightPairRow>(name);
 
-        // Outcome-string, for the same reason case 29 uses one: a regression that re-admits this shape fails
-        // with the actual WRONG ROW printed, not merely "no exception was thrown".
+        // Outcome string, as in case 29.
         using var nativeOnly = CreatePairContext(collection, MongoQueryMode.NativeOnly);
         var outcome = DescribeOutcome(
             () => nativeOnly.Entities.AsNoTracking().Where(x => (int)x.Weight > x.Other).Select(x => x.Label).ToList(),
             label => label);
         Assert.Equal("threw NativeTranslationNotSupportedException", outcome);
 
-        // Same "no working driver-LINQ oracle" limitation as cases 12/13/25/29 -- both routes throw, which is
-        // exactly the slice base's behaviour, restored.
+        // No working driver-LINQ oracle (as cases 12/13/25/29); both routes throw.
         using var native = CreatePairContext(collection, MongoQueryMode.Native);
         Assert.NotNull(Record.Exception(() => native.Entities.AsNoTracking()
             .Where(x => (int)x.Weight > x.Other).Select(x => x.Label).ToList()));
@@ -2014,9 +1642,8 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             .Where(x => (int)x.Weight > x.Other).Select(x => x.Label).ToList()));
     }
 
-    // The control that keeps case 30 from being read as "any field-to-field cast declines": the SAME shape
-    // over a DEFAULT-serialized field goes native and returns the CLR answer. Without this, tightening the
-    // guard to reject every cast operand would look green.
+    // Control for case 30: the same shape over a default-serialized field goes native with the CLR answer, so
+    // the guard can't be satisfied by declining every cast operand.
     [Fact]
     public void Field_to_field_cast_over_a_default_serialized_property_still_goes_native()
     {
@@ -2070,49 +1697,25 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── 34. C1 (EF-403 fix wave, revised): a RELATIONAL cast comparison over a NULLABLE property must NOT ──
-    //        leave the TYPE-BRACKETED query dialect
+    // ── 34. A relational cast comparison over a nullable property must stay type-bracketed ──────────
     //
-    // THE ORIGINAL DEFECT. A `member <op> constant` comparison whose cast the query-native branch can't absorb
-    // falls through to $expr. MongoDB's query dialect TYPE-BRACKETS a relational operator: {Price: {$lt: 100}}
-    // matches neither a stored BSON null nor a MISSING element. A BARE $expr form does not -- $toInt/$toDouble
-    // map both of those to null, and BSON TOTAL ORDER puts Null BELOW every number, so a null/missing row would
-    // satisfy $lt and $lte. MEASURED end to end on a live server, over the fixture below:
+    // A fall-through to $expr loses the query dialect's type bracketing: {Price: {$lt: 100}} matches neither null
+    // nor missing, but $toInt/$toDouble map both to null, which BSON order puts below every number:
     //
     //   {Price: {$lt: 100}}                        -> [p1_50]                        <- query dialect (bracketed)
     //   {$expr: {$lt: [{$toInt: "$Price"}, 100]}}  -> [p1_50, p3_null, p4_missing]    <- bare $expr (NOT bracketed)
     //
-    // This is the invariant MongoExpressionNegator's class remarks already record ("silent wrong data, under
-    // default Native, on an extremely ordinary input"), re-opened from the other direction: there it is about
-    // NEGATING a type-bracketed comparison, here about a comparison that WAS bracketed and would otherwise stop
-    // being so.
-    //
-    // THE FIX (this revision). Rather than declining the whole comparison whenever the property is nullable,
-    // MongoExpressionTranslator.NeedsNumericTypeBracket flags exactly this case and conjoins the $expr
-    // comparison with a MongoNumericTypeBracketExpression -- {Price: {$type: "number"}} -- reproducing the
-    // query dialect's own type bracket exactly:
+    // MongoExpressionTranslator.NeedsNumericTypeBracket conjoins a MongoNumericTypeBracketExpression:
     //
     //   {$and: [{Price: {$type: "number"}}, {$expr: {$lt: [{$toInt: "$Price"}, 100]}}]}  -> [p1_50]
     //
-    // "number" (not {$ne: null}) is what makes this an EXACT complement rather than an approximation: {$ne:
-    // null} excludes a missing/null field but admits any OTHER foreign BSON type (e.g. a stray string) that a
-    // genuine query-dialect $lt would still type-bracket away. This codebase's recorded rule for exactly this
-    // family is MongoExpressionNegator's: EXACT COMPLEMENT OR DECLINE, NEVER AN APPROXIMATION -- {$type:
-    // "number"} is what lets this case satisfy "exact complement" instead of falling back to "decline".
+    // {$type: "number"} rather than {$ne: null}, because the query dialect also brackets away other foreign BSON
+    // types; this keeps it an exact equivalent (see MongoExpressionNegator's "exact complement or decline" rule).
+    // All four relational operators get the bracket; $gt/$gte only happen to be safe without it.
+    // NorthwindWhereQueryMongoTest.Decimal_cast_to_double_works is this shape.
     //
-    // ALL FOUR RELATIONAL OPERATORS get the SAME bracket, not just < and <=, which are the only ones that
-    // measurably differ WITHOUT it (Null sorts below every number, so $gt/$gte happen to exclude the ragged
-    // rows even from a bare $expr -- an ACCIDENT of collation order this fix does not rely on).
-    //
-    // WHAT THIS RESTORES: NorthwindWhereQueryMongoTest.Decimal_cast_to_double_works is exactly this shape over
-    // Product.UnitPrice (decimal?) with $gt, so it now goes NATIVE again, emitting the $and/$type form above
-    // instead of reverting to driver-LINQ.
-    //
-    // TWO CONTROLS keep the fix from being read as "every relational cast now needs bracketing": EQUALITY over
-    // the same nullable property still goes native WITHOUT a bracket ($eq/$ne partition every BSON value
-    // including null and missing, so moving one into $expr changes nothing), and a RELATIONAL comparison over a
-    // NON-NULLABLE property still goes native WITHOUT a bracket (that is the owner-ruled CLR-correct divergence
-    // of case 27, which this fix must not touch -- see case 34b immediately below, unchanged by this revision).
+    // Controls: equality over the same nullable property needs no bracket ($eq/$ne partition every BSON value), and
+    // a relational comparison over a non-nullable property is case 27's shape, left unbracketed (see 34b).
 
     private class NullablePriceRow
     {
@@ -2129,23 +1732,21 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         var collection = SeedNullablePrices(
             nameof(Relational_cast_comparison_over_a_nullable_property_goes_native_with_a_numeric_type_bracket));
 
-        // All four relational operators now go NATIVE (NativeOnly succeeds) and agree with Native and
-        // DriverLinq -- all three answer the same, type-bracketed rows. The expected sets are asserted PER
-        // OPERATOR, not just for parity: parity alone would pass if all three paths returned the ragged rows.
+        // All four operators go native with the same type-bracketed rows in every mode. Expected sets are asserted
+        // per operator, since parity alone would pass if all paths returned the ragged rows.
         AssertRelationalCastGoesNative(collection, x => (int?)x.Price < 100, ["p1_50"]);
         AssertRelationalCastGoesNative(collection, x => (int?)x.Price <= 100, ["p1_50"]);
         AssertRelationalCastGoesNative(collection, x => (int?)x.Price > 100, ["p2_150"]);
         AssertRelationalCastGoesNative(collection, x => (int?)x.Price >= 100, ["p2_150"]);
 
-        // The mirrored branch (member on the RIGHT) has its own separate NeedsNumericTypeBracket call site.
+        // The mirrored branch (member on the right) has its own NeedsNumericTypeBracket call site.
         AssertRelationalCastGoesNative(collection, x => 100 > (int?)x.Price, ["p1_50"]);
 
-        // decimal? -> double?, the exact Northwind Decimal_cast_to_double_works shape.
+        // decimal? -> double?, the Northwind Decimal_cast_to_double_works shape.
         AssertRelationalCastGoesNative(collection, x => (double?)x.Amount < 100, ["p1_50"]);
         AssertRelationalCastGoesNative(collection, x => (double?)x.Amount > 100, ["p2_150"]);
 
-        // CONTROL 1 -- equality over the SAME nullable property still falls through and goes native WITHOUT a
-        // bracket ($eq/$ne partition every BSON value including null and missing, so a bracket would be inert).
+        // Control 1 — equality over the same nullable property goes native without a bracket.
         using (var eqNativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly))
         {
             Assert.Equal(
@@ -2154,9 +1755,8 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                     .OrderBy(x => x.Label).Select(x => x.Label).ToList());
         }
 
-        // CONTROL 2 -- a relational cast comparison over a NON-NULLABLE property still goes native WITHOUT a
-        // bracket (case 27's owner-ruled shape, untouched by NeedsNumericTypeBracket). Weight: p1 = 1.6,
-        // p2 = 0.5, p3 = 2.5, p4 = MISSING -> (int) 1, 0, 2, null.
+        // Control 2 — relational over a non-nullable property goes native without a bracket (case 27's shape).
+        // Weight: p1 = 1.6, p2 = 0.5, p3 = 2.5, p4 = missing -> (int) 1, 0, 2, null.
         using (var relNativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly))
         {
             Assert.Equal(
@@ -2166,25 +1766,16 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         }
     }
 
-    // ── 34b. The RESIDUAL this guard deliberately does NOT close, pinned as MEASURED — not as correct ──
+    // ── 34b. Known residual, pinned as measured (not as correct) ─────────────────────────────────────
     //
-    // The same un-type-bracketing reaches a NON-NULLABLE property through a MISSING element: p4_missing has no
-    // Weight at all, so $toInt yields null, and null < 2 is true under BSON total order. MEASURED:
+    // A missing element on a non-nullable property also escapes type bracketing: p4_missing has no Weight, $toInt
+    // yields null, and null < 2 is true:
     //
     //   Native / NativeOnly : {$expr: {$lt: [{$toInt: "$Weight"}, 2]}} -> p1_50, p2_150, p4_missing
     //   DriverLinq          : {Weight: {$lt: 2}}                       -> p1_50, p2_150
     //
-    // NOT CLOSED HERE, deliberately, and the reason is scope rather than taste: gating a relational cast on the
-    // OPERATOR alone (dropping the nullability conjunct) would revoke case 27's owner-ruled CLR-correct
-    // divergence -- `(int)x.D > 0` is exactly a relational cast comparison -- i.e. it would undo the
-    // fall-through for relational comparisons entirely, which is a far larger change than this fix wave's
-    // remit. And the document it affects VIOLATES THE MODEL: an absent element for a required non-nullable
-    // property is a state the provider's own read path rejects ("Document element 'Weight' is missing for
-    // required non-nullable property"), so there is no in-memory CLR oracle for it at all -- materializing the
-    // entity throws before any comparison happens.
-    //
-    // Pinned so it cannot change silently in either direction, and so the next person to touch this guard finds
-    // the measurement rather than re-deriving it.
+    // Not closed: bracketing every relational cast would revoke case 27's CLR-correct fall-through, and the
+    // document violates the model (the read path rejects a missing required element), so there is no CLR oracle.
 
     [Fact]
     public void Missing_element_on_a_NON_nullable_property_still_reaches_the_untype_bracketed_expr_form()
@@ -2204,7 +1795,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             driverLinq.Entities.AsNoTracking().Where(x => (int)x.Weight < 2)
                 .OrderBy(x => x.Label).Select(x => x.Label).ToList());
 
-        // The premise: there IS no CLR oracle here, because materializing p4_missing throws first.
+        // Premise: no CLR oracle, because materializing p4_missing throws.
         using var oracle = CreateNullablePriceContext(collection, MongoQueryMode.Native);
         Assert.Throws<InvalidOperationException>(() => oracle.Entities.AsNoTracking().ToList());
     }
@@ -2214,11 +1805,8 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         Expression<Func<NullablePriceRow, bool>> predicate,
         string[] expectedLabels)
     {
-        // Every leg projects LABELS rather than whole entities, for the same reason case 34's original form
-        // did: a WHOLE-ENTITY read of this fixture throws on its own, because p4_missing omits the non-nullable
-        // Weight -- so a .Where(predicate).ToList() leg would fail with InvalidOperationException under the
-        // very mutation it is meant to catch, hiding the rows. See case 34b, which asserts that materialization
-        // throw as its own premise.
+        // Legs project labels, not entities: materializing p4_missing (no required Weight) throws and would hide the
+        // rows (see case 34b).
         using var nativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly);
         Assert.Equal(
             expectedLabels,
@@ -2235,19 +1823,16 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             driverLinq.Entities.AsNoTracking().Where(predicate).OrderBy(x => x.Label).Select(x => x.Label).ToList());
     }
 
-    // Four rows, three states for the nullable properties: a value (twice, so an assertion is never a one-row
-    // accident), an explicit BSON null, and a MISSING element. Weight is NON-nullable and is also absent on the
-    // fourth row, which is what case 34b needs. The seed SELF-CHECKS the stored shape, because "missing" and
-    // "present but null" are indistinguishable from results alone and an un-self-checked seed could silently
-    // degrade to two states -- which is exactly the axis these cases exist to exercise.
+    // Three states for the nullable properties: a value (twice), an explicit BSON null, and a missing element.
+    // Weight (non-nullable) is also missing on the fourth row, for case 34b. The seed self-checks the stored shape,
+    // since missing and null are indistinguishable from results.
     private IMongoCollection<NullablePriceRow> SeedNullablePrices(string name)
     {
         var raw = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
         var typed = database.MongoDatabase.GetCollection<NullablePriceRow>(raw.CollectionNamespace.CollectionName);
 
-        // The three well-formed rows go in TYPED so decimal? gets whatever representation the driver's own
-        // mapping produces, rather than one hand-picked here; the fourth is raw, since a missing element cannot
-        // be expressed through the typed writer at all.
+        // Well-formed rows go in typed so decimal? gets the driver's own representation; a missing element needs
+        // the raw writer.
         typed.InsertMany(
         [
             new NullablePriceRow { Label = "p1_50", Price = 50.0, Amount = 50m, Weight = 1.6 },
@@ -2279,20 +1864,11 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── 35. I2 (EF-403 fix wave): an owned-collection .Count compared against a NON-INTEGRAL threshold ──
+    // ── 35. An owned-collection .Count compared against a non-integral threshold ───────────────────
     //
-    // MongoQueryLanguageRenderer.TryRenderSizeComparison's remarks used to carry a MEASURED claim that this
-    // shape "falls back to driver-LINQ before this method is ever reached", because TranslateOperand's convert
-    // guard "rejects that convert outright". THIS SLICE FALSIFIED IT: Convert(count, Double) now matches the
-    // new MongoConvertExpression branch, the operand resolves to a MongoSizeExpression,
-    // AllFieldsDefaultSerialized admits it on its catch-all (a size node carries no IProperty to check), and
-    // the query goes NATIVE. The OUTPUT is correct, so this is an unrecorded INCIDENTAL WIDENING plus a
-    // now-false MEASURED claim, not a bug -- recorded deliberately, because this repo's own record says four
-    // earlier slices had to retro-fit an unnoticed widening.
-    //
-    // The MQL leg is what makes this case discriminating rather than decorative: it pins that the comparison
-    // takes the $expr TIER and NOT the query-dialect array-index form, which would answer the WRONG question
-    // (an array-index $exists test can only express an integral threshold).
+    // Convert(count, Double) becomes a MongoConvertExpression over a MongoSizeExpression (which
+    // AllFieldsDefaultSerialized admits, having no IProperty), so this goes native via $expr. The MQL leg pins that
+    // it doesn't take the query-dialect array-index form, which can only express an integral threshold.
 
     [Fact]
     public void Count_compared_against_a_non_integral_threshold_goes_native_via_expr()
@@ -2325,11 +1901,10 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         var mql = MqlPipeline(logs);
         Assert.Contains("$expr", mql);
         Assert.Contains("$toDouble", mql);
-        // NOT the array-index tier: {"Posts.2": {$exists: true}} answers Count > 2, a different question.
+        // Not the array-index tier: {"Posts.2": {$exists: true}} answers Count > 2.
         Assert.DoesNotContain("Posts.2", mql);
 
-        // In-memory LINQ over the same expression, and explicit DriverLinq, both agree -- so the widening is
-        // value-preserving, which is what makes it benign rather than a second owner ruling.
+        // In-memory LINQ and DriverLinq agree, so this is value-preserving.
         using var oracle = CreateQuantContext(collection, MongoQueryMode.Native);
         Assert.Equal(
             ["b3"],
@@ -2343,22 +1918,18 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 .OrderBy(b => b.Title).Select(b => b.Title).ToList());
     }
 
-    // ── 36. M4 (EF-403 fix wave): $toInt's ROUNDING MODE is pinned — it truncates toward zero ─────────
+    // ── 36. $toInt truncates toward zero ──────────────────────────────────────────────────────────
     //
-    // Case 27's fixture cannot discriminate this: every one of its values gives the same answer whether MQL
-    // truncates, floors or rounds. Both assertions below are chosen so that exactly one rounding rule survives.
+    // Each assertion leaves exactly one rounding rule standing:
     //
     //   d: D = -1.5  ->  truncate-toward-zero -1 | floor -2 | round-half-even -2 | round-half-away -2
     //   a: D =  1.6  ->  truncate 1             | floor 1  | round 2
     //   c: D =  2.5  ->  truncate 2             | floor 2  | round-half-even 2 | round-half-away 3
     //
-    // (1) A threshold of -1.5 lies strictly BETWEEN the truncated (-1) and floored (-2) results, so d is in the
-    //     result set under truncation and absent under floor/round -- d's presence IS the discriminator.
-    // (2) (int)D == 2 selects only c under truncation; under round-half-even it would ALSO select a (1.6 -> 2).
+    // (1) Threshold -1.5 lies between -1 and -2, so d is present only under truncation.
+    // (2) (int)D == 2 selects only c under truncation; round-half-even would also select a.
     //
-    // The oracle here is IN-MEMORY LINQ, not driver-LINQ: this is case 27's owner-ruled divergence, so explicit
-    // DriverLinq drops the cast and answers a different question ({D: {$gt: -1.5}} excludes d, whose D is
-    // exactly -1.5; {D: {$eq: 2}} matches nothing). C# truncates toward zero, and native agrees with C#.
+    // The oracle is in-memory LINQ, not driver-LINQ, which drops the cast (case 27).
 
     [Fact]
     public void Cast_truncates_toward_zero_rather_than_flooring_or_rounding()
@@ -2377,7 +1948,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             nativeOnly.Entities.AsNoTracking().Where(x => (int)x.D == 2)
                 .OrderBy(x => x.Label).Select(x => x.Label).ToList());
 
-        // The CLR oracle, over the same expressions and the same rows.
+        // The CLR oracle, over the same expressions and rows.
         using var oracle = CreateContext(collection, MongoQueryMode.Native);
         var materialized = oracle.Entities.AsNoTracking().ToList();
         Assert.Equal(
@@ -2388,20 +1959,13 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             materialized.Where(x => (int)x.D == 2).OrderBy(x => x.Label).Select(x => x.Label).ToList());
     }
 
-    // ── 37. I1 (EF-403 fix wave): an OUT-OF-RANGE value aborts the WHOLE query, not just its own row ──
+    // ── 37. An out-of-range value aborts the whole query, not just its own row ────────────────────
     //
-    // MongoConvertExpression's remarks used to tag this UNVERIFIED. MEASURED here, and the answer is worse than
-    // "the offending row errors": $expr is evaluated for every document the stage SCANS, so one unconvertible
-    // value aborts the entire aggregate -- including for documents that would never have matched, and even for
-    // a predicate that matches NOTHING. The released packages returned rows (they drop the cast).
-    //
-    // DISPOSITION, re-taken explicitly rather than inherited: KEEP the server error; do NOT add $convert's
-    // onError. Three answers are available and all three differ -- released returns rows (from a comparison the
-    // query did not ask for), unchecked C# produces an unspecified wrapped value, and onError:null would give a
-    // THIRD answer matching neither, because a converted-to-null operand then participates in a BSON-total-order
-    // comparison and quietly moves the row into or out of the result depending on the operator (the very
-    // silent, operator-dependent behaviour case 34's guard exists to prevent). A loud abort is the only one of
-    // the three that cannot be mistaken for an answer. Recorded in BREAKING-CHANGES.md.
+    // $expr is evaluated for every scanned document, so one unconvertible value aborts the aggregate, even for a
+    // predicate that matches nothing. Deliberately no $convert onError: a null operand would then take part in a
+    // BSON-total-order comparison and silently move rows in or out depending on the operator (see case 34). A loud
+    // abort can't be mistaken for an answer. Previously released versions (driver-LINQ, cast dropped) returned
+    // rows; recorded in BREAKING-CHANGES.md.
 
     private class BigRow
     {
@@ -2430,16 +1994,14 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                     .OrderBy(x => x.Label).Select(x => x.Label).ToList());
             Assert.Contains("overflow", ex.Message);
 
-            // THE BLAST-RADIUS LEG, and the reason this case is not just "an overflow throws": the predicate
-            // below matches NO document under any rounding rule ((int)1.6 = 1, and 1e30 overflows), so a
-            // per-ROW failure would simply have produced an empty result. It aborts anyway.
+            // Blast radius: this predicate matches no document, so a per-row failure would give an empty result.
+            // It aborts anyway.
             Assert.Throws<MongoCommandException>(
                 () => db.Entities.AsNoTracking().Where(x => (int)x.D < 0)
                     .OrderBy(x => x.Label).Select(x => x.Label).ToList());
         }
 
-        // The released behaviour, still available through the documented escape hatch: the driver drops the
-        // cast, so both queries answer and neither aborts.
+        // DriverLinq (the escape hatch) drops the cast, so both queries answer.
         using var driverLinq = CreateBigContext(collection, MongoQueryMode.DriverLinq);
         Assert.Equal(
             ["big", "small"],
@@ -2460,22 +2022,13 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── 38. EF-404: a PLAIN field-to-field comparison (no cast) over a value-converted operand ──
-    //        must decline, not read the raw stored value through $expr
+    // ── 38. A plain field-to-field comparison (no cast) over a value-converted operand must decline ──
     //
-    // Case 30 closed this hazard for the CAST subset (`(int)x.Weight > x.Other`); this closes the PLAIN
-    // subset (`x.Weight > x.Other`, no cast at all), which routes straight to TranslateComparison's general
-    // $expr path and previously had no default-serialization check on either operand.
-    //
-    // MEASURED, all four combinations of {value-transforming, re-encoding} x {one side converted, both sides
-    // converted}: under the RELEASED/pre-fix general $expr path, Native read the RAW stored value on the
-    // converted side(s) and disagreed with the CLR/model answer every time, while DriverLinq has NO working
-    // oracle for this shape at all -- the driver's own LINQ3 provider throws ExpressionNotSupportedException
-    // ("the two arguments are serialized differently") for a field-to-field comparison whenever the two
-    // operands' serializers differ, regardless of query mode. So this is squarely the ticket's outcome (2):
-    // "Native differs from DriverLinq" (DriverLinq's disagreement takes the form of a decline, not a
-    // different wrong answer) -- a genuine native-only defect, fixed by declining to fall back, which lands
-    // on the same throw DriverLinq already produces for this shape.
+    // The cast-free counterpart of case 30: `x.Weight > x.Other` goes to TranslateComparison's general $expr path,
+    // which must check default serialization on both operands. Otherwise native reads the raw stored value(s) and
+    // disagrees with the model in all four {transforming, re-encoding} x {one side, both sides} combinations.
+    // Driver-LINQ throws for this shape ("the two arguments are serialized differently"), so declining lands on
+    // the same throw.
 
     private class OneSideTransformRow
     {
@@ -2492,8 +2045,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Field_to_field_comparison_over_a_one_side_transforming_converter_declines()
     {
         var name = UniqueCollectionName(nameof(Field_to_field_comparison_over_a_one_side_transforming_converter_declines));
-        // CLR Weight=3, Other=4 -> model answer 3>4 FALSE. Stored Weight=6 (converted), Other=4 (plain) ->
-        // a raw-value read would compare 6>4 TRUE -- the wrong row, and the discriminator this test pins.
+        // Model 3 > 4 is false; stored 6 > 4 would wrongly match.
         database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
         [
             new BsonDocument { { "Label", "p" }, { "Weight", 6.0 }, { "Other", 4.0 } }
@@ -2506,7 +2058,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
             label => label);
         Assert.Equal("threw NativeTranslationNotSupportedException", outcome);
 
-        // No driver-LINQ oracle exists for this shape either (measured): both routes decline/throw.
+        // No driver-LINQ oracle: both routes throw.
         using var native = CreateOneSideTransformContext(collection, MongoQueryMode.Native);
         Assert.NotNull(Record.Exception(() => native.Entities.AsNoTracking()
             .Where(x => x.Weight > x.Other).Select(x => x.Label).ToList()));
@@ -2545,8 +2097,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Field_to_field_comparison_over_a_both_side_transforming_converter_declines()
     {
         var name = UniqueCollectionName(nameof(Field_to_field_comparison_over_a_both_side_transforming_converter_declines));
-        // CLR Weight=3, Other=2 -> model answer 3>2 TRUE. Stored Weight=6 (x2), Other=6 (x3) -> a raw-value
-        // read would compare 6>6 FALSE, wrongly EXCLUDING a row the model says matches.
+        // Model 3 > 2 is true; stored 6 > 6 would wrongly exclude the row.
         database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
         [
             new BsonDocument { { "Label", "p" }, { "Weight", 6.0 }, { "Other", 6.0 } }
@@ -2594,9 +2145,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Field_to_field_comparison_over_a_one_side_reencoding_converter_declines()
     {
         var name = UniqueCollectionName(nameof(Field_to_field_comparison_over_a_one_side_reencoding_converter_declines));
-        // CLR Weight=9, Other=10 -> model answer 9>10 FALSE. Stored Weight="9" (string), Other=10 (int32) --
-        // BSON type-brackets a string above every numeric type by total order, so a raw comparison inside
-        // $expr answers "9" > 10 as TRUE regardless of the numeric values, wrongly admitting the row.
+        // Model 9 > 10 is false; stored "9" (string) sorts above every number, so a raw comparison matches.
         database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
         [
             new BsonDocument { { "Label", "p" }, { "Weight", "9" }, { "Other", 10 } }
@@ -2647,9 +2196,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     public void Field_to_field_comparison_over_a_both_side_reencoding_converter_declines()
     {
         var name = UniqueCollectionName(nameof(Field_to_field_comparison_over_a_both_side_reencoding_converter_declines));
-        // CLR Weight=9, Other=10 -> model answer 9>10 FALSE. Stored Weight="9", Other="10", both strings --
-        // a raw comparison inside $expr would compare them LEXICOGRAPHICALLY ("9" > "10" is TRUE, since '9' >
-        // '1'), wrongly admitting the row under a numeric-looking predicate.
+        // Model 9 > 10 is false; stored "9" > "10" lexicographically, so a raw comparison matches.
         database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
         [
             new BsonDocument { { "Label", "p" }, { "Weight", "9" }, { "Other", "10" } }
@@ -2682,10 +2229,8 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // The control that keeps case 38 from being read as "any field-to-field comparison declines": the SAME
-    // shape over DEFAULT-serialized fields still goes native and returns the CLR answer -- this is exactly
-    // case 30's control (`Field_to_field_cast_over_a_default_serialized_property_still_goes_native`), which
-    // already covers a bare (non-converted) field-to-field comparison, so it is not repeated here.
+    // Case 38's control (default-serialized fields go native) is
+    // Field_to_field_cast_over_a_default_serialized_property_still_goes_native.
 
     // ── Seed and helpers ────────────────────────────────────────────────────────────────────────────
 
@@ -2721,8 +2266,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     private static string Mql(List<string> logs)
         => Assert.Single(logs, l => l.Contains("Executed MQL query"));
 
-    // The captured log line carries a leading timestamp, so it can never be compared across two contexts as-is.
-    // Trim to the pipeline itself so two modes' emissions ARE comparable.
+    // Strips the log line's leading timestamp so emissions from two contexts are comparable.
     private static string MqlPipeline(List<string> logs)
     {
         var line = Mql(logs);

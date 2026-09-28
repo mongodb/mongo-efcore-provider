@@ -19,21 +19,20 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 /// <summary>
-/// Represents a <c>$project</c> aggregation stage that reshapes each document into the projected fields.
+/// A <c>$project</c> stage.
 /// </summary>
 internal sealed class MongoProjectStage : MongoPipelineStage
 {
     /// <summary>
-    /// Initializes a new instance of the <see cref="MongoProjectStage"/> class.
+    /// Creates a <c>$project</c> stage with the given ordered output fields.
     /// </summary>
-    /// <param name="projections">The ordered output fields of the projection.</param>
     public MongoProjectStage(IReadOnlyList<MongoProjection> projections)
     {
         Projections = projections;
     }
 
     /// <summary>
-    /// Gets the ordered output fields of the projection.
+    /// The ordered output fields of the projection.
     /// </summary>
     public IReadOnlyList<MongoProjection> Projections { get; }
 }

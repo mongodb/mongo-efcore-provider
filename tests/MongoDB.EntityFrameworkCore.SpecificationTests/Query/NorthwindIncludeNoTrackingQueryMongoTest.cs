@@ -1056,10 +1056,9 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
     public override async Task Include_collection_with_client_filter(bool async)
     {
         // Fails: Throws with Mongo-specific message rather than the generic EF message. EF-X010
-        // The base test's own Assert.ThrowsAsync<InvalidOperationException>/Assert.Contains fails because the
-        // provider throws the driver's ExpressionNotSupportedException instead, so what escapes base is an
-        // Xunit.Sdk.ThrowsException wrapping that driver exception. Pin both: the wrapper type and the driver
-        // exception name in its message, so this flips if the provider's behaviour changes in either direction.
+        // The provider throws the driver's ExpressionNotSupportedException rather than the base test's expected
+        // InvalidOperationException, so base surfaces an Xunit ThrowsException wrapping it. Pin both the wrapper
+        // type and the driver exception name, so a behavior change in either direction is caught.
         await Assert.ThrowsAsync<ThrowsException>(() =>
             base.Include_collection_with_client_filter(async));
         if (MongoSpecTestHelpers.IsNativeOnly)

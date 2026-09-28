@@ -51,7 +51,6 @@ public class NativePipelineExecutionTests(TemporaryDatabaseFixture database)
 
         using var db = SingleEntityDbContext.Create(collection);
 
-        // Obtain IMongoClientWrapper from the context's service provider
         var clientWrapper = db.GetService<IMongoClientWrapper>();
         var collectionNamespace = collection.CollectionNamespace;
 

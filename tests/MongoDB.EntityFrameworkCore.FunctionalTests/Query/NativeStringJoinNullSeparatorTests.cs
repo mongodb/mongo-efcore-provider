@@ -25,12 +25,8 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// Final whole-branch review finding 4 (MINOR, real bug): <c>string.Join</c>'s elements were each wrapped in
-/// <c>$ifNull</c> against <c>""</c> so a null element degrades gracefully rather than nulling the whole
-/// <c>$concat</c> — but the SEPARATOR itself was left un-coalesced, so a null/parameterized-null separator
-/// nulled the entire result (every row), diverging from .NET's own <c>string.Join</c> semantics (a null
-/// separator behaves like an empty one). Fixed by wrapping the separator in the same
-/// <c>MongoCoalesceExpression</c>/<c>$ifNull</c> the elements already use.
+/// A null <c>string.Join</c> separator must behave like <c>""</c> (as in .NET); un-coalesced, it would null the
+/// whole <c>$concat</c> on every row. The separator gets the same <c>$ifNull</c> the elements use.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeStringJoinNullSeparatorTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -56,12 +52,7 @@ public class NativeStringJoinNullSeparatorTests(TemporaryDatabaseFixture databas
 
         string? separator = null;
 
-        // .NET's own oracle: string.Join(null, ...) behaves exactly like string.Join("", ...) — the null
-        // separator contributes nothing, it does NOT null out the result. Asserted via a WHERE predicate
-        // (matching this suite's own Join_non_aggregate spec-test precedent, a $expr equality comparison)
-        // rather than a bare Select projection — a bare Select of a MongoConcatExpression is a separate,
-        // pre-existing native-projection gap outside this finding's scope (only Trim/FirstOrLast were in
-        // finding 5's allow-list fix).
+        // Asserted via a Where predicate because a bare Select of a MongoConcatExpression isn't native.
         var expectedOneJoined = string.Join(separator!, "foo", "bar");
         var expectedTwoJoined = string.Join(separator!, "baz", "qux");
 
@@ -78,8 +69,7 @@ public class NativeStringJoinNullSeparatorTests(TemporaryDatabaseFixture databas
             .ToList();
         Assert.Equal(["two"], twoMatches);
 
-        // The critical regression check: with the null separator un-coalesced, $concat would null out EVERY
-        // row's Joined value, so BOTH predicates above would match zero rows instead of exactly one each.
+        // An un-coalesced null separator would make every row's join null.
         var noneMatchNull = nativeOnly.Entities.AsNoTracking()
             .Where(x => string.Join(separator!, new[] { x.A, x.B }) == null)
             .Select(x => x.Label)

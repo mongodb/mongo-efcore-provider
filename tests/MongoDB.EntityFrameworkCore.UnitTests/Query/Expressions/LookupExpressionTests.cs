@@ -44,15 +44,14 @@ public class LookupExpressionTests
     [Fact]
     public void Lookup_for_navigation_targeting_collection_in_separate_entity_is_marked_FallbackOnly()
     {
-        // When a lookup targets a collection navigation to a TPH-derived type, it should be marked FallbackOnly
-        // because the native translator cannot narrow the collection scope to just the derived discriminator value.
+        // A collection navigation to a TPH-derived type is FallbackOnly: the native translator can't narrow the
+        // collection scope to the derived discriminator value.
         var dogsNavigation = GetOwnerDogsNavigation();
         var lookup = new LookupExpression(dogsNavigation);
 
-        // The lookup should be marked FallbackOnly because it targets a TPH-derived type collection.
         Assert.Equal(LookupPipelineKind.FallbackOnly, lookup.PipelineKind);
         Assert.True(lookup.HasPipeline);
-        // The pipeline should contain a $match stage to filter by the discriminator
+        // The pipeline filters by discriminator via $match.
         Assert.Single(lookup.PipelineStages);
         Assert.NotNull(lookup.PipelineStages[0]);
         Assert.True(lookup.PipelineStages[0].Contains("$match"));
@@ -162,7 +161,7 @@ public class LookupExpressionTests
                     .HasValue<Dog>("Dog")
                     .HasValue<Cat>("Cat");
             });
-            // Explicitly touch the derived types to ensure proper registration
+        // Touch the derived types to ensure they're registered.
             modelBuilder.Entity<Dog>();
             modelBuilder.Entity<Cat>();
         }

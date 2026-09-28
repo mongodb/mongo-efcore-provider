@@ -22,28 +22,17 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// <see cref="MongoExpressionTranslator"/> — <c>root.GetType() == typeof(T)</c> (and its <c>!=</c> form),
-/// scoped to a NON-hierarchy root entity type.
+/// <see cref="MongoExpressionTranslator"/> — <c>root.GetType() == typeof(T)</c> (and <c>!=</c>) for a root entity
+/// type with no hierarchy.
 /// </summary>
 /// <remarks>
-/// EF Core has no provider-agnostic rewrite for <see cref="object.GetType"/> comparisons either — like whole-
-/// entity equality (see <c>MongoExpressionTranslator.EntityEquality.cs</c>), each provider implements its own
-/// (relational's <c>RelationalSqlTranslatingExpressionVisitor.ProcessGetType</c>, InMemory's equivalent), so
-/// without this, EVERY <c>c.GetType() == typeof(T)</c> predicate fell back to driver-LINQ.
+/// EF Core has no provider-agnostic rewrite for <see cref="object.GetType"/> comparisons (cf. relational's
+/// <c>ProcessGetType</c>). With no base or derived types, <c>GetType()</c> always equals the entity's CLR type, so
+/// the comparison folds to a constant. TPH hierarchies would need a discriminator predicate (as
+/// <c>TryBuildDiscriminatorPredicate</c> does for <c>OfType&lt;T&gt;</c>) and decline.
 /// <para>
-/// <b>Scope, deliberately narrow.</b> Only a root entity type with NO hierarchy (no base type and no directly
-/// derived types) is handled here — for such a type, <c>GetType()</c> is compile-time-known to always equal
-/// the entity type's own CLR type, so the whole comparison collapses to a constant <see langword="true"/>/
-/// <see langword="false"/>, needing no discriminator field at all. A TPH hierarchy needs a genuine
-/// discriminator-value predicate (mirroring <c>TryBuildDiscriminatorPredicate</c>, used for <c>OfType&lt;T&gt;</c>)
-/// and is out of scope here — it declines and keeps falling back.
-/// </para>
-/// <para>
-/// <b>This incidentally fixes EF-202 for the non-hierarchy shape.</b> The driver-LINQ fallback's own
-/// <c>GetType()</c> handling narrows on discriminator-field presence/absence (<c>_t: null</c> / <c>_t: {$ne:
-/// null}</c>) rather than on the COMPARISON type, so <c>c.GetType() == typeof(SomeUnrelatedType)</c> against a
-/// non-hierarchy <c>Customer</c> wrongly matches every row instead of none. Going native here sidesteps that
-/// bug entirely: the comparison type is checked directly against the entity's own CLR type at translate time.
+/// This avoids EF-202 for the non-hierarchy shape: driver-LINQ narrows on discriminator presence rather than the
+/// comparison type, so <c>GetType() == typeof(Unrelated)</c> wrongly matches every row.
 /// </para>
 /// </remarks>
 internal sealed partial class MongoExpressionTranslator
@@ -77,8 +66,7 @@ internal sealed partial class MongoExpressionTranslator
             return false;
         }
 
-        // Hierarchy types need a real discriminator predicate, not a compile-time constant — decline and let
-        // this keep falling back to driver-LINQ (see the type's own remarks).
+        // Hierarchy types need a discriminator predicate, not a constant; decline.
         if (_entityType.BaseType is not null || _entityType.GetDirectlyDerivedTypes().Any())
             return false;
 

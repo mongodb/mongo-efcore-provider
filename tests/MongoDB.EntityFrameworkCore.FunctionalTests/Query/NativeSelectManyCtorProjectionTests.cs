@@ -40,9 +40,7 @@ public class NativeSelectManyCtorProjectionTests(TemporaryDatabaseFixture databa
         public string Heading { get; set; } = "";
     }
 
-    // A ctor-only DTO over the owned-collection SelectMany's (outer, inner) pair — no member named
-    // "blogTitle"/"postHeading" matches a constructor parameter by the compiler's naming rule, so
-    // NewExpression.Members is null.
+    // Ctor-only DTO over the SelectMany (outer, inner) pair; NewExpression.Members is null.
     private class BlogPostSummary
     {
         public string BlogTitle { get; }
@@ -79,16 +77,8 @@ public class NativeSelectManyCtorProjectionTests(TemporaryDatabaseFixture databa
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
             });
 
-        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
-        // here proves the ctor-only DTO result selector went native.
-        //
-        // NOTE: .OrderBy(...) is applied AFTER .AsEnumerable() rather than composed directly on the query.
-        // A server-side sort composed directly on a native SelectMany().Select() is unconditionally
-        // non-native in this codebase today (a separate, pre-existing gap unrelated to ctor-only DTOs — the
-        // same one Task 2's GroupBy test hit). Composing OrderBy on the query here would make the test fail
-        // for the wrong reason. The native-translation gate under test (SelectMany's ctor-only DTO result
-        // selector) is still fully exercised: ToList() below is what triggers query compilation/execution,
-        // and it runs BEFORE the in-memory OrderBy.
+        // Success under NativeOnly proves native. OrderBy is client-side because a server-side sort over
+        // SelectMany().Select() is a separate, unsupported shape.
         var results = db.Entities
             .SelectMany(b => b.Posts, (b, p) => new BlogPostSummary(b.Title, p.Heading))
             .AsEnumerable()

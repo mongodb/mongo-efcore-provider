@@ -28,14 +28,10 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// Generalizations of the Entity_equality_null native translation (spec test) to two closely-related
-/// whole-entity-typed shapes that reuse the SAME <c>MongoElementRefExpression</c>-vs-null mechanism:
-/// an owned single-reference navigation compared to null (<c>b.Address == null</c>), and the root entity
-/// compared to itself (<c>c == c</c>), which is trivially true regardless of document content. Also covers
-/// the remaining whole-entity shape, a non-null, non-self entity-typed operand (<c>Entity_equality_local</c>'s
-/// shape, <c>c == other</c>) — this one goes native via genuinely different, key-based machinery instead
-/// (<c>MongoExpressionTranslator.EntityEquality.cs</c>), since comparing against an arbitrary OTHER entity
-/// is EF's key-based equality semantics, not document equality.
+/// Whole-entity equality shapes beyond <c>Entity_equality_null</c>: an owned reference compared to null
+/// (<c>b.Address == null</c>) and the root compared to itself (<c>c == c</c>), both via the
+/// <c>MongoElementRefExpression</c>-vs-null mechanism; and an entity compared to another entity or a list of
+/// entities, which uses key-based equality (<c>MongoExpressionTranslator.EntityEquality.cs</c>).
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -89,8 +85,7 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
         var collection = SeedCustomers(nameof(Entity_equality_self_goes_native));
         using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out var spyLogger);
 
-        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
-        // here proves `c == c` went through the native $$ROOT-vs-itself path rather than driver-LINQ.
+        // NativeOnly success proves `c == c` took the native path.
 #pragma warning disable CS1718 // Comparison made to same variable — deliberate: this is the shape under test.
         var results = db.Entities.AsNoTracking().Where(c => c == c).ToList();
 #pragma warning restore CS1718
@@ -176,11 +171,8 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Entity vs. a DIFFERENT, non-null captured entity (`Entity_equality_local`'s shape) — goes native
-    //  via a primary-key comparison (MongoExpressionTranslator.EntityEquality.cs), not the $$ROOT/self
-    //  mechanism above: comparing a whole entity to an arbitrary OTHER entity value is EF's key-based
-    //  equality semantics, not document equality, and has no serializer path for `$$ROOT`/a sub-document
-    //  against an unrelated CLR object — so this needed genuinely different machinery.
+    //  Entity vs. a different, non-null captured entity (`Entity_equality_local`'s shape) — native via a
+    //  primary-key comparison (MongoExpressionTranslator.EntityEquality.cs), EF's key-based semantics
     // ════════════════════════════════════════════════════════════════════════════════════════════
 
     [Fact]
@@ -195,8 +187,7 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
         using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out var spyLogger);
         var other = new Customer { Id = existingId, Name = "Ignored — only the key is compared" };
 
-        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
-        // here proves `c == other` went through the native key-based path rather than driver-LINQ.
+        // NativeOnly success proves `c == other` took the native key-based path.
         var results = db.Entities.AsNoTracking().Where(c => c == other).ToList();
 
         var found = Assert.Single(results);
@@ -219,10 +210,8 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Entity-list Contains — `customers.Contains(c)`, generalizing the single-comparand shape above
-    //  to a client-side LIST of entity values (including a null entry) — goes native via a primary-key
-    //  $in (MongoExpressionTranslator.EntityEquality.cs's TryTranslateEntityListContains), not an
-    //  OR-chain: see that method's remarks for why a list-length-independent rewrite is required here.
+    //  Entity-list Contains — `customers.Contains(c)`, including a null entry — native via a primary-key
+    //  $in (see TryTranslateEntityListContains for why not an OR-chain)
     // ════════════════════════════════════════════════════════════════════════════════════════════
 
     [Fact]
@@ -235,9 +224,7 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
         using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out var spyLogger);
         var customers = new List<Customer?> { null, new Customer { Id = existingId, Name = "Ignored — only the key is compared" } };
 
-        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
-        // here proves `customers.Contains(c)` went through the native key-based $in path rather than
-        // driver-LINQ.
+        // NativeOnly success proves `customers.Contains(c)` took the native key-based $in path.
         var results = db.Entities.AsNoTracking().Where(c => customers.Contains(c)).ToList();
 
         var found = Assert.Single(results);

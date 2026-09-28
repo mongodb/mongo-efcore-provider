@@ -23,43 +23,19 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The translator must NOT simply unwrap a cast — a narrowing or signed/unsigned conversion changes the
-/// value, so dropping it silently changes results (a sort key ordered by the raw stored value; a comparison
-/// evaluated in the wrong type).
+/// A narrowing or signed/unsigned cast changes the value, so the translator must not simply unwrap it.
 /// </para>
 /// <para>
-/// <b>The admissible set is bounded by MQL itself, not by taste.</b> <see cref="ToOperatorFor"/> maps only
-/// <see cref="int"/>, <see cref="long"/>, <see cref="double"/> and <see cref="decimal"/>; there is no
-/// <c>$toShort</c>, <c>$toUInt</c> or <c>$toFloat</c>. The driver's own LINQ provider throws
-/// <c>ExpressionNotSupportedException</c> for those targets in predicate, sort and projection position alike,
-/// so declining them keeps native and the fallback at the SAME boundary.
+/// The admissible set is bounded by MQL (<see cref="ToOperatorFor"/>): there's no <c>$toShort</c>/<c>$toUInt</c>/
+/// <c>$toFloat</c>, and the driver throws for those targets too, so native and fallback decline at the same place.
+/// Not query-dialect-renderable: <c>$expr</c> inside <c>$elemMatch</c> is a server error.
 /// </para>
 /// <para>
-/// <b>This node is deliberately NOT admitted by <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>.</b>
-/// It has no query-dialect form, and <c>$expr</c> is a hard server error inside <c>$elemMatch</c> — so
-/// admitting it there would turn a clean decline into a runtime failure. See that classifier's own remarks.
-/// </para>
-/// <para>
-/// <b><c>Convert</c> and <c>ConvertChecked</c> both map to this same node — there is no separate "checked"
-/// flavor — and an out-of-range conversion aborts the whole query, not just the offending row.</b>
-/// <c>$expr</c> is evaluated for every document the stage scans, so a single unconvertible value (e.g. a
-/// double too large for <c>$toInt</c>) fails the aggregate for every document, including ones that would
-/// never have matched the predicate or been returned.
-/// </para>
-/// <para>
-/// <b>Disposition: keep the server error. Do NOT add <c>$convert</c>'s <c>onError</c>.</b> The released
-/// (driver-LINQ) packages instead silently drop the cast, so out-of-range rows are returned uncast rather
-/// than erroring — this is a deliberate, documented behavioral delta (see <c>BREAKING-CHANGES.md</c>), not an
-/// oversight. An <c>onError: null</c> fallback was considered and rejected: a converted-to-<c>null</c> operand
-/// participates in BSON's total-ordering comparisons (<c>Null</c> sorts below every number) and would quietly
-/// move the row into or out of the result depending on the operator — reintroducing exactly the
-/// silent, operator-dependent behavior <c>MongoExpressionTranslator.NeedsNumericTypeBracket</c> and its
-/// <see cref="MongoNumericTypeBracketExpression"/> conjunct exist to prevent for a STORED null/missing value;
-/// an <c>onError</c>-produced null would bypass that bracket entirely, since the bracket tests the stored
-/// field's own BSON type, not the conversion's output. A loud abort is the only option
-/// that can't be mistaken for a valid answer, and out-of-range data reaching a narrowing cast is a genuine
-/// defect in the query or the data. <c>UseQueryMode(MongoQueryMode.DriverLinq)</c> is the mitigation for
-/// anyone who needs the old silent-drop behavior.
+/// <c>Convert</c> and <c>ConvertChecked</c> both map here. An out-of-range value fails the whole aggregate
+/// (<c>$expr</c> runs on every scanned document). Keep that error; don't add <c>$convert</c>'s <c>onError</c>:
+/// an error-produced null would slip past <see cref="MongoNumericTypeBracketExpression"/> (which tests the stored
+/// type) and silently move rows in or out of the result. Driver-LINQ drops the cast instead (a documented
+/// behavioral delta, see <c>BREAKING-CHANGES.md</c>); <c>UseQueryMode(MongoQueryMode.DriverLinq)</c> restores it.
 /// </para>
 /// </remarks>
 internal sealed class MongoConvertExpression(MongoExpression operand, Type clrType) : MongoExpression
@@ -71,17 +47,12 @@ internal sealed class MongoConvertExpression(MongoExpression operand, Type clrTy
     public override Type Type { get; } = clrType;
 
     /// <summary>
-    /// The MQL conversion operator for <paramref name="clrType"/>, or <see langword="null"/> when MQL cannot
-    /// express it. This is the single definition of the admissible set — every gate consults it rather than
-    /// re-deriving one.
+    /// The MQL conversion operator for <paramref name="clrType"/>, or <see langword="null"/> when MQL can't express
+    /// it. The single definition of the admissible set.
     /// </summary>
     /// <remarks>
-    /// <c>$toString</c> (<see cref="string"/>) was added for string-concatenation operand coercion only — there
-    /// is no C# cast that compiles to <c>Convert(x, typeof(string))</c> (numeric→string requires
-    /// <c>ToString()</c>, not a cast), so the only construction sites that can produce a
-    /// <see cref="MongoConvertExpression"/> targeting <see cref="string"/> are
-    /// <c>MongoExpressionTranslator.TranslateStringConcat</c>'s operand coercion. This does not reopen any
-    /// other admission path.
+    /// <c>$toString</c> exists only for string-concatenation operand coercion
+    /// (<c>MongoExpressionTranslator.TranslateStringConcat</c>); no C# cast compiles to <c>Convert(x, string)</c>.
     /// </remarks>
     public static string? ToOperatorFor(Type clrType)
     {

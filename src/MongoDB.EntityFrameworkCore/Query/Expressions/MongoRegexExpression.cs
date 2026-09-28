@@ -25,40 +25,21 @@ internal enum MongoRegexKind
     Contains,
 
     /// <summary>
-    /// <c>EF.Functions.Like(matchExpression, pattern)</c> against a compile-time-constant SQL LIKE pattern
-    /// (<c>%</c>/<c>_</c> wildcards) — see
-    /// <see cref="NativeTranslation.MongoRegexPatternBuilder.BuildPattern"/>'s <c>Like</c>
-    /// arm. Scoped to the query ($match) dialect only: <c>MongoAggregationExpressionRenderer.CanRender</c>
-    /// declines a <c>Like</c>-kind regex rather than admitting it into the $expr dialect, since there is no
-    /// $expr rendering for it (a Like pattern needs wildcard-to-regex conversion, not a literal substring
-    /// search like $indexOfCP).
+    /// <c>EF.Functions.Like(matchExpression, pattern)</c> with a constant SQL LIKE pattern (see
+    /// <see cref="NativeTranslation.MongoRegexPatternBuilder.BuildPattern"/>). Query ($match) dialect only;
+    /// <c>MongoAggregationExpressionRenderer.CanRender</c> declines it since there's no <c>$expr</c> rendering.
     /// </summary>
     Like,
 
     /// <summary>
-    /// The REVERSED-argument shape of <c>System.Text.RegularExpressions.Regex.IsMatch(input, pattern)</c> —
-    /// a compile-time-constant <c>input</c> tested against a document-field-valued <c>pattern</c> (e.g.
-    /// <c>Regex.IsMatch("Seattle", o.String)</c>). Unlike every other <see cref="MongoRegexKind"/> member,
-    /// <see cref="MongoRegexExpression.Field"/> here holds the resolved PATTERN field (not the value under
-    /// test) and <see cref="MongoRegexExpression.Term"/> holds the fixed input string — see
-    /// <see cref="NativeTranslation.MongoExpressionTranslator"/>'s <c>TryTranslateRegexIsMatch</c> for why the
-    /// roles are swapped relative to StartsWith/EndsWith/Contains/Like.
+    /// The reversed-argument <c>Regex.IsMatch(input, pattern)</c> shape: a constant input tested against a
+    /// field-valued pattern (<c>Regex.IsMatch("Seattle", o.String)</c>). Here <see cref="MongoRegexExpression.Field"/>
+    /// holds the pattern field and <see cref="MongoRegexExpression.Term"/> the input (see
+    /// <see cref="NativeTranslation.MongoExpressionTranslator"/>'s <c>TryTranslateRegexIsMatch</c>).
     /// <para>
-    /// Aggregation-expression-dialect ONLY: MongoDB's <c>$regularExpression</c> query-dialect BSON type
-    /// requires a literal pattern, never a field, so this kind has no query-dialect form at all — see
-    /// <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>'s and <c>RenderNode</c>'s dedicated
-    /// <c>IsMatch</c> exclusions. It renders instead via the aggregation expression <c>$regexMatch</c>
-    /// operator, whose <c>regex</c> operand — unlike <c>$regularExpression</c>'s — may itself be a
-    /// field-valued expression.
-    /// </para>
-    /// <para>
-    /// <b>Malformed-pattern risk is inherent, not a bug to guard against.</b> Because the pattern is sourced
-    /// from a document field rather than validated once at C# compile/translate time, a row whose pattern
-    /// field holds an invalid regex causes <c>$regexMatch</c> to throw a genuine per-document server error at
-    /// execution time. This is unavoidable for a field-valued pattern (the forward, constant-pattern shape
-    /// has no equivalent risk — its pattern is a fixed, already-valid .NET <see cref="System.Text.RegularExpressions.Regex"/>
-    /// literal) and is not specific to this provider: the same query would fail the same way against any
-    /// driver capable of expressing it.
+    /// Aggregation dialect only (<c>$regexMatch</c>): <c>$regularExpression</c> requires a literal pattern. A row
+    /// whose pattern field holds an invalid regex makes the server throw at execution time; that's inherent to a
+    /// field-valued pattern.
     /// </para>
     /// </summary>
     IsMatch
@@ -74,23 +55,19 @@ internal sealed class MongoRegexExpression : MongoExpression
     /// Creates a <see cref="MongoRegexExpression"/>.
     /// </summary>
     /// <param name="field">
-    /// The document field being tested: a <c>MongoFieldExpression</c> for an ordinary property, or a
-    /// <c>MongoElementRefExpression</c> for a value with no backing <c>IProperty</c> — e.g. a projected
-    /// <c>Distinct()</c>'s own COMPUTED alias (EF-322 gap-2). Both render identically here: only the document
-    /// path is ever read (see <c>MongoQueryLanguageRenderer.RenderRegex</c>), never property metadata.
+    /// The document field being tested: a <c>MongoFieldExpression</c>, or a <c>MongoElementRefExpression</c> for a
+    /// value with no backing <c>IProperty</c> (e.g. a projected <c>Distinct()</c>'s computed alias). Only the
+    /// document path is read (see <c>MongoQueryLanguageRenderer.RenderRegex</c>).
     /// </param>
     /// <param name="kind">The kind of regex test to perform (StartsWith, EndsWith, or Contains).</param>
     /// <param name="term">
-    /// The search term: a <c>MongoConstantExpression</c> or <c>MongoParameterExpression</c> of string, or a
-    /// <c>MongoFieldExpression</c> for a field-to-field test (e.g. <c>c.A.StartsWith(c.B)</c>) — the latter has
-    /// no query-dialect form and is rendered only via <c>MongoAggregationExpressionRenderer</c>'s <c>$indexOfCP</c>
-    /// form inside <c>$expr</c>.
+    /// A string <c>MongoConstantExpression</c>/<c>MongoParameterExpression</c>, or a <c>MongoFieldExpression</c> for a
+    /// field-to-field test (<c>c.A.StartsWith(c.B)</c>), which renders only via <c>$indexOfCP</c> inside <c>$expr</c>.
     /// </param>
     /// <param name="negated"><see langword="true"/> for a negated match (<c>!s.StartsWith(...)</c>).</param>
     /// <param name="caseInsensitive">
-    /// <see langword="true"/> for a case-insensitive match (<c>StringComparison.OrdinalIgnoreCase</c>).
-    /// <see langword="false"/> (the default, matching every pre-existing construction site) for the ordinal
-    /// case-sensitive form.
+    /// <see langword="true"/> for <c>StringComparison.OrdinalIgnoreCase</c>; <see langword="false"/> (default) for
+    /// ordinal case-sensitive.
     /// </param>
     public MongoRegexExpression(
         MongoExpression field, MongoRegexKind kind, MongoExpression term, bool negated, bool caseInsensitive = false)
@@ -103,8 +80,7 @@ internal sealed class MongoRegexExpression : MongoExpression
     }
 
     /// <summary>
-    /// The document field being tested — a <c>MongoFieldExpression</c> or a <c>MongoElementRefExpression</c>;
-    /// see the constructor's own remarks.
+    /// The document field being tested; see the constructor.
     /// </summary>
     // 'new' hides the inherited Expression.Field(...) method; used for semantic clarity.
     public new MongoExpression Field { get; }
@@ -113,10 +89,7 @@ internal sealed class MongoRegexExpression : MongoExpression
     public MongoRegexKind Kind { get; }
 
     /// <summary>
-    /// The search term: a <c>MongoConstantExpression</c> or <c>MongoParameterExpression</c> of string, or a
-    /// <c>MongoFieldExpression</c> for a field-to-field test (e.g. <c>c.A.StartsWith(c.B)</c>) — the latter has
-    /// no query-dialect form and is rendered only via <c>MongoAggregationExpressionRenderer</c>'s <c>$indexOfCP</c>
-    /// form inside <c>$expr</c>.
+    /// The search term: a string constant/parameter, or a field for a field-to-field test (<c>$expr</c> only).
     /// </summary>
     public MongoExpression Term { get; }
 
@@ -124,9 +97,7 @@ internal sealed class MongoRegexExpression : MongoExpression
     public bool Negated { get; }
 
     /// <summary>
-    /// <see langword="true"/> for a case-insensitive match (<c>StringComparison.OrdinalIgnoreCase</c>).
-    /// <see langword="false"/> (the default, matching every pre-existing construction site) for the ordinal
-    /// case-sensitive form.
+    /// <see langword="true"/> for <c>StringComparison.OrdinalIgnoreCase</c>; <see langword="false"/> for ordinal.
     /// </summary>
     public bool CaseInsensitive { get; }
 

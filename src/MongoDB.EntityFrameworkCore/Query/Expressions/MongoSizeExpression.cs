@@ -18,34 +18,14 @@ using System;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// Represents a native <c>{ $size: … }</c> aggregation expression over a named array field, identified by its
-/// dotted document path.
+/// A native <c>{ $size: … }</c> aggregation expression over an array field, identified by its dotted document
+/// path.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Two uses, distinguished by <see cref="NullSafe"/>:
-/// </para>
-/// <list type="bullet">
-/// <item>
-/// A projected collection-navigation <c>Count</c> (<c>select new { ..., OrderCount = c.Orders.Count }</c>),
-/// where <see cref="FieldName"/> is the synthetic <c>_lookup_&lt;Nav&gt;</c> array field written by the matching
-/// <see cref="LookupExpression"/>. A <c>$lookup</c> always writes an array, so <see cref="NullSafe"/> is
-/// <see langword="false"/> and the rendering is the plain <c>{ $size: "$path" }</c>.
-/// </item>
-/// <item>
-/// An OWNED (embedded) collection's element count used in a predicate (<c>Where(b =&gt; b.Posts.Count &gt; 2)</c>),
-/// where <see cref="FieldName"/> is the embedded array's dotted path. An embedded array can be MISSING or
-/// explicitly BSON <c>null</c>, and <c>$size</c> against either is a hard server error that aborts the whole
-/// aggregate — so <see cref="NullSafe"/> is <see langword="true"/> and the rendering wraps the path in
-/// <c>$ifNull</c>, mapping both states to <c>[]</c> (count 0, which is what LINQ answers for a missing embedded
-/// array).
-/// </item>
-/// </list>
-/// <para>
-/// This does not wrap a <see cref="MongoFieldExpression"/> because that node requires a backing
-/// <see cref="Microsoft.EntityFrameworkCore.Metadata.IProperty"/>, and neither an array navigation nor a
-/// <c>$lookup</c> alias has one.
-/// </para>
+/// Used for a projected collection-navigation <c>Count</c> over a <c>$lookup</c> alias (always an array, so the
+/// plain form), and for an owned collection's count (<c>b.Posts.Count</c>), which may be missing or BSON null —
+/// <c>$size</c> on either aborts the aggregate, so <see cref="NullSafe"/> wraps the path in <c>$ifNull</c>.
+/// Not built on <see cref="MongoFieldExpression"/>, which requires a backing <c>IProperty</c>.
 /// </remarks>
 internal sealed class MongoSizeExpression : MongoExpression
 {
@@ -55,9 +35,8 @@ internal sealed class MongoSizeExpression : MongoExpression
     /// <param name="fieldName">The array's dotted document path (e.g. <c>_lookup_Orders</c>, <c>Posts</c>).</param>
     /// <param name="type">The CLR type of the resulting count (typically <see cref="int"/> or <see cref="long"/>).</param>
     /// <param name="nullSafe">
-    /// <see langword="true"/> to render <c>{ $size: { $ifNull: [ "$path", [] ] } }</c> — required for an
-    /// embedded array, which may be missing or explicitly null. <see langword="false"/> (the default) renders
-    /// the plain <c>{ $size: "$path" }</c>, preserving the emitted MQL of the projected-<c>Count</c> path.
+    /// <see langword="true"/> to render <c>{ $size: { $ifNull: [ "$path", [] ] } }</c> (required for an embedded
+    /// array); <see langword="false"/> for the plain <c>{ $size: "$path" }</c>.
     /// </param>
     public MongoSizeExpression(string fieldName, Type type, bool nullSafe = false)
     {
@@ -70,8 +49,8 @@ internal sealed class MongoSizeExpression : MongoExpression
     public string FieldName { get; }
 
     /// <summary>
-    /// Whether the array path is wrapped in <c>$ifNull</c> so a missing or explicitly-null array counts as
-    /// empty instead of aborting the aggregate. See the class remarks.
+    /// Whether the path is wrapped in <c>$ifNull</c> so a missing or null array counts as empty instead of
+    /// aborting the aggregate.
     /// </summary>
     public bool NullSafe { get; }
 
