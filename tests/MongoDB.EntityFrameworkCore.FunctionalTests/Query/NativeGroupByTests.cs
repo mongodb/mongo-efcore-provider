@@ -1620,8 +1620,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     public void GroupBy_single_member_anonymous_key_Key_member_inside_accumulator_goes_native()
     {
         // A one-member anonymous key is composite (_id: {Country: ...}); g.Key.Country inside the accumulator
-        // resolves to the raw per-document "$Country". Asserted against the LINQ-to-objects answer, not
-        // driver-LINQ: driver-LINQ returns 0 for US here (EF-457).
+        // resolves to the raw per-document "$Country". Asserted against the LINQ-to-objects answer.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_single_member_anonymous_key_Key_member_inside_accumulator_goes_native));
 
@@ -1634,6 +1633,167 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
             .ToArray();
 
         Assert.Equal([("FR", 0), ("UK", 0), ("US", 2)], results);
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void GroupBy_single_member_anonymous_key_Key_member_inside_accumulator_matches_oracle(MongoQueryMode mode)
+    {
+        // EF-457: a g.Key member inside an aggregate predicate must mean the group key, on every path.
+        var seed = SeedOrders();
+        var expected = seed
+            .GroupBy(o => new { o.Country })
+            .Select(g => (g.Key.Country, UsCount: g.Count(o => g.Key.Country == "US")))
+            .OrderBy(x => x.Country)
+            .ToArray();
+        Assert.Equal([("FR", 0), ("UK", 0), ("US", 2)], expected);
+
+        using var db = CreateContext(seed, mode,
+            nameof(GroupBy_single_member_anonymous_key_Key_member_inside_accumulator_matches_oracle) + mode);
+
+        var results = db.Entities
+            .GroupBy(o => new { o.Country })
+            .Select(g => new { g.Key.Country, UsCount = g.Count(o => g.Key.Country == "US") })
+            .AsEnumerable()
+            .Select(x => (x.Country, x.UsCount))
+            .OrderBy(x => x.Country)
+            .ToArray();
+
+        Assert.Equal(expected, results);
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void GroupBy_scalar_key_Key_inside_accumulator_matches_oracle(MongoQueryMode mode)
+    {
+        // EF-457, scalar key: g.Key inside Count/Sum over the group means the group key.
+        var seed = SeedOrders();
+        var expected = seed
+            .GroupBy(o => o.Country)
+            .Select(g => (Country: g.Key, UsCount: g.Count(o => g.Key == "US"), UsSum: g.Sum(o => g.Key == "US" ? o.Amount : 0m)))
+            .OrderBy(x => x.Country)
+            .ToArray();
+        Assert.Equal([("FR", 0, 0m), ("UK", 0, 0m), ("US", 2, 300m)], expected);
+
+        using var db = CreateContext(seed, mode, nameof(GroupBy_scalar_key_Key_inside_accumulator_matches_oracle) + mode);
+
+        var results = db.Entities
+            .GroupBy(o => o.Country)
+            .Select(g => new
+            {
+                Country = g.Key,
+                UsCount = g.Count(o => g.Key == "US"),
+                UsSum = g.Sum(o => g.Key == "US" ? o.Amount : 0m)
+            })
+            .AsEnumerable()
+            .Select(x => (x.Country, x.UsCount, x.UsSum))
+            .OrderBy(x => x.Country)
+            .ToArray();
+
+        Assert.Equal(expected, results);
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void GroupBy_anonymous_key_Key_member_inside_Where_and_Sum_matches_oracle(MongoQueryMode mode)
+    {
+        // EF-457: g.Key members inside a Where-then-Sum and inside a Sum selector over the group. The Where makes
+        // the driver keep the $push-then-$project form (where "$_id" is the group key), so this guards that the
+        // key substitution is also correct there.
+        var seed = SeedOrders();
+        var expected = seed
+            .GroupBy(o => new { o.Country, o.Year })
+            .Select(g => (
+                g.Key.Country,
+                g.Key.Year,
+                WhereSum: g.Where(o => g.Key.Country == "US" && o.Amount > 100).Sum(o => o.Amount),
+                SelectorSum: g.Sum(o => g.Key.Year == 2020 ? o.Amount : 0m)))
+            .OrderBy(x => x.Country).ThenBy(x => x.Year)
+            .ToArray();
+        Assert.Equal(
+            [("FR", 2021, 0m, 0m), ("UK", 2020, 0m, 75m), ("US", 2020, 0m, 100m), ("US", 2021, 200m, 0m)],
+            expected);
+
+        using var db = CreateContext(seed, mode,
+            nameof(GroupBy_anonymous_key_Key_member_inside_Where_and_Sum_matches_oracle) + mode);
+
+        var results = db.Entities
+            .GroupBy(o => new { o.Country, o.Year })
+            .Select(g => new
+            {
+                g.Key.Country,
+                g.Key.Year,
+                WhereSum = g.Where(o => g.Key.Country == "US" && o.Amount > 100).Sum(o => o.Amount),
+                SelectorSum = g.Sum(o => g.Key.Year == 2020 ? o.Amount : 0m)
+            })
+            .AsEnumerable()
+            .Select(x => (x.Country, x.Year, x.WhereSum, x.SelectorSum))
+            .OrderBy(x => x.Country).ThenBy(x => x.Year)
+            .ToArray();
+
+        Assert.Equal(expected, results);
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void GroupBy_with_element_selector_Key_inside_accumulator_matches_oracle(MongoQueryMode mode)
+    {
+        // EF-457 with an element selector: the aggregate lambda's parameter is the projected element, not the
+        // source document (EF Core inlines the element selector into the aggregate lambda).
+        var seed = SeedOrders();
+        var expected = seed
+            .GroupBy(o => o.Country, o => o.Amount)
+            .Select(g => (Country: g.Key, UsSum: g.Sum(a => g.Key == "US" ? a : 0m)))
+            .OrderBy(x => x.Country)
+            .ToArray();
+        Assert.Equal([("FR", 0m), ("UK", 0m), ("US", 300m)], expected);
+
+        using var db = CreateContext(seed, mode,
+            nameof(GroupBy_with_element_selector_Key_inside_accumulator_matches_oracle) + mode);
+
+        var results = db.Entities
+            .GroupBy(o => o.Country, o => o.Amount)
+            .Select(g => new { Country = g.Key, UsSum = g.Sum(a => g.Key == "US" ? a : 0m) })
+            .AsEnumerable()
+            .Select(x => (x.Country, x.UsSum))
+            .OrderBy(x => x.Country)
+            .ToArray();
+
+        Assert.Equal(expected, results);
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void GroupBy_Key_inside_aggregate_in_Where_over_groups_matches_oracle(MongoQueryMode mode)
+    {
+        // EF-457 where the aggregate sits in a predicate over the groupings rather than the final projection.
+        var seed = SeedOrders();
+        var expected = seed
+            .GroupBy(o => new { o.Country })
+            .Where(g => g.Count(o => g.Key.Country != "UK") > 0)
+            .Select(g => (g.Key.Country, Count: g.Count()))
+            .OrderBy(x => x.Country)
+            .ToArray();
+        Assert.Equal([("FR", 1), ("US", 2)], expected);
+
+        using var db = CreateContext(seed, mode,
+            nameof(GroupBy_Key_inside_aggregate_in_Where_over_groups_matches_oracle) + mode);
+
+        var results = db.Entities
+            .GroupBy(o => new { o.Country })
+            .Where(g => g.Count(o => g.Key.Country != "UK") > 0)
+            .Select(g => new { g.Key.Country, Count = g.Count() })
+            .AsEnumerable()
+            .Select(x => (x.Country, x.Count))
+            .OrderBy(x => x.Country)
+            .ToArray();
+
+        Assert.Equal(expected, results);
     }
 
     [Fact]
@@ -1666,8 +1826,16 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     public void GroupBy_nested_anonymous_key_Key_member_inside_accumulator_declines()
     {
         // A nested anonymous key part (new { Inner = new { o.Country } }) declines at key binding, so an inner
-        // g.Key.Inner.Country accumulator condition never reaches the raw-key resolver.
+        // g.Key.Inner.Country accumulator condition never reaches the raw-key resolver. The fallback (and explicit
+        // DriverLinq) must still give the LINQ-to-objects answer (EF-457).
         var seed = SeedOrders();
+        var expected = seed
+            .GroupBy(o => new { Inner = new { o.Country } })
+            .Select(g => new { g.Key.Inner.Country, UsCount = g.Count(o => g.Key.Inner.Country == "US") })
+            .OrderBy(x => x.Country)
+            .Select(x => x.UsCount)
+            .ToArray();
+        Assert.Equal([0, 0, 2], expected);
 
         int[] Run(SingleEntityDbContext<Order> db) =>
             db.Entities
@@ -1680,9 +1848,11 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
             nameof(GroupBy_nested_anonymous_key_Key_member_inside_accumulator_declines) + "N");
+        Assert.Equal(expected, Run(nativeDb));
+
         using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
             nameof(GroupBy_nested_anonymous_key_Key_member_inside_accumulator_declines) + "D");
-        Assert.Equal(Run(driverDb), Run(nativeDb));
+        Assert.Equal(expected, Run(driverDb));
 
         using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(GroupBy_nested_anonymous_key_Key_member_inside_accumulator_declines) + "NO");
