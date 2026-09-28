@@ -98,6 +98,14 @@ Rules that cost real bugs to learn. Breaking one usually produces **silently wro
   stays ahead of the `$lookup`; if paging was also recorded after the join, the query declines. Paging recorded
   *between* two joins of a chain has no native position (the deferred snapshot runs after every `$lookup`), so it
   declines too (`HasPagingRecordedBetweenJoins`).
+- **GroupBy over a join scope** (`MongoSelectDefinition.GroupByJoinScope`, decided purely in `TranslateGroupBy`):
+  requires a `TransparentIdentifier` key parameter (a result selector that projected one side must not resolve
+  by name against the root entity); the chain is confirmed only at the binder's commit point. Paging recorded
+  ahead of a non-1:1 grouped join declines — deferring it past the `$lookup` (fine for projections) silently
+  changes group counts. A finalized grouping or Distinct takes precedence over a confirmed join's inner
+  access; a non-nullable key part or `$min`/`$max`/`$avg` accumulator that may read an unmatched left-outer
+  join side declines rather than answer a plausible default, as does an accumulator condition that may (`$expr`
+  orders null below every value). See `NativeGroupByOverJoinTests`.
 - **Set ops form a tree; each `Union`'s dedup belongs to its own link, never hoisted.**
   `MongoSelectDefinition.SetOperations` is an ordered list where an operand may itself carry a link, so
   whole-entity `Concat`/`Union` nests both directions. Right-nesting (`A.Concat(B.Union(C))`) cannot be
@@ -114,6 +122,17 @@ Rules that cost real bugs to learn. Breaking one usually produces **silently wro
 - **A negated `&&`/`||` is exactly De Morgan'd via `MongoExpressionNegator`, or declines** — never wrapped in an
   aggregation `$not`. The dialects differ on missing vs. null, on relational ordering of null/missing, and on
   implicit array-element matching, so a `$not` wrap silently changes rows.
+- **The aggregation dialect orders null and missing below every value**, so a bare `$lt`/`$lte` (or a `$gt`/`$gte`
+  whose right side is null) answers true where C# lifted semantics answer false. `MongoAggregationExpressionRenderer`
+  conjoins `$gt: [<lower side>, null]` whenever `MayBeNull` says the lower operand may be null (CLR type, a query
+  parameter, or a null-propagating operator over one). That covers HAVING, `$cond` inside `$group`, `$project`
+  ternaries and element-scoped `$filter`/`$map` predicates (the guard reads `$$e.<field>`). A value whose CLR type is
+  non-nullable but may be *missing* (an unmatched left-join side) gets no guard, so conditions over it must decline.
+- **A composite `$group` `_id` omits a missing sub-key**, so `"_id.<Name>"` reads as missing, not null
+  (`$eq: [missing, null]` is false), and a missing part and a null part form two groups. `MongoPipelineFactory
+  .RenderCompositeKeyPart` `$ifNull`-normalizes every part that may be null, once, for every later read. A nullable
+  key over an unmatched join side (`(decimal?)o.Total`) is made null-safe at bind time (its translated field is
+  non-nullable), and key-only accumulator conditions, which read the raw field, use `NullSafeKeyRead`.
 - **Negator ↔ dialect classifier ↔ both renderers must agree**, enforced by
   `MongoExpressionNodeCoverageTests` (reflection-discovers every `MongoExpression` subtype, checks all seven
   dispatchers). The matrix is keyed by node type, so it's blind to shape-conditional dispatch (e.g.

@@ -128,6 +128,14 @@ internal static class NativeJoinScopeTranslator
     }
 
     /// <summary>
+    /// The single scope index <paramref name="body"/> resolves to (0 = root, <c>k</c> = <c>scope.Levels[k-1]</c>'s
+    /// Inner), as <see cref="TryTranslateSingleScope"/> would resolve it, without translating.
+    /// </summary>
+    public static bool TryResolveSingleScopeIndex(
+        MongoJoinScope scope, ParameterExpression rootParam, Expression body, out int scopeIndex)
+        => TryRerootToSingleScope(scope, rootParam, body, out scopeIndex, out _);
+
+    /// <summary>
     /// Rewrites <paramref name="body"/>'s <c>Outer</c>/<c>Inner</c> hop chain onto one synthetic parameter per scope
     /// level, via <see cref="MongoTransparentScopeResolver.ScopeRerootingVisitor"/>. Succeeds only when the whole
     /// body resolves to a single scope index and no other reference to <paramref name="rootParam"/> survives. The

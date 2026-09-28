@@ -1017,8 +1017,14 @@ public class MongoAggregationExpressionRendererTests
 
         var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
 
+        const string replace
+            = """{ "$replaceAll" : { "input" : "$Text", "find" : { "$literal" : "zz" }, "replacement" : { "$ifNull" : [{ "$literal" : "yy" }, ""] } } }""";
+        var comparison = $$"""{ "{{mql}}" : [{{replace}}, { "$literal" : "$Text" }] }""";
+
+        // `<` has the (string-typed, so may-be-null) left operand on its lower side, so it also carries the
+        // relational null guard; the other operators' lower side is the non-null constant, or they are $eq/$ne.
         Assert.Equal(
-            $$"""{ "{{mql}}" : [{ "$replaceAll" : { "input" : "$Text", "find" : { "$literal" : "zz" }, "replacement" : { "$ifNull" : [{ "$literal" : "yy" }, ""] } } }, { "$literal" : "$Text" }] }""",
+            op == "LessThan" ? $$"""{ "$and" : [{ "$gt" : [{{replace}}, null] }, {{comparison}}] }""" : comparison,
             result.ToJson());
     }
 
@@ -1107,6 +1113,183 @@ public class MongoAggregationExpressionRendererTests
         Assert.Equal(
             """{ "$regexMatch" : { "input" : { "$literal" : "$Order" }, "regex" : "$Text", "options" : "" } }""",
             result.ToJson());
+    }
+
+    // ------------------------------------------------------------------
+    // Null guard on the "less" side of a relational comparison. The aggregation dialect orders null (and missing)
+    // below every value; C# lifted semantics make any comparison with a null operand false.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Less_than_over_a_nullable_operand_is_null_guarded()
+    {
+        var expr = new MongoBinaryExpression(
+            MongoBinaryOperator.LessThan,
+            new MongoElementRefExpression("__agg0", typeof(int?)),
+            new MongoConstantExpression(100, forSerialization: null));
+
+        var rendered = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$and" : [{ "$gt" : ["$__agg0", null] }, { "$lt" : ["$__agg0", 100] }] }""",
+            rendered.ToJson());
+    }
+
+    [Fact]
+    public void Greater_than_guards_its_right_operand_not_its_left()
+    {
+        // `5 > v` / `a > b`: the right side is the lower one; a null left side already answers false.
+        var expr = new MongoBinaryExpression(
+            MongoBinaryOperator.GreaterThanOrEqual,
+            new MongoElementRefExpression("A", typeof(int?)),
+            new MongoElementRefExpression("B", typeof(int?)));
+
+        var rendered = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$and" : [{ "$gt" : ["$B", null] }, { "$gte" : ["$A", "$B"] }] }""",
+            rendered.ToJson());
+    }
+
+    [Fact]
+    public void Relational_comparison_over_non_nullable_operands_is_not_guarded()
+    {
+        var age = GetProperty<Customer>("Age");
+        var expr = new MongoBinaryExpression(
+            MongoBinaryOperator.LessThanOrEqual,
+            new MongoFieldExpression(age, "Age"),
+            new MongoConstantExpression(5, forSerialization: null));
+
+        var rendered = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal("""{ "$lte" : ["$Age", 5] }""", rendered.ToJson());
+    }
+
+    [Fact]
+    public void Equality_over_a_nullable_operand_is_not_guarded()
+    {
+        // $eq/$ne already answer C#'s null == c / null != c.
+        var expr = new MongoBinaryExpression(
+            MongoBinaryOperator.Equal,
+            new MongoElementRefExpression("__agg0", typeof(int?)),
+            new MongoConstantExpression(7, forSerialization: null));
+
+        var rendered = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal("""{ "$eq" : ["$__agg0", 7] }""", rendered.ToJson());
+    }
+
+    [Fact]
+    public void Negated_guarded_comparison_wraps_the_whole_guard()
+    {
+        // !(v < 100) is true for a null v: $not over the guarded pair gives exactly that.
+        var expr = new MongoUnaryExpression(
+            MongoUnaryOperator.Not,
+            new MongoBinaryExpression(
+                MongoBinaryOperator.LessThan,
+                new MongoElementRefExpression("__agg0", typeof(int?)),
+                new MongoConstantExpression(100, forSerialization: null)));
+
+        var rendered = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$not" : [{ "$and" : [{ "$gt" : ["$__agg0", null] }, { "$lt" : ["$__agg0", 100] }] }] }""",
+            rendered.ToJson());
+    }
+
+    [Fact]
+    public void Element_scoped_relational_comparison_is_guarded_on_the_element_field()
+    {
+        // $filter/$map element predicates are guarded too, and the guard reads the element-scoped field.
+        var expr = new MongoBinaryExpression(
+            MongoBinaryOperator.LessThan,
+            new MongoElementRefExpression("Rank", typeof(int?)),
+            new MongoConstantExpression(0, forSerialization: null));
+
+        var rendered = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable(), elementVariable: "e");
+
+        Assert.Equal(
+            """{ "$and" : [{ "$gt" : ["$$e.Rank", null] }, { "$lt" : ["$$e.Rank", 0] }] }""",
+            rendered.ToJson());
+    }
+
+    [Fact]
+    public void Filtered_size_element_predicate_is_guarded_inside_the_filter_cond()
+    {
+        var expr = new MongoFilteredSizeExpression(
+            "Posts",
+            new MongoBinaryExpression(
+                MongoBinaryOperator.GreaterThan,
+                new MongoConstantExpression(0, forSerialization: null),
+                new MongoElementRefExpression("Rank", typeof(int?))),
+            typeof(int));
+
+        var rendered = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$size" : { "$filter" : { "input" : { "$ifNull" : ["$Posts", []] }, "as" : "e", "cond" : { "$and" : [{ "$gt" : ["$$e.Rank", null] }, { "$gt" : [0, "$$e.Rank"] }] } } } }""",
+            rendered.ToJson());
+    }
+
+    [Fact]
+    public void Quantifier_element_predicate_is_guarded_inside_the_map()
+    {
+        var expr = new MongoQuantifierExpression(
+            new MongoElementRefExpression("Posts", typeof(int?[])),
+            new MongoBinaryExpression(
+                MongoBinaryOperator.LessThanOrEqual,
+                new MongoElementRefExpression("Rank", typeof(int?)),
+                new MongoConstantExpression(-5, forSerialization: null)),
+            MongoExpressionTranslator.MongoQuantifierKind.All);
+
+        var rendered = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$allElementsTrue" : { "$map" : { "input" : { "$ifNull" : ["$Posts", []] }, "as" : "e", "in" : { "$and" : [{ "$gt" : ["$$e.Rank", null] }, { "$lte" : ["$$e.Rank", -5] }] } } } }""",
+            rendered.ToJson());
+    }
+
+    [Fact]
+    public void Guarded_parameter_operand_gets_a_single_placeholder()
+    {
+        var age = GetProperty<Customer>("Age");
+        var expr = new MongoBinaryExpression(
+            MongoBinaryOperator.GreaterThan,
+            new MongoFieldExpression(age, "Age"),
+            new MongoParameterExpression("__p", forSerialization: null));
+        var placeholders = new PlaceholderTable();
+
+        var rendered = MongoAggregationExpressionRenderer.Render(expr, placeholders).AsBsonDocument;
+
+        Assert.Single(placeholders.Entries);
+        var conjuncts = rendered["$and"].AsBsonArray;
+        Assert.Equal(conjuncts[1]["$gt"].AsBsonArray[1], conjuncts[0]["$gt"].AsBsonArray[0]);
+        Assert.NotSame(conjuncts[1]["$gt"].AsBsonArray[1], conjuncts[0]["$gt"].AsBsonArray[0]);
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData(5, false)]
+    public void MayBeNull_decides_a_constant_by_its_value(int? value, bool expected)
+        => Assert.Equal(
+            expected,
+            MongoAggregationExpressionRenderer.MayBeNull(new MongoConstantExpression(value, forSerialization: null)));
+
+    [Fact]
+    public void MayBeNull_sees_through_null_propagating_operators()
+    {
+        var age = GetProperty<Customer>("Age");
+        var nullable = new MongoElementRefExpression("R", typeof(int?));
+        var nonNullable = new MongoFieldExpression(age, "Age");
+
+        Assert.True(MongoAggregationExpressionRenderer.MayBeNull(
+            new MongoBinaryExpression(MongoBinaryOperator.Add, nonNullable, nullable)));
+        Assert.True(MongoAggregationExpressionRenderer.MayBeNull(
+            new MongoDatePartExpression(new MongoElementRefExpression("D", typeof(DateTime?)), MongoDatePart.Year)));
+        Assert.True(MongoAggregationExpressionRenderer.MayBeNull(new MongoParameterExpression("p", forSerialization: null)));
+        Assert.False(MongoAggregationExpressionRenderer.MayBeNull(
+            new MongoBinaryExpression(MongoBinaryOperator.Add, nonNullable, new MongoConstantExpression(1, forSerialization: null))));
+        Assert.False(MongoAggregationExpressionRenderer.MayBeNull(new MongoSizeExpression("Posts", typeof(int))));
     }
 
     // --- Helper methods ---

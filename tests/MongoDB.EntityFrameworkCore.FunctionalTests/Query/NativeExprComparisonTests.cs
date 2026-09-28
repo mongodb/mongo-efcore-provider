@@ -445,4 +445,223 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         Assert.Equal(driverNames, nativeNames);
         Assert.Equal(["Bob", "Carol"], nativeNames); // Alice is the only row excluded
     }
+
+    // ── Null guard on the lower side of an $expr relational comparison ─────────────────────────────
+    //
+    // The aggregation dialect orders null and missing below every value, so a bare $lt with a null left side (or $gt
+    // with a null right side) is true; C# lifted semantics make it false. MongoAggregationExpressionRenderer adds
+    // `$gt: [<lower side>, null]` when that side may be null. This changes results against driver-LINQ, which emits
+    // the bare comparison: each test pins the hand-computed C# answer under NativeOnly and records what driver-LINQ
+    // answers.
+
+    public class RankedCustomer
+    {
+        public ObjectId Id { get; set; }
+        public string Name { get; set; } = "";
+        public int? Rank { get; set; }
+        public int Limit { get; set; }
+    }
+
+    // Low: Rank 3 (< Limit 5). High: Rank 10. Null: Rank null. Missing: no Rank element at all.
+    private (IMongoCollection<RankedCustomer> collection, List<string> logs) SeedRanked(string name)
+    {
+        var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
+        var bson = database.MongoDatabase.GetCollection<BsonDocument>(collectionName);
+        bson.InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Low" }, { "Rank", 3 }, { "Limit", 5 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "High" }, { "Rank", 10 }, { "Limit", 5 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Null" }, { "Rank", BsonNull.Value }, { "Limit", 5 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Missing" }, { "Limit", 5 } },
+        ]);
+        return (database.MongoDatabase.GetCollection<RankedCustomer>(collectionName), []);
+    }
+
+    private SingleEntityDbContext<RankedCustomer> CreateRankedContext(
+        IMongoCollection<RankedCustomer> collection, List<string> logs, MongoQueryMode mode)
+        => SingleEntityDbContext.Create(
+            collection,
+            optionsBuilderAction: b =>
+            {
+                b.LogTo(logs.Add)
+                    .EnableSensitiveDataLogging()
+                    .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+            });
+
+    private List<string> RankedNames(
+        string name, MongoQueryMode mode, Expression<Func<RankedCustomer, bool>> predicate, out string mql)
+    {
+        var (collection, logs) = SeedRanked(name + mode);
+        using var db = CreateRankedContext(collection, logs, mode);
+        var names = db.Entities.Where(predicate).ToList().Select(c => c.Name).OrderBy(n => n).ToList();
+        mql = Mql(logs);
+        return names;
+    }
+
+    // Asserts the NativeOnly answer against the hand oracle, and pins driver-LINQ's (different) answer so a change on
+    // either side is noticed. Returns the NativeOnly MQL.
+    private string AssertNullGuardedWhere(
+        string name, Expression<Func<RankedCustomer, bool>> predicate, string[] expected, string[] driverLinq)
+    {
+        var native = RankedNames(name, MongoQueryMode.NativeOnly, predicate, out var mql);
+        Assert.Equal(expected, native);
+        Assert.Equal(driverLinq, RankedNames(name, MongoQueryMode.DriverLinq, predicate, out _));
+        Assert.Contains("$expr", mql);
+        return mql;
+    }
+
+    [Fact]
+    public void Nullable_field_to_field_less_than_via_expr_excludes_null_and_missing()
+    {
+        // C#: null < 5 is false, so only Low. Driver-LINQ's bare $lt also admits Null and Missing.
+        var mql = AssertNullGuardedWhere(
+            nameof(Nullable_field_to_field_less_than_via_expr_excludes_null_and_missing),
+            c => c.Rank < c.Limit, ["Low"], ["Low", "Missing", "Null"]);
+        Assert.Contains("""{ "$and" : [{ "$gt" : ["$Rank", null] }, { "$lt" : ["$Rank", "$Limit"] }] }""", mql);
+    }
+
+    [Fact]
+    public void Nullable_field_to_field_greater_than_guards_the_right_side()
+    {
+        var name = nameof(Nullable_field_to_field_greater_than_guards_the_right_side);
+        var mql = AssertNullGuardedWhere(name + "Gt", c => c.Limit > c.Rank, ["Low"], ["Low", "Missing", "Null"]);
+        Assert.Contains("""{ "$and" : [{ "$gt" : ["$Rank", null] }, { "$gt" : ["$Limit", "$Rank"] }] }""", mql);
+
+        AssertNullGuardedWhere(name + "Ge", c => c.Limit >= c.Rank, ["Low"], ["Low", "Missing", "Null"]);
+    }
+
+    [Fact]
+    public void Negated_nullable_field_to_field_comparison_is_the_exact_complement()
+    {
+        // C#: !(null < 5) is true, so everything but Low.
+        AssertNullGuardedWhere(
+            nameof(Negated_nullable_field_to_field_comparison_is_the_exact_complement),
+            c => !(c.Rank < c.Limit), ["High", "Missing", "Null"], ["High"]);
+    }
+
+    [Fact]
+    public void Nullable_arithmetic_lower_side_excludes_null_and_missing()
+    {
+        // Rank + 1 is null when Rank is: C# null < 5 is false.
+        var mql = AssertNullGuardedWhere(
+            nameof(Nullable_arithmetic_lower_side_excludes_null_and_missing),
+            c => c.Rank + 1 < 5, ["Low"], ["Low", "Missing", "Null"]);
+        Assert.Contains("""{ "$gt" : [{ "$add" : ["$Rank", 1] }, null] }""", mql);
+    }
+
+    [Fact]
+    public void Null_parameter_on_the_lower_side_matches_nothing()
+    {
+        // C#: (Limit - 1) > null is false for every row. Driver-LINQ's $gt: [4, null] is true for every row.
+        int? threshold = null;
+        AssertNullGuardedWhere(
+            nameof(Null_parameter_on_the_lower_side_matches_nothing),
+            c => c.Limit - 1 > threshold, [], ["High", "Low", "Missing", "Null"]);
+    }
+
+    [Fact]
+    public void Nullable_projection_ternary_treats_null_and_missing_as_not_less()
+    {
+        List<string> Run(MongoQueryMode mode, out string mql)
+        {
+            var (collection, logs) = SeedRanked(nameof(Nullable_projection_ternary_treats_null_and_missing_as_not_less) + mode);
+            using var db = CreateRankedContext(collection, logs, mode);
+            var result = db.Entities.Select(c => new { c.Name, F = c.Rank < 5 ? 1 : 0 }).ToList()
+                .OrderBy(x => x.Name).Select(x => x.Name + ":" + x.F).ToList();
+            mql = Mql(logs);
+            return result;
+        }
+
+        Assert.Equal(["High:0", "Low:1", "Missing:0", "Null:0"], Run(MongoQueryMode.NativeOnly, out var nativeMql));
+        Assert.Contains("""{ "$and" : [{ "$gt" : ["$Rank", null] }, { "$lt" : ["$Rank", 5] }] }""", nativeMql);
+
+        // Driver-LINQ's bare $lt answers 1 for Null and Missing.
+        Assert.Equal(["High:0", "Low:1", "Missing:1", "Null:1"], Run(MongoQueryMode.DriverLinq, out _));
+    }
+
+    // ── Composite group key with a possibly-missing part ────────────────────────────────────────────
+    //
+    // $group omits a missing sub-key from a composite _id, so "$_id.Rank" reads as missing, not null, and $expr's
+    // $eq: [missing, null] is false. C# puts both the null and the missing row under Rank == null. Seed groups by
+    // (Name, Rank): Low 3, High 10, Null null, Missing (no Rank element).
+
+    private List<string> GroupedByNameAndRank<T>(
+        string name, MongoQueryMode mode, Func<IQueryable<RankedCustomer>, IEnumerable<T>> query, Func<T, string> format)
+    {
+        var (collection, logs) = SeedRanked(name + mode);
+        using var db = CreateRankedContext(collection, logs, mode);
+        return query(db.Entities).Select(format).OrderBy(s => s).ToList();
+    }
+
+    [Fact]
+    public void Composite_key_part_equal_null_includes_a_missing_part()
+    {
+        // Driver-LINQ is right here (it renders the query-dialect { "_id.Rank": null }), so full parity.
+        var name = nameof(Composite_key_part_equal_null_includes_a_missing_part);
+        var result = NativeModeAssert.NativeAndParity(mode => GroupedByNameAndRank(name, mode,
+            q => q.GroupBy(c => new { c.Name, c.Rank }).Where(g => g.Key.Rank == null)
+                .Select(g => new { g.Key.Name, C = g.Count() }).ToList(),
+            x => x.Name + ":" + x.C));
+
+        Assert.Equal(["Missing:1", "Null:1"], result);
+    }
+
+    [Fact]
+    public void Composite_key_part_not_equal_null_excludes_a_missing_part()
+    {
+        var name = nameof(Composite_key_part_not_equal_null_excludes_a_missing_part);
+        var result = NativeModeAssert.NativeAndParity(mode => GroupedByNameAndRank(name, mode,
+            q => q.GroupBy(c => new { c.Name, c.Rank }).Where(g => g.Key.Rank != null)
+                .Select(g => new { g.Key.Name, C = g.Count() }).ToList(),
+            x => x.Name + ":" + x.C));
+
+        Assert.Equal(["High:1", "Low:1"], result);
+    }
+
+    [Fact]
+    public void Composite_key_part_less_than_is_false_for_a_missing_part()
+    {
+        // Hand oracle only: driver-LINQ's bare $lt also admits Null and Missing.
+        var result = GroupedByNameAndRank(nameof(Composite_key_part_less_than_is_false_for_a_missing_part),
+            MongoQueryMode.NativeOnly,
+            q => q.GroupBy(c => new { c.Name, c.Rank }).Where(g => g.Key.Rank < 5)
+                .Select(g => new { g.Key.Name, C = g.Count() }).ToList(),
+            x => x.Name + ":" + x.C);
+
+        Assert.Equal(["Low:1"], result);
+    }
+
+    [Fact]
+    public void Composite_key_part_projection_reads_a_missing_part_as_null()
+    {
+        // Projected key part, ternary and a key-only accumulator condition, all over the missing part. Hand oracle
+        // only: driver-LINQ can't translate the key-only condition.
+        var result = GroupedByNameAndRank(nameof(Composite_key_part_projection_reads_a_missing_part_as_null),
+            MongoQueryMode.NativeOnly,
+            q => q.GroupBy(c => new { c.Name, c.Rank })
+                .Select(g => new
+                {
+                    g.Key.Name,
+                    g.Key.Rank,
+                    IsNull = g.Key.Rank == null ? 1 : 0,
+                    Less = g.Key.Rank < 5 ? 1 : 0,
+                    NullRows = g.Count(x => g.Key.Rank == null)
+                }).ToList(),
+            x => $"{x.Name}:{x.Rank?.ToString() ?? "null"}:{x.IsNull}:{x.Less}:{x.NullRows}");
+
+        Assert.Equal(["High:10:0:0:0", "Low:3:0:1:0", "Missing:null:1:0:1", "Null:null:1:0:1"], result);
+    }
+
+    [Fact]
+    public void Composite_key_merges_a_missing_and_a_null_part_into_one_group()
+    {
+        // C# groups a null and a missing Rank under the same key. Hand oracle only: driver-LINQ keeps them apart.
+        var result = GroupedByNameAndRank(nameof(Composite_key_merges_a_missing_and_a_null_part_into_one_group),
+            MongoQueryMode.NativeOnly,
+            q => q.GroupBy(c => new { c.Limit, c.Rank })
+                .Select(g => new { g.Key.Rank, C = g.Count() }).ToList(),
+            x => $"{x.Rank?.ToString() ?? "null"}:{x.C}");
+
+        Assert.Equal(["10:1", "3:1", "null:2"], result);
+    }
 }

@@ -154,8 +154,11 @@ internal sealed class MongoSelectDefinition
     /// The op list the merge methods currently target: <see cref="TrailingOps"/> once a set op is attached;
     /// <see cref="PostJoinOps"/> once a join's Inner access (or a reference-collection Count predicate) is
     /// confirmed; <see cref="PostGroupOps"/> once a projected Distinct's or a keyed GroupBy's <c>$group</c> is
-    /// finalized; otherwise <see cref="PipelineOps"/>. The flips are mutually exclusive in practice, so check order
-    /// is not a precedence.
+    /// finalized; otherwise <see cref="PipelineOps"/>. A finalized grouping (keyed GroupBy or projected Distinct)
+    /// takes precedence over a confirmed join's Inner access, because the lowerer always emits the join's
+    /// <c>$lookup</c>s (and <see cref="PostJoinOps"/>) before <c>$group</c>: a post-group op routed to
+    /// <see cref="PostJoinOps"/> would run over ungrouped rows lacking the group's aliases (a GroupBy over a join
+    /// scope after an inner-side <c>Where</c>).
     /// </summary>
     /// <remarks>
     /// The two <see cref="Grouping"/> branches are kept exclusive (<c>IsDistinct &amp;&amp; !IsGroupBy</c> /
@@ -165,9 +168,9 @@ internal sealed class MongoSelectDefinition
     /// </remarks>
     private List<MongoSelectOp> ActiveOps
         => SetOperation != null ? _trailingOps
-            : _joinInnerAccessConfirmed || _referenceCollectionCountPredicateConfirmed ? _postJoinOps
             : IsDistinct && !IsGroupBy && Grouping != null ? _postGroupOps
             : IsGroupBy && !IsDistinct && Grouping != null ? _postGroupOps
+            : _joinInnerAccessConfirmed || _referenceCollectionCountPredicateConfirmed ? _postJoinOps
             : _pipelineOps;
 
     /// <summary>
@@ -792,6 +795,15 @@ internal sealed class MongoSelectDefinition
     /// <summary>The native join scope chain recorded by <c>TranslateJoinCore</c>, or <see
     /// langword="null"/> if this select has no eligible native join.</summary>
     internal MongoJoinScope? JoinScope { get; set; }
+
+    /// <summary>
+    /// Set by <c>TranslateGroupBy</c> when the grouped source is a native join scope that is safe to group over
+    /// (<c>TryGetGroupByJoinScope</c>). <see cref="NativeTranslation.NativeGroupByBinder"/> then resolves key parts, accumulator operands
+    /// and element predicates over the join's <c>TransparentIdentifier</c> element through this scope, and confirms the
+    /// join chain only once the whole grouping has bound. <see langword="null"/> means root-entity resolution (the join,
+    /// if any, stays an unconfirmed candidate and the query falls back).
+    /// </summary>
+    internal MongoJoinScope? GroupByJoinScope { get; set; }
 
     private bool _hasConfirmedJoinLookup;
 

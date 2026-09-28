@@ -378,7 +378,7 @@ internal sealed class MongoPipelineFactory
         {
             var idDoc = new BsonDocument();
             foreach (var part in grouping.Key)
-                idDoc.Add(part.Name, RenderKeyPart(part.FieldRef, placeholders));
+                idDoc.Add(part.Name, RenderCompositeKeyPart(part.FieldRef, placeholders));
             id = idDoc;
         }
         else
@@ -408,6 +408,18 @@ internal sealed class MongoPipelineFactory
 
         return new BsonDocument("$group", group);
     }
+
+    // A composite _id omits a sub-key whose value is missing, so every later read of "_id.<Name>" (HAVING, the
+    // flatten $project, projection ternaries) would see missing rather than null: $expr's $eq: [missing, null] is
+    // false, and a missing and a null part would form two groups where C# forms one. $ifNull: [part, null] normalizes
+    // missing to null once, here, for every part that may be null. A single-part _id needs no wrapping: $group
+    // already groups a missing scalar _id as null.
+    private static BsonValue RenderCompositeKeyPart(MongoExpression fieldRef, PlaceholderTable placeholders)
+        => fieldRef is not (MongoConstantExpression or MongoParameterExpression
+               or MongoFieldExpression { NullSafe: true }) // already renders as $ifNull
+           && MongoAggregationExpressionRenderer.MayBeNull(fieldRef)
+            ? new BsonDocument("$ifNull", new BsonArray { RenderKeyPart(fieldRef, placeholders), BsonNull.Value })
+            : RenderKeyPart(fieldRef, placeholders);
 
     // A constant/parameter key part is $literal-wrapped: a "$"-prefixed string as _id (or an _id sub-field)
     // would otherwise be read as a field path and silently group by that field.
