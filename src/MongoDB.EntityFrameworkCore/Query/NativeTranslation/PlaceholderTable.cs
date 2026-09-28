@@ -46,12 +46,12 @@ internal sealed class PlaceholderTable
     /// </remarks>
     internal const string SentinelKey = "__mongoef_param__";
 
-    private readonly List<(string Name, IBsonSerializer? Serializer, bool IsArray, MongoRegexKind? RegexKind, IProperty? EntityMemberProperty, int? ArrayElementIndex)> _entries = [];
+    private readonly List<(string Name, IBsonSerializer? Serializer, bool IsArray, MongoRegexKind? RegexKind, IProperty? EntityMemberProperty, int? ArrayElementIndex, bool RegexCaseInsensitive)> _entries = [];
 
     /// <summary>
     /// A read-only view of all accumulated placeholder entries, in insertion order.
     /// </summary>
-    public IReadOnlyList<(string Name, IBsonSerializer? Serializer, bool IsArray, MongoRegexKind? RegexKind, IProperty? EntityMemberProperty, int? ArrayElementIndex)> Entries => _entries;
+    public IReadOnlyList<(string Name, IBsonSerializer? Serializer, bool IsArray, MongoRegexKind? RegexKind, IProperty? EntityMemberProperty, int? ArrayElementIndex, bool RegexCaseInsensitive)> Entries => _entries;
 
     /// <summary>
     /// Appends a placeholder entry and returns a sentinel <see cref="BsonValue"/> to embed
@@ -69,7 +69,7 @@ internal sealed class PlaceholderTable
     public BsonValue CreatePlaceholder(string parameterName, IBsonSerializer? serializer)
     {
         var index = _entries.Count;
-        _entries.Add((parameterName, serializer, false, null, null, null));
+        _entries.Add((parameterName, serializer, false, null, null, null, false));
         return new BsonDocument(SentinelKey, new BsonInt32(index));
     }
 
@@ -93,7 +93,7 @@ internal sealed class PlaceholderTable
     public BsonValue CreateEntityMemberPlaceholder(string parameterName, IProperty entityMemberProperty, IBsonSerializer serializer)
     {
         var index = _entries.Count;
-        _entries.Add((parameterName, serializer, false, null, entityMemberProperty, null));
+        _entries.Add((parameterName, serializer, false, null, entityMemberProperty, null, false));
         return new BsonDocument(SentinelKey, new BsonInt32(index));
     }
 
@@ -114,7 +114,7 @@ internal sealed class PlaceholderTable
     public BsonValue CreateArrayPlaceholder(string parameterName, IBsonSerializer elementSerializer)
     {
         var index = _entries.Count;
-        _entries.Add((parameterName, elementSerializer, true, null, null, null));
+        _entries.Add((parameterName, elementSerializer, true, null, null, null, false));
         return new BsonDocument(SentinelKey, new BsonInt32(index));
     }
 
@@ -141,7 +141,7 @@ internal sealed class PlaceholderTable
     public BsonValue CreateEntityKeyArrayPlaceholder(string parameterName, IProperty entityMemberProperty, IBsonSerializer elementSerializer)
     {
         var index = _entries.Count;
-        _entries.Add((parameterName, elementSerializer, true, null, entityMemberProperty, null));
+        _entries.Add((parameterName, elementSerializer, true, null, entityMemberProperty, null, false));
         return new BsonDocument(SentinelKey, new BsonInt32(index));
     }
 
@@ -168,7 +168,7 @@ internal sealed class PlaceholderTable
     public BsonValue CreateArrayElementPlaceholder(string parameterName, int elementIndex, IBsonSerializer? serializer)
     {
         var index = _entries.Count;
-        _entries.Add((parameterName, serializer, false, null, null, elementIndex));
+        _entries.Add((parameterName, serializer, false, null, null, elementIndex, false));
         return new BsonDocument(SentinelKey, new BsonInt32(index));
     }
 
@@ -185,14 +185,20 @@ internal sealed class PlaceholderTable
     /// </summary>
     /// <param name="parameterName">The EF query-parameter name (e.g. <c>__p_0</c>).</param>
     /// <param name="kind">Whether the term is a <c>StartsWith</c>/<c>EndsWith</c>/<c>Contains</c> test.</param>
+    /// <param name="caseInsensitive">
+    /// <see langword="true"/> for a case-insensitive match (<c>StringComparison.OrdinalIgnoreCase</c>) — the
+    /// runtime value is escaped/anchored exactly as for the case-sensitive form, but
+    /// <see cref="MongoPipelineFactory"/> emits <c>BsonRegularExpression</c> options <c>"is"</c> instead of
+    /// <c>"s"</c>, matching <see cref="MongoQueryLanguageRenderer.RenderRegex"/>'s constant-term branch.
+    /// </param>
     /// <returns>
     /// A sentinel <see cref="BsonDocument"/> of the form <c>{ __mongoef_param__: &lt;index&gt; }</c>
     /// where <c>index</c> is the zero-based position in <see cref="Entries"/>.
     /// </returns>
-    public BsonValue CreateRegexPlaceholder(string parameterName, MongoRegexKind kind)
+    public BsonValue CreateRegexPlaceholder(string parameterName, MongoRegexKind kind, bool caseInsensitive = false)
     {
         var index = _entries.Count;
-        _entries.Add((parameterName, null, false, kind, null, null));
+        _entries.Add((parameterName, null, false, kind, null, null, caseInsensitive));
         return new BsonDocument(SentinelKey, new BsonInt32(index));
     }
 

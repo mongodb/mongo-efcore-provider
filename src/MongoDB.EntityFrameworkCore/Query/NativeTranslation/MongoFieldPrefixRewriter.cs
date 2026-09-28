@@ -86,7 +86,7 @@ internal static class MongoFieldPrefixRewriter
             MongoArrayContainsExpression ac => new MongoArrayContainsExpression(
                 (MongoFieldExpression)Rewrite(ac.Field, prefix), Rewrite(ac.Value, prefix), ac.Negated),
             MongoRegexExpression r => new MongoRegexExpression(
-                (MongoFieldExpression)Rewrite(r.Field, prefix), r.Kind, Rewrite(r.Term, prefix), r.Negated),
+                (MongoFieldExpression)Rewrite(r.Field, prefix), r.Kind, Rewrite(r.Term, prefix), r.Negated, r.CaseInsensitive),
             // Prefix the ARRAY path only. The element predicate's field paths are ELEMENT-relative (that is
             // what $elemMatch requires), so rewriting them would mis-address every field inside the
             // $elemMatch and silently match nothing.
@@ -124,6 +124,9 @@ internal static class MongoFieldPrefixRewriter
             MongoStringLengthExpression sl => new MongoStringLengthExpression(Rewrite(sl.Operand, prefix)),
             MongoMathExpression m => new MongoMathExpression(
                 m.Function, m.Operands.Select(o => Rewrite(o, prefix)).ToList(), m.Type),
+            MongoTrimExpression t => new MongoTrimExpression(
+                Rewrite(t.Source, prefix), t.Side, t.Chars is null ? null : Rewrite(t.Chars, prefix)),
+            MongoStringFirstOrLastExpression fl => new MongoStringFirstOrLastExpression(Rewrite(fl.Source, prefix), fl.Kind),
             MongoDateTimeOffsetLocalExpression l => new MongoDateTimeOffsetLocalExpression(
                 (MongoFieldExpression)Rewrite(l.Operand, prefix)),
             // NullSafe MUST be carried across — dropping it (as this arm used to) silently removed the $ifNull

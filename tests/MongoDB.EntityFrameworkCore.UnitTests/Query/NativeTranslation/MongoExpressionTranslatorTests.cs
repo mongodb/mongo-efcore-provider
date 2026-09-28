@@ -1411,19 +1411,89 @@ public class MongoExpressionTranslatorTests
     }
 
     [Fact]
-    public void StartsWith_with_string_comparison_overload_reports_not_translatable()
+    public void StartsWith_with_string_comparison_ordinal_overload_translates_to_regex_expression()
     {
-        // The driver-LINQ v3 provider does not support the StringComparison-taking overloads (confirmed
-        // empirically — see Task 6 report); matching only the plain single-arg overload keeps native and
-        // fallback behavior identical, so this shape must fall back rather than be mistranslated.
+        // EF-322 (Task 3): StringComparison.Ordinal has a fixed, culture-independent meaning MongoDB's
+        // regex engine can reproduce, so this overload is now natively representable (case-sensitive, same
+        // as the plain single-arg overload).
         var entityType = GetEntityType<Customer>();
         var translator = NewTranslator(entityType);
         Expression<Func<Customer, bool>> predicate = c => c.Name.StartsWith("A", StringComparison.Ordinal);
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+        var regex = Assert.IsType<MongoRegexExpression>(result);
+        Assert.Equal(MongoRegexKind.StartsWith, regex.Kind);
+        Assert.False(regex.CaseInsensitive);
+    }
+
+    [Fact]
+    public void StartsWith_with_string_comparison_current_culture_overload_reports_not_translatable()
+    {
+        // CurrentCulture(IgnoreCase)/InvariantCulture(IgnoreCase) have no culture-aware collation
+        // equivalent in MongoDB's $regularExpression, so this translator still declines them — but NOT
+        // because the driver-LINQ v3 fallback rejects the shape too: empirically, the driver's own LINQ v3
+        // provider silently EXECUTES these four culture-sensitive members (Ordinal-equivalent semantics, not
+        // genuine culture-aware collation) instead of throwing (a pre-existing latent wrong-data risk for
+        // genuinely culture-sensitive input, entirely inside the driver — see Task 3's parked finding in the
+        // plan ledger). Declining here is deliberate: falling back reproduces the driver's existing behavior
+        // rather than this translator silently mistranslating the shape itself.
+        var entityType = GetEntityType<Customer>();
+        var translator = NewTranslator(entityType);
+        Expression<Func<Customer, bool>> predicate = c => c.Name.StartsWith("A", StringComparison.CurrentCulture);
 
         var translated = translator.TryTranslate(predicate.Body, out var result);
 
         Assert.False(translated);
         Assert.Null(result);
+    }
+
+    [Theory]
+    [InlineData("StartsWith")]
+    [InlineData("Contains")]
+    [InlineData("EndsWith")]
+    public void Field_to_field_term_with_OrdinalIgnoreCase_reports_not_translatable(string kind)
+    {
+        // EF-322 non-ASCII case-folding gap (final-review finding 1(b) follow-up). Empirically verified
+        // against a live mongod 8.2.7: MongoAggregationExpressionRenderer.RenderRegexAsExpr's ONLY tool for
+        // folding a field-to-field CaseInsensitive term is $toLower (there is no "options" operand on
+        // $indexOfCP/$strLenCP), and $toLower is genuinely ASCII-only — it leaves Latin-1 (É), Cyrillic (Б)
+        // and Greek (Ω) uppercase letters completely untouched, so it cannot faithfully reproduce .NET's
+        // OrdinalIgnoreCase (Unicode simple case folding) for ANY non-ASCII input, and there is no other
+        // $expr-scoped operator that does (collation is a whole-command/collection option, not attachable to
+        // one operator inside a larger $expr). Rather than silently answer wrong for non-ASCII rows, this
+        // shape declines entirely — including the previously-"working" ASCII-only case — so it falls back to
+        // driver-LINQ, which throws a clean ExpressionNotSupportedException for every OrdinalIgnoreCase
+        // field-to-field shape (verified: NativeStringCaseInsensitiveMatchTests's
+        // DriverLinq_field_to_field_OrdinalIgnoreCase_throws). No silent-wrong-data path remains.
+        var entityType = GetEntityType<Customer>();
+        var translator = NewTranslator(entityType);
+        Expression<Func<Customer, bool>> predicate = kind switch
+        {
+            "StartsWith" => c => c.Name.StartsWith(c.Nickname, StringComparison.OrdinalIgnoreCase),
+            "Contains" => c => c.Name.Contains(c.Nickname, StringComparison.OrdinalIgnoreCase),
+            "EndsWith" => c => c.Name.EndsWith(c.Nickname, StringComparison.OrdinalIgnoreCase),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind))
+        };
+
+        var translated = translator.TryTranslate(predicate.Body, out var result);
+
+        Assert.False(translated);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void Field_to_field_term_with_Ordinal_still_translates()
+    {
+        // Sanity check that the OrdinalIgnoreCase decline above is scoped to CaseInsensitive only — the
+        // plain case-SENSITIVE field-to-field shape (unaffected by any $toLower folding) still translates.
+        var entityType = GetEntityType<Customer>();
+        var translator = NewTranslator(entityType);
+        Expression<Func<Customer, bool>> predicate = c => c.Name.StartsWith(c.Nickname, StringComparison.Ordinal);
+
+        Assert.True(translator.TryTranslate(predicate.Body, out var result));
+        var regex = Assert.IsType<MongoRegexExpression>(result);
+        Assert.False(regex.CaseInsensitive);
+        Assert.IsType<MongoFieldExpression>(regex.Term);
     }
 
     // ------------------------------------------------------------------

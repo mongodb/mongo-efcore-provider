@@ -788,7 +788,7 @@ internal sealed class MongoPipelineFactory
         int index,
         IReadOnlyDictionary<string, object?> parameterValues)
     {
-        var (name, serializer, isArray, regexKind, entityMemberProperty, arrayElementIndex) = _placeholders.Entries[index];
+        var (name, serializer, isArray, regexKind, entityMemberProperty, arrayElementIndex, regexCaseInsensitive) = _placeholders.Entries[index];
 
         if (!parameterValues.TryGetValue(name, out var rawValue))
             throw new InvalidOperationException(
@@ -853,7 +853,7 @@ internal sealed class MongoPipelineFactory
         if (regexKind is not null)
         {
             var pattern = MongoRegexPatternBuilder.BuildPattern((string)rawValue!, regexKind.Value);
-            return new BsonRegularExpression(pattern, "s");
+            return new BsonRegularExpression(pattern, regexCaseInsensitive ? "is" : "s");
         }
 
         // Property-less primitive (e.g. Skip/Take count): serialize via BsonValue.Create.

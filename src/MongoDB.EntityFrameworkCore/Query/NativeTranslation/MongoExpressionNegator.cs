@@ -104,7 +104,7 @@ internal static class MongoExpressionNegator
             MongoInExpression e => new MongoInExpression(e.Field, e.Values, !e.Negated),
             MongoComputedInExpression e => new MongoComputedInExpression(e.Needle, e.Values, !e.Negated),
             MongoArrayContainsExpression e => new MongoArrayContainsExpression(e.Field, e.Value, !e.Negated),
-            MongoRegexExpression e => new MongoRegexExpression(e.Field, e.Kind, e.Term, !e.Negated),
+            MongoRegexExpression e => new MongoRegexExpression(e.Field, e.Kind, e.Term, !e.Negated, e.CaseInsensitive),
             MongoElemMatchExpression e => new MongoElemMatchExpression(e.ArrayPath, e.ElementPredicate, !e.Negated),
             _ => null
         };
