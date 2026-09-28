@@ -447,7 +447,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }, { "$lookup" : { 
 
         AssertMql(
             """
-Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "ContactTitle" : "Owner" } }, { "$sort" : { "_id" : 1 } }, { "$match" : { "_lookup_Orders.2" : { "$exists" : true } } }, { "$project" : { "_id" : "$_id", "TotalOrders" : { "$size" : "$_lookup_Orders" } } }
+Customers.{ "$match" : { "ContactTitle" : "Owner" } }, { "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "_lookup_Orders.2" : { "$exists" : true } } }, { "$project" : { "Id" : "$_id", "TotalOrders" : { "$size" : "$_lookup_Orders" }, "_id" : 0 } }
 """);
     }
 

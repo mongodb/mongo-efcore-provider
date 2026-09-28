@@ -345,6 +345,16 @@ internal static class NativeSlotPopulator
                 mongoQ.Select.MarkJoinInnerAccessConfirmed();
                 mongoQ.Select.AddPredicateConjunct(innerPredicateNode);
             }
+            // EF-322: an unfiltered reference-collection-nav Count/LongCount compared against a value —
+            // `c.Orders.Count > 2`, or the identical shape EF Core substitutes into a Where composed after a
+            // projected Select. The general translator.TryTranslate attempt above always declines this shape
+            // (its owned-collection-count arm requires an embedded collection), so this is tried only once that
+            // has already failed. See docs/superpowers/specs/2026-09-27-native-reference-collection-count-predicate-design.md.
+            else if (NativeReferenceCollectionCountPredicateBinder.TryTranslate(
+                         mongoQ, predicate.Parameters[0], predicate.Body, out var countPredicateNode))
+            {
+                mongoQ.Select.AddPredicateConjunct(countPredicateNode);
+            }
             else
                 mongoQ.Select.MarkNotNativelyRepresentable();
         }

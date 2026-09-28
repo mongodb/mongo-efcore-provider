@@ -231,6 +231,32 @@ internal sealed class LookupExpression
     public bool RenamedToAvoidJoinCollision { get; set; }
 
     /// <summary>
+    /// Set when a reference-collection-nav <c>Count</c>/<c>LongCount</c> predicate or projection leaf's own
+    /// <see cref="NativeTranslation.MongoSizeExpression"/> reads this EXACT array — via
+    /// <see cref="NativeTranslation.NativeCorrelationMatcher.TryBuildReferenceCollectionCountLookup"/> — and
+    /// therefore needs it to stay the navigation's TRUE, unfiltered array forever, regardless of what else
+    /// registers at the same alias afterward.
+    /// </summary>
+    /// <remarks>
+    /// EF-322 final review (round 3, NEW Critical): this lookup is registered EAGERLY, at
+    /// <c>Where</c>/projection-translation time, before it is known whether a filtered/paged <c>Include</c> for
+    /// the SAME navigation will also register later, in the completely different, later-running
+    /// <c>MongoProjectionBindingExpressionVisitor</c> pass. Without this flag, that Include's own registration
+    /// would collide on alias and get silently MERGED into this bare entry by
+    /// <see cref="MongoQueryExpression.AddLookup"/>'s general-purpose bare-then-pipelined merge (used by many
+    /// OTHER features — plain collection Include, <c>ThenInclude</c>, joins — which this flag does NOT change:
+    /// <c>AddLookup</c>'s own merge logic is untouched), corrupting the <c>$size</c> read with the Include's
+    /// paged array instead of the true count — silently, in EVERY <see cref="MongoQueryMode"/> including an
+    /// explicit <see cref="MongoQueryMode.DriverLinq"/>, since the merge happens at registration time, before
+    /// native-vs-fallback is ever decided. Instead, the SAME collision-detection
+    /// <c>MongoProjectionBindingExpressionVisitor.VisitExtension</c>'s <c>IncludeExpression</c> case already
+    /// uses to avoid colliding with an incompatible ($unwind-ed) join lookup (see
+    /// <see cref="RenamedToAvoidJoinCollision"/>) also checks this flag, and renames the INCOMING Include's own
+    /// lookup instead — leaving this Count's bare entry, and its alias, untouched.
+    /// </remarks>
+    public bool IsBareCountSizeSource { get; set; }
+
+    /// <summary>
     /// A single-level collection Include the native pipeline can emit as a <c>$lookup</c> array (no
     /// <c>$unwind</c>), readable by the DOM collection materializer from a root-level
     /// <c>_lookup_&lt;Nav&gt;</c> field: a collection nav, no filtered-Include pipeline stages, not

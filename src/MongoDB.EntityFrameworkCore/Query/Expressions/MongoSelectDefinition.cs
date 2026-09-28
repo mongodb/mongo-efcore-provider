@@ -151,6 +151,44 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     internal void MarkJoinInnerAccessConfirmed() => _joinInnerAccessConfirmed = true;
 
+    private bool _referenceCollectionCountPredicateConfirmed;
+
+    /// <summary>
+    /// <see langword="true"/> once <see cref="NativeTranslation.NativeReferenceCollectionCountPredicateBinder"/>
+    /// recognized an unfiltered reference-collection-nav <c>Count</c>/<c>LongCount</c> comparison in a
+    /// <c>Where</c> predicate and registered its own <c>$lookup</c>. Deliberately a SEPARATE flag from
+    /// <see cref="JoinInnerAccessConfirmed"/>, even though <see cref="ActiveOps"/> routes both the same way
+    /// (post-lookup placement is correct for both, for the reason <see cref="PostJoinOps"/> documents): this
+    /// flag additionally feeds <see cref="Route"/>'s retroactive decline below, which must be able to ask
+    /// "did OUR shape confirm" without also firing for a genuine join-scope confirmation, and vice versa
+    /// (<c>MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope</c>'s own
+    /// <see cref="JoinInnerAccessConfirmed"/> check must not be tripped by a query that never had a join at
+    /// all).
+    /// </summary>
+    /// <remarks>
+    /// EF-322 final review (Critical 1/2): this predicate's own <c>$lookup</c> is registered eagerly, at
+    /// translation time, before it is known whether a LATER set operation (<c>Union</c>/<c>Concat</c>), a
+    /// projected <c>Distinct</c>/keyed <c>GroupBy</c>, or a genuine cross-collection <c>Join</c> will also
+    /// attach to this same select — each of those is lowered by a DIFFERENT
+    /// <see cref="NativeTranslation.MongoSelectLowerer"/> branch that does not know to flush
+    /// <see cref="PostJoinOps"/> at the point our <c>$match</c> needs it
+    /// (the set-op <c>OperandsProjected</c>/trailing-ops branches never emit <see cref="PostJoinOps"/> at all;
+    /// a later <c>Join</c> can even flip <see cref="JoinInnerAccessConfirmed"/>-driven paging eligibility in
+    /// ways that were never exercised by this predicate). Rather than teach every such branch a new emission
+    /// point (a wide, easy-to-miss-a-branch change), <see cref="Route"/> retroactively declines the WHOLE
+    /// combination once the full query shape is known — this predicate simply does not go native when
+    /// composed with a set operation, a projected <c>Distinct</c>/keyed <c>GroupBy</c>, or any <c>Join</c>,
+    /// falling back to driver-LINQ (which the shared <c>InjectAfterRoot</c> lookup registration already
+    /// supports) exactly as it did before this predicate existed.
+    /// </remarks>
+    internal bool ReferenceCollectionCountPredicateConfirmed => _referenceCollectionCountPredicateConfirmed;
+
+    /// <summary>
+    /// Records that <see cref="NativeTranslation.NativeReferenceCollectionCountPredicateBinder"/> recognized
+    /// and registered this predicate's <c>$lookup</c>. See <see cref="ReferenceCollectionCountPredicateConfirmed"/>.
+    /// </summary>
+    internal void MarkReferenceCollectionCountPredicateConfirmed() => _referenceCollectionCountPredicateConfirmed = true;
+
     /// <summary>
     /// Relocates a trailing <see cref="MongoSortOp"/> already recorded in <see cref="PipelineOps"/> (from
     /// earlier Outer-only keys in the SAME <c>OrderBy</c>/<c>ThenBy</c> chain) into <see cref="PostJoinOps"/>,
@@ -201,9 +239,17 @@ internal sealed class MongoSelectDefinition
     /// $group and the outer GroupBy's) is decided once, structurally, by <c>MongoSelectLowerer</c>, not by this
     /// property.
     /// </summary>
+    /// <remarks>
+    /// EF-322 final review: <see cref="ReferenceCollectionCountPredicateConfirmed"/> shares the
+    /// <see cref="JoinInnerAccessConfirmed"/> branch's target (post-lookup placement is correct for both), but
+    /// is checked as a separate flag — see that flag's own remarks for why. A query that later turns out
+    /// incompatible with this predicate (a set op or Distinct/GroupBy attaches, or a genuine Join is added)
+    /// still routes ops here at RECORDING time; it is <see cref="Route"/>, not this routing, that retroactively
+    /// declines the whole select once that incompatibility is known.
+    /// </remarks>
     private List<MongoSelectOp> ActiveOps
         => SetOperation != null ? _trailingOps
-            : _joinInnerAccessConfirmed ? _postJoinOps
+            : _joinInnerAccessConfirmed || _referenceCollectionCountPredicateConfirmed ? _postJoinOps
             : IsDistinct && !IsGroupBy && Grouping != null ? _postGroupOps
             : IsGroupBy && !IsDistinct && Grouping != null ? _postGroupOps
             : _pipelineOps;
@@ -1309,10 +1355,25 @@ internal sealed class MongoSelectDefinition
     /// Deliberately includes <c>_hasUnsupportedOperator</c>: an inner operator that was declined rather than
     /// lowered records no op at all, yet is exactly as disqualifying as one that did.
     /// </summary>
+    /// <remarks>
+    /// EF-322 final review (round 2, NEW Critical): <see cref="_postJoinOps"/> must be checked too, not just
+    /// <see cref="_pipelineOps"/>. A <c>NativeReferenceCollectionCountPredicateBinder</c>-confirmed <c>Where</c>
+    /// (<see cref="ReferenceCollectionCountPredicateConfirmed"/>) records its <c>$match</c> into
+    /// <see cref="_postJoinOps"/>, not <see cref="_pipelineOps"/> — omitting it here let a query like
+    /// <c>Orders.Join(Owners.Where(o =&gt; o.Orders.Count &gt; 1), ...)</c> read as a bare scan of the WHOLE
+    /// Owners collection, silently discarding the predicate (and the confirming caller never learning the
+    /// inner wasn't bare) in every <see cref="MongoQueryMode"/>, including an explicit
+    /// <see cref="MongoQueryMode.DriverLinq"/> — since <see cref="MarkSawNonBareJoinInner"/> is what routes a
+    /// filtered-inner join to a clean, universal decline (see that method's remarks), never reaching this
+    /// predicate's own machinery at all. <see cref="_postLookupPagingOps"/>/<see cref="_postGroupOps"/> need no
+    /// matching conjunct: both are populated only once <see cref="Grouping"/> or an existing
+    /// <see cref="JoinScope"/> is already present, each of which independently fails an EARLIER conjunct here.
+    /// </remarks>
     internal bool IsBareCollectionScan
         => !_hasUnsupportedOperator
            && _pipelineOps.Count == 0
            && _trailingOps.Count == 0
+           && _postJoinOps.Count == 0
            && _projections.Count == 0
            && Cardinality == null
            && Grouping == null
@@ -1341,10 +1402,21 @@ internal sealed class MongoSelectDefinition
     /// <see cref="MongoSelectDefinition"/>) and the GroupBy+Join hard-decline
     /// (<see cref="IsGroupByFallbackUnsafe"/>) onto this route. <c>$lookup</c> streamability is a separate
     /// axis (streaming-vs-DOM), not an is-native signal. An unconfirmed reference-Include candidate join
-    /// also forces Fallback — see <see cref="HasUnconfirmedCandidateJoin"/>.
+    /// also forces Fallback — see <see cref="HasUnconfirmedCandidateJoin"/>. A confirmed reference-collection
+    /// Count predicate (<see cref="ReferenceCollectionCountPredicateConfirmed"/>) additionally forces Fallback
+    /// once ANY of a set operation, a projected Distinct/keyed GroupBy (<see cref="Grouping"/>), a genuine Join
+    /// (<see cref="JoinScope"/>), or a correlated <c>SelectMany</c> (<see cref="UnwindSources"/>) is also
+    /// present on this select — see that flag's own remarks for why this predicate cannot go native in
+    /// combination with any of those, regardless of composition order. (EF-322 final review, round 2, NEW
+    /// Important: the <c>SelectMany</c>'s own <c>$lookup</c>/<c>$unwind</c> can land on the same document path
+    /// as this predicate's <c>$lookup</c>, corrupting the read side with a BSON-type mismatch rather than
+    /// merely misordering a stage — declining here fails CLOSED with a clean exception instead.)
     /// </summary>
     internal NativeRoute Route
-        => _hasUnsupportedOperator || HasUnconfirmedCandidateJoin ? NativeRoute.Fallback
+        => _hasUnsupportedOperator || HasUnconfirmedCandidateJoin
+            || (_referenceCollectionCountPredicateConfirmed
+                && (SetOperation != null || Grouping != null || JoinScope != null || _unwindSources.Count > 0))
+            ? NativeRoute.Fallback
             // A GroupBy key was bound but no aggregate Select finalized the grouping (e.g. a bare GroupBy(key)
             // that terminates on the IGrouping sequence, or a group followed by an unsupported operator): the
             // native path cannot represent this, so fall back rather than silently emit an ungrouped scan.
