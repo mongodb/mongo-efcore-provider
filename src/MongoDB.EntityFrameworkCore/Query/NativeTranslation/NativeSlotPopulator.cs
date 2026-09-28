@@ -191,6 +191,21 @@ internal static class NativeSlotPopulator
                      && NativeJoinScopeTranslator.TryTranslateRootScopeOnly(
                          chainedScope, predicate.Parameters[0], predicate.Body, valueMode: false, out var chainedPredicateNode))
                 mongoQ.Select.AddPredicateConjunct(chainedPredicateNode);
+            // Chained join scope reading a non-root level (`od.Order.Customer.City == "Seattle"` after nav-expansion):
+            // each conjunct resolves to one scope and defers into PostJoinOps, after every level's $lookup/$unwind.
+            // Tried after the root-only arm, so a root-only body still records ahead of the $lookup. Join
+            // confirmation is left to the trailing Select, as in the depth-1 Inner arms.
+            else if (mongoQ.Select.JoinScope is { Levels.Count: > 1 } chainedInnerScope
+                     && TryTranslateChainedScopeConjunction(
+                         mongoQ, chainedInnerScope, predicate.Parameters[0], predicate.Body, out var chainedConjuncts))
+            {
+                // Flip before AddPredicateConjunct so the conjuncts land in PostJoinOps.
+                mongoQ.Select.MarkJoinInnerAccessConfirmed();
+                foreach (var chainedConjunct in chainedConjuncts)
+                {
+                    mongoQ.Select.AddPredicateConjunct(chainedConjunct);
+                }
+            }
             // A reference-Include null check (`Include(e => e.Manager).First(e => e.Manager == null)` ->
             // `ti.Inner == null`). Doesn't register the lookup: the Select(ti => ti.Outer) EF always synthesizes next
             // confirms it, and registering here too would double-count MarkReferenceIncludeConfirmed and trip
@@ -388,6 +403,88 @@ internal static class NativeSlotPopulator
             {
                 return false;
             }
+        }
+
+        conjuncts = translated;
+        return true;
+    }
+
+    /// <summary>
+    /// Translates a <c>Where</c> body over a CHAINED join scope (<c>Levels.Count &gt; 1</c>) that reads a non-root
+    /// level — nav-expansion's shape for a multi-hop reference-navigation filter (<c>od.Order.Customer.City ==
+    /// "Seattle"</c>). Each top-level <c>&amp;&amp;</c> conjunct must be either a bare-level null check
+    /// (<see cref="NativeJoinScopeTranslator.TryMatchScopeNullCheck"/>) on a left-outer level, or a predicate resolving to
+    /// exactly one scope. Splitting is exact since a <c>$match</c> has no short-circuit to preserve. All-or-nothing
+    /// and pure: nothing is recorded on decline.
+    /// </summary>
+    /// <remarks>
+    /// Declines when no conjunct reads a non-root level: a root-only body belongs to the root-scope arm, which records
+    /// into PipelineOps ahead of the $lookup. A non-root conjunct needs its level's Lookup to be ForceUnwind, like
+    /// the depth-1 Inner arm, so by the time PostJoinOps lower there is one row per (Outer, Inner) pair.
+    /// </remarks>
+    private static bool TryTranslateChainedScopeConjunction(
+        MongoQueryExpression mongoQ, MongoJoinScope scope, ParameterExpression rootParam, Expression body,
+        [NotNullWhen(true)] out List<MongoExpression>? conjuncts)
+    {
+        conjuncts = null;
+        if (mongoQ.Joins.Count != scope.Levels.Count)
+        {
+            return false;
+        }
+
+        var translated = new List<MongoExpression>();
+        var readsNonRootScope = false;
+        var pending = new Stack<Expression>();
+        pending.Push(body);
+        while (pending.Count > 0)
+        {
+            var node = pending.Pop();
+            if (node is BinaryExpression { NodeType: ExpressionType.AndAlso } andAlso)
+            {
+                // Right pushed first so conjuncts are emitted in source order.
+                pending.Push(andAlso.Right);
+                pending.Push(andAlso.Left);
+                continue;
+            }
+
+            if (NativeJoinScopeTranslator.TryMatchScopeNullCheck(scope, rootParam, node, out var nullCheckIndex, out var isNotNull))
+            {
+                // An inner join drops unmatched rows, so the check would be constant. Same guard as
+                // NativeJoinScopeProjectionBinder.TryTranslateScopeNullCheckConditional (left-outer level plus a
+                // ForceUnwind lookup, whose missing field $ifNull reads as null).
+                var level = scope.Levels[nullCheckIndex - 1];
+                if (!level.IsLeftOuter || mongoQ.Joins[nullCheckIndex - 1].Lookup is not { ForceUnwind: true })
+                {
+                    return false;
+                }
+
+                translated.Add(new MongoLookupNullCheckExpression(level.InnerPrefix, isNotNull));
+                readsNonRootScope = true;
+            }
+            else if (NativeJoinScopeTranslator.TryTranslateSingleScopePredicate(
+                         scope, rootParam, node, out var scopeIndex, out var conjunct))
+            {
+                if (scopeIndex > 0)
+                {
+                    if (mongoQ.Joins[scopeIndex - 1].Lookup is not { ForceUnwind: true })
+                    {
+                        return false;
+                    }
+
+                    readsNonRootScope = true;
+                }
+
+                translated.Add(conjunct);
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        if (!readsNonRootScope)
+        {
+            return false;
         }
 
         conjuncts = translated;

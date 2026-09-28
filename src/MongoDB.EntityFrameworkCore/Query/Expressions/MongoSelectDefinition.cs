@@ -250,6 +250,16 @@ internal sealed class MongoSelectDefinition
     internal bool HasPaging => _pipelineOps.Exists(o => o is MongoSkipOp or MongoLimitOp);
 
     /// <summary>
+    /// <see langword="true"/> when <see cref="PostJoinOps"/> holds an op that does not commute with a later
+    /// row-changing join: <c>$skip</c>, <c>$limit</c> or a dedup (<see cref="MongoDistinctOp"/>). PostJoinOps lower
+    /// after EVERY join's <c>$lookup</c>/<c>$unwind</c>, including a join recorded after the op, so such an op would
+    /// page or dedup that later join's rows instead. <c>$match</c>/<c>$sort</c> commute. See
+    /// <c>TranslateJoinCore</c>.
+    /// </summary>
+    internal bool HasNonCommutingPostJoinOp
+        => _postJoinOps.Exists(o => o is MongoSkipOp or MongoLimitOp or MongoDistinctOp);
+
+    /// <summary>
     /// <see langword="true"/> when any $sort op is present. Currently unused: a pre-<c>GroupBy</c> sort is either
     /// a no-op or defines the row set for a following Skip/Take, so it is not a reason to decline.
     /// </summary>

@@ -443,8 +443,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         //
         // Depth-1 only via the explicit `Levels.Count: 1` check. The recognizer itself matches a one-hop access
         // over a chain too; without the check, only the confirmation-count mismatch in
-        // HasUnconfirmedCandidateJoin would block a chain. Possible follow-up: use
-        // NativeJoinScopeProjectionBinder.ConfirmEntireChain for chains.
+        // HasUnconfirmedCandidateJoin would block a chain. A bare root leaf over a chain is handled by the next arm.
         else if (IsTransparentIdentifierMemberAccessSelector(selector)
                  && mongoQueryExpression.Select.JoinScope is { Levels.Count: 1 }
                  && IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var bareLeafJoin))
@@ -463,6 +462,28 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // Without this, an operator composed after this Select could record a native op that lowers before
             // the $lookup and resolves against the outer entity type. See MongoSelectDefinition.HasConfirmedJoinLookup.
             mongoQueryExpression.Select.MarkJoinLookupConfirmed();
+        }
+        // A bare ROOT-entity leaf over a chained join scope (`ti => ti.Outer.Outer`): what nav-expansion leaves after
+        // a multi-hop reference-navigation filter (`od.Order.Customer.City == "Seattle"`). Confirms every level, as
+        // the chained projection arms do. Root only: a non-root whole-entity leaf needs HasBareJoinInnerEntityLeaf's
+        // read-side handling, which exists only at depth 1.
+        //
+        // Paging in PipelineOps recorded after a join may sit BETWEEN two joins of the chain, and confirming would
+        // defer it past both $lookups (see the chain-paging gap at the bare-value arm below), so decline. Checked
+        // before IsSingleEligibleNativeJoinScope, which may itself defer PipelineOps. This guard conservatively also
+        // declines paging written after BOTH joins while it's still in PipelineOps, since the flags can't tell that
+        // apart from between-joins paging. Paging recorded after a Where flipped to PostJoinOps isn't seen here (it's
+        // not in PipelineOps); it lowers after every $lookup, which is correct only if no row-changing join follows
+        // it, and TranslateJoinCore declines when one does (HasNonCommutingPostJoinOp). Paging recorded before any
+        // join keeps IsSingleEligibleNativeJoinScope's existing handling.
+        else if (mongoQueryExpression.Select.JoinScope is { Levels.Count: > 1 } chainedLeafScope
+                 && NativeJoinScopeTranslator.TryResolveBareScopeLeaf(
+                     chainedLeafScope, selector.Parameters[0], selector.Body, out var chainedLeafScopeIndex)
+                 && chainedLeafScopeIndex == 0
+                 && !(mongoQueryExpression.Select.HasPaging && mongoQueryExpression.Select.HasPagingRecordedAfterAJoin)
+                 && IsSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
+        {
+            NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, chainedLeafScope);
         }
         // A wrapped `new {...}`/MemberInit projection over the same eligible single-level join, every leaf
         // resolvable by NativeJoinScopeTranslator. TryBindProjection is the whole gate and mutates nothing on
@@ -2059,6 +2080,17 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // shaper can read inner entity properties from the $lookup result field.
         var reboundInnerShaper = RebindInnerShaperToOuterQuery(
             inner.ShaperExpression, innerQueryExpression, outerQueryExpression, outerKeySelector, innerKeySelector, joinInfo);
+
+        // Paging/dedup already recorded into PostJoinOps (a Where/OrderBy reaching an earlier join's Inner side
+        // flipped ActiveOps) is lowered after EVERY $lookup/$unwind, including this join's. Unless this join provably
+        // neither drops nor multiplies rows, that would page/dedup its joined rows instead of the rows the op was
+        // written over (`Join(a).Where(x => x.r.…).Take(1).Join(b)` returned one row instead of b's matches). Checked
+        // here, once Navigation/Lookup are resolved, so it closes the hole for every consuming Select arm. Fails
+        // closed: no resolved Lookup is not row-count-preserving.
+        if (outerQueryExpression.Select.HasNonCommutingPostJoinOp && !joinInfo.IsRowCountPreserving)
+        {
+            outerQueryExpression.Select.MarkNotNativelyRepresentable();
+        }
 
         // Computed for every join so a later join can tell whether every join so far is eligible. This only
         // builds JoinScope; confirming ($lookup registration) is deferred to the consuming Select arm.

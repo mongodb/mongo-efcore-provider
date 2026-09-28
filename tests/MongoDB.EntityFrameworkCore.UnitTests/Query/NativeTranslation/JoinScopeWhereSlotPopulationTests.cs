@@ -354,4 +354,194 @@ public class JoinScopeWhereSlotPopulationTests
         Assert.True(sortOp.Orderings[0].Ascending);
         Assert.True(sortOp.Orderings[1].Ascending);
     }
+
+    /// <summary>
+    /// A chained join's <c>Where</c> reading the SECOND level's Inner side (<c>x.l.Sku</c>) translates via the chained
+    /// arm and defers into <see cref="MongoSelectDefinition.PostJoinOps"/>, so it lowers after both
+    /// <c>$lookup</c>/<c>$unwind</c> blocks. This is nav-expansion's shape for a multi-hop reference-navigation filter
+    /// (<c>od.Order.Customer.City == "Seattle"</c>).
+    /// </summary>
+    [Fact]
+    public void Where_reading_second_level_inner_scope_of_chained_join_populates_predicate_in_post_join_ops()
+    {
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r, l })
+                .Where(x => x.l.Sku == "A"));
+
+        Assert.Equal(2, mongoQ.Select.JoinScope!.Levels.Count);
+        Assert.False(mongoQ.Select.HasUnsupportedOperator);
+        Assert.True(mongoQ.Select.JoinInnerAccessConfirmed);
+        Assert.Empty(mongoQ.Select.PipelineOps);
+        var matchOp = Assert.IsType<MongoMatchOp>(Assert.Single(mongoQ.Select.PostJoinOps));
+        Assert.IsType<MongoBinaryExpression>(matchOp.Predicate);
+    }
+
+    /// <summary>Same, for the FIRST level's Inner side of a two-level chain (<c>x.r.Total</c>, scope index 1).</summary>
+    [Fact]
+    public void Where_reading_first_level_inner_scope_of_chained_join_populates_predicate_in_post_join_ops()
+    {
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r, l })
+                .Where(x => x.r.Total > 0));
+
+        Assert.False(mongoQ.Select.HasUnsupportedOperator);
+        Assert.True(mongoQ.Select.JoinInnerAccessConfirmed);
+        Assert.Empty(mongoQ.Select.PipelineOps);
+        Assert.IsType<MongoMatchOp>(Assert.Single(mongoQ.Select.PostJoinOps));
+    }
+
+    /// <summary>
+    /// A top-level <c>&amp;&amp;</c> whose conjuncts each read ONE scope (root and second level) is split and translated
+    /// per conjunct; AddPredicateConjunct folds them into one <c>$match</c> in PostJoinOps.
+    /// </summary>
+    [Fact]
+    public void Where_conjunction_over_root_and_second_level_of_chained_join_populates_one_post_join_match()
+    {
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r, l })
+                .Where(x => x.o.Name == "Alice" && x.l.Sku == "A"));
+
+        Assert.False(mongoQ.Select.HasUnsupportedOperator);
+        Assert.Empty(mongoQ.Select.PipelineOps);
+        var matchOp = Assert.IsType<MongoMatchOp>(Assert.Single(mongoQ.Select.PostJoinOps));
+        Assert.Equal(
+            MongoBinaryOperator.AndAlso,
+            Assert.IsType<MongoBinaryExpression>(matchOp.Predicate).Operator);
+    }
+
+    /// <summary>A single comparison spanning two scopes (root vs. second level) has no single-scope translation: decline.</summary>
+    [Fact]
+    public void Where_comparing_two_scopes_of_chained_join_declines()
+    {
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r, l })
+                .Where(x => x.o.Name == x.l.Sku));
+
+        Assert.True(mongoQ.Select.HasUnsupportedOperator);
+        Assert.Empty(mongoQ.Select.PostJoinOps);
+    }
+
+    /// <summary>
+    /// A null check on an INNER-join level is constant (the $unwind already dropped unmatched rows), so the chained arm
+    /// declines it rather than emitting a vacuous $match — same rule as the depth-1 null-check arm.
+    /// </summary>
+    [Fact]
+    public void Where_null_check_on_inner_join_level_of_chained_join_declines()
+    {
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r, l })
+                .Where(x => x.l == null));
+
+        Assert.True(mongoQ.Select.HasUnsupportedOperator);
+        Assert.Empty(mongoQ.Select.PostJoinOps);
+    }
+
+    /// <summary>
+    /// The full nav-expansion shape of a multi-hop filter: chained join, Where on the second level, then the
+    /// root-entity leaf <c>Select(x =&gt; x.o)</c> (arrives as <c>ti =&gt; ti.Outer.Outer</c>). The new arm confirms
+    /// the whole chain, so Route is native and every candidate join is confirmed.
+    /// </summary>
+    [Fact]
+    public void Root_entity_leaf_after_second_level_where_over_chained_join_goes_native()
+    {
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r, l })
+                .Where(x => x.l.Sku == "A")
+                .Select(x => x.o));
+
+        Assert.False(mongoQ.Select.HasUnsupportedOperator);
+        Assert.False(mongoQ.Select.HasUnconfirmedCandidateJoin);
+        Assert.True(mongoQ.Select.HasConfirmedJoinLookup);
+        Assert.Equal(NativeRoute.WholeEntity, mongoQ.Select.Route);
+    }
+
+    /// <summary>
+    /// A non-root whole-entity leaf (<c>x.l</c>) is NOT taken by the new arm: reading an Inner entity needs the
+    /// HasBareJoinInnerEntityLeaf read-side handling, which only exists at depth 1. Must stay Fallback.
+    /// </summary>
+    [Fact]
+    public void Inner_entity_leaf_over_chained_join_is_not_confirmed()
+    {
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r, l })
+                .Select(x => x.l));
+
+        Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
+    }
+
+    /// <summary>
+    /// Paging written BETWEEN the two joins sits in PipelineOps flagged "after a join"; confirming the chain would
+    /// defer it past BOTH $lookups (the known chain-paging gap), so the arm must decline.
+    /// </summary>
+    [Fact]
+    public void Root_entity_leaf_over_chained_join_with_paging_between_joins_declines()
+    {
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Take(1)
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r, l })
+                .Select(x => x.o));
+
+        Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
+        Assert.False(mongoQ.Select.HasConfirmedJoinLookup);
+    }
+
+    /// <summary>
+    /// A first-level Where flips ActiveOps to PostJoinOps, so the Take written BETWEEN the joins lands in PostJoinOps,
+    /// which lowers after BOTH $lookup/$unwind blocks and would page the row-multiplied result of the second
+    /// (collection-navigation) join. The second join must mark the query non-native when it is recorded.
+    /// </summary>
+    [Fact]
+    public void Paging_in_post_join_ops_ahead_of_a_row_multiplying_second_join_declines()
+    {
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Where(x => x.r.Total > 0).OrderBy(x => x.r.Total).Take(1)
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r, l })
+                .Where(x => x.l.Sku == "A")
+                .Select(x => x.o));
+
+        Assert.True(mongoQ.Select.HasUnsupportedOperator);
+        Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
+        Assert.False(mongoQ.Select.HasConfirmedJoinLookup);
+    }
+
+    /// <summary>Same, for the wrapped-projection arm (a result selector projecting leaves of two scopes).</summary>
+    [Fact]
+    public void Paging_in_post_join_ops_ahead_of_a_row_multiplying_second_join_with_wrapped_projection_declines()
+    {
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Where(x => x.r.Total > 0).OrderBy(x => x.r.Total).Take(1)
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o.Name, l.Sku }));
+
+        Assert.True(mongoQ.Select.HasUnsupportedOperator);
+        Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
+    }
+
+    /// <summary>
+    /// Paging written AFTER the second-level Where (so into PostJoinOps) with no later join pages the fully-joined
+    /// rows, which is exactly where PostJoinOps lowers. The join-recording gate must not decline it.
+    /// </summary>
+    [Fact]
+    public void Paging_after_second_level_where_over_chained_join_with_no_later_join_goes_native()
+    {
+        var mongoQ = TranslateThreeSourceJoinQuery((owners, orders, lines) =>
+            owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r, l })
+                .Where(x => x.l.Sku == "A")
+                .Take(2)
+                .Select(x => x.o));
+
+        Assert.False(mongoQ.Select.HasUnsupportedOperator);
+        Assert.IsType<MongoLimitOp>(mongoQ.Select.PostJoinOps[^1]);
+        Assert.Equal(NativeRoute.WholeEntity, mongoQ.Select.Route);
+    }
 }

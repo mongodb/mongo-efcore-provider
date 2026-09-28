@@ -219,7 +219,7 @@ internal sealed partial class MongoQueryExpression
     {
         foreach (var join in _joins)
         {
-            if (join.Lookup is not { } lookup || !(join.IsLeftOuter && lookup.Navigation is { IsCollection: false }))
+            if (!join.IsRowCountPreserving)
                 return false;
         }
 
