@@ -147,7 +147,7 @@ internal sealed partial class MongoExpressionTranslator
     /// entity, never a collection, so it cannot resolve to an array path.
     /// </para>
     /// </remarks>
-    private static bool TryMatchCountExpression(
+    internal static bool TryMatchCountExpression(
         Expression node,
         [NotNullWhen(true)] out Expression? source,
         out LambdaExpression? predicate)

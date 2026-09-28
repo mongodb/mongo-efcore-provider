@@ -93,6 +93,12 @@ internal static class NativeProjectionBinder
         // Parallel staging list for the EF-449 correlated-reducer leaves, for the same reason pendingLookups
         // exists: a later leaf declining must not leave a half-registered reducer leaf behind.
         var pendingReducerLeaves = new List<MongoCorrelatedReducerLeaf>();
+        // Parallel staging list for LookupExpressions a projected reference-collection-Count leaf (EF-322) needs
+        // stamped LookupExpression.IsBareCountSizeSource — staged rather than mutated at recognition time (see
+        // NativeCorrelationMatcher.TryBuildReferenceCollectionCountLookup's remarks), so a later leaf declining
+        // (whole projection falls back) never leaves a half-committed stamp on an object outside this method's
+        // control. Applied only in the commit block below, alongside pendingLookups/pendingReducerLeaves.
+        var pendingBareCountStamps = new List<LookupExpression>();
         // MongoQueryExpression.AddToProjection disambiguates aliases case-insensitively (appending a counter on
         // collision). If two members here differ only by case, the DOM shaper would read the disambiguated
         // alias while the native $project emits the un-disambiguated one, silently dropping a value. Bail to
@@ -147,7 +153,7 @@ internal static class NativeProjectionBinder
                 foreach (var (memberName, memberValue) in wrappedMembers)
                 {
                     var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], memberValue, memberName);
-                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
+                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
                         return false;
                     if (!seenAliases.Add(alias))
                         return false;
@@ -254,7 +260,7 @@ internal static class NativeProjectionBinder
                 foreach (var (memberName, memberValue) in positionalMembers)
                 {
                     var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], memberValue, memberName);
-                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
+                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
                         return false;
                     if (!seenAliases.Add(alias))
                         return false;
@@ -411,7 +417,7 @@ internal static class NativeProjectionBinder
         bool TryBindAsBareProjection(Expression bareLikeExpr, string provisionalAlias, bool allowWholeRootEntityLeafForThis)
         {
             if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], bareLikeExpr, provisionalAlias,
-                    pendingLookups, pendingReducerLeaves, out var bareLeaf, out var bareIsArrayLeaf, out _,
+                    pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var bareLeaf, out var bareIsArrayLeaf, out _,
                     allowWholeRootEntityLeafForThis))
             {
                 return false;
@@ -507,6 +513,8 @@ internal static class NativeProjectionBinder
             mongoQ.AddLookup(lookup);
         foreach (var reducerLeaf in pendingReducerLeaves)
             mongoQ.AddCorrelatedReducerLeaf(reducerLeaf);
+        foreach (var lookupToStamp in pendingBareCountStamps)
+            lookupToStamp.IsBareCountSizeSource = true;
         foreach (var projection in projections)
             mongoQ.Select.AddProjection(projection);
         // Register the bare body's alias override in the same commit block as the projections it describes,
@@ -716,6 +724,7 @@ internal static class NativeProjectionBinder
         string alias,
         List<LookupExpression> pendingLookups,
         List<MongoCorrelatedReducerLeaf> pendingReducerLeaves,
+        List<LookupExpression> pendingBareCountStamps,
         out MongoExpression result,
         out bool isArrayLeaf,
         out bool isOwnedNavEntityLeaf,
@@ -917,7 +926,8 @@ internal static class NativeProjectionBinder
             return true;
         }
 
-        if (TryTranslateProjectedCollectionCount(mongoQ, outerParameter, leafExpression, pendingLookups, out var sizeExpression))
+        if (TryTranslateProjectedCollectionCount(
+                mongoQ, outerParameter, leafExpression, pendingLookups, pendingBareCountStamps, out var sizeExpression))
         {
             result = sizeExpression!;
             return true;
@@ -2283,6 +2293,7 @@ internal static class NativeProjectionBinder
         ParameterExpression outerParameter,
         Expression leafExpression,
         List<LookupExpression> pendingLookups,
+        List<LookupExpression> pendingBareCountStamps,
         out MongoExpression? result)
     {
         result = null;
@@ -2298,64 +2309,25 @@ internal static class NativeProjectionBinder
             return false;
         }
 
-        if (whereArg is not MethodCallExpression
-            {
-                Method: { Name: nameof(Queryable.Where), DeclaringType: var whereDeclaring },
-                Arguments: [EntityQueryRootExpression rootExpression, var predicateArg]
-            }
-            || whereDeclaring != typeof(Queryable))
+        if (!NativeCorrelationMatcher.TryMatchReferenceCollectionCountNavigation(
+                mongoQ, outerParameter, whereArg, out var navigation))
         {
             return false;
         }
 
-        var predicate = predicateArg.UnwrapLambdaFromQuote();
-        if (predicate.Parameters.Count != 1)
-            return false;
-
-        var outerEntityType = mongoQ.CollectionExpression.EntityType;
-        var targetEntityType = rootExpression.EntityType;
-
-        // The Count binder wants a reference (non-embedded) collection navigation.
-        if (!NativeCorrelationMatcher.TryMatchCorrelatedCollection(
-                predicate.Body, outerEntityType, outerParameter, targetEntityType, requireEmbedded: false, out var navigation))
+        if (!NativeCorrelationMatcher.TryBuildReferenceCollectionCountLookup(
+                mongoQ, navigation, pendingLookups, leafExpression.Type, out var lookupToStamp, out var sizeExpression))
         {
             return false;
         }
 
-        var lookup = new LookupExpression(navigation) { InjectAfterRoot = true };
-        if (!lookup.IsNativeCollectionLookup)
-            return false;
+        // Stage rather than mutate: the stamp is only applied once this whole projection's shared commit
+        // block runs (see pendingBareCountStamps' own remarks at its declaration site), since a LATER leaf in
+        // this same projection can still decline and fall the whole thing back to driver-LINQ.
+        if (lookupToStamp is not null)
+            pendingBareCountStamps.Add(lookupToStamp);
 
-        // CROSS-LEAF ALIAS COLLISION. Two leaves in one projection can both want `_lookup_<Nav>`, and
-        // MongoQueryExpression.AddLookup dedupes by As, silently KEEPING THE FIRST — so whichever leaf's lookup
-        // loses reads a shape it was not built for. That is only safe when the two lookups are interchangeable.
-        // The PipelineKind is what decides that: a CorrelatedReducer lookup (EF-449) carries a `$limit: 1`
-        // sub-pipeline and is unwound to a single DOCUMENT, whereas this leaf's `{$size: ...}` needs the whole
-        // ARRAY — mix them and either `$size` runs over a document (a hard server error) or the reducer's
-        // `_lookup_<Nav>.<Member>` path resolves against an array (silently reads nothing). MEASURED before the
-        // fix: for `new { M = a.Nav.FirstOrDefault().Member, N = a.Nav.Count }` the reducer's lookup was
-        // registered first and survived, leaving the count leaf's `$size` pointing at a single document.
-        //
-        // This is the MIRROR of the same-alias decline inside TryGetCorrelatedReducerLeaf: that one fires when
-        // the reducer leaf runs SECOND (it declines on ANY same-alias lookup, staged here or already pending on
-        // mongoQ), this one when the reducer leaf ran FIRST. Together they make the guard symmetric under
-        // left-to-right member processing, in either member order.
-        //
-        // A SAME-kind same-alias lookup (a second Count leaf over the same navigation, or an already-pending
-        // collection-Include lookup for it) IS interchangeable, so it is simply reused rather than re-staged —
-        // which is exactly what AddLookup's dedupe already did for it, so behaviour there is unchanged.
-        var collidingLookup = pendingLookups.FirstOrDefault(l => l.As == lookup.As)
-            ?? mongoQ.GetPendingLookups().FirstOrDefault(l => l.As == lookup.As);
-        if (collidingLookup is null)
-        {
-            pendingLookups.Add(lookup);
-        }
-        else if (collidingLookup.PipelineKind != lookup.PipelineKind)
-        {
-            return false;
-        }
-
-        result = new MongoSizeExpression(LookupExpression.GetLookupAlias(navigation), leafExpression.Type);
+        result = sizeExpression;
         return true;
     }
 

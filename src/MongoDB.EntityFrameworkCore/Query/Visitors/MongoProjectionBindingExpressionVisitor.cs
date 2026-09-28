@@ -696,8 +696,22 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                         // incompatible under one $lookup regardless of pipeline state, so give THIS lookup a
                         // distinct alias instead of colliding — the join's own alias, and everything already
                         // staged against it elsewhere in the SAME projection, is untouched.
+                        //
+                        // EF-322 final review (round 3, NEW Critical): the SAME hazard, one level more subtle,
+                        // when the collision is with a reference-collection Count/LongCount predicate's own
+                        // bare lookup (LookupExpression.IsBareCountSizeSource) instead of a join's: that entry
+                        // isn't $unwind-ed (ShouldUnwind is false for it — it's a plain array, same shape a
+                        // bare Include wants), so sharing it is fine when THIS Include is unpaged (both want
+                        // the identical full array) — but if THIS Include carries its own OrderBy/Skip/Take
+                        // pipeline (already extracted into `lookup.PipelineStages` by ExtractNestedIncludePipeline
+                        // above, so `lookup.HasPipeline` reflects it here), AddLookup would otherwise MERGE that
+                        // pipeline straight into the Count's bare entry, corrupting its $size read with the
+                        // Include's paged array instead of the true count — silently, in every MongoQueryMode.
+                        // Scoped to `lookup.HasPipeline` so the safe, unpaged, share-one-$lookup case (the
+                        // scenario the paragraph above already documents as intentional) is left alone.
                         var existingIncompatibleLookup = _queryExpression.GetPendingLookups()
-                            .FirstOrDefault(l => l.As == lookup.As && l.ShouldUnwind);
+                            .FirstOrDefault(l => l.As == lookup.As
+                                && (l.ShouldUnwind || (l.IsBareCountSizeSource && lookup.HasPipeline)));
                         var readAlias = plainLookupAlias;
                         if (existingIncompatibleLookup != null)
                         {

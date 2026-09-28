@@ -360,12 +360,22 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
     public override async Task Collection_where_nav_prop_count(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Collection_where_nav_prop_count(async));
+        await base.Collection_where_nav_prop_count(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "_lookup_Orders.5" : { "$exists" : true } } }
+""");
     }
 
     public override async Task Collection_where_nav_prop_count_reverse(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Collection_where_nav_prop_count_reverse(async));
+        await base.Collection_where_nav_prop_count_reverse(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "$expr" : { "$lt" : [5, { "$size" : "$_lookup_Orders" }] } } }
+""");
     }
 
     public override async Task Collection_orderby_nav_prop_count(bool async)
