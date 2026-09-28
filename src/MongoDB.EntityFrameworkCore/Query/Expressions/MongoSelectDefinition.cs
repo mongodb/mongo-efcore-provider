@@ -237,6 +237,13 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     public void AppendDistinct() => ActiveOps.Add(new MongoDistinctOp());
 
+    /// <summary>
+    /// A whole-entity <c>Distinct()</c> over a bare join leaf (<see cref="BareJoinEntityLeaf"/>): appended to
+    /// <see cref="PostJoinOps"/> so it dedups the joined rows after the <c>$lookup</c>/<c>$unwind</c>, not the
+    /// un-joined outer rows before it.
+    /// </summary>
+    internal void AppendPostJoinDistinct(MongoDistinctOp op) => _postJoinOps.Add(op);
+
     // HasPaging/HasOrdering/HasLimit scan _pipelineOps only: they gate a pre-terminal GroupBy, which is unreachable
     // after a set op, so they must not see _trailingOps.
     /// <summary><see langword="true"/> when any $skip or $limit op is present.</summary>
@@ -779,14 +786,26 @@ internal sealed class MongoSelectDefinition
     /// pushed-down <c>Select</c> on fallback when this is set. Deliberately NOT set for the Outer unwrap
     /// (<c>Select(ti =&gt; ti.Outer)</c>, e.g. a reference Include's mandatory unwrap), whose root-document read the
     /// driver's push-down already satisfies. The strip covers an OUTERMOST captured Select (or one under a
-    /// reducer); EF Core hoists Where/OrderBy/Skip/Take ahead of the pending selector, so those shapes qualify, but a
-    /// trailing <c>Distinct()</c> is not hoisted and explicit DriverLinq still returns null entities for it — pinned by
-    /// <c>NativeJoinTests.Distinct_after_a_bare_Inner_entity_leaf_under_DriverLinq_pins_known_null_entities</c>.
+    /// reducer); EF Core hoists Where/OrderBy/Skip/Take ahead of the pending selector, so those shapes qualify. A
+    /// trailing <c>Distinct()</c> is not hoisted, so the Select stays under it; the driver-LINQ bridge then keeps it
+    /// and moves the deduplicated <c>_v</c> value back under <c>_lookup_&lt;Nav&gt;</c> instead
+    /// (<c>MongoEFToLinqTranslatingExpressionVisitor.RepresentBareInnerJoinLeaf</c>).
     /// </summary>
     internal bool HasBareJoinInnerEntityLeaf => _hasBareJoinInnerEntityLeaf;
 
     /// <summary>See <see cref="HasBareJoinInnerEntityLeaf"/>.</summary>
     internal void MarkBareJoinInnerEntityLeaf() => _hasBareJoinInnerEntityLeaf = true;
+
+    /// <summary>
+    /// The join <c>$lookup</c> whose Outer or Inner side <c>TranslateSelect</c>'s bare whole-entity-leaf arm selected
+    /// (<c>Select(ti =&gt; ti.Outer)</c> / <c>Select(ti =&gt; ti.Inner)</c>), and which side; <see langword="null"/>
+    /// otherwise. The row is still the flattened join document, so a following whole-entity <c>Distinct()</c> must
+    /// compare only the selected entity, not the (outer, inner) pair (see <see cref="MongoDistinctOp"/>).
+    /// </summary>
+    internal (LookupExpression Lookup, bool IsInner)? BareJoinEntityLeaf { get; private set; }
+
+    /// <summary>Sets <see cref="BareJoinEntityLeaf"/>.</summary>
+    internal void MarkBareJoinEntityLeaf(LookupExpression lookup, bool isInner) => BareJoinEntityLeaf = (lookup, isInner);
 
     private bool _hasPagingRecordedAfterAJoin;
 

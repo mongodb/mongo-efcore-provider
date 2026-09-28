@@ -453,10 +453,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             mongoQueryExpression.Select.MarkReferenceIncludeConfirmed();
             // The Inner spelling is read off the join's _lookup_<Nav> field of a whole document, which the driver-LINQ
             // fallback's pushed-down `_v` projection doesn't provide — see HasBareJoinInnerEntityLeaf.
-            if (selector.Body is MemberExpression { Member.Name: "Inner" })
+            var isInnerLeaf = selector.Body is MemberExpression { Member.Name: "Inner" };
+            if (isInnerLeaf)
             {
                 mongoQueryExpression.Select.MarkBareJoinInnerEntityLeaf();
             }
+            // A following Distinct must dedup the selected side only — see TryBindWholeEntityDistinct.
+            mongoQueryExpression.Select.MarkBareJoinEntityLeaf(bareLeafJoin.Lookup!, isInnerLeaf);
             // Without this, an operator composed after this Select could record a native op that lowers before
             // the $lookup and resolves against the outer entity type. See MongoSelectDefinition.HasConfirmedJoinLookup.
             mongoQueryExpression.Select.MarkJoinLookupConfirmed();
@@ -1802,12 +1805,31 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// Records a <see cref="MongoDistinctOp"/> for a whole-entity <c>Distinct()</c>. Declines if a projection,
     /// grouping, cardinality or unwind source is already present.
     /// </summary>
+    /// <remarks>
+    /// Over a bare join leaf (<see cref="MongoSelectDefinition.BareJoinEntityLeaf"/>) the op must run after the
+    /// <c>$lookup</c>/<c>$unwind</c> and dedup the selected side only: an inner row matched by several outer rows (or
+    /// an outer row matching several inner rows) comes back once. Declines if any other <c>$lookup</c> is registered
+    /// (its field would be dropped for Inner, compared for Outer), or if paging was deferred past the join (it
+    /// lowers after <see cref="MongoSelectDefinition.PostJoinOps"/>, so it would wrongly run after this Distinct).
+    /// </remarks>
     private static bool TryBindWholeEntityDistinct(MongoQueryExpression mongoQ)
     {
         var select = mongoQ.Select;
         if (select.Projection.Count > 0 || select.Grouping != null || select.Cardinality != null
             || select.UnwindSource != null)
             return false;
+
+        if (select.BareJoinEntityLeaf is var (lookup, isInner))
+        {
+            if (mongoQ.GetPendingLookups() is not [var only] || only.As != lookup.As
+                || select.PostLookupPagingOps.Count > 0)
+                return false;
+
+            select.AppendPostJoinDistinct(isInner
+                ? new MongoDistinctOp(KeepOnlyField: lookup.As)
+                : new MongoDistinctOp(ExcludeField: lookup.As));
+            return true;
+        }
 
         select.AppendDistinct();
         return true;

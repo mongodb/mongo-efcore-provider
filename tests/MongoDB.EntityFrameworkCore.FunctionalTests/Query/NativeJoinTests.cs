@@ -987,26 +987,161 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Equal(expected.OrderBy(t => t), actual.OrderBy(t => t));
     }
 
-    // KNOWN DEVIATION, pinned (pre-existing — measured identically at cdfd1851, before the bare-Inner-leaf strip
-    // existed): `Distinct()` composed AFTER a bare Inner `Select` is the one operator EF Core does not hoist ahead of
-    // the join's pending selector, so the captured chain is Distinct(Select(...)) and the entity path's strip (which
-    // only removes an OUTERMOST Select, or a reducer's) cannot reach it — and stripping under a Distinct would change
-    // what is deduplicated (whole Owner+Order documents instead of Orders) anyway. Explicit DriverLinq therefore still
-    // returns NULL entities for this shape. Default Native mode translates it natively and is correct (see the
-    // DistinctAfter rows of the theory above). Asserting the current wrong value so this goes red when it is fixed
-    // (EF-458).
-    [Fact]
-    public void Distinct_after_a_bare_Inner_entity_leaf_under_DriverLinq_pins_known_null_entities()
+    // `Distinct()` composed AFTER a bare Inner `Select` is the one operator EF Core does not hoist ahead of the join's
+    // pending selector, so the captured chain is Distinct(Select(...)) and the entity path's strip of the pushed-down
+    // Select can't apply (stripping would dedup whole Owner+Order documents instead of the inner entities). The
+    // driver-LINQ fallback therefore keeps the Select + Distinct and re-presents the deduplicated `_v` value under the
+    // join's `_lookup_<Nav>` field, where the entity shaper reads it. Every mode must match the in-memory oracle,
+    // including dedup of an inner row matched more than once, operators composed after the Distinct, and a left-join
+    // inner leaf whose unmatched rows collapse to a single null. The Distinct itself goes native (NativeOnly rows);
+    // an operator composed after it still falls back to driver-LINQ.
+    [Theory]
+    [InlineData(MongoQueryMode.Native, "Distinct")]
+    [InlineData(MongoQueryMode.DriverLinq, "Distinct")]
+    [InlineData(MongoQueryMode.NativeOnly, "Distinct")]
+    [InlineData(MongoQueryMode.Native, "DuplicateInnerDistinct")]
+    [InlineData(MongoQueryMode.DriverLinq, "DuplicateInnerDistinct")]
+    [InlineData(MongoQueryMode.NativeOnly, "DuplicateInnerDistinct")]
+    [InlineData(MongoQueryMode.Native, "OuterDistinct")]
+    [InlineData(MongoQueryMode.DriverLinq, "OuterDistinct")]
+    [InlineData(MongoQueryMode.NativeOnly, "OuterDistinct")]
+    [InlineData(MongoQueryMode.Native, "PagedOuterDistinct")]
+    [InlineData(MongoQueryMode.DriverLinq, "PagedOuterDistinct")]
+    [InlineData(MongoQueryMode.NativeOnly, "PagedOuterDistinct")]
+    [InlineData(MongoQueryMode.Native, "DistinctWhere")]
+    [InlineData(MongoQueryMode.DriverLinq, "DistinctWhere")]
+    [InlineData(MongoQueryMode.Native, "DistinctOrderBy")]
+    [InlineData(MongoQueryMode.DriverLinq, "DistinctOrderBy")]
+    [InlineData(MongoQueryMode.Native, "DistinctOrderBySkip")]
+    [InlineData(MongoQueryMode.DriverLinq, "DistinctOrderBySkip")]
+    [InlineData(MongoQueryMode.Native, "DistinctOrderByTake")]
+    [InlineData(MongoQueryMode.DriverLinq, "DistinctOrderByTake")]
+    [InlineData(MongoQueryMode.Native, "DistinctFirst")]
+    [InlineData(MongoQueryMode.DriverLinq, "DistinctFirst")]
+    [InlineData(MongoQueryMode.Native, "DistinctCount")]
+    [InlineData(MongoQueryMode.DriverLinq, "DistinctCount")]
+    [InlineData(MongoQueryMode.NativeOnly, "DistinctCount")]
+    [InlineData(MongoQueryMode.Native, "GroupJoinDefaultIfEmptyDistinct")]
+    [InlineData(MongoQueryMode.DriverLinq, "GroupJoinDefaultIfEmptyDistinct")]
+    [InlineData(MongoQueryMode.NativeOnly, "GroupJoinDefaultIfEmptyDistinct")]
+    [InlineData(MongoQueryMode.Native, "GroupJoinDefaultIfEmptyDuplicateInnerDistinct")]
+    [InlineData(MongoQueryMode.DriverLinq, "GroupJoinDefaultIfEmptyDuplicateInnerDistinct")]
+    [InlineData(MongoQueryMode.NativeOnly, "GroupJoinDefaultIfEmptyDuplicateInnerDistinct")]
+#if !EF8 && !EF9
+    [InlineData(MongoQueryMode.Native, "LeftJoinDistinct")]
+    [InlineData(MongoQueryMode.DriverLinq, "LeftJoinDistinct")]
+    [InlineData(MongoQueryMode.NativeOnly, "LeftJoinDistinct")]
+#endif
+    public void Distinct_after_a_bare_Inner_entity_leaf_matches_oracle(MongoQueryMode mode, string shape)
     {
-        var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.DriverLinq,
-            nameof(Distinct_after_a_bare_Inner_entity_leaf_under_DriverLinq_pins_known_null_entities));
+        var seed = SeedOwnersWithRepeatedAndUnmatchedOrders();
+        using var db = CreateContext(seed, mode, nameof(Distinct_after_a_bare_Inner_entity_leaf_matches_oracle) + mode + shape);
 
-        var rows = db.Owners.Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
-            .Select(x => x.r).Distinct().ToList();
+        var actual = RunDistinctInnerEntityLeaf(db.Owners, db.Orders, shape);
+        var expected = RunDistinctInnerEntityLeaf(seed.Owners.AsQueryable(), seed.Orders.AsQueryable(), shape);
 
-        Assert.Equal(seed.Orders.Length, rows.Count);
-        Assert.All(rows, Assert.Null);
+        Assert.NotEmpty(expected);
+        Assert.Equal(expected.OrderBy(t => t, StringComparer.Ordinal), actual.OrderBy(t => t, StringComparer.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Distinct_after_a_bare_Inner_entity_leaf_returns_tracked_entities(MongoQueryMode mode)
+    {
+        var seed = SeedOwnersWithRepeatedAndUnmatchedOrders();
+        using var db = CreateContext(seed, mode, nameof(Distinct_after_a_bare_Inner_entity_leaf_returns_tracked_entities) + mode);
+
+        var owners = db.Orders.Join(db.Owners, r => r.OwnerId, o => o.Id, (r, o) => new { r, o })
+            .Select(x => x.o).Distinct().ToList();
+
+        Assert.Equal(["Alice", "Bob"], owners.Select(o => o.Name).OrderBy(n => n, StringComparer.Ordinal));
+        Assert.All(owners, o => Assert.Equal(EntityState.Unchanged, db.Entry(o).State));
+        Assert.All(owners, o => Assert.Same(o, db.Owners.Local.Single(l => l.Id == o.Id)));
+        Assert.Equal(2, db.ChangeTracker.Entries().Count());
+    }
+
+    // KNOWN GAP, pinned (pre-existing, measured identically before the Distinct-over-a-join-leaf fix): EF Core moves
+    // the Include's LeftJoin ABOVE the Distinct, giving a join / Distinct / join chain that neither path can
+    // translate. It fails loudly rather than returning wrong rows; the Outer-leaf Distinct's `$unset` of the join
+    // field must never reach an Include-shaping Select (see IsIncludeShapingSelect).
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Distinct_after_an_Include_over_a_join_declines_loudly(MongoQueryMode mode)
+    {
+        var seed = SeedOwnersWithRepeatedAndUnmatchedOrders();
+        using var db = CreateContext(seed, mode, nameof(Distinct_after_an_Include_over_a_join_declines_loudly) + mode);
+
+        Assert.Throws<InvalidOperationException>(() => db.Orders.Include(r => r.Owner)
+            .Join(db.Owners, r => r.OwnerId, o => o.Id, (r, o) => r)
+            .Distinct()
+            .ToList());
+    }
+
+    private static List<string> RunDistinctInnerEntityLeaf(IQueryable<Owner> owners, IQueryable<Order> orders, string shape)
+    {
+        var ordersOfOwners = owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r }).Select(x => x.r);
+        var ownersOfOrders = orders.Join(owners, r => r.OwnerId, o => o.Id, (r, o) => new { r, o }).Select(x => x.o);
+
+        // Keys are read client-side, so a null entity where the oracle has a real one fails loudly.
+        return shape switch
+        {
+            "Distinct" => OrderKeys(ordersOfOwners.Distinct()),
+            "DuplicateInnerDistinct" => OwnerKeys(ownersOfOrders.Distinct()),
+            "OuterDistinct" => OwnerKeys(
+                owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r }).Select(x => x.o).Distinct()),
+            // Paging over the joined rows must run before the Distinct: the two cheapest orders are both Alice's.
+            "PagedOuterDistinct" => OwnerKeys(
+                owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                    .OrderBy(x => x.r.Total).Take(2).Select(x => x.o).Distinct()),
+            "DistinctWhere" => OrderKeys(ordersOfOwners.Distinct().Where(r => r.Total > 15m)),
+            "DistinctOrderBy" => OrderKeys(ordersOfOwners.Distinct().OrderBy(r => r.Total)),
+            "DistinctOrderBySkip" => OrderKeys(ordersOfOwners.Distinct().OrderBy(r => r.Total).Skip(1)),
+            "DistinctOrderByTake" => OrderKeys(ordersOfOwners.Distinct().OrderBy(r => r.Total).Take(2)),
+            "DistinctFirst" => [OrderKey(ordersOfOwners.Distinct().OrderByDescending(r => r.Total).First())],
+            "DistinctCount" => [ownersOfOrders.Distinct().Count().ToString()],
+            "GroupJoinDefaultIfEmptyDistinct" => OrderKeys(
+                (from o in owners
+                 join r in orders on o.Id equals r.OwnerId into g
+                 from r in g.DefaultIfEmpty()
+                 select r).Distinct()),
+            "GroupJoinDefaultIfEmptyDuplicateInnerDistinct" => OwnerKeys(
+                (from r in orders
+                 join o in owners on r.OwnerId equals o.Id into g
+                 from o in g.DefaultIfEmpty()
+                 select o).Distinct()),
+#if !EF8 && !EF9
+            "LeftJoinDistinct" => OwnerKeys(
+                orders.LeftJoin(owners, r => r.OwnerId, o => o.Id, (r, o) => new { r, o }).Select(x => x.o).Distinct()),
+#endif
+            _ => throw new ArgumentOutOfRangeException(nameof(shape))
+        };
+
+        static List<string> OrderKeys(IQueryable<Order?> q) => q.AsEnumerable().Select(OrderKey).ToList();
+        static List<string> OwnerKeys(IQueryable<Owner?> q) => q.AsEnumerable().Select(o => o?.Name ?? "<null>").ToList();
+        static string OrderKey(Order? r) => r == null ? "<null>" : r.Id + ":" + r.Total;
+    }
+
+    // Alice owns two orders (so an Order->Owner join repeats her), Bob owns one, Carol owns none (unmatched outer row
+    // for an Owner->Order left join), and two orders dangle (unmatched outer rows for an Order->Owner left join, which
+    // Distinct must collapse to a single null).
+    private static Seed SeedOwnersWithRepeatedAndUnmatchedOrders()
+    {
+        var alice = new Owner { Id = ObjectId.GenerateNewId(), Name = "Alice", Region = "North", Rank = 7 };
+        var bob = new Owner { Id = ObjectId.GenerateNewId(), Name = "Bob", Region = "South", Rank = 8 };
+        var carol = new Owner { Id = ObjectId.GenerateNewId(), Name = "Carol", Region = "West", Rank = 9 };
+
+        var orders = new[]
+        {
+            new Order { Id = ObjectId.GenerateNewId(), OwnerId = alice.Id, Total = 10m, Region = "North" },
+            new Order { Id = ObjectId.GenerateNewId(), OwnerId = alice.Id, Total = 20m, Region = "North" },
+            new Order { Id = ObjectId.GenerateNewId(), OwnerId = bob.Id, Total = 30m, Region = "South" },
+            new Order { Id = ObjectId.GenerateNewId(), OwnerId = ObjectId.GenerateNewId(), Total = 98m, Region = "East" },
+            new Order { Id = ObjectId.GenerateNewId(), OwnerId = ObjectId.GenerateNewId(), Total = 99m, Region = "East" },
+        };
+
+        return new Seed([alice, bob, carol], orders, []);
     }
 
     private static List<decimal> RunBareInnerEntityLeaf(IQueryable<Owner> owners, IQueryable<Order> orders, string shape)
