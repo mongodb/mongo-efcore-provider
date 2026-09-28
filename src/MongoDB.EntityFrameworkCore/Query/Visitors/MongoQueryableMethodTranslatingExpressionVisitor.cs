@@ -831,12 +831,17 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             var innerProperty = innerKeyPropertyName != null ? innerEntityType.FindProperty(innerKeyPropertyName) : null;
             if (outerProperty != null && innerProperty != null)
             {
+                // GetFieldPath, not GetElementName(): a composite-primary-key component is stored under _id
+                // ("_id.ProductId"), so the bare element name names no field and the $lookup matches nothing
+                // (EF-456).
+                var outerFieldPath = Expressions.LookupExpression.GetFieldPath(outerProperty);
                 var localField = throughJoin != null
-                    ? $"{throughJoin.Alias}.{outerProperty.GetElementName()}"
-                    : outerProperty.GetElementName();
+                    ? $"{throughJoin.Alias}.{outerFieldPath}"
+                    : outerFieldPath;
 
                 joinInfo.Lookup = new Expressions.LookupExpression(
-                    innerEntityType, innerEntityType.GetCollectionName(), localField, innerProperty.GetElementName(),
+                    innerEntityType, innerEntityType.GetCollectionName(), localField,
+                    Expressions.LookupExpression.GetFieldPath(innerProperty),
                     joinInfo.Alias, forceUnwind: true)
                 {
                     PreserveNullAndEmptyArrays = joinInfo.IsLeftOuter
