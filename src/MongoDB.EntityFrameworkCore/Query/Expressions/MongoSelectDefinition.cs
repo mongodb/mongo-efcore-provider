@@ -759,12 +759,50 @@ internal sealed class MongoSelectDefinition
     /// <see langword="true"/> once a <c>Skip</c>/<c>Take</c> was recorded while <c>MongoQueryExpression.Joins</c> was
     /// still empty, i.e. it genuinely pages the outer sequence before a later join
     /// (<c>Customers.Take(1).GroupJoin(...)</c>) rather than being hoisted forward by EF Core. Deferring such an op
-    /// past the join would change which rows it keeps, so <c>IsSingleEligibleNativeJoinScope</c> declines instead.
+    /// past the join would change which rows it keeps, so <c>IsSingleEligibleNativeJoinScope</c> keeps it ahead of
+    /// the <c>$lookup</c> when a join may multiply rows (or declines, if <see cref="HasPagingRecordedAfterAJoin"/> is
+    /// also set).
     /// </summary>
     internal bool HasPagingRecordedBeforeAnyJoin => _hasPagingRecordedBeforeAnyJoin;
 
     /// <summary>Sets <see cref="HasPagingRecordedBeforeAnyJoin"/>.</summary>
     internal void MarkPagingRecordedBeforeAnyJoin() => _hasPagingRecordedBeforeAnyJoin = true;
+
+    private bool _hasBareJoinInnerEntityLeaf;
+
+    /// <summary>
+    /// <see langword="true"/> once <c>TranslateSelect</c>'s bare whole-entity-leaf arm confirmed a join through
+    /// its INNER side (<c>Select(ti =&gt; ti.Inner)</c>), so the result entity is read from the join's
+    /// <c>_lookup_&lt;Nav&gt;</c> field of a WHOLE document. The native pipeline emits no <c>$project</c> for that
+    /// arm, but the driver-LINQ fallback renders the captured bare <c>Select</c> as <c>{ _v: "$_lookup_&lt;Nav&gt;" }</c>,
+    /// which the entity shaper cannot read (it came back as a silent null entity). The entity path strips that
+    /// pushed-down <c>Select</c> on fallback when this is set. Deliberately NOT set for the Outer unwrap
+    /// (<c>Select(ti =&gt; ti.Outer)</c>, e.g. a reference Include's mandatory unwrap), whose root-document read the
+    /// driver's push-down already satisfies. The strip covers an OUTERMOST captured Select (or one under a
+    /// reducer); EF Core hoists Where/OrderBy/Skip/Take ahead of the pending selector, so those shapes qualify, but a
+    /// trailing <c>Distinct()</c> is not hoisted and explicit DriverLinq still returns null entities for it — pinned by
+    /// <c>NativeJoinTests.Distinct_after_a_bare_Inner_entity_leaf_under_DriverLinq_pins_known_null_entities</c>.
+    /// </summary>
+    internal bool HasBareJoinInnerEntityLeaf => _hasBareJoinInnerEntityLeaf;
+
+    /// <summary>See <see cref="HasBareJoinInnerEntityLeaf"/>.</summary>
+    internal void MarkBareJoinInnerEntityLeaf() => _hasBareJoinInnerEntityLeaf = true;
+
+    private bool _hasPagingRecordedAfterAJoin;
+
+    /// <summary>
+    /// The complement of <see cref="HasPagingRecordedBeforeAnyJoin"/>: <see langword="true"/> once a
+    /// <c>Skip</c>/<c>Take</c> was recorded into <see cref="PipelineOps"/> while at least one join already
+    /// existed — the EF-hoisted-forward <c>Join(...).Take(n)</c> shape, whose paging applies to the JOINED rows.
+    /// When both flags are set the single <see cref="PipelineOps"/> snapshot holds paging that belongs on BOTH
+    /// sides of the <c>$lookup</c>/<c>$unwind</c>, which neither keeping it in place nor deferring it wholesale
+    /// can represent, so <c>IsSingleEligibleNativeJoinScope</c> declines.
+    /// </summary>
+    internal bool HasPagingRecordedAfterAJoin => _hasPagingRecordedAfterAJoin;
+
+    /// <summary>Records that a <c>Skip</c>/<c>Take</c> was recorded while a join already existed on this select.
+    /// See <see cref="HasPagingRecordedAfterAJoin"/>.</summary>
+    internal void MarkPagingRecordedAfterAJoin() => _hasPagingRecordedAfterAJoin = true;
 
     private readonly List<MongoUnwindSource> _unwindSources = [];
 

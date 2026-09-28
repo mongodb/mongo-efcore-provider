@@ -1320,6 +1320,28 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                         Expression.Constant(unwindDoc),
                         Expression.Constant(null, serializerType)),
                     Expression.Constant(null, serializerType));
+
+                // A left-outer join's unmatched row comes out of `$unwind { preserveNullAndEmptyArrays: true }`
+                // with the joined field MISSING, not null, and the driver renders a TransparentIdentifier null
+                // check over this flattened `_lookup_<Nav>` shape (`ti.Inner != null ? ti.Inner.X : fallback`) as
+                // `$ne: ["$_lookup_<Nav>", null]` — TRUE for a missing field in aggregation expressions, so the
+                // ternary took the dereferencing branch and read a default (0/null) instead of the fallback.
+                // MEASURED: NativeJoinScopeConditionalProjectionTests' two-level-chain DriverLinq test returned
+                // null where "<none>" was expected, and a single left join over a collection/reference navigation
+                // did the same once a native Select arm registered its lookup at translation time (flipping the
+                // fallback onto this flattened shape). Normalizing missing -> explicit null right after the
+                // $unwind makes the null check answer correctly; a matched row's sub-document is unchanged. Scoped
+                // to forced-unwind (join) lookups — Include's reference lookups are untouched.
+                if (lookup.ForceUnwind && lookup.PreserveNullAndEmptyArrays)
+                {
+                    var setDoc = new BsonDocument("$set", new BsonDocument(lookup.As,
+                        new BsonDocument("$ifNull", new BsonArray { "$" + lookup.As, BsonNull.Value })));
+                    query = Expression.Call(null, appendStageMethod, query,
+                        Expression.New(stageConstructor,
+                            Expression.Constant(setDoc),
+                            Expression.Constant(null, serializerType)),
+                        Expression.Constant(null, serializerType));
+                }
             }
         }
 

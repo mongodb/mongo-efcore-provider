@@ -432,6 +432,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         {
             mongoQueryExpression.AddLookup(bareLeafJoin.Lookup!);
             mongoQueryExpression.Select.MarkReferenceIncludeConfirmed();
+            // The Inner spelling is read off the join's _lookup_<Nav> field of a whole document, which the driver-LINQ
+            // fallback's pushed-down `_v` projection doesn't provide — see HasBareJoinInnerEntityLeaf.
+            if (selector.Body is MemberExpression { Member.Name: "Inner" })
+            {
+                mongoQueryExpression.Select.MarkBareJoinInnerEntityLeaf();
+            }
             // Without this, an operator composed after this Select could record a native op that lowers before
             // the $lookup and resolves against the outer entity type. See MongoSelectDefinition.HasConfirmedJoinLookup.
             mongoQueryExpression.Select.MarkJoinLookupConfirmed();
@@ -695,8 +701,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// <para>
     /// <c>HasUnsupportedOperator</c> prevents wrong rows: confirming registers the <c>$lookup</c> at translation
     /// time, which flips <c>UsesDriverJoinFields</c> and changes the driver-LINQ fallback's shape. For
-    /// <c>Join(…).Where(x =&gt; x.Inner.Foo == …).Select(x =&gt; x.Inner)</c> that fallback returns wrong rows
-    /// (pinned by <c>NorthwindJoinQueryMongoTest.GroupJoin_Where</c>). Deliberately not
+    /// <c>Join(…).Where(x =&gt; …x.Inner…).Select(x =&gt; x.Inner)</c> whose <c>Where</c> declines, that fallback
+    /// returned wrong rows (first exposed by the GroupJoin_Where spec tests, which now go native). NOT currently pinned:
+    /// the wrong rows came from the bare Inner leaf's driver-LINQ `_v` push-down, since fixed
+    /// (<see cref="MongoSelectDefinition.HasBareJoinInnerEntityLeaf"/>), and no test fails with this conjunct removed
+    /// (measured, EF10). Kept as defence in depth; the shape is covered by
+    /// <c>NativeJoinTests.Inner_side_Where_that_declines_natively_does_not_confirm_the_join</c>. Deliberately not
     /// <c>Route == Fallback</c>, which is also true merely because this join is unconfirmed.
     /// </para>
     /// <para>
@@ -797,16 +807,30 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             {
                 // Paging recorded before any join existed (e.g. `Customers.Take(1).GroupJoin(Orders, ...)
                 // .SelectMany(g => g.DefaultIfEmpty())`) pages the outer sequence and must not be deferred past a
-                // row-multiplying collection $unwind. HasPagingRecordedBeforeAnyJoin alone can't distinguish this
-                // from a reference-nav dereference in a projection (whose join is synthesized just as late), which
-                // is at most 0:1 and still defers. So decline only when a collection navigation is also present.
+                // row-multiplying $unwind. HasPagingRecordedBeforeAnyJoin alone can't distinguish this from a
+                // reference-nav dereference in a projection (whose join is synthesized just as late), which is at
+                // most 0:1 and still defers. "May multiply" is any join not provably a reference navigation — a
+                // collection navigation OR a navigation-less join (checking only IsCollection once let a
+                // navigation-less join's outer Take be deferred: 1 row instead of 3, pinned by
+                // NativeJoinTests.Outer_paging_before_a_navigation_less_one_to_many_join_pages_the_outer_rows). Such
+                // paging is already ahead of the $lookup in PipelineOps, so it stays there — unless paging was also
+                // recorded after a join, which leaves no correct single placement, so decline.
                 if (mongoQueryExpression.Select.HasPagingRecordedBeforeAnyJoin
-                    && mongoQueryExpression.Joins.Any(j => j.Lookup?.Navigation is { IsCollection: true }))
+                    && mongoQueryExpression.Joins.Any(j => j.Lookup?.Navigation is not { IsCollection: false }))
                 {
-                    return false;
+                    if (mongoQueryExpression.Select.HasPagingRecordedAfterAJoin)
+                    {
+                        return false;
+                    }
                 }
-
-                mongoQueryExpression.Select.DeferPipelineOpsPastConfirmedJoin();
+                else
+                {
+                    // NOT covered here (pre-existing, still open): paging written BETWEEN two joins of a chain
+                    // (`Join(a, ...).Take(1).Join(b, ...)`) is flagged "after a join", so it lands here and is
+                    // deferred past BOTH joins' $lookup/$unwind — see the chain-paging gap documented at
+                    // TranslateSelect's bare-value arm.
+                    mongoQueryExpression.Select.DeferPipelineOpsPastConfirmedJoin();
+                }
             }
         }
 
@@ -1993,9 +2017,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// A wrong-data guard that makes <see cref="MongoSelectDefinition.JoinScope"/> safe to consume.
     /// <see cref="RebindInnerShaperToOuterQuery"/> falls back to any navigation targeting the joined type, so
     /// <c>Owners.Join(Orders, o =&gt; o.Region, r =&gt; r.Region, …)</c> can resolve <c>Owner.Orders</c> and a
-    /// lookup on <c>_id</c>/<c>OwnerId</c>. That's harmless on driver-LINQ (only the output field name is used)
-    /// but joins on the wrong fields once confirmed natively. Composite or non-simple keys decline here. See
-    /// <c>NativeJoinTests.Navigation_less_key_equality_join_still_declines_cleanly_in_NativeOnly</c>.
+    /// lookup on <c>_id</c>/<c>OwnerId</c>, which would join on the wrong fields once confirmed natively. For simple
+    /// keys <see cref="RebindInnerShaperToOuterQuery"/> now discards such a navigation and builds a raw-key lookup
+    /// instead (<c>NativeJoinTests.Join_on_non_key_properties_between_navigation_related_types_joins_on_the_written_keys</c>);
+    /// composite or other non-simple keys still decline here.
     /// </remarks>
     private static bool JoinLookupImplementsKeySelectors(
         JoinInfo joinInfo,
@@ -2008,9 +2033,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return false;
         }
 
-        var outerKeyName = outerKeySelector.Body.TryGetSimplePropertyName();
-        var innerKeyName = innerKeySelector.Body.TryGetSimplePropertyName();
-        if (outerKeyName == null || innerKeyName == null)
+        if (outerKeySelector.Body.TryGetSimplePropertyName() == null
+            || innerKeySelector.Body.TryGetSimplePropertyName() == null)
         {
             return false;
         }
@@ -2022,11 +2046,35 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return true;
         }
 
+        return LookupImplementsKeySelectors(
+            lookup, joinInfo.Navigation, joinInfo.InnerEntityType, outerKeySelector, innerKeySelector);
+    }
+
+    /// <summary>
+    /// The navigation-backed half of <see cref="JoinLookupImplementsKeySelectors"/>, shared with
+    /// <see cref="RebindInnerShaperToOuterQuery"/>'s decision to discard a navigation whose <c>$lookup</c> would not
+    /// implement the written key equality: whether <paramref name="lookup"/>'s local/foreign fields are the element
+    /// paths of the join's own simple outer/inner key properties.
+    /// </summary>
+    private static bool LookupImplementsKeySelectors(
+        LookupExpression lookup,
+        INavigation navigation,
+        IEntityType innerEntityType,
+        LambdaExpression outerKeySelector,
+        LambdaExpression innerKeySelector)
+    {
+        var outerKeyName = outerKeySelector.Body.TryGetSimplePropertyName();
+        var innerKeyName = innerKeySelector.Body.TryGetSimplePropertyName();
+        if (outerKeyName == null || innerKeyName == null)
+        {
+            return false;
+        }
+
         // Resolve the outer property on the navigation's declaring type, not the root: for a chained join
         // (`e.r.Id`) that's the prior hop's inner type, and the root could hold a wrong same-named property.
-        var outerAnchorEntityType = joinInfo.Navigation!.DeclaringEntityType;
+        var outerAnchorEntityType = navigation.DeclaringEntityType;
         var outerProperty = outerAnchorEntityType.FindProperty(outerKeyName);
-        var innerProperty = joinInfo.InnerEntityType.FindProperty(innerKeyName);
+        var innerProperty = innerEntityType.FindProperty(innerKeyName);
         if (outerProperty == null || innerProperty == null)
         {
             return false;
@@ -2040,6 +2088,56 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             || lookup.LocalField.EndsWith("." + outerElementPath, StringComparison.Ordinal);
 
         return outerFieldMatches && lookup.ForeignField == LookupExpression.GetFieldPath(innerProperty);
+    }
+
+    /// <summary>
+    /// Builds the forced-unwind <c>$lookup</c> for a navigation-backed join hop, with its <c>localField</c>
+    /// prefixed by a transitive hop's alias and/or an owned/embedded path (EF-380). Shared by
+    /// <see cref="RebindInnerShaperToOuterQuery"/>'s real registration and its key-equality check, so the two
+    /// can never disagree about which fields the lookup joins on.
+    /// </summary>
+    private static LookupExpression BuildNavigationJoinLookup(
+        INavigation navigation, string alias, bool isLeftOuter, JoinInfo? throughJoin, string? embeddedPath)
+    {
+        var lookup = new LookupExpression(navigation, forceUnwind: true)
+        {
+            As = alias,
+            PreserveNullAndEmptyArrays = isLeftOuter
+        };
+        if (throughJoin != null)
+        {
+            // Transitive join: match against the already-unwound intermediate document; an
+            // owned/embedded navigation (EF-380) inserts its path between the intermediate's alias
+            // and the field.
+            var throughAlias = embeddedPath != null ? $"{throughJoin.Alias}.{embeddedPath}" : throughJoin.Alias;
+            lookup.LocalField = $"{throughAlias}.{lookup.LocalField}";
+        }
+        else if (embeddedPath != null)
+        {
+            // Direct from root, but through an owned/embedded navigation (EF-380).
+            lookup.LocalField = $"{embeddedPath}.{lookup.LocalField}";
+        }
+
+        return lookup;
+    }
+
+    /// <summary>
+    /// Resolves the raw outer/inner key properties a navigation-less (EF-377) join <c>$lookup</c> is built from:
+    /// <paramref name="fkPropertyName"/> on <paramref name="fkOwnerEntityType"/> (the root, or a transitive hop's
+    /// target) and the inner key selector's simple property on <paramref name="innerEntityType"/>.
+    /// </summary>
+    private static bool TryResolveRawKeyJoinProperties(
+        IEntityType fkOwnerEntityType,
+        IEntityType innerEntityType,
+        string? fkPropertyName,
+        LambdaExpression innerKeySelector,
+        [NotNullWhen(true)] out IProperty? outerProperty,
+        [NotNullWhen(true)] out IProperty? innerProperty)
+    {
+        var innerKeyPropertyName = innerKeySelector.Body.TryGetSimplePropertyName();
+        outerProperty = fkPropertyName != null ? fkOwnerEntityType.FindProperty(fkPropertyName) : null;
+        innerProperty = innerKeyPropertyName != null ? innerEntityType.FindProperty(innerKeyPropertyName) : null;
+        return outerProperty != null && innerProperty != null;
     }
 
     /// <summary>
@@ -2172,6 +2270,28 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 .FirstOrDefault(n => n.TargetEntityType == innerEntityType);
         }
 
+        // A navigation resolved above — by the FK match OR the loose "any navigation onto the joined type"
+        // fallback — is only usable if its $lookup reproduces the key equality the user actually WROTE. For a join
+        // on other properties between two navigation-related types (`Owners.Join(Orders, o => o.Region, r =>
+        // r.Region, ...)`), or a principal-key-to-FK join whose model only has the navigation pointing the OTHER
+        // way (`e1.EmployeeID equals e2.ReportsTo` with only Employee.Manager, EF Core's
+        // No_orderby_added_for_fully_translated_manually_constructed_LOJ), the resolved navigation's $lookup joins
+        // on completely different fields. Discard such a navigation and build the join as a navigation-less
+        // raw-key $lookup (the EF-377 branch below) — but only when both key selectors are simple properties that
+        // branch can actually resolve; anything else (composite keys, a key reached through an embedded hop) keeps
+        // the navigation exactly as before, and TranslateJoinCore's JoinLookupImplementsKeySelectors conjunct
+        // still declines it natively.
+        if (navigation != null
+            && !LookupImplementsKeySelectors(
+                BuildNavigationJoinLookup(navigation, alias: "", joinInfo.IsLeftOuter, throughJoin, embeddedPath),
+                navigation, innerEntityType, outerKeySelector, innerKeySelector)
+            && TryResolveRawKeyJoinProperties(
+                throughJoin?.InnerEntityType ?? outerEntityType, innerEntityType, fkPropertyName, innerKeySelector,
+                out _, out _))
+        {
+            navigation = null;
+        }
+
         // Document-shape decision (single source of truth): the driver's native LeftJoin
         // (producing { _outer, _inner }) is only viable for a SINGLE reference join. As soon
         // as a second cross-collection join appears we must flatten everything to root-level
@@ -2194,26 +2314,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         if (navigation != null)
         {
-            var lookup = new Expressions.LookupExpression(navigation, forceUnwind: true)
-            {
-                As = joinInfo.Alias,
-                PreserveNullAndEmptyArrays = joinInfo.IsLeftOuter
-            };
-            if (throughJoin != null)
-            {
-                // Transitive join: match against the already-unwound intermediate document; an
-                // owned/embedded navigation (EF-380) inserts its path between the intermediate's alias
-                // and the field.
-                var throughAlias = embeddedPath != null ? $"{throughJoin.Alias}.{embeddedPath}" : throughJoin.Alias;
-                lookup.LocalField = $"{throughAlias}.{lookup.LocalField}";
-            }
-            else if (embeddedPath != null)
-            {
-                // Direct from root, but through an owned/embedded navigation (EF-380).
-                lookup.LocalField = $"{embeddedPath}.{lookup.LocalField}";
-            }
-
-            joinInfo.Lookup = lookup;
+            joinInfo.Lookup = BuildNavigationJoinLookup(
+                navigation, joinInfo.Alias, joinInfo.IsLeftOuter, throughJoin, embeddedPath);
         }
         else if (fkPropertyName != null)
         {
@@ -2222,18 +2324,21 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // The FK-owning entity type is the root when isDirectFromRoot, or the through-hop's target
             // otherwise; the localField is scoped by the through-hop's alias the same way a
             // navigation-bearing transitive hop is above.
-            var fkOwnerEntityType = throughJoin?.InnerEntityType ?? outerEntityType;
-            var innerKeyPropertyName = innerKeySelector.Body.TryGetSimplePropertyName();
-            var outerProperty = fkOwnerEntityType.FindProperty(fkPropertyName);
-            var innerProperty = innerKeyPropertyName != null ? innerEntityType.FindProperty(innerKeyPropertyName) : null;
-            if (outerProperty != null && innerProperty != null)
+            if (TryResolveRawKeyJoinProperties(
+                    throughJoin?.InnerEntityType ?? outerEntityType, innerEntityType, fkPropertyName, innerKeySelector,
+                    out var outerProperty, out var innerProperty))
             {
+                // LookupExpression.GetFieldPath, not a bare GetElementName(): a property that is one component of a
+                // composite primary key is stored nested under _id ("_id.ProductId"), so the bare element name names
+                // no field at all and the $lookup silently matches nothing (MEASURED, every query mode — pinned by
+                // NativeCompositeKeyJoinTests). The navigation-backed branch above already builds its fields this way.
+                var outerFieldPath = LookupExpression.GetFieldPath(outerProperty);
                 var localField = throughJoin != null
-                    ? $"{throughJoin.Alias}.{outerProperty.GetElementName()}"
-                    : outerProperty.GetElementName();
+                    ? $"{throughJoin.Alias}.{outerFieldPath}"
+                    : outerFieldPath;
 
                 joinInfo.Lookup = new Expressions.LookupExpression(
-                    innerEntityType, innerEntityType.GetCollectionName(), localField, innerProperty.GetElementName(),
+                    innerEntityType, innerEntityType.GetCollectionName(), localField, LookupExpression.GetFieldPath(innerProperty),
                     joinInfo.Alias, forceUnwind: true)
                 {
                     PreserveNullAndEmptyArrays = joinInfo.IsLeftOuter

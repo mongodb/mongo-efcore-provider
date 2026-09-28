@@ -40,10 +40,11 @@ internal static class NativeJoinScopeTranslator
         => TryTranslateCore(scope, rootParam, body, valueMode: true, out result);
 
     /// <summary>
-    /// Whether <paramref name="body"/> references the join's Inner side. <c>NativeSlotPopulator</c>'s <c>Where</c>
-    /// arm rejects such bodies: <c>$match</c> is lowered before the <c>$lookup</c> that materializes Inner, so it
-    /// would filter on a field that doesn't exist yet and silently match nothing. <see cref="TryTranslatePredicate"/>
-    /// itself stays general-purpose.
+    /// Whether <paramref name="body"/> references the join's Inner side. <c>NativeSlotPopulator</c>'s Outer-only
+    /// <c>Where</c>/<c>OrderBy</c> arms reject such bodies: they record into <c>PipelineOps</c>, which lower before the
+    /// <c>$lookup</c> that materializes Inner, so they would filter on a field that doesn't exist yet and silently
+    /// match nothing. Inner-reaching bodies go to the separate Inner arms, which use the same general-purpose
+    /// <see cref="TryTranslatePredicate"/>/<see cref="TryTranslateValue"/> but defer into <c>PostJoinOps</c>.
     /// </summary>
     public static bool ReferencesInnerScope(ParameterExpression rootParam, Expression body)
     {
@@ -335,10 +336,10 @@ internal static class NativeJoinScopeTranslator
         //
         // Residual gap: after `.Join(a, b, ...).Select(x => x.Outer).Join(c, d, ...)` the second join's flat
         // TransparentIdentifier can match the first join's recorded types exactly, and this type check can't tell
-        // them apart — scope.InnerPrefix would name the wrong $lookup alias, silently producing wrong data. The Where
-        // arm avoids it by rejecting all Inner access (ReferencesInnerScope); the Select arms close it via
-        // scope.Levels.Count == Joins.Count (see MongoQueryableMethodTranslatingExpressionVisitor). Any new caller
-        // needing Inner access must do likewise.
+        // them apart — scope.InnerPrefix would name the wrong $lookup alias, silently producing wrong data. Every
+        // Inner-reaching caller closes it by requiring a single join: the Where/OrderBy Inner arms check
+        // `mongoQ.Joins.Count == 1`, the Select arms `scope.Levels.Count == Joins.Count` with a depth-1 scope (see
+        // MongoQueryableMethodTranslatingExpressionVisitor). Any new caller needing Inner access must do likewise.
         //
         // EF's TransparentIdentifier exposes Outer/Inner as fields, not properties; see
         // ExpressionExtensionMethods.IsTransparentIdentifierType.
