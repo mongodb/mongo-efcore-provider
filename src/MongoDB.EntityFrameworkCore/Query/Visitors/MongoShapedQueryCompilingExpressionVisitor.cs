@@ -332,11 +332,18 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // element names; the client-side shaper handles the projection. The Select may sit
         // directly on the captured expression, or under a no-arg cardinality terminator
         // (Single/First/etc.) which we also need to rebind to the un-projected source type.
+        //
+        // When an operator composes over the projecting Select (Distinct, a set op), it survives the strip (only a
+        // trailing, possibly identity, Select is removed) and the driver returns projected documents, which lack an
+        // owned-reference leaf's owner key. Detected by the remaining chain no longer yielding entity documents.
         mongoQueryExpression.CapturedExpression = StripPushedDownSelect(mongoQueryExpression.CapturedExpression);
+        var pushedDownSelectRetained = mongoQueryExpression.CapturedExpression is { } strippedCaptured
+                                       && rootEntityType.Model.FindEntityType(
+                                           GetQueryableElementType(strippedCaptured.Type)) == null;
 
         return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
             (bsonDoc, behavior) => new MongoMixedProjectionBindingRemovingExpressionVisitor(
-                rootEntityType, mongoQueryExpression, bsonDoc, behavior));
+                rootEntityType, mongoQueryExpression, bsonDoc, behavior, pushedDownSelectRetained));
     }
 
     /// <summary>
@@ -471,6 +478,15 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         return captured;
     }
+
+    // The element type of an IQueryable<T> chain, or the type itself for a cardinality terminal (First, Single, ...).
+    private static Type GetQueryableElementType(Type type)
+        => type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IQueryable<>)
+            ? type.GetGenericArguments()[0]
+            : type.GetInterfaces()
+                  .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IQueryable<>))
+                  ?.GetGenericArguments()[0]
+              ?? type;
 
     /// <summary>
     /// Whether a native-factory decline on the <see cref="NativeRoute.Projection"/> route must strip the

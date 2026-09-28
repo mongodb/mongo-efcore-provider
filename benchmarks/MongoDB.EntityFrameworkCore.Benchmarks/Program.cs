@@ -66,12 +66,13 @@ if (args.Contains("--verify-native"))
             Console.WriteLine($"OrderByTake:       NATIVE OK (count={count})");
         });
 
-        // ReferenceInclude — expected to throw NativeTranslationNotSupportedException (Include deferred)
+        // ReferenceInclude — expected native
         RunShape("ReferenceInclude: ", () =>
         {
             using var ctx = new BenchmarkDbContext(nativeOnlyOptions);
             var count = ctx.Reviews.AsNoTracking().Include(r => r.Product).ToList().Count;
-        }, expectFallback: true);
+            Console.WriteLine($"ReferenceInclude:  NATIVE OK (count={count})");
+        });
 
         Console.WriteLine("=== verification done ===");
     }

@@ -573,12 +573,13 @@ public class MongoExpressionNodeCoverageTests
         ["MongoLookupNullCheckExpression|QL.IsQueryDialectRenderable"] = "false",
         ["MongoLookupNullCheckExpression|QL.Render"] = "rendered",
 
-        // Query-dialect-only by design: produced only as the Left conjunct of a translator-built AndAlso beside an
-        // $expr sibling, so it is never negated or rendered inside $expr. AllFieldsDefaultSerialized falls open
-        // to true, which is fine: it is only constructed after CanFallThroughToExpr confirmed default
-        // serialization.
-        ["MongoNumericTypeBracketExpression|Agg.CanRender"] = "false",
-        ["MongoNumericTypeBracketExpression|Agg.Render"] = "declined",
+        // Produced only as the Left conjunct of a translator-built AndAlso beside an $expr sibling. Renders in both
+        // dialects ($type: "number" / $isNumber), since a negated, ternary or sort-key comparison renders the whole
+        // conjunction via $expr. The negator declines it (a negated conjunction is $not-wrapped whole instead).
+        // AllFieldsDefaultSerialized falls open to true, which is fine: it is only constructed after
+        // CanFallThroughToExpr confirmed default serialization.
+        ["MongoNumericTypeBracketExpression|Agg.CanRender"] = "true",
+        ["MongoNumericTypeBracketExpression|Agg.Render"] = "rendered",
         ["MongoNumericTypeBracketExpression|AllFieldsDefaultSerialized"] = "true",
         ["MongoNumericTypeBracketExpression|AllFieldsDefaultSerialized(converted)"] = "true",
         ["MongoNumericTypeBracketExpression|Negator.TryNegate"] = "false",

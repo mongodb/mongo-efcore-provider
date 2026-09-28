@@ -253,6 +253,156 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
         Assert.Equal([2, 3, 1], actual);
     }
 
+#if !EF8 && !EF9
+    // Two-level chains spelled with EF10's LeftJoin operator (the GroupJoin/SelectMany/DefaultIfEmpty spelling is
+    // above). Seed rows exercise every unmatched shape: a matched region, a dangling RegionId, a null RegionId,
+    // and (for the left-left chains) an order whose customer is dangling, so level 1 is unmatched too. Every
+    // unmatched row must read the ternary's ELSE value, never a bare null or a default. The DriverLinq rows guard
+    // the fallback's missing -> null normalization after a preserved forced $unwind
+    // (MongoEFToLinqTranslatingExpressionVisitor.LeftJoin.cs): with it disabled, every explicit-LeftJoin DriverLinq
+    // row returns null for the unmatched rows.
+    [Theory]
+    [InlineData(MongoQueryMode.Native, "JoinThenLeftJoinBareTernary")]
+    [InlineData(MongoQueryMode.DriverLinq, "JoinThenLeftJoinBareTernary")]
+    [InlineData(MongoQueryMode.Native, "LeftJoinThenLeftJoinBareTernary")]
+    [InlineData(MongoQueryMode.DriverLinq, "LeftJoinThenLeftJoinBareTernary")]
+    [InlineData(MongoQueryMode.Native, "LeftJoinThenLeftJoinFirstLevelTernary")]
+    [InlineData(MongoQueryMode.DriverLinq, "LeftJoinThenLeftJoinFirstLevelTernary")]
+    [InlineData(MongoQueryMode.Native, "LeftJoinThenLeftJoinWrappedTernary")]
+    [InlineData(MongoQueryMode.DriverLinq, "LeftJoinThenLeftJoinWrappedTernary")]
+    [InlineData(MongoQueryMode.Native, "LeftJoinThenLeftJoinResultSelectorTernary")]
+    [InlineData(MongoQueryMode.DriverLinq, "LeftJoinThenLeftJoinResultSelectorTernary")]
+    [InlineData(MongoQueryMode.Native, "JoinThenLeftJoinResultSelectorTernary")]
+    [InlineData(MongoQueryMode.DriverLinq, "JoinThenLeftJoinResultSelectorTernary")]
+    [InlineData(MongoQueryMode.Native, "TwoHopNavigationTernary")]
+    [InlineData(MongoQueryMode.DriverLinq, "TwoHopNavigationTernary")]
+    [InlineData(MongoQueryMode.Native, "TwoHopNavigationWrappedTernary")]
+    [InlineData(MongoQueryMode.DriverLinq, "TwoHopNavigationWrappedTernary")]
+    public void Nav_null_check_ternary_over_a_two_level_LeftJoin_chain_matches_oracle(MongoQueryMode mode, string shape)
+    {
+        var (ordersName, customersName, regionsName) =
+            CreateCollectionNames(nameof(Nav_null_check_ternary_over_a_two_level_LeftJoin_chain_matches_oracle) + shape);
+
+        var matchedRegionId = ObjectId.GenerateNewId();
+        var danglingRegionId = ObjectId.GenerateNewId();
+        var danglingCustomerId = ObjectId.GenerateNewId();
+        var matchedCustomerId = ObjectId.GenerateNewId();
+        var danglingRegionCustomerId = ObjectId.GenerateNewId();
+        var nullRegionCustomerId = ObjectId.GenerateNewId();
+
+        using (var seed = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryMode.DriverLinq))
+        {
+            seed.Set<Region>().Add(new Region { Id = matchedRegionId, Name = "Western Europe" });
+            seed.Set<Customer>().AddRange(
+                new Customer { Id = matchedCustomerId, Name = "Alfreds", RegionId = matchedRegionId },
+                new Customer { Id = danglingRegionCustomerId, Name = "Blauer", RegionId = danglingRegionId },
+                new Customer { Id = nullRegionCustomerId, Name = "Chop-suey", RegionId = null });
+            seed.Set<Order>().AddRange(
+                new Order { Id = ObjectId.GenerateNewId(), OrderNo = 1, CustomerId = matchedCustomerId },
+                new Order { Id = ObjectId.GenerateNewId(), OrderNo = 2, CustomerId = danglingRegionCustomerId },
+                new Order { Id = ObjectId.GenerateNewId(), OrderNo = 3, CustomerId = nullRegionCustomerId },
+                new Order { Id = ObjectId.GenerateNewId(), OrderNo = 4, CustomerId = danglingCustomerId });
+            seed.SaveChanges();
+        }
+
+        using var db = new JoinScopeDbContext(database, ordersName, customersName, regionsName, mode);
+        var actual = RunTwoLevelLeftJoinTernary(db.Set<Order>(), db.Set<Customer>(), db.Set<Region>(), shape);
+
+        using var oracleDb = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryMode.DriverLinq);
+        var expected = RunTwoLevelLeftJoinTernaryOracle(
+            oracleDb.Set<Order>().AsNoTracking().ToList(),
+            oracleDb.Set<Customer>().AsNoTracking().ToList(),
+            oracleDb.Set<Region>().AsNoTracking().ToList(),
+            shape);
+
+        Assert.Contains(expected, e => e.Contains(NoneSentinel, StringComparison.Ordinal));
+        Assert.Equal(expected, actual);
+    }
+
+    private static System.Collections.Generic.List<string> RunTwoLevelLeftJoinTernary(
+        IQueryable<Order> orders, IQueryable<Customer> customers, IQueryable<Region> regions, string shape)
+        => shape switch
+        {
+            "JoinThenLeftJoinBareTernary" => orders
+                .Join(customers, o => o.CustomerId, c => (ObjectId?)c.Id, (o, c) => new { o, c })
+                .LeftJoin(regions, x => x.c.RegionId, r => (ObjectId?)r.Id, (x, r) => new { x.o, x.c, r })
+                .OrderBy(x => x.o.OrderNo)
+                .Select(x => x.r != null ? x.r.Name : NoneSentinel)
+                .AsEnumerable().Select(s => s ?? "<null>").ToList(),
+            "LeftJoinThenLeftJoinBareTernary" => orders
+                .LeftJoin(customers, o => o.CustomerId, c => (ObjectId?)c.Id, (o, c) => new { o, c })
+                .LeftJoin(regions, x => x.c.RegionId, r => (ObjectId?)r.Id, (x, r) => new { x.o, x.c, r })
+                .OrderBy(x => x.o.OrderNo)
+                .Select(x => x.r != null ? x.r.Name : NoneSentinel)
+                .AsEnumerable().Select(s => s ?? "<null>").ToList(),
+            "LeftJoinThenLeftJoinFirstLevelTernary" => orders
+                .LeftJoin(customers, o => o.CustomerId, c => (ObjectId?)c.Id, (o, c) => new { o, c })
+                .LeftJoin(regions, x => x.c.RegionId, r => (ObjectId?)r.Id, (x, r) => new { x.o, x.c, r })
+                .OrderBy(x => x.o.OrderNo)
+                .Select(x => x.c != null ? x.c.Name : NoneSentinel)
+                .AsEnumerable().Select(s => s ?? "<null>").ToList(),
+            "LeftJoinThenLeftJoinWrappedTernary" => orders
+                .LeftJoin(customers, o => o.CustomerId, c => (ObjectId?)c.Id, (o, c) => new { o, c })
+                .LeftJoin(regions, x => x.c.RegionId, r => (ObjectId?)r.Id, (x, r) => new { x.o, x.c, r })
+                .OrderBy(x => x.o.OrderNo)
+                .Select(x => new { x.o.OrderNo, Region = x.r != null ? x.r.Name : NoneSentinel })
+                .AsEnumerable().Select(x => x.OrderNo + ":" + (x.Region ?? "<null>")).ToList(),
+            "LeftJoinThenLeftJoinResultSelectorTernary" => orders
+                .LeftJoin(customers, o => o.CustomerId, c => (ObjectId?)c.Id, (o, c) => new { o, c })
+                .LeftJoin(regions, x => x.c.RegionId, r => (ObjectId?)r.Id,
+                    (x, r) => new { x.o.OrderNo, Region = r != null ? r.Name : NoneSentinel })
+                .OrderBy(x => x.OrderNo)
+                .AsEnumerable().Select(x => x.OrderNo + ":" + (x.Region ?? "<null>")).ToList(),
+            "JoinThenLeftJoinResultSelectorTernary" => orders
+                .Join(customers, o => o.CustomerId, c => (ObjectId?)c.Id, (o, c) => new { o, c })
+                .LeftJoin(regions, x => x.c.RegionId, r => (ObjectId?)r.Id,
+                    (x, r) => new { x.o.OrderNo, Region = r != null ? r.Name : NoneSentinel })
+                .OrderBy(x => x.OrderNo)
+                .AsEnumerable().Select(x => x.OrderNo + ":" + (x.Region ?? "<null>")).ToList(),
+            // The same two left-outer levels reached through optional reference navigations, which EF expands
+            // into the LeftJoin chain itself.
+            "TwoHopNavigationTernary" => orders
+                .OrderBy(o => o.OrderNo)
+                .Select(o => o.Customer!.Region != null ? o.Customer.Region.Name : NoneSentinel)
+                .AsEnumerable().Select(s => s ?? "<null>").ToList(),
+            "TwoHopNavigationWrappedTernary" => orders
+                .OrderBy(o => o.OrderNo)
+                .Select(o => new { o.OrderNo, Region = o.Customer!.Region != null ? o.Customer.Region.Name : NoneSentinel })
+                .AsEnumerable().Select(x => x.OrderNo + ":" + (x.Region ?? "<null>")).ToList(),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape))
+        };
+
+    // LINQ-to-Objects spelling of the shapes above: the same operators, with `?.` where the database query's
+    // null-propagating member access would dereference an unmatched level-1 row in memory.
+    private static System.Collections.Generic.List<string> RunTwoLevelLeftJoinTernaryOracle(
+        System.Collections.Generic.List<Order> orders, System.Collections.Generic.List<Customer> customers,
+        System.Collections.Generic.List<Region> regions, string shape)
+    {
+        var innerFirst = orders
+            .Join(customers, o => o.CustomerId, c => (ObjectId?)c.Id, (o, c) => new { o, c = (Customer?)c })
+            .LeftJoin(regions, x => x.c?.RegionId, r => (ObjectId?)r.Id, (x, r) => new { x.o, x.c, r })
+            .OrderBy(x => x.o.OrderNo)
+            .ToList();
+        var leftFirst = orders
+            .LeftJoin(customers, o => o.CustomerId, c => (ObjectId?)c.Id, (o, c) => new { o, c })
+            .LeftJoin(regions, x => x.c?.RegionId, r => (ObjectId?)r.Id, (x, r) => new { x.o, x.c, r })
+            .OrderBy(x => x.o.OrderNo)
+            .ToList();
+
+        return shape switch
+        {
+            "JoinThenLeftJoinBareTernary" => innerFirst.Select(x => x.r != null ? x.r.Name! : NoneSentinel).ToList(),
+            "LeftJoinThenLeftJoinBareTernary" or "TwoHopNavigationTernary" => leftFirst.Select(x => x.r != null ? x.r.Name! : NoneSentinel).ToList(),
+            "LeftJoinThenLeftJoinFirstLevelTernary" => leftFirst.Select(x => x.c != null ? x.c.Name! : NoneSentinel).ToList(),
+            "LeftJoinThenLeftJoinWrappedTernary" or "LeftJoinThenLeftJoinResultSelectorTernary" or "TwoHopNavigationWrappedTernary"
+                => leftFirst.Select(x => x.o.OrderNo + ":" + (x.r != null ? x.r.Name : NoneSentinel)).ToList(),
+            "JoinThenLeftJoinResultSelectorTernary"
+                => innerFirst.Select(x => x.o.OrderNo + ":" + (x.r != null ? x.r.Name : NoneSentinel)).ToList(),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape))
+        };
+    }
+#endif
+
     private static (string Orders, string Customers, string Regions) CreateCollectionNames(string testName)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];

@@ -326,6 +326,49 @@ internal static class BsonBinding
         throw new InvalidOperationException($"Document element is missing for required non-nullable property '{property.Name}'.");
     }
 
+    /// <summary>
+    /// Create the expression which reads <paramref name="property"/> like <see cref="GetPropertyValue{T}"/>, but yields
+    /// <paramref name="placeholder"/> instead of throwing when the element is absent from the document.
+    /// </summary>
+    /// <remarks>
+    /// Only for an owner key the shaped document legitimately lacks, where the value is unobservable (see
+    /// <c>MongoProjectionBindingRemovingExpressionVisitor.OwnerKeyMayBeAbsent</c>). The placeholder must be non-null
+    /// so the materializer's null-key check doesn't turn the owned entity into <see langword="null"/>.
+    /// </remarks>
+    internal static MethodCallExpression CreateGetPropertyValueOrPlaceholder(
+        Expression bsonDocExpression, IReadOnlyProperty property, Type resultType, object placeholder)
+        => Expression.Call(
+            null,
+            GetPropertyValueOrPlaceholderMethodInfo.MakeGenericMethod(resultType),
+            bsonDocExpression,
+            Expression.Constant(property, typeof(IReadOnlyProperty)),
+            Expression.Constant(placeholder, resultType));
+
+    private static readonly MethodInfo GetPropertyValueOrPlaceholderMethodInfo
+        = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Single(mi => mi.Name == nameof(GetPropertyValueOrPlaceholder));
+
+    internal static T? GetPropertyValueOrPlaceholder<T>(BsonDocument? document, IReadOnlyProperty property, T placeholder)
+    {
+        if (document == null)
+        {
+            return default;
+        }
+
+        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
+        if (!TryReadElementValue(document, serializationInfo, out T? value))
+        {
+            return placeholder;
+        }
+
+        if (value == null && !property.IsNullable)
+        {
+            throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name}'.");
+        }
+
+        return value;
+    }
+
     internal static T? GetPropertyValueAtElement<T>(BsonDocument document, string elementName, IReadOnlyProperty property)
     {
         var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);

@@ -1715,7 +1715,8 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
     // NorthwindWhereQueryMongoTest.Decimal_cast_to_double_works is this shape.
     //
     // Controls: equality over the same nullable property needs no bracket ($eq/$ne partition every BSON value), and
-    // a relational comparison over a non-nullable property is case 27's shape, left unbracketed (see 34b).
+    // a relational comparison over a non-nullable property still goes native (case 27's shape; it is bracketed
+    // too, see 34b).
 
     private class NullablePriceRow
     {
@@ -1755,7 +1756,7 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
                     .OrderBy(x => x.Label).Select(x => x.Label).ToList());
         }
 
-        // Control 2 — relational over a non-nullable property goes native without a bracket (case 27's shape).
+        // Control 2 — relational over a non-nullable property goes native (case 27's shape).
         // Weight: p1 = 1.6, p2 = 0.5, p3 = 2.5, p4 = missing -> (int) 1, 0, 2, null.
         using (var relNativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly))
         {
@@ -1766,38 +1767,72 @@ public class NativeCastTests(TemporaryDatabaseFixture database) : IClassFixture<
         }
     }
 
-    // ── 34b. Known residual, pinned as measured (not as correct) ─────────────────────────────────────
+    // ── 34b. A missing element on a NON-nullable property is type-bracketed too ─────────────────────
     //
-    // A missing element on a non-nullable property also escapes type bracketing: p4_missing has no Weight, $toInt
-    // yields null, and null < 2 is true:
+    // p4_missing has no Weight, so $toInt yields null, and null < 2 is true in bare $expr. Driver-LINQ's query
+    // dialect excludes the row, so native used to return one extra row:
     //
-    //   Native / NativeOnly : {$expr: {$lt: [{$toInt: "$Weight"}, 2]}} -> p1_50, p2_150, p4_missing
-    //   DriverLinq          : {Weight: {$lt: 2}}                       -> p1_50, p2_150
+    //   bare $expr : {$expr: {$lt: [{$toInt: "$Weight"}, 2]}}                       -> p1_50, p2_150, p4_missing
+    //   DriverLinq : {Weight: {$lt: 2}}                                              -> p1_50, p2_150
+    //   bracketed  : {$and: [{Weight: {$type: "number"}}, {$expr: {$lt: [...]}}]}    -> p1_50, p2_150
     //
-    // Not closed: bracketing every relational cast would revoke case 27's CLR-correct fall-through, and the
-    // document violates the model (the read path rejects a missing required element), so there is no CLR oracle.
+    // The document violates the model (materializing it throws), so there is no CLR oracle, but a label
+    // projection or Count never materializes it. NeedsNumericTypeBracket therefore brackets every relational
+    // cast, not just nullable ones. That can't change case 27's CLR answer: the bracket only removes non-numeric
+    // rows. The thresholds here are chosen so truncation and the driver's dropped cast (case 27) agree, which
+    // isolates the missing row.
+    //
+    // A negated comparison renders the whole conjunction in $expr, where the bracket is {$isNumber: "$Weight"}:
+    //   {$expr: {$not: [{$and: [{$isNumber: "$Weight"}, {$lt: [{$toInt: "$Weight"}, 2]}]}]}}
+    // That is the exact complement, and matches driver-LINQ's {Weight: {$not: {$lt: 2}}} (includes missing).
 
     [Fact]
-    public void Missing_element_on_a_NON_nullable_property_still_reaches_the_untype_bracketed_expr_form()
+    public void Missing_element_on_a_NON_nullable_property_is_type_bracketed_and_matches_driver_linq()
     {
         var collection = SeedNullablePrices(
-            nameof(Missing_element_on_a_NON_nullable_property_still_reaches_the_untype_bracketed_expr_form));
+            nameof(Missing_element_on_a_NON_nullable_property_is_type_bracketed_and_matches_driver_linq));
 
-        using var nativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly);
-        Assert.Equal(
-            ["p1_50", "p2_150", "p4_missing"],
-            nativeOnly.Entities.AsNoTracking().Where(x => (int)x.Weight < 2)
-                .OrderBy(x => x.Label).Select(x => x.Label).ToList());
+        // Weight: p1 = 1.6, p2 = 0.5, p3 = 2.5, p4 = missing -> (int) 1, 0, 2, (none).
+        AssertRelationalCastGoesNative(collection, x => (int)x.Weight < 2, ["p1_50", "p2_150"]);
+        AssertRelationalCastGoesNative(collection, x => (int)x.Weight >= 2, ["p3_null"]);
+        AssertRelationalCastGoesNative(collection, x => 2 > (int)x.Weight, ["p1_50", "p2_150"]);
 
-        using var driverLinq = CreateNullablePriceContext(collection, MongoQueryMode.DriverLinq);
-        Assert.Equal(
-            ["p1_50", "p2_150"],
-            driverLinq.Entities.AsNoTracking().Where(x => (int)x.Weight < 2)
-                .OrderBy(x => x.Label).Select(x => x.Label).ToList());
+        // Negated: the missing row is in the complement, as with driver-LINQ's $not.
+        AssertRelationalCastGoesNative(collection, x => !((int)x.Weight < 2), ["p3_null", "p4_missing"]);
+
+        // Count never materializes the entity, so it would have counted p4_missing.
+        using (var nativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly))
+            Assert.Equal(2, nativeOnly.Entities.Count(x => (int)x.Weight < 2));
+        using (var driverLinq = CreateNullablePriceContext(collection, MongoQueryMode.DriverLinq))
+            Assert.Equal(2, driverLinq.Entities.Count(x => (int)x.Weight < 2));
+
+        // A ternary projection renders the bracket in the aggregation dialect ($isNumber) and agrees with Where.
+        using (var nativeOnly = CreateNullablePriceContext(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Equal(
+                ["y", "y", "n", "n"],
+                nativeOnly.Entities.AsNoTracking().OrderBy(x => x.Label)
+                    .Select(x => (int)x.Weight < 2 ? "y" : "n").ToList());
+        }
 
         // Premise: no CLR oracle, because materializing p4_missing throws.
         using var oracle = CreateNullablePriceContext(collection, MongoQueryMode.Native);
         Assert.Throws<InvalidOperationException>(() => oracle.Entities.AsNoTracking().ToList());
+    }
+
+    // ── 34c. A negated relational cast over a NULLABLE property goes native ─────────────────────────
+    //
+    // Same aggregation-dialect bracket: !((int?)x.Price < 100) is true for null in C#, and the $not-wrapped
+    // conjunction answers true for null and missing, matching driver-LINQ's {Price: {$not: {$lt: 100}}}.
+
+    [Fact]
+    public void Negated_relational_cast_over_a_nullable_property_goes_native_and_includes_null_and_missing()
+    {
+        var collection = SeedNullablePrices(
+            nameof(Negated_relational_cast_over_a_nullable_property_goes_native_and_includes_null_and_missing));
+
+        AssertRelationalCastGoesNative(
+            collection, x => !((int?)x.Price < 100), ["p2_150", "p3_null", "p4_missing"]);
     }
 
     private void AssertRelationalCastGoesNative(

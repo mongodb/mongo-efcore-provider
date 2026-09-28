@@ -275,7 +275,7 @@ internal static class NativeSlotPopulator
             if (mongoQ.Joins.Count == 0)
                 mongoQ.Select.MarkPagingRecordedBeforeAnyJoin();
             else
-                mongoQ.Select.MarkPagingRecordedAfterAJoin();
+                mongoQ.Select.MarkPagingRecordedAfterAJoin(mongoQ.Joins.Count);
             PopulatePagingSlot(mongoQ, call, mongoQ.Select.AppendSkip);
         }
         else if (methodDefinition == QueryableMethods.Take)
@@ -283,7 +283,7 @@ internal static class NativeSlotPopulator
             if (mongoQ.Joins.Count == 0)
                 mongoQ.Select.MarkPagingRecordedBeforeAnyJoin();
             else
-                mongoQ.Select.MarkPagingRecordedAfterAJoin();
+                mongoQ.Select.MarkPagingRecordedAfterAJoin(mongoQ.Joins.Count);
             PopulatePagingSlot(mongoQ, call, mongoQ.Select.AppendLimit);
         }
         else if (methodDefinition == QueryableMethods.Reverse)

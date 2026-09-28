@@ -405,6 +405,12 @@ internal sealed partial class MongoExpressionTranslator
     /// Recognizes <c>string.Length</c> (<c>x.Name.Length</c>) — the only member the aggregation dialect has a
     /// dedicated operator for (<c>$strLenCP</c>). A receiver that isn't <see cref="string"/> is left unmatched.
     /// </summary>
+    /// <remarks>
+    /// <c>$strLenCP</c> counts Unicode code points, whereas .NET counts UTF-16 code units, so a string with a
+    /// surrogate pair (e.g. an emoji) is one shorter per pair than in C#. That matches driver-LINQ, which also
+    /// renders <c>$strLenCP</c> (<c>LengthPropertyToAggregationExpressionTranslator</c>), and the other code-point
+    /// operators used here (<c>$indexOfCP</c>, <c>$substrCP</c>). Pinned by <c>NativeStringLengthTests</c>.
+    /// </remarks>
     private static bool TryMatchStringLength(Expression node, [NotNullWhen(true)] out Expression? receiver)
     {
         receiver = null;

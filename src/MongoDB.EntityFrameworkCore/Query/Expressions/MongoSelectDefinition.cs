@@ -800,9 +800,31 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     internal bool HasPagingRecordedAfterAJoin => _hasPagingRecordedAfterAJoin;
 
-    /// <summary>Records that a <c>Skip</c>/<c>Take</c> was recorded while a join already existed on this select.
-    /// See <see cref="HasPagingRecordedAfterAJoin"/>.</summary>
-    internal void MarkPagingRecordedAfterAJoin() => _hasPagingRecordedAfterAJoin = true;
+    /// <summary>Records that a <c>Skip</c>/<c>Take</c> was recorded while <paramref name="joinCount"/> (at least one)
+    /// joins already existed on this select. See <see cref="HasPagingRecordedAfterAJoin"/> and
+    /// <see cref="HasPagingRecordedBetweenJoins"/>.</summary>
+    internal void MarkPagingRecordedAfterAJoin(int joinCount)
+    {
+        _hasPagingRecordedAfterAJoin = true;
+        _minJoinCountAtPagingAfterAJoin = _minJoinCountAtPagingAfterAJoin is { } existing
+            ? Math.Min(existing, joinCount)
+            : joinCount;
+    }
+
+    private int? _minJoinCountAtPagingAfterAJoin;
+
+    /// <summary>
+    /// <see langword="true"/> when a <c>Skip</c>/<c>Take</c> recorded after a join was recorded while FEWER than
+    /// <paramref name="finalJoinCount"/> joins existed, i.e. it was written BETWEEN two joins of a chain
+    /// (<c>Join(a, …).Skip(1).Take(2).Join(b, …)</c>) and pages the rows the earlier join(s) produced. The single
+    /// deferred <see cref="PostLookupPagingOps"/> snapshot runs after EVERY join's <c>$lookup</c>/<c>$unwind</c>, so it
+    /// would page the fully joined result instead — silently wrong rows whenever a later join changes the row count.
+    /// <c>IsSingleEligibleNativeJoinScope</c> declines such a chain (the driver-LINQ fallback emits each
+    /// <c>$lookup</c> at its own boundary). Paging hoisted forward past the whole chain's pending selector is
+    /// recorded with every join present and is unaffected.
+    /// </summary>
+    internal bool HasPagingRecordedBetweenJoins(int finalJoinCount)
+        => _minJoinCountAtPagingAfterAJoin is { } min && min < finalJoinCount;
 
     private readonly List<MongoUnwindSource> _unwindSources = [];
 

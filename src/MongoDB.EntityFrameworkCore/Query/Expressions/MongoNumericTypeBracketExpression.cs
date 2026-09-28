@@ -23,11 +23,13 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 /// <remarks>
 /// Emitted by <see cref="MongoDB.EntityFrameworkCore.Query.NativeTranslation.MongoExpressionTranslator"/> as the left
-/// <see cref="MongoBinaryOperator.AndAlso"/> conjunct beside a numeric-cast relational comparison over a nullable
-/// property that renders via <c>$expr</c>. The query dialect type-brackets relational operators, but <c>$expr</c>
-/// treats missing as null and sorts null below every number, so without this bracket <c>&lt;</c>/<c>&lt;=</c> would
-/// silently admit missing/null rows. <c>{ $ne: null }</c> wouldn't exclude foreign types. Query-dialect only: it is
-/// always a top-level <c>$match</c> conjunct, never inside <c>$expr</c>.
+/// <see cref="MongoBinaryOperator.AndAlso"/> conjunct beside a numeric-cast relational comparison that renders via
+/// <c>$expr</c>. The query dialect type-brackets relational operators, but <c>$expr</c> treats missing as null and
+/// sorts null below every number, so without this bracket <c>&lt;</c>/<c>&lt;=</c> would silently admit missing/null
+/// rows. <c>{ $ne: null }</c> wouldn't exclude foreign types. Renders as <c>{ field: { $type: "number" } }</c> at
+/// query level and as the equivalent <c>{ $isNumber: "$field" }</c> in the aggregation dialect (a negated, ternary,
+/// projected or sort-key comparison). The negator declines it; a negated bracketed comparison is instead
+/// <c>$not</c>-wrapped whole, which is its exact complement.
 /// </remarks>
 internal sealed class MongoNumericTypeBracketExpression(MongoFieldExpression field) : MongoExpression
 {

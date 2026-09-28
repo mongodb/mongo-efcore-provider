@@ -971,29 +971,30 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         }
     }
 
-    // For a shadow-key element the operand-position fallback crashes in both fallback-capable modes. Believed
-    // cause (not asserted here — only the exception message is): the driver pushes the projected-operand set op
-    // server-side with `_id: 0`, stripping the owner key the element shaper reads. DriverLinq never consults the
-    // native binder, so declining restores the pre-existing behavior; admitting the leaf would return data with
-    // silently changed set semantics.
+    // For a shadow-key element the operand-position fallback pushes the projected-operand set op server-side with
+    // `_id: 0`, stripping the owner key the element shaper reads. Under NoTracking that key is unobservable, so the
+    // mixed shaper reads it as a placeholder and the fallback returns the value-deduped rows. Natively the leaf is
+    // still declined: admitting it would leak the owner _id into the dedup key and change set semantics.
     [Fact]
-    public void Array_leaf_in_a_projected_union_operand_with_a_shadow_key_element_lands_on_the_pre_existing_fallback_crash()
+    public void Array_leaf_in_a_projected_union_operand_with_a_shadow_key_element_falls_back_correctly()
     {
         var collection = SeedShadow(
-            nameof(Array_leaf_in_a_projected_union_operand_with_a_shadow_key_element_lands_on_the_pre_existing_fallback_crash));
+            nameof(Array_leaf_in_a_projected_union_operand_with_a_shadow_key_element_falls_back_correctly));
 
-        static List<object> Run(SingleEntityDbContext<Blog> db)
+        static List<(string Title, string Headings)> Run(SingleEntityDbContext<Blog> db)
             => db.Set<Blog>().AsNoTracking().Where(b => b.Title == "b_one")
                 .Select(b => new {b.Title, b.Posts})
                 .Union(db.Set<Blog>().AsNoTracking().Where(b => b.Title == "c_two")
                     .Select(b => new {b.Title, b.Posts}))
-                .ToList<object>();
+                .ToList()
+                .Select(r => (r.Title, string.Join(",", r.Posts.Select(p => p.Heading))))
+                .OrderBy(r => r.Title)
+                .ToList();
 
         foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContext(collection, ShadowKeyModel, mode);
-            var ex = Assert.Throws<InvalidOperationException>(() => Run(db));
-            Assert.Contains("Document element is missing for required non-nullable property 'Id'", ex.Message);
+            Assert.Equal([("b_one", "h1"), ("c_two", "h2,h3")], Run(db));
         }
 
         using var nativeOnly = CreateContext(collection, ShadowKeyModel, MongoQueryMode.NativeOnly);

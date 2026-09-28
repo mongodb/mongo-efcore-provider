@@ -102,16 +102,20 @@ public sealed class BsonSerializerFactory
                 => GetNullableSerializer(type.GetGenericArguments()[0], property),
             {IsGenericType: true} when SupportsDictionary(type)
                 => GetDictionarySerializer(type),
-            // A non-collection generic type (e.g. an anonymous composite GroupBy key) falls through to the
-            // BsonClassMapSerializer path below like any other POCO.
             {IsGenericType: true} when IsSupportedCollectionType(type)
                 => GetCollectionSerializer(type, CreateTypeSerializer(type.GetGenericArguments()[0])),
-            {IsPrimitive: false}
-                // Adapted from BsonClassMapSerializationProvider in the C# driver
-                => (IBsonSerializer)Activator.CreateInstance(
-                    typeof(BsonClassMapSerializer<>).MakeGenericType(type), BsonClassMap.LookupClassMap(type))!,
+            // Value-type and concrete-class POCOs (anonymous composite GroupBy keys, DTO keys, constructor projections).
+            // Interfaces and abstract classes can't be auto-mapped, so they fall to the NotSupportedException below
+            // rather than surfacing a driver class-map error.
+            {IsValueType: true, IsPrimitive: false} or {IsClass: true, IsAbstract: false}
+                => CreateClassMapSerializer(type),
             _ => throw new NotSupportedException($"No known serializer for type '{type.ShortDisplayName()}'.")
         };
+
+    // Adapted from BsonClassMapSerializationProvider in the C# driver
+    private static IBsonSerializer CreateClassMapSerializer(Type type)
+        => (IBsonSerializer)Activator.CreateInstance(
+            typeof(BsonClassMapSerializer<>).MakeGenericType(type), BsonClassMap.LookupClassMap(type))!;
 
     internal static BsonType GetBsonType(Type type)
         => type switch

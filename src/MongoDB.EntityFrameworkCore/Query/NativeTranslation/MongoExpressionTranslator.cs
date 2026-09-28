@@ -1006,7 +1006,7 @@ internal sealed partial class MongoExpressionTranslator
     /// <para>
     /// A cast the query-native branch can't absorb (<see cref="HasNumericConvert"/>) falls through to <c>$expr</c>
     /// as an explicit <see cref="MongoConvertExpression"/>, gated by <see cref="CanFallThroughToExpr"/>. A
-    /// relational comparison over a nullable property there also gets a <see cref="MongoNumericTypeBracketExpression"/>
+    /// relational comparison there also gets a <see cref="MongoNumericTypeBracketExpression"/>
     /// conjunct (<see cref="NeedsNumericTypeBracket"/>), since bare <c>$expr</c> doesn't type-bracket null/missing
     /// the way the query dialect does.
     /// </para>
@@ -1136,7 +1136,7 @@ internal sealed partial class MongoExpressionTranslator
 
         // --- Query-native shape: member on exactly one side, value on the other ---
 
-        // Set when a numeric-cast relational comparison over a nullable property falls through to $expr and needs
+        // Set when a numeric-cast relational comparison falls through to $expr and needs
         // a type-bracket conjunct (see CanFallThroughToExpr). Not built for outer-scoped fields, which decline.
         MongoFieldExpression? numericTypeBracket = null;
 
@@ -1145,13 +1145,13 @@ internal sealed partial class MongoExpressionTranslator
         {
             // A widening or identity-like cast on the member side is absorbed; any other cast falls through to the
             // $expr path as an explicit $toX (see HasNumericConvert), gated by CanFallThroughToExpr, with a type
-            // bracket for a relational comparison over a nullable property.
+            // bracket for a relational comparison.
             if (HasNumericConvert(left, leftProperty!.ClrType, out var leftWideningTarget, out var leftIdentityLike))
             {
                 if (!CanFallThroughToExpr(leftProperty))
                     return null;
 
-                if (!leftIsOuter && NeedsNumericTypeBracket(leftProperty, nodeType))
+                if (!leftIsOuter && NeedsNumericTypeBracket(nodeType))
                     numericTypeBracket = new MongoFieldExpression(leftProperty, leftPath!);
             }
             else
@@ -1192,7 +1192,7 @@ internal sealed partial class MongoExpressionTranslator
                     return null;
 
                 // nodeType, not the mirrored operator: relational operators are closed under Mirror.
-                if (!rightIsOuter && NeedsNumericTypeBracket(rightProperty, nodeType))
+                if (!rightIsOuter && NeedsNumericTypeBracket(nodeType))
                     numericTypeBracket = new MongoFieldExpression(rightProperty, rightPath!);
             }
             else
@@ -1320,17 +1320,20 @@ internal sealed partial class MongoExpressionTranslator
 
     /// <summary>
     /// Whether a numeric-cast comparison's <c>$expr</c> fall-through needs a
-    /// <see cref="MongoNumericTypeBracketExpression"/> over <paramref name="property"/> to match the query dialect.
+    /// <see cref="MongoNumericTypeBracketExpression"/> over the compared field to match the query dialect.
     /// </summary>
     /// <remarks>
-    /// Only relational comparisons over nullable properties. <c>{UnitPrice: {$lt: 100}}</c> excludes null and
-    /// missing (type bracketing), but <c>$expr</c> compares by BSON total order, where null sorts below every
-    /// number. All four relational operators get the bracket so the result is exact, not coincidentally correct
-    /// for <c>&gt;</c>/<c>&gt;=</c>. Non-nullable properties don't need it (null/missing is already a schema
-    /// violation), and equality never does.
+    /// Every relational comparison. <c>{UnitPrice: {$lt: 100}}</c> excludes null and missing (type bracketing),
+    /// but <c>$expr</c> compares by BSON total order, where null (and <c>$toInt</c> of a missing element) sorts
+    /// below every number. All four relational operators get the bracket so the result is exact, not
+    /// coincidentally correct for <c>&gt;</c>/<c>&gt;=</c>. Non-nullable properties get it too: a missing element
+    /// there violates the model, but the query dialect (and so driver-LINQ) still excludes that row, and a
+    /// projection or <c>Count</c> over it never materializes the entity to reject it. The bracket only removes
+    /// non-numeric rows, so it can't change the CLR answer over well-formed documents (case 27 of
+    /// <c>NativeCastTests</c>). Equality never needs it.
     /// </remarks>
-    private static bool NeedsNumericTypeBracket(IProperty property, ExpressionType comparisonNodeType)
-        => property.IsNullable && IsRelationalComparison(comparisonNodeType);
+    private static bool NeedsNumericTypeBracket(ExpressionType comparisonNodeType)
+        => IsRelationalComparison(comparisonNodeType);
 
     // The four type-bracketed operators. Equality is absent: $eq/$ne partition every value, including null/missing.
     private static bool IsRelationalComparison(ExpressionType nodeType)

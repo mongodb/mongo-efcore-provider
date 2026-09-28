@@ -22,6 +22,7 @@ using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using MongoDB.EntityFrameworkCore.Infrastructure;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
@@ -141,6 +142,137 @@ public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
             .ToList();
 
         Assert.Equal(["N2", "N3"], result);
+    }
+
+    // Paging between two joins whose first join keeps BOTH sides (a transparent identifier), so the chain reaches
+    // the wrapped-projection / scalar-leaf join-scope Select arms rather than the whole-entity path above. Each shape
+    // is compared with LINQ-to-Objects over the same rows; paging deferred past both $lookup/$unwind blocks pages
+    // the fully joined result (N1 dropped by the second join first), giving a silently wrong page.
+    [Theory]
+    [InlineData(MongoQueryMode.Native, "WrappedSkipTake")]
+    [InlineData(MongoQueryMode.DriverLinq, "WrappedSkipTake")]
+    [InlineData(MongoQueryMode.Native, "WrappedSkip")]
+    [InlineData(MongoQueryMode.DriverLinq, "WrappedSkip")]
+    [InlineData(MongoQueryMode.Native, "WrappedTake")]
+    [InlineData(MongoQueryMode.DriverLinq, "WrappedTake")]
+    [InlineData(MongoQueryMode.Native, "WrappedBothScopes")]
+    [InlineData(MongoQueryMode.DriverLinq, "WrappedBothScopes")]
+    [InlineData(MongoQueryMode.Native, "ScalarLeaf")]
+    [InlineData(MongoQueryMode.DriverLinq, "ScalarLeaf")]
+    [InlineData(MongoQueryMode.Native, "WrappedThenTrailingSelect")]
+    [InlineData(MongoQueryMode.DriverLinq, "WrappedThenTrailingSelect")]
+    [InlineData(MongoQueryMode.Native, "LeftFirstJoinSkipTake")]
+    [InlineData(MongoQueryMode.DriverLinq, "LeftFirstJoinSkipTake")]
+    public void Paging_between_two_transparent_identifier_joins_matches_oracle(MongoQueryMode mode, string shape)
+    {
+        using var db = Setup(mode);
+
+        var actual = RunInterleavedTransparentIdentifierShape(db.Roots, db.Mids, db.Others, shape);
+
+        // Oracle: LINQ-to-Objects over the whole collections read back untracked.
+        var expected = RunInterleavedTransparentIdentifierShape(
+            db.Roots.AsNoTracking().ToList().AsQueryable(),
+            db.Mids.AsNoTracking().ToList().AsQueryable(),
+            db.Others.AsNoTracking().ToList().AsQueryable(),
+            shape);
+
+        Assert.NotEmpty(expected);
+        Assert.Equal(expected, actual);
+    }
+
+    // The native pipeline has no per-join position for paging, so each interleaved shape above must decline
+    // (IsSingleEligibleNativeJoinScope / MongoSelectDefinition.HasPagingRecordedBetweenJoins) rather than defer
+    // the paging past both $lookup blocks. Before the decline, every Wrapped* shape went native and returned the
+    // wrong page.
+    [Theory]
+    [InlineData("WrappedSkipTake")]
+    [InlineData("WrappedSkip")]
+    [InlineData("WrappedTake")]
+    [InlineData("WrappedBothScopes")]
+    [InlineData("WrappedThenTrailingSelect")]
+    [InlineData("LeftFirstJoinSkipTake")]
+    public void Paging_between_two_transparent_identifier_joins_declines_under_NativeOnly(string shape)
+    {
+        using var db = Setup(MongoQueryMode.NativeOnly);
+
+        Assert.Throws<NativeTranslationNotSupportedException>(
+            () => RunInterleavedTransparentIdentifierShape(db.Roots, db.Mids, db.Others, shape));
+    }
+
+    // Aggregate terminal over an interleaved chain: TryBindAggregate confirms through the same gate.
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Count_over_paging_between_two_transparent_identifier_joins_matches_oracle(MongoQueryMode mode)
+    {
+        using var db = Setup(mode);
+
+        var actual = db.Roots
+            .Join(db.Mids, r => r.MidId, m => (ObjectId?)m._id, (r, m) => new { r, m })
+            .OrderBy(x => x.r.Name).Take(2)
+            .Join(db.Others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, o.Label })
+            .Count();
+
+        // Take(2) keeps N1, N2; only N2 has an Other. Paging after both joins would count N2 and N3.
+        Assert.Equal(1, actual);
+    }
+
+    // Control: paging written AFTER both joins (hoisted ahead of the chain's pending selector with every join
+    // present) still goes native and pages the fully joined rows.
+    [Fact]
+    public void Paging_after_both_transparent_identifier_joins_still_goes_native_under_NativeOnly()
+    {
+        using var db = Setup(MongoQueryMode.NativeOnly);
+
+        var actual = db.Roots
+            .Join(db.Mids, r => r.MidId, m => (ObjectId?)m._id, (r, m) => new { r, m })
+            .Join(db.Others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, o.Label })
+            .OrderBy(x => x.Name)
+            .Skip(1)
+            .ToList();
+
+        // Joined rows by name: N2, N3 (N1 has no Other); Skip(1) leaves N3.
+        Assert.Equal(["N3/O1"], actual.Select(x => x.Name + "/" + x.Label));
+    }
+
+    private static List<string> RunInterleavedTransparentIdentifierShape(
+        IQueryable<Root> roots, IQueryable<Mid> mids, IQueryable<Other> others, string shape)
+    {
+        var firstJoin = roots.Join(mids, r => r.MidId, m => (ObjectId?)m._id, (r, m) => new { r, m });
+        return shape switch
+        {
+            "WrappedSkipTake" => firstJoin.OrderBy(x => x.r.Name).Skip(1).Take(2)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, o.Label })
+                .AsEnumerable().Select(x => x.Name + "/" + x.Label).ToList(),
+            "WrappedSkip" => firstJoin.OrderBy(x => x.r.Name).Skip(1)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, o.Label })
+                .AsEnumerable().Select(x => x.Name + "/" + x.Label).ToList(),
+            // Take(1) keeps N1 only, which has no Other: the correct answer is EMPTY, so use Take(2) (N1, N2 -> N2)
+            // to keep the oracle non-empty; paging past both joins would return N2 and N3.
+            "WrappedTake" => firstJoin.OrderBy(x => x.r.Name).Take(2)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, o.Label })
+                .AsEnumerable().Select(x => x.Name + "/" + x.Label).ToList(),
+            "WrappedBothScopes" => firstJoin.OrderBy(x => x.r.Name).Skip(1).Take(2)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, x.m.Tag })
+                .AsEnumerable().Select(x => x.Name + "/" + x.Tag).ToList(),
+            "ScalarLeaf" => firstJoin.OrderBy(x => x.r.Name).Skip(1).Take(2)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x, o })
+                .Select(y => y.x.r.Name)
+                .ToList(),
+            "WrappedThenTrailingSelect" => firstJoin.OrderBy(x => x.r.Name).Skip(1).Take(2)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x, o })
+                .Select(y => new { y.x.r.Name, y.o.Label })
+                .AsEnumerable().Select(x => x.Name + "/" + x.Label).ToList(),
+            // First join left-outer (GroupJoin/SelectMany/DefaultIfEmpty over a collection navigation's inverse),
+            // second an inner join that drops N1.
+            "LeftFirstJoinSkipTake" => roots
+                .GroupJoin(mids, r => r.MidId, m => (ObjectId?)m._id, (r, ms) => new { r, ms })
+                .SelectMany(x => x.ms.DefaultIfEmpty(), (x, m) => new { x.r, m })
+                .OrderBy(x => x.r.Name).Skip(1).Take(2)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, o.Label })
+                .AsEnumerable().Select(x => x.Name + "/" + x.Label).ToList(),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape))
+        };
     }
 
     // A sort between two joins whose second join is 1:N, so $unwind expands. Roots are inserted in reverse order
