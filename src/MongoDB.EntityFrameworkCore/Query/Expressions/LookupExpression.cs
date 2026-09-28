@@ -232,7 +232,7 @@ internal sealed class LookupExpression
 
     /// <summary>
     /// Set when a reference-collection-nav <c>Count</c>/<c>LongCount</c> predicate or projection leaf's own
-    /// <see cref="NativeTranslation.MongoSizeExpression"/> reads this EXACT array — via
+    /// <see cref="MongoSizeExpression"/> reads this EXACT array — via
     /// <see cref="NativeTranslation.NativeCorrelationMatcher.TryBuildReferenceCollectionCountLookup"/> — and
     /// therefore needs it to stay the navigation's TRUE, unfiltered array forever, regardless of what else
     /// registers at the same alias afterward.
@@ -246,8 +246,8 @@ internal sealed class LookupExpression
     /// <see cref="MongoQueryExpression.AddLookup"/>'s general-purpose bare-then-pipelined merge (used by many
     /// OTHER features — plain collection Include, <c>ThenInclude</c>, joins — which this flag does NOT change:
     /// <c>AddLookup</c>'s own merge logic is untouched), corrupting the <c>$size</c> read with the Include's
-    /// paged array instead of the true count — silently, in EVERY <see cref="MongoQueryMode"/> including an
-    /// explicit <see cref="MongoQueryMode.DriverLinq"/>, since the merge happens at registration time, before
+    /// paged array instead of the true count — silently, in EVERY <see cref="Infrastructure.MongoQueryMode"/> including an
+    /// explicit <see cref="Infrastructure.MongoQueryMode.DriverLinq"/>, since the merge happens at registration time, before
     /// native-vs-fallback is ever decided. Instead, the SAME collision-detection
     /// <c>MongoProjectionBindingExpressionVisitor.VisitExtension</c>'s <c>IncludeExpression</c> case already
     /// uses to avoid colliding with an incompatible ($unwind-ed) join lookup (see

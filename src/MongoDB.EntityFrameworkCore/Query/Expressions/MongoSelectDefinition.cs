@@ -1362,8 +1362,8 @@ internal sealed class MongoSelectDefinition
     /// <see cref="_postJoinOps"/>, not <see cref="_pipelineOps"/> — omitting it here let a query like
     /// <c>Orders.Join(Owners.Where(o =&gt; o.Orders.Count &gt; 1), ...)</c> read as a bare scan of the WHOLE
     /// Owners collection, silently discarding the predicate (and the confirming caller never learning the
-    /// inner wasn't bare) in every <see cref="MongoQueryMode"/>, including an explicit
-    /// <see cref="MongoQueryMode.DriverLinq"/> — since <see cref="MarkSawNonBareJoinInner"/> is what routes a
+    /// inner wasn't bare) in every <see cref="Infrastructure.MongoQueryMode"/>, including an explicit
+    /// <see cref="Infrastructure.MongoQueryMode.DriverLinq"/> — since <see cref="MarkSawNonBareJoinInner"/> is what routes a
     /// filtered-inner join to a clean, universal decline (see that method's remarks), never reaching this
     /// predicate's own machinery at all. <see cref="_postLookupPagingOps"/>/<see cref="_postGroupOps"/> need no
     /// matching conjunct: both are populated only once <see cref="Grouping"/> or an existing
