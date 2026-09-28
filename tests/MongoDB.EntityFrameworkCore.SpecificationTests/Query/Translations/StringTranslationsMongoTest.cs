@@ -1068,7 +1068,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle" } } }, { "$mat
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$String", ""] }, { "$ifNull" : ["|", ""] }, { "$ifNull" : ["foo", ""] }, { "$ifNull" : ["|", ""] }, { "$ifNull" : [null, ""] }, { "$ifNull" : ["|", ""] }, { "$ifNull" : ["bar", ""] }] }, "Seattle|foo||bar"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$String", { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "|" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "foo" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "|" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : null }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "|" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "bar" }, { "$literal" : "" }] }] }, "Seattle|foo||bar"] } } }
 """);
     }
 

@@ -463,7 +463,7 @@ Customers.{ "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName",
 
         AssertMql(
             """
-Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$CompanyName", ""] }, { "$ifNull" : ["|", ""] }, { "$ifNull" : ["foo", ""] }, { "$ifNull" : ["|", ""] }, { "$ifNull" : [null, ""] }, { "$ifNull" : ["|", ""] }, { "$ifNull" : ["bar", ""] }] }, "Around the Horn|foo||bar"] } } }
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$CompanyName", { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "|" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "foo" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "|" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : null }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "|" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "bar" }, { "$literal" : "" }] }] }, "Around the Horn|foo||bar"] } } }
 """);
     }
 
