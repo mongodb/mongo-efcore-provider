@@ -85,9 +85,23 @@ internal static class NativeJoinScopeTranslator
     public static bool TryTranslateSingleScope(
         MongoJoinScope scope, ParameterExpression rootParam, Expression body, bool valueMode,
         [NotNullWhen(true)] out MongoExpression? result)
+        => TryTranslateSingleScopeCore(scope, rootParam, body, valueMode, out _, out result);
+
+    /// <summary>
+    /// Predicate form of <see cref="TryTranslateSingleScope"/> that also reports which scope the body resolved to
+    /// (0 = root, <c>k</c> = <c>scope.Levels[k-1]</c>'s Inner), so the caller can apply per-level gates.
+    /// </summary>
+    public static bool TryTranslateSingleScopePredicate(
+        MongoJoinScope scope, ParameterExpression rootParam, Expression body,
+        out int scopeIndex, [NotNullWhen(true)] out MongoExpression? result)
+        => TryTranslateSingleScopeCore(scope, rootParam, body, valueMode: false, out scopeIndex, out result);
+
+    private static bool TryTranslateSingleScopeCore(
+        MongoJoinScope scope, ParameterExpression rootParam, Expression body, bool valueMode,
+        out int scopeIndex, [NotNullWhen(true)] out MongoExpression? result)
     {
         result = null;
-        if (!TryRerootToSingleScope(scope, rootParam, body, out var scopeIndex, out var rewritten))
+        if (!TryRerootToSingleScope(scope, rootParam, body, out scopeIndex, out var rewritten))
         {
             return false;
         }
@@ -214,8 +228,8 @@ internal static class NativeJoinScopeTranslator
     /// <summary>
     /// Depth-agnostic <see cref="TryMatchInnerNullCheck"/>: <c>rootParam.«hop chain» == null</c> / <c>!= null</c> for
     /// any non-root scope level, resolved by member-name chain via <see cref="TryRerootToBareScope"/> rather than by
-    /// CLR type. Structural only: callers must check the level is left-outer and non-collection, otherwise the null
-    /// test is degenerate.
+    /// CLR type. Structural only: callers must check the level is left-outer and that its join has a ForceUnwind
+    /// lookup (or a non-collection navigation), otherwise the null test is degenerate.
     /// </summary>
     public static bool TryMatchScopeNullCheck(
         MongoJoinScope scope, ParameterExpression rootParam, Expression test,
@@ -250,6 +264,15 @@ internal static class NativeJoinScopeTranslator
         isNotNull = binary.NodeType == ExpressionType.NotEqual;
         return true;
     }
+
+    /// <summary>
+    /// Resolves a bare scope leaf — a pure <c>Outer</c>/<c>Inner</c> hop chain with no trailing member, e.g.
+    /// <c>ti.Outer.Outer</c> — to its scope index (0 = root). Structural only; the caller decides which index is
+    /// acceptable.
+    /// </summary>
+    public static bool TryResolveBareScopeLeaf(
+        MongoJoinScope scope, ParameterExpression rootParam, Expression node, out int scopeIndex)
+        => TryRerootToBareScope(scope, rootParam, node, out scopeIndex);
 
     // Resolves bare scope leaves (`x.Inner`, `x.Outer.Inner`, no trailing member) via
     // MongoTransparentScopeResolver.TryResolveScopeDepth, by member-name chain rather than CLR type.

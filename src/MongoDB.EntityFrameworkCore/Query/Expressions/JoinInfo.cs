@@ -69,4 +69,12 @@ internal sealed class JoinInfo(IEntityType innerEntityType, bool isLeftOuter)
     /// every join is. See <c>MongoSelectDefinition.JoinScope</c>.
     /// </summary>
     public bool IsNativelyEligible { get; set; }
+
+    /// <summary>
+    /// Whether this join lowers to a row-count-preserving <c>$lookup</c>/<c>$unwind</c>: a left-outer join over a
+    /// reference (non-collection) navigation, whose <c>$unwind</c> (<c>preserveNullAndEmptyArrays: true</c>) neither
+    /// drops nor multiplies rows. <see langword="false"/> when no <see cref="Lookup"/> was resolved (fail closed).
+    /// See <see cref="MongoQueryExpression.AreAllJoinsRowCountPreserving"/>.
+    /// </summary>
+    internal bool IsRowCountPreserving => IsLeftOuter && Lookup is { Navigation.IsCollection: false };
 }
