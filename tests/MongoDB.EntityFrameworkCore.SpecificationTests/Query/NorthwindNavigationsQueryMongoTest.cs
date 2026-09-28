@@ -61,7 +61,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer.City" : "Seattle" } }, { "$sort" : { "_id.OrderID" : 1, "_id.ProductID" : 1 } }, { "$limit" : 1 }
+OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$set" : { "_lookup_Customer" : { "$ifNull" : ["$_lookup_Customer", null] } } }, { "$match" : { "_lookup_Customer.City" : "Seattle" } }, { "$sort" : { "_id.OrderID" : 1, "_id.ProductID" : 1 } }, { "$limit" : 1 }
 """);
     }
 
@@ -142,7 +142,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
         await base.Include_with_multiple_optional_navigations(async);
         AssertMql(
             """
-OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer.City" : "London" } }
+OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$set" : { "_lookup_Customer" : { "$ifNull" : ["$_lookup_Customer", null] } } }, { "$match" : { "_lookup_Customer.City" : "London" } }
 """);
     }
 
@@ -242,7 +242,7 @@ Employees.{ "$lookup" : { "from" : "Employees", "localField" : "ReportsTo", "for
         await base.Select_Where_Navigation_Null_Deep(async);
         AssertMql(
             """
-Employees.{ "$lookup" : { "from" : "Employees", "localField" : "ReportsTo", "foreignField" : "_id", "as" : "_lookup_Manager" } }, { "$unwind" : { "path" : "$_lookup_Manager", "preserveNullAndEmptyArrays" : true } }, { "$lookup" : { "from" : "Employees", "localField" : "_lookup_Manager.ReportsTo", "foreignField" : "_id", "as" : "_lookup_Manager_1" } }, { "$unwind" : { "path" : "$_lookup_Manager_1", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Manager_1" : null } }
+Employees.{ "$lookup" : { "from" : "Employees", "localField" : "ReportsTo", "foreignField" : "_id", "as" : "_lookup_Manager" } }, { "$unwind" : { "path" : "$_lookup_Manager", "preserveNullAndEmptyArrays" : true } }, { "$set" : { "_lookup_Manager" : { "$ifNull" : ["$_lookup_Manager", null] } } }, { "$lookup" : { "from" : "Employees", "localField" : "_lookup_Manager.ReportsTo", "foreignField" : "_id", "as" : "_lookup_Manager_1" } }, { "$unwind" : { "path" : "$_lookup_Manager_1", "preserveNullAndEmptyArrays" : true } }, { "$set" : { "_lookup_Manager_1" : { "$ifNull" : ["$_lookup_Manager_1", null] } } }, { "$match" : { "_lookup_Manager_1" : null } }
 """);
     }
 
@@ -505,7 +505,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
         await base.Navigation_inside_contains_nested(async);
         AssertMql(
             """
-OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer.City" : { "$in" : ["Novigrad", "Seattle"] } } }
+OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$set" : { "_lookup_Customer" : { "$ifNull" : ["$_lookup_Customer", null] } } }, { "$match" : { "_lookup_Customer.City" : { "$in" : ["Novigrad", "Seattle"] } } }
 """);
     }
 
@@ -514,7 +514,7 @@ OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "f
         await base.Navigation_from_join_clause_inside_contains(async);
         AssertMql(
             """
-OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer.Country" : { "$in" : ["USA", "Redania"] } } }
+OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$set" : { "_lookup_Customer" : { "$ifNull" : ["$_lookup_Customer", null] } } }, { "$match" : { "_lookup_Customer.Country" : { "$in" : ["USA", "Redania"] } } }
 """);
     }
 
@@ -633,7 +633,7 @@ Orders.
         await base.Multiple_include_with_multiple_optional_navigations(async);
         AssertMql(
             """
-OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer.City" : "London" } }, { "$lookup" : { "from" : "Products", "localField" : "_id.ProductID", "foreignField" : "_id", "as" : "_lookup_Product" } }, { "$unwind" : { "path" : "$_lookup_Product", "preserveNullAndEmptyArrays" : false } }
+OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "foreignField" : "_id", "as" : "_lookup_Order" } }, { "$unwind" : { "path" : "$_lookup_Order", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Order.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$set" : { "_lookup_Customer" : { "$ifNull" : ["$_lookup_Customer", null] } } }, { "$match" : { "_lookup_Customer.City" : "London" } }, { "$lookup" : { "from" : "Products", "localField" : "_id.ProductID", "foreignField" : "_id", "as" : "_lookup_Product" } }, { "$unwind" : { "path" : "$_lookup_Product", "preserveNullAndEmptyArrays" : false } }
 """);
     }
 

@@ -285,26 +285,34 @@ public class JoinScopeWhereSlotPopulationTests
         Assert.True(sortOp.Orderings[1].Ascending);
     }
 
+    /// <summary>
+    /// A depth-1 <c>Where</c> reaching the join's Inner side over a COLLECTION-navigation join (the Owner/Order
+    /// fixture's <c>owners.Join(orders, ...)</c> resolves to <c>Owner.Orders</c>) translates and defers into
+    /// <see cref="MongoSelectDefinition.PostJoinOps"/> — never <c>PipelineOps</c>, which lower BEFORE the
+    /// <c>$lookup</c>/<c>$unwind</c> that materializes Inner. Same shape as EF Core's own
+    /// <c>GroupJoin_Where</c> / <c>GroupJoin_Where_OrderBy</c> spec tests, which previously fell back to
+    /// driver-LINQ because this arm required a reference navigation.
+    /// </summary>
     [Fact]
-    public void Where_reading_inner_scope_after_join_still_declines_gracefully()
+    public void Where_reading_inner_scope_after_collection_navigation_join_populates_predicate_in_post_join_ops()
     {
-        // The Where arm is Outer-only (ReferencesInnerScope gate): $match ops are lowered before the $lookup that
-        // materializes Inner, so an Inner predicate must mark the query non-native.
         var mongoQ = TranslateJoinQuery((owners, orders) =>
             owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
                 .Where(x => x.r.Total > 0));
 
         Assert.NotNull(mongoQ.Select.JoinScope);
+        Assert.True(mongoQ.Joins[0].Navigation!.IsCollection);
+        Assert.True(mongoQ.Select.JoinInnerAccessConfirmed);
+
         Assert.Empty(mongoQ.Select.PipelineOps);
-        // Fallback for the trailing-Select reason too, so this alone proves nothing; empty PipelineOps does.
-        Assert.Equal(NativeRoute.Fallback, mongoQ.Select.Route);
+        var matchOp = Assert.IsType<MongoMatchOp>(Assert.Single(mongoQ.Select.PostJoinOps));
+        Assert.IsType<MongoBinaryExpression>(matchOp.Predicate);
     }
 
     /// <summary>
-    /// Unlike the Where arm, a depth-1 <c>OrderBy</c> key on the Inner side (<c>x.r.Total</c>) translates and
-    /// defers into <see cref="MongoSelectDefinition.PostJoinOps"/>. The Owner/Order navigation is a collection
-    /// (the <c>Join_Customers_Orders_Skip_Take</c> shape), so this does not require
-    /// <see cref="LookupExpression.IsReference"/>.
+    /// Like the Where arm, a depth-1 <c>OrderBy</c> key on the Inner side (<c>x.r.Total</c>) translates and defers
+    /// into <see cref="MongoSelectDefinition.PostJoinOps"/>. The Owner/Order navigation is a collection (the
+    /// <c>Join_Customers_Orders_Skip_Take</c> shape), so neither requires <see cref="LookupExpression.IsReference"/>.
     /// </summary>
     [Fact]
     public void OrderBy_reading_inner_scope_after_join_populates_sort_in_post_join_ops()

@@ -439,6 +439,117 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Equal([seed.Owners[0].Name], result.Select(x => x.Name));
     }
 
+    // Outer-source paging written BEFORE a 1:N join (`Owners.OrderBy(...).Take(1).Join(...)`) pages the OUTER
+    // sequence, so it must stay ahead of the $lookup/$unwind. A NAVIGATION-LESS key-equality join is 1:N just like
+    // a collection navigation, but IsSingleEligibleNativeJoinScope's paging branch used to recognize only
+    // `Navigation.IsCollection` as row-multiplying — a null navigation slipped through and the Take was DEFERRED
+    // past the $unwind, paging the JOINED rows: one row instead of three, silently, in the default Native mode.
+    // Differential against an in-memory LINQ oracle, all three modes, inner and left-outer spellings.
+    [Theory]
+    [InlineData(MongoQueryMode.Native, false)]
+    [InlineData(MongoQueryMode.DriverLinq, false)]
+    [InlineData(MongoQueryMode.NativeOnly, false)]
+    [InlineData(MongoQueryMode.Native, true)]
+    [InlineData(MongoQueryMode.DriverLinq, true)]
+    [InlineData(MongoQueryMode.NativeOnly, true)]
+    public void Outer_paging_before_a_navigation_less_one_to_many_join_pages_the_outer_rows(MongoQueryMode mode, bool leftOuter)
+    {
+        var (owners, orderLines) = SeedTwoOwnersSharingThreeMatchingLines();
+        using var db = CreateContext(new Seed(owners, [], orderLines), mode,
+            nameof(Outer_paging_before_a_navigation_less_one_to_many_join_pages_the_outer_rows) + mode + leftOuter);
+
+        List<(string Name, int? Quantity)> actual, expected;
+        if (leftOuter)
+        {
+            actual = (from o in db.Owners.OrderBy(o => o.Name).Take(1)
+                      join ol in db.OrderLines on o.Region equals ol.Sku into g
+                      from ol in g.DefaultIfEmpty()
+                      select new { o.Name, Quantity = ol != null ? (int?)ol.Quantity : null })
+                .AsEnumerable().Select(x => (x.Name, x.Quantity)).ToList();
+            expected = (from o in owners.OrderBy(o => o.Name).Take(1)
+                        join ol in orderLines on o.Region equals ol.Sku into g
+                        from ol in g.DefaultIfEmpty()
+                        select (o.Name, ol != null ? (int?)ol.Quantity : null)).ToList();
+        }
+        else
+        {
+            actual = db.Owners.OrderBy(o => o.Name).Take(1)
+                .Join(db.OrderLines, o => o.Region, ol => ol.Sku, (o, ol) => new { o.Name, ol.Quantity })
+                .AsEnumerable().Select(x => (x.Name, (int?)x.Quantity)).ToList();
+            expected = owners.OrderBy(o => o.Name).Take(1)
+                .Join(orderLines, o => o.Region, ol => ol.Sku, (o, ol) => (o.Name, (int?)ol.Quantity)).ToList();
+        }
+
+        Assert.Equal(3, expected.Count);
+        Assert.Equal(expected.OrderBy(x => x.Quantity), actual.OrderBy(x => x.Quantity));
+    }
+
+    // The collection-navigation sibling of the test above (`Owners.Take(1).Join(Orders, ...)` resolves to
+    // Owner.Orders). This used to DECLINE outright (falling back to driver-LINQ, throwing under NativeOnly) —
+    // correct, but unnecessary: paging recorded before any join is already positioned ahead of the $lookup in
+    // PipelineOps, which is exactly where it belongs. It now goes native and stays there.
+    [Fact]
+    public void Outer_paging_before_a_collection_navigation_join_goes_native_and_pages_the_outer_rows()
+    {
+        var seed = SeedOwnersAndOrders();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Outer_paging_before_a_collection_navigation_join_goes_native_and_pages_the_outer_rows));
+
+        var actual = db.Owners.OrderBy(o => o.Name).Take(1)
+            .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o.Name, r.Total })
+            .AsEnumerable().Select(x => (x.Name, x.Total)).OrderBy(x => x.Total).ToList();
+        var expected = seed.Owners.OrderBy(o => o.Name).Take(1)
+            .Join(seed.Orders, o => o.Id, r => r.OwnerId, (o, r) => (o.Name, r.Total))
+            .OrderBy(x => x.Total).ToList();
+
+        Assert.True(expected.Count > 1, "fixture must give the first owner more than one order");
+        Assert.Equal(expected, actual);
+    }
+
+    // Paging on BOTH sides of a 1:N join (`Take(1)` on the outer source, `Take(2)` on the joined result) records
+    // both into the same PipelineOps snapshot, which can be neither kept wholly ahead of the $lookup (the Take(2)
+    // would page the outer rows) nor deferred wholly past it (the Take(1) would page the joined rows). Declines:
+    // throws under NativeOnly and returns the correct rows through the fallback under Native.
+    [Fact]
+    public void Paging_on_both_sides_of_a_one_to_many_join_declines_and_falls_back_correctly()
+    {
+        var (owners, orderLines) = SeedTwoOwnersSharingThreeMatchingLines();
+        var seed = new Seed(owners, [], orderLines);
+
+        using (var nativeOnly = CreateContext(seed, MongoQueryMode.NativeOnly,
+                   nameof(Paging_on_both_sides_of_a_one_to_many_join_declines_and_falls_back_correctly) + "_nativeOnly"))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+                nativeOnly.Owners.OrderBy(o => o.Name).Take(1)
+                    .Join(nativeOnly.OrderLines, o => o.Region, ol => ol.Sku, (o, ol) => new { o.Name, ol.Quantity })
+                    .Take(2)
+                    .ToList());
+        }
+
+        using var native = CreateContext(seed, MongoQueryMode.Native,
+            nameof(Paging_on_both_sides_of_a_one_to_many_join_declines_and_falls_back_correctly) + "_native");
+
+        var actual = native.Owners.OrderBy(o => o.Name).Take(1)
+            .Join(native.OrderLines, o => o.Region, ol => ol.Sku, (o, ol) => new { o.Name, ol.Quantity })
+            .Take(2)
+            .ToList();
+
+        // Which two of Alice's three joined rows survive the unordered Take(2) is unspecified; that there are
+        // two, and that they are all Alice's (the outer Take(1) ran first), is not.
+        Assert.Equal(2, actual.Count);
+        Assert.All(actual, x => Assert.Equal("Alice", x.Name));
+    }
+
+    private static (Owner[] Owners, OrderLine[] OrderLines) SeedTwoOwnersSharingThreeMatchingLines()
+        => ([
+                new Owner { Id = ObjectId.GenerateNewId(), Name = "Alice", Region = "MATCH" },
+                new Owner { Id = ObjectId.GenerateNewId(), Name = "Bob", Region = "MATCH" },
+            ],
+            Enumerable.Range(1, 3).Select(i => new OrderLine
+            {
+                Id = ObjectId.GenerateNewId(), OrderId = ObjectId.GenerateNewId(), Sku = "MATCH", Quantity = i
+            }).ToArray());
+
 #if !EF8 && !EF9
     [Fact]
     public void Chained_join_then_LeftJoin_unmatched_row_reads_a_scalar_leaf_at_the_second_level_under_NativeOnly()
@@ -657,31 +768,21 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 
     [Fact]
-    public void Where_after_a_bare_whole_entity_leaf_select_declines_cleanly_under_NativeOnly()
+    public void Where_after_a_bare_whole_entity_leaf_select_goes_native_and_filters_the_inner_side()
     {
         // Hazard: single-scope resolution is by name, so `Id` could resolve against the root (Owner) and filter
         // the wrong collection. In practice EF hoists the Where ahead of the pending selector, giving
-        // `Where(ti => ti.Inner.Id == k)`, which NativeSlotPopulator's Where arm declines
-        // (NativeJoinScopeTranslator.ReferencesInnerScope); that blocks confirmation via HasUnsupportedOperator.
-        // HasConfirmedJoinLookup is defence-in-depth for the reverse ordering.
+        // `Where(ti => ti.Inner.Id == k)`, which NativeSlotPopulator's general Inner Where arm resolves through the
+        // join's own $lookup alias (`_lookup_Orders._id`) and defers past the $lookup — so it goes native and must
+        // return the one matching Order. HasConfirmedJoinLookup is defence-in-depth for the reverse ordering.
         var seed = SeedOwnersAndOrders();
         var targetOrderId = seed.Orders[2].Id;
 
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
-            nameof(Where_after_a_bare_whole_entity_leaf_select_declines_cleanly_under_NativeOnly));
+            nameof(Where_after_a_bare_whole_entity_leaf_select_goes_native_and_filters_the_inner_side));
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() =>
-            db.Owners
-                .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
-                .Select(x => x.r)
-                .Where(r => r.Id == targetOrderId)
-                .ToList());
-
-        using var dbNative = CreateContext(seed, MongoQueryMode.Native,
-            nameof(Where_after_a_bare_whole_entity_leaf_select_declines_cleanly_under_NativeOnly) + "_fallback");
-
-        var result = dbNative.Owners
-            .Join(dbNative.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+        var result = db.Owners
+            .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
             .Select(x => x.r)
             .Where(r => r.Id == targetOrderId)
             .ToList();
@@ -689,6 +790,203 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         // One Order has that id; matching it against Owner._id instead would return nothing.
         Assert.Equal([targetOrderId], result.Select(r => r.Id));
         Assert.Equal(30m, Assert.Single(result).Total);
+    }
+
+    // The shape IsSingleEligibleNativeJoinScope's `!HasUnsupportedOperator` conjunct exists for: a join-scope Where
+    // reaching the Inner side with a predicate the native translator cannot represent (a string method it has no
+    // operator for) declines, and without the conjunct the trailing `Select(x => x.r)` would still confirm the join
+    // and move the certain driver-LINQ fallback onto the flattened `_lookup_<Nav>` shape. That used to mis-shape the
+    // rows (NullReferenceException in Native mode with the conjunct removed), but the mis-shaping was the bare Inner
+    // leaf's `_v` push-down, since fixed (MongoSelectDefinition.HasBareJoinInnerEntityLeaf) — so as of this change
+    // NO test fails with the conjunct removed (MEASURED: EF10 unit/functional/spec all green without it). The
+    // conjunct is kept as defence in depth; these tests pin this shape's results in every mode, and the NativeOnly
+    // half pins that each predicate still declines (Trim stopped declining once native string translations landed,
+    // so re-check the predicates if this test starts going native).
+    [Theory]
+    [InlineData(MongoQueryMode.Native, "Replace")]
+    [InlineData(MongoQueryMode.DriverLinq, "Replace")]
+    [InlineData(MongoQueryMode.Native, "ToString")]
+    [InlineData(MongoQueryMode.DriverLinq, "ToString")]
+    [InlineData(MongoQueryMode.Native, "Substring")]
+    [InlineData(MongoQueryMode.DriverLinq, "Substring")]
+    public void Inner_side_Where_that_declines_natively_does_not_confirm_the_join(MongoQueryMode mode, string shape)
+    {
+        var seed = SeedOwnersAndOrders();
+        using var db = CreateContext(seed, mode,
+            nameof(Inner_side_Where_that_declines_natively_does_not_confirm_the_join) + mode + shape);
+
+        var actual = RunInnerSideDecliningWhere(db.Owners, db.Orders, shape);
+        var expected = RunInnerSideDecliningWhere(seed.Owners.AsQueryable(), seed.Orders.AsQueryable(), shape);
+
+        Assert.NotEmpty(expected);
+        Assert.Equal(expected.OrderBy(t => t), actual.OrderBy(t => t));
+    }
+
+    [Theory]
+    [InlineData("Replace")]
+    [InlineData("ToString")]
+    [InlineData("Substring")]
+    public void Inner_side_Where_that_declines_natively_throws_under_NativeOnly(string shape)
+    {
+        var seed = SeedOwnersAndOrders();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Inner_side_Where_that_declines_natively_throws_under_NativeOnly) + shape);
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() => RunInnerSideDecliningWhere(db.Owners, db.Orders, shape));
+    }
+
+    private static List<decimal> RunInnerSideDecliningWhere(IQueryable<Owner> owners, IQueryable<Order> orders, string shape)
+        => shape switch
+        {
+            "Replace" => owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Where(x => x.r.Region.Replace("th", "") == "Nor").Select(x => x.r).AsEnumerable().Select(r => r.Total).ToList(),
+            "ToString" => owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Where(x => x.r.Total.ToString() == "10").Select(x => x.r).AsEnumerable().Select(r => r.Total).ToList(),
+            "Substring" => owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Where(x => x.r.Region.Substring(0, 1) == "N").Select(x => x.r).AsEnumerable().Select(r => r.Total).ToList(),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape))
+        };
+
+    // A left join's Where combining a null check on the Inner side with an ordinary Inner predicate — EF Core's
+    // GroupJoin_DefaultIfEmpty_Where (`where o != null && o.CustomerID == "ALFKI"`). Each && conjunct is translated
+    // on its own (null check -> MongoLookupNullCheckExpression, the rest via the join-scope translator) and all land
+    // after the $lookup/$unwind. Over a COLLECTION navigation (Owner.Orders) and a REFERENCE one (Order.Owner),
+    // including the null check alone and the conjuncts in the other order.
+    [Theory]
+    [InlineData(MongoQueryMode.Native, "CollectionAnd")]
+    [InlineData(MongoQueryMode.DriverLinq, "CollectionAnd")]
+    [InlineData(MongoQueryMode.NativeOnly, "CollectionAnd")]
+    [InlineData(MongoQueryMode.Native, "CollectionNullCheckOnly")]
+    [InlineData(MongoQueryMode.DriverLinq, "CollectionNullCheckOnly")]
+    [InlineData(MongoQueryMode.NativeOnly, "CollectionNullCheckOnly")]
+    [InlineData(MongoQueryMode.Native, "ReferenceAnd")]
+    [InlineData(MongoQueryMode.DriverLinq, "ReferenceAnd")]
+    [InlineData(MongoQueryMode.NativeOnly, "ReferenceAnd")]
+    [InlineData(MongoQueryMode.Native, "ReferenceAndReversed")]
+    [InlineData(MongoQueryMode.DriverLinq, "ReferenceAndReversed")]
+    [InlineData(MongoQueryMode.NativeOnly, "ReferenceAndReversed")]
+    public void Left_join_Where_with_an_Inner_null_check_conjunct_matches_oracle(MongoQueryMode mode, string shape)
+    {
+        var seed = SeedOwnersAndOrdersWithUnmatchedRows();
+        using var db = CreateContext(seed, mode,
+            nameof(Left_join_Where_with_an_Inner_null_check_conjunct_matches_oracle) + mode + shape);
+
+        var actual = RunLeftJoinNullCheckConjunct(db.Owners, db.Orders, shape);
+        // In-memory LINQ evaluates `o.Name == ... && o != null` left to right and would dereference the null Owner;
+        // under EF Core's null semantics the reversed conjunction means the same as the forward one, so the forward
+        // spelling is the oracle for it.
+        var expected = RunLeftJoinNullCheckConjunct(
+            seed.Owners.AsQueryable(), seed.Orders.AsQueryable(), shape == "ReferenceAndReversed" ? "ReferenceAnd" : shape);
+
+        Assert.NotEmpty(expected);
+        Assert.Equal(expected.OrderBy(t => t), actual.OrderBy(t => t));
+    }
+
+#pragma warning disable RCS1146 // Use conditional access — the explicit null check IS the shape under test.
+    private static List<decimal> RunLeftJoinNullCheckConjunct(IQueryable<Owner> owners, IQueryable<Order> orders, string shape)
+        => shape switch
+        {
+            "CollectionAnd" => (from o in owners
+                                join r in orders on o.Id equals r.OwnerId into g
+                                from r in g.DefaultIfEmpty()
+                                where r != null && r.Total > 5m
+                                select r).AsEnumerable().Select(r => r.Total).ToList(),
+            "CollectionNullCheckOnly" => (from o in owners
+                                          join r in orders on o.Id equals r.OwnerId into g
+                                          from r in g.DefaultIfEmpty()
+                                          where r != null
+                                          select r).AsEnumerable().Select(r => r.Total).ToList(),
+            "ReferenceAnd" => (from r in orders
+                               join o in owners on r.OwnerId equals o.Id into g
+                               from o in g.DefaultIfEmpty()
+                               where o != null && o.Name == "Alice"
+                               select r).AsEnumerable().Select(r => r.Total).ToList(),
+            "ReferenceAndReversed" => (from r in orders
+                                       join o in owners on r.OwnerId equals o.Id into g
+                                       from o in g.DefaultIfEmpty()
+                                       where o.Name == "Alice" && o != null
+                                       select r).AsEnumerable().Select(r => r.Total).ToList(),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape))
+        };
+#pragma warning restore RCS1146
+
+    // A bare whole-entity INNER leaf (`Select(x => x.r)`) over a confirmed join, in EVERY mode. The bare-leaf arm
+    // registers the join's $lookup at translation time, so explicit DriverLinq runs on the flattened
+    // `_lookup_<Nav>` shape; the driver then pushed the Select down as `{ _v: "$_lookup_Orders" }` while the
+    // entity shaper reads `_lookup_Orders` off the document — so every row came back as a NULL entity, silently
+    // (MEASURED; the bare shape was already broken before any Where arm could reach it, and the Where shapes
+    // became broken once their Where started to translate natively). The fallback now strips that pushed-down
+    // Select so it returns the same whole documents the native pipeline does.
+    [Theory]
+    [InlineData(MongoQueryMode.Native, "BareSelect")]
+    [InlineData(MongoQueryMode.DriverLinq, "BareSelect")]
+    [InlineData(MongoQueryMode.NativeOnly, "BareSelect")]
+    [InlineData(MongoQueryMode.Native, "InnerWhere")]
+    [InlineData(MongoQueryMode.DriverLinq, "InnerWhere")]
+    [InlineData(MongoQueryMode.Native, "OrderByAfter")]
+    [InlineData(MongoQueryMode.DriverLinq, "OrderByAfter")]
+    [InlineData(MongoQueryMode.Native, "SkipAfter")]
+    [InlineData(MongoQueryMode.DriverLinq, "SkipAfter")]
+    [InlineData(MongoQueryMode.Native, "TakeAfter")]
+    [InlineData(MongoQueryMode.DriverLinq, "TakeAfter")]
+    [InlineData(MongoQueryMode.Native, "WhereAfter")]
+    [InlineData(MongoQueryMode.DriverLinq, "WhereAfter")]
+    [InlineData(MongoQueryMode.Native, "DistinctAfter")]
+    [InlineData(MongoQueryMode.NativeOnly, "DistinctAfter")]
+    [InlineData(MongoQueryMode.Native, "FirstAfter")]
+    [InlineData(MongoQueryMode.DriverLinq, "FirstAfter")]
+    [InlineData(MongoQueryMode.NativeOnly, "InnerWhere")]
+    public void Bare_Inner_entity_leaf_over_a_join_matches_oracle(MongoQueryMode mode, string shape)
+    {
+        var seed = SeedOwnersAndOrders();
+        using var db = CreateContext(seed, mode, nameof(Bare_Inner_entity_leaf_over_a_join_matches_oracle) + mode + shape);
+
+        var actual = RunBareInnerEntityLeaf(db.Owners, db.Orders, shape);
+        var expected = RunBareInnerEntityLeaf(seed.Owners.AsQueryable(), seed.Orders.AsQueryable(), shape);
+
+        Assert.NotEmpty(expected);
+        Assert.Equal(expected.OrderBy(t => t), actual.OrderBy(t => t));
+    }
+
+    // KNOWN DEVIATION, pinned (pre-existing — measured identically at cdfd1851, before the bare-Inner-leaf strip
+    // existed): `Distinct()` composed AFTER a bare Inner `Select` is the one operator EF Core does not hoist ahead of
+    // the join's pending selector, so the captured chain is Distinct(Select(...)) and the entity path's strip (which
+    // only removes an OUTERMOST Select, or a reducer's) cannot reach it — and stripping under a Distinct would change
+    // what is deduplicated (whole Owner+Order documents instead of Orders) anyway. Explicit DriverLinq therefore still
+    // returns NULL entities for this shape. Default Native mode translates it natively and is correct (see the
+    // DistinctAfter rows of the theory above). Asserting the current wrong value so this goes red when it is fixed.
+    [Fact]
+    public void Distinct_after_a_bare_Inner_entity_leaf_under_DriverLinq_pins_known_null_entities()
+    {
+        var seed = SeedOwnersAndOrders();
+        using var db = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(Distinct_after_a_bare_Inner_entity_leaf_under_DriverLinq_pins_known_null_entities));
+
+        var rows = db.Owners.Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+            .Select(x => x.r).Distinct().ToList();
+
+        Assert.Equal(seed.Orders.Length, rows.Count);
+        Assert.All(rows, Assert.Null);
+    }
+
+    private static List<decimal> RunBareInnerEntityLeaf(IQueryable<Owner> owners, IQueryable<Order> orders, string shape)
+    {
+        var joined = owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r });
+        var inner = shape switch
+        {
+            "BareSelect" => joined.Select(x => x.r),
+            "InnerWhere" => joined.Where(x => x.r.Total > 15m).Select(x => x.r),
+            "OrderByAfter" => joined.Select(x => x.r).OrderBy(r => r.Total),
+            "SkipAfter" => joined.Select(x => x.r).OrderBy(r => r.Total).Skip(1),
+            "TakeAfter" => joined.Select(x => x.r).OrderBy(r => r.Total).Take(2),
+            "WhereAfter" => joined.Select(x => x.r).Where(r => r.Total > 15m),
+            "DistinctAfter" => joined.Select(x => x.r).Distinct(),
+            "FirstAfter" => joined.Select(x => x.r).OrderBy(r => r.Total).Take(1),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape))
+        };
+
+        // Selecting Total client-side throws for a null entity rather than silently comparing nulls.
+        return inner.AsEnumerable().Select(r => r.Total).ToList();
     }
 
     [Fact]
@@ -766,24 +1064,109 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
                 .ToList());
     }
 
-    [Fact]
-    public void Navigation_less_key_equality_join_still_declines_cleanly_in_NativeOnly()
+    // A nav-null-check ternary as ONE MEMBER of a wrapped `new { ... }` projection over a LEFT join — EF Core's own
+    // Condition_on_entity_with_include shape (`new { a = o != null ? o.OrderID : -1 }`). The ELSE branch is a
+    // non-null value on purpose: EF's NullCheckRemovingExpressionVisitor collapses `x != null ? x.M : null` to a
+    // bare `x.M` before translation (see NativeJoinScopeConditionalProjectionTests' remarks), which is a different,
+    // already-native shape. Over a COLLECTION navigation (Owner.Orders, principal side): after the forced
+    // left-outer $unwind each row carries at most one Order, and an Owner with none carries NO joined field — the
+    // null check must fire for Bob, not read a missing Total.
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Wrapped_nav_null_check_ternary_over_a_collection_navigation_left_join_matches_oracle(MongoQueryMode mode)
+    {
+        var seed = SeedOwnersAndOrdersWithUnmatchedRows();
+        using var db = CreateContext(seed, mode,
+            nameof(Wrapped_nav_null_check_ternary_over_a_collection_navigation_left_join_matches_oracle) + mode);
+
+        var actual = (from o in db.Owners
+                      join r in db.Orders on o.Id equals r.OwnerId into g
+                      from r in g.DefaultIfEmpty()
+                      select new { o.Name, Total = r != null ? r.Total : -1m })
+            .AsEnumerable().Select(x => (x.Name, x.Total)).OrderBy(x => x.Name).ToList();
+        var expected = (from o in seed.Owners
+                        join r in seed.Orders on o.Id equals r.OwnerId into g
+                        from r in g.DefaultIfEmpty()
+                        select (o.Name, r != null ? r.Total : -1m))
+            .OrderBy(x => x.Name).ToList();
+
+        Assert.Equal([("Alice", 10m), ("Bob", -1m)], expected);
+        Assert.Equal(expected, actual);
+    }
+
+    // The REFERENCE-navigation sibling (Orders left-joined to Owners resolves Order.Owner): the dangling-FK Order
+    // must take the ELSE branch. Also mixes an Outer scalar leaf with the conditional leaf in the same projection.
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Wrapped_nav_null_check_ternary_over_a_reference_navigation_left_join_matches_oracle(MongoQueryMode mode)
+    {
+        var seed = SeedOwnersAndOrdersWithUnmatchedRows();
+        using var db = CreateContext(seed, mode,
+            nameof(Wrapped_nav_null_check_ternary_over_a_reference_navigation_left_join_matches_oracle) + mode);
+
+        var actual = (from r in db.Orders
+                      join o in db.Owners on r.OwnerId equals o.Id into g
+                      from o in g.DefaultIfEmpty()
+                      select new { r.Total, Name = o != null ? o.Name : "<none>" })
+            .AsEnumerable().Select(x => (x.Total, x.Name)).OrderBy(x => x.Total).ToList();
+        var expected = (from r in seed.Orders
+                        join o in seed.Owners on r.OwnerId equals o.Id into g
+                        from o in g.DefaultIfEmpty()
+                        select (r.Total, o != null ? o.Name : "<none>"))
+            .OrderBy(x => x.Total).ToList();
+
+        Assert.Equal([(10m, "Alice"), (99m, "<none>")], expected);
+        Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native, false)]
+    [InlineData(MongoQueryMode.DriverLinq, false)]
+    [InlineData(MongoQueryMode.NativeOnly, false)]
+    [InlineData(MongoQueryMode.Native, true)]
+    [InlineData(MongoQueryMode.DriverLinq, true)]
+    [InlineData(MongoQueryMode.NativeOnly, true)]
+    public void Join_on_non_key_properties_between_navigation_related_types_joins_on_the_written_keys(
+        MongoQueryMode mode, bool leftOuter)
     {
         // Keep the fixture's Owner.Orders / Order.Owner navigations: they are what give this test meaning.
         // A Join on Region/Region (non-key) between types that have a navigation: RebindInnerShaperToOuterQuery's
-        // loose `FirstOrDefault(n => n.TargetEntityType == innerEntityType)` would resolve Owner.Orders and build a
-        // $lookup on _id/OwnerId, a different join condition (silently wrong rows once confirmed).
-        // TranslateJoinCore's JoinLookupImplementsKeySelectors declines it. Without the navigations this would
-        // pass for the wrong reason (no JoinScope at all).
+        // loose `FirstOrDefault(n => n.TargetEntityType == innerEntityType)` resolves Owner.Orders, whose $lookup
+        // joins on _id/OwnerId — a different join condition. Such a navigation is now discarded and the join built
+        // as a raw-key $lookup on Region/Region, so it goes native (NativeOnly) and joins on the written keys (the
+        // in-memory oracle). Without the navigations this would pass for the wrong reason.
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
-            nameof(Navigation_less_key_equality_join_still_declines_cleanly_in_NativeOnly));
+        using var db = CreateContext(seed, mode,
+            nameof(Join_on_non_key_properties_between_navigation_related_types_joins_on_the_written_keys) + mode + leftOuter);
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() =>
-            db.Owners
+        List<(string Name, decimal? Total)> actual, expected;
+        if (leftOuter)
+        {
+            actual = (from o in db.Owners
+                      join r in db.Orders on o.Region equals r.Region into g
+                      from r in g.DefaultIfEmpty()
+                      select new { o.Name, Total = r != null ? (decimal?)r.Total : null })
+                .AsEnumerable().Select(x => (x.Name, x.Total)).ToList();
+            expected = (from o in seed.Owners
+                        join r in seed.Orders on o.Region equals r.Region into g
+                        from r in g.DefaultIfEmpty()
+                        select (o.Name, r != null ? (decimal?)r.Total : null)).ToList();
+        }
+        else
+        {
+            actual = db.Owners
                 .Join(db.Orders, o => o.Region, r => r.Region, (o, r) => new { o.Name, r.Total })
-                .AsEnumerable()
-                .ToList());
+                .AsEnumerable().Select(x => (x.Name, (decimal?)x.Total)).ToList();
+            expected = seed.Owners
+                .Join(seed.Orders, o => o.Region, r => r.Region, (o, r) => (o.Name, (decimal?)r.Total)).ToList();
+        }
+
+        Assert.Equal(3, expected.Count);
+        Assert.Equal(expected.OrderBy(x => x.Name).ThenBy(x => x.Total), actual.OrderBy(x => x.Name).ThenBy(x => x.Total));
     }
 
     [Fact]

@@ -683,7 +683,7 @@ Orders.{ "$group" : { "_id" : "$_id", "_v" : { "$sum" : 1 } } }, { "$project" : 
         await base.Concat_with_one_side_being_GroupBy_aggregate(async);
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer.City" : "Seatte" } }, { "$project" : { "OrderDate" : "$OrderDate", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$CustomerID", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "OrderDate" : { "$max" : "$_elements.OrderDate" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$set" : { "_lookup_Customer" : { "$ifNull" : ["$_lookup_Customer", null] } } }, { "$match" : { "_lookup_Customer.City" : "Seatte" } }, { "$project" : { "OrderDate" : "$OrderDate", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$CustomerID", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "OrderDate" : { "$max" : "$_elements.OrderDate" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
 """);
     }
 

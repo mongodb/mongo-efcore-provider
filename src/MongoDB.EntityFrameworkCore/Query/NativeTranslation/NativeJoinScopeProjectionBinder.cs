@@ -219,6 +219,21 @@ internal static class NativeJoinScopeProjectionBinder
             // Ordinary scalar/computed leaf. A chain must use TryTranslateSingleScope, which re-roots the leaf onto
             // the single scope its member-name chain names; TryTranslateValue's flat CLR-type check could resolve
             // against the wrong level's $lookup alias. A leaf spanning scopes declines the whole projection.
+            //
+            // A nav-null-check ternary member (`new { a = o != null ? o.OrderID : -1 }`) is tried first: the ordinary
+            // arm has no ternary handling. A ternary whose test isn't a scope null check falls through unchanged.
+            if (leafBody is ConditionalExpression conditionalLeaf
+                && TryTranslateScopeNullCheckConditional(mongoQ, scope, rootParam, conditionalLeaf, out var conditionalValue))
+            {
+                if (!seenAliases.Add(alias))
+                {
+                    return false;
+                }
+
+                staged.Add(new MongoProjection(alias, conditionalValue));
+                continue;
+            }
+
             MongoExpression? computedLeaf;
             if (scope.Levels.Count > 1)
             {
@@ -336,7 +351,29 @@ internal static class NativeJoinScopeProjectionBinder
             return false;
         }
 
-        var rootParam = selector.Parameters[0];
+        if (!TryTranslateScopeNullCheckConditional(mongoQ, scope, selector.Parameters[0], conditional, out var leaf))
+        {
+            return false;
+        }
+
+        mongoQ.Select.AddProjection(new MongoProjection(NativeProjectionBinder.SyntheticBareProjectionAlias, leaf));
+        ConfirmEntireChain(mongoQ, scope);
+        return true;
+    }
+
+    /// <summary>
+    /// Translates a ternary null-checking ONE join scope level's Inner side and choosing between two branches —
+    /// <c>ti.Inner != null ? ti.Inner.City : "&lt;none&gt;"</c> — into a <see cref="MongoConditionalExpression"/>
+    /// over a <see cref="MongoLookupNullCheckExpression"/>. Shared by the BARE-body arm
+    /// (<see cref="TryBindConditionalProjection"/>) and the WRAPPED-leaf arm of <see cref="TryBindProjection"/>
+    /// (a ternary as one member of <c>new { ... }</c>, EF Core's own <c>Condition_on_entity_with_include</c> shape).
+    /// Pure: mutates nothing, so either caller can decline afterwards without a partial commit.
+    /// </summary>
+    private static bool TryTranslateScopeNullCheckConditional(
+        MongoQueryExpression mongoQ, MongoJoinScope scope, ParameterExpression rootParam, ConditionalExpression conditional,
+        [NotNullWhen(true)] out MongoConditionalExpression? leaf)
+    {
+        leaf = null;
 
         if (!NativeJoinScopeTranslator.TryMatchScopeNullCheck(scope, rootParam, conditional.Test, out var scopeIndex, out var isNotNull))
         {
@@ -347,9 +384,11 @@ internal static class NativeJoinScopeProjectionBinder
         var checkedJoin = mongoQ.Joins[scopeIndex - 1];
         var level = scope.Levels[scopeIndex - 1];
 
-        // An inner Join drops unmatched rows, so the null check would be constant; a collection navigation has no
-        // single null answer. Checked per level since a chain can mix Join/LeftJoin.
-        if (!level.IsLeftOuter || checkedJoin.Navigation is { IsCollection: true })
+        // An inner Join drops unmatched rows, so the null check would be constant. Checked per level since a chain
+        // can mix Join/LeftJoin. Not restricted to reference navigations: every JoinInfo.Lookup is ForceUnwind, so a
+        // left-outer collection join yields one (Outer, Inner-or-missing) row per pair, and
+        // MongoLookupNullCheckExpression's $ifNull treats the missing field as null.
+        if (!level.IsLeftOuter || checkedJoin.Lookup is not { ForceUnwind: true })
         {
             return false;
         }
@@ -360,11 +399,7 @@ internal static class NativeJoinScopeProjectionBinder
             return false;
         }
 
-        var testExpr = new MongoLookupNullCheckExpression(level.InnerPrefix, isNotNull);
-        var leaf = new MongoConditionalExpression(testExpr, ifTrue, ifFalse);
-
-        mongoQ.Select.AddProjection(new MongoProjection(NativeProjectionBinder.SyntheticBareProjectionAlias, leaf));
-        ConfirmEntireChain(mongoQ, scope);
+        leaf = new MongoConditionalExpression(new MongoLookupNullCheckExpression(level.InnerPrefix, isNotNull), ifTrue, ifFalse);
         return true;
     }
 

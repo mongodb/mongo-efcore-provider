@@ -71,6 +71,7 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
     [InlineData(MongoQueryMode.NativeOnly)]
     public void Bare_nav_null_check_ternary_over_a_reference_join_matches_oracle(MongoQueryMode mode)
     {
@@ -120,8 +121,12 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
         Assert.Contains(NoneSentinel, actual);
     }
 
+    // DriverLinq included: that mode used to return a bare null instead of NoneSentinel for the dangling-region
+    // row (the flattened left-outer $unwind left the joined field MISSING, which the driver's `$ne: [field, null]`
+    // treats as non-null) — fixed by the bridge's missing -> null normalization after a preserved forced $unwind.
     [Theory]
     [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
     [InlineData(MongoQueryMode.NativeOnly)]
     public void Bare_nav_null_check_ternary_over_a_two_level_chain_matches_oracle(MongoQueryMode mode)
     {
@@ -189,49 +194,6 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
         Assert.Equal(2, actual.Count);
         Assert.Equal("Western Europe", actual[0]);
         Assert.Equal(NoneSentinel, actual[1]);
-    }
-
-    [Fact]
-    public void Bare_nav_null_check_ternary_over_a_two_level_chain_under_DriverLinq_pins_known_fallback_bug()
-    {
-        // Pins a known-wrong result: under explicit DriverLinq, the driver-LINQ bridge returns a bare `null` for a
-        // two-level LeftJoin chain's unmatched row instead of running the else branch (NoneSentinel). Native
-        // handles this shape correctly, so this is the only coverage of that bridge bug; it should go red when the
-        // bridge is fixed.
-        var (ordersName, customersName, regionsName) =
-            CreateCollectionNames(nameof(Bare_nav_null_check_ternary_over_a_two_level_chain_under_DriverLinq_pins_known_fallback_bug));
-
-        var matchedRegionId = ObjectId.GenerateNewId();
-        var matchedCustomerId = ObjectId.GenerateNewId();
-        var unmatchedCustomerId = ObjectId.GenerateNewId();
-        var danglingRegionId = ObjectId.GenerateNewId();
-        var orderWithRegionId = ObjectId.GenerateNewId();
-        var orderWithoutRegionId = ObjectId.GenerateNewId();
-
-        using (var seed = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryMode.DriverLinq))
-        {
-            seed.Set<Region>().Add(new Region { Id = matchedRegionId, Name = "Western Europe" });
-            seed.Set<Customer>().AddRange(
-                new Customer { Id = matchedCustomerId, Name = "Alfreds", RegionId = matchedRegionId },
-                new Customer { Id = unmatchedCustomerId, Name = "Blauer", RegionId = danglingRegionId });
-            seed.Set<Order>().AddRange(
-                new Order { Id = orderWithRegionId, OrderNo = 1, CustomerId = matchedCustomerId },
-                new Order { Id = orderWithoutRegionId, OrderNo = 2, CustomerId = unmatchedCustomerId });
-            seed.SaveChanges();
-        }
-
-        using var db = new JoinScopeDbContext(database, ordersName, customersName, regionsName, MongoQueryMode.DriverLinq);
-
-        var buggyActual = db.Set<Order>()
-            .Join(db.Set<Customer>(), o => o.CustomerId, c => c.Id, (o, c) => new { o, c })
-            .GroupJoin(db.Set<Region>(), x => x.c.RegionId, r => r.Id, (x, rs) => new { x.o, x.c, rs })
-            .SelectMany(x => x.rs.DefaultIfEmpty(), (x, r) => new { x.o, x.c, r })
-            .OrderBy(x => x.o.OrderNo)
-            .Select(x => x.r != null ? x.r.Name : NoneSentinel)
-            .ToList();
-
-        Assert.Equal(["Western Europe", null], buggyActual);
-        Assert.NotEqual(NoneSentinel, buggyActual[1]);
     }
 
     [Theory]

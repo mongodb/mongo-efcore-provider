@@ -81,13 +81,16 @@ Rules that cost real bugs to learn. Breaking one usually produces **silently wro
 - **Multi-scope join projections.** A trailing `Select` over a `Joins.Count >= 2` chain is native only for a
   whole-entity leaf or a leaf resolving to exactly one chain scope; multi-scope or nested wrapped leaves decline.
 - **Navigation-less joins** are native-eligible iff `RebindInnerShaperToOuterQuery`'s raw-key branch resolved
-  both keys (`JoinInfo.Lookup != null`). A navigation resolving to the *wrong* target must still decline
-  (`JoinLookupImplementsKeySelectors`). See `NativeJoinTests`.
+  both keys (`JoinInfo.Lookup != null`). A navigation resolved to the *wrong* target (its `$lookup` doesn't
+  reproduce the written simple key equality) is discarded and rebuilt by that raw-key branch; a non-simple key
+  keeps it and still declines (`JoinLookupImplementsKeySelectors`). Raw-key fields use
+  `LookupExpression.GetFieldPath` (a composite-PK component lives at `_id.<Name>`). See `NativeJoinTests`,
+  `NativeCompositeKeyJoinTests`.
 - **Paging ahead of a join's confirming `Select`.** EF Core hoists `Skip`/`Take`/`Where`/`OrderBy` ahead of the
   join's result selector; the recorded `PipelineOps` are deferred to run after the join, unless the join is in
-  the left-outer-reference-navigation "safe to page before `$lookup`" set. Reducers there decline. A 1:N
-  collection-navigation join with paging recorded before any join declines — deferring would page the
-  multiplied result, not the outer sequence.
+  the left-outer-reference-navigation "safe to page before `$lookup`" set. Reducers there decline. Paging
+  recorded before any join, ahead of a join that may multiply rows (collection navigation or navigation-less),
+  stays ahead of the `$lookup`; if paging was also recorded after the join, the query declines.
 - **Set ops form a tree; each `Union`'s dedup belongs to its own link, never hoisted.**
   `MongoSelectDefinition.SetOperations` is an ordered list where an operand may itself carry a link, so
   whole-entity `Concat`/`Union` nests both directions. Right-nesting (`A.Concat(B.Union(C))`) cannot be

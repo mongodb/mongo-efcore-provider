@@ -1690,7 +1690,7 @@ Customers.{ "$sort" : { "ContactName" : -1 } }, { "$limit" : 1 }
         await base.OfType_Select(async);
         AssertMql(
             """
-Orders.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : "$_lookup_Customer.City", "_id" : 0 } }, { "$limit" : 1 }
+Orders.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$set" : { "_lookup_Customer" : { "$ifNull" : ["$_lookup_Customer", null] } } }, { "$project" : { "_v" : "$_lookup_Customer.City", "_id" : 0 } }, { "$limit" : 1 }
 """);
     }
 
@@ -1699,7 +1699,7 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Customers", "local
         await base.OfType_Select_OfType_Select(async);
         AssertMql(
             """
-Orders.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : "$_lookup_Customer.City", "_id" : 0 } }, { "$limit" : 1 }
+Orders.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$set" : { "_lookup_Customer" : { "$ifNull" : ["$_lookup_Customer", null] } } }, { "$project" : { "_v" : "$_lookup_Customer.City", "_id" : 0 } }, { "$limit" : 1 }
 """);
     }
 

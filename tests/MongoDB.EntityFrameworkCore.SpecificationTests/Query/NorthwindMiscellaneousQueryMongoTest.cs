@@ -2905,7 +2905,7 @@ Products.{ "$set" : { "__sort0" : { "$ifNull" : ["$UnitPrice", { "$literal" : { 
         await base.No_orderby_added_for_fully_translated_manually_constructed_LOJ(async);
         AssertMql(
             """
-Employees.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Employees", "localField" : "_outer._id", "foreignField" : "ReportsTo", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "City1" : "$_v._outer.City", "City2" : "$_v._inner.City", "_id" : 0 } }
+Employees.{ "$lookup" : { "from" : "Employees", "localField" : "_id", "foreignField" : "ReportsTo", "as" : "_lookup_Employee" } }, { "$unwind" : { "path" : "$_lookup_Employee", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "City1" : "$City", "City2" : "$_lookup_Employee.City", "_id" : 0 } }
 """);
     }
 
@@ -4386,7 +4386,7 @@ Employees.{ "$project" : { "Title" : "$Title", "_id" : 0 } }
         await base.Perform_identity_resolution_reuses_same_instances_across_joins(async, useAsTracking);
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Orders.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Orders.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$set" : { "_lookup_Customer" : { "$ifNull" : ["$_lookup_Customer", null] } } }
 """);
     }
 

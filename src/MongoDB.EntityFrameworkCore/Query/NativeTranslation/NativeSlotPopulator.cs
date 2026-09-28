@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -176,9 +177,10 @@ internal static class NativeSlotPopulator
                          predicate.Parameters[0], predicate.Body, containsNavigation, out var innerListContainsNode))
                 mongoQ.Select.AddPredicateConjunct(innerListContainsNode);
             // Outer-side only: $match ops lower before the $lookup, so a Where reaching Inner is left to the arms
-            // below. This gate is deliberately shorter than IsSingleEligibleNativeJoinScope: those conjuncts protect
-            // registering a $lookup, and this arm registers nothing (an unconfirmed join routes to Fallback, discarding
-            // the conjunct). Don't copy this shorter set to a registering call site.
+            // below (which defer into PostJoinOps). This gate is deliberately shorter than
+            // IsSingleEligibleNativeJoinScope: those conjuncts protect registering a $lookup, and this arm registers
+            // nothing (an unconfirmed join routes to Fallback, discarding the conjunct). Don't copy this shorter set to
+            // a registering call site.
             else if (mongoQ.Select.JoinScope is { Levels.Count: 1 } singleLevelScope
                      && !NativeJoinScopeTranslator.ReferencesInnerScope(predicate.Parameters[0], predicate.Body)
                      && NativeJoinScopeTranslator.TryTranslatePredicate(
@@ -194,11 +196,12 @@ internal static class NativeSlotPopulator
             // confirms it, and registering here too would double-count MarkReferenceIncludeConfirmed and trip
             // HasUnconfirmedCandidateJoin. It only translates the predicate and flips ActiveOps to PostJoinOps, so the
             // check (and First()'s $limit) run after the $lookup/$unwind. Left-outer only: an inner join's $unwind
-            // drops unmatched rows, making the check vacuous; a collection navigation's 1:N $unwind has no single "is
-            // null" meaning.
+            // drops unmatched rows, making the check vacuous. Not restricted to reference navigations: every
+            // JoinInfo.Lookup is ForceUnwind, so a left-outer collection join also yields one (Outer, Inner-or-missing)
+            // row per pair.
             else if (mongoQ.Select.JoinScope != null
                      && mongoQ.Joins.Count == 1
-                     && mongoQ.Joins[0] is { IsLeftOuter: true, Lookup: { Navigation.IsCollection: false } lookup }
+                     && mongoQ.Joins[0] is { IsLeftOuter: true, Lookup: { ForceUnwind: true } lookup }
                      && NativeJoinScopeTranslator.TryMatchInnerNullCheck(
                          predicate.Parameters[0], predicate.Body, out var isNotNull))
             {
@@ -208,17 +211,35 @@ internal static class NativeSlotPopulator
             }
             // A general predicate reaching a single-level join's Inner side (`o.Customer.City != "London"`);
             // TryTranslatePredicate resolves Inner members via JoinScope.Levels[0].InnerPrefix. The narrower null-check
-            // arm is tried first. Non-collection only (1:N post-join filtering is unexamined); no left-outer
-            // requirement, since dropping unmatched rows is correct for a general comparison. Join confirmation is left
-            // to the trailing Select(ti => ti.Outer), as in the null-check arm.
+            // arm is tried first. Not restricted to reference navigations: every JoinInfo.Lookup is ForceUnwind, so by
+            // the time PostJoinOps lower a collection-nav join is already one (Outer, Inner) row per pair, and a $match
+            // over them is exactly Join(...).Where(...) (EF Core's GroupJoin_Where resolves to the collection nav
+            // Customer.Orders). No left-outer requirement, since dropping unmatched rows is correct for a general
+            // comparison. Join confirmation is left to the trailing Select(ti => ti.Outer), as in the null-check arm.
             else if (mongoQ.Select.JoinScope is { Levels.Count: 1 } innerScope
                      && mongoQ.Joins.Count == 1
-                     && mongoQ.Joins[0].Lookup is { Navigation.IsCollection: false }
+                     && mongoQ.Joins[0].Lookup is { ForceUnwind: true }
                      && NativeJoinScopeTranslator.TryTranslatePredicate(
                          innerScope, predicate.Parameters[0], predicate.Body, out var innerPredicateNode))
             {
                 mongoQ.Select.MarkJoinInnerAccessConfirmed();
                 mongoQ.Select.AddPredicateConjunct(innerPredicateNode);
+            }
+            // A top-level && over a single-level join scope that neither arm above takes whole — typically an Inner
+            // null check plus an Inner predicate (EF Core's GroupJoin_DefaultIfEmpty_Where,
+            // `o != null && o.CustomerID == "ALFKI"`). Each conjunct is translated on its own into PostJoinOps;
+            // splitting is exact since a $match has no short-circuit to preserve. All-or-nothing.
+            else if (mongoQ.Select.JoinScope is { Levels.Count: 1 } conjunctionScope
+                     && mongoQ.Joins.Count == 1
+                     && predicate.Body is BinaryExpression { NodeType: ExpressionType.AndAlso }
+                     && TryTranslateJoinScopeConjunction(
+                         conjunctionScope, mongoQ.Joins[0], predicate.Parameters[0], predicate.Body, out var conjunctNodes))
+            {
+                mongoQ.Select.MarkJoinInnerAccessConfirmed();
+                foreach (var conjunctNode in conjunctNodes)
+                {
+                    mongoQ.Select.AddPredicateConjunct(conjunctNode);
+                }
             }
             // An unfiltered reference-collection-nav count compared to a value (`c.Orders.Count > 2`), which
             // translator.TryTranslate always declines (it handles only embedded collections).
@@ -249,15 +270,20 @@ internal static class NativeSlotPopulator
         {
             // Each Skip appends a $skip at its arrival position. With no join recorded yet, this paging precedes any
             // join and must not be deferred past a later one — see
-            // MongoSelectDefinition.HasPagingRecordedBeforeAnyJoin.
+            // MongoSelectDefinition.HasPagingRecordedBeforeAnyJoin. The else arm records the opposite, so the join
+            // gate can decline a snapshot holding paging from both sides of a join.
             if (mongoQ.Joins.Count == 0)
                 mongoQ.Select.MarkPagingRecordedBeforeAnyJoin();
+            else
+                mongoQ.Select.MarkPagingRecordedAfterAJoin();
             PopulatePagingSlot(mongoQ, call, mongoQ.Select.AppendSkip);
         }
         else if (methodDefinition == QueryableMethods.Take)
         {
             if (mongoQ.Joins.Count == 0)
                 mongoQ.Select.MarkPagingRecordedBeforeAnyJoin();
+            else
+                mongoQ.Select.MarkPagingRecordedAfterAJoin();
             PopulatePagingSlot(mongoQ, call, mongoQ.Select.AppendLimit);
         }
         else if (methodDefinition == QueryableMethods.Reverse)
@@ -317,6 +343,58 @@ internal static class NativeSlotPopulator
     }
 
     /// <summary>
+    /// Backs the Where arm for a top-level <c>&amp;&amp;</c> over a single-level join scope: flattens the conjunction
+    /// and translates each conjunct as an Inner null check (left-outer joins only) or a join-scope predicate via
+    /// <see cref="NativeJoinScopeTranslator.TryTranslatePredicate"/>. Pure: returns every node or none.
+    /// </summary>
+    private static bool TryTranslateJoinScopeConjunction(
+        MongoJoinScope scope, JoinInfo join, ParameterExpression rootParam, Expression body,
+        [NotNullWhen(true)] out List<MongoExpression>? conjuncts)
+    {
+        conjuncts = null;
+        if (join.Lookup is not { ForceUnwind: true } lookup)
+        {
+            return false;
+        }
+
+        var translated = new List<MongoExpression>();
+        var pending = new Stack<Expression>();
+        pending.Push(body);
+        while (pending.Count > 0)
+        {
+            var node = pending.Pop();
+            if (node is BinaryExpression { NodeType: ExpressionType.AndAlso } andAlso)
+            {
+                // Right pushed first so conjuncts are emitted in source order.
+                pending.Push(andAlso.Right);
+                pending.Push(andAlso.Left);
+                continue;
+            }
+
+            if (NativeJoinScopeTranslator.TryMatchInnerNullCheck(rootParam, node, out var isNotNull))
+            {
+                if (!join.IsLeftOuter)
+                {
+                    return false;
+                }
+
+                translated.Add(new MongoLookupNullCheckExpression(lookup.As, isNotNull));
+            }
+            else if (NativeJoinScopeTranslator.TryTranslatePredicate(scope, rootParam, node, out var conjunct))
+            {
+                translated.Add(conjunct);
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        conjuncts = translated;
+        return true;
+    }
+
+    /// <summary>
     /// Records an OrderBy/ThenBy[Descending] key via <paramref name="record"/>, trying each supported key shape in turn
     /// and marking the query non-native if none translates.
     /// </summary>
@@ -356,8 +434,8 @@ internal static class NativeSlotPopulator
                      singleLevelScope, keySelector.Parameters[0], keySelector.Body, out var joinSortKey))
             record(new MongoOrdering(joinSortKey, ascending));
         // Sort key reaching a single-level join's Inner side (`Join(...).OrderBy(x => x.Inner.OrderID)`), deferred into
-        // PostJoinOps so it lowers after the $lookup/$unwind. Unlike the Where Inner arm, collection navigations are
-        // allowed: a $sort changes neither row count nor identity, so it's correct for any join cardinality (and
+        // PostJoinOps so it lowers after the $lookup/$unwind. Collection navigations are allowed (as in the Where
+        // Inner arm): a $sort changes neither row count nor identity, so it's correct for any join cardinality (and
         // Customers.Join(Orders, ...) resolves to the Customer.Orders collection navigation).
         else if (mongoQ.Select.JoinScope is { Levels.Count: 1 } innerSortScope
                  && mongoQ.Joins.Count == 1

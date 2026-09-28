@@ -201,10 +201,14 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             return VisitProjectedQuery(shapedQueryExpression, rootEntityType, mongoQueryExpression);
         }
 
-        // Entity path: full BsonDocuments shaped into tracked/untracked entity instances
+        // Entity path: full BsonDocuments shaped into tracked/untracked entity instances. A bare join INNER leaf
+        // (Select(ti => ti.Inner)) is read from the join's _lookup_<Nav> field of the WHOLE document — which the
+        // native pipeline returns, but the driver-LINQ fallback would not (it pushes the bare Select down as `_v`),
+        // so strip that Select on fallback. See MongoSelectDefinition.HasBareJoinInnerEntityLeaf.
         return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
             (bsonDoc, behavior) => new MongoProjectionBindingRemovingExpressionVisitor(
-                rootEntityType, mongoQueryExpression, bsonDoc, behavior));
+                rootEntityType, mongoQueryExpression, bsonDoc, behavior),
+            stripBareProjectionOnFallback: mongoQueryExpression.Select.HasBareJoinInnerEntityLeaf);
     }
 
     private MethodCallExpression VisitProjectedQuery(
