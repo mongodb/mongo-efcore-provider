@@ -1476,6 +1476,8 @@ internal static class NativeProjectionBinder
                 => IsArrayFreeComputedSubtree(trim.Source) && (trim.Chars is null || IsArrayFreeComputedSubtree(trim.Chars)),
             MongoStringFirstOrLastExpression firstOrLast => IsArrayFreeComputedSubtree(firstOrLast.Source),
             MongoFieldExpression or MongoConstantExpression or MongoParameterExpression => true,
+            // A $type/$isNumber test on its field; never touches an array.
+            MongoNumericTypeBracketExpression => true,
             // Includes the size kinds, deliberately excluded by the catch-all.
             _ => false
         };

@@ -4005,4 +4005,41 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         Assert.Contains("Projecting a whole entity other than an owned or reference collection element", ex.Message);
     }
 
+    // A whole-element owned SelectMany has Route == WholeEntity, but as a set-op operand the lowerer emits no
+    // $unwind for source2 and runs source1's $unwind (and inner-element filter) after the $unionWith, over both
+    // sides. Without IsPlainWholeEntitySelect's UnwindSource check, left-filtered Concat returned 4 rows (the
+    // filter leaked onto the right side) and right-filtered Concat 10 (the right filter was dropped); the correct
+    // answers are 7. Driver-LINQ can't run these shapes either, so the fix turns silent wrong rows into a throw.
+    [Fact]
+    public void Whole_owned_element_SelectMany_as_set_op_operand_does_not_go_native()
+    {
+        var seed = SeedOwners();
+
+        // Price > 5m keeps Widget and Gadget; the unfiltered side is all five items. 2 + 5 = 7 either way round.
+        Assert.Equal(7, seed.SelectMany(o => o.Items.Where(i => i.Price > 5m)).Concat(seed.SelectMany(o => o.Items)).Count());
+
+        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        {
+            using var db = CreateContext(
+                seed, mode, nameof(Whole_owned_element_SelectMany_as_set_op_operand_does_not_go_native) + mode);
+            var owners = db.Entities.AsNoTracking();
+
+            var leftFiltered = Record.Exception(() => owners.SelectMany(o => o.Items.Where(i => i.Price > 5m))
+                .Concat(owners.SelectMany(o => o.Items)).ToList());
+            var rightFiltered = Record.Exception(() => owners.SelectMany(o => o.Items)
+                .Concat(owners.SelectMany(o => o.Items.Where(i => i.Price > 5m))).ToList());
+
+            if (mode == MongoQueryMode.NativeOnly)
+            {
+                Assert.IsType<NativeTranslationNotSupportedException>(leftFiltered);
+                Assert.IsType<NativeTranslationNotSupportedException>(rightFiltered);
+            }
+            else
+            {
+                // The Native fallback reaches driver-LINQ, which rejects the shape; it must not return rows.
+                Assert.NotNull(leftFiltered);
+                Assert.NotNull(rightFiltered);
+            }
+        }
+    }
 }

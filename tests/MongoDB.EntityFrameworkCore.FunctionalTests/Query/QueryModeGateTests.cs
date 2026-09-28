@@ -156,14 +156,21 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
     public void Native_mode_falls_back_for_unrepresentable_query()
     {
         var (collection, logs) = SeedCustomers(nameof(Native_mode_falls_back_for_unrepresentable_query));
+
+        // A ToUpper computed projection has no native translation. There is no fallback log event, so prove the
+        // fallback is real by asserting NativeOnly rejects the same query; otherwise, once the native translator
+        // learns the shape, this test would silently stop exercising the fallback.
+        using (var nativeOnly = CreateContext(collection, [], MongoQueryMode.NativeOnly))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() => nativeOnly.Entities
+                .Where(c => c.Score > 15).OrderBy(c => c.Score).Select(c => c.Name.ToUpper()).ToList());
+        }
+
         using var db = CreateContext(collection, logs, MongoQueryMode.Native);
-
-        // Assumes a scalar projection is not natively representable, so it must fall back and still
-        // return correct results.
         var names = db.Entities.Where(c => c.Score > 15).OrderBy(c => c.Score)
-            .Select(c => c.Name).ToList();
+            .Select(c => c.Name.ToUpper()).ToList();
 
-        Assert.Equal(["Bob", "Carol", "Dave"], names.ToArray());
+        Assert.Equal(["BOB", "CAROL", "DAVE"], names.ToArray());
     }
 
     // ── NativeOnly: representable shapes succeed, non-representable ones throw at compile time ────

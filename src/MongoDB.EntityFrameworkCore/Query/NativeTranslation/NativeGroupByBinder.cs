@@ -632,8 +632,10 @@ internal static class NativeGroupByBinder
     // Resolves g.Key / g.Key.Sub inside an accumulator's condition/operand to the key part's raw per-document
     // expression, never "_id": accumulators run in the same $group that produces _id, so "_id" would be circular.
     // (The HAVING comparison in TryBindGroupSideOperand runs in a later $match and does use "_id".)
+    // otherOperand is the comparand: a zero-part key only resolves against a literal null (see below).
     private static bool TryResolveKeyReferenceAsRawExpression(
         Expression expr,
+        Expression otherOperand,
         ParameterExpression groupingParameter,
         IReadOnlyList<MongoGroupingKeyPart> keyParts,
         bool isComposite,
@@ -645,12 +647,23 @@ internal static class NativeGroupByBinder
         if (expr is not MemberExpression member)
             return false;
 
-        // Known bug: a zero-part (empty new{}) key's g.Key inside an accumulator condition (e.g.
-        // g.Count(e => g.Key == null)) hits keyParts[0] on an empty list and throws IndexOutOfRangeException.
         if (member.Member.Name == "Key" && member.Expression == groupingParameter)
         {
             if (isComposite)
                 return false; // whole composite key has no single raw expression to compare against a scalar
+
+            if (keyParts.Count == 0)
+            {
+                // A zero-part (empty new{}) key is the constant empty document _id: {}, so its raw expression is
+                // an empty {} literal (never null). Only a literal-null comparand is safe: anything else has no
+                // backing property to serialize through (BsonValue.Create throws), so decline, as
+                // IsSafeZeroPartKeyComparison does for HAVING.
+                if (!IsSafeZeroPartKeyComparison("_id", keyParts, otherOperand))
+                    return false;
+
+                result = new MongoDocumentConstructionExpression(member, []);
+                return true;
+            }
 
             result = keyParts[0].FieldRef;
             return true;
@@ -698,7 +711,7 @@ internal static class NativeGroupByBinder
                 or ExpressionType.GreaterThanOrEqual or ExpressionType.LessThan or ExpressionType.LessThanOrEqual
             } bin)
         {
-            if (TryResolveKeyReferenceAsRawExpression(bin.Left, groupingParameter, keyParts, isComposite, out var leftKey)
+            if (TryResolveKeyReferenceAsRawExpression(bin.Left, bin.Right, groupingParameter, keyParts, isComposite, out var leftKey)
                 && TryTranslateComparisonConstant(bin.Right, (leftKey as MongoFieldExpression)?.Property, out var rightConst))
             {
                 result = new MongoBinaryExpression(MapComparisonOperator(bin.NodeType), leftKey, rightConst);
@@ -706,7 +719,7 @@ internal static class NativeGroupByBinder
                 return true;
             }
 
-            if (TryResolveKeyReferenceAsRawExpression(bin.Right, groupingParameter, keyParts, isComposite, out var rightKey)
+            if (TryResolveKeyReferenceAsRawExpression(bin.Right, bin.Left, groupingParameter, keyParts, isComposite, out var rightKey)
                 && TryTranslateComparisonConstant(bin.Left, (rightKey as MongoFieldExpression)?.Property, out var leftConst))
             {
                 result = new MongoBinaryExpression(MapComparisonOperator(FlipComparison(bin.NodeType)), rightKey, leftConst);
@@ -1332,6 +1345,12 @@ internal static class NativeGroupByBinder
         // A string-sequence leaf (AsEnumerable/ToList/ToArray over a string) pushes down the raw string and applies
         // the .NET call in the shaper, so a $group would dedupe the underlying strings, not the projected values.
         if (select.HasStringSequenceProjectionLeaf)
+            return false;
+
+        // An owned-array or owned-reference entity leaf forces the owner _id into the projected document (see
+        // NativeProjectionBinder), so a $group over it would dedup by owner identity rather than projected value.
+        // Same reason IsPlainProjectedSelect declines it as a set-op operand; the driver-LINQ fallback dedups by value.
+        if (select.HasArrayProjectionLeaf)
             return false;
 
         // Declines:

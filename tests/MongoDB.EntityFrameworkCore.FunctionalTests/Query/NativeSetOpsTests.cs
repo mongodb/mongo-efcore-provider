@@ -2422,12 +2422,11 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     }
 
     [Fact]
-    public void GroupBy_after_Union_of_projected_operand_does_not_regress_the_preexisting_decline_path()
+    public void GroupBy_after_Union_of_plain_projected_operand_declines_and_stays_correct()
     {
-        // A plain projected operand (OperandsProjected: true, no operand-side Grouping) still declines via
-        // `hadTerminalGrouping && !hasFinalizedPriorGrouping`. A Distinct-shaped projected operand is avoided:
-        // it hits a known bug (see the KNOWN BUG comment on MongoSelectLowerer's OperandsProjected branch).
-        var collection = SeedCollection(nameof(GroupBy_after_Union_of_projected_operand_does_not_regress_the_preexisting_decline_path));
+        // A plain projected operand (OperandsProjected: true, no operand-side Grouping) declines via
+        // `hadTerminalGrouping && !hasFinalizedPriorGrouping`; the fallback is correct.
+        var collection = SeedCollection(nameof(GroupBy_after_Union_of_plain_projected_operand_declines_and_stays_correct));
 
         (string Key, int Total)[] Query(SingleEntityDbContext<Item> db)
             => db.Entities.Select(i => new { i.Name })
@@ -2445,6 +2444,188 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
         var result = Query(nativeDb);
         Assert.Equal(5, result.Length);
         Assert.All(result, r => Assert.Equal(1, r.Total));
+    }
+
+    // A Grouping-bearing source1 (projected Distinct or GroupBy.Select(aggregate)) has its $group/$project
+    // snapshotted into PriorGrouping when an outer GroupBy composes after the set op. The lowerer must emit
+    // source1's own $group/$project before $unionWith and the outer $group after it; emitting the outer
+    // $group first failed with "Document element '...' is missing but required".
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void GroupBy_after_Union_of_projected_Distinct_operand_returns_correct_groups(MongoQueryMode mode)
+    {
+        // Operand 1 is a projected Distinct ({1,2,3} -> 3 names); operand 2 is a plain projection ({3,4,5}).
+        // Union dedups the shared "Three", so GroupBy(Name) yields 5 groups of 1.
+        var collection = SeedCollection(nameof(GroupBy_after_Union_of_projected_Distinct_operand_returns_correct_groups) + mode);
+        using var db = Make(collection, mode);
+
+        var result = db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name }).Distinct()
+            .Union(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name }))
+            .GroupBy(x => x.Name)
+            .Select(g => new { g.Key, Total = g.Count() })
+            .AsEnumerable()
+            .OrderBy(r => r.Key)
+            .Select(r => (r.Key, r.Total))
+            .ToArray();
+
+        Assert.Equal(
+            [("Five", 1), ("Four", 1), ("One", 1), ("Three", 1), ("Two", 1)],
+            result);
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void GroupBy_after_Concat_of_projected_Distinct_operand_counts_the_duplicate(MongoQueryMode mode)
+    {
+        // Concat keeps the "Three" from both operands, so its group has 2 rows. Grouping by a different
+        // member than the Distinct also proves the outer $group runs over the combined, flattened rows.
+        var collection = SeedCollection(nameof(GroupBy_after_Concat_of_projected_Distinct_operand_counts_the_duplicate) + mode);
+        using var db = Make(collection, mode);
+
+        var result = db.Entities.Where(i => i.Value <= 3).Select(i => new { i.Name, i.Value }).Distinct()
+            .Concat(db.Entities.Where(i => i.Value >= 3).Select(i => new { i.Name, i.Value }))
+            .GroupBy(x => x.Value)
+            .Select(g => new { g.Key, Total = g.Count() })
+            .AsEnumerable()
+            .OrderBy(r => r.Key)
+            .Select(r => (r.Key, r.Total))
+            .ToArray();
+
+        Assert.Equal([(1, 1), (2, 1), (3, 2), (4, 1), (5, 1)], result);
+    }
+
+    // Variants around the Grouping-bearing-source1 + outer GroupBy shape. Each must match in-memory LINQ
+    // under Native (native or fallback) and, where NativeOnly succeeds, under NativeOnly too.
+    public static TheoryData<string, Func<IQueryable<Item>, IQueryable<Item>, IEnumerable<(int Key, int Total)>>>
+        OuterGroupByOverGroupedSource1Shapes()
+        => new()
+        {
+            {
+                "GroupBy operand, outer GroupBy by Count",
+                (a, b) => a.Where(i => i.Value <= 3).GroupBy(i => i.Value).Select(g => new { g.Key, Count = g.Count() })
+                    .Union(b.Where(i => i.Value >= 2).GroupBy(i => i.Value).Select(g => new { g.Key, Count = g.Count() }))
+                    .GroupBy(x => x.Count).Select(g => new { g.Key, Total = g.Count() })
+                    .AsEnumerable().Select(r => (r.Key, r.Total))
+            },
+            {
+                "Distinct operand, Where between Distinct and Union",
+                (a, b) => a.Select(i => new { i.Value }).Distinct().Where(x => x.Value > 1)
+                    .Concat(b.Where(i => i.Value >= 4).Select(i => new { i.Value }))
+                    .GroupBy(x => x.Value).Select(g => new { g.Key, Total = g.Count() })
+                    .AsEnumerable().Select(r => (r.Key, r.Total))
+            },
+            {
+                "Distinct operand, Where between Union and GroupBy",
+                (a, b) => a.Select(i => new { i.Value }).Distinct()
+                    .Concat(b.Where(i => i.Value >= 4).Select(i => new { i.Value }))
+                    .Where(x => x.Value != 2)
+                    .GroupBy(x => x.Value).Select(g => new { g.Key, Total = g.Count() })
+                    .AsEnumerable().Select(r => (r.Key, r.Total))
+            },
+            {
+                "Distinct operand, outer group ordering and paging",
+                (a, b) => a.Select(i => new { i.Value }).Distinct()
+                    .Concat(b.Where(i => i.Value >= 4).Select(i => new { i.Value }))
+                    .GroupBy(x => x.Value).OrderByDescending(g => g.Key).Skip(1)
+                    .Select(g => new { g.Key, Total = g.Count() })
+                    .AsEnumerable().Select(r => (r.Key, r.Total))
+            },
+            {
+                "Distinct operand, outer group HAVING",
+                (a, b) => a.Select(i => new { i.Value }).Distinct()
+                    .Concat(b.Where(i => i.Value >= 4).Select(i => new { i.Value }))
+                    .GroupBy(x => x.Value).Where(g => g.Count() > 1)
+                    .Select(g => new { g.Key, Total = g.Count() })
+                    .AsEnumerable().Select(r => (r.Key, r.Total))
+            },
+            {
+                "Distinct operand, Intersect then GroupBy",
+                (a, b) => a.Select(i => new { i.Value }).Distinct()
+                    .Intersect(b.Where(i => i.Value >= 3).Select(i => new { i.Value }))
+                    .GroupBy(x => x.Value).Select(g => new { g.Key, Total = g.Count() })
+                    .AsEnumerable().Select(r => (r.Key, r.Total))
+            },
+        };
+
+    [Theory]
+    [MemberData(nameof(OuterGroupByOverGroupedSource1Shapes))]
+    public void Outer_GroupBy_over_grouped_source1_set_op_matches_in_memory(
+        string name,
+        Func<IQueryable<Item>, IQueryable<Item>, IEnumerable<(int Key, int Total)>> query)
+    {
+        var collection = SeedCollection(nameof(Outer_GroupBy_over_grouped_source1_set_op_matches_in_memory) + name.GetHashCode());
+        var items = SeedItems().AsQueryable();
+        var expected = query(items, items).OrderBy(r => r.Key).ToArray();
+
+        using var nativeDb = Make(collection, MongoQueryMode.Native);
+        Assert.Equal(expected, query(nativeDb.Entities, nativeDb.Entities).OrderBy(r => r.Key).ToArray());
+
+        using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly);
+        (int Key, int Total)[]? nativeOnly = null;
+        try
+        {
+            nativeOnly = query(nativeOnlyDb.Entities, nativeOnlyDb.Entities).OrderBy(r => r.Key).ToArray();
+        }
+        catch (NativeTranslationNotSupportedException)
+        {
+            // Declined to the fallback; the Native assertion above covers correctness.
+        }
+
+        if (nativeOnly != null)
+            Assert.Equal(expected, nativeOnly);
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Where_between_projected_Distinct_and_Concat_filters_source1(MongoQueryMode mode)
+    {
+        // The Where after the Distinct lands in source1's PostGroupOps and must run before the $unionWith.
+        var collection = SeedCollection(nameof(Where_between_projected_Distinct_and_Concat_filters_source1) + mode);
+        using var db = Make(collection, mode);
+
+        var result = db.Entities.Select(i => new { i.Value }).Distinct().Where(x => x.Value > 1)
+            .Concat(db.Entities.Where(i => i.Value >= 4).Select(i => new { i.Value }))
+            .AsEnumerable().Select(x => x.Value).OrderBy(v => v).ToArray();
+
+        Assert.Equal([2, 3, 4, 4, 5, 5], result);
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Ops_after_projected_Distinct_in_second_operand_filter_that_operand(MongoQueryMode mode)
+    {
+        // The second operand's post-Distinct Where/OrderBy/Take must run inside its $unionWith pipeline.
+        var collection = SeedCollection(nameof(Ops_after_projected_Distinct_in_second_operand_filter_that_operand) + mode);
+        using var db = Make(collection, mode);
+
+        var result = db.Entities.Where(i => i.Value <= 2).Select(i => new { i.Value })
+            .Concat(db.Entities.Select(i => new { i.Value }).Distinct().Where(x => x.Value > 1)
+                .OrderByDescending(x => x.Value).Take(2))
+            .AsEnumerable().Select(x => x.Value).OrderBy(v => v).ToArray();
+
+        Assert.Equal([1, 2, 4, 5], result);
+    }
+
+    [Fact]
+    public void Where_after_GroupBy_operand_before_Union_filters_that_operand()
+    {
+        // Declines today (a Where after GroupBy.Select isn't admitted as a set-op operand); pins the result.
+        var collection = SeedCollection(nameof(Where_after_GroupBy_operand_before_Union_filters_that_operand));
+        using var db = Make(collection, MongoQueryMode.Native);
+
+        var result = db.Entities.GroupBy(i => i.Value).Select(g => new { g.Key, Count = g.Count() })
+            .Where(x => x.Key >= 4)
+            .Union(db.Entities.GroupBy(i => i.Value).Select(g => new { g.Key, Count = g.Count() })
+                .Where(x => x.Key == 1))
+            .AsEnumerable().Select(x => x.Key).OrderBy(v => v).ToArray();
+
+        Assert.Equal([1, 4, 5], result);
     }
 
     [Fact]

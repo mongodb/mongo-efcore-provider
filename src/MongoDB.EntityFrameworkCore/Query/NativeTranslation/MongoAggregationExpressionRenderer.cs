@@ -75,6 +75,10 @@ internal static class MongoAggregationExpressionRenderer
                         BsonNull.Value
                     }),
             MongoConstantExpression or MongoParameterExpression => MongoValueRenderer.RenderValue(node, placeholders),
+            // Aggregation form of the query dialect's { field: { $type: "number" } }; see
+            // MongoNumericTypeBracketExpression. $and short-circuits, so a following $toX never sees a non-number.
+            MongoNumericTypeBracketExpression bracket
+                => new BsonDocument("$isNumber", Render(bracket.Field, placeholders, elementVariable)),
             MongoBinaryExpression binary => RenderBinary(binary, placeholders, elementVariable),
             MongoSizeExpression size => RenderSize(size, elementVariable),
             // Array-expression $avg/$max/$min/$sum over an $addToSet output, not a $group accumulator.
@@ -119,6 +123,8 @@ internal static class MongoAggregationExpressionRenderer
                     Render(indexOf.Haystack, placeholders, elementVariable),
                     Render(indexOf.Needle, placeholders, elementVariable)
                 }),
+            // Code points, not UTF-16 code units: a surrogate pair counts as 1, not 2 as in .NET. Same as
+            // driver-LINQ; see MongoExpressionTranslator.TryMatchStringLength.
             MongoStringLengthExpression length
                 => new BsonDocument("$strLenCP", Render(length.Operand, placeholders, elementVariable)),
             MongoMathExpression math => RenderMath(math, placeholders, elementVariable),
@@ -164,6 +170,7 @@ internal static class MongoAggregationExpressionRenderer
         => node switch
         {
             MongoFieldExpression or MongoElementRefExpression or MongoOuterFieldExpression or MongoLookupNullCheckExpression => true,
+            MongoNumericTypeBracketExpression => true,
             MongoConstantExpression or MongoParameterExpression => true,
             // $and/$or test a bare operand by truthiness, so a value-converted bool field (e.g. stored as "N",
             // a truthy string) would render but answer wrong. See CanRenderLogicalOperand; comparison-result

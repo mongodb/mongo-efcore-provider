@@ -1651,7 +1651,8 @@ public class MongoExpressionTranslatorTests
     // A narrowing cast makes only the query-native branch decline; the comparison falls through to $expr. The
     // node shape matters: absorbing the cast (bare field, constant with the property serializer) would compare
     // the untruncated stored value. The fall-through wraps the field in MongoConvertExpression and the constant
-    // has no serialization context.
+    // has no serialization context. A relational fall-through is conjoined with a numeric type bracket over the same
+    // field, even for a non-nullable property (a missing element would otherwise compare as null in $expr).
     [Fact]
     public void Narrowing_cast_on_member_vs_constant_falls_through_to_the_expr_path()
     {
@@ -1660,7 +1661,7 @@ public class MongoExpressionTranslatorTests
 
         Assert.True(translator.TryTranslate(predicate.Body, out var result));
 
-        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        var cmp = UnwrapNumericTypeBracket(result, "DoubleScore");
         Assert.Equal(MongoBinaryOperator.GreaterThan, cmp.Operator);
 
         var convert = Assert.IsType<MongoConvertExpression>(cmp.Left);
@@ -1682,7 +1683,7 @@ public class MongoExpressionTranslatorTests
 
         Assert.True(translator.TryTranslate(predicate.Body, out var result));
 
-        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        var cmp = UnwrapNumericTypeBracket(result, "DoubleScore");
         Assert.Equal(MongoBinaryOperator.LessThan, cmp.Operator); // NOT mirrored to GreaterThan
 
         var constant = Assert.IsType<MongoConstantExpression>(cmp.Left);
@@ -1759,10 +1760,20 @@ public class MongoExpressionTranslatorTests
 
         Assert.True(translator.TryTranslate(body, out var result));
 
-        var cmp = Assert.IsType<MongoBinaryExpression>(result);
+        var cmp = UnwrapNumericTypeBracket(result, "Weight");
         var convert = Assert.IsType<MongoConvertExpression>(cmp.Left);
         var field = Assert.IsType<MongoFieldExpression>(convert.Operand);
         Assert.Equal("Weight", field.ElementName);
+    }
+
+    // Asserts AndAlso(MongoNumericTypeBracketExpression(field), comparison) and returns the comparison.
+    private static MongoBinaryExpression UnwrapNumericTypeBracket(MongoExpression? result, string elementName)
+    {
+        var and = Assert.IsType<MongoBinaryExpression>(result);
+        Assert.Equal(MongoBinaryOperator.AndAlso, and.Operator);
+        var bracket = Assert.IsType<MongoNumericTypeBracketExpression>(and.Left);
+        Assert.Equal(elementName, bracket.Field.ElementName);
+        return Assert.IsType<MongoBinaryExpression>(and.Right);
     }
 
     // The identity-like arm: HasNumericConvert also tolerates enum ↔ underlying, char -> int and boxing, reported

@@ -311,6 +311,25 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return source;
         }
 
+        // An identity re-projection over an already-bound construction shaper. Nav-expansion appends one after
+        // Distinct/Union/Concat/Intersect/Except when the projection holds an entity reference (an owned
+        // navigation such as `new { b.Title, b.Address }`), to re-apply its pending Include expansion: e.g.
+        // `e => new { Title = e.Title, Address = e.Address }`. Substituting the shaper folds each member access back
+        // to the node already bound, so the result equals the shaper. Re-running projection binding over those bound
+        // nodes (ProjectionBindingExpression leaves, owned-entity shapers whose value buffer is an
+        // EntityProjectionExpression rather than a binding) would throw in every query mode.
+        //
+        // Not for a whole-entity leaf (`new { Customer = c, ... }`, a shaper whose value buffer is a binding): the
+        // driver-LINQ fallback can't shape that under a Distinct/set op, so it keeps failing translation cleanly.
+        if (source.ShaperExpression is NewExpression or MemberInitExpression
+            && !ContainsBoundEntityShaper(source.ShaperExpression)
+            && ExpressionEqualityComparer.Instance.Equals(
+                ReplacingExpressionVisitor.Replace(selector.Parameters[0], source.ShaperExpression, selector.Body),
+                source.ShaperExpression))
+        {
+            return source;
+        }
+
         // Join/LeftJoin/GroupJoin TransparentIdentifier selectors pass through; any other projecting Select
         // this method can't lower natively marks the query non-representable.
         var mongoQueryExpression = (MongoQueryExpression)source.QueryExpression;
@@ -481,10 +500,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // null-check removal leaves of `nav != null ? nav.Member : null`). Tried after the whole-entity and
         // conditional arms, so it never shadows them.
         //
-        // Restricted to Levels.Count == 1: for a 2-level chain, paging between the two joins is deferred past
-        // both $lookup blocks as one snapshot (DeferPipelineOpsPastConfirmedJoin + ConfirmEntireChain), so it
-        // pages the fully-joined result, giving silently wrong rows. That gap also affects the wrapped-projection
-        // arm; staying depth-1 avoids exposing it through a bare leaf.
+        // Restricted to Levels.Count == 1. It was added to keep paging written between two joins of a chain off
+        // this arm; that shape now declines in IsSingleEligibleNativeJoinScope for every arm, so lifting this
+        // restriction is a possible follow-up (not yet validated for chains).
         else if (IsSingleEligibleNativeJoinScope(mongoQueryExpression, out _)
                  && mongoQueryExpression.Select.JoinScope is { Levels.Count: 1 }
                  && mongoQueryExpression.Select.Projection.Count == 0
@@ -599,6 +617,43 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var newShaper = _projectionBindingExpressionVisitor.Translate(mongoQueryExpression, newSelectorBody);
 
         return source.UpdateShaperExpression(newShaper);
+    }
+
+    // True when the shaper holds an entity shaper bound through a ProjectionBindingExpression (a whole-entity or
+    // join-inner leaf), as opposed to an owned navigation shaper bound directly to its EntityProjectionExpression.
+    private static bool ContainsBoundEntityShaper(Expression shaper)
+    {
+        var finder = new BoundEntityShaperFinder();
+        finder.Visit(shaper);
+        return finder.Found;
+    }
+
+    private sealed class BoundEntityShaperFinder : System.Linq.Expressions.ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        [return: NotNullIfNotNull(nameof(node))]
+        public override Expression? Visit(Expression? node)
+        {
+            if (Found)
+                return node;
+
+            if (node is StructuralTypeShaperExpression { ValueBufferExpression: ProjectionBindingExpression })
+            {
+                Found = true;
+                return node;
+            }
+
+            // Extension nodes don't all implement VisitChildren; descend only through the ones that wrap shapers.
+            return node switch
+            {
+                StructuralTypeShaperExpression or ProjectionBindingExpression => node,
+                IncludeExpression include => Visit(include.EntityExpression),
+                CollectionShaperExpression collection => Visit(collection.InnerShaper),
+                _ when node?.NodeType == ExpressionType.Extension => node,
+                _ => base.Visit(node)
+            };
+        }
     }
 
     /// <summary>
@@ -810,12 +865,18 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                         return false;
                     }
                 }
+                // Paging written BETWEEN two joins of a chain (`Join(a, ...).Skip(1).Take(2).Join(b, ...)`) pages
+                // the earlier join's rows, but the deferred snapshot is emitted after EVERY join's $lookup/$unwind
+                // and would page the fully joined result (silently wrong rows when a later join drops or
+                // multiplies rows). The lowerer has no per-join boundary to place it at, so decline; the
+                // driver-LINQ fallback emits each $lookup at its own boundary. Checked before deferring, so a
+                // decline mutates nothing. Pinned by Ef373InterleavedPagingTests.
+                else if (mongoQueryExpression.Select.HasPagingRecordedBetweenJoins(mongoQueryExpression.Joins.Count))
+                {
+                    return false;
+                }
                 else
                 {
-                    // NOT covered here (pre-existing, still open): paging written BETWEEN two joins of a chain
-                    // (`Join(a, ...).Take(1).Join(b, ...)`) is flagged "after a join", so it lands here and is
-                    // deferred past BOTH joins' $lookup/$unwind — see the chain-paging gap documented at
-                    // TranslateSelect's bare-value arm.
                     mongoQueryExpression.Select.DeferPipelineOpsPastConfirmedJoin();
                 }
             }
@@ -2879,7 +2940,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                        && link.Kind is MongoSetOperationKind.Concat or MongoSetOperationKind.Union
                        && IsWholeEntitySetOpOperandSelect(link.OperandSelect));
 
-    // Filter/sort/paging only: no projection, grouping, scalar cardinality, own set op, lookups, or VectorSearch.
+    // Filter/sort/paging only: no projection, grouping, scalar cardinality, own set op, SelectMany unwind, lookups,
+    // or VectorSearch.
+    //
+    // UnwindSource: a whole-element owned SelectMany (SelectMany(o => o.Items)) has Route == WholeEntity and no
+    // lookups, but operand lowering emits no $unwind for mongo2 and source1's $unwind (plus its inner-element
+    // filter) would run after the $unionWith over both sides, silently returning wrong rows. Pinned by
+    // NativeSelectManyTests.Whole_owned_element_SelectMany_as_set_op_operand_does_not_go_native.
     private static bool IsPlainWholeEntitySelect(MongoQueryExpression mongo)
         => mongo.Select.Route == NativeRoute.WholeEntity
            && mongo.Select.SetOperation == null
@@ -2887,13 +2954,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            && mongo.Select.Grouping == null
            && mongo.Select.Cardinality == null
            && mongo.Select.Projection.Count == 0
+           && mongo.Select.UnwindSource == null
            && !mongo.IsJoinQuery
            && mongo.Lookups.Count == 0
            && !mongo.Select.HasClientWrappedWholeEntityShaper
            && !mongo.CapturedExpression.ContainsVectorSearch();
 
     // The projected analogue of IsPlainWholeEntitySelect: a terminal anonymous/DTO Select is the only thing done.
-    // It also checks UnwindSource == null, which IsPlainWholeEntitySelect omits (a known latent gap).
     //
     // HasArrayProjectionLeaf: an owned-collection array leaf (Select(b => new { b.Title, b.Posts })) makes
     // NativeProjectionBinder emit the owner key into the projected document. Projected-operand dedup

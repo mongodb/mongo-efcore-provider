@@ -87,15 +87,24 @@ internal sealed class MongoSelectLowerer
                 // and must not apply to the other operand's rows, so it's emitted here rather than deferred.
                 AppendLookupStages(query, stages);
 
-                // Known bug: if an outer GroupBy composes on this projected-Distinct-operand set op,
-                // SnapshotPriorGroupingForNestedGroupBy moves the operand's grouping into PriorGrouping and
-                // Grouping becomes the outer one, so the outer $group is emitted here (before $unionWith)
-                // and the operand's dedup after it. Fails with "Document element '...' is missing but
-                // required" in every mode. See NativeSetOpsTests
-                // .GroupBy_after_Union_of_projected_operand_does_not_regress_the_preexisting_decline_path.
-                if (select.Grouping is { } outerGrouping)
-                    stages.Add(new MongoGroupStage(outerGrouping));
-                stages.Add(new MongoProjectStage(select.Projection));
+                // A GroupBy composed after this set op over a Grouping-bearing source1 (projected Distinct or
+                // GroupBy.Select(aggregate)) had SnapshotPriorGroupingForNestedGroupBy move source1's own
+                // $group/$project into the Prior* slots; Grouping/Projection are then the outer GroupBy's, which
+                // must run over the combined rows and are emitted by the Grouping block below.
+                if (select.PriorGrouping is { } source1PriorGrouping)
+                {
+                    AppendPriorGroupingStages(select, source1PriorGrouping, stages, sortFields);
+                }
+                else
+                {
+                    if (select.Grouping is { } source1Grouping)
+                        stages.Add(new MongoGroupStage(source1Grouping));
+                    stages.Add(new MongoProjectStage(select.Projection));
+
+                    // Ops composed on source1's projected Distinct/GroupBy output before the set op
+                    // (Distinct().Where(..).Union(..)) belong to source1, ahead of the combine.
+                    AppendSelectOpStages(select.PostGroupOps, stages, sortFields);
+                }
             }
 
             AppendSetOpChainStages(select, stages, sortFields);
@@ -149,29 +158,25 @@ internal sealed class MongoSelectLowerer
         // prior $group/$project (snapshotted by SnapshotPriorGroupingForNestedGroupBy) must run first, or the
         // two collapse into one and silently aggregate pre-dedup rows. Ops composed between the two GroupBys
         // (PostGroupOps) follow it.
-        if (select.PriorGrouping is { } priorGrouping)
+        //
+        // Skipped for a projected-operand set op: there the prior grouping is source1's own, already emitted
+        // before the set-op stage.
+        if (select.PriorGrouping is { } priorGrouping && select.SetOperation is not { OperandsProjected: true })
         {
-            stages.Add(new MongoGroupStage(priorGrouping));
-
-            // The prior grouping's own HAVING: after its $group, before its flattening $project.
-            if (select.PriorGroupHavingPredicate is { } priorHavingPredicate)
-            {
-                stages.Add(new MongoMatchStage(priorHavingPredicate));
-            }
-
-            if (select.PriorGroupingProjection.Count > 0)
-                stages.Add(new MongoProjectStage(select.PriorGroupingProjection));
-            AppendSelectOpStages(select.PostGroupOps, stages, sortFields);
+            AppendPriorGroupingStages(select, priorGrouping, stages, sortFields);
         }
 
         // Keyed $group terminal, followed by a flattening $project that lifts _id, _id.<Name> sub-keys and
         // accumulator outputs to the top-level aliases the shaper reads. Pre-group PipelineOps are fine ahead
         // of it; see MongoSelectDefinition.HasOrdering.
         //
-        // Skipped for a projected-operand set op: that Grouping is source1's own Distinct, already emitted
-        // before the set-op stage; re-emitting would add a spurious $group over the combined result. A GroupBy
-        // after a whole-entity Union/Concat (OperandsProjected false) is emitted here, after TrailingOps.
-        if (select.Grouping is { } grouping && select.SetOperation is not { OperandsProjected: true })
+        // Skipped for a projected-operand set op unless PriorGrouping is set: otherwise that Grouping is source1's
+        // own Distinct/GroupBy, already emitted before the set-op stage, and re-emitting would add a spurious
+        // $group over the combined result. With PriorGrouping set, Grouping is an outer GroupBy over the combined
+        // rows. A GroupBy after a whole-entity Union/Concat (OperandsProjected false) is also emitted here, after
+        // TrailingOps.
+        if (select.Grouping is { } grouping
+            && (select.SetOperation is not { OperandsProjected: true } || select.PriorGrouping != null))
         {
             stages.Add(new MongoGroupStage(grouping));
 
@@ -263,6 +268,26 @@ internal sealed class MongoSelectLowerer
         return stages;
     }
 
+    // The snapshotted prior grouping's $group, its own HAVING (after the $group, before the flattening
+    // $project), the flattening $project, then the ops composed on its output (PostGroupOps).
+    private static void AppendPriorGroupingStages(
+        MongoSelectDefinition select,
+        MongoGrouping priorGrouping,
+        List<MongoPipelineStage> stages,
+        SyntheticSortFieldAllocator sortFields)
+    {
+        stages.Add(new MongoGroupStage(priorGrouping));
+
+        if (select.PriorGroupHavingPredicate is { } priorHavingPredicate)
+        {
+            stages.Add(new MongoMatchStage(priorHavingPredicate));
+        }
+
+        if (select.PriorGroupingProjection.Count > 0)
+            stages.Add(new MongoProjectStage(select.PriorGroupingProjection));
+        AppendSelectOpStages(select.PostGroupOps, stages, sortFields);
+    }
+
     // One stage per set-op link, in LINQ source order (a left-nested chain has several). Each Union dedups
     // right after its own $unionWith: Concat(Union(A,B),C) must dedup A,B before C joins, and hoisting the
     // dedup to the end would silently drop rows. Mutually recursive with AppendSetOpOperandStages, which
@@ -306,6 +331,9 @@ internal sealed class MongoSelectLowerer
             if (link.OperandSelect.Grouping is { } operandGrouping)
                 operandStages.Add(new MongoGroupStage(operandGrouping));
             operandStages.Add(new MongoProjectStage(link.OperandSelect.Projection));
+
+            // The operand's ops composed on its projected Distinct/GroupBy output.
+            AppendSelectOpStages(link.OperandSelect.PostGroupOps, operandStages, sortFields);
         }
         else
         {

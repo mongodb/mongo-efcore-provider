@@ -41,20 +41,39 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     private readonly IEntityType _rootEntityType;
     private readonly ParameterExpression _docParameter;
 
+    private readonly bool _ownerKeyMayBeAbsent;
+
+    /// <param name="rootEntityType">The root entity type of the query.</param>
+    /// <param name="queryExpression">The query being shaped.</param>
+    /// <param name="docParameter">The shaper's <see cref="BsonDocument"/> parameter.</param>
+    /// <param name="trackingBehavior">The query's tracking behavior.</param>
+    /// <param name="pushedDownSelectRetained">
+    /// <see langword="true"/> when the projecting <c>Select</c> could not be stripped because an operator composes
+    /// over its result (<c>Distinct</c>, <c>Union</c>, <c>Concat</c>, ...). The driver then returns projected
+    /// documents keyed by member name, which carry an owned-reference leaf's sub-document but not its owner's key.
+    /// </param>
     public MongoMixedProjectionBindingRemovingExpressionVisitor(
         IEntityType rootEntityType,
         MongoQueryExpression queryExpression,
         ParameterExpression docParameter,
-        QueryTrackingBehavior trackingBehavior)
+        QueryTrackingBehavior trackingBehavior,
+        bool pushedDownSelectRetained = false)
         : base(rootEntityType, queryExpression, docParameter, trackingBehavior)
     {
         _queryExpression = queryExpression;
         _rootEntityType = rootEntityType;
         _docParameter = docParameter;
+
+        // The owned key only feeds identity: under NoTracking it's unobservable (TrackAll already rejects an owned
+        // entity projected without its owner), but identity resolution would merge every row onto the placeholder.
+        _ownerKeyMayBeAbsent = pushedDownSelectRetained && trackingBehavior == QueryTrackingBehavior.NoTracking;
     }
 
     /// <inheritdoc />
     protected override bool ReadsUnprojectedDocuments => true;
+
+    /// <inheritdoc />
+    protected override bool OwnerKeyMayBeAbsent => _ownerKeyMayBeAbsent;
 
     protected override Expression VisitExtension(Expression extensionExpression)
     {

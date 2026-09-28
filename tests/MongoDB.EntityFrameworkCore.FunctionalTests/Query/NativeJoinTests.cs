@@ -762,9 +762,48 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
                 .Select(x => x.r)
                 .FirstOrDefault());
 
-        // No Native-mode correctness half: this shape returns null on the driver-LINQ path too (a separate,
-        // pre-existing fallback defect), so there's no correct result to assert. What's pinned is the clean
-        // decline instead of wrong data (null or "more than one element") natively.
+        // What's pinned here is the clean decline instead of wrong data (null or "more than one element")
+        // natively; the correctness half is Reducer_after_a_bare_Inner_entity_leaf_over_a_join_returns_the_joined_row.
+    }
+
+    // The Native/DriverLinq correctness half of the shape above: it declines natively, so both modes run the
+    // driver-LINQ fallback, which must return the one joined Order. It used to return null: the bare-leaf arm
+    // registers the join's $lookup at translation time, so the fallback ran over the flattened `_lookup_Orders`
+    // shape, the driver pushed `Select(x => x.r)` down as `{ _v: "$_lookup_Orders" }`, and the entity shaper
+    // (which reads `_lookup_Orders` off the whole document) found nothing. Fixed by the fallback's strip of that
+    // pushed-down Select under a reducer (MongoSelectDefinition.HasBareJoinInnerEntityLeaf); disabling the strip
+    // turns every row of this theory red.
+    [Theory]
+    [InlineData(MongoQueryMode.Native, "First")]
+    [InlineData(MongoQueryMode.DriverLinq, "First")]
+    [InlineData(MongoQueryMode.Native, "FirstOrDefault")]
+    [InlineData(MongoQueryMode.DriverLinq, "FirstOrDefault")]
+    [InlineData(MongoQueryMode.Native, "Single")]
+    [InlineData(MongoQueryMode.DriverLinq, "Single")]
+    [InlineData(MongoQueryMode.Native, "SingleOrDefault")]
+    [InlineData(MongoQueryMode.DriverLinq, "SingleOrDefault")]
+    public void Reducer_after_a_bare_Inner_entity_leaf_over_a_join_returns_the_joined_row(MongoQueryMode mode, string reducer)
+    {
+        var seed = SeedOrderlessOwnerFirst();
+        using var db = CreateContext(seed, mode,
+            nameof(Reducer_after_a_bare_Inner_entity_leaf_over_a_join_returns_the_joined_row) + mode + reducer);
+
+        var inner = db.Owners
+            .Join(db.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+            .Select(x => x.r);
+
+        var result = reducer switch
+        {
+            "First" => inner.First(),
+            "FirstOrDefault" => inner.FirstOrDefault(),
+            "Single" => inner.Single(),
+            "SingleOrDefault" => inner.SingleOrDefault(),
+            _ => throw new ArgumentOutOfRangeException(nameof(reducer))
+        };
+
+        Assert.NotNull(result);
+        Assert.Equal(seed.Orders[0].Id, result.Id);
+        Assert.Equal(5m, result.Total);
     }
 
     [Fact]
@@ -954,7 +993,8 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     // only removes an OUTERMOST Select, or a reducer's) cannot reach it — and stripping under a Distinct would change
     // what is deduplicated (whole Owner+Order documents instead of Orders) anyway. Explicit DriverLinq therefore still
     // returns NULL entities for this shape. Default Native mode translates it natively and is correct (see the
-    // DistinctAfter rows of the theory above). Asserting the current wrong value so this goes red when it is fixed.
+    // DistinctAfter rows of the theory above). Asserting the current wrong value so this goes red when it is fixed
+    // (EF-458).
     [Fact]
     public void Distinct_after_a_bare_Inner_entity_leaf_under_DriverLinq_pins_known_null_entities()
     {

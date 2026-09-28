@@ -865,14 +865,222 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         Assert.Equal(9, result.Total);
     }
 
-    // ── Set-op gate ─────────────────────────────────────────────────────────────────────────────────
+    // ── Owned-reference leaf in an anonymous type under Distinct / set ops ─────────────────────────────
     //
-    // A nav-entity-leaf projection's _id would leak into a set operation's comparison/dedup key, like the owned-array
-    // leaf's, so it sets HasArrayProjectionLeaf and declines as a set-op operand (pinned at unit level by
+    // A nav-entity-leaf projection's _id would leak into a set operation's or projected Distinct's comparison/dedup
+    // key, like the owned-array leaf's, so it sets HasArrayProjectionLeaf and declines natively as a set-op operand or
+    // Distinct source (pinned at unit level by
     // SlotPopulationTests.Owned_reference_entity_leaf_projection_sets_HasArrayProjectionLeaf_for_the_set_op_gate).
     //
-    // Not covered end-to-end: Union/Concat of two wrapped (entity/array-typed) projections, or a projected
-    // Distinct over one, hits a separate pre-existing gap. Nav-expansion re-enters
-    // MongoProjectionBindingExpressionVisitor's shaper-building a second time, finds leftover state and throws
-    // InvalidCastException instead of a correct pipeline or NativeTranslationNotSupportedException.
+    // These used to throw in every mode: nav-expansion appends an identity re-projection (e => new { e.Title,
+    // e.Address }) after the Distinct/set op to re-apply the owned auto-include, and re-binding the already-bound
+    // shaper threw InvalidCastException / "ProjectionBindingExpression could not be translated". On the driver-LINQ
+    // path the projecting Select can't be stripped, so the driver returns projected documents without the owner _id
+    // the owned shadow key reads; under NoTracking that key is unobservable and reads as a placeholder.
+
+    public static TheoryData<MongoQueryMode> FallbackModes()
+        => new() { MongoQueryMode.Native, MongoQueryMode.DriverLinq };
+
+    [Theory]
+    [MemberData(nameof(FallbackModes))]
+    public void Owned_reference_entity_leaf_in_anonymous_type_with_Distinct(MongoQueryMode mode)
+    {
+        var collection = SeedBlogs(nameof(Owned_reference_entity_leaf_in_anonymous_type_with_Distinct) + mode);
+        using var db = CreateContext(collection, mode, BlogModel);
+
+        var result = db.Entities.AsNoTracking().Select(b => new { b.Address }).Distinct().ToList();
+
+        Assert.Equal(["LA", "NYC"], result.Select(r => r.Address.City).OrderBy(c => c).ToArray());
+    }
+
+    [Theory]
+    [MemberData(nameof(FallbackModes))]
+    public void Owned_reference_entity_leaf_in_anonymous_type_with_Union(MongoQueryMode mode)
+    {
+        var collection = SeedBlogs(nameof(Owned_reference_entity_leaf_in_anonymous_type_with_Union) + mode);
+        using var db = CreateContext(collection, mode, BlogModel);
+
+        var result = db.Entities.AsNoTracking().Where(b => b.Title == "Alpha").Select(b => new { b.Title, b.Address })
+            .Union(db.Entities.AsNoTracking().Select(b => new { b.Title, b.Address }))
+            .ToList();
+
+        Assert.Equal(
+            [("Alpha", "NYC", "10001"), ("Beta", "LA", "90001")],
+            result.Select(r => (r.Title, r.Address.City, r.Address.Zip)).OrderBy(r => r.Title).ToArray());
+    }
+
+    [Theory]
+    [MemberData(nameof(FallbackModes))]
+    public void Owned_reference_entity_leaf_in_anonymous_type_with_Concat(MongoQueryMode mode)
+    {
+        var collection = SeedBlogs(nameof(Owned_reference_entity_leaf_in_anonymous_type_with_Concat) + mode);
+        using var db = CreateContext(collection, mode, BlogModel);
+
+        var result = db.Entities.AsNoTracking().Where(b => b.Title == "Alpha").Select(b => new { b.Title, b.Address })
+            .Concat(db.Entities.AsNoTracking().Select(b => new { b.Title, b.Address }))
+            .ToList();
+
+        Assert.Equal(
+            [("Alpha", "NYC"), ("Alpha", "NYC"), ("Beta", "LA")],
+            result.Select(r => (r.Title, r.Address.City)).OrderBy(r => r.Title).ToArray());
+    }
+
+    [Fact]
+    public void Owned_reference_entity_leaf_in_anonymous_type_with_Union_declines_under_NativeOnly()
+    {
+        var collection = SeedBlogs(nameof(Owned_reference_entity_leaf_in_anonymous_type_with_Union_declines_under_NativeOnly));
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() =>
+            db.Entities.AsNoTracking().Select(b => new { b.Title, b.Address })
+                .Union(db.Entities.AsNoTracking().Select(b => new { b.Title, b.Address }))
+                .ToList());
+    }
+
+    // Like the set-op gate, a native projected Distinct declines: its $group would include the leaked owner _id.
+    [Fact]
+    public void Owned_reference_entity_leaf_in_anonymous_type_with_Distinct_declines_under_NativeOnly()
+    {
+        var collection = SeedBlogs(nameof(Owned_reference_entity_leaf_in_anonymous_type_with_Distinct_declines_under_NativeOnly));
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() =>
+            db.Entities.AsNoTracking().Select(b => new { b.Address }).Distinct().ToList());
+    }
+
+    // Two distinct blogs with equal Title and Address: dedup compares projected values, so they collapse to one row.
+    [Theory]
+    [MemberData(nameof(FallbackModes))]
+    public void Owned_reference_entity_leaf_Distinct_dedups_by_value_not_owner_identity(MongoQueryMode mode)
+    {
+        var collection = SeedDuplicateBlogs(nameof(Owned_reference_entity_leaf_Distinct_dedups_by_value_not_owner_identity) + mode);
+        using var db = CreateContext(collection, mode, BlogModel);
+
+        var result = db.Entities.AsNoTracking().Select(b => new { b.Title, b.Address }).Distinct().ToList();
+
+        var row = Assert.Single(result);
+        Assert.Equal(("Same", "NYC"), (row.Title, row.Address.City));
+    }
+
+    [Theory]
+    [MemberData(nameof(FallbackModes))]
+    public void Owned_reference_entity_leaf_Union_dedups_by_value_not_owner_identity(MongoQueryMode mode)
+    {
+        var collection = SeedDuplicateBlogs(nameof(Owned_reference_entity_leaf_Union_dedups_by_value_not_owner_identity) + mode);
+        using var db = CreateContext(collection, mode, BlogModel);
+
+        var result = db.Entities.AsNoTracking().Select(b => new { b.Title, b.Address })
+            .Union(db.Entities.AsNoTracking().Select(b => new { b.Title, b.Address }))
+            .ToList();
+
+        var row = Assert.Single(result);
+        Assert.Equal(("Same", "NYC"), (row.Title, row.Address.City));
+    }
+
+    // TrackAll rejects an owned entity projected without its owner (EF Core's own check). Identity resolution needs
+    // the real owner key, which the projected documents don't carry, so it must fail rather than merge rows.
+    [Theory]
+    [InlineData(QueryTrackingBehavior.TrackAll)]
+    [InlineData(QueryTrackingBehavior.NoTrackingWithIdentityResolution)]
+    public void Owned_reference_entity_leaf_Concat_with_tracking_or_identity_resolution_does_not_return_merged_rows(
+        QueryTrackingBehavior trackingBehavior)
+    {
+        var collection = SeedDuplicateBlogs(
+            nameof(Owned_reference_entity_leaf_Concat_with_tracking_or_identity_resolution_does_not_return_merged_rows)
+            + trackingBehavior);
+        using var db = CreateContext(collection, MongoQueryMode.Native, BlogModel);
+        db.ChangeTracker.QueryTrackingBehavior = trackingBehavior;
+
+        Assert.Throws<InvalidOperationException>(() =>
+            db.Entities.Select(b => new { b.Title, b.Address })
+                .Concat(db.Entities.Select(b => new { b.Title, b.Address }))
+                .ToList());
+    }
+
+    private IMongoCollection<Blog> SeedDuplicateBlogs(string name)
+    {
+        var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
+        coll.InsertMany([
+            new BsonDocument
+            {
+                { "_id", ObjectId.GenerateNewId() }, { "Title", "Same" },
+                { "Address", new BsonDocument { { "City", "NYC" }, { "Zip", "10001" } } }
+            },
+            new BsonDocument
+            {
+                { "_id", ObjectId.GenerateNewId() }, { "Title", "Same" },
+                { "Address", new BsonDocument { { "City", "NYC" }, { "Zip", "10001" } } }
+            },
+        ]);
+        return database.MongoDatabase.GetCollection<Blog>(coll.CollectionNamespace.CollectionName);
+    }
+
+    // The same identity re-projection follows an owned-collection leaf; its elements also key off the owner _id.
+    [Theory]
+    [MemberData(nameof(FallbackModes))]
+    public void Owned_collection_leaf_in_anonymous_type_with_Concat(MongoQueryMode mode)
+    {
+        var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(
+            nameof(Owned_collection_leaf_in_anonymous_type_with_Concat) + mode));
+        coll.InsertMany([
+            new BsonDocument
+            {
+                { "_id", ObjectId.GenerateNewId() }, { "Title", "Alpha" },
+                { "Tags", new BsonArray { new BsonDocument("Name", "a1"), new BsonDocument("Name", "a2") } }
+            },
+            new BsonDocument
+            {
+                { "_id", ObjectId.GenerateNewId() }, { "Title", "Beta" },
+                { "Tags", new BsonArray { new BsonDocument("Name", "b1") } }
+            },
+        ]);
+        var collection = database.MongoDatabase.GetCollection<BlogWithTags>(coll.CollectionNamespace.CollectionName);
+        using var db = CreateContext(collection, mode, BlogWithTagsModel);
+
+        var result = db.Entities.AsNoTracking().Where(b => b.Title == "Alpha").Select(b => new { b.Title, b.Tags })
+            .Concat(db.Entities.AsNoTracking().Where(b => b.Title == "Beta").Select(b => new { b.Title, b.Tags }))
+            .ToList();
+
+        Assert.Equal(
+            [("Alpha", "a1,a2"), ("Beta", "b1")],
+            result.Select(r => (r.Title, string.Join(",", r.Tags.Select(t => t.Name)))).OrderBy(r => r.Title).ToArray());
+    }
+
+    // A string owner key reads as a non-null placeholder too, so the owned entity isn't materialized as null.
+    private class StringKeyedBlog
+    {
+        public string Id { get; set; } = "";
+        public string Title { get; set; } = "";
+        public Address Address { get; set; } = null!;
+    }
+
+    [Theory]
+    [MemberData(nameof(FallbackModes))]
+    public void Owned_reference_entity_leaf_with_string_owner_key_in_anonymous_type_with_Union(MongoQueryMode mode)
+    {
+        var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(
+            nameof(Owned_reference_entity_leaf_with_string_owner_key_in_anonymous_type_with_Union) + mode));
+        coll.InsertMany([
+            new BsonDocument
+            {
+                { "_id", "a" }, { "Title", "Alpha" },
+                { "Address", new BsonDocument { { "City", "NYC" }, { "Zip", "10001" } } }
+            },
+            new BsonDocument
+            {
+                { "_id", "b" }, { "Title", "Beta" },
+                { "Address", new BsonDocument { { "City", "LA" }, { "Zip", "90001" } } }
+            },
+        ]);
+        var collection = database.MongoDatabase.GetCollection<StringKeyedBlog>(coll.CollectionNamespace.CollectionName);
+        using var db = CreateContext(collection, mode, mb => mb.Entity<StringKeyedBlog>().OwnsOne(b => b.Address));
+
+        var result = db.Entities.AsNoTracking().Where(b => b.Title == "Alpha").Select(b => new { b.Title, b.Address })
+            .Union(db.Entities.AsNoTracking().Where(b => b.Title == "Beta").Select(b => new { b.Title, b.Address }))
+            .ToList();
+
+        Assert.Equal(
+            [("Alpha", "NYC"), ("Beta", "LA")],
+            result.Select(r => (r.Title, r.Address.City)).OrderBy(r => r.Title).ToArray());
+    }
 }

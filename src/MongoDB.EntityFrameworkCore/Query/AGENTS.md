@@ -90,7 +90,9 @@ Rules that cost real bugs to learn. Breaking one usually produces **silently wro
   join's result selector; the recorded `PipelineOps` are deferred to run after the join, unless the join is in
   the left-outer-reference-navigation "safe to page before `$lookup`" set. Reducers there decline. Paging
   recorded before any join, ahead of a join that may multiply rows (collection navigation or navigation-less),
-  stays ahead of the `$lookup`; if paging was also recorded after the join, the query declines.
+  stays ahead of the `$lookup`; if paging was also recorded after the join, the query declines. Paging recorded
+  *between* two joins of a chain has no native position (the deferred snapshot runs after every `$lookup`), so it
+  declines too (`HasPagingRecordedBetweenJoins`).
 - **Set ops form a tree; each `Union`'s dedup belongs to its own link, never hoisted.**
   `MongoSelectDefinition.SetOperations` is an ordered list where an operand may itself carry a link, so
   whole-entity `Concat`/`Union` nests both directions. Right-nesting (`A.Concat(B.Union(C))`) cannot be

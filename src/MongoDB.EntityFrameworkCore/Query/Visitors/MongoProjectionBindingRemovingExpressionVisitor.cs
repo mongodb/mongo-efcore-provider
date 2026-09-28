@@ -74,6 +74,13 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     /// <summary>True for the fallback shaper, which sees whole un-projected documents.</summary>
     protected virtual bool ReadsUnprojectedDocuments => false;
 
+    /// <summary>
+    /// True when an owned entity's owner key may legitimately be absent from the shaped document, so a missing key
+    /// reads as a non-null placeholder instead of throwing. See
+    /// <see cref="MongoMixedProjectionBindingRemovingExpressionVisitor"/>'s retained-Select case.
+    /// </summary>
+    protected virtual bool OwnerKeyMayBeAbsent => false;
+
     /// <summary>Whether <paramref name="alias"/> is a native whole-root-entity ("$$ROOT") leaf.</summary>
     private bool IsWholeRootEntityAlias(string? alias)
         => alias != null
@@ -631,6 +638,26 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         return base.VisitMethodCall(methodCallExpression);
     }
 
+    // A non-null stand-in for an absent owner key: default for a non-nullable value type, "" for string. Other key
+    // types have no safe stand-in, so the read stays required.
+    private static bool TryGetOwnerKeyPlaceholder(Type keyType, out object placeholder)
+    {
+        if (keyType == typeof(string))
+        {
+            placeholder = string.Empty;
+            return true;
+        }
+
+        if (keyType.IsValueType && Nullable.GetUnderlyingType(keyType) == null)
+        {
+            placeholder = Activator.CreateInstance(keyType)!;
+            return true;
+        }
+
+        placeholder = null!;
+        return false;
+    }
+
     protected Expression CreateGetValueExpression(
         Expression docExpression,
         IProperty property,
@@ -698,6 +725,21 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
                     if (ownerBsonDocExpression != null)
                     {
+                        // The principal is the owner's own stored key (not another owned key further up the chain,
+                        // which recurses and applies this check at the root). Only a shadow owned key: a CLR-mapped
+                        // one would surface the placeholder.
+                        if (OwnerKeyMayBeAbsent
+                            && property.IsShadowProperty()
+                            && !principalProperty.IsOwnedTypeKey()
+                            && TryGetOwnerKeyPlaceholder(principalProperty.ClrType, out var placeholder))
+                        {
+                            var ownerDocument = CreateGetValueExpression(
+                                ownerBsonDocExpression, (string?)null, false, typeof(BsonDocument));
+                            Expression keyRead = BsonBinding.CreateGetPropertyValueOrPlaceholder(
+                                ownerDocument, principalProperty, principalProperty.ClrType, placeholder);
+                            return keyRead.Type == type ? keyRead : Expression.Convert(keyRead, type);
+                        }
+
                         return CreateGetValueExpression(ownerBsonDocExpression, principalProperty, type);
                     }
                 }

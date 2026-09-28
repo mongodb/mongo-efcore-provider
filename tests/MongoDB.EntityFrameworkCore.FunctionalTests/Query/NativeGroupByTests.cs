@@ -1558,6 +1558,137 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnlyDb));
     }
 
+    [Fact]
+    public void GroupBy_empty_key_Key_null_check_inside_accumulator_goes_native()
+    {
+        // A zero-part key's g.Key inside an accumulator condition used to index keyParts[0] on an empty list
+        // (ArgumentOutOfRangeException). The key is always the non-null empty document {}, so "== null" counts no
+        // rows and "!= null" counts every row. Checked against driver-LINQ.
+        var seed = SeedOrders();
+
+        (int IsNull, int NotNull, decimal FilteredSum)[] Run(SingleEntityDbContext<Order> db) =>
+            db.Entities
+                .GroupBy(o => new { })
+                .Select(g => new
+                {
+                    IsNull = g.Count(o => g.Key == null),
+                    NotNull = g.Count(o => null != g.Key),
+                    FilteredSum = g.Where(o => g.Key != null).Sum(o => o.Amount)
+                })
+                .AsEnumerable()
+                .Select(x => (x.IsNull, x.NotNull, x.FilteredSum))
+                .ToArray();
+
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(GroupBy_empty_key_Key_null_check_inside_accumulator_goes_native) + "NO");
+        var native = Run(nativeOnlyDb);
+        Assert.Equal([(0, 5, 675m)], native);
+
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(GroupBy_empty_key_Key_null_check_inside_accumulator_goes_native) + "D");
+        Assert.Equal(Run(driverDb), native);
+    }
+
+    [Fact]
+    public void GroupBy_empty_key_Key_vs_non_null_value_inside_accumulator_declines()
+    {
+        // A zero-part key's g.Key has no backing property to serialize a non-null comparand against, so the
+        // accumulator declines (falls back under Native, throws under NativeOnly) instead of crashing.
+        var seed = SeedOrders();
+        var sentinel = new { };
+
+        int[] Run(SingleEntityDbContext<Order> db) =>
+            db.Entities
+                .GroupBy(o => new { })
+                .Select(g => new { Count = g.Count(o => g.Key == sentinel) })
+                .AsEnumerable()
+                .Select(x => x.Count)
+                .ToArray();
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(GroupBy_empty_key_Key_vs_non_null_value_inside_accumulator_declines) + "N");
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(GroupBy_empty_key_Key_vs_non_null_value_inside_accumulator_declines) + "D");
+        Assert.Equal(Run(driverDb), Run(nativeDb));
+
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(GroupBy_empty_key_Key_vs_non_null_value_inside_accumulator_declines) + "NO");
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnlyDb));
+    }
+
+    [Fact]
+    public void GroupBy_single_member_anonymous_key_Key_member_inside_accumulator_goes_native()
+    {
+        // A one-member anonymous key is composite (_id: {Country: ...}); g.Key.Country inside the accumulator
+        // resolves to the raw per-document "$Country". Asserted against the LINQ-to-objects answer, not
+        // driver-LINQ: driver-LINQ returns 0 for US here (EF-457).
+        using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
+            nameof(GroupBy_single_member_anonymous_key_Key_member_inside_accumulator_goes_native));
+
+        var results = db.Entities
+            .GroupBy(o => new { o.Country })
+            .Select(g => new { g.Key.Country, UsCount = g.Count(o => g.Key.Country == "US") })
+            .AsEnumerable()
+            .Select(x => (x.Country, x.UsCount))
+            .OrderBy(x => x.Country)
+            .ToArray();
+
+        Assert.Equal([("FR", 0), ("UK", 0), ("US", 2)], results);
+    }
+
+    [Fact]
+    public void GroupBy_single_member_anonymous_key_whole_Key_null_check_inside_accumulator_declines()
+    {
+        // The whole composite g.Key has no single raw expression, so a g.Key == null accumulator condition declines.
+        var seed = SeedOrders();
+
+        int[] Run(SingleEntityDbContext<Order> db) =>
+            db.Entities
+                .GroupBy(o => new { o.Country })
+                .Select(g => new { g.Key.Country, Count = g.Count(o => g.Key == null) })
+                .AsEnumerable()
+                .OrderBy(x => x.Country)
+                .Select(x => x.Count)
+                .ToArray();
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(GroupBy_single_member_anonymous_key_whole_Key_null_check_inside_accumulator_declines) + "N");
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(GroupBy_single_member_anonymous_key_whole_Key_null_check_inside_accumulator_declines) + "D");
+        Assert.Equal(Run(driverDb), Run(nativeDb));
+
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(GroupBy_single_member_anonymous_key_whole_Key_null_check_inside_accumulator_declines) + "NO");
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnlyDb));
+    }
+
+    [Fact]
+    public void GroupBy_nested_anonymous_key_Key_member_inside_accumulator_declines()
+    {
+        // A nested anonymous key part (new { Inner = new { o.Country } }) declines at key binding, so an inner
+        // g.Key.Inner.Country accumulator condition never reaches the raw-key resolver.
+        var seed = SeedOrders();
+
+        int[] Run(SingleEntityDbContext<Order> db) =>
+            db.Entities
+                .GroupBy(o => new { Inner = new { o.Country } })
+                .Select(g => new { g.Key.Inner.Country, UsCount = g.Count(o => g.Key.Inner.Country == "US") })
+                .AsEnumerable()
+                .OrderBy(x => x.Country)
+                .Select(x => x.UsCount)
+                .ToArray();
+
+        using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
+            nameof(GroupBy_nested_anonymous_key_Key_member_inside_accumulator_declines) + "N");
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(GroupBy_nested_anonymous_key_Key_member_inside_accumulator_declines) + "D");
+        Assert.Equal(Run(driverDb), Run(nativeDb));
+
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(GroupBy_nested_anonymous_key_Key_member_inside_accumulator_declines) + "NO");
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnlyDb));
+    }
+
     private class CountryYearKey
     {
         public string Country { get; }
