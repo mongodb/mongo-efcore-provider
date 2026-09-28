@@ -360,9 +360,22 @@ internal sealed class MongoSelectLowerer
                 continue;
             }
 
-            // Whole-entity Distinct: $group{_id:"$$ROOT"} dedup, then $replaceRoot from "$_id".
-            if (op is MongoDistinctOp)
+            // Whole-entity Distinct: $group{_id:"$$ROOT"} dedup, then $replaceRoot from "$_id". Over a bare join leaf,
+            // first narrow the flattened join document to the selected entity (see MongoDistinctOp). A left join's
+            // unmatched inner rows all narrow to {} and so dedup to a single null entity.
+            if (op is MongoDistinctOp distinctOp)
             {
+                if (distinctOp.KeepOnlyField is { } keepOnly)
+                {
+                    stages.Add(new MongoProjectStage(
+                        [new MongoProjection(keepOnly, new MongoElementRefExpression(keepOnly, typeof(object)))]));
+                }
+
+                if (distinctOp.ExcludeField is { } exclude)
+                {
+                    stages.Add(new MongoUnsetStage([exclude]));
+                }
+
                 stages.Add(new MongoGroupByRootStage());
                 stages.Add(new MongoReplaceRootStage("_id", mergeOwnerKeySentinels: false));
                 continue;

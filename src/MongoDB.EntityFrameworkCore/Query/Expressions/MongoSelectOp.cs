@@ -41,4 +41,12 @@ internal sealed record MongoLimitOp(MongoExpression Count) : MongoSelectOp;
 /// projected Distinct (<see cref="MongoSelectDefinition.Grouping"/>) it is just another ordered op, lowering to the
 /// <c>$group{_id:"$$ROOT"}</c> + <c>$replaceRoot</c> dedup also used by <c>Union</c>.
 /// </summary>
-internal sealed record MongoDistinctOp : MongoSelectOp;
+/// <param name="KeepOnlyField">
+/// For a Distinct over a bare join Inner leaf: the join's <c>_lookup_&lt;Nav&gt;</c> field, the only part of the
+/// flattened document that is the result entity. The dedup first projects the document down to it.
+/// </param>
+/// <param name="ExcludeField">
+/// For a Distinct over a bare join Outer leaf: the join's <c>_lookup_&lt;Nav&gt;</c> field, which is not part of
+/// the result entity. The dedup first unsets it, so an outer row matched by several inner rows comes back once.
+/// </param>
+internal sealed record MongoDistinctOp(string? KeepOnlyField = null, string? ExcludeField = null) : MongoSelectOp;

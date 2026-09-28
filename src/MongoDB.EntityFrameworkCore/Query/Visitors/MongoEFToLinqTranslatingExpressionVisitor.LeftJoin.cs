@@ -650,10 +650,32 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                     return StripInterleavedJoinChain(chain, innermostJoin, baseSource, rewriter);
                 }
 
+                var contiguousGroup = _pendingLookups.Where(l => l.ForceUnwind).ToList();
+
+                // Whether the element is still the flattened root document (the bare Outer leaf), and, once a
+                // bare Inner leaf Select has been reattached, the lookup field it reads. See
+                // _bareInnerJoinLeafAlias and ExcludeJoinFieldsBeforeDistinct.
+                // An Include-shaping Select (Select(ti => Include(ti.Outer, ti.Inner))) is plumbing too, but its
+                // entity DOES read the join field, so it must survive a Distinct.
+                var elementIsRootDocument = !chain.Any(IsIncludeShapingSelect);
+                string? bareInnerJoinLeafAlias = null;
+
                 var result = baseSource;
                 foreach (var call in composed)
                 {
-                    var rebuilt = ReattachComposedOperator(call, result, rewriter);
+                    var source = result;
+                    if (elementIsRootDocument && IsQueryableDistinct(call))
+                    {
+                        var excluded = ExcludeJoinFieldsBeforeDistinct(result, contiguousGroup);
+                        if (excluded == null)
+                        {
+                            return null;
+                        }
+
+                        source = excluded;
+                    }
+
+                    var rebuilt = ReattachComposedOperator(call, source, rewriter);
                     if (rebuilt == null)
                     {
                         // Cannot rewrite this operator safely. Refuse the strip so the join survives and
@@ -662,8 +684,16 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                         return null;
                     }
 
+                    if (!IsElementPreservingOperator(call))
+                    {
+                        elementIsRootDocument = false;
+                        bareInnerJoinLeafAlias = TryGetBareLookupFieldSelectAlias(rebuilt);
+                    }
+
                     result = rebuilt;
                 }
+
+                _bareInnerJoinLeafAlias = bareInnerJoinLeafAlias;
 
                 // The reattached stages read $lookup output, so the lookups go below them but no lower than the
                 // base source: an inner $unwind drops rows, so hoisting it above a base-source Skip/Take/Distinct
@@ -676,7 +706,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 // terminal like Count. Root-vs-transitive classification happens earlier in
                 // AnalyzeKeySelectorTarget; see
                 // NativeReferenceIncludeTests.Deep_ThenInclude_through_embedded_hop_returns_correct_data_via_fallback.
-                var contiguousGroup = _pendingLookups.Where(l => l.ForceUnwind).ToList();
                 foreach (var lookup in contiguousGroup)
                 {
                     _injectedEarlyLookups.Add(lookup);
@@ -983,6 +1012,16 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 return null;
             }
 
+            // An operator composed after a user Select (e.g. the Where in `Select(x => x.Inner).Distinct().Where(r
+            // => ...)`) already reads the projected element, not the join's TransparentIdentifier or the root
+            // document, so it has nothing to rewrite and is kept verbatim over the rebuilt source.
+            if (oldSourceItemType == newSourceItemType
+                && newSourceItemType != rewriter.RootType
+                && !oldSourceItemType.IsTransparentIdentifierType())
+            {
+                continue;
+            }
+
             var rewritten = rewriter.RewriteLambda(lambda, newSourceItemType);
             if (rewritten == null)
             {
@@ -1031,6 +1070,111 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         {
             return null;
         }
+    }
+
+    private static bool IsIncludeShapingSelect(MethodCallExpression call)
+        => call.Method.Name == nameof(Queryable.Select)
+           && call.Arguments.Count == 2
+           && call.Arguments[1] is UnaryExpression { NodeType: ExpressionType.Quote, Operand: LambdaExpression selector }
+           && new IncludeExpressionFinder().Find(selector.Body);
+
+    private sealed class IncludeExpressionFinder : System.Linq.Expressions.ExpressionVisitor
+    {
+        private bool _found;
+
+        public bool Find(Expression expression)
+        {
+            Visit(expression);
+            return _found;
+        }
+
+        public override Expression? Visit(Expression? node)
+        {
+            if (node is IncludeExpression)
+            {
+                _found = true;
+                return node;
+            }
+
+            return _found ? node : base.Visit(node);
+        }
+    }
+
+    private static bool IsQueryableDistinct(MethodCallExpression call)
+        => call.Method.DeclaringType == typeof(Queryable)
+           && call.Method.Name == nameof(Queryable.Distinct)
+           && call.Arguments.Count == 1;
+
+    /// <summary>
+    /// Operators whose element is the element of their source (filter, order, page, dedup, or a cardinality
+    /// terminal), so a bare join leaf selected below them is still what the query returns.
+    /// </summary>
+    private static bool IsElementPreservingOperator(MethodCallExpression call)
+        => call.Method.DeclaringType == typeof(Queryable)
+           && call.Method.Name is nameof(Queryable.Where) or nameof(Queryable.OrderBy)
+               or nameof(Queryable.OrderByDescending) or nameof(Queryable.ThenBy) or nameof(Queryable.ThenByDescending)
+               or nameof(Queryable.Skip) or nameof(Queryable.Take) or nameof(Queryable.Distinct)
+               or nameof(Queryable.First) or nameof(Queryable.FirstOrDefault) or nameof(Queryable.Single)
+               or nameof(Queryable.SingleOrDefault) or nameof(Queryable.Last) or nameof(Queryable.LastOrDefault);
+
+    /// <summary>
+    /// A <c>Distinct()</c> over the bare Outer leaf of a join (<c>Join(...).Select(x =&gt; x.Outer).Distinct()</c>)
+    /// runs over the flattened root document, which still carries each join's <c>_lookup_&lt;Nav&gt;</c> field, so
+    /// it would dedup (outer, inner) pairs and return an outer entity once per matched inner row. Unset those
+    /// fields first so only the outer entity is compared; nothing above the Distinct can read the inner side.
+    /// Returns <see langword="null"/> (refuse the strip) if a tail-appended lookup chains off an unset field.
+    /// </summary>
+    private Expression? ExcludeJoinFieldsBeforeDistinct(Expression source, List<LookupExpression> joinLookups)
+    {
+        if (joinLookups.Count == 0)
+        {
+            return source;
+        }
+
+        var aliases = joinLookups.Select(l => l.As).ToList();
+        if (_pendingLookups.Any(l => !l.ForceUnwind
+                                     && aliases.Any(a => l.LocalField.StartsWith(a + ".", StringComparison.Ordinal))))
+        {
+            return null;
+        }
+
+        return AppendBsonStage(source, new BsonDocument("$unset", new BsonArray(aliases)));
+    }
+
+    /// <summary>
+    /// The <c>_lookup_&lt;Nav&gt;</c> field a reattached bare Inner leaf <c>Select</c> reads
+    /// (<c>Select(e =&gt; Mql.Field(e, "_lookup_&lt;Nav&gt;", serializer))</c>, the rewrite of
+    /// <c>Select(ti =&gt; ti.Inner)</c>), or <see langword="null"/> for any other operator.
+    /// </summary>
+    private string? TryGetBareLookupFieldSelectAlias(Expression rebuilt)
+        => rebuilt is MethodCallExpression
+           {
+               Method.Name: nameof(Queryable.Select),
+               Arguments: [_, UnaryExpression { NodeType: ExpressionType.Quote, Operand: LambdaExpression selector }]
+           }
+           && selector.Body is MethodCallExpression { Method.IsGenericMethod: true } field
+           && field.Method.GetGenericMethodDefinition() == MqlFieldMethodInfo
+           && field.Arguments[0] == selector.Parameters[0]
+           && field.Arguments[1] is ConstantExpression { Value: string alias }
+           && _pendingLookups.Any(l => l.ForceUnwind && l.As == alias)
+            ? alias
+            : null;
+
+    /// <summary>Appends a raw pipeline stage that keeps the element type (and serializer) of <paramref name="query"/>.</summary>
+    private static Expression AppendBsonStage(Expression query, BsonDocument stage)
+    {
+        var sourceType = query.Type.TryGetItemType()!;
+        var serializerType = typeof(IBsonSerializer<>).MakeGenericType(sourceType);
+        return Expression.Call(
+            null,
+            typeof(MongoQueryable).GetMethod(nameof(MongoQueryable.AppendStage))!.MakeGenericMethod(sourceType, sourceType),
+            query,
+            Expression.New(
+                typeof(BsonDocumentPipelineStageDefinition<,>).MakeGenericType(sourceType, sourceType)
+                    .GetConstructor([typeof(BsonDocument), serializerType])!,
+                Expression.Constant(stage),
+                Expression.Constant(null, serializerType)),
+            Expression.Constant(null, serializerType));
     }
 
     private static bool ContainsType(Type candidate, Type target)
@@ -1115,6 +1259,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         }
 
         public bool Failed { get; private set; }
+
+        /// <summary>The flattened root document type the rewritten lambdas take as their parameter.</summary>
+        public Type RootType => _rootType;
 
         public LambdaExpression? RewriteLambda(LambdaExpression lambda, Type newParameterType)
         {

@@ -86,6 +86,12 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     // onto the shared compile-time LookupExpression objects. See IsInjectedEarly.
     private readonly HashSet<LookupExpression> _injectedEarlyLookups = [];
 
+    // Set by StripJoinForLookup when it reattached a bare Inner leaf Select (`Select(ti => ti.Inner)`) that is still
+    // the query's element: one the entity path couldn't strip because an operator EF Core doesn't hoist ahead of
+    // the join's pending selector (Distinct) sits above it. The driver wraps that value as `{ _v: ... }`, but the
+    // entity shaper reads the inner entity from this `_lookup_<Nav>` field, so Translate re-presents it there.
+    private string? _bareInnerJoinLeafAlias;
+
     // Where each group is emitted, keyed by reference on the node it is emitted immediately above. One-shot:
     // Visit removes the entry before recursing. Usually a single entry on the join chain's base source; an
     // operator interleaved between two joins gets one entry per boundary, so e.g. a Skip/Take between two
@@ -173,7 +179,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// <param name="resultCardinality">The query's result cardinality.</param>
     /// <param name="guardUnstrippableForceUnwindJoin">
     /// Whether to apply <see cref="GuardAgainstUnstrippableForceUnwindJoin"/>. <see langword="false"/> for the
-    /// bulk <c>ExecuteUpdate</c>/<c>ExecuteDelete</c> id-document path, which has no shaper to mismatch.
+    /// bulk <c>ExecuteUpdate</c>/<c>ExecuteDelete</c> id-document path, which has no shaper to mismatch (and so
+    /// also skips <see cref="RepresentBareInnerJoinLeaf"/>).
     /// </param>
     public MethodCallExpression Translate(
         Expression? efQueryExpression,
@@ -214,11 +221,12 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
         if (resultCardinality == ResultCardinality.Enumerable)
         {
-            var withLookups = AppendLookupStages(query);
+            var withLookups = RepresentBareInnerJoinLeaf(AppendLookupStages(query), guardUnstrippableForceUnwindJoin);
             return ApplyAsSerializer(withLookups, BsonDocumentSerializer.Instance, typeof(BsonDocument));
         }
 
-        var withLookupsSingle = AppendLookupStages(query.Arguments[0]);
+        var withLookupsSingle = RepresentBareInnerJoinLeaf(
+            AppendLookupStages(query.Arguments[0]), guardUnstrippableForceUnwindJoin);
         var documentQueryableSource = ApplyAsSerializer(withLookupsSingle, BsonDocumentSerializer.Instance, typeof(BsonDocument));
 
         return Expression.Call(
@@ -226,6 +234,17 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             query.Method.GetGenericMethodDefinition().MakeGenericMethod(typeof(BsonDocument)),
             documentQueryableSource);
     }
+
+    /// <summary>
+    /// Moves the driver's <c>_v</c>-wrapped bare Inner leaf value back under the <c>_lookup_&lt;Nav&gt;</c> field the
+    /// entity shaper reads (see <see cref="_bareInnerJoinLeafAlias"/>). A missing value (a left join's unmatched
+    /// row) stays missing and shapes as <see langword="null"/>. Skipped for the bulk id-document path
+    /// (<paramref name="hasEntityShaper"/> <see langword="false"/>), which reads no entity.
+    /// </summary>
+    private Expression RepresentBareInnerJoinLeaf(Expression query, bool hasEntityShaper)
+        => hasEntityShaper && _bareInnerJoinLeafAlias is { } alias
+            ? AppendBsonStage(query, new BsonDocument("$project", new BsonDocument { { alias, "$_v" }, { "_id", 0 } }))
+            : query;
 
     private static MethodCallExpression ApplyAsSerializer(
         Expression query,
