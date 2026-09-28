@@ -28,14 +28,9 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-347 (Task 1) native <c>OfType&lt;TDerived&gt;()</c> → a discriminator <c>$eq</c>/<c>$in</c> predicate
-/// conjunct. Proves that narrowing a TPH hierarchy via <c>OfType</c> executes as a native pipeline (rather
-/// than falling back to driver-LINQ) for both a leaf type (single discriminator value → <c>$eq</c>) and an
-/// intermediate type with derived siblings (discriminator subtree → <c>$in</c>), across the discriminator
-/// mapping modes exercised by <see cref="Mapping.DiscriminatorTests"/> (real property, shadow property with
-/// explicit values, shadow property with EF's default values). <see cref="MongoQueryMode.NativeOnly"/> is
-/// the "went native" signal — the emitted MQL for filter/predicate shapes is otherwise indistinguishable
-/// from the driver-LINQ fallback (see the Query area AGENTS.md "MQL shape cannot prove native" pitfall).
+/// Native <c>OfType&lt;TDerived&gt;()</c> as a discriminator predicate: <c>$eq</c> for a leaf type, <c>$in</c>
+/// over the subtree for an intermediate type, across real and shadow discriminator mappings.
+/// <see cref="MongoQueryMode.NativeOnly"/> is the "went native" signal, since the MQL matches driver-LINQ's.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -59,9 +54,7 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
 
         using var db = Make(collection, MongoQueryMode.NativeOnly, mapping);
 
-        // Customer is an intermediate type (SubCustomer derives from it) so the discriminator predicate
-        // must be an $in over the {Customer, SubCustomer} subtree. Succeeding at all under NativeOnly is
-        // the "went native" signal.
+        // Intermediate type: the predicate is an $in over the {Customer, SubCustomer} subtree.
         var result = db.Entities.OfType<Customer>().ToList();
 
         Assert.Equal(4, result.Count); // 3 Customer rows + 1 SubCustomer row from SetupTestData.
@@ -81,8 +74,7 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
 
         using var db = Make(collection, MongoQueryMode.NativeOnly, mapping);
 
-        // SubCustomer is a leaf type (no derived types) so the discriminator predicate is a single-value
-        // $eq. Succeeding at all under NativeOnly is the "went native" signal.
+        // Leaf type: the predicate is a single-value $eq.
         var result = db.Entities.OfType<SubCustomer>().ToList();
 
         Assert.Single(result);
@@ -138,15 +130,10 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
 
         using var db = Make(collection, MongoQueryMode.NativeOnly, mapping);
 
-        // The discriminator conjunct must compose with an ordinary Where predicate on the same select
-        // (AddPredicateConjunct AND-combines rather than replacing) and still go fully native. Filters on
-        // Sequence (declared on BaseEntity) rather than a derived-only property (Name) or the Status enum:
-        // a derived-only member can't resolve via NativeSlotPopulator's translator, which is built from
-        // the root CollectionExpression.EntityType — a separate, pre-existing limitation, not something
-        // this task changes — and enum equality is normalized by EF into a Convert(prop, int) == constant
-        // shape that MongoExpressionTranslator's numeric-cast guard rejects, another pre-existing gap.
-        // Sequence <= 3 keeps the 3 "Customer"-discriminator rows but excludes SubCustomer (Sequence 5),
-        // which the bare discriminator $in would otherwise include — proving the AND actually narrows.
+        // The discriminator conjunct must AND with the Where predicate, not replace it: Sequence <= 3 excludes
+        // SubCustomer (Sequence 5), which the bare $in would include. Filters on a BaseEntity-declared member
+        // because derived-only members resolve against the root entity type only (a known gap), and enum
+        // equality arrives as Convert(prop, int) == constant, which the numeric-cast guard rejects.
         var result = db.Entities.OfType<Customer>().Where(c => c.Sequence <= 3).ToList();
 
         Assert.Equal(3, result.Count);
@@ -158,14 +145,8 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
     [InlineData(true)]  // non-default BsonRepresentation on the discriminator
     public void OfType_value_converted_or_represented_discriminator_goes_native(bool useBsonRepresentation)
     {
-        // EF-349 fixed MongoEFDiscriminator.GetDiscriminator(sForTypeAndSubTypes) to build the driver-LINQ
-        // filter value by serializing THROUGH the discriminator property's serializer, the same transform
-        // the write path applies — so the driver-LINQ filter now matches the stored, converted/represented
-        // "_t" value instead of the raw model value. The native predicate already serialized through the
-        // property serializer (MongoConstantExpression.ForSerialization), so native and driver-LINQ now
-        // agree, and TryBuildDiscriminatorPredicate no longer needs to reject this discriminator shape —
-        // it goes native like any other OfType, and both paths return the correct 4-row Customer subtree
-        // (previously, pre-fix, the driver-LINQ path itself incorrectly returned 0 rows here).
+        // Both paths must serialize discriminator values through the property's serializer (as the write path
+        // does) so the filter matches the stored converted/represented value rather than the raw model value.
         Action<ModelBuilder> model = useBsonRepresentation
             ? IntDiscriminatorStringRepresentationModel
             : ConvertedDiscriminatorModel;
@@ -196,19 +177,9 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
         var collection = database.CreateCollection<BaseEntity>();
         SetupTestData(Make(collection, MongoQueryMode.Native, mapping));
 
-        // SetupTestData seeds two Customer rows with an identical (Name, ShippingAddress) pair — Sequence 1
-        // and 2, both ("Customer 1", "123 Main St") — so the projected Distinct after OfType is observable:
-        // it collapses those two into one. OfType<Customer> also pulls in the SubCustomer row (Sequence 5),
-        // giving 3 distinct pairs overall.
-        //
-        // EMPIRICALLY this falls back (NativeOnly throws): Name/ShippingAddress are declared on Customer, not
-        // BaseEntity, and NativeProjectionBinder's MongoExpressionTranslator is built from
-        // CollectionExpression.EntityType — the query's ROOT entity type (BaseEntity here), not the
-        // OfType-narrowed derived type. This is the SAME pre-existing, documented limitation called out in
-        // OfType_composed_with_where_goes_native's comment (a derived-only member can't resolve against the
-        // root entity type) — now observed for Distinct's projected members instead of a Where predicate. It
-        // is not a regression introduced by the OfType+Distinct composition itself (see the companion test
-        // below, which projects a BaseEntity-declared member through the same composition and goes native).
+        // Sequence 1 and 2 share ("Customer 1", "123 Main St"), so Distinct is observable (3 pairs overall).
+        // Falls back because Name/ShippingAddress are Customer-only and the translator resolves members against
+        // the root entity type (BaseEntity), not the OfType-narrowed type.
         using (var db = Make(collection, MongoQueryMode.NativeOnly, mapping))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(() =>
@@ -232,12 +203,8 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
     [Fact]
     public void OfType_composed_with_Distinct_on_base_declared_member_goes_native()
     {
-        // Companion to the test above: projecting a BaseEntity-DECLARED member (Status, not a Customer-only
-        // member) through the identical OfType + projected-Distinct composition goes native — isolating that
-        // the fallback above is caused by the pre-existing derived-member-resolution gap, not by the
-        // OfType-discriminator-predicate + degenerate-$group composition itself. The Customer subtree
-        // (Sequence 1, 2, 3, 5) has Status values Active, Inactive, Active, Inactive — 2 distinct values —
-        // so the dedup is observable.
+        // Companion to the test above: a BaseEntity-declared member through the same composition goes native,
+        // so the fallback there is the derived-member gap, not OfType + Distinct itself.
         var mapping = GetMapping(MappingMode.RealProperty);
         var collection = database.CreateCollection<BaseEntity>();
         SetupTestData(Make(collection, MongoQueryMode.Native, mapping));
@@ -281,12 +248,8 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
     [Fact]
     public void Non_TPH_OfType_falls_back_gracefully_and_works_across_modes()
     {
-        // No HasDiscriminator/TPH configuration on this model — Cat has no discriminator property, so
-        // TryBuildDiscriminatorPredicate returns false and the query is marked non-native. This is the
-        // CURRENT, ACCEPTED disposition (EF-423): OfType falls back to driver-LINQ and returns correct
-        // results across all query modes (Native/DriverLinq/NativeOnly), demonstrating graceful fallback.
-        // Pinning this here so a future change to TranslateOfType can't silently alter the behavior
-        // without this test failing.
+        // No discriminator property, so TryBuildDiscriminatorPredicate declines; pins that OfType still returns
+        // correct results in every query mode.
         var collection = database.CreateCollection<Animal>(nameof(Non_TPH_OfType_falls_back_gracefully_and_works_across_modes));
 
         using (var db = MakeAnimalContext(collection, MongoQueryMode.Native, NoDiscriminatorModel))
@@ -297,12 +260,9 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
             db.SaveChanges();
         }
 
-        // Query pattern: Animals.OfType<Cat> with no discriminator property.
-        // Expected: Falls back to driver-LINQ and returns the 1 Cat instance.
         List<Cat> RunOfTypeQuery(AnimalDbContext db) =>
             db.Animals.AsNoTracking().OfType<Cat>().ToList();
 
-        // Under Native mode, OfType falls back to driver-LINQ. The fallback returns correct results.
         using (var nativeDb = MakeAnimalContext(collection, MongoQueryMode.Native, NoDiscriminatorModel))
         {
             var cats = RunOfTypeQuery(nativeDb);
@@ -311,7 +271,6 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
             Assert.Equal("Cat 1", cats[0].Name);
         }
 
-        // Under DriverLinq mode, OfType works correctly (no native path exists anyway).
         using (var driverDb = MakeAnimalContext(collection, MongoQueryMode.DriverLinq, NoDiscriminatorModel))
         {
             var cats = RunOfTypeQuery(driverDb);
@@ -319,9 +278,7 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
             Assert.Equal("Cat 1", cats[0].Name);
         }
 
-        // Under NativeOnly mode, OfType still returns correct results via fallback.
-        // (This means the fallback is permitted even under NativeOnly for this case,
-        // or the query's Route is not Fallback. Either way, it succeeds with correct data.)
+        // NativeOnly also succeeds for this shape.
         using (var nativeOnlyDb = MakeAnimalContext(collection, MongoQueryMode.NativeOnly, NoDiscriminatorModel))
         {
             var cats = RunOfTypeQuery(nativeOnlyDb);
@@ -340,10 +297,8 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
         using var nativeDb = Make(collection, MongoQueryMode.Native, mapping);
         using var driverDb = Make(collection, MongoQueryMode.DriverLinq, mapping);
 
-        // OfType<Customer> subtree ordered by Sequence is {1, 2, 3, 5} (Customer, Customer, Customer,
-        // SubCustomer). Skip(1).Take(2) must return the middle two rows (Sequence 2 and 3), not an
-        // arbitrary/incorrect slice — this is the result-correctness assertion the routing-only test
-        // (NativeGateRoutingTests.C_tph_oftype_derived_routing) does not make.
+        // Subtree by Sequence is {1, 2, 3, 5}; Skip(1).Take(2) must return {2, 3}. Result-correctness
+        // complement to NativeGateRoutingTests.C_tph_oftype_derived_routing.
         List<int> Run(SingleEntityDbContext<BaseEntity> db) =>
             db.Entities.OfType<Customer>().OrderBy(e => e.Sequence).Skip(1).Take(2)
                 .Select(e => e.Sequence).ToList();
@@ -455,9 +410,7 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
             .HasConversion(v => "d:" + v, s => s!.Substring(2));
     }
 
-    // A non-TPH model with no discriminator property configured. Both Animal and Cat are stored in the
-    // same collection, but with no discriminator property to distinguish them. Attempting OfType<Cat>()
-    // on an Animal query will have no discriminator to filter by, so it falls back to driver-LINQ.
+    // Animal and Cat share a collection with no discriminator property, so OfType<Cat>() can't go native.
     private static void NoDiscriminatorModel(ModelBuilder mb)
     {
         mb.Entity<Animal>().ToCollection("animals");
@@ -466,11 +419,8 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
 
     private static void SetupTestData(DbContext db)
     {
-        // Sequence is declared on BaseEntity (unlike Name/ShippingAddress, which only exist on derived
-        // types) so a Where predicate over it composes with the OfType discriminator conjunct without
-        // hitting the separate, pre-existing limitation that NativeSlotPopulator's translator resolves
-        // member access against the root entity type only (CollectionExpression.EntityType) and therefore
-        // cannot address a derived-only property.
+        // Sequence is declared on BaseEntity so native predicates can use it after OfType (derived-only
+        // members resolve against the root entity type only).
         db.Add(new Customer {Sequence = 1, Name = "Customer 1", ShippingAddress = "123 Main St", Status = Status.Active});
         db.Add(new Customer {Sequence = 2, Name = "Customer 1", ShippingAddress = "123 Main St", Status = Status.Inactive});
         db.Add(new Customer {Sequence = 3, Name = "Customer 2", ShippingAddress = "123 Main St", Status = Status.Active});

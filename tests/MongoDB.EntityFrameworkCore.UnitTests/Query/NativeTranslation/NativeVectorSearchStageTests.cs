@@ -31,22 +31,18 @@ using MongoDB.EntityFrameworkCore.Serializers;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// Unit tests for the native <c>$vectorSearch</c> IR: the dedicated
-/// <see cref="MongoSelectDefinition.VectorSearch"/> slot, the lowerer block that emits it FIRST, and the
-/// <see cref="MongoPipelineFactory"/> arms that render it (a deferred slot for the search itself, a constant
-/// document for the score companion).
+/// Tests for the native <c>$vectorSearch</c> IR: the <see cref="MongoSelectDefinition.VectorSearch"/> slot, the
+/// lowerer emitting it first, and the <see cref="MongoPipelineFactory"/> rendering (a deferred slot for the
+/// search, a constant score <c>$addFields</c>).
 /// </summary>
 /// <remarks>
-/// Nothing populates the slot yet — the slot populator branch is a later task — so every select here is
-/// hand-built. That is deliberate: these tests pin the emission and rendering independently of the gate.
-/// The rendered bodies are asserted byte-for-byte against the MQL baselines the specification suite already
-/// commits for the driver-LINQ path, because "the native path re-baselines nothing" is the whole point.
+/// Selects are hand-built to test emission and rendering independently of the gate. Rendered bodies must equal
+/// the driver-LINQ baselines in the specification suite byte-for-byte.
 /// </remarks>
 public class NativeVectorSearchStageTests
 {
-    // A cut-down stand-in for the specification suite's vector-search Book, carrying exactly what the
-    // committed baselines below depend on: a "Floats" vector property, a "FloatsIndex" vector index, and the
-    // is_published element rename the pre-filter baseline asserts.
+    // Cut-down spec-suite Book: a "Floats" vector property, a "FloatsIndex" index, and the is_published
+    // element rename the pre-filter baseline depends on.
     private class Book
     {
         public ObjectId Id { get; set; }
@@ -68,7 +64,7 @@ public class NativeVectorSearchStageTests
     // The exact input vector the specification suite's VectorSearch_floats uses.
     private static readonly QueryVector InputVector = new[] { 0.33f, -0.52f };
 
-    // Committed baselines, copied verbatim from tests/.../SpecificationTests/Query/VectorSearchMongoTest.cs.
+    // Copied verbatim from SpecificationTests/Query/VectorSearchMongoTest.cs.
     private const string FloatsBaseline =
         """{ "$vectorSearch" : { "path" : "Floats", "limit" : 4, "numCandidates" : 40, "index" : "FloatsIndex", "queryVector" : [0.33000001311302185, -0.51999998092651367] } }""";
 
@@ -134,8 +130,8 @@ public class NativeVectorSearchStageTests
     [Fact]
     public void Vector_search_slot_is_an_anchor_not_a_terminal_operator()
     {
-        // A .Where composed after a vector search must keep recording into PipelineOps, which is only true
-        // while the slot stays OUT of HasTerminalOperator. Route is unaffected too.
+        // A .Where after a vector search must keep recording into PipelineOps, so the slot must not count
+        // toward HasTerminalOperator. Route is unaffected too.
         using var db = CreateContext();
         var entityType = db.Model.FindEntityType(typeof(Book))!;
 
@@ -216,9 +212,8 @@ public class NativeVectorSearchStageTests
     [Fact]
     public void Parameterized_pre_filter_substitutes_per_execution_without_consuming_the_template()
     {
-        // The pre-filter is rendered ONCE, into the shared placeholder table; Build's substitution pass
-        // rewrites sentinels IN PLACE, so a second execution would see a spent template if the deferred
-        // builder embedded the rendered document itself rather than a clone.
+        // The pre-filter is rendered once and Build substitutes sentinels in place, so the deferred builder
+        // must embed a clone or the second execution sees a spent template.
         using var db = CreateContext();
         var entityType = db.Model.FindEntityType(typeof(Book))!;
         var isPublished = entityType.FindProperty(nameof(Book.IsPublished))!;
@@ -246,9 +241,8 @@ public class NativeVectorSearchStageTests
     [Fact]
     public void Runtime_arguments_are_resolved_from_this_executions_query_parameters()
     {
-        // The shape of a query-parameter node differs across EF versions; NativeQueryParameter is what keeps
-        // the resolution version-agnostic, and this is the test that exercises that arm rather than the
-        // constant one. (The #if is in the TEST only — src/ has none on this path.)
+        // Exercises the query-parameter arm (via NativeQueryParameter) rather than the constant one; the
+        // node's shape differs by EF version, hence the #if.
         using var db = CreateContext();
         var entityType = db.Model.FindEntityType(typeof(Book))!;
 
@@ -303,8 +297,8 @@ public class NativeVectorSearchStageTests
     [Fact]
     public void Build_records_the_zero_results_diagnostic_state()
     {
-        // QueryingEnumerable's zero-results warning reads these two entries back out of AdditionalState; if
-        // Build did not write them a natively-routed empty vector query would throw KeyNotFoundException.
+        // QueryingEnumerable's zero-results warning reads these entries from AdditionalState; without them an
+        // empty native vector query would throw KeyNotFoundException.
         using var db = CreateContext();
         var entityType = db.Model.FindEntityType(typeof(Book))!;
 
@@ -325,8 +319,8 @@ public class NativeVectorSearchStageTests
     [Fact]
     public void The_parameter_values_only_Build_overload_refuses_a_vector_search_template()
     {
-        // A vector-search template always has a deferred slot, so the old overload must fail loudly rather
-        // than emit a pipeline with a hole.
+        // A vector-search template always has a deferred slot, so the parameter-values overload must throw
+        // rather than emit a pipeline with a hole.
         using var db = CreateContext();
         var entityType = db.Model.FindEntityType(typeof(Book))!;
 

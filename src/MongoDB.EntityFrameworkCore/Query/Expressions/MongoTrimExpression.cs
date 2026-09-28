@@ -26,9 +26,8 @@ internal enum MongoTrimSide
 }
 
 /// <summary>
-/// Represents <c>string.Trim()</c>/<c>TrimStart()</c>/<c>TrimEnd()</c> and their <c>char</c>/<c>char[]</c>-arg
-/// overloads — MQL <c>$trim</c>/<c>$ltrim</c>/<c>$rtrim</c>, aggregation-expression dialect only (no query-
-/// dialect form exists for these).
+/// <c>string.Trim()</c>/<c>TrimStart()</c>/<c>TrimEnd()</c> (and <c>char</c>/<c>char[]</c> overloads) as MQL
+/// <c>$trim</c>/<c>$ltrim</c>/<c>$rtrim</c>. Aggregation-expression dialect only.
 /// </summary>
 internal sealed class MongoTrimExpression : MongoExpression
 {
@@ -39,15 +38,13 @@ internal sealed class MongoTrimExpression : MongoExpression
         Chars = chars;
     }
 
-    /// <summary>The string-typed operand being trimmed.</summary>
     public MongoExpression Source { get; }
 
-    /// <summary>Which side(s) to strip.</summary>
     public MongoTrimSide Side { get; }
 
     /// <summary>
-    /// The characters to strip, as a single string constant (e.g. <c>"Se"</c> for <c>Trim(new[]{'S','e'})</c>),
-    /// or <see langword="null"/> for the zero-arg overload (MongoDB's own default: whitespace).
+    /// The characters to strip as one string constant (<c>"Se"</c> for <c>Trim('S','e')</c>), or
+    /// <see langword="null"/> for MongoDB's default (whitespace).
     /// </summary>
     public MongoExpression? Chars { get; }
 

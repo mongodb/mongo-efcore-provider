@@ -24,11 +24,9 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 public class MongoAggregationExpressionRendererDatePartTests
 {
-    // Mirrors MongoAggregationExpressionRendererTests' own Customer/GetProperty<T> pattern exactly, so a
-    // MongoFieldExpression built here carries a real IProperty rather than a null double — some renderer
-    // paths (e.g. AllFieldsDefaultSerialized, reached transitively from CanRender for other node kinds in
-    // this same file) do read Property, so a null double would throw a NullReferenceException instead of the
-    // renderer's own exception type, masking the actual thing under test.
+    // Mirrors MongoAggregationExpressionRendererTests' Customer/GetProperty<T> pattern so a MongoFieldExpression
+    // carries a real IProperty: some renderer paths (e.g. AllFieldsDefaultSerialized) read it, and a null would
+    // throw NullReferenceException and mask what's under test.
     private class Row
     {
         public ObjectId Id { get; set; }
@@ -56,10 +54,8 @@ public class MongoAggregationExpressionRendererDatePartTests
 
         var rendered = MongoAggregationExpressionRenderer.Render(node, placeholders);
 
-        // SP4 final-review fix: a $cond branch that is itself a bare constant is now $literal-wrapped, the
-        // same way RenderProject/RenderAddFields already wrap a bare top-level constant/parameter (guards
-        // against a "$"-prefixed string branch being misread as a field-path reference) — applied uniformly
-        // to every constant branch, not just ones that happen to start with "$".
+        // Constant $cond branches are $literal-wrapped, like RenderProject/RenderAddFields' top-level constants,
+        // so a "$"-prefixed string isn't read as a field path.
         Assert.Equal(
             new BsonDocument("$cond", new BsonDocument
             {
@@ -88,13 +84,8 @@ public class MongoAggregationExpressionRendererDatePartTests
             rendered);
     }
 
-    // NOTE ON TEST SHAPE: MongoDatePart is internal, and a public [Theory] method cannot expose an internal
-    // type in its signature (CS0051) while the test class stays public (required for xUnit discovery). Rows
-    // are supplied via [MemberData], boxing the actual MongoDatePart enum value as object — the identical
-    // idiom already established in MongoConditionalAndDatePartExpressionTests.cs's DatePartTestData() and in
-    // MongoAggregationExpressionRendererTests.cs for MongoBinaryOperator (also internal) — rather than
-    // round-tripping through a raw int, which would have no compile-time/attribute-level connection to
-    // MongoDatePart and no safety net against an out-of-range value.
+    // MongoDatePart is internal, so a public [Theory] can't take it as a parameter (CS0051); rows are boxed via
+    // [MemberData], as in MongoConditionalAndDatePartExpressionTests.DatePartTestData().
     [Theory]
     [MemberData(nameof(DatePartOperatorTestData))]
     public void DatePart_renders_as_the_matching_operator(object part, string operatorName)

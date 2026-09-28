@@ -27,9 +27,8 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// EF-322 step 3a: <see cref="NativeProjectionBinder.TryPopulateNativeProjection"/>'s BARE-selector-body arm.
-/// Asserts the DERIVED ALIAS and its TIER, not just the admit/decline boolean — the alias IS the mechanism this
-/// slice turns on, and a test that only checked the boolean would stay green if the alias were wrong.
+/// <see cref="NativeProjectionBinder.TryPopulateNativeProjection"/>'s bare-selector-body arm. Asserts the derived
+/// alias and its tier, not just the admit/decline boolean — a boolean-only check stays green with a wrong alias.
 /// </summary>
 public class NativeProjectionBinderBareBodyTests
 {
@@ -50,9 +49,7 @@ public class NativeProjectionBinderBareBodyTests
     {
         public string City { get; set; } = "";
 
-        // The hop's own collection — the ONLY thing in this fixture that produces a DOTTED array path
-        // ("Address.Notes"), which is what IsFallbackSafeBareSizeLeaf declines. Without it no test here could
-        // discriminate that guard at all.
+        // The only dotted array path in this fixture ("Address.Notes"), which IsFallbackSafeBareSizeLeaf declines.
         public List<Note> Notes { get; set; } = null!;
     }
 
@@ -67,15 +64,10 @@ public class NativeProjectionBinderBareBodyTests
     }
 
     /// <summary>
-    /// The same shape as <see cref="Order"/>, but the owned collection navigation is declared as
-    /// <see cref="ISet{T}"/> — an ordinary, EF-supported collection type that <c>List&lt;Line&gt;</c> is NOT
-    /// assignable to, and therefore one <c>TryCreateEmptyCollection</c> declines.
+    /// Like <see cref="Order"/>, but the owned collection is an <see cref="ISet{T}"/>, which <c>List&lt;Line&gt;</c>
+    /// is not assignable to, so <c>TryCreateEmptyCollection</c> declines it. The only fixture that exercises that
+    /// decline side.
     /// </summary>
-    /// <remarks>
-    /// This fixture exists because nothing else in the tree could discriminate the CONSTRUCTIBILITY dimension of
-    /// the A4-0 rewrite's reach: every interface-typed navigation modelled anywhere else is one <c>List&lt;T&gt;</c>
-    /// IS assignable to, i.e. the success side of the branch. See the final-review F1 finding.
-    /// </remarks>
     private class SetOrder
     {
         public ObjectId Id { get; set; }
@@ -115,8 +107,8 @@ public class NativeProjectionBinderBareBodyTests
         Assert.Equal("Country", projection.Alias);
         Assert.Equal("Country", Assert.IsType<MongoFieldExpression>(projection.Expression).ElementName);
 
-        // The alias is registered on the carrier under the BARE sentinel key, which is what every alias-reading
-        // site consults — a bare body's own ProjectionMember has no last member to derive a name from.
+        // Registered under the bare sentinel key, which every alias-reading site consults: a bare body's
+        // ProjectionMember has no last member to derive a name from.
         Assert.True(mongoQ.Select.IsBareProjection);
         Assert.True(mongoQ.Select.TryGetProjectionAlias(null, out var alias));
         Assert.Equal("Country", alias);
@@ -132,8 +124,7 @@ public class NativeProjectionBinderBareBodyTests
 
         Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
 
-        // A document root's PK is stored at "_id" (PrimaryKeyDiscoveryConvention rewrites it), so tier 1's
-        // alias-IS-the-path rule makes the alias "_id" rather than the CLR member name. That is what lets
+        // A root PK is stored at "_id", and tier 1's alias is the path, so the alias is "_id" — which lets
         // RenderProject suppress its default `_id : 0` exclusion instead of emitting a malformed mix.
         var projection = Assert.Single(mongoQ.Select.Projection);
         Assert.Equal("_id", projection.Alias);
@@ -149,8 +140,8 @@ public class NativeProjectionBinderBareBodyTests
 
         Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
 
-        // A primitive collection is a mapped PROPERTY, so it arrives as a plain member access and resolves to a
-        // MongoFieldExpression — it never reaches the owned-array branch at all.
+        // A primitive collection is a mapped property, so it resolves to a MongoFieldExpression, not the
+        // owned-array branch.
         var projection = Assert.Single(mongoQ.Select.Projection);
         Assert.Equal("Tags", projection.Alias);
         Assert.IsType<MongoFieldExpression>(projection.Expression);
@@ -163,9 +154,8 @@ public class NativeProjectionBinderBareBodyTests
         var mongoQ = TestQuery();
         Expression<Func<Order, string>> selector = o => o.Address.City;
 
-        // The EF-362 tripwire. The leaf resolves fine — to the DOTTED path "Address.City" — but a dotted alias
-        // is read back as a literal key while MongoDB renders `$project: {"Address.City": …}` as NESTED output,
-        // so tier 1 requires a non-dotted path.
+        // The leaf resolves to the dotted path "Address.City", but a dotted alias is read back as a literal key
+        // while `$project: {"Address.City": …}` renders nested output, so tier 1 requires a non-dotted path.
         Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
 
         Assert.Empty(mongoQ.Select.Projection);
@@ -174,12 +164,11 @@ public class NativeProjectionBinderBareBodyTests
         Assert.False(mongoQ.Select.TryGetProjectionAlias(null, out _));
     }
 
-    // ── EF-322 slice A4 (A4-1): TIER 2 — a COMPUTED bare leaf under the reserved `_v` alias ───────────────
+    // ── Tier 2: a computed bare leaf under the reserved `_v` alias ───────────────────────────────────────
     //
-    // These four flip and pin the tier-2 admission. The tier is asserted, not just the alias string: the
-    // late-fallback strip is TIER-conditional (do NOT strip for Synthetic, whose `_v` is exactly what the
-    // driver's own bare push-down writes), so a test that checked only the alias would stay green if the tier
-    // regressed to DocumentPath and would then be asserting a shape that silently reads a missing element.
+    // The tier is asserted, not just the alias: the late-fallback strip is tier-conditional (it must not fire for
+    // Synthetic, whose `_v` is what the driver's bare push-down writes), so a DocumentPath regression would
+    // silently read a missing element.
 
     [Fact]
     public void Bare_arithmetic_leaf_is_admitted_under_the_reserved_alias_and_the_synthetic_tier()
@@ -187,10 +176,8 @@ public class NativeProjectionBinderBareBodyTests
         var mongoQ = TestQuery();
         Expression<Func<Order, int>> selector = o => o.Amount * 2;
 
-        // Was a DECLINE through step 3a (tier 1 requires a root-relative document path and an arithmetic leaf is
-        // backed by no document element at all). A4-1 admits it instead, under a SYNTHETIC alias — which is a
-        // different answer to the same question, not a relaxation of tier 1: `_v` is still not whole-document
-        // readable, which is precisely why the strip must not fire for it.
+        // Not a relaxation of tier 1: `_v` is still not whole-document readable, which is why the strip must not
+        // fire for it.
         Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
 
         var projection = Assert.Single(mongoQ.Select.Projection);
@@ -228,18 +215,9 @@ public class NativeProjectionBinderBareBodyTests
         var mongoQ = TestQuery();
         Expression<Func<Order, long>> selector = o => (long)o.Amount;
 
-        // EF-410: a widening cast leaf is now admitted here too. MongoExpressionTranslator.TranslateOperand
-        // UNWRAPS a widening conversion instead of wrapping it in a MongoConvertExpression, so the translated
-        // value is a bare MongoFieldExpression — indistinguishable by node kind alone from a leaf that was never
-        // cast. The tier-2 gate now re-derives "was this leaf syntactically a cast" from the ORIGINAL selector
-        // body (a `UnaryExpression { NodeType: Convert }`) rather than from the already-lossy translated value,
-        // so this now admits — but the RESULT is a plain MongoFieldExpression, exactly as an uncast field leaf
-        // produces, so the downstream alias/tier derivation treats it identically: DocumentPath tier, aliased to
-        // the field's own name ("Amount"), not the reserved "_v" a computed (arithmetic/count/MongoConvertExpression)
-        // leaf gets. The shaper reads the raw stored value back and the driver/native BSON readers widen it to the
-        // requested CLR type (long) same as any other numeric read. See
-        // NativeCastTests.Widening_cast_bare_projection_leaf_goes_native /
-        // NativeCastTests.Widening_cast_projection_leaf_now_goes_native for the end-to-end functional pin.
+        // TranslateOperand unwraps a widening conversion, so the leaf is a plain MongoFieldExpression and gets
+        // DocumentPath tier with the field's own alias ("Amount"), not "_v". The BSON readers widen the stored
+        // value to long. End-to-end: NativeCastTests.Widening_cast_bare_projection_leaf_goes_native.
         Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
 
         var projection = Assert.Single(mongoQ.Select.Projection);
@@ -254,14 +232,9 @@ public class NativeProjectionBinderBareBodyTests
         var mongoQ = TestQuery();
         Expression<Func<Order, int>> selector = _ => 0;
 
-        // Tier 2's dedicated constant/parameter arm admits this unconditionally (no subtree check needed,
-        // unlike the arithmetic/cast/conditional/coalesce arms). A falsy constant renders as a BARE VALUE,
-        // which $project would read as an inclusion/exclusion FLAG rather than a literal if emitted verbatim —
-        // but MongoPipelineFactory.RenderProject now $literal-wraps a bare MongoConstantExpression/
-        // MongoParameterExpression projection value (mirroring RenderAddFields' existing $set wrap), so the
-        // rendered pipeline is a genuine value projection, never a flag. See
-        // NativeComputedBareProjectionTests.Bare_constant_leaf_now_goes_native_via_the_project_literal_wrap
-        // for the end-to-end functional pin asserting the emitted MQL.
+        // The constant/parameter arm admits unconditionally. A bare falsy constant in $project would read as an
+        // exclusion flag, so RenderProject $literal-wraps it. End-to-end:
+        // NativeComputedBareProjectionTests.Bare_constant_leaf_now_goes_native_via_the_project_literal_wrap.
         Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
         var projection = Assert.Single(mongoQ.Select.Projection);
         Assert.IsType<MongoConstantExpression>(projection.Expression);
@@ -274,13 +247,9 @@ public class NativeProjectionBinderBareBodyTests
         var mongoQ = TestQuery();
         Expression<Func<Order, bool>> selector = o => o.Amount > 2;
 
-        // The reason the tier-2 gate matches on the OPERATOR rather than on the node type alone. A comparison
-        // also translates to a MongoBinaryExpression, but it renders as a boolean predicate rather than an
-        // arithmetic value, so `{_v: <false>}` is the same BARE-VALUE-as-a-flag hazard the constant case above
-        // pins — and, as that case records, for a BARE body the measured consequence is a junk pure-exclusion
-        // projection rather than the abort the WRAPPED spelling produces. (This shape is declined one gate
-        // earlier today — TryTranslateLeaf's own node-kind check never admits a comparison — so this is a second
-        // net, deliberately: two gates, one shape, neither relying on the other.)
+        // A comparison is also a MongoBinaryExpression, but renders as a boolean, so `{_v: false}` is the
+        // bare-value-as-flag hazard; that's why the tier-2 gate matches on the operator. TryTranslateLeaf also
+        // declines it earlier — two independent gates on purpose.
         Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
         Assert.Empty(mongoQ.Select.Projection);
         Assert.False(mongoQ.Select.IsBareProjection);
@@ -291,27 +260,16 @@ public class NativeProjectionBinderBareBodyTests
     {
         var mongoQ = TestQuery();
 
-        // THE LOWERED SPELLING, not the source one — and the difference is now load-bearing rather than
-        // cosmetic. Since the final fix round, arm 1a asks the A4-0 rewrite's OWN matcher whether it can reach
-        // this body, and that matcher recognizes the post-nav-expansion form EF actually produces
-        // (Queryable.Count over Queryable.AsQueryable over EF.Property). A source-spelled `o => o.Lines.Count`
-        // still TRANSLATES to a MongoSizeExpression — the translator matches `.Count` by name — but it is not a
-        // shape the rewrite could ever be handed at runtime, so testing the gate with it would assert the gate
-        // against an input the production path never produces.
+        // The lowered spelling EF's nav-expansion produces (Queryable.Count over AsQueryable over EF.Property):
+        // arm 1a asks the null-coalescing rewrite's own matcher, which only recognizes this form. A source-spelled
+        // `o => o.Lines.Count` still translates to MongoSizeExpression but never reaches the rewrite at runtime.
         Expression<Func<Order, int>> selector = o => EF.Property<List<Line>>(o, "Lines").AsQueryable().Count();
 
-        // A4-2 — THE ADMISSION THIS WHOLE SLICE EXISTS FOR, and the one that makes the A4-0 prerequisite live.
-        // A count leaf is the shape whose bare `$size` over a MISSING or explicitly-null array aborts the whole
-        // aggregate under the DEFAULT Native mode on a late fallback — the exact defect that got tier 2 reverted
-        // at step 3a. It is admitted here only because NullCoalesceSyntheticBareCountBody now rewrites the
-        // pushed-down body to its `$ifNull` form, so the driver's un-stripped push-down renders the SAME MQL
-        // native does. Pinned end-to-end over a ragged fixture, in all three modes plus the late-decline route,
-        // by NativeComputedBareProjectionTests.
-        //
-        // GATE 1a admits it (the top node IS a MongoSizeExpression); the subtree check deliberately does NOT
-        // run for this arm, because "the body IS the count" is exactly the reach the A4-0 rewrite has. The three
-        // cases below — a count NESTED under arithmetic or a cast — stay declined by GATE 2 for the mirror-image
-        // reason: the rewrite matches only a body that IS the count, never one that merely contains one.
+        // A bare `$size` over a missing/null array aborts the aggregate on a late fallback under Native. It is
+        // admitted only because NullCoalesceSyntheticBareCountBody rewrites the pushed-down body to its `$ifNull`
+        // form, so the driver's push-down renders the same MQL as native (pinned end-to-end by
+        // NativeComputedBareProjectionTests). Gate 1a skips the subtree check because the rewrite reaches exactly
+        // a body that is the count; a count nested under arithmetic or a cast stays declined (tests below).
         Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
 
         var projection = Assert.Single(mongoQ.Select.Projection);
@@ -320,8 +278,8 @@ public class NativeProjectionBinderBareBodyTests
 
         Assert.True(mongoQ.Select.IsBareProjection);
         Assert.Equal(ProjectionAliasTier.Synthetic, mongoQ.Select.BareProjectionTier);
-        // The tier, not just the alias: the late-fallback strip is TIER-conditional and must NOT fire here, or
-        // the shaper is handed whole documents while still reading `_v`.
+        // The late-fallback strip is tier-conditional and must not fire here, or the shaper gets whole documents
+        // while reading `_v`.
         Assert.False(mongoQ.Select.HasDocumentPathAliasOverride);
     }
 
@@ -331,15 +289,10 @@ public class NativeProjectionBinderBareBodyTests
         var mongoQ = TestQuery();
         Expression<Func<Order, int>> selector = o => o.Lines.Count(l => l.Quantity > 0);
 
-        // MongoFilteredSizeExpression is a SEPARATE node kind from MongoSizeExpression (the "sibling, not a
-        // flag" decision recorded in Query/AGENTS.md), so gate 1a has to name it explicitly and a test that
-        // covered only the unfiltered one would leave that arm unpinned.
-        //
-        // It is admitted WITHOUT any rewrite of its own, and that is MEASURED rather than assumed: the driver
-        // renders a filtered count as `{$sum: {$map: {input: "$Lines", …}}}`, and `$map` over a MISSING or
-        // explicitly-null array yields missing rather than aborting the aggregate the way `$size` does — so the
-        // un-stripped fallback answers 0 for the ragged rows on its own. Measured over all four array states in
-        // every mode by NativeComputedBareProjectionTests.Bare_filtered_count_leaf_goes_native_for_every_array_state.
+        // MongoFilteredSizeExpression is a separate node kind, so gate 1a must name it. No rewrite needed: the
+        // driver renders a filtered count as `{$sum: {$map: …}}`, and $map over a missing/null array yields
+        // missing instead of aborting. Pinned by
+        // NativeComputedBareProjectionTests.Bare_filtered_count_leaf_goes_native_for_every_array_state.
         Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
 
         var projection = Assert.Single(mongoQ.Select.Projection);
@@ -354,20 +307,15 @@ public class NativeProjectionBinderBareBodyTests
     {
         var mongoQ = TestQuery();
 
-        // The lowered spelling again, for the reason the root-declared case above states — and here it matters
-        // twice over: the hop is now declined by the rewrite's OWN IsNavigationOnParameter check (the receiver
-        // is `o.Address`, not the selector parameter), so a source-spelled body would decline at the matcher's
-        // very FIRST test instead and this case would stop exercising the hop dimension at all.
+        // Lowered spelling so the hop is declined by the rewrite matcher's IsNavigationOnParameter check (receiver
+        // is `o.Address`) rather than at its first test.
         Expression<Func<Order, int>> selector =
             o => EF.Property<List<Note>>(o.Address, "Notes").AsQueryable().Count();
 
-        // THE C1 REGRESSION PIN, at unit level. This translates to a MongoSizeExpression exactly like the
-        // root-declared `o.Lines.Count` above, so gate 1a's NODE KIND test admits it — what declines it is
-        // IsFallbackSafeBareSizeLeaf consulting the A4-0 rewrite's own matcher, whose IsNavigationOnParameter
-        // accepts only a navigation whose receiver IS the selector parameter. Admitting a hop would commit a
-        // projection the rewrite cannot coalesce — and the Synthetic tier suppresses the strip, so the driver's
-        // un-stripped push-down renders a bare $size and aborts on a missing or explicitly-null array. Measured
-        // end-to-end over a ragged hop fixture by
+        // Gate 1a's node-kind test admits this MongoSizeExpression; IsFallbackSafeBareSizeLeaf declines it via the
+        // rewrite's matcher, which accepts only a navigation on the selector parameter. Admitting it would commit
+        // a projection the rewrite can't coalesce, and the driver's un-stripped push-down would abort on a
+        // missing/null array. End-to-end:
         // NativeComputedBareProjectionTests.Bare_count_leaf_through_an_owned_reference_HOP_is_declined_and_answers_correctly.
         Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
         Assert.Empty(mongoQ.Select.Projection);
@@ -381,12 +329,8 @@ public class NativeProjectionBinderBareBodyTests
         var mongoQ = TestQuery();
         Expression<Func<Order, int>> selector = o => o.Address.Notes.Count(n => n.Text == "x");
 
-        // The filtered kind is held to the SAME dotted-path rule, and that is a deliberate uniformity rather
-        // than a necessity — a filtered count is structurally protected without any rewrite (the driver renders
-        // it {$sum: {$map: …}}, and $map tolerates a missing array where $size does not), so this shape COULD
-        // have been admitted. One rule over both size kinds is checkable by reading one method; two rules would
-        // have to be kept matched against two different protection mechanisms. Pinned so that widening it later
-        // is a deliberate choice.
+        // Held to the same dotted-path rule for uniformity, although $map would tolerate a missing array: one rule
+        // over both size kinds is easier to verify. Pinned so widening it is deliberate.
         Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
         Assert.Empty(mongoQ.Select.Projection);
         Assert.False(mongoQ.Select.IsBareProjection);
@@ -395,17 +339,11 @@ public class NativeProjectionBinderBareBodyTests
     [Fact]
     public void Bare_collection_count_leaf_over_a_navigation_type_the_rewrite_cannot_build_an_empty_for_is_declined()
     {
-        // THE THIRD INSTANCE OF THE RECURRING DEFECT CLASS, pinned at the gate. An ISet<Line> navigation carries
-        // a perfectly NON-DOTTED array path ("Lines"), so the gate's previous ARRAY-PATH-only test admitted it —
-        // but the A4-0 rewrite declines it on a different dimension entirely: List<Line> is not assignable to
-        // ISet<Line>, so TryCreateEmptyCollection cannot build the `??` substitute and the body is left
-        // un-coalesced. The Synthetic tier then suppresses the strip and the driver's un-stripped push-down
-        // renders a bare {"$size": "$Lines"}, which aborts on a missing or explicitly-null array. MEASURED
-        // end-to-end, base vs. that version, on three routes — see
+        // A non-dotted path ("Lines"), but List<Line> is not assignable to ISet<Line>, so the rewrite can't build
+        // the `??` substitute and the driver's push-down would render a bare {"$size": "$Lines"} that aborts on a
+        // missing/null array. IsFallbackSafeBareSizeLeaf calls the rewrite's own matcher, so the gate knows every
+        // dimension the rewrite does. End-to-end:
         // NativeComputedBareProjectionTests.Set_typed_collection_navigation_bare_count_is_declined_and_answers_correctly.
-        //
-        // What declines it now is that IsFallbackSafeBareSizeLeaf CALLS the rewrite's own matcher, so the gate
-        // cannot know about one dimension and not another: it knows exactly what the rewrite knows.
         var mongoQ = TestSetQuery();
         Expression<Func<SetOrder, int>> selector =
             o => EF.Property<ISet<Line>>(o, "Lines").AsQueryable().Count();
@@ -415,9 +353,7 @@ public class NativeProjectionBinderBareBodyTests
         Assert.False(mongoQ.Select.IsBareProjection);
         Assert.Null(mongoQ.Select.BareProjectionTier);
 
-        // CONTROL, on the SAME model: an ordinary bare leaf still binds, so the decline above cannot be blamed
-        // on a fixture EF failed to build. Without this a broken SetOrder mapping would make the test pass for
-        // the wrong reason.
+        // Control on the same model: a plain bare leaf still binds, so the decline isn't a broken fixture.
         var control = TestSetQuery();
         Expression<Func<SetOrder, string>> plain = o => o.Country;
         Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(control, plain));
@@ -430,12 +366,9 @@ public class NativeProjectionBinderBareBodyTests
         var mongoQ = TestQuery();
         Expression<Func<Order, int>> selector = o => o.Lines.Count * 2;
 
-        // THE CASE THE TOP-NODE GATE ALONE LETS THROUGH, and it is not a hypothetical: A4-1 shipped without the
-        // subtree check and this shape re-opened the tier-2 revert's own defect. The top node here IS an
-        // arithmetic MongoBinaryExpression, so gate 1 admits it; its LEFT operand is a MongoSizeExpression, so
-        // the driver's un-stripped push-down renders a bare `$size` and aborts on a missing or explicitly-null
-        // array — under the DEFAULT Native mode on the late-decline route, and under explicit DriverLinq with no
-        // decline at all. Pinned end-to-end over a ragged fixture by
+        // The top node is arithmetic, so gate 1 admits it, but its operand is a MongoSizeExpression: the driver's
+        // push-down renders a bare `$size` that aborts on a missing/null array (late decline under Native, or
+        // DriverLinq). End-to-end:
         // NativeComputedBareProjectionTests.Bare_arithmetic_over_a_collection_count_is_declined_and_answers_correctly.
         Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
         Assert.Empty(mongoQ.Select.Projection);
@@ -448,11 +381,8 @@ public class NativeProjectionBinderBareBodyTests
         var mongoQ = TestQuery();
         Expression<Func<Order, long>> selector = o => (long)(o.Lines.Count / 2.0);
 
-        // The same hole through the CAST arm rather than the arithmetic one — a separate case because gate 1 has
-        // two admitting shapes and a subtree check wired into only one of them would be silently half-applied.
-        // The `/ 2.0` is what forces a genuine narrowing MongoConvertExpression at the top (a widening cast is
-        // unwrapped by TranslateOperand and declines a gate earlier, for unrelated reasons — see
-        // Bare_widening_cast_leaf_is_still_declined_and_never_reaches_the_alias_derivation).
+        // Same hole through the cast arm; gate 1 has two admitting shapes and both need the subtree check. The
+        // `/ 2.0` forces a narrowing MongoConvertExpression (a widening cast is unwrapped to a plain field).
         Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
         Assert.Empty(mongoQ.Select.Projection);
         Assert.False(mongoQ.Select.IsBareProjection);
@@ -464,11 +394,8 @@ public class NativeProjectionBinderBareBodyTests
         var mongoQ = TestQuery();
         Expression<Func<Order, int>> selector = o => o.Lines.Count(l => l.Quantity > 0) * 2;
 
-        // MongoFilteredSizeExpression is a separate node kind from MongoSizeExpression (the "sibling, not a
-        // flag" decision recorded in Query/AGENTS.md), so a subtree check that named only the unfiltered one
-        // would admit this. It does not: IsArrayFreeComputedSubtree is an ALLOW-LIST, and neither size kind is
-        // on it. That is also why this case cannot be folded into the one above — it is the arm that proves the
-        // exclusion comes from the catch-all rather than from an enumeration someone has to keep complete.
+        // IsArrayFreeComputedSubtree is an allow-list containing neither size kind; this proves the filtered kind
+        // is excluded by the catch-all, not by an enumeration someone must keep complete.
         Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
         Assert.Empty(mongoQ.Select.Projection);
         Assert.False(mongoQ.Select.IsBareProjection);
@@ -480,20 +407,17 @@ public class NativeProjectionBinderBareBodyTests
         var mongoQ = TestQuery();
         Expression<Func<Order, Order>> selector = o => o;
 
-        // The positive control at unit level. TranslateSelect returns a `x => x` Select unchanged before the
-        // binder is ever called, so this shape does not reach here in practice — but the arm must not be able to
-        // match a bare ParameterExpression even if it did, or whole-entity queries would start emitting a
-        // $project keyed by nothing.
+        // TranslateSelect returns `x => x` unchanged before the binder runs, but the arm must still never match a
+        // bare ParameterExpression, or whole-entity queries would emit a $project keyed by nothing.
         Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
         Assert.Empty(mongoQ.Select.Projection);
         Assert.False(mongoQ.Select.IsBareProjection);
     }
 
-    // ── EF-412: wrapped whole-entity leaf recognition ───────────────────────────────────────────────────
+    // ── Wrapped whole-entity leaf recognition ───────────────────────────────────────────────────────────
     //
-    // These tests ensure that when a wrapped projection (anonymous type / DTO) contains a whole-entity leaf,
-    // it is recognized and emitted as `$$ROOT`, but ONLY in wrapped contexts (NewExpression/MemberInitExpression).
-    // The bare-body parameter is NOT admitted by this new arm — it must keep taking the pre-existing path.
+    // A whole-entity leaf inside a wrapped projection (NewExpression/MemberInitExpression) is emitted as
+    // `$$ROOT`. A bare-body parameter must not be admitted by this arm.
 
     [Fact]
     public void Wrapped_whole_entity_leaf_is_admitted_as_ROOT()
@@ -501,26 +425,21 @@ public class NativeProjectionBinderBareBodyTests
         var mongoQ = TestQuery();
         Expression<Func<Order, object>> selector = o => new { o, Total = o.Age * o.Score };
 
-        // The new arm admits a wrapped whole-entity leaf as `$$ROOT`.
         Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
 
         var projections = mongoQ.Select.Projection;
         Assert.Equal(2, projections.Count);
 
-        // First projection entry should be the whole-entity leaf aliased as "o"
         var firstProjection = projections[0];
         Assert.Equal("o", firstProjection.Alias);
         var rootRef = Assert.IsType<MongoElementRefExpression>(firstProjection.Expression);
         Assert.Equal("$ROOT", rootRef.Path);
         Assert.Equal(typeof(Order), rootRef.Type);
 
-        // Second projection entry should be the computed leaf aliased as "Total"
         var secondProjection = projections[1];
         Assert.Equal("Total", secondProjection.Alias);
-        // The computed (arithmetic) leaf is a MongoBinaryExpression
         Assert.IsType<MongoBinaryExpression>(secondProjection.Expression);
 
-        // Neither bare projection nor override expected for a wrapped body
         Assert.False(mongoQ.Select.IsBareProjection);
         Assert.False(mongoQ.Select.TryGetProjectionAlias(null, out _));
     }
@@ -528,13 +447,10 @@ public class NativeProjectionBinderBareBodyTests
     [Fact]
     public void Bare_whole_entity_parameter_is_still_declined_by_the_new_arm()
     {
-        // NEGATIVE CONTROL: ensure the new arm doesn't admit a bare `o => o`.
-        // This test is what catches the load-bearing gate — a bare body MUST NOT be admitted by the new arm,
-        // or it would silently break the pre-existing WholeEntity route (which EF's query compilation expects).
+        // A bare `o => o` must not be admitted by the wrapped-entity arm, or it would break the WholeEntity route.
         var mongoQ = TestQuery();
         Expression<Func<Order, Order>> selector = o => o;
 
-        // Even though the new arm is now in the code, a bare body still must be declined.
         Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
         Assert.Empty(mongoQ.Select.Projection);
         Assert.False(mongoQ.Select.IsBareProjection);
@@ -549,34 +465,25 @@ public class NativeProjectionBinderBareBodyTests
 
         Expression<Func<Order, int>> second = o => o.Amount;
 
-        // This is what makes the alias carrier provably WRITE-ONCE, and therefore what makes
-        // AddProjectionAliasOverride safe to use Dictionary.Add: the one writer cannot commit a second bare
-        // override on the same select. Without the guard the second call would append a second projection AND
-        // attempt a second override write for the one bare sentinel key.
+        // The guard makes the alias carrier write-once, which is what lets AddProjectionAliasOverride use
+        // Dictionary.Add.
         Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, second));
 
-        // And it declines cleanly — the first projection and the first override are untouched.
+        // Declines cleanly: the first projection and override are untouched.
         var projection = Assert.Single(mongoQ.Select.Projection);
         Assert.Equal("Country", projection.Alias);
         Assert.True(mongoQ.Select.TryGetProjectionAlias(null, out var alias));
         Assert.Equal("Country", alias);
     }
 
-    // ── EF-322 slice A4 (A4-0): the CapturedExpression null-coalescing rewrite ───────────────────────────
+    // ── NullCoalesceSyntheticBareCountBody: the CapturedExpression null-coalescing rewrite ───────────────
     //
-    // These exercise NativeProjectionBinder.NullCoalesceSyntheticBareCountBody rather than
-    // TryPopulateNativeProjection, because the rewrite CANNOT live inside the binder's commit block:
-    // MongoQueryableMethodTranslatingExpressionVisitor.VisitMethodCall re-assigns
-    // CapturedExpression = _finalExpression immediately after every translated Queryable call — including the
-    // Select whose translation runs the binder — so a write from inside the binder is overwritten before
-    // anything reads it. MEASURED with a marker expression: the marker never reached the driver-LINQ bridge.
-    // The rewrite is applied at that assignment instead, and its input is the Synthetic-tier override the
-    // binder registers, so these tests set that override up by hand — the tier is not yet REACHABLE (no
-    // producer writes Synthetic until the tier-2 admission lands), which is exactly why the rewrite ships
-    // first and is inert.
+    // Tested directly rather than through TryPopulateNativeProjection: the rewrite can't live in the binder's
+    // commit block, because MongoQueryableMethodTranslatingExpressionVisitor.VisitMethodCall reassigns
+    // CapturedExpression = _finalExpression after every translated Queryable call. It is applied at that
+    // assignment, keyed on the Synthetic-tier override, which these tests register by hand.
     //
-    // The captured spelling used below is the one EF's nav-expansion actually produces, MEASURED on a running
-    // query rather than assumed: Select(b => b.Posts.Count) is captured as
+    // EF's nav-expansion captures Select(b => b.Posts.Count) as
     // Select(b => Queryable.Count(Queryable.AsQueryable(EF.Property<List<Post>>(b, "Posts")))).
 
     private static MongoQueryExpression SyntheticBareQuery(Expression captured)
@@ -602,8 +509,8 @@ public class NativeProjectionBinderBareBodyTests
             .Single(m => m.Name == name && m.IsGenericMethod && m.GetParameters().Length == parameterCount)
             .MakeGenericMethod(elementType);
 
-    // Hand-built rather than compiler-emitted, because C# cannot spell EF.Property<T> with a `Type` variable —
-    // and the navigation's DECLARED CLR type is precisely the axis under test.
+    // Hand-built: C# can't spell EF.Property<T> with a `Type` variable, and the navigation's declared CLR type is
+    // the axis under test.
     private static Expression CapturedSelectOfType(Type navigationType)
     {
         var parameter = Expression.Parameter(typeof(Order), "o");
@@ -623,11 +530,9 @@ public class NativeProjectionBinderBareBodyTests
     [Fact]
     public void Bare_collection_navigation_Count_body_is_rewritten_to_its_null_coalesced_form()
     {
-        // THE PREREQUISITE. The driver renders a bare {"$size": "$Lines"} for this body, and $size against a
-        // MISSING or explicitly-null array aborts the whole aggregate — so a Synthetic-tier bare count that
-        // ever reaches the driver-LINQ bridge (a late native-factory decline under the DEFAULT Native mode, or
-        // an explicit DriverLinq) is a hard failure on ragged data. (b.Lines ?? new List<Line>()).Count is
-        // MEASURED to render {"$size": {"$ifNull": ["$Lines", []]}} — byte-identical to native's own rendering.
+        // The driver renders a bare {"$size": "$Lines"}, which aborts on a missing/null array whenever a
+        // Synthetic bare count reaches the driver-LINQ bridge. (b.Lines ?? new List<Line>()).Count renders
+        // {"$size": {"$ifNull": ["$Lines", []]}}, identical to native.
         var captured = CapturedSelect(o => EF.Property<List<Line>>(o, "Lines").AsQueryable().Count());
         var mongoQ = SyntheticBareQuery(captured);
 
@@ -636,9 +541,8 @@ public class NativeProjectionBinderBareBodyTests
 
         Assert.NotSame(captured, rewritten);
 
-        // Assert the SHAPE of the rewritten body, not merely that something changed: Count over AsQueryable
-        // over a Coalesce whose left operand is the untouched navigation access and whose right operand is a
-        // freshly constructed empty collection of the navigation's own CLR type.
+        // Shape: Count over AsQueryable over a Coalesce of the untouched navigation and a new empty collection of
+        // the navigation's CLR type.
         var count = Assert.IsAssignableFrom<MethodCallExpression>(SelectorOf(rewritten!).Body);
         Assert.Equal(nameof(Queryable.Count), count.Method.Name);
         var asQueryable = Assert.IsAssignableFrom<MethodCallExpression>(count.Arguments[0]);
@@ -651,18 +555,14 @@ public class NativeProjectionBinderBareBodyTests
         Assert.Same(originalNavigation, coalesce.Left);
         Assert.Equal(typeof(List<Line>), Assert.IsAssignableFrom<NewExpression>(coalesce.Right).Type);
 
-        // The lambda parameter is REUSED, not re-created — a rebuilt parameter would leave the rewritten body
-        // referring to a parameter the Select no longer binds, which is not something a shape assertion on the
-        // Coalesce alone would catch.
+        // The lambda parameter must be reused; a rebuilt one would leave the body referencing an unbound parameter.
         Assert.Same(SelectorOf(captured).Parameters[0], SelectorOf(rewritten!).Parameters[0]);
     }
 
     [Fact]
     public void Bare_LongCount_body_is_rewritten_too()
     {
-        // LongCount is admitted by the same gate as Count and was untested when this rewrite first shipped.
-        // It is not a spelling nobody writes: EF lowers `b.Lines.LongCount()` to exactly this shape, and a
-        // rewrite that silently covered only Count would leave the LongCount spelling aborting on ragged data.
+        // EF lowers `b.Lines.LongCount()` to this shape; it must be rewritten like Count.
         var captured = CapturedSelect(o => EF.Property<List<Line>>(o, "Lines").AsQueryable().LongCount());
         var mongoQ = SyntheticBareQuery(captured);
 
@@ -684,14 +584,9 @@ public class NativeProjectionBinderBareBodyTests
     [InlineData(typeof(HashSet<Line>))]
     public void A_non_List_navigation_CLR_type_is_rewritten_against_an_assignable_empty_collection(Type navigationType)
     {
-        // THE CORRECTNESS CASE THIS REWRITE SHIPPED WITHOUT. EF's nav-expansion spells the navigation
-        // EF.Property<TNavClrType>(b, "…") using the DECLARED property type, so a model declaring
-        // ICollection<T> / IList<T> / IEnumerable<T> reaches this rewrite with an INTERFACE-typed navigation —
-        // and this provider's own suite already models one (OwnedEntityTests.PersonWithIEnumerableLocations).
-        // The first version of this rewrite declined every interface type, which is not a coverage gap but the
-        // exact bare-$size abort this whole change exists to close, left open for a whole family of ordinary
-        // models. HashSet<Line> is the control on the other side of the branch: constructible, so it must be
-        // coalesced against ITSELF rather than against a List.
+        // Nav-expansion uses the declared property type, so interface-typed navigations (ICollection<T>,
+        // IList<T>, IEnumerable<T>; see OwnedEntityTests.PersonWithIEnumerableLocations) reach this rewrite and
+        // must be coalesced against List<T>. HashSet<Line> is constructible, so it's coalesced against itself.
         var captured = CapturedSelectOfType(navigationType);
         var mongoQ = SyntheticBareQuery(captured);
 
@@ -703,8 +598,8 @@ public class NativeProjectionBinderBareBodyTests
         var asQueryable = Assert.IsAssignableFrom<MethodCallExpression>(count.Arguments[0]);
         var coalesce = Assert.IsAssignableFrom<BinaryExpression>(asQueryable.Arguments[0]);
 
-        // The Coalesce's own type must stay the NAVIGATION's declared type — that is what keeps the rebuilt
-        // AsQueryable call valid — while the substitute is a constructible collection assignable to it.
+        // The Coalesce keeps the navigation's declared type (keeping AsQueryable valid); the substitute is a
+        // constructible type assignable to it.
         Assert.Equal(navigationType, coalesce.Type);
         var substitute = Assert.IsAssignableFrom<NewExpression>(coalesce.Right).Type;
         Assert.True(navigationType.IsAssignableFrom(substitute));
@@ -716,14 +611,8 @@ public class NativeProjectionBinderBareBodyTests
     [InlineData(typeof(IReadOnlySet<Line>))]
     public void A_navigation_CLR_type_no_substitute_is_assignable_to_is_left_untouched(Type navigationType)
     {
-        // THE DECLINE SIDE OF THE SAME BRANCH, which had NO ROW until the final review. The theory above covers
-        // ICollection<T> / IEnumerable<T> / IList<T> — precisely the three interfaces List<T> IS assignable to,
-        // i.e. the three for which TryCreateEmptyCollection SUCCEEDS — so the mutation recorded against it
-        // ("the interface-typed-navigation fallback removed") could only ever have measured the success path.
-        //
-        // ISet<T> and IReadOnlySet<T> are ordinary EF-supported collection types List<T> is NOT assignable to.
-        // They are the boundary the gate now shares with this rewrite: a decline here is also a decline at
-        // IsFallbackSafeBareSizeLeaf, which is what stops the un-rewritten bare $size from ever being committed
+        // ISet<T>/IReadOnlySet<T> are EF-supported types List<T> isn't assignable to, so the rewrite declines —
+        // and so does IsFallbackSafeBareSizeLeaf, which keeps the un-rewritten bare $size from being committed
         // (see Bare_collection_count_leaf_over_a_navigation_type_the_rewrite_cannot_build_an_empty_for_is_declined).
         var captured = CapturedSelectOfType(navigationType);
         var mongoQ = SyntheticBareQuery(captured);
@@ -738,9 +627,7 @@ public class NativeProjectionBinderBareBodyTests
     [InlineData(nameof(Queryable.Last))]
     public void A_bare_count_under_a_cardinality_terminator_is_rewritten_through_the_terminator(string terminator)
     {
-        // THE SECOND NAVIGATION SHAPE, which shipped with no coverage at all: `Select(b => b.Posts.Count).First()`
-        // captures as First(Select(…)), so the pushed-down Select is not the outermost node. Deleting the whole
-        // branch left every other test green, which is exactly why this one exists.
+        // `Select(b => b.Posts.Count).First()` captures as First(Select(…)), so the Select isn't outermost.
         var select = CapturedSelect(o => EF.Property<List<Line>>(o, "Lines").AsQueryable().Count());
         var captured = UnderTerminator(select, terminator);
         var mongoQ = SyntheticBareQuery(captured);
@@ -751,10 +638,8 @@ public class NativeProjectionBinderBareBodyTests
         Assert.NotSame(captured, rewritten);
         var rebuiltTerminator = Assert.IsAssignableFrom<MethodCallExpression>(rewritten);
 
-        // The terminator's METHOD — generic argument included — must be UNCHANGED. StripPushedDownSelect
-        // retargets its terminator because it REMOVES the Select and the element type therefore changes; this
-        // rewrite keeps the Select and touches only its body, whose type is unchanged, so retargeting here
-        // would be wrong rather than merely redundant. Asserting the MethodInfo pins that distinction.
+        // The terminator's MethodInfo must be unchanged: unlike StripPushedDownSelect (which removes the Select
+        // and so must retarget), this rewrite keeps the Select's element type.
         Assert.Same(((MethodCallExpression)captured).Method, rebuiltTerminator.Method);
 
         var innerSelect = Assert.IsAssignableFrom<MethodCallExpression>(rebuiltTerminator.Arguments[0]);
@@ -767,8 +652,7 @@ public class NativeProjectionBinderBareBodyTests
     [Fact]
     public void A_non_count_body_under_a_cardinality_terminator_is_left_untouched()
     {
-        // The terminator branch inherits the SAME body gate as the outermost-Select branch, rather than having a
-        // second, independently-spelled copy of it — which is what this pins.
+        // The terminator branch shares the outermost-Select branch's body gate rather than a second copy.
         var captured = UnderTerminator(CapturedSelect(o => o.Amount * 2), nameof(Queryable.First));
         var mongoQ = SyntheticBareQuery(captured);
 
@@ -779,11 +663,8 @@ public class NativeProjectionBinderBareBodyTests
     [Fact]
     public void Bare_arithmetic_body_is_left_untouched()
     {
-        // Scope pin, and it is a MEASURED boundary rather than a conservative choice: the driver renders
-        // arithmetic as $multiply, which never touches an array and so never aborts on a missing or
-        // explicitly-null one. Rewriting it would be unrequested scope — and the tier-2 admission that lands
-        // later admits arithmetic under the SAME Synthetic tier, so this test is what keeps the rewrite keyed
-        // on the body SHAPE rather than on the tier alone.
+        // $multiply never touches an array, so arithmetic needs no rewrite. Arithmetic is also Synthetic-tier, so
+        // this keeps the rewrite keyed on body shape as well as tier.
         var captured = CapturedSelect(o => o.Amount * 2);
         var mongoQ = SyntheticBareQuery(captured);
 
@@ -794,7 +675,7 @@ public class NativeProjectionBinderBareBodyTests
     [Fact]
     public void Bare_cast_body_is_left_untouched()
     {
-        // Same boundary, the other measured-safe computed kind: a narrowing cast renders $toInt.
+        // Same boundary: a narrowing cast renders $toInt.
         var captured = CapturedSelect(o => (int)o.Weight);
         var mongoQ = SyntheticBareQuery(captured);
 
@@ -805,10 +686,8 @@ public class NativeProjectionBinderBareBodyTests
     [Fact]
     public void A_count_body_with_no_synthetic_override_is_left_untouched()
     {
-        // THE INERTNESS CONTROL, and the reason this change is safe to ship ahead of the capability it exists
-        // for: nothing in the tree registers a Synthetic-tier override yet, so on today's code path the
-        // rewrite is unreachable and every shipped shape keeps its exact current disposition. It also pins the
-        // gate as TIER data rather than a body-shape sniff — a rewrite keyed only on the body would fire here.
+        // Without a Synthetic-tier override the rewrite must not fire: the gate is tier data, not a body-shape
+        // sniff.
         var captured = CapturedSelect(o => EF.Property<List<Line>>(o, "Lines").AsQueryable().Count());
         var mongoQ = TestQuery();
         mongoQ.CapturedExpression = captured;
@@ -816,7 +695,7 @@ public class NativeProjectionBinderBareBodyTests
         Assert.Same(captured,
             NativeProjectionBinder.NullCoalesceSyntheticBareCountBody(mongoQ.CapturedExpression, mongoQ.Select));
 
-        // A DocumentPath-tier bare override — tier 1, everything step 3a ships — is equally untouched.
+        // A DocumentPath-tier bare override is equally untouched.
         var tier1 = TestQuery();
         tier1.Select.AddProjectionAliasOverride(
             MongoSelectDefinition.BareProjectionMemberKey, "Lines", ProjectionAliasTier.DocumentPath);
@@ -829,13 +708,10 @@ public class NativeProjectionBinderBareBodyTests
     [Fact]
     public void A_wrapped_count_body_is_left_untouched()
     {
-        // A WRAPPED count leaf's end-to-end behaviour on a ragged array under DriverLinq is measured by
-        // NativeOwnedCollectionCountTests.Wrapped_count_projection_under_DriverLinq_works_for_present_and_ragged_arrays_alike
-        // — it no longer aborts, but via a different mechanism (MongoEFToLinqTranslatingExpressionVisitor's
-        // embedded-collection-count coalesce), not this one. This method's own scope stays narrow: the rewrite
-        // navigates to the pushed-down bare Select's own body — the same navigation
-        // StripPushedDownSelect uses — precisely so a free-form tree walk cannot reach a wrapped leaf and flip
-        // that pin silently.
+        // The rewrite navigates only to the pushed-down bare Select's body (the same navigation
+        // StripPushedDownSelect uses), so it never reaches a wrapped leaf. Wrapped counts are coalesced elsewhere
+        // (MongoEFToLinqTranslatingExpressionVisitor); see
+        // NativeOwnedCollectionCountTests.Wrapped_count_projection_under_DriverLinq_works_for_present_and_ragged_arrays_alike.
         var captured = CapturedSelect(o => new {o.Country, N = EF.Property<List<Line>>(o, "Lines").AsQueryable().Count()});
         var mongoQ = SyntheticBareQuery(captured);
 
@@ -846,15 +722,10 @@ public class NativeProjectionBinderBareBodyTests
     [Fact]
     public void A_count_over_something_other_than_the_selector_parameter_is_left_untouched()
     {
-        // A REFERENCE-collection count is captured as an EntityQueryRoot subquery, not as a navigation access
-        // on the selector's own parameter, and it needs no rewrite: it reads a $lookup output, and a $lookup
-        // always writes an array (never absent, never explicit null). The parameter-rooted requirement is what
-        // separates the two; this stands in for it with a count over a captured local.
-        //
-        // The body deliberately keeps the FULL Count(AsQueryable(x)) spelling and varies only what `x` is
-        // rooted at. An earlier version of this test used `other.Count()`, which declined one gate EARLIER (no
-        // AsQueryable call at all) and so was VACUOUS — removing the parameter-rooted check left it green.
-        // Caught by mutation, and the corrected body fails when that check is removed.
+        // A reference-collection count is an EntityQueryRoot subquery over a $lookup output (always an array), so
+        // it needs no rewrite; the parameter-rooted requirement separates the two. Stood in for by a captured
+        // local. The full Count(AsQueryable(x)) spelling is kept so only the root varies — `other.Count()` would
+        // decline earlier and never exercise the parameter-rooted check.
         var other = new List<Line>();
         var captured = CapturedSelect(o => other.AsQueryable().Count());
         var mongoQ = SyntheticBareQuery(captured);
@@ -879,13 +750,9 @@ public class NativeProjectionBinderBareBodyTests
         var mongoQ = TestQuery();
         Expression<Func<Order, object>> selector = o => new {o.Country, o.Amount};
 
-        // The inertness control for the wrapped path: a wrapped projection's alias comes from its member name,
-        // so it must register nothing — an override here would make IsBareProjection/BareProjectionTier answer
-        // for a projection that has no bare body, and wrongly trip the late-fallback strip
-        // (NativeProjectionBinder.NullCoalesceSyntheticBareCountBody, which reads BareProjectionTier). NOTE:
-        // as of EF-395 NEITHER of the two former narrowings consults IsBareProjection any more — both were
-        // removed (see MongoQueryableMethodTranslatingExpressionVisitor's and NativeGroupByBinder's own
-        // comments recording that) — so the strip is now the only consumer this control protects.
+        // A wrapped projection's aliases come from member names, so it must register no override; otherwise
+        // IsBareProjection/BareProjectionTier would answer for a non-bare projection and wrongly trip the
+        // late-fallback strip.
         Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
 
         Assert.Equal(2, mongoQ.Select.Projection.Count);

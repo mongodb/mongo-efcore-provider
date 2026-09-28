@@ -27,20 +27,11 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-411: native <c>Reverse</c>/<c>Last</c>/<c>LastOrDefault</c> for the ORDERED-source case — MQL has no
-/// "reverse row order" stage, so the only sound native form is flipping an explicit trailing sort's
-/// direction (the exact complement of the original order) and, for Last/LastOrDefault, reusing the ordinary
-/// First/FirstOrDefault <c>$limit:1</c> reducer machinery on top of the flipped sort. An unordered source has
-/// no defined LINQ row order to complement, so all three decline rather than inventing an unreliable
-/// natural-order sort. <c>Last</c>/<c>LastOrDefault</c> have a working driver-LINQ oracle either way (MEASURED
-/// live), so their unordered decline falls back gracefully — correct results, throwing only under
-/// <see cref="MongoQueryMode.NativeOnly"/>. <c>Reverse</c> does NOT: the C# driver's own LINQ v3 provider
-/// does not translate <c>Queryable.Reverse()</c> at all, ordered or not (MEASURED —
-/// <see cref="MongoDB.Driver.Linq.ExpressionNotSupportedException"/>), so its decline hard-fails in EVERY
-/// mode, exactly like reference SelectMany/Intersect/Except elsewhere in this codebase — this is pre-existing
-/// (every <c>Reverse()</c> call failed in every mode before this slice too), not a regression it introduces.
-/// <see cref="MongoQueryMode.NativeOnly"/> is the "went native" signal throughout, since the emitted MQL for
-/// the ordered case is not otherwise distinguishable from a fallback that flips the sort itself.
+/// Native <c>Reverse</c>/<c>Last</c>/<c>LastOrDefault</c>. MQL has no "reverse row order" stage, so
+/// <c>Reverse</c> is native only by flipping an explicit trailing sort; otherwise it hard-fails in every mode
+/// because the driver's LINQ provider doesn't translate <c>Reverse</c> either. <c>Last</c> over a trailing sort
+/// flips it; otherwise it uses <c>$group</c>/<c>$last</c>. <see cref="MongoQueryMode.NativeOnly"/> is the
+/// "went native" signal, since the MQL can't tell the paths apart.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -89,8 +80,7 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
         var collection = Seed([1, 2, 3], nameof(Reverse_over_descending_order_flips_to_ascending_in_the_emitted_sort));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // OrderByDescending puts [3,2,1]; Reverse() must flip the emitted $sort back to ascending — the row
-        // order proves the flip (a no-op Reverse, or one that failed to flip, would return [3,2,1] instead).
+        // A Reverse that failed to flip the $sort would return [3,2,1].
         var result = db.Entities.OrderByDescending(e => e.Value).Reverse().Select(e => e.Value).ToList();
 
         Assert.Equal([1, 2, 3], result);
@@ -107,14 +97,8 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
         Assert.Equal(["n2", "n1", "n1"], result);
     }
 
-    // MEASURED: the C# driver's own LINQ v3 provider does not support Queryable.Reverse() AT ALL — ordered
-    // or not (MongoDB.Driver.Linq.ExpressionNotSupportedException, confirmed via a live probe against both
-    // shapes before writing the two tests below). So a Reverse() this slice cannot route natively has NO
-    // driver-LINQ oracle to land on, same family as reference SelectMany/Intersect/Except elsewhere in this
-    // file: a decline hard-fails in EVERY mode (Native's own fallback attempt included), not just NativeOnly.
-    // This is NOT a regression from this slice — every Reverse() call hard-failed in every mode before it
-    // too, since native had no coverage for it at all and the driver never did either; this slice only adds
-    // the ordered case as a genuinely new, previously-unreachable capability.
+    // The driver's LINQ provider doesn't support Queryable.Reverse(), so a Reverse that can't go native has no
+    // fallback and fails in every mode.
 
     [Fact]
     public void Reverse_without_an_explicit_order_still_hard_fails_in_every_mode()
@@ -136,8 +120,7 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
     {
         var collection = Seed([1, 2, 3], nameof(Reverse_after_a_composed_operator_following_the_sort_still_hard_fails_in_every_mode));
 
-        // The tail op is a $match (Where), not a $sort, so TryFlipTrailingSortDirection has nothing to flip
-        // and this shape declines exactly like the unordered case above — same no-oracle disposition.
+        // The trailing op is a $match, not a $sort, so there is nothing to flip.
         using var nativeDb = CreateContext(collection, MongoQueryMode.Native);
         Assert.Throws<ExpressionNotSupportedException>(
             () => nativeDb.Entities.OrderBy(e => e.Value).Where(e => e.Value > 0).Reverse().ToList());
@@ -209,18 +192,14 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
         var collection = Seed([2, 1, 3], nameof(Last_over_a_ThenBy_chain_flips_every_ordering));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // OrderBy(Value).ThenBy(Name) ascending puts Value==3 last; Last() must return that row, which only
-        // holds if BOTH orderings in the ThenBy chain were flipped together (flipping just one would break
-        // the tie-break and could return a different row on a model with real ties).
+        // Every ordering in the ThenBy chain must be flipped together, or ties could return a different row.
         var last = db.Entities.OrderBy(e => e.Value).ThenBy(e => e.Name).Last();
 
         Assert.Equal(3, last.Value);
     }
 
-    // EF-322 RE-BASELINE (the three tests below). They pinned Last/LastOrDefault DECLINING when there is no
-    // explicit prior sort to flip. That shape now goes native via $group{_id:null,_last:{$last:"$$ROOT"}} +
-    // $replaceRoot — the exact MQL the driver-LINQ fallback already emitted for it, so going native did not
-    // invent a new notion of "the last row". Re-pinned as results rather than deleted.
+    // Without a trailing sort to flip, Last/LastOrDefault lower to $group{_id:null,_last:{$last:"$$ROOT"}} +
+    // $replaceRoot, the same MQL driver LINQ emits.
     [Fact]
     public void Last_without_an_explicit_order_goes_native_with_driver_linq_parity()
     {
@@ -232,8 +211,7 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
         using var driverDb = CreateContext(collection, MongoQueryMode.DriverLinq);
         var driverValue = driverDb.Entities.Last().Value;
 
-        // LINQ leaves row order undefined for an unordered source, so the DRIVER is the oracle here, not a
-        // hard-coded value: the contract this pins is that going native did not change which row comes back.
+        // Row order is undefined for an unordered source, so driver LINQ is the oracle.
         Assert.Equal(driverValue, nativeValue);
     }
 
@@ -242,9 +220,7 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
     {
         var collection = Seed([], nameof(LastOrDefault_without_an_explicit_order_goes_native_and_returns_null_when_empty));
 
-        // The empty case is the one with a DEFINED answer regardless of row order, and it is the case the
-        // $group pattern could plausibly get wrong: $group{_id:null} over no input emits no document at all
-        // (rather than one with a null _last), so the reducer must still yield null and not throw.
+        // $group{_id:null} over no input emits no document at all; the reducer must still yield null.
         using var nativeOnlyDb = CreateContext(collection, MongoQueryMode.NativeOnly);
         Assert.Null(nativeOnlyDb.Entities.LastOrDefault());
     }
@@ -255,12 +231,8 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
         var collection = Seed([1, 2, 3], nameof(Last_after_Take_over_an_ordered_source_goes_native_and_respects_the_Take));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // This used to decline on the grounds that Take(2) had already consumed the limit slot that the
-        // sort-flip + $limit:1 lowering needed. The $group lowering needs no limit slot at all, so the
-        // conflict is gone — but that makes the ORDERING load-bearing, which is what this asserts: the
-        // $group must run AFTER the $sort/$limit ($sort asc, $limit 2, $last => 2), not before or instead
-        // of them. Flipping the sort here (the old lowering) would answer 3, and dropping the Take would
-        // also answer 3 — so the correct answer distinguishes this from both ways of getting it wrong.
+        // The $group must run after $sort/$limit (answer 2). Flipping the sort instead, or dropping the Take,
+        // would both answer 3.
         Assert.Equal(2, db.Entities.OrderBy(e => e.Value).Take(2).Last().Value);
     }
 }

@@ -26,10 +26,9 @@ using MongoDB.EntityFrameworkCore.UnitTests.TestUtilities;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// Unit tests for <see cref="NativeCorrelationMatcher"/>, which recognizes a correlated
-/// <c>Where</c>-over-<see cref="Microsoft.EntityFrameworkCore.Query.EntityQueryRootExpression"/> shape and
-/// resolves it to the single matching collection navigation off the outer entity. Extracted (EF-347 slice 5,
-/// Task 1) from <see cref="NativeProjectionBinder"/>'s projected-<c>Count</c> recognition.
+/// Unit tests for <see cref="NativeCorrelationMatcher"/>, which resolves a correlated
+/// <c>Where</c>-over-<see cref="Microsoft.EntityFrameworkCore.Query.EntityQueryRootExpression"/> shape to the single
+/// matching collection navigation on the outer entity.
 /// </summary>
 public class NativeCorrelationMatcherTests
 {
@@ -73,9 +72,8 @@ public class NativeCorrelationMatcherTests
 
     private static readonly MethodInfo EfPropertyOfInt = typeof(EF).GetMethod(nameof(EF.Property))!.MakeGenericMethod(typeof(int));
 
-    // Note has no real CLR "CustomerId" member (it's a shadow FK property, backing the owned relationship) —
-    // an EF.Property(n, "CustomerId") call is the structurally-correct way to reference it, mirroring what
-    // GetRootParameter/TryGetSimplePropertyName recognize for shadow-property FK access.
+    // Note's "CustomerId" is a shadow FK, so it's referenced via EF.Property, as GetRootParameter /
+    // TryGetSimplePropertyName expect.
     private static Expression ShadowProperty(ParameterExpression note, string name)
         => Expression.Call(EfPropertyOfInt, note, Expression.Constant(name));
 
@@ -129,7 +127,7 @@ public class NativeCorrelationMatcherTests
         var nullGuard = Expression.NotEqual(
             Expression.Convert(Expression.Property(outer, nameof(Customer.Id)), typeof(object)),
             Expression.Constant(null, typeof(object)));
-        // Equality AndAlso null-guard (guard on the RIGHT, rather than the left).
+        // Null-guard on the right of the AndAlso.
         var body = Expression.AndAlso(BareEquality(outer, dependent), nullGuard);
 
         var result = NativeCorrelationMatcher.TryMatchCorrelatedCollection(
@@ -159,9 +157,7 @@ public class NativeCorrelationMatcherTests
         var (customerType, _, noteType, _, _) = TestModel();
         var outer = Expression.Parameter(typeof(Customer), "c");
         var noteParam = Expression.Parameter(typeof(Note), "n");
-        // Note has no real CLR FK property; the owned nav's shadow FK is conventionally named
-        // "CustomerId" too (same as the reference nav's), so referencing that name off a Note-typed
-        // dependent parameter mirrors the shape TryMatchCorrelatedCollection expects to recognize.
+        // The owned nav's shadow FK is also named "CustomerId".
         var body = Expression.Equal(
             Expression.Property(outer, nameof(Customer.Id)),
             ShadowProperty(noteParam, "CustomerId"));
@@ -221,13 +217,9 @@ public class NativeCorrelationMatcherTests
     }
 
     // ── Ambiguous candidates ─────────────────────────────────────────────────────
-    // EF Core's own model-building invariants make it impossible to construct two GENUINE navigations on one
-    // outer entity type whose ForeignKey both resolve to a property literally named the same on the same
-    // target entity type (only one property can carry a given name, and only one foreign key may be declared
-    // over a given property set). To exercise the "more than one candidate" branch, a second, independent
-    // model supplies a second real navigation, and a minimal DispatchProxy-based facade re-targets its
-    // TargetEntityType (the ONLY member overridden) so it collides with the first model's Order entity type —
-    // every other member (IsCollection/IsEmbedded/ForeignKey) is answered by the real, untouched navigation.
+    // EF's model invariants prevent two genuine navigations on one outer type whose FKs resolve to the same-named
+    // property on the same target. So a second model supplies a real navigation and a DispatchProxy facade overrides
+    // only its TargetEntityType to collide with Order; every other member comes from the real navigation.
 
     private class OverrideProxy : DispatchProxy
     {
@@ -273,9 +265,7 @@ public class NativeCorrelationMatcherTests
         var secondCustomerType = db2.Model.FindEntityType(typeof(SecondCustomer))!;
         var realSecondNav = secondCustomerType.FindNavigation(nameof(SecondCustomer.Orders2))!;
 
-        // A second real navigation (own model, own FK named "CustomerId" like ordersNav's) with its
-        // TargetEntityType re-pointed at orderType — the only way to legitimately collide two navigations
-        // on target+FK-name given EF Core's own uniqueness invariants (see comment above).
+        // Second model's navigation (FK also "CustomerId") re-pointed at orderType; see comment above.
         var secondNav = OverrideProxy.Create<INavigation>(realSecondNav, new()
         {
             ["get_TargetEntityType"] = _ => orderType

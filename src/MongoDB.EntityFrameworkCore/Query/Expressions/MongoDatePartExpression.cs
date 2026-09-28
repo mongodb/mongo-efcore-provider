@@ -18,9 +18,8 @@ using System;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// The date-part components this provider translates natively. <c>TimeOfDay</c> is deliberately absent — MQL
-/// has no single clean composition for it, and a decline falls back gracefully to the existing driver-LINQ
-/// bridge (<c>MongoEFToLinqTranslatingExpressionVisitor</c>), which already handles it.
+/// The date-part components translated natively. <c>TimeOfDay</c> is absent: MQL has no clean composition for
+/// it, and the driver-LINQ fallback handles it.
 /// </summary>
 internal enum MongoDatePart
 {
@@ -37,20 +36,13 @@ internal enum MongoDatePart
 }
 
 /// <summary>
-/// Extracts one <see cref="MongoDatePart"/> component from a datetime-valued <see cref="Operand"/>, rendered
-/// in the aggregation-expression dialect as the matching MQL date operator (<c>$year</c>, <c>$month</c>,
-/// <c>$dayOfMonth</c>, <c>$hour</c>, <c>$minute</c>, <c>$second</c>, <c>$millisecond</c>, <c>$dayOfWeek</c>,
-/// <c>$dayOfYear</c>, or <c>$dateTrunc</c> for <see cref="MongoDatePart.Date"/>).
+/// Extracts one <see cref="MongoDatePart"/> from a datetime-valued <see cref="Operand"/> via the matching MQL date
+/// operator (<c>$year</c>, <c>$month</c>, …, or <c>$dateTrunc</c> for <see cref="MongoDatePart.Date"/>).
 /// </summary>
 /// <remarks>
-/// <see cref="Operand"/> is deliberately typed as the general <see cref="MongoExpression"/>, not a bare field:
-/// every one of MQL's date-extraction operators accepts any date-valued EXPRESSION, not just a field
-/// reference, which is what lets this node wrap a <see cref="MongoDateTimeOffsetLocalExpression"/> (the
-/// reconstructed local time for a <c>DateTimeOffset</c> source) as well as a plain <c>DateTime</c> field.
-/// <para>
-/// Like <see cref="MongoConvertExpression"/>, this node has no query-dialect form and must never be admitted
-/// by <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>.
-/// </para>
+/// <see cref="Operand"/> is any date-valued expression, so it can wrap a
+/// <see cref="MongoDateTimeOffsetLocalExpression"/> as well as a <c>DateTime</c> field. Aggregation dialect only;
+/// must never be admitted by <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>.
 /// </remarks>
 internal sealed class MongoDatePartExpression(MongoExpression operand, MongoDatePart part) : MongoExpression
 {

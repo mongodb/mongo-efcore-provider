@@ -28,11 +28,9 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-322 owned-collection slice: a whole-entity query over an entity with an owned COLLECTION navigation
-/// (OwnsMany, auto-included eagerly) goes native and streams — the gate predicate
-/// IsOwnedEmbeddedIncludeSelector admits the synthetic Select(x => IncludeExpression(x, ownedCollection)).
-/// Owned data round-trips through the driver, so each case asserts Native == DriverLinq parity plus a
-/// NativeOnly routing proof.
+/// A whole-entity query over an entity with an owned collection (OwnsMany, auto-included) goes native and streams:
+/// IsOwnedEmbeddedIncludeSelector admits the synthetic <c>Select(x => IncludeExpression(x, ownedCollection))</c>.
+/// Each case asserts Native == DriverLinq parity plus a NativeOnly routing proof.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeOwnedCollectionWholeEntityTests(TemporaryDatabaseFixture database)
@@ -149,7 +147,7 @@ public class NativeOwnedCollectionWholeEntityTests(TemporaryDatabaseFixture data
         Assert.Equal(["b"], blog.Posts.Select(p => p.Heading));
     }
 
-    // ── Mixed owned reference + owned collection on the same entity: the whole chain now goes native ──
+    // ── Mixed owned reference + owned collection on the same entity ──
 
     private class Shop
     {
@@ -188,7 +186,7 @@ public class NativeOwnedCollectionWholeEntityTests(TemporaryDatabaseFixture data
         });
         var collection = database.MongoDatabase.GetCollection<Shop>(coll.CollectionNamespace.CollectionName);
 
-        // Routing proof: NativeOnly succeeds (mixed owned-ref + owned-collection chain admitted as a whole).
+        // Routing proof: the mixed chain is admitted as a whole.
         using (var native = CreateContext(collection, MongoQueryMode.NativeOnly, ShopModel))
         {
             var shop = Assert.Single(native.Entities.AsNoTracking().ToList());

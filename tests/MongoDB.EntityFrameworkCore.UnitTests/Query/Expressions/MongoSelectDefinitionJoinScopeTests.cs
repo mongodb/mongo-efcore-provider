@@ -37,11 +37,8 @@ public class MongoSelectDefinitionJoinScopeTests
     [Fact]
     public void HasTerminalOperator_stays_false_when_only_a_join_scope_is_set()
     {
-        // JoinScope is pure metadata recorded unconditionally for eligible joins (including
-        // Include-shaped ones that are indistinguishable from genuine joins at this stage).
-        // It does NOT contribute to HasTerminalOperator — that gate is reserved for actual
-        // terminal operators (GroupBy, Distinct, SetOp, SelectMany unwind), and reference-Include
-        // confirmation runs BEFORE the join scope would block it via a HasTerminalOperator check.
+        // JoinScope is metadata recorded for every eligible join, including Include-shaped ones; counting it
+        // as a terminal would block reference-Include confirmation.
         var select = new MongoSelectDefinition();
         Assert.False(select.HasTerminalOperator);
 

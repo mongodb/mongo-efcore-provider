@@ -28,39 +28,20 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-322 step 3a — the BARE-projection boundary. A selector body that is a plain leaf rather than an
-/// anonymous-type/DTO construction (<c>Select(b =&gt; b.Title)</c>, <c>Select(b =&gt; b.Posts)</c>,
-/// <c>Select(b =&gt; b.Id)</c>) now emits a native <c>$project</c> instead of falling back to driver-LINQ and
-/// folding the projection client-side. Routing is proven by <see cref="MongoQueryMode.NativeOnly"/>, never by
-/// MQL shape.
+/// Bare-leaf selectors (<c>Select(b =&gt; b.Title)</c>, <c>b.Posts</c>, <c>b.Id</c>) emit a native <c>$project</c>.
+/// Routing is proven by <see cref="MongoQueryMode.NativeOnly"/>, never by MQL shape.
 /// </summary>
 /// <remarks>
-/// <para>
-/// <b>Every leaf kind carries a PARAMETERIZED-<c>Where</c> leg, and that is not decoration.</b> A bare body's
-/// <c>$project</c> alias is chosen by the provider, while the driver names a bare projection <c>_v</c> — so on
-/// any route where the DOM shaper built for the native <c>$project</c> is handed a DRIVER-rendered pipeline,
-/// the two disagree. The route that does that is a LATE native-factory decline under the DEFAULT
-/// <see cref="MongoQueryMode.Native"/> mode, and the cheapest way to reach it is a captured local inside a
-/// <c>string.StartsWith</c> (the native renderer refuses a parameterized regex term). A constant-only
-/// <c>Where</c> never reaches it, because the native factory succeeds.
-/// </para>
-/// <para>
-/// <b>The legs assert VALUES, never absence-of-throw</b>, because the failure is SILENT for everything except a
-/// non-nullable value type: a nullable scalar comes back <see langword="null"/> and an array comes back EMPTY,
-/// with no exception anywhere. Each scalar leg therefore mixes a non-nullable leaf (the only loud one) with a
-/// nullable string and a nullable int.
-/// </para>
+/// Each leaf kind has a parameterized-<c>Where</c> leg: a captured local in <c>StartsWith</c> makes the native
+/// factory decline late under <see cref="MongoQueryMode.Native"/>, handing the native shaper a driver-rendered
+/// pipeline (whose bare alias is <c>_v</c>). Legs assert values, because that failure is silent (null scalars,
+/// empty arrays) for everything except non-nullable value types.
 /// </remarks>
 [XUnitCollection("QueryTests")]
 public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
 {
-    // The ragged fixture. Deliberately un-masked: NO `= []` initializer on either collection navigation, so a
-    // null-vs-empty read-back is observable rather than papered over by the POCO (the same un-masking rule
-    // NativeArrayProjectionTests and the EF-358 fixtures follow).
-    //
-    // Note the nullable/non-nullable mix — Title/Rank non-nullable, Note/Score nullable. The parameterized-Where
-    // legs need both: only a non-nullable leaf fails LOUDLY on an alias miss, so a fixture of only non-nullable
-    // leaves would have caught the late-fallback bug by luck rather than by design.
+    // No `= []` initializers on collection navigations, so null-vs-empty is observable. Mixes nullable and
+    // non-nullable leaves because only non-nullable ones fail loudly on an alias miss.
     public class Blog
     {
         public ObjectId Id { get; set; }
@@ -81,10 +62,8 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     private static readonly Action<ModelBuilder> BlogModel = mb =>
         mb.Entity<Blog>().OwnsMany(b => b.Posts, p => p.HasKey(x => x.PostId));
 
-    // Test 13's EF-362 tripwire model: the scalar leaf is reached THROUGH an owned single reference, so its
-    // document path is DOTTED ("Home.City") while a $project alias would have to be dotted too — and a dotted
-    // alias is read back as a LITERAL key while MongoDB renders it as a NESTED document. The bare arm declines
-    // it deliberately; EF-362 is the ticket that flips this test.
+    // Owned-hop scalar: the document path is dotted ("Home.City"), which a $project alias can't round-trip
+    // (read back as a literal key, rendered as a nested document), so the bare arm declines. See EF-362.
     public class HopBlog
     {
         public ObjectId Id { get; set; }
@@ -100,10 +79,8 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     private static readonly Action<ModelBuilder> HopModel = mb =>
         mb.Entity<HopBlog>().OwnsOne(b => b.Home);
 
-    // Test 14's positive control gets its OWN clean flat model — no owned data at all. The ragged Blog fixture
-    // cannot settle it: a raw-seeded owned element carries no owner FK, which makes a WHOLE-ENTITY query over it
-    // fail for reasons that have nothing to do with this slice (that is exactly what left the control
-    // inconclusive when it was first measured).
+    // Separate flat model for test 14: raw-seeded owned elements have no owner FK, which breaks whole-entity
+    // queries over the ragged fixture for unrelated reasons.
     public class FlatBlog
     {
         public ObjectId Id { get; set; }
@@ -144,23 +121,16 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Bare_scalar_projection_behind_a_parameterized_predicate_returns_correct_values));
 
-        // The REQUIRED parameterized-Where leg. `prefix` is a captured local, so the native renderer refuses the
-        // regex term, TryBuildNativeFactory declines LATE, and the alias-addressed shaper is handed a pipeline
-        // the driver rendered from the captured chain. It is correct only because the late-fallback strip removes
-        // the pushed-down bare Select, leaving whole documents that a document-path alias reads correctly.
+        // Captured `prefix` makes the native renderer refuse the regex term, so TryBuildNativeFactory declines
+        // late and the shaper gets a driver-rendered pipeline. Correct only because the late-fallback strip
+        // removes the pushed-down Select, leaving whole documents.
         var prefix = "p";
 
-        // DEFAULT Native mode, deliberately: this route does not exist under NativeOnly (which throws on the
-        // decline) and is never taken under DriverLinq (which never builds a native factory at all).
+        // Default Native mode: NativeOnly throws on the decline and DriverLinq never builds a native factory.
         using var db = CreateContext(collection, MongoQueryMode.Native);
 
-        // The two NULLABLE leaves are EXECUTED AND ASSERTED FIRST, deliberately, and the ordering is
-        // load-bearing rather than stylistic. Without the late-fallback strip a nullable leaf comes back
-        // <null>,<null>,<null>,<null>,<null> with NO exception at all, while the non-nullable Title leaf throws
-        // at materialization ("Document element 'Title' is missing for required non-nullable property"). Because
-        // ToList() materializes eagerly, running the Title query first would abort the test before either silent
-        // row was ever observed — so it would prove only the loud half of the failure mode, which is the half
-        // that would have been caught anyway.
+        // Nullable leaves run first: without the strip they silently return all nulls, while Title throws;
+        // running Title first would hide the silent half.
         var notes = db.Entities.AsNoTracking()
             .Where(b => b.Title.StartsWith(prefix)).OrderBy(b => b.Title)
             .Select(b => b.Note).ToList();
@@ -171,7 +141,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             .Select(b => b.Score).ToList();
         Assert.Equal([10, null, 30, null, 50], scores);
 
-        // And the non-nullable leaf, which is the only one that fails loudly, kept for exactly that contrast.
+        // The non-nullable leaf, which fails loudly.
         var titles = db.Entities.AsNoTracking()
             .Where(b => b.Title.StartsWith(prefix)).OrderBy(b => b.Title)
             .Select(b => b.Title).ToList();
@@ -199,10 +169,8 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Bare_primary_key_projection_emits_id_and_no_id_exclusion));
 
-        // NOT a routing proof — a driver-LINQ push-down emits a $project too. What this pins is the ALIAS: a
-        // single-property PK's element name is `_id`, so the emitted body already contains `_id` and
-        // RenderProject must therefore NOT add its default `_id : 0` exclusion on top (which would be a
-        // malformed inclusion/exclusion mix).
+        // Not a routing proof. Pins the alias: the PK element is `_id`, so RenderProject must not also add
+        // `_id : 0` (an invalid inclusion/exclusion mix).
         using var db = CreateContextWithLogging(collection, MongoQueryMode.Native, out var spy);
         _ = db.Entities.AsNoTracking().Select(b => b.Id).ToList();
 
@@ -290,10 +258,9 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Bare_owned_collection_projection_matches_driver_linq));
 
-        // THE silent case, and the target of the alias mutation. Under explicit DriverLinq an entity/collection
-        // leaf makes EF's own ProjectionAnalyzer refuse to push the projection down, so the alias-addressed
-        // shaper runs over WHOLE documents from aggregate([]) — correct only because the alias IS the element
-        // name. Alias the leaf anything else and every row comes back as an EMPTY collection, silently.
+        // The silent case: under DriverLinq, EF won't push down an entity/collection leaf, so the shaper reads
+        // whole documents and is correct only because the alias equals the element name. Any other alias yields
+        // empty collections.
         static List<string> Run(SingleEntityDbContext<Blog> db)
             => db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Posts).ToList()
                 .Select(PrintPosts).ToList();
@@ -310,9 +277,8 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Bare_owned_collection_projection_emits_the_element_name_alias));
 
-        // NOT a routing proof (see the class remarks) — it pins the emitted ALIAS, which is the thing the whole
-        // slice turns on, plus the owner key an array leaf must drag along so a shadow-keyed element can still
-        // materialize per row.
+        // Not a routing proof; pins the emitted alias plus the owner key an array leaf must carry so
+        // shadow-keyed elements can materialize.
         using var db = CreateContextWithLogging(collection, MongoQueryMode.Native, out var spy);
         _ = db.Entities.AsNoTracking().Select(b => b.Posts).ToList();
 
@@ -375,10 +341,8 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
         var collection = SeedSetOps(nameof(Bare_projection_after_a_union_or_concat_goes_native) + mode);
         using var db = CreateContext(collection, mode);
 
-        // The DUPLICATED "p2" is the load-bearing row: two DISTINCT documents share that Title, so whole-entity
-        // dedup before the trailing $project keeps both while dedup over the PROJECTED value would collapse them.
-        // Its presence is what proves the trailing projection cannot change the set operation's semantics — which
-        // is why this shape is admitted while a projected OPERAND is not (see the operand tripwire below).
+        // Two distinct documents share "p2": whole-entity dedup before the trailing $project keeps both, while
+        // dedup over the projected value would collapse them.
         Assert.Equal(
             ["p2", "p2", "q0", "r_mid", "s_hi"],
             Sorted(db.Entities.AsNoTracking().Where(b => b.Rank <= 3)
@@ -397,8 +361,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     [InlineData(MongoQueryMode.NativeOnly)]
     public void Bare_projection_after_an_intersect_or_except_goes_native(MongoQueryMode mode)
     {
-        // No DriverLinq leg: the driver's own LINQ provider does not translate a cross-view Intersect/Except at
-        // all, so there is no oracle for these two in any mode — the assertion is against the seed.
+        // No DriverLinq leg: the driver doesn't translate cross-view Intersect/Except, so assert against the seed.
         var collection = SeedSetOps(nameof(Bare_projection_after_an_intersect_or_except_goes_native) + mode);
         using var db = CreateContext(collection, mode);
 
@@ -415,16 +378,15 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
                 .Select(b => b.Title)));
     }
 
-    // ── 13. Owned-hop scalar: the EF-362 tripwire ─────────────────────────────────
+    // ── 13. Owned-hop scalar declines (EF-362) ────────────────────────────────────
 
     [Fact]
     public void Bare_owned_hop_scalar_projection_declines()
     {
         var collection = SeedHop(nameof(Bare_owned_hop_scalar_projection_declines));
 
-        // A DELIBERATE decline, and the shape EF-362 flips: for an owned hop the document path is DOTTED
-        // ("Home.City"), and a dotted alias is looked up by the shaper as a literal key while MongoDB's $project
-        // renders it as a nested document. Declining keeps the shape byte-identical to pre-3a.
+        // Deliberate decline: a dotted alias ("Home.City") is read by the shaper as a literal key but rendered by
+        // $project as a nested document.
         foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateHopContext(collection, mode);
@@ -445,9 +407,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedFlat(nameof(Bare_entity_projection_is_unchanged_and_still_native));
 
-        // `Select(x => x)` is returned unchanged by TranslateSelect's very first line, so it never reaches the
-        // projection binder and 3a adds no arm that could match a bare ParameterExpression. This is the control
-        // that 3a did not disturb what already worked.
+        // `Select(x => x)` is returned unchanged at the top of TranslateSelect and never reaches the binder.
         using var db = CreateFlatContext(collection, MongoQueryMode.NativeOnly);
 
         Assert.Equal(
@@ -460,7 +420,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
                 .Select(b => b.Title));
     }
 
-    // ── 15. Bare projected set-op OPERAND: EF-395 relaxes this to go native ───────
+    // ── 15. Bare projected set-op operand goes native ─────────────────────────────
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -472,16 +432,9 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             nameof(Bare_projected_union_and_concat_operands_go_native_and_return_correct_values) + mode);
         using var db = CreateContext(collection, mode);
 
-        // EF-395: a bare (non-`new{}`) projected operand — Select(b => b.Title) — is admitted by
-        // IsPlainProjectedSelect the same as a wrapped one. Safe because the hazard the wrapped-vs-bare
-        // distinction used to guard against (an array leaf's leaked owner key corrupting the $$ROOT/`$_doc`
-        // whole-document dedup key) is fully covered by the SEPARATE HasArrayProjectionLeaf conjunct, which
-        // still declines regardless of bare/wrapped. For a non-array scalar leaf the projected document IS
-        // exactly the value being compared ({Title: "..."}), so dedup-by-whole-document and dedup-by-value
-        // coincide — admitting it changes nothing about what $$ROOT means.
-        //
-        // Note the answers DIFFER from test 8's: dedup here is over the projected VALUES, so the two distinct
-        // "p2" documents collapse to one.
+        // IsPlainProjectedSelect admits a bare operand like a wrapped one. For a scalar leaf the projected
+        // document is exactly the compared value, so whole-document dedup equals value dedup; array leaves are
+        // still declined by HasArrayProjectionLeaf. Unlike test 8, the two "p2" documents collapse to one.
         Assert.Equal(
             ["p2", "q0", "r_mid", "s_hi"],
             Sorted(db.Entities.AsNoTracking().Where(b => b.Rank <= 3).Select(b => b.Title)
@@ -498,17 +451,13 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     [InlineData(MongoQueryMode.NativeOnly)]
     public void Bare_projected_intersect_and_except_operands_go_native_and_return_correct_values(MongoQueryMode mode)
     {
-        // No DriverLinq leg: the driver's own LINQ provider does not translate a cross-view Intersect/Except
-        // at all (see test 8's twin), so there is no oracle for these two in any mode.
+        // No DriverLinq leg: the driver doesn't translate cross-view Intersect/Except (see test 8).
         var collection = SeedSetOps(
             nameof(Bare_projected_intersect_and_except_operands_go_native_and_return_correct_values) + mode);
         using var db = CreateContext(collection, mode);
 
-        // Same relaxation as Union/Concat, but for the two operators with NO driver-LINQ baseline at all — so
-        // this is a strict improvement (hard-fail-in-every-mode -> a correct answer in every mode), not a
-        // narrowing of an existing graceful fallback. op1 titles = {p2, q0, r_mid}; op2 titles = {p2, r_mid,
-        // s_hi} (each Where(...).Select(...) already dedups by construction of the seed). Intersect = {p2,
-        // r_mid}; Except = {q0}.
+        // These have no driver-LINQ baseline, so this goes from failing in every mode to correct in every mode.
+        // op1 = {p2, q0, r_mid}, op2 = {p2, r_mid, s_hi}; Intersect = {p2, r_mid}, Except = {q0}.
         Assert.Equal(
             ["p2", "r_mid"],
             Sorted(db.Entities.AsNoTracking().Where(b => b.Rank <= 3).Select(b => b.Title)
@@ -520,14 +469,8 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
                 .Except(db.Entities.AsNoTracking().Where(b => b.Rank >= 3).Select(b => b.Title))));
     }
 
-    // Coverage gap closed post-review: the safety argument for admitting a bare projected set-op operand
-    // (test 15 above) rests entirely on HasArrayProjectionLeaf still declining an OWNED-ARRAY bare leaf
-    // regardless of the bare/wrapped conjunct removed from IsPlainProjectedSelect. The two existing array-leaf
-    // guard tests (NativeArrayProjectionTests) only exercise the WRAPPED spelling
-    // (Select(b => new { b.Title, b.Posts })), so nothing pinned the BARE spelling
-    // (Select(b => b.Posts)) still declining as a set-op operand. This test closes that gap: it is expected
-    // to ALREADY pass under the current code (this is not a bug fix) and exists so a future accidental
-    // weakening of HasArrayProjectionLeaf's bare-leaf coverage fails a test rather than going unnoticed.
+    // Test 15's safety rests on HasArrayProjectionLeaf declining a bare owned-array operand; the
+    // NativeArrayProjectionTests guards only cover the wrapped spelling, so this pins the bare one.
     [Fact]
     public void Bare_owned_array_projection_operand_still_declines_under_native_only()
     {
@@ -540,9 +483,8 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             () => db.Entities.AsNoTracking().Where(b => b.Rank <= 3).Select(b => b.Posts)
                 .Union(db.Entities.AsNoTracking().Where(b => b.Rank >= 3).Select(b => b.Posts)).ToList());
 
-        // Intersect/Except have NO driver-LINQ baseline at all, so a declined shape hard-fails translation in
-        // EVERY mode via TryTranslateSetOperation's null return (EF Core's own translation-failure path,
-        // InvalidOperationException) rather than the graceful NativeTranslationNotSupportedException above.
+        // Intersect/Except have no driver-LINQ baseline, so a decline fails in every mode via
+        // TryTranslateSetOperation's null return (InvalidOperationException).
         Assert.Throws<InvalidOperationException>(
             () => db.Entities.AsNoTracking().Where(b => b.Rank <= 3).Select(b => b.Posts)
                 .Intersect(db.Entities.AsNoTracking().Where(b => b.Rank >= 3).Select(b => b.Posts)).ToList());
@@ -552,7 +494,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
                 .Except(db.Entities.AsNoTracking().Where(b => b.Rank >= 3).Select(b => b.Posts)).ToList());
     }
 
-    // ── 16. Bare projection then Distinct: EF-395 relaxes this to go native ───────
+    // ── 16. Bare projection then Distinct goes native ─────────────────────────────
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -563,18 +505,15 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
         var collection = SeedSetOps(nameof(Bare_projection_then_Distinct_goes_native_and_returns_correct_values) + mode);
         using var db = CreateContext(collection, mode);
 
-        // EF-395: TryBindDistinctFromProjection no longer declines a bare-body projection. The mechanical
-        // hazard that previously made this unsafe (ApplyProjection's alias-override lookup was gated on
-        // `Route == NativeRoute.Projection`, which Distinct flips to `GroupBy`, reverting the bare alias to
-        // null and crashing the shaper) is fixed at the source by also honoring the override when
-        // Select.IsDistinct is set — IsDistinct is set ONLY by TryBindDistinctFromProjection itself, so the
-        // override is provably still valid (the flatten re-adds the exact same alias) whenever it's true.
+        // Distinct flips Route to GroupBy, so ApplyProjection also honors the alias override when
+        // Select.IsDistinct is set (only TryBindDistinctFromProjection sets it, and the flatten re-adds the same
+        // alias); otherwise the alias reverts to null and the shaper crashes.
         Assert.Equal(
             ["p2", "q0", "r_mid", "s_hi"],
             Sorted(db.Entities.AsNoTracking().Select(b => b.Title).Distinct()));
     }
 
-    // ── EF-395 task-brief probes, kept verbatim for direct traceability ───────────
+    // ── Minimal set-op / Distinct probes ──────────────────────────────────────────
 
     [Fact]
     public void Bare_projection_as_set_operation_operand_goes_native()
@@ -605,8 +544,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Bare_projection_then_cardinality_operator_goes_native));
 
-        // An INCIDENTAL widening that arrives with 3a — neither narrowing is on the cardinality path — so it
-        // needs its own pin rather than being left to a later composition slice.
+        // Neither bare-arm narrowing is on the cardinality path, so this needs its own pin.
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
         Assert.Equal(5, db.Entities.AsNoTracking().Select(b => b.Title).Count());
@@ -639,11 +577,9 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
         var collection = SeedRagged(nameof(A_second_projection_after_a_bare_one_returns_correct_values) + mode);
         using var db = CreateContext(collection, mode);
 
-        // The composition-after-projection seam, from the bare side. The bare arm declines outright when
-        // Projection is already populated, which is both what keeps this shape's pre-3a disposition and what
-        // makes the alias override provably write-once (AddProjectionAliasOverride uses Dictionary.Add). NOTE:
-        // EF Core's own pending-selector machinery fuses two member-access Selects before the provider sees
-        // them, so this may never reach a second binder call at all — the assertion is on the VALUES either way.
+        // The bare arm declines when Projection is already populated, which keeps the alias override write-once
+        // (AddProjectionAliasOverride uses Dictionary.Add). EF may fuse the two Selects before the provider sees
+        // them, so assert on values either way.
         Assert.Equal(
             [6, 8, 10, 7, 6],
             db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => b.Title).Select(t => t.Length).ToList());
@@ -651,10 +587,8 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
 
     // ── Seeds and helpers ─────────────────────────────────────────────────────────
 
-    // The four array states the count and array paths have historically diverged on — populated, empty, field
-    // MISSING, field explicitly BSON NULL — plus a fifth populated row, and a nullable/non-nullable value mix.
-    // Every Title shares the prefix "p", so the parameterized-Where legs select ALL FIVE rows and can therefore
-    // compare against the same expectations the unfiltered legs use.
+    // The array states: populated, empty, missing, explicit BSON null, plus a fifth populated row. Every Title
+    // starts with "p", so parameterized-Where legs select all rows and share expectations.
     private static readonly string[] ExpectedTags = ["t1|t2", "<empty>", "<null>", "<null>", "t9"];
 
     private static readonly string[] ExpectedPosts = ["h1|h2", "<empty>", "<empty>", "<empty>", "h9"];
@@ -671,9 +605,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             RaggedRow("p5_one", 5, "n5", 50, new BsonArray {"t9"}, new BsonArray {PostDoc(9, "h9")})
         ]);
 
-        // Read the stored documents back and assert the four states really are stored as intended: "missing" and
-        // "present but null" are otherwise indistinguishable from results alone, so an un-self-checked seed could
-        // silently degrade to three states.
+        // Self-check the seed: missing vs. null are indistinguishable from results alone.
         var stored = raw.Find(FilterDefinition<BsonDocument>.Empty).ToList().ToDictionary(d => d["Title"].AsString);
         Assert.Equal(5, stored.Count);
         Assert.Equal(2, stored["p1_two"]["Posts"].AsBsonArray.Count);
@@ -688,10 +620,8 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
         return database.MongoDatabase.GetCollection<Blog>(raw.CollectionNamespace.CollectionName);
     }
 
-    // A null `tags`/`posts` means OMIT the element entirely — distinct from BsonNull.Value, which writes an
-    // explicit BSON null. Those are the two absent states. Note/Score are omitted when null for the same reason:
-    // a nullable leaf's late-fallback read has to be correct for a genuinely absent element, not just a
-    // present-but-null one.
+    // null `tags`/`posts` omits the element; BsonNull.Value writes explicit null. Note/Score are omitted when
+    // null so nullable leaves are tested against a truly absent element.
     private static BsonDocument RaggedRow(
         string title, int rank, string? note, int? score, BsonValue? tags, BsonValue? posts)
     {
@@ -724,10 +654,8 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
     private static BsonDocument PostDoc(int postId, string heading)
         => new() {{"PostId", postId}, {"Heading", heading}};
 
-    // Two DISTINCT documents share the Title "p2" while differing in Rank, which is what each operand's own
-    // Where selects on. That is what makes the set-op tests non-vacuous: whole-entity dedup (test 8) keeps both,
-    // dedup over the projected value (test 15) collapses them, so the two shapes give DIFFERENT answers and a
-    // test cannot pass by accident on the wrong one.
+    // Two distinct documents share Title "p2" (different Rank): whole-entity dedup (test 8) keeps both, value
+    // dedup (test 15) collapses them, so the shapes give different answers.
     private IMongoCollection<Blog> SeedSetOps(string name)
     {
         var raw = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
@@ -785,14 +713,11 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
         return database.MongoDatabase.GetCollection<FlatBlog>(raw.CollectionNamespace.CollectionName);
     }
 
-    // Set operations carry no ordering guarantee (their re-unifying $group stages reorder rows), so every set-op
-    // assertion sorts client-side rather than asserting server order.
+    // Set operations don't preserve order, so set-op assertions sort client-side.
     private static List<string> Sorted(IQueryable<string> query)
         => query.ToList().OrderBy(t => t, StringComparer.Ordinal).ToList();
 
-    // A collection is printed rather than compared structurally: a null element must be distinguishable from an
-    // empty string, and "absent" from "empty", or an assertion silently stops discriminating exactly where the
-    // ragged states matter.
+    // Printed rather than compared structurally, so null vs "" and absent vs empty stay distinguishable.
     private static string Print(List<string>? tags)
         => tags is null ? "<null>" : tags.Count == 0 ? "<empty>" : string.Join("|", tags);
 
@@ -835,8 +760,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // MQL-capture idiom mirrored from NativeArrayProjectionTests: FunctionalTests has no TestMqlLoggerFactory /
-    // AssertMql (those live in the SpecificationTests project), so MQL is captured through SpyLoggerProvider.
+    // FunctionalTests has no AssertMql, so MQL is captured via SpyLoggerProvider (as in NativeArrayProjectionTests).
     private static SingleEntityDbContext<Blog> CreateContextWithLogging(
         IMongoCollection<Blog> collection, MongoQueryMode mode, out SpyLoggerProvider spyLogger)
     {

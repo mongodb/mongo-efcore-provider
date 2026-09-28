@@ -30,11 +30,8 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-322 Task 2 gate tests: a whole-entity query over an entity with an owned SINGLE-REFERENCE navigation
-/// (auto-included eagerly by EF Core convention) must go native — the gate must admit the synthetic
-/// <c>Select(x => IncludeExpression(x, ownedNav))</c> auto-include instead of marking the query non-natively
-/// representable. See <c>.superpowers/sdd/EF-322-owned-ref-whole-entity-spike.md</c> for the spike that
-/// found the exact gate site and admit condition this predicate implements.
+/// A whole-entity query over an entity with an owned single-reference navigation (auto-included by EF
+/// convention) must go native: the gate admits the synthetic <c>Select(x => IncludeExpression(x, ownedNav))</c>.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture database)
@@ -52,9 +49,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // MQL-capture idiom mirrored from NativeOwnedCollectionCountTests.cs: FunctionalTests has no
-    // TestMqlLoggerFactory/AssertMql (those live in the SpecificationTests project), so MQL is captured
-    // through SpyLoggerProvider instead.
+    // FunctionalTests has no AssertMql, so MQL is captured through SpyLoggerProvider.
     private static SingleEntityDbContext<T> CreateContextWithLogging<T>(
         IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction,
         out SpyLoggerProvider spyLogger)
@@ -121,8 +116,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         var collection = SeedBlogs(nameof(Owned_single_reference_whole_entity_goes_native));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
 
-        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
-        // here proves the owned auto-include Select went through the native whole-entity path.
+        // Under NativeOnly a fallback throws, so success proves the owned auto-include went native.
         var results = db.Entities.AsNoTracking().ToList();
 
         Assert.Equal(2, results.Count);
@@ -187,8 +181,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogWithTagsModel);
 
-        // Under NativeOnly a shape that falls back throws; success here proves the owned-COLLECTION
-        // auto-include Select went through the native whole-entity path (EF-322 owned-collection slice).
+        // Success under NativeOnly proves the owned-collection auto-include went native.
         var blog = Assert.Single(db.Entities.AsNoTracking().ToList());
         Assert.Equal("Alpha", blog.Title);
         Assert.Equal(["a", "b"], blog.Tags.Select(t => t.Name));
@@ -214,21 +207,10 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     [Fact]
     public void Non_owned_reference_include_now_goes_native()
     {
-        // EF-368 Task 5: this test's premise predates that ticket (it used to be
-        // "Non_owned_reference_include_still_falls_back", asserting a NativeOnly throw). It still pins the
-        // ORIGINAL point — a NON-owned (reference) navigation's explicit Include Select must NOT be admitted
-        // by IsOwnedEmbeddedIncludeSelector's !navigation.IsEmbedded() guard (EF-322) — but the CONSEQUENCE of
-        // that decline has changed: the shape is now admitted by a DIFFERENT, later mechanism, the
-        // single-level reference-Include recognizer/confirm (TryConfirmReferenceInclude), so it goes native
-        // instead of falling back. Customer here is a REQUIRED navigation (non-nullable CustomerId), so the
-        // native path's INNER $unwind drops any row whose CustomerId is dangling: NativeOnly now SUCCEEDS
-        // rather than throwing.
-        //
-        // EF-368 final fix wave, Finding 7: this test's assertion used to be a bare Assert.Empty over a
-        // seed whose ONLY row had a deliberately dangling CustomerId — which is also exactly what a BROKEN
-        // query returns, so it no longer discriminated the stated purpose (that the shape reaches the
-        // reference-Include machinery at all rather than being admitted or dropped elsewhere). A second,
-        // RESOLVABLE row is now seeded so the test asserts a populated navigation as well as the drop.
+        // A non-owned navigation's Include is not admitted by IsOwnedEmbeddedIncludeSelector's
+        // !navigation.IsEmbedded() guard, but is picked up by the reference-Include recognizer
+        // (TryConfirmReferenceInclude). Customer is required, so the inner $unwind drops the dangling row; the
+        // resolvable row pins that the navigation is populated (an empty result alone would also match a broken query).
         var customersName = UniqueCollectionName(nameof(Non_owned_reference_include_now_goes_native)) + "Cust";
         var resolvableCustomerId = ObjectId.GenerateNewId();
         database.MongoDatabase.GetCollection<BsonDocument>(customersName).InsertOne(new BsonDocument
@@ -297,9 +279,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Task 3: parity (Native == DriverLinq) + edge-case matrix for owned single-reference
-    //  whole-entity queries. See .superpowers/sdd/task-3-brief.md and
-    //  .superpowers/sdd/EF-322-owned-ref-whole-entity-spike.md for the edge cases this codifies.
+    //  Parity (Native == DriverLinq) and edge cases for owned single-reference whole-entity queries
     // ════════════════════════════════════════════════════════════════════════════════════════════
 
     // ── (1) Present owned sub-document: Native == DriverLinq ──────────────────────────────────────
@@ -392,9 +372,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         Assert.NotNull(native.Single(b => b.Title == "WithAddr").Address);
     }
 
-    // ── (2b) Explicit BSON null VALUE for the whole owned-reference element (distinct from the ─────
-    //        key-ABSENT case above) — same optional-owned-ref model, but the "Address" element is
-    //        present with an explicit BsonNull value rather than omitted entirely.
+    // ── (2b) Explicit BSON null for the owned-reference element (vs. key-absent above) ─────────────
 
     [Fact]
     public void Explicit_null_owned_reference_yields_null_matching_driver_linq()
@@ -420,9 +398,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         List<BlogOptionalAddress> native;
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogOptionalAddressModel))
         {
-            // NativeOnly: proves the explicit-BsonNull owned-ref shape genuinely goes native rather than
-            // silently falling back — success here (rather than NativeTranslationNotSupportedException)
-            // is the routing proof.
+            // Success under NativeOnly is the routing proof.
             native = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
         }
 
@@ -439,15 +415,13 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
             }
         }
 
-        // Explicit BsonNull behaves identically to key-absent (see Absent_owned_reference_yields_null_
-        // matching_driver_linq above): both materialize a null owned-reference navigation.
+        // Explicit BsonNull behaves like key-absent: both materialize a null navigation.
         Assert.Null(driver.Single(b => b.Title == "NullAddr").Address);
         Assert.Null(native.Single(b => b.Title == "NullAddr").Address);
         Assert.NotNull(native.Single(b => b.Title == "WithAddr").Address);
     }
 
-    // ── (3) Required owned reference with the sub-document missing: both modes throw the SAME ─────
-    //       exception type (and, per the spike, the same message).
+    // ── (3) Required owned reference missing: both modes throw the same exception type ────────────
 
     private class BlogRequiredAddress
     {
@@ -485,7 +459,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         Assert.Equal(driverEx.GetType(), nativeEx.GetType());
         Assert.Equal(driverEx.Message, nativeEx.Message);
 
-        // And it must genuinely go native (not silently fall back to driver-LINQ under NativeOnly).
+        // And it must go native, not fall back.
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, BlogRequiredAddressModel);
         Assert.Throws<InvalidOperationException>(() => nativeOnly.Entities.AsNoTracking().ToList());
     }
@@ -554,8 +528,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         List<BlogNested> native;
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogNestedModel))
         {
-            // NativeOnly: proves the 2-level nested owned-reference chain genuinely goes native (the
-            // admit predicate unwraps nested IncludeExpression layers) rather than falling back.
+            // Success under NativeOnly proves the admit predicate unwraps nested IncludeExpression layers.
             native = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
         }
 
@@ -659,9 +632,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
             driver = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
         }
 
-        // NativeOnly + Enumerable cardinality (.ToList(), no reducer) forces the one-pass streaming
-        // materializer; success here proves the flat owned-ref shape genuinely streams rather than
-        // silently falling back to driver-LINQ.
+        // NativeOnly with no reducer forces the one-pass streaming materializer; success proves it streams.
         List<Blog> native;
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
@@ -678,9 +649,8 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  EF-322 owned-collection slice: mixed owned-ref + owned-collection now goes native — a routing
-    //  proof (see also NativeMaterializerOnePassTests.Owned_reference_and_owned_collection_
-    //  materialize_correct_nested_values, which asserts Native==DriverLinq parity for this shape).
+    //  Mixed owned-ref + owned-collection goes native (routing proof; Native==DriverLinq parity is in
+    //  NativeMaterializerOnePassTests.Owned_reference_and_owned_collection_materialize_correct_nested_values)
     // ════════════════════════════════════════════════════════════════════════════════════════════
 
     private class BlogMixed
@@ -712,19 +682,15 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogMixedModel);
 
-        // The admit predicate now accepts EVERY embedded navigation in the auto-include chain — an owned
-        // reference (Address) mixed with an owned COLLECTION (Tags) on the same root is admitted as a whole
-        // and goes native (EF-322 owned-collection slice; previously this fell back).
+        // The admit predicate accepts every embedded navigation in the auto-include chain, reference and collection.
         var blog = Assert.Single(db.Entities.AsNoTracking().ToList());
         Assert.Equal("NYC", blog.Address.City);
         Assert.Equal(["a"], blog.Tags.Select(t => t.Name));
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  EF-441 Task 1: an owned single-reference navigation ENTITY LEAF inside a projection
-    //  (Select(b => new { b.Address, b.Title })) goes native. See NativeProjectionBinder's
-    //  TryGetOwnedReferenceNavigationLeaf / TryTranslateLeaf arm and .superpowers/sdd/
-    //  2026-08-28-ef441-navigation-entity-leaf-projection/task-0-report.md §2 for the mechanism.
+    //  Owned single-reference navigation entity leaf inside a projection (Select(b => new { b.Address, b.Title })).
+    //  See NativeProjectionBinder.TryGetOwnedReferenceNavigationLeaf / TryTranslateLeaf.
     // ════════════════════════════════════════════════════════════════════════════════════════════
 
     [Fact]
@@ -733,8 +699,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         var collection = SeedBlogs(nameof(Owned_reference_entity_leaf_beside_field_leaf_goes_native_and_reads_correct_values));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
 
-        // NativeOnly: success here (rather than NativeTranslationNotSupportedException) is the routing
-        // proof that the mixed field+entity-nav projection genuinely goes native.
+        // Success under NativeOnly is the routing proof.
         var results = db.Entities.AsNoTracking()
             .Select(b => new { b.Address, b.Title })
             .OrderBy(r => r.Title)
@@ -756,8 +721,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
 
         _ = db.Entities.AsNoTracking().Select(b => new { b.Address, b.Title }).ToList();
 
-        // Matches spike report §2b's verified shape: the nav's own document path as the alias, the field
-        // sibling by its own name, and the retained owner _id (task 1, site 4) that the owned Address
+        // The nav's document path as the alias, the field sibling by name, and the retained owner _id that the owned
         // element's shadow-key read requires.
         spyLogger.AssertExecutedMqlContains("{ \"$project\" : { \"Address\" : \"$Address\", \"Title\" : \"$Title\", \"_id\" : \"$_id\" } }");
     }
@@ -788,18 +752,9 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         Assert.Equal(driver, native);
     }
 
-    // Fix round 1 (post-review): the LATE-FALLBACK leg for the field-sibling nav-entity-leaf projection was
-    // completely uncovered — reverting site 4's unconditional _id/DocumentPath-alias-override registration
-    // (NativeProjectionBinder.TryPopulateNativeProjection) leaves the ENTIRE unit/spec/functional suite green
-    // while silently breaking this exact shape under plain `Native` mode.
-    //
-    // This test originally used a captured-local `StartsWith` to force that late-fallback leg (translate-time
-    // routes native, Route == Projection, then MongoQueryLanguageRenderer.RenderRegex declined at render
-    // time). That trigger no longer declines — a parameterized StartsWith term is now natively representable
-    // — so this shape goes fully native under both Native and NativeOnly. The mixed/whole-document shaper
-    // read this test used to force via that trigger remains covered directly by the explicit-DriverLinq leg
-    // below (same shape, same read). This test now just proves the field-sibling projection stays correct
-    // with a genuine (non-baked) query parameter, under both Native and NativeOnly.
+    // Guards the unconditional _id / DocumentPath-alias-override registration in
+    // NativeProjectionBinder.TryPopulateNativeProjection: reverting it breaks this shape silently. Uses a
+    // parameterized StartsWith to exercise a genuine query parameter; the DriverLinq leg covers the mixed shaper.
     [Fact]
     public void Field_sibling_projection_behind_a_parameterized_where_reads_correct_values()
     {
@@ -832,9 +787,8 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
             Assert.Equal("10001", row.Address.Zip);
         }
 
-        // And explicit DriverLinq — the OTHER leg that needs the same shape to read correctly, per the spike's
-        // §5a finding (the mixed shaper's ReadsUnprojectedDocuments handles this leaf's alias without any
-        // null-out, since the alias names a real element on a whole document).
+        // Explicit DriverLinq must read the same shape: the mixed shaper's ReadsUnprojectedDocuments handles the alias
+        // without null-out, since it names a real element on a whole document.
         using (var driver = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
         {
             var results = driver.Entities.AsNoTracking()
@@ -849,9 +803,8 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         }
     }
 
-    // Renamed member ("Addr" instead of "Address") must decline outright — the late-fallback leg's
-    // correctness depends on the emitted alias naming a real element the driver-LINQ bridge also renders
-    // under that same name (see TryTranslateLeaf's alias-must-equal-document-path conjunct).
+    // A renamed member ("Addr") must decline: the emitted alias must name a real element the driver-LINQ bridge
+    // renders under the same name (see TryTranslateLeaf's alias-must-equal-document-path conjunct).
     [Fact]
     public void Renamed_owned_reference_entity_leaf_falls_back_but_still_reads_correct_values()
     {
@@ -869,9 +822,8 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         Assert.Equal("LA", results[1].Addr.City);
     }
 
-    // The computed-sibling carve-out (mirrors EF-444's Task-4 carve-out): a nav-entity leaf mixed with a
-    // COMPUTED leaf (no document path of its own) still declines the whole projection — there is no correct
-    // late-fallback rendering for that combination (spike report §5). This is EXPECTED, not a residual gap.
+    // A nav-entity leaf mixed with a computed leaf (no document path) declines the whole projection; there is no
+    // correct late-fallback rendering for that combination. Expected, not a gap.
     private class BlogWithRank
     {
         public ObjectId Id { get; set; }
@@ -913,30 +865,14 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         Assert.Equal(9, result.Total);
     }
 
-    // ── Set-op-gate regression (spike report §4's flagged-not-decided item) ────────────────────────
+    // ── Set-op gate ─────────────────────────────────────────────────────────────────────────────────
     //
-    // A nav-entity-leaf projection's emitted _id would leak into a set operation's whole-document
-    // comparison/dedup key exactly like the owned-ARRAY leaf's does (see NativeProjectionBinder's own
-    // comment on HasArrayProjectionLeaf and MongoQueryableMethodTranslatingExpressionVisitor.
-    // IsPlainProjectedSelect). This leaf kind now sets that SAME flag (see NativeProjectionBinder's commit
-    // block), so it must decline as a set-op operand rather than silently emitting a wrong-comparison-key
-    // set op.
+    // A nav-entity-leaf projection's _id would leak into a set operation's comparison/dedup key, like the owned-array
+    // leaf's, so it sets HasArrayProjectionLeaf and declines as a set-op operand (pinned at unit level by
+    // SlotPopulationTests.Owned_reference_entity_leaf_projection_sets_HasArrayProjectionLeaf_for_the_set_op_gate).
     //
-    // NOT covered at THIS (functional/end-to-end) level, by design: a genuine Union/Concat of two operands
-    // that both push down a WRAPPED (entity/array-typed) projection — and, separately, a plain
-    // Select(...).Distinct() over one (no set op at all) — hits a SEPARATE, PRE-EXISTING gap in EF's own
-    // nav-expansion, confirmed by the reviewer's mutation testing to reproduce on the UNMODIFIED base commit
-    // too (i.e. it is not introduced by EF-441, and it is not specific to the nav-entity leaf — it would
-    // equally affect the pre-existing owned-ARRAY-leaf projection, which had simply never been combined with a
-    // set op or a projected Distinct in this repo's test suite before). Nav-expansion re-enters
-    // MongoProjectionBindingExpressionVisitor's shaper-building for what is really the same logical Select a
-    // second time; the second pass finds state left over from the first and throws InvalidCastException
-    // instead of returning either a correct native pipeline or a graceful NativeTranslationNotSupportedException
-    // decline. This is a real, loud failure (not silent wrong data), but the WRONG exception type, and it is
-    // outside this ticket's file scope (NativeProjectionBinder.cs) to fix — it lives in
-    // MongoProjectionBindingExpressionVisitor.cs and warrants its OWN follow-up ticket, since it predates
-    // EF-441 and is not specific to this leaf kind. The unit-level regression test
-    // (SlotPopulationTests.Owned_reference_entity_leaf_projection_sets_HasArrayProjectionLeaf_for_the_set_op_gate)
-    // proves the ONE fact this task owns — the gate's flag is set correctly — via a harness that bypasses
-    // nav-expansion and therefore does not hit this separate concern.
+    // Not covered end-to-end: Union/Concat of two wrapped (entity/array-typed) projections, or a projected
+    // Distinct over one, hits a separate pre-existing gap. Nav-expansion re-enters
+    // MongoProjectionBindingExpressionVisitor's shaper-building a second time, finds leftover state and throws
+    // InvalidCastException instead of a correct pipeline or NativeTranslationNotSupportedException.
 }

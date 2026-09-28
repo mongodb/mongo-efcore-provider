@@ -103,50 +103,20 @@ internal static class ExpressionExtensionMethods
             : expression;
 
     /// <summary>
-    /// Reads a WRAPPED projection body — an anonymous type / DTO construction — into its
-    /// (member name, value expression) pairs, in both spellings the C# compiler produces: a
-    /// <see cref="NewExpression"/> carrying <see cref="NewExpression.Members"/> (anonymous types and
-    /// positional constructors) or a <see cref="MemberInitExpression"/> over a parameterless constructor
-    /// (object-initializer syntax).
+    /// Reads a wrapped projection body (anonymous type / DTO construction) into (member name, value) pairs:
+    /// a <see cref="NewExpression"/> with <see cref="NewExpression.Members"/>, or a
+    /// <see cref="MemberInitExpression"/> over a parameterless constructor. Returns <see langword="false"/> (with
+    /// empty <paramref name="members"/>) for anything else, an empty construction, or a nested/list binding.
     /// </summary>
-    /// <param name="body">The projection body to read — a <see cref="NewExpression"/> or a <see cref="MemberInitExpression"/>.</param>
-    /// <param name="members">The (member name, value) pairs the body was read into, or empty when this returns <see langword="false"/>.</param>
+    /// <param name="body">The projection body.</param>
+    /// <param name="members">The pairs read, or empty on <see langword="false"/>.</param>
     /// <param name="allowPositionalConstructorArguments">
-    /// When <see langword="true"/>, additionally admits a <see cref="NewExpression"/> whose
-    /// <see cref="NewExpression.Members"/> is <see langword="null"/> (a constructor-only DTO). The compiler only
-    /// populates <c>Members</c> for an anonymous-type object-creation expression (and similarly
-    /// compiler-synthesized positional constructs); for <c>new SomeNamedClass(args)</c> it is ALWAYS
-    /// <see langword="null"/>, regardless of whether the constructor's parameters happen to map 1:1 by name to
-    /// same-named properties. This admits that ordinary-named-type shape, yielding synthetic positional
-    /// pseudo-names (<see cref="PositionalConstructorArgumentAliasPrefix"/> + index) instead of real member
-    /// names. Defaults to <see langword="false"/> — every pre-existing call site keeps its exact prior behavior
-    /// unless it opts in. ONLY the <c>GroupBy</c>/<c>SelectMany</c> result-selector family (which addresses each
-    /// bound value by array index, not by EF Core's <c>ProjectionMember</c>/<c>MemberInfo</c>-keyed dictionary)
-    /// may pass <see langword="true"/> — see Query's own <c>NativeProjectionBinder</c>/
-    /// <c>NativeJoinScopeProjectionBinder</c>, which must NOT, because their read side resolves a wrapped
-    /// member's alias through that dictionary, keyed by a REAL <c>MemberInfo</c>; a synthetic name registered
-    /// there is never found by that read.
+    /// Also admit <c>new SomeNamedClass(args)</c>, whose <see cref="NewExpression.Members"/> is always
+    /// <see langword="null"/>, naming arguments <see cref="PositionalConstructorArgumentAliasPrefix"/> + index.
+    /// Only for callers that address values by index (the <c>GroupBy</c>/<c>SelectMany</c> result selectors);
+    /// <c>NativeProjectionBinder</c>/<c>NativeJoinScopeProjectionBinder</c> must not, since they resolve aliases
+    /// by real <c>MemberInfo</c> and would never find a synthetic name.
     /// </param>
-    /// <returns>
-    /// <see langword="false"/> — leaving <paramref name="members"/> empty — for a body that is not a wrapped
-    /// construction, has no members, or uses a member binding this cannot express (a nested or list binding,
-    /// or a <see cref="MemberInitExpression"/> whose constructor itself takes arguments). Callers treat that as
-    /// "not a wrapped projection" and fall through to their bare-body handling.
-    /// </returns>
-    /// <remarks>
-    /// <para>
-    /// Nine sites read this same shape — three arms inside <c>NativeProjectionBinder</c>'s own switch (the
-    /// WRAPPED arm, the MULTI-ARGUMENT positional-ctor-DTO arm, added by the multi-argument
-    /// positional-ctor-DTO projection ticket), plus <c>NativeProjectionBinder</c>'s document-construction leaf,
-    /// <c>NativeJoinScopeProjectionBinder</c>, <c>NativeSelectManyBinder</c>, <c>NativeGroupByBinder</c>, and the
-    /// QMTEV's three shaper builders (<c>TryBuildGroupResultShaper</c>, <c>BuildSelectManyResultShaper</c>,
-    /// <c>BuildPositionalCtorProjectionShaper</c>, which additionally REBUILD the construction — see
-    /// <see cref="RebuildProjectionMembers"/>). They had **already drifted**: the
-    /// <c>GroupBy</c> copy omitted both the <c>Members.Count == Arguments.Count</c> pairing check and the
-    /// non-empty checks its five siblings carry, so it accepted a degenerate empty construction. This is the
-    /// strict form; a degenerate body now declines and falls back, which is the safe direction.
-    /// </para>
-    /// </remarks>
     internal static bool TryGetProjectionMembers(
         this Expression body, out IReadOnlyList<(string MemberName, Expression Value)> members,
         bool allowPositionalConstructorArguments = false)
@@ -168,10 +138,7 @@ internal static class ExpressionExtensionMethods
                 return true;
             }
 
-            // A CTOR-ONLY DTO — Members is null because this is an ordinary named-type object creation, and the
-            // compiler only populates Members for an anonymous-type (or similarly compiler-synthesized
-            // positional) construction; it is null here regardless of parameter naming. Admitted only when the
-            // caller opts in; see the allowPositionalConstructorArguments parameter doc for who may.
+            // Constructor-only DTO; see allowPositionalConstructorArguments.
             case NewExpression
             {
                 Members: null, Arguments: { Count: > 0 } positionalArguments
@@ -212,11 +179,8 @@ internal static class ExpressionExtensionMethods
     }
 
     /// <summary>
-    /// The reserved pseudo-member-name prefix for a ctor-only DTO's positional constructor arguments (see
-    /// <see cref="TryGetProjectionMembers"/>'s <c>allowPositionalConstructorArguments</c> parameter) — argument
-    /// index <c>i</c> becomes <c>"_ctorArg" + i</c>. Underscore-prefixed and self-documenting, consistent with
-    /// this codebase's other synthetic-alias conventions (<c>NativeProjectionBinder.SyntheticBareProjectionAlias</c>
-    /// = <c>"_v"</c>, <c>MongoSelectDefinition.BareProjectionMemberKey</c>).
+    /// Pseudo-member-name prefix for a constructor-only DTO's positional arguments (argument <c>i</c> becomes
+    /// <c>"_ctorArg" + i</c>); see <see cref="TryGetProjectionMembers"/>.
     /// </summary>
     internal const string PositionalConstructorArgumentAliasPrefix = "_ctorArg";
 
@@ -224,17 +188,12 @@ internal static class ExpressionExtensionMethods
         => PositionalConstructorArgumentAliasPrefix + index;
 
     /// <summary>
-    /// Rebuilds a wrapped projection body — the counterpart of <see cref="TryGetProjectionMembers"/> — with each
-    /// member's value replaced by the matching entry of <paramref name="values"/>, preserving the original
-    /// construction spelling (<see cref="NewExpression"/> or <see cref="MemberInitExpression"/>).
+    /// Inverse of <see cref="TryGetProjectionMembers"/>: rebuilds the construction with each member's value
+    /// replaced by the matching entry of <paramref name="values"/>.
     /// </summary>
     /// <remarks>
-    /// Only valid on a <paramref name="body"/> that <see cref="TryGetProjectionMembers"/> accepted, and
-    /// <paramref name="values"/> must be in that method's own order. The <see cref="MemberAssignment"/> cast is
-    /// safe for exactly that reason: the reader rejects any other binding kind, so a body it admitted has none.
-    /// That coupling is the point — the shaper-building callers used to restate the admissibility switch in
-    /// order to rebuild, which meant deciding admissibility WHILE already mutating the projection (see
-    /// <c>TryBuildGroupResultShaper</c>).
+    /// Only valid on a body <see cref="TryGetProjectionMembers"/> accepted, with <paramref name="values"/> in its
+    /// order; that is what makes the <see cref="MemberAssignment"/> cast safe.
     /// </remarks>
     internal static Expression RebuildProjectionMembers(this Expression body, IReadOnlyList<Expression> values)
         => body switch
@@ -251,19 +210,10 @@ internal static class ExpressionExtensionMethods
         };
 
     /// <summary>
-    /// Matches a SINGLE access hop in either spelling EF Core produces — a plain
-    /// <see cref="MemberExpression"/> (an ordinary scalar/navigation access) or the shadow-safe
-    /// <c>EF.Property&lt;T&gt;(root, "Name")</c> call its navigation expansion emits — yielding the receiver and
-    /// the accessed name.
+    /// Matches a single access hop — a <see cref="MemberExpression"/> or EF Core's
+    /// <c>EF.Property&lt;T&gt;(root, "Name")</c> — yielding the receiver and name, so both spellings resolve
+    /// identically wherever a member chain is walked.
     /// </summary>
-    /// <remarks>
-    /// Both spellings must resolve identically wherever a member chain is walked, which is why this is shared:
-    /// <c>MongoExpressionTranslator</c> and <c>NativeSelectManyBinder</c> held byte-identical private copies
-    /// (the former's comment even read "Mirrors NativeSelectManyBinder.TryGetMemberAccess"). Note the
-    /// SPECIALIZED matchers elsewhere in the native binders — "is this a member access on THIS parameter", "give
-    /// me the root parameter of this chain" — are deliberately not folded in here: they answer different
-    /// questions and do not all agree on details, so collapsing them would change what each accepts.
-    /// </remarks>
     internal static bool TryGetMemberOrEFProperty(this Expression expression, out Expression receiver, out string name)
     {
         switch (expression)
@@ -288,16 +238,11 @@ internal static class ExpressionExtensionMethods
     }
 
     /// <summary>
-    /// Whether <paramref name="expression"/> anywhere references <paramref name="parameter"/>.
+    /// Whether <paramref name="expression"/> anywhere references <paramref name="parameter"/> (by identity).
     /// </summary>
     /// <remarks>
-    /// Scope questions in the native translators are decided by parameter IDENTITY, never by member name — see
-    /// the standing invariant in <c>Query/AGENTS.md</c>; a name-based test conflates a member two scopes happen
-    /// to share (both typically have an <c>Id</c>). This lives here because <c>NativeSelectManyBinder</c> and
-    /// <c>NativeProjectionBinder</c> each held an identical private wrapper-plus-visitor pair for it. The
-    /// scope-CLASSIFYING visitors elsewhere (<c>NativeJoinScopeTranslator</c>'s inner-access detector,
-    /// <c>MongoExpressionTranslator</c>'s free-parameter collector) are deliberately NOT this: they answer which
-    /// scope, or which parameters, not merely whether one appears.
+    /// Scope is decided by parameter identity, never member name (see <c>Query/AGENTS.md</c>): two scopes
+    /// commonly share a member such as <c>Id</c>.
     /// </remarks>
     internal static bool ReferencesParameter(this Expression expression, ParameterExpression parameter)
     {
@@ -334,25 +279,19 @@ internal static class ExpressionExtensionMethods
             : expression;
 
     /// <summary>
-    /// Whether <paramref name="type"/> is one of EF Core's compiler-generated
-    /// <c>TransparentIdentifier&lt;TOuter, TInner&gt;</c> constructions — the anonymous result type a join's
-    /// result selector wraps its outer/inner pair in.
+    /// Whether <paramref name="type"/> is EF Core's <c>TransparentIdentifier&lt;TOuter, TInner&gt;</c>, the type
+    /// a join's result selector wraps its outer/inner pair in.
     /// </summary>
     /// <remarks>
-    /// Callers should check an <c>"Outer"</c>/<c>"Inner"</c> member's DECLARING TYPE with this helper rather
-    /// than matching the member name alone — otherwise any user type exposing a member called <c>Outer</c> or
-    /// <c>Inner</c> would be mistaken for join plumbing. Shared by
-    /// <c>MongoEFToLinqTranslatingExpressionVisitor.LeftJoin.cs</c> and
-    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.ClassifyJoinHop</c>, which must stay in agreement.
+    /// Check an <c>Outer</c>/<c>Inner</c> member's declaring type with this, not the name alone, or a user type
+    /// with such a member is mistaken for join plumbing.
     /// </remarks>
     internal static bool IsTransparentIdentifierType(this Type? type)
         => type is { IsGenericType: true }
            && type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal);
 
-    // Types whose Equals(object) requires an exact runtime-type match, i.e. no cross-type equality. Shared by
-    // MongoEFToLinqTranslatingExpressionVisitor (driver-LINQ bridge) and MongoExpressionTranslator (native
-    // translator) — both fold a mismatched-type Equals(...) call to a `false` constant, and must agree on
-    // exactly which types are eligible for the fold.
+    // Types whose Equals(object) requires an exact runtime-type match. Both the driver-LINQ bridge and the native
+    // translator fold a mismatched-type Equals(...) to `false` using this set, so they agree.
     private static readonly HashSet<Type> ExactTypeEqualityTypes =
     [
         typeof(bool), typeof(byte), typeof(sbyte), typeof(short), typeof(ushort),
@@ -362,17 +301,16 @@ internal static class ExpressionExtensionMethods
     ];
 
     /// <summary>
-    /// True when <paramref name="left"/> and <paramref name="right"/> are different <see cref="ExactTypeEqualityTypes"/>
-    /// members, so equality between them is always false. Scoped to that set rather than any mismatched
-    /// types, since an arbitrary type's <c>Equals(object)</c> override could compare across types.
+    /// True when <paramref name="left"/> and <paramref name="right"/> are different members of
+    /// <see cref="ExactTypeEqualityTypes"/>, so they are never equal. Limited to that set because an arbitrary
+    /// type's <c>Equals(object)</c> could compare across types.
     /// </summary>
     internal static bool AreMismatchedExactEqualityTypes(Type left, Type right)
         => left != right && ExactTypeEqualityTypes.Contains(left) && ExactTypeEqualityTypes.Contains(right);
 
     /// <summary>
-    /// True when <paramref name="receiver"/>.Equals(<paramref name="argument"/>) is guaranteed to return
-    /// <see langword="false"/> at runtime because the two sides are known-different simple types with no
-    /// cross-type equality (e.g. <c>((int?)1).Equals((ulong)2)</c>).
+    /// True when <paramref name="receiver"/>.Equals(<paramref name="argument"/>) always returns
+    /// <see langword="false"/> because of a type mismatch (e.g. <c>((int?)1).Equals((ulong)2)</c>).
     /// </summary>
     internal static bool IsAlwaysFalseAcrossTypeMismatch(Expression receiver, Expression argument)
     {

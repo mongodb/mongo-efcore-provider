@@ -163,12 +163,9 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
                 EntityFrameworkEventSource.Log.QueryExecuting();
 #endif
 
-                // Initialize the state manager BEFORE creating the cursor. On the one-pass streaming path the
-                // driver eagerly deserializes (and materializes) the first cursor batch DURING
-                // MongoClient.Execute — the custom output serializer's Deserialize runs while the cursor is
-                // being created — so a tracked query would otherwise see a null StateManager and NRE. Doing
-                // this first is harmless for the DOM / driver-LINQ paths: they return lazy enumerables and
-                // materialize later, per row, inside the shaper (which runs after this point regardless).
+                // Initialize the state manager before creating the cursor: on the one-pass streaming path the
+                // driver materializes the first batch during Execute, so a tracked query would otherwise NRE.
+                // Harmless for the DOM / driver-LINQ paths, which materialize later.
                 _queryContext.InitializeStateManager(_standAloneStateManager);
 
                 try

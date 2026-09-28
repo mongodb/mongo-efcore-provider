@@ -27,7 +27,7 @@ internal enum MongoSetOperationKind
     /// <summary><c>Union</c> — <c>$unionWith</c> followed by full-document (<c>$$ROOT</c>) de-duplication.</summary>
     Union,
 
-    /// <summary><c>Intersect</c> — documents present (by full-document value) in BOTH operands (deduped).</summary>
+    /// <summary><c>Intersect</c> — distinct documents (by full-document value) present in both operands.</summary>
     Intersect,
 
     /// <summary><c>Except</c> — distinct documents of the first operand not present in the second.</summary>
@@ -35,11 +35,9 @@ internal enum MongoSetOperationKind
 }
 
 /// <summary>
-/// A terminal set operation (<c>Union</c>/<c>Concat</c>) attached to the outer
-/// <see cref="MongoSelectDefinition"/>. The second operand is captured as its own
-/// <see cref="MongoSelectDefinition"/> (rendered as the nested <c>$unionWith</c> pipeline against
-/// <see cref="OperandCollectionName"/>) — either whole-entity, or projected (same collection; see
-/// <see cref="OperandsProjected"/>). Terminal-only.
+/// A terminal set operation attached to the outer <see cref="MongoSelectDefinition"/>. The second operand is its own
+/// <see cref="MongoSelectDefinition"/>, rendered as a nested pipeline against <see cref="OperandCollectionName"/>,
+/// either whole-entity or projected (see <see cref="OperandsProjected"/>).
 /// </summary>
 internal sealed class MongoSetOperation
 {
@@ -59,39 +57,28 @@ internal sealed class MongoSetOperation
     public string OperandCollectionName { get; }
 
     /// <summary>
-    /// The operand's OWN entity type. For a whole-entity set op this equals the outer query's root entity
-    /// type (<c>TryTranslateSetOperation</c> requires the two to be equal), but for a PROJECTED-operand set op
-    /// the operands may be different entity types entirely — and the operand's own pipeline (its
-    /// <c>$match</c>/<c>$sort</c>/<c>$skip</c>/<c>$limit</c> ops and its <c>$project</c>) is emitted inside the
-    /// nested <c>$unionWith</c>/set-difference pipeline against ITS collection. The lowerer's synthetic
-    /// <c>$set</c> sort-field allocator therefore has to reserve the operand type's top-level element names
-    /// too: a computed sort on the operand allocates from the SAME allocator, and a <c>$set</c> of a name that
-    /// collides with one of the operand's own mapped elements silently clobbers it (EF-408 gap 1, measured
-    /// reachable — see NativeComputedSortTests.Synthetic_sort_field_does_not_clobber_a_set_op_operands_own_element).
+    /// The operand's own entity type, which may differ from the outer root for a projected-operand set op. The
+    /// lowerer's synthetic <c>$set</c> sort-field allocator must reserve this type's top-level element names too, or a
+    /// computed sort on the operand silently clobbers one of its mapped elements (see
+    /// NativeComputedSortTests.Synthetic_sort_field_does_not_clobber_a_set_op_operands_own_element).
     /// </summary>
     public IEntityType OperandEntityType { get; }
 
     /// <summary>
-    /// <c>true</c> when both operands were plain projected selects (<see cref="MongoSelectDefinition.Projection"/>
-    /// populated) at the time the set op was attached, so each operand's own <c>$project</c> is part of ITS
-    /// pipeline and must be emitted BEFORE the combine — source1's ahead of the set-op stage, the operand's
-    /// inside the nested pipeline (see <c>MongoSelectLowerer.Lower</c>). <c>false</c> for a whole-entity set op
-    /// or a trailing projection composed after a set op, where any <c>$project</c> is emitted AFTER the combine.
+    /// <c>true</c> when both operands were projected selects when the set op was attached, so each operand's
+    /// <c>$project</c> is emitted before the combine (see <c>MongoSelectLowerer.Lower</c>). <c>false</c> for a
+    /// whole-entity set op or a projection composed after it, where <c>$project</c> follows the combine.
     /// </summary>
     public bool OperandsProjected { get; }
 
     /// <summary>
-    /// The filter/sort/page ops recorded on the OUTER select AFTER the previous link was attached and BEFORE
-    /// this one — e.g. the <c>OrderBy</c>/<c>Take</c> in <c>A.Union(B).OrderBy(..).Take(1).Union(C)</c>. The
-    /// lowerer emits them immediately before this link's own stage, so they operate on the result combined
-    /// SO FAR rather than on the fully-combined result.
+    /// Outer-select filter/sort/page ops recorded between the previous link and this one (e.g. the
+    /// <c>OrderBy</c>/<c>Take</c> in <c>A.Union(B).OrderBy(..).Take(1).Union(C)</c>), emitted just before this link's
+    /// stage so they apply to the result combined so far. Empty for the first link.
     /// </summary>
     /// <remarks>
-    /// Empty for the first link (nothing can be recorded after a set op before one exists) and for every
-    /// single-link set op. <see cref="MongoSelectDefinition.AppendSetOperation"/> is the sole writer: it
-    /// moves the outer select's accumulated <c>TrailingOps</c> here as each new link attaches, so
-    /// <c>TrailingOps</c> always means "after the LAST link" — which is what lets the lowerer emit it once,
-    /// at the end, exactly as it did when a select could hold only one set op.
+    /// Written only by <see cref="MongoSelectDefinition.AppendSetOperation"/>, which moves accumulated
+    /// <c>TrailingOps</c> here, so <c>TrailingOps</c> always means "after the last link".
     /// </remarks>
     public IReadOnlyList<MongoSelectOp> PrecedingOps { get; private set; } = [];
 

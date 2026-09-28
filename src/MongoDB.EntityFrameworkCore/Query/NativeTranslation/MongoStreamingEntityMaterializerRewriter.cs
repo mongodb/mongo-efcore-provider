@@ -56,10 +56,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 {
     private readonly IEntityType _rootEntityType;
 
-    // No BsonSerializerFactory dependency: unlike the DOM read path, this rewriter bakes each property's
-    // serializer into the generated expression tree at COMPILE time via the static
-    // BsonSerializerFactory.GetPropertySerializationInfo (see BuildTypedRead), so there is no per-instance
-    // factory to hold. It used to take and store one, and never read it.
+    // No BsonSerializerFactory dependency: each property's serializer is baked into the expression tree at
+    // compile time via the static BsonSerializerFactory.GetPropertySerializationInfo (see BuildTypedRead).
     public MongoStreamingEntityMaterializerRewriter(IEntityType rootEntityType)
         => _rootEntityType = rootEntityType;
 
@@ -103,12 +101,10 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         public required Dictionary<IProperty, ParameterExpression> Locals { get; init; }
 
         /// <summary>
-        /// A per-required-non-nullable-scalar-property presence flag, set <c>true</c> by the fill loop when the
-        /// property's element is encountered — even if its value is an explicit BSON <c>null</c> (present-but-
-        /// null takes <see cref="BuildTypedRead"/>'s <c>default(T)</c> path; only a MISSING element leaves the
-        /// flag false). A flag still <c>false</c> after the fill loop means the required element was absent, and
-        /// the materializer throws the same <see cref="InvalidOperationException"/> the DOM / driver-LINQ
-        /// binding path (<c>BsonBinding.GetPropertyValue</c>) throws.
+        /// Presence flag per required non-nullable scalar, set by the fill loop when the element is encountered
+        /// (even as explicit BSON <c>null</c>). Still <c>false</c> after the loop means the element was missing,
+        /// and the materializer throws the same <see cref="InvalidOperationException"/> as
+        /// <c>BsonBinding.GetPropertyValue</c>.
         /// </summary>
         public required Dictionary<IProperty, ParameterExpression> RequiredPresence { get; init; }
 
@@ -398,10 +394,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                 continue;
             }
 
-            // Mark a required scalar PRESENT before reading its value (not inside BuildTypedRead): a
-            // present-but-null required scalar must count as present, taking BuildTypedRead's default(T) path
-            // rather than tripping the post-loop missing-required throw below. Only a genuinely absent element
-            // leaves the flag false.
+            // Mark present before reading (not inside BuildTypedRead): a present-but-null required scalar must
+            // take BuildTypedRead's null handling, not the post-loop missing-required throw.
             Expression read = BuildTypedRead(property, local);
             if (plan.RequiredPresence.TryGetValue(property, out var presenceFlag))
             {
@@ -498,13 +492,10 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             return loop;
         }
 
-        // Reset every required-scalar presence flag and owned-collection accumulator to null BEFORE this fill
-        // pass; enforce/normalize AFTER. The reset matters for owned-collection element plans, whose
-        // locals/flags are reused across array iterations: element N's presence/accumulator must not leak into
-        // element N+1. (For root/owned-reference once-only plans the reset is redundant with CollectLocals but
-        // harmless.) A presence flag still false after the loop means the required element was missing, and
-        // throws the same InvalidOperationException the DOM / driver-LINQ binding path throws
-        // (BsonBinding.GetPropertyValue).
+        // Reset presence flags and collection accumulators before each pass, and enforce/normalize after.
+        // Owned-collection element plans reuse their locals across iterations, so element N's state must not leak
+        // into element N+1 (for once-only plans the reset is redundant but harmless). A flag still false after the
+        // loop throws like BsonBinding.GetPropertyValue.
         var body = new List<Expression>();
         foreach (var (_, presenceFlag) in plan.RequiredPresence)
         {
@@ -518,18 +509,11 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
         body.Add(loop);
 
-        // Normalize an ABSENT owned collection to an EMPTY accumulator. Two states reach here with the
-        // accumulator still null: the array element was MISSING (name-dispatch never matched, so
-        // BuildCollectionLoop never ran) or it was an explicit BSON Null (BuildCollectionLoop consumed the null
-        // and left the accumulator alone). Both must materialize as an EMPTY CLR collection — EF Core's
-        // contract for a collection navigation regardless of the CLR type's nullability or field initializer,
-        // matching what the DOM shaper does for the same two states. Leaving the accumulator null instead makes
-        // IncludeCollection skip both its fixup loop and its GetOrCreate call, so the navigation retains
-        // whatever the POCO's own field initializer left — making the observable result depend on that
-        // initializer. The List<TElement> built here is only the accumulator handed to IncludeCollection; the
-        // collection actually assigned to the navigation is created by the navigation's own
-        // IClrCollectionAccessor (GetOrCreate), so a non-List navigation type such as HashSet<T> still
-        // materializes correctly.
+        // Normalize an absent owned collection (missing element, or explicit BSON Null consumed by
+        // BuildCollectionLoop) to an empty accumulator. EF Core's contract is an empty collection either way,
+        // matching the DOM shaper; a null accumulator makes IncludeCollection skip GetOrCreate, so the result would
+        // depend on the POCO's field initializer. The navigation's own IClrCollectionAccessor creates the actual
+        // collection, so non-List types such as HashSet<T> still work.
         foreach (var collection in plan.OwnedCollections)
         {
             body.Add(
@@ -592,9 +576,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                 elementBreak),
             Expression.Call(_reader, ReadEndArrayMethod));
 
-        // A BSON Null array value: consume the null and leave the accumulator null. BuildFillLoop's post-loop
-        // normalization then makes it an empty accumulator, the same treatment a MISSING array element gets
-        // (which reaches no branch here at all) — normalizing in one place keeps the two absent states in sync.
+        // BSON Null: consume it and leave the accumulator null; BuildFillLoop normalizes it the same way as a
+        // missing array, keeping the two absent states in one place.
         return Expression.IfThenElse(
             Expression.Equal(
                 Expression.Call(_reader, GetCurrentBsonTypeMethod),
@@ -869,13 +852,9 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         }
 
         // Replace the whole `{ bsonDocN; bsonDocN = ... as BsonDocument; bsonDocN == null ? null : <block> }`
-        // with `!present ? <absent> : <rewrittenBlock>`. The outer block's bsonDocN local + assignment are
-        // dropped entirely: their RHS is an unreduced EntityProjectionExpression that has no streaming
-        // equivalent — presence is tracked by the `present` flag instead.
-        //
-        // For a REQUIRED owned reference an absent sub-document is an error, exactly as the DOM path's
-        // required-field guard throws (BsonBinding.GetBsonDocument): reproduce that throw rather than yielding
-        // null, so required-navigation semantics match the DOM path.
+        // with `!present ? <absent> : <rewrittenBlock>`. The bsonDocN local is dropped: its RHS is an unreduced
+        // EntityProjectionExpression with no streaming equivalent. For a required owned reference, <absent>
+        // throws like the DOM path (BsonBinding.GetBsonDocument) rather than yielding null.
         var absent = navigation.ForeignKey.IsRequiredDependent
             ? (Expression)Expression.Block(
                 conditional.Type,
@@ -1008,25 +987,18 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     /// position via the property's serializer and assign it to <paramref name="local"/>.
     /// </summary>
     /// <remarks>
-    /// An explicit BSON <c>null</c> at the element is consumed (<see cref="IBsonReader.ReadNull"/>). For a
-    /// non-nullable VALUE-typed property (<c>int</c>, <c>DateTime</c>, ...) the local is left at
-    /// <c>default(T)</c>, matching the DOM/driver-LINQ oracle (<see cref="Storage.BsonBinding"/>'s
-    /// <c>value == null</c> check can never be true for an unconstrained value-typed <c>T</c>, so it never
-    /// throws there either — this is not a deliberate tolerance, just a property of the generic check). For a
-    /// non-nullable REFERENCE-typed property (<c>string</c>, a collection, an owned class, ...) <c>default(T)</c>
-    /// IS <c>null</c>, so silently assigning it would produce an invalid object with a null required member;
-    /// this throws the same <see cref="InvalidOperationException"/> message as the oracle instead (EF-343),
-    /// restoring streaming/DOM parity. The element being present (rather than missing) is what distinguishes
-    /// this from a MISSING required field, handled separately by the fill-loop presence tracking.
+    /// An explicit BSON <c>null</c> is consumed. A non-nullable value-typed property is left at
+    /// <c>default(T)</c>, matching <see cref="Storage.BsonBinding"/> (whose null check can never fire for an
+    /// unconstrained value-typed <c>T</c>). A non-nullable reference-typed property throws the same
+    /// <see cref="InvalidOperationException"/> as <see cref="Storage.BsonBinding"/>, since <c>default(T)</c> would be
+    /// an invalid null. A missing element is handled separately by the fill loop's presence tracking.
     /// </remarks>
     private Expression BuildTypedRead(IProperty property, ParameterExpression local)
     {
         var serializer = BsonSerializerFactory.GetPropertySerializationInfo(property).Serializer;
 
-        // Reuse the threaded per-row context (its Reader is _reader) rather than allocating a fresh
-        // BsonDeserializationContext per property. When the serializer implements the strongly-typed
-        // IBsonSerializer<TValue> (the common case), call the generic Deserialize returning TValue directly —
-        // no boxing/Convert. Otherwise fall back to the boxed non-generic IBsonSerializer.Deserialize + Convert.
+        // Reuse the per-row context rather than allocating one per property. Prefer the generic
+        // IBsonSerializer<TValue>.Deserialize (no boxing); otherwise use the non-generic one + Convert.
         var valueType = serializer.ValueType;
         var genericSerializerType = typeof(IBsonSerializer<>).MakeGenericType(valueType);
 

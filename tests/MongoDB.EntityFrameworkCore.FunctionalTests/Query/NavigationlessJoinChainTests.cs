@@ -27,9 +27,8 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// dependent hop's <c>$lookup</c> localField unscoped, or dropped the hop's own <c>$lookup</c>
 /// entirely, once a later join forced flat mode — silently dropping every row. Covers the bare hop
 /// in first, second, and both positions, plus the shared <c>GroupJoin</c> translator path.
-/// EF-322 (navigation-less join native eligibility): these same bare-hop chain shapes are also now
-/// eligible for native translation, not merely fallback-correct — the <c>_go_native_under_NativeOnly</c>
-/// facts assert that explicitly under <see cref="MongoQueryMode.NativeOnly"/>.
+/// The <c>_go_native_under_NativeOnly</c> facts pin that these shapes also translate natively under
+/// <see cref="MongoQueryMode.NativeOnly"/>.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NavigationlessJoinChainTests(TemporaryDatabaseFixture database)

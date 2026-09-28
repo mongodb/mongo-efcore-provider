@@ -20,24 +20,14 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 /// per-document relevance score as the synthetic <see cref="ScoreField"/> element.
 /// </summary>
 /// <remarks>
-/// <para>
-/// A MARKER with no payload: <c>MongoPipelineFactory</c> renders it to the fixed
-/// <c>{ "$addFields": { "__score": { "$meta": "vectorSearchScore" } } }</c>. Giving it a generic
-/// "add these fields" BSON payload instead would put BSON into the lowerer, which this area's contract
-/// forbids — the lowerer is BSON-free and all BSON construction belongs to the renderer/factory.
-/// </para>
-/// <para>
-/// It is emitted UNCONDITIONALLY, exactly as the driver-LINQ bridge does, so the two paths' pipelines stay
-/// byte-identical and no committed MQL baseline moves. The score can also be read straight out of a later
-/// <c>$project</c> via <c>$meta</c>, so emitting the companion is a baseline-parity choice rather than a
-/// correctness one.
-/// </para>
+/// A payload-free marker that <c>MongoPipelineFactory</c> renders to
+/// <c>{ "$addFields": { "__score": { "$meta": "vectorSearchScore" } } }</c>, keeping BSON out of the lowerer.
+/// Emitted unconditionally, as the driver-LINQ bridge does, so both paths produce identical pipelines.
 /// </remarks>
 internal sealed class MongoVectorSearchScoreStage : MongoPipelineStage
 {
     /// <summary>
-    /// The synthetic top-level element the score is written to. Not a mapped property of any entity type;
-    /// a projection that reads it back does so by raw element name.
+    /// The synthetic top-level element holding the score; not a mapped property, so read back by raw name.
     /// </summary>
     internal const string ScoreField = "__score";
 }

@@ -20,21 +20,12 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// <see cref="MongoExpressionTranslator"/> — <c>root is T</c> (<see cref="TypeBinaryExpression"/>),
-/// scoped to a NON-hierarchy root entity type.
+/// <see cref="MongoExpressionTranslator"/> — <c>root is T</c> for a root entity type with no hierarchy.
 /// </summary>
 /// <remarks>
-/// Sibling of <c>MongoExpressionTranslator.EntityType.cs</c>'s <c>root.GetType() == typeof(T)</c> handling —
-/// same reasoning, different C# syntax. Without this, every <c>c is T</c> predicate over the query root fell
-/// back to driver-LINQ.
-/// <para>
-/// <b>Scope, deliberately narrow.</b> Only a root entity type with NO hierarchy (no base type and no directly
-/// derived types) is handled here — for such a type, the query root can only ever be exactly that CLR type,
-/// so <c>root is T</c> collapses to a constant <see langword="true"/>/<see langword="false"/>, needing no
-/// discriminator field at all. A TPH hierarchy needs a genuine discriminator-value predicate (mirroring
-/// <c>TryBuildDiscriminatorPredicate</c>, used for <c>OfType&lt;T&gt;</c>) and is out of scope here — it
-/// declines and keeps falling back.
-/// </para>
+/// Sibling of <c>MongoExpressionTranslator.EntityType.cs</c>. With no base or derived types the root can only be
+/// exactly that CLR type, so <c>root is T</c> folds to a constant. TPH hierarchies would need a discriminator
+/// predicate (as <c>TryBuildDiscriminatorPredicate</c> does for <c>OfType&lt;T&gt;</c>) and decline.
 /// </remarks>
 internal sealed partial class MongoExpressionTranslator
 {
@@ -48,14 +39,12 @@ internal sealed partial class MongoExpressionTranslator
         if (!ReferenceEquals(Unwrap(typeBinary.Expression), SelfParam))
             return false;
 
-        // SelfParam can be a projected/accumulator value in a Distinct or GroupBy-aggregate scope, not the
-        // root entity (e.g. a Where after Select(...).Distinct()) — _entityType.ClrType is only meaningful
-        // when SelfParam genuinely denotes the root, so decline otherwise.
+        // In a Distinct/GroupBy-aggregate scope SelfParam may be a projected value, not the root entity; the
+        // constant fold is only valid for the root.
         if (SelfParam.Type != _entityType.ClrType)
             return false;
 
-        // Hierarchy types need a real discriminator predicate, not a compile-time constant — decline and let
-        // this keep falling back to driver-LINQ (see the type's own remarks).
+        // Hierarchy types need a discriminator predicate, not a constant; decline.
         if (_entityType.BaseType is not null || _entityType.GetDirectlyDerivedTypes().Any())
             return false;
 

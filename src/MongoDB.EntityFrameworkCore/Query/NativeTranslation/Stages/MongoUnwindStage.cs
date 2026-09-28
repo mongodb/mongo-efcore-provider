@@ -27,13 +27,9 @@ internal sealed class MongoUnwindStage : MongoPipelineStage
     /// </summary>
     /// <param name="lookup">The lookup expression that specifies which array field to unwind.</param>
     /// <param name="preserveNullAndEmptyArrays">
-    /// Whether a principal document with no matching array element/document is preserved (LEFT-join
-    /// semantics) rather than dropped (INNER-join semantics, e.g. a cross-collection reference SelectMany
-    /// flatten). Defaults to <see langword="true"/> so a caller that does not think about this gets the
-    /// conservative (LEFT-join) behavior. The reference-Include <c>$unwind</c>
-    /// (<c>MongoSelectLowerer.AppendLookupStages</c>'s <c>IsStreamableReference</c> arm) instead passes the
-    /// registered <see cref="LookupExpression.PreserveNullAndEmptyArrays"/> explicitly, since that flag
-    /// follows the navigation's own requiredness (INNER for required, LEFT-join for optional).
+    /// Whether a document with no match is kept (left-join) or dropped (inner-join, e.g. a reference SelectMany).
+    /// Defaults to <see langword="true"/> (the conservative choice). The reference-Include <c>$unwind</c> passes
+    /// <see cref="LookupExpression.PreserveNullAndEmptyArrays"/>, which follows the navigation's requiredness.
     /// </param>
     public MongoUnwindStage(LookupExpression lookup, bool preserveNullAndEmptyArrays = true)
     {
@@ -47,9 +43,7 @@ internal sealed class MongoUnwindStage : MongoPipelineStage
     public LookupExpression Lookup { get; }
 
     /// <summary>
-    /// Whether a principal document with no matching array element/document is preserved
-    /// (<see langword="true"/>, LEFT-join) or dropped (<see langword="false"/>, INNER-join). See the
-    /// constructor parameter docs for the two cases that set each value.
+    /// Whether a document with no match is kept (<see langword="true"/>, left-join) or dropped (inner-join).
     /// </summary>
     public bool PreserveNullAndEmptyArrays { get; }
 }

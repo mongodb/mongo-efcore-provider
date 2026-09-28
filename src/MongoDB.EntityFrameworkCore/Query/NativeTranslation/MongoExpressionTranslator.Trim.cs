@@ -24,10 +24,8 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// their <c>char</c>/<c>char[]</c>-arg overloads.
 /// </summary>
 /// <remarks>
-/// The driver-LINQ v3 provider only translates the <c>char[]</c>-arg overload of
-/// <c>TrimStart</c>/<c>TrimEnd</c> and the zero-arg overload of <c>Trim</c> (confirmed empirically by
-/// observing <c>StringTranslationsMongoTest</c>'s baselines under <c>MongoQueryMode.DriverLinq</c>) — every
-/// other combination here is genuinely new capability, not a native conversion of existing fallback behavior.
+/// Driver-LINQ only translates zero-arg <c>Trim</c> and <c>char[]</c>-arg <c>TrimStart</c>/<c>TrimEnd</c>; the
+/// other overloads have no driver fallback.
 /// </remarks>
 internal sealed partial class MongoExpressionTranslator
 {
@@ -75,9 +73,8 @@ internal sealed partial class MongoExpressionTranslator
                         forSerialization: null);
                     break;
                 default:
-                    // A parameterized/computed char[] has no compile-time string to build; decline rather
-                    // than guess (no placeholder-substitution path exists for a computed `chars` operand,
-                    // same reasoning as the correlated-reducer leaf's constant-only predicate gate).
+                    // A parameterized/computed char[] has no compile-time string, and there is no
+                    // placeholder-substitution path for the `chars` operand.
                     return false;
             }
         }

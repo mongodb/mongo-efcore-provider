@@ -34,10 +34,8 @@ public class NativeSelectCtorProjectionTests(TemporaryDatabaseFixture database) 
         public string City { get; set; } = "";
     }
 
-    // A ctor-only DTO — no member named "customerId"/"city" matches a constructor parameter of the same name
-    // by the compiler's naming rule, so NewExpression.Members is null for
-    // `new CustomerListItem(c.CustomerID, c.City)`. Mirrors EF Core's own Northwind
-    // CustomerListItem(string id, string city).
+    // Ctor-only DTO: NewExpression.Members is null for `new CustomerListItem(c.CustomerID, c.City)`. Mirrors
+    // EF Core's Northwind CustomerListItem.
     private class CustomerListItem
     {
         public string CustomerID { get; }
@@ -73,16 +71,9 @@ public class NativeSelectCtorProjectionTests(TemporaryDatabaseFixture database) 
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
             });
 
-        // Under NativeOnly a shape that falls back throws NativeTranslationNotSupportedException; success
-        // here proves the 2-argument ctor-only DTO Select — EF Core's own Northwind
-        // Member_binding_after_ctor_arguments_fails_with_client_eval shape — went native.
-        //
-        // NOTE: .OrderBy(...)/.Take(...) are applied AFTER .AsEnumerable() rather than composed directly on
-        // the query, mirroring NativeGroupByCtorProjectionTests/NativeSelectManyCtorProjectionTests exactly.
-        // A server-side OrderBy/Take composed DIRECTLY on this Select now goes native too — see
-        // Select_with_two_argument_ctor_only_dto_then_OrderBy_goes_native below — but this test is kept
-        // client-side deliberately: it isolates the Select-only projection binder from the OrderBy arm, so a
-        // future regression in either one fails independently rather than only as a combined shape.
+        // Success under NativeOnly proves native (EF's Member_binding_after_ctor_arguments_fails_with_client_eval
+        // shape). OrderBy/Take are client-side to isolate the projection binder from the server-side sort,
+        // which the next test covers.
         var results = db.Entities
             .Select(c => new CustomerListItem(c.CustomerID, c.City))
             .AsEnumerable()
@@ -119,11 +110,8 @@ public class NativeSelectCtorProjectionTests(TemporaryDatabaseFixture database) 
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
             });
 
-        // Composed DIRECTLY on the query — the gap NativeSelectCtorProjectionTests' sibling test documents.
-        // EF Core's nav-expansion rewrites the OrderBy key to `x => new CustomerListItem(x.CustomerID,
-        // x.City).City`, whose receiver is the SAME Members-null NewExpression the Select projects.
-        // Succeeding under NativeOnly (rather than throwing NativeTranslationNotSupportedException) proves
-        // NativeSlotPopulator.PopulateSortSlot now resolves this shape.
+        // Nav-expansion rewrites the sort key to `x => new CustomerListItem(x.CustomerID, x.City).City`, a
+        // member of the Members-null NewExpression; NativeSlotPopulator.PopulateSortSlot must resolve it.
         var results = db.Entities
             .Select(c => new CustomerListItem(c.CustomerID, c.City))
             .OrderBy(c => c.City)

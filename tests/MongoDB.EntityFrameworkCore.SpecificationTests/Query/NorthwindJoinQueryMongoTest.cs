@@ -396,8 +396,7 @@ Customers.
     public override async Task Unflattened_GroupJoin_composed_2(bool async)
     {
         // Fails: same unflattened-GroupJoin shape as Unflattened_GroupJoin_composed above (identical
-        // InvalidOperationException from EF Core itself, thrown before reaching our provider); the
-        // second Join composed on top is irrelevant to the failure. Not an EF-436 gap.
+        // InvalidOperationException from EF Core itself, before reaching the provider).
         await AssertTranslationFailed(() => base.Unflattened_GroupJoin_composed_2(async));
 
         AssertMql(
@@ -417,17 +416,9 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
     public override async Task GroupJoin_DefaultIfEmpty_multiple(bool async)
     {
         // EF-375: two joins onto the same target type now flatten to one $lookup per join instead of
-        // leaving the driver to nest the document twice (which threw at shaper time). EF-436 found the real
-        // reason this never worked on EF8/EF9: EF Core's nav-expansion flattens GroupJoin+SelectMany
-        // (DefaultIfEmpty) into a LeftJoin call on every version, but pre-.NET10 that's EF Core's own
-        // internal-API LeftJoin shim (Microsoft.EntityFrameworkCore.Internal.QueryableExtensions.LeftJoin),
-        // not the BCL Queryable.LeftJoin added in .NET 10 - our own method-source allow-list only recognized
-        // the latter, so the flattened call was declined before ever reaching TranslateLeftJoin. Once
-        // MongoQueryableMethodTranslatingExpressionVisitor recognizes both forms, EF-375's join-flattening
-        // fix (itself version-generic, no #if needed) applies identically on EF8/EF9/EF10 — the query now
-        // reaches TranslateLeftJoin on every version, and EF-322's candidate-join recognition fix means
-        // NativeSlotPopulator now recognizes EF8/EF9's internal LeftJoin shim there too, so this goes native
-        // on all three EF versions.
+        // leaving the driver to nest the document twice (which threw at shaper time). On EF8/EF9 nav-expansion
+        // produces EF Core's internal LeftJoin shim (Microsoft.EntityFrameworkCore.Internal.QueryableExtensions
+        // .LeftJoin) rather than the BCL Queryable.LeftJoin; both are recognized, so this is native everywhere.
         await base.GroupJoin_DefaultIfEmpty_multiple(async);
 
         AssertMql(
@@ -439,15 +430,10 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
     public override async Task GroupJoin_DefaultIfEmpty2(bool async)
     {
         // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022.
-        // Out of scope for EF-436 (which covers a different set of GroupJoin shapes; see its
-        // "Distinct from" section) - this is the same filtered-inner-subquery gap as the other
-        // EF-X022 tests above, and declines consistently across EF8/EF9/EF10.
         await AssertTranslationFailed(() => base.GroupJoin_DefaultIfEmpty2(async));
 
 #if EF8 || EF9
-        // EF-436: after the LeftJoin-recognition fix, this reaches the driver like its EF10 counterpart
-        // below and is rejected there too (filtered subquery inner, EF-X022) - same partial "Employees."
-        // capture as EF10's non-native-only branch.
+        // Reaches the driver, which rejects the filtered subquery inner after logging the outer collection.
         AssertMql(
     """
 Employees.
@@ -517,8 +503,6 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
         // designed for self-referencing CHAINS, not independent siblings) - so the strip declines and,
         // since native rendering can't represent two forced-unwind lookups either, translation is
         // rejected rather than risk falling back to a native pipeline that would silently double-nest.
-        // Runs on all three EF majors identically now: this shape used to also fail earlier on EF8/EF9 for
-        // the unrelated EF-X020 reason (the LeftJoin shim admission gate), now fixed.
         await AssertTranslationFailed(() => base.Join_GroupJoin_DefaultIfEmpty_Where(async));
         AssertMql();
     }
@@ -567,9 +551,7 @@ Customers.
         await Assert.ThrowsAnyAsync<Exception>(() => base.GroupJoin_SelectMany_subquery_with_filter_and_DefaultIfEmpty(async));
 
 #if EF8 || EF9
-        // EF-436: after the LeftJoin-recognition fix, this reaches the driver like EF10's non-native-only
-        // branch below and captures the same partial "Customers." pipeline before the driver rejects the
-        // filtered-subquery join inner (EF-X022).
+        // Reaches the driver, which rejects the filtered subquery inner after logging the outer collection.
         AssertMql(
     """
 Customers.
@@ -619,17 +601,9 @@ Customers.
     public override async Task Inner_join_with_tautology_predicate_converts_to_cross_join(bool async)
     {
         // Fails: Multiple query roots issue EF-220, and Join/GroupJoin inner sub-query (filtered/ordered) not
-        // supported EF-X022. Upstream's body is
-        // `from c in Customers.OrderBy(c => c.CustomerID).Take(10) join o in Orders.OrderBy(o => o.OrderID).Take(10) ...`
-        // — BOTH sides are self-paging. Only the INNER (`Orders.OrderBy(OrderID).Take(10)`) matters: the outer's
-        // own paging is emitted at pipeline top level and is correct. The inner is a sorted+paged sub-query, so
-        // driver 3.11 rejects the whole expression with ExpressionNotSupportedException ("expression must be a
-        // MongoDB IQueryable against a collection") rather than folding it into the correlated $lookup
-        // sub-pipeline the way 3.10 silently did. See docs/failing-spec-tests.md § EF-X022.
-        // This spelling reaches TranslateJoin on ALL THREE EF versions (an ordinary inner join needs no
-        // DefaultIfEmpty normalization, unlike the Left_join_... sibling below).
-        // The driver rejects the expression at translation time, but only AFTER the outer collection is logged,
-        // so a partial ("Customers.") pipeline is captured on all three EF versions.
+        // supported EF-X022. Only the inner `Orders.OrderBy(o => o.OrderID).Take(10)` matters: driver 3.11 rejects
+        // a sorted+paged join inner with ExpressionNotSupportedException (see docs/failing-spec-tests.md § EF-X022).
+        // The outer collection is logged first, so a partial "Customers." pipeline is captured.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.Inner_join_with_tautology_predicate_converts_to_cross_join(async));
 
@@ -649,21 +623,8 @@ Customers.
     public override async Task Left_join_with_tautology_predicate_doesnt_convert_to_cross_join(bool async)
     {
         // Fails: Multiple query roots issue EF-220, and Join/GroupJoin inner sub-query (filtered/ordered) not
-        // supported EF-X022. Upstream's body is
-        // `from c in Customers.OrderBy(c => c.CustomerID).Take(10) join o in Orders.OrderBy(o => o.OrderID).Take(10)
-        //  on ... into grouping from o in grouping.DefaultIfEmpty() ...` — BOTH sides are self-paging. Only the
-        // INNER (`Orders.OrderBy(OrderID).Take(10)`) matters; the outer's own paging is emitted at pipeline top
-        // level and is correct. The inner is a sorted+paged sub-query, which driver 3.11 rejects outright
-        // (see docs/failing-spec-tests.md § EF-X022).
-        //
-        // EF-436 update: this test's comment previously described a genuine EF8/EF9 vs EF10 mechanism split
-        // (EF8/EF9 failing inside the QMTEV with no MQL logged, EF10 reaching the driver and logging the
-        // outer collection first) - that split was itself downstream of the same stale LeftJoin-recognition
-        // gate as GroupJoin_DefaultIfEmpty_multiple (see its comment), not a genuine EF-version difference.
-        // Once that gate is fixed, EF8/EF9 reach the driver exactly like EF10 and get the SAME
-        // ExpressionNotSupportedException from the same ordered/paged-inner rejection, logging the same
-        // partial "Customers." pipeline first. AssertNativeTranslationFailedAsync accepts both
-        // ExpressionNotSupportedException and InvalidOperationException, so this stays green either way.
+        // supported EF-X022. As in Inner_join_with_tautology_predicate_converts_to_cross_join, driver 3.11 rejects
+        // the sorted+paged inner after logging the outer collection, on every EF version.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.Left_join_with_tautology_predicate_doesnt_convert_to_cross_join(async));
 
@@ -894,9 +855,8 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
     public override async Task GroupJoin_subquery_projection_outer_mixed(bool async)
     {
         // Fails: not a GroupJoin gap - the leading `from o0 in Orders.OrderBy(...).Take(1)` is an
-        // uncorrelated cross-collection subquery SelectMany, which fails translation (with no
-        // driver-LINQ fallback) before the GroupJoin is ever reached. Same family as
-        // Join_customers_orders_with_subquery / SelectMany_correlated_subquery_take EF-X001
+        // uncorrelated cross-collection subquery SelectMany that fails translation before the GroupJoin is
+        // reached. Same family as Join_customers_orders_with_subquery / SelectMany_correlated_subquery_take EF-X001
         await AssertTranslationFailed(() => base.GroupJoin_subquery_projection_outer_mixed(async));
 
         AssertMql(
@@ -907,11 +867,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
     public override async Task GroupJoin_on_true_equal_true(bool async)
     {
         // Fails: same unflattened-GroupJoin projection gap as Unflattened_GroupJoin_composed above
-        // (identical InvalidOperationException - MongoProjectionBindingExpressionVisitor hits an
-        // unbound `DbSet<Order>()` trying to bind the raw, un-flattened group `g` in the result
-        // selector's projection); the tautological `true == true` key selectors are irrelevant to
-        // the failure - it happens purely because the group is projected without a SelectMany/
-        // DefaultIfEmpty flatten or an aggregate. Not an EF-436 gap.
+        // (the raw group `g` is projected without a SelectMany/DefaultIfEmpty flatten or an aggregate).
         await AssertTranslationFailed(() => base.GroupJoin_on_true_equal_true(async));
 
         AssertMql(

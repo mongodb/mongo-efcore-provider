@@ -22,8 +22,7 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// Unit tests for <see cref="MongoAggregationExpressionRenderer"/>, which renders dialect-agnostic
-/// <see cref="MongoExpression"/> subtrees into MongoDB aggregation expressions (the body inside <c>{ $expr: … }</c>).
+/// Unit tests for <see cref="MongoAggregationExpressionRenderer"/>.
 /// </summary>
 public class MongoAggregationExpressionRendererTests
 {
@@ -46,7 +45,7 @@ public class MongoAggregationExpressionRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 1: field-to-field comparison → { $eq: ['$Age', '$Score'] }
+    // Field-to-field comparison → { $eq: ['$Age', '$Score'] }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -65,7 +64,7 @@ public class MongoAggregationExpressionRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 2: arithmetic operand → { $gt: [ { $add: ['$Age', '$Score'] }, 5 ] }
+    // Arithmetic operand → { $gt: [ { $add: ['$Age', '$Score'] }, 5 ] }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -133,8 +132,8 @@ public class MongoAggregationExpressionRendererTests
         var rendered = MongoAggregationExpressionRenderer.Render(
             new MongoFilteredSizeExpression("Posts", inner, typeof(int)), placeholders);
 
-        // The INNER array path is element-relative to the OUTER variable, and the inner element
-        // predicate is relative to the inner variable. Getting either wrong reads the wrong array.
+        // The inner array path is relative to the outer variable, and the inner predicate to the inner
+        // variable. Getting either wrong reads the wrong array.
         var json = rendered.ToJson();
         Assert.Contains("\"$$e.Comments\"", json);
         Assert.Contains("\"$$ee.Age\"", json);
@@ -153,7 +152,7 @@ public class MongoAggregationExpressionRendererTests
     }
 
     // ------------------------------------------------------------------
-    // EF-434: integer division
+    // Integer division
     // ------------------------------------------------------------------
 
     [Fact]
@@ -177,8 +176,7 @@ public class MongoAggregationExpressionRendererTests
     [Fact]
     public void Plain_Divide_still_renders_unwrapped()
     {
-        // The negative half of the pair: a non-integral division must NOT be truncated. Asserted separately
-        // from the row above so that collapsing the two operators into one arm goes red rather than green.
+        // Non-integral division must not be truncated; separate from the row above so merging the two arms fails.
         var age = GetProperty<Customer>("Age");
         var score = GetProperty<Customer>("Score");
 
@@ -195,7 +193,7 @@ public class MongoAggregationExpressionRendererTests
     }
 
     // ------------------------------------------------------------------
-    // EF-413: MongoInExpression / MongoUnaryExpression aggregation-dialect arms
+    // MongoInExpression / MongoUnaryExpression aggregation-dialect arms
     // ------------------------------------------------------------------
 
     [Fact]
@@ -247,8 +245,8 @@ public class MongoAggregationExpressionRendererTests
     [Fact]
     public void CanRender_reports_true_for_MongoInExpression_over_value_list_of_parameters()
     {
-        // EF-322: `new[] { prm1, prm2 }.Contains(c.Age)` where prm1/prm2 are separately-parameterized
-        // locals — the same MongoValueListExpression shape TranslateInValues now produces.
+        // `new[] { prm1, prm2 }.Contains(c.Age)` with separately-parameterized locals — the
+        // MongoValueListExpression shape TranslateInValues produces.
         var status = GetProperty<Customer>("Status");
         var field = new MongoFieldExpression(status, "Status");
         var values = new MongoValueListExpression(
@@ -275,8 +273,7 @@ public class MongoAggregationExpressionRendererTests
     [Fact]
     public void CanRender_reports_false_for_MongoInExpression_over_unrenderable_values()
     {
-        // Neither a constant enumerable nor a parameter — CanRenderInValues must decline this shape the same
-        // way RenderInValues would throw on it, so the two never disagree.
+        // Neither constant enumerable nor parameter: CanRenderInValues must decline what RenderInValues throws on.
         var status = GetProperty<Customer>("Status");
         var field = new MongoFieldExpression(status, "Status");
         var node = new MongoInExpression(field, new MongoFieldExpression(status, "Other"), negated: false);
@@ -290,11 +287,8 @@ public class MongoAggregationExpressionRendererTests
     // CanRender
     // ------------------------------------------------------------------
 
-    // NOTE ON TEST SHAPE: MongoExpression is internal, and a public [Theory] method cannot expose an internal
-    // type in its signature (CS0051) while the test class stays public (required for xUnit discovery — see the
-    // identical, already-established idiom in MongoExpressionNegatorTests.cs). The [MemberData] rows are boxed
-    // as `object` here and cast back to `MongoExpression` inside the method, which keeps the brief's requested
-    // [Theory]/[MemberData]-over-node-collections shape intact rather than falling back to per-row [Fact]s.
+    // MemberData rows are boxed as object: a public [Theory] can't expose internal MongoExpression (CS0051).
+    // Same idiom as MongoExpressionNegatorTests.
 
     [Theory]
     [MemberData(nameof(RenderableNodes))]
@@ -302,7 +296,7 @@ public class MongoAggregationExpressionRendererTests
     {
         var expr = (MongoExpression)node;
         Assert.True(MongoAggregationExpressionRenderer.CanRender(expr));
-        // Non-vacuous: prove Render really does handle it, so the two cannot drift silently.
+        // Prove Render really handles it, so CanRender and Render can't drift.
         _ = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
     }
 
@@ -394,14 +388,14 @@ public class MongoAggregationExpressionRendererTests
                 typeof(int))
         ];
 
-        // EF-413: a MongoInExpression (client-collection Contains → $in).
+        // A MongoInExpression (client-collection Contains → $in).
         yield return
         [
             new MongoInExpression(
                 new MongoFieldExpression(age, "Age"), new MongoConstantExpression(new[] { 1, 2 }, age), negated: false)
         ];
 
-        // EF-413: a MongoUnaryExpression{Not} over a renderable operand.
+        // A MongoUnaryExpression{Not} over a renderable operand.
         yield return
         [
             new MongoUnaryExpression(
@@ -438,7 +432,7 @@ public class MongoAggregationExpressionRendererTests
     }
 
     // ------------------------------------------------------------------
-    // MongoConvertExpression — the $toX node (EF-322 slice A1, Task 3)
+    // MongoConvertExpression — the $toX node
     // ------------------------------------------------------------------
 
     [Theory]
@@ -461,8 +455,7 @@ public class MongoAggregationExpressionRendererTests
     [InlineData(typeof(float))]
     public void Convert_node_to_a_target_MQL_cannot_express_is_not_renderable(Type target)
     {
-        // MQL has no $toShort/$toUInt/$toFloat, and the driver's own LINQ provider throws for these targets too —
-        // so declining is the same boundary the oracle has, not a coverage choice.
+        // MQL has no $toShort/$toUInt/$toFloat (driver-LINQ throws for these too), so declining is correct.
         Assert.Null(MongoConvertExpression.ToOperatorFor(target));
         Assert.False(MongoAggregationExpressionRenderer.CanRender(
             new MongoConvertExpression(new MongoElementRefExpression("I", typeof(int)), target)));
@@ -471,8 +464,8 @@ public class MongoAggregationExpressionRendererTests
     [Fact]
     public void Convert_node_is_NOT_query_dialect_renderable()
     {
-        // LOAD-BEARING: $expr is a hard server error inside $elemMatch, so a node that only the aggregation
-        // dialect can express must never be admitted by the query-dialect classifier.
+        // $expr is a server error inside $elemMatch, so an aggregation-only node must never be admitted by the
+        // query-dialect classifier.
         Assert.False(MongoQueryLanguageRenderer.IsQueryDialectRenderable(
             new MongoConvertExpression(new MongoElementRefExpression("D", typeof(double)), typeof(int))));
     }
@@ -480,9 +473,8 @@ public class MongoAggregationExpressionRendererTests
     [Fact]
     public void Convert_node_reports_unrenderable_when_its_OPERAND_is()
     {
-        // A MongoElemMatchExpression is one of the node kinds the aggregation dialect cannot express (it's a
-        // $match-only construct — a hard server error inside $expr, see the Query AGENTS.md invariant on
-        // $elemMatch nesting). Wrapping it in a convert must not launder it into renderability.
+        // $elemMatch is $match-only (server error inside $expr); wrapping it in a convert must not make it
+        // renderable.
         var unrenderable = new MongoElemMatchExpression(
             "Posts",
             new MongoBinaryExpression(MongoBinaryOperator.GreaterThan,
@@ -494,7 +486,7 @@ public class MongoAggregationExpressionRendererTests
     }
 
     // ------------------------------------------------------------------
-    // MongoOuterFieldExpression — always renders at document root (EF-421)
+    // MongoOuterFieldExpression — always renders at document root
     // ------------------------------------------------------------------
 
     [Fact]
@@ -511,8 +503,8 @@ public class MongoAggregationExpressionRendererTests
     [Fact]
     public void MongoOuterFieldExpression_renders_at_document_root_even_inside_a_filter_scope()
     {
-        // The whole point of this node: unlike MongoFieldExpression, an elementVariable in scope must NOT
-        // change its rendering — it always means "the enclosing document", never "the filter's own element".
+        // Unlike MongoFieldExpression, an elementVariable in scope must not change its rendering: it always
+        // means the enclosing document.
         var status = GetProperty<Customer>("Status");
         var node = new MongoOuterFieldExpression(status, "Status");
 
@@ -536,11 +528,8 @@ public class MongoAggregationExpressionRendererTests
 
         var rendered = MongoAggregationExpressionRenderer.Render(node, placeholders);
 
-        // Wrapped in $ifNull (not a bare field ref) — see the render site's own remarks: after
-        // $lookup+$unwind(preserveNullAndEmptyArrays: true), an unmatched row's alias field is genuinely
-        // MISSING, and the aggregation-expression dialect's $ne does NOT treat missing and null alike the
-        // way the query dialect does, so a bare comparison would wrongly answer "not null" for an unmatched
-        // row. MEASURED against a real server (not merely asserted here).
+        // $ifNull-wrapped: after $lookup+$unwind(preserveNullAndEmptyArrays), an unmatched row's alias field is
+        // missing, and aggregation $ne doesn't equate missing with null, so a bare comparison says "not null".
         Assert.Equal(
             new BsonDocument("$ne",
                 new BsonArray { new BsonDocument("$ifNull", new BsonArray { "$_lookup_Manager", BsonNull.Value }), BsonNull.Value }),
@@ -555,7 +544,7 @@ public class MongoAggregationExpressionRendererTests
 
         var rendered = MongoAggregationExpressionRenderer.Render(node, placeholders);
 
-        // Same $ifNull-wrapping as the $ne case above, and for the same reason.
+        // Same $ifNull wrap as the $ne case above.
         Assert.Equal(
             new BsonDocument("$eq",
                 new BsonArray { new BsonDocument("$ifNull", new BsonArray { "$_lookup_Manager", BsonNull.Value }), BsonNull.Value }),
@@ -619,7 +608,7 @@ public class MongoAggregationExpressionRendererTests
     }
 
     // ------------------------------------------------------------------
-    // MongoRegexExpression with a field Term (EF-322 Task 2) — native $indexOfCP/$strLenCP rendering
+    // MongoRegexExpression with a field Term — $indexOfCP/$strLenCP rendering
     // ------------------------------------------------------------------
 
     [Fact]
@@ -670,10 +659,8 @@ public class MongoAggregationExpressionRendererTests
     }
 
     // ------------------------------------------------------------------
-    // MongoRegexExpression with a constant Term (EF-322: Include_collection_with_conditional_order_by) —
-    // every CanRender caller is already inside an $expr/$addFields/$sort/quantifier scope with no
-    // $regularExpression alternative available, so there is no fallback disposition to preserve here; a
-    // constant-term regex must render exactly like a field-to-field one via $indexOfCP/$strLenCP.
+    // MongoRegexExpression with a constant Term — every CanRender caller is in an aggregation scope with no
+    // $regularExpression alternative, so it renders like the field-term case via $indexOfCP/$strLenCP.
     // ------------------------------------------------------------------
 
     [Fact]
@@ -713,9 +700,8 @@ public class MongoAggregationExpressionRendererTests
     }
 
     // ------------------------------------------------------------------
-    // SP4 final-review fix: a "$"-prefixed constant used as a $ifNull/$cond BRANCH must be $literal-wrapped,
-    // the same way RenderProject/RenderAddFields already wrap a bare TOP-LEVEL constant/parameter — otherwise
-    // MongoDB reads the unwrapped string as a field-path reference instead of the literal value it is.
+    // A "$"-prefixed constant used as a $ifNull/$cond branch must be $literal-wrapped (as RenderProject does at
+    // top level); otherwise MongoDB reads it as a field path.
     // ------------------------------------------------------------------
 
     [Fact]

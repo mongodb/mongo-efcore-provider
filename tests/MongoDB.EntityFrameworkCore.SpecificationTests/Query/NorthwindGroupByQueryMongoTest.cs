@@ -134,9 +134,6 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$min" : "$_id" } } }, { "
 
     public override async Task GroupBy_Property_Select_Sum(bool async)
     {
-        // EF-322 SP1: the EF-149 gap this was pinning was the GroupBy key itself (EF.Property(...)), which
-        // NativeGroupByBinder.TryBindGroupKey now translates via TryTranslateValue — this now succeeds in
-        // both modes instead of hard-failing in every mode.
         await base.GroupBy_Property_Select_Sum(async);
 
         AssertMql(
@@ -1003,11 +1000,9 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : { "$add" : ["$_id
 
     public override async Task Join_complex_GroupBy_Aggregate(bool async)
     {
-        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022. The join's inner is
-        // `Customers.Where(…).OrderBy(City).Skip(10).Take(50)` — a filtered+sorted+paged sub-query. Driver 3.11
-        // rejects it outright ("expression must be a MongoDB IQueryable against a collection") rather than
-        // folding it into the correlated $lookup sub-pipeline the way 3.10 silently did (3.10 returned 0 rows
-        // instead of 29). Failing loudly is the documented boundary; see docs/failing-spec-tests.md § EF-X022.
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022. The inner
+        // (`Customers.Where(…).OrderBy(City).Skip(10).Take(50)`) is rejected by the driver rather than mis-folded
+        // into the correlated $lookup (which returned wrong rows on 3.10). See docs/failing-spec-tests.md.
         // The rejection happens after the outer collection is logged, so a partial pipeline is captured.
         await AssertTranslationFailed(() => base.Join_complex_GroupBy_Aggregate(async));
 
@@ -1080,11 +1075,9 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : { "$add" : ["$_id
 
     public override async Task GroupJoin_complex_GroupBy_Aggregate(bool async)
     {
-        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022. The join's inner is
-        // `Orders.Where(< 10400).OrderBy(OrderDate).Take(100)` — a filtered+sorted+paged sub-query. Driver 3.11
-        // rejects it outright ("expression must be a MongoDB IQueryable against a collection") rather than
-        // folding it into the correlated $lookup sub-pipeline the way 3.10 silently did (3.10 returned 27 rows
-        // instead of 20). Failing loudly is the documented boundary; see docs/failing-spec-tests.md § EF-X022.
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022. The inner
+        // (`Orders.Where(< 10400).OrderBy(OrderDate).Take(100)`) is rejected by the driver rather than mis-folded
+        // into the correlated $lookup (which returned wrong rows on 3.10). See docs/failing-spec-tests.md.
         // The rejection happens after the outer collection is logged, so a partial pipeline is captured.
         await AssertTranslationFailed(() => base.GroupJoin_complex_GroupBy_Aggregate(async));
 
@@ -1396,11 +1389,9 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_orderAgg0" : { "$sum" : 1 }, "__a
 
     public override async Task Join_GroupBy_Aggregate_in_subquery(bool async)
     {
-        // Declines: the join's inner is a SUBQUERY that itself joins a grouped source, so the wrong-data verdict
-        // is reached on the intermediate query expression and propagated to the outer one
-        // (MongoSelectDefinition.PropagateFallbackWrongDataFrom). Without that propagation the driver-LINQ
-        // fallback executed and returned 0 rows instead of 133. This is the provider's own permanent,
-        // driver-independent GroupBy+Join wrong-data hard-decline (EF-344), not a driver-rejection boundary.
+        // Declines: the inner subquery joins a grouped source; the wrong-data verdict is propagated from the
+        // intermediate query (MongoSelectDefinition.PropagateFallbackWrongDataFrom). Without it the driver-LINQ
+        // fallback returns 0 rows instead of 133.
         await AssertTranslationFailed(() => base.Join_GroupBy_Aggregate_in_subquery(async));
 
         AssertMql();
@@ -2024,11 +2015,8 @@ Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$project" : { "_ctorArg0" : 
 
     public override async Task GroupBy_with_group_key_access_thru_nested_navigation(bool async)
     {
-        // Fails: GroupBy issue EF-149. This override briefly carried an `#if EF8 || EF9` split whose EF10 arm
-        // asserted SUCCESS plus a driver-LINQ pipeline baseline, on the strength of driver 3.10 translating
-        // the two-hop join. That is no longer true and the split is gone: the chain now declines at
-        // GuardAgainstUnstrippableMultiJoin, before any pipeline runs, uniformly on all three EF majors -
-        // which is also what the main-bound line asserts. Hence one un-`#if`'d arm and an empty AssertMql().
+        // Fails: GroupBy issue EF-149. The two-hop join chain declines at GuardAgainstUnstrippableMultiJoin
+        // before any pipeline runs, on every EF version.
         await AssertTranslationFailed(() => base.GroupBy_with_group_key_access_thru_nested_navigation(async));
 
         AssertMql();
@@ -2054,12 +2042,8 @@ Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$project" : { "_ctorArg0" : 
 
     public override async Task GroupBy_with_group_key_being_nested_navigation(bool async)
     {
-        // Fails: GroupBy issue EF-149. The EF10 arm used to record a real driver-LINQ pipeline here, because
-        // under driver 3.10 this shape got as far as EXECUTING one and only then failed to deserialize the
-        // $group key (the key is the whole nested Customer entity, which the driver decodes with
-        // BsonClassMapSerializer<Customer> rather than the registered entity serializer). It no longer reaches
-        // execution: the two-hop join chain declines during translation, so nothing is logged and the baseline
-        // is empty on every EF major - matching the main-bound line. Hence no `#if` here either.
+        // Fails: GroupBy issue EF-149. The two-hop join chain declines during translation, so nothing is logged
+        // on any EF version.
         await AssertTranslationFailed(() => base.GroupBy_with_group_key_being_nested_navigation(async));
 
         AssertMql();
@@ -2093,9 +2077,6 @@ Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$project" : { "_ctorArg0" : 
 
     public override async Task GroupBy_Property_Select_Count_with_predicate(bool async)
     {
-        // EF-322 SP3: the EF-149 gap this was pinning was the predicated Count itself
-        // (g.Count(o => ...)), which NativeGroupByBinder.TryBindAccumulator now translates via
-        // TryTranslateAccumulatorCondition — this now succeeds in both modes instead of hard-failing.
         await base.GroupBy_Property_Select_Count_with_predicate(async);
 
         AssertMql(
@@ -2106,9 +2087,6 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : { "$cond" : { "if
 
     public override async Task GroupBy_Property_Select_LongCount_with_predicate(bool async)
     {
-        // EF-322 SP3: the EF-149 gap this was pinning was the predicated Count itself
-        // (g.LongCount(o => ...)), which NativeGroupByBinder.TryBindAccumulator now translates via
-        // TryTranslateAccumulatorCondition — this now succeeds in both modes instead of hard-failing.
         await base.GroupBy_Property_Select_LongCount_with_predicate(async);
 
         AssertMql(
@@ -2342,14 +2320,8 @@ Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A"
 
     public override async Task Group_by_column_project_constant(bool async)
     {
-        // EF-322 SP4: the EF-149 gap this was pinning was the zero-accumulator "bare body" decline, which
-        // covered ANY bare Select body (including a plain constant like `e => 42`), not just a bare g.Key
-        // read. SP4 narrowed that decline to bare KEY members only (isBareBodyKeyMember), so a bare constant
-        // projection is no longer declined at that gate — but reaching a decline-free gate is not enough on
-        // its own: the bare constant still needs a translator that will actually accept it. That is SP4's
-        // NEW TryTranslateGroupProjectionExpression, whose fallthrough to translator.TryTranslateValue is what
-        // accepts the bare constant `42` once the narrowed gate lets the bare body through. Both causes are
-        // necessary; either alone still declines. This test now succeeds as a side effect of the two together.
+        // Native via two pieces: the bare-body decline applies only to bare key members (isBareBodyKeyMember),
+        // and TryTranslateGroupProjectionExpression falls through to TryTranslateValue to accept the constant.
         await base.Group_by_column_project_constant(async);
 
         AssertMql(
@@ -2487,16 +2459,10 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "Sum" : { "$sum" : { "$add" : ["$_i
     //AssertMql(" ");
     public override async Task Complex_query_with_group_by_in_subquery5(bool async)
     {
-        // Fails: GroupBy issue EF-149. The accepted-type list stays widened at THIS call site (the file-wide
-        // shadow remains strict elsewhere): for this unsupported shape the driver's
-        // ConstantExpressionToAggregationExpressionTranslator tries to BSON-serialize the un-inlined
-        // MongoQuery<Customer,Customer> subquery constant and dies inside BsonClassMap.Freeze(), so a
-        // TRANSLATION error surfaces as a SERIALIZATION one. Per AGENTS.md the exception type of an
-        // unsupported operation is not part of the contract, so this is accepted rather than chased.
-        //
-        // What DID change: the EF10 arm used to record one logged statement ("OrderDetails.") because the
-        // outer collection was reached before the failure. It no longer is, so the baseline is empty on every
-        // EF major and the `#if` is gone - matching the main-bound line.
+        // Fails: GroupBy issue EF-149. The accepted types stay widened here: the driver tries to BSON-serialize
+        // the un-inlined MongoQuery<Customer,Customer> subquery constant and fails in BsonClassMap.Freeze(), so
+        // a translation error surfaces as a serialization one. The exception type of an unsupported shape isn't
+        // contract.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.Complex_query_with_group_by_in_subquery5(async),
             typeof(ArgumentException), typeof(FormatException), typeof(BsonSerializationException));
@@ -2696,23 +2662,13 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "Sum" : { "$sum" : { "$add" : ["$_i
     private static async Task AssertGroupByUnsupported(Func<Task> query)
         => await AssertTranslationFailed(query);
 
-    // Shadows the base helper: a GroupBy shape the native translator does not support must fail as a
-    // *translation* failure, but the exact exception depends on the query mode and how far the driver-LINQ
-    // fallback gets. Under MongoQueryMode.NativeOnly the provider throws NativeTranslationNotSupportedException;
-    // under the default Native mode it falls back to driver-LINQ, which surfaces an EF InvalidOperationException
-    // (CoreStrings.TranslationFailed or an internal "VisitChildren" guard) or a driver translation exception
-    // (ExpressionNotSupportedException / ArgumentException / FormatException). All of these are accepted here.
-    // Data-assertion failures (Xunit assertion exceptions) are deliberately NOT accepted, so a future
-    // wrong-data regression in the fallback path still turns the test red rather than being masked.
-    // ArgumentException (incl. its ArgumentOutOfRangeException subtype) and FormatException are required, not
-    // speculative: e.g. GroupJoin_GroupBy_Aggregate* and Key_plus_key_in_projection genuinely throw
-    // ArgumentException ("Property ... is not defined for type IGrouping<...>") from the driver-LINQ
-    // fallback; GroupBy_skip_0_take_0_aggregate throws ArgumentOutOfRangeException ('limit'); and
-    // GroupBy_select_grouping_list/_array/_composed_list*, GroupBy_complex_key_aggregate,
-    // GroupBy_aggregate_projecting_conditional_expression, GroupBy_with_group_key_being_navigation, and
-    // several other GroupBy_* shapes throw FormatException while deserializing the fallback's driver-LINQ
-    // result. Verified empirically (EF-344 follow-up): narrowing this set to the three "clean" types turns
-    // 21 currently-green tests red, so the breadth stays.
+    // Shadows the base helper: an unsupported GroupBy shape must fail as a translation failure.
+    // NativeOnly throws NativeTranslationNotSupportedException; under Native the driver-LINQ fallback throws an
+    // EF InvalidOperationException or a driver ExpressionNotSupportedException / ArgumentException /
+    // FormatException. ArgumentException (e.g. GroupJoin_GroupBy_Aggregate*, GroupBy_skip_0_take_0_aggregate)
+    // and FormatException (fallback deserialization in several GroupBy_* shapes) are needed — narrowing the set
+    // fails ~21 tests. Xunit assertion exceptions are not accepted, so a fallback wrong-data regression still
+    // fails.
     protected new static Task AssertTranslationFailed(Func<Task> query)
         => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             query, typeof(ArgumentException), typeof(FormatException));

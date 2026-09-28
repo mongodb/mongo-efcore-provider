@@ -29,29 +29,15 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// Differential-correctness functional test (real DB) for the native-join-scope-nested-projection design
-/// (<c>docs/superpowers/specs/2026-09-08-native-join-scope-nested-projection-design.md</c>): a nested
-/// anonymous-projection member sourced from a reference-Include join scope —
-/// <c>new { CustomerInfo = new { Name = o.Customer!.Name } }</c> over <c>Orders.Include(o => o.Customer)</c>
-/// — matches an in-memory LINQ oracle, including the UNMATCHED-FK (dangling reference, no matching Customer
-/// document) case. Since a reference Include over an OPTIONAL navigation lowers to a LEFT-OUTER
-/// <c>$lookup</c>/<c>$unwind</c>, the unmatched row is exactly where a native-vs-fallback bug in the nested
-/// leaf's dotted-path read (<c>BsonBinding.CreateGetPropertyValueAtPath</c>'s absent-intermediate-segment
-/// handling) would most likely hide — a REQUIRED navigation would just drop that row via an inner unwind,
-/// never exercising the null-nested-leaf path at all.
+/// A nested anonymous member sourced from a reference-Include join scope
+/// (<c>new { CustomerInfo = new { Name = o.Customer!.Name } }</c>) matches an in-memory oracle, including a
+/// dangling FK. The optional navigation lowers to a left-outer <c>$unwind</c>, so the unmatched row exercises the
+/// null-nested-leaf path of <c>BsonBinding.CreateGetPropertyValueAtPath</c>; a required one would drop it.
 /// </summary>
 /// <remarks>
-/// The oracle is NOT built by literally executing <c>selector</c> against a plain in-memory object graph
-/// with a null <c>Customer</c> navigation: <c>o.Customer!.Name</c>'s null-forgiving <c>!</c> operator emits
-/// no runtime null-check at all (it is a compile-time-only warning suppression), so compiling and running
-/// that exact expression tree via <c>IQueryable</c>-over-<c>List&lt;T&gt;</c> (which just runs the compiled
-/// delegate — no EF null-propagating SQL/MQL translation is involved) would throw
-/// <see cref="NullReferenceException"/> for the unmatched row, not produce <see langword="null"/>. EF's own
-/// translation of this exact shape against a LEFT-OUTER join is what makes an absent join match propagate as
-/// null instead of throwing — that translated behavior is precisely the thing under test, so the oracle
-/// instead performs the left-outer join explicitly with <c>GroupJoin</c>/<c>DefaultIfEmpty</c> (ordinary,
-/// well-understood LINQ-to-Objects semantics, sharing no code with the provider) and applies the SAME nested
-/// anonymous shape to the joined pair.
+/// The oracle does an explicit <c>GroupJoin</c>/<c>DefaultIfEmpty</c> rather than running <c>selector</c> over
+/// objects: <c>o.Customer!.Name</c> throws <see cref="NullReferenceException"/> in LINQ-to-Objects, while EF's
+/// translation propagates null, which is the behavior under test.
 /// </remarks>
 [XUnitCollection("QueryTests")]
 public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture database)
@@ -79,11 +65,8 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
         Gold = 1
     }
 
-    // The exact motivating shape from the design doc, adapted to this project's model: a top-level scalar
-    // sibling (OrderNo, off the query root) alongside a NESTED anonymous member (CustomerInfo) whose own
-    // member (Name) is sourced from the join's INNER side (Customer, an optional/nullable reference
-    // navigation reached via Include). Depth-1 join scope, single level of nesting — squarely Design §"in
-    // scope (v1)".
+    // A root scalar sibling beside a nested member sourced from the optional Include's inner side; depth-1 scope,
+    // one level of nesting.
     private static readonly Expression<Func<Order, object>> Selector =
         o => new { o.OrderNo, CustomerInfo = new { o.Customer!.Name } };
 
@@ -101,9 +84,7 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
         var matchedCustomerId = ObjectId.GenerateNewId();
         var matchedOrderId = ObjectId.GenerateNewId();
         var unmatchedOrderId = ObjectId.GenerateNewId();
-        // A dangling FK: generated but NEVER inserted into the Customers collection, so the $lookup this
-        // reference Include emits genuinely finds no match for it (not merely null-CustomerId, which would
-        // be a different, less interesting case — the $lookup itself still runs and fails to match).
+        // A dangling FK: never inserted, so the $lookup runs and finds no match (unlike a null CustomerId).
         var danglingCustomerId = ObjectId.GenerateNewId();
 
         using (var seed = new JoinScopeDbContext(database, ordersName, customersName, MongoQueryMode.DriverLinq))
@@ -122,9 +103,7 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
             .Select(Selector)
             .ToList();
 
-        // The independent oracle: an ordinary LINQ-to-Objects left-outer join (see the class remarks for why
-        // this — not a literal re-execution of Selector against a null Customer — is the correct oracle
-        // construction here), applying the SAME nested anonymous shape to the (Order, Customer?) pair.
+        // Left-outer join in LINQ-to-Objects (see class remarks), applying the same nested shape.
         var orderSeeds = new[]
         {
             new { Id = matchedOrderId, OrderNo = 1, CustomerId = (ObjectId?)matchedCustomerId },
@@ -140,13 +119,10 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
             .ToList();
 
         Assert.Equal(2, actual.Count);
-        // Structural equality of the (compiler-unified, since the shapes match exactly) anonymous type —
-        // proves the native result agrees with the oracle on BOTH rows, not merely on row count.
+        // Structural equality of the compiler-unified anonymous type: values on both rows, not just count.
         Assert.Equal(oracle, actual);
 
-        // Named-value assertions too, so a bug that happened to preserve anonymous-type Equals (e.g. via a
-        // coincidentally-matching hash/serialization round trip) can't hide: read the actual matched/dangling
-        // values back explicitly.
+        // Named-value checks too, in case anonymous-type Equals hides a bug.
         dynamic matchedRow = actual[0];
         dynamic unmatchedRow = actual[1];
         Assert.Equal(1, (int)matchedRow.OrderNo);
@@ -156,11 +132,7 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
     }
 
     // ---------------------------------------------------------------------------------------------------
-    // End-to-end coverage for the ACCEPT SET of the binder's nested arm (final-review Finding 2). Before the
-    // final-review fix the arm accepted any MongoExpression NativeJoinScopeTranslator.TryTranslateValue
-    // returned for a nested member, and only ONE of those shapes (an Inner-sourced plain field) was ever
-    // executed against a database — which is exactly why the other two shapes shipped as compile-time
-    // InvalidCastExceptions in the DEFAULT Native mode. Every shape the arm can now see has a real-DB test:
+    // End-to-end coverage of the nested arm's accept set; each shape it can see runs against a real database:
     //   * Inner-sourced plain field        -> ACCEPTED, Nested_projection_over_reference_include_matches_oracle
     //   * computed (MongoBinaryExpression) -> DECLINES, Nested_projection_with_computed_member_falls_back
     //   * Outer-sourced (MongoOuterField)  -> DECLINES, Nested_projection_with_outer_sourced_member_falls_back
@@ -169,17 +141,10 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
     // ---------------------------------------------------------------------------------------------------
 
     /// <summary>
-    /// A nested member over a VALUE-CONVERTED property (<c>Tier</c>, stored as its enum NAME) DECLINES —
-    /// and, unlike the two cases below, it declines UPSTREAM of the nested arm: the join-scope value
-    /// translator refuses a value-converted member for a FLAT join-scope leaf too (measured: an ordinary
-    /// <c>new { C = x.Inner.ConvertedProperty }</c> over the same join is <c>NativeRoute.Fallback</c>,
-    /// while the identical projection of an unconverted property is <c>NativeRoute.Projection</c>). That is
-    /// pre-existing behavior this feature neither introduced nor widened, and it is why the nested arm needs
-    /// no <c>NativeGroupByBinder.HasDefaultKeySerialization</c> guard of its own (the guard its sibling
-    /// <c>NativeProjectionBinder.TryGetDocumentConstructionLeaf</c> applies): no value-converted member can
-    /// reach the arm to be guarded. This test exists so that stops being an unverified claim — if the
-    /// translator is ever widened to admit converted members, this test flips to a failure and the guard
-    /// question must be re-answered rather than silently inherited.
+    /// A nested member over a value-converted property (<c>Tier</c>, stored as its enum name) declines upstream of
+    /// the nested arm: the join-scope value translator refuses converted members for flat leaves too. That's why
+    /// the arm has no <c>HasDefaultKeySerialization</c> guard; if the translator is ever widened, this test fails
+    /// and the guard question must be revisited.
     /// </summary>
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -192,11 +157,9 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
             expected: new { OrderNo = 1, CustomerInfo = new { Name = "Alfreds", Tier = CustomerTier.Gold } });
 
     /// <summary>
-    /// A COMPUTED nested member (<c>o.OrderNo + o.Customer!.Rank</c>) is NOT natively representable by the
-    /// nested arm — it translates to a <c>MongoBinaryExpression</c>, which the shared read side's
-    /// <c>MongoFieldExpression</c> cast cannot accept. It must DECLINE (fall back), not crash. This is the
-    /// exact shape the final review reproduced as an <see cref="InvalidCastException"/> at query-compile
-    /// time in the default <see cref="MongoQueryMode.Native"/> mode.
+    /// A computed nested member (<c>o.OrderNo + o.Customer!.Rank</c>) is a <c>MongoBinaryExpression</c>, which the
+    /// shared read side's <c>MongoFieldExpression</c> cast can't accept; it must fall back, not throw
+    /// <see cref="InvalidCastException"/> at compile time.
     /// </summary>
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -209,12 +172,9 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
             expected: new { OrderNo = 1, Wrap = new { Combo = 1 + 7 } });
 
     /// <summary>
-    /// An OUTER-sourced nested member (<c>Copy = new { N = o.OrderNo }</c> — no Inner access inside the
-    /// nested body) likewise DECLINES: the two-scope translator resolves an outer-rooted access to a
-    /// <c>MongoOuterFieldExpression</c>, a sealed SIBLING of <c>MongoFieldExpression</c>, which the same read
-    /// side cast rejects. The sibling top-level <c>o.Customer!.Name</c> leaf is what forces the join to exist
-    /// at all (a projection that never touches the navigation would make EF drop the Include outright, so
-    /// there would be no join scope to bind).
+    /// An outer-sourced nested member (<c>Copy = new { N = o.OrderNo }</c>) is a <c>MongoOuterFieldExpression</c>,
+    /// rejected by the same cast; falls back. The sibling <c>o.Customer!.Name</c> leaf keeps the join alive (EF
+    /// drops an Include the projection never touches).
     /// </summary>
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -227,11 +187,8 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
             expected: new { Name = "Alfreds", Copy = new { N = 1 } });
 
     /// <summary>
-    /// Shared body for the two DECLINE cases: seeds one matched Order/Customer pair, then asserts that
-    /// <see cref="MongoQueryMode.NativeOnly"/> THROWS (proving the shape really does leave the native path —
-    /// MQL shape alone could not prove this, see Query/AGENTS.md) while the default
-    /// <see cref="MongoQueryMode.Native"/> still returns the correct row via the driver-LINQ fallback, i.e.
-    /// exactly the behavior this shape had before the nested arm existed.
+    /// Shared body for the decline cases: <see cref="MongoQueryMode.NativeOnly"/> throws (the only reliable proof
+    /// of leaving the native path) while <see cref="MongoQueryMode.Native"/> returns the correct row via fallback.
     /// </summary>
     private void AssertNestedLeafDeclinesButStillReturnsCorrectRows(
         string testName, MongoQueryMode mode, Expression<Func<Order, object>> selector, object expected)
@@ -258,8 +215,7 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
 
         var actual = db.Set<Order>().Include(o => o.Customer).Select(selector).ToList();
 
-        // Structural equality against a compiler-unified anonymous instance of the same shape — proves the
-        // fallback produced the right VALUES, not merely the right row count.
+        // Structural equality: right values, not just right row count.
         Assert.Equal([expected], actual);
     }
 
@@ -293,11 +249,8 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
         {
             base.OnModelCreating(modelBuilder);
 
-            // Tier is deliberately VALUE-CONVERTED (stored as its enum NAME, not its numeric value) so
-            // Nested_projection_with_value_converted_member_falls_back can pin that such a member never
-            // reaches the binder's nested arm at all. See the "DELIBERATELY NOT applying" remarks on that arm
-            // in NativeJoinScopeProjectionBinder for why it therefore needs no
-            // NativeGroupByBinder.HasDefaultKeySerialization guard.
+            // Tier is value-converted (stored as its enum name) so
+            // Nested_projection_with_value_converted_member_falls_back can pin that it never reaches the nested arm.
             modelBuilder.Entity<Customer>().ToCollection(_customersCollection)
                 .Property(c => c.Tier).HasConversion<string>();
             modelBuilder.Entity<Order>(b =>

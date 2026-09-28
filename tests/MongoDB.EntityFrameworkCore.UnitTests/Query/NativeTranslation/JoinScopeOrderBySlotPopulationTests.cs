@@ -26,18 +26,15 @@ using MongoDB.EntityFrameworkCore.UnitTests.TestUtilities;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// EF-322, Phase 2 Group A: proves <see cref="NativeSlotPopulator"/>'s new conditional ORDER BY sort-key arm
-/// (a bare nav-null-check ternary reaching a single-level join scope's Inner side, e.g.
-/// <c>o =&gt; o.Customer != null ? o.Customer.City : ""</c>) actually resolves against a REAL, EF-generated
-/// <c>TransparentIdentifier&lt;TOuter,TInner&gt;</c> parameter — not a hand-mocked one. Harness deliberately
-/// copied from <c>NativeJoinScopeProjectionBinderTests.TranslateJoinQuery</c> (see that file's own remarks for
-/// why a hand-declared "Outer"/"Inner" fixture would exercise nothing real).
+/// <see cref="NativeSlotPopulator"/>'s conditional sort-key arm (a nav-null-check ternary over a single-level
+/// join scope's Inner side, e.g. <c>o =&gt; o.Customer != null ? o.Customer.City : ""</c>), exercised against a
+/// real EF-generated <c>TransparentIdentifier&lt;TOuter,TInner&gt;</c>. Harness copied from
+/// <c>NativeJoinScopeProjectionBinderTests.TranslateJoinQuery</c>.
 /// </summary>
 public class JoinScopeOrderBySlotPopulationTests
 {
-    // Real CLR navigation properties are required, not decorative — TranslateJoinCore's JoinScope eligibility
-    // resolves the join's navigation via IEntityType.GetNavigations(), which a convention-only shadow FK does
-    // not satisfy. Same reasoning as JoinScopeWhereSlotPopulationTests/NativeJoinScopeProjectionBinderTests.
+    // Real CLR navigations are required: JoinScope eligibility resolves the join's navigation via
+    // IEntityType.GetNavigations(), which a shadow FK alone doesn't satisfy.
     private class Owner
     {
         public int Id { get; set; }
@@ -77,14 +74,8 @@ public class JoinScopeOrderBySlotPopulationTests
     [Fact]
     public void Conditional_sort_key_over_an_optional_reference_left_join_goes_native()
     {
-        // `(r, o) => o != null ? o.Name : ""` as an OrderBy key after a LeftJoin — mirrors
-        // NativeJoinScopeProjectionBinderTests.Binds_a_bare_nav_null_check_ternary_over_a_left_join's SELECT
-        // shape, but as a sort key instead of a projection. Order-outer/Owner-inner (not the "natural" reading
-        // order) is DELIBERATE: RebindInnerShaperToOuterQuery resolves a join's Navigation by searching the
-        // OUTER entity's own navigation set first for one matching the outer key selector's FK property AND
-        // IsOnDependent — i.e. it only ever finds a REFERENCE nav when the OUTER side is the dependent
-        // (FK-holding) entity. Owner-outer/Order-inner resolves to Owner.Orders — a COLLECTION nav (tested
-        // separately below) — not the reference nav Order.Owner this test targets.
+        // Order must be the outer side: RebindInnerShaperToOuterQuery finds a reference navigation only when
+        // the outer entity is the dependent. Owner-outer resolves to the collection Owner.Orders (tested below).
         var mongoQ = TranslateJoinQuery((owners, orders) =>
             orders.GroupJoin(owners, r => r.OwnerId, o => o.Id, (r, os) => new { r, os })
                 .SelectMany(x => x.os.DefaultIfEmpty(), (x, o) => new { x.r, o })
@@ -109,10 +100,8 @@ public class JoinScopeOrderBySlotPopulationTests
     [Fact]
     public void Outer_key_then_conditional_inner_key_land_in_one_sort_stage()
     {
-        // An earlier Outer-only key (r.Total) recorded in PipelineOps as a MongoSortOp, followed by a
-        // ThenBy reaching the Inner side via the new conditional arm, must relocate the WHOLE existing sort
-        // into PostJoinOps rather than leaving two separate $sort stages — see
-        // DeferTrailingSortPastConfirmedJoin's own remarks for why splitting them is a silent wrong-order bug.
+        // The earlier outer-only key must move into PostJoinOps with the inner ThenBy; two separate $sort
+        // stages would silently mis-order (see DeferTrailingSortPastConfirmedJoin).
         var mongoQ = TranslateJoinQuery((owners, orders) =>
             orders.GroupJoin(owners, r => r.OwnerId, o => o.Id, (r, os) => new { r, os })
                 .SelectMany(x => x.os.DefaultIfEmpty(), (x, o) => new { x.r, o })
@@ -128,19 +117,12 @@ public class JoinScopeOrderBySlotPopulationTests
     [Fact]
     public void Conditional_sort_key_over_a_required_reference_join_declines()
     {
-        // A plain (inner) Join for a REQUIRED reference nav: "Inner != null" is unconditionally true (a
-        // dropped, unmatched row never reaches the sort at all), so it is not a real check — the arm must
-        // decline, not silently treat it as one. Mirrors TryBindConditionalProjection's own IsLeftOuter guard,
-        // proven independently here since this is a different call site.
+        // After an inner Join, "Inner != null" is always true, so it isn't a real null check; the arm must
+        // decline (same IsLeftOuter guard as TryBindConditionalProjection, at a different call site).
         var mongoQ = TranslateJoinQuery((owners, orders) =>
             orders.Join(owners, r => r.OwnerId, o => o.Id, (r, o) => new { r, o })
                 .OrderBy(x => x.o != null ? x.o.Name : ""));
 
-        // The join itself is a plain required Join (Order.Owner is non-nullable via its FK), so the ternary
-        // must decline the conditional arm and fall through to the "not natively representable" catch-all —
-        // proven here by the query staying off the native OrderBy path (no MongoSortOp with a conditional
-        // key recorded); the whole query's Route ends up Fallback, which NativeOnly-mode functional tests
-        // cover end-to-end. This unit test only needs to prove the ARM itself declines for this shape.
         Assert.NotNull(mongoQ.Select.JoinScope);
         Assert.False(mongoQ.Select.JoinScope!.Levels[0].IsLeftOuter);
         Assert.Empty(mongoQ.Select.PostJoinOps);
@@ -150,10 +132,8 @@ public class JoinScopeOrderBySlotPopulationTests
     [Fact]
     public void Conditional_sort_key_over_a_collection_navigation_join_declines()
     {
-        // Owner-outer/Order-inner resolves to Owner.Orders — a COLLECTION navigation (Lookup.IsReference is
-        // false) — not a reference nav. A collection has no single "is it null" answer once flattened by
-        // SelectMany(DefaultIfEmpty()), so this is a DIFFERENT degenerate case from the required-Join test
-        // above (different guard: Navigation.IsCollection, not IsLeftOuter) and needs its own proof.
+        // Owner-outer resolves to the collection Owner.Orders, which has no single "is it null" answer once
+        // flattened; declines via the Navigation.IsCollection guard, not IsLeftOuter.
         var mongoQ = TranslateJoinQuery((owners, orders) =>
             owners.GroupJoin(orders, o => o.Id, r => r.OwnerId, (o, rs) => new { o, rs })
                 .SelectMany(x => x.rs.DefaultIfEmpty(), (x, r) => new { x.o, r })

@@ -2663,12 +2663,6 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Ship
     public override async Task Select_expression_other_to_string(bool async)
         => await base.Select_expression_other_to_string(async);
 
-    // EF-322: these used to be driver-LINQ-only (the native translator had no DateTime.AddXxx support at
-    // all), and the driver-LINQ shaper lost the .NET DateTimeKind on the round trip (BSON dates always
-    // deserialize as UTC), so the base test's exact-value comparison used to fail. Now that AddXxx goes
-    // native, our OWN shaper (not the driver's) reads the result back, and it agrees with .NET — no
-    // divergence to work around.
-
     public override async Task Select_expression_date_add_year(bool async)
     {
         await base.Select_expression_date_add_year(async);
@@ -4130,11 +4124,9 @@ Customers.{ "$match" : { } }
 
     public override async Task Throws_on_concurrent_query_first(bool async)
     {
-        // EF-252 is fixed for this shape (measured during EF-322): the blocking query is
-        // context.Customers.Select(c => Process(c, ...)), which the native client-method-wrap arm now routes
-        // through the native pipeline instead of the driver-LINQ fallback; the native path's per-row
-        // concurrency-detector guard (QueryingEnumerable) correctly holds for the duration of Process()'s
-        // block, so the concurrent second query now genuinely throws ConcurrentMethodInvocation as expected.
+        // The blocking query (Customers.Select(c => Process(c, ...))) runs natively, and the native path's
+        // per-row concurrency-detector guard (QueryingEnumerable) holds during Process(), so the concurrent
+        // second query throws ConcurrentMethodInvocation.
         await base.Throws_on_concurrent_query_first(async);
 
         if (MongoSpecTestHelpers.IsNativeOnly)
@@ -4301,7 +4293,7 @@ Customers.
 
     public override async Task Throws_on_concurrent_query_list(bool async)
     {
-        // EF-252 is fixed for this shape — see Throws_on_concurrent_query_first's own remarks.
+        // See Throws_on_concurrent_query_first.
         await base.Throws_on_concurrent_query_list(async);
 
         if (MongoSpecTestHelpers.IsNativeOnly)
@@ -4738,14 +4730,10 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
 
     public override async Task SelectMany_after_client_method(bool async)
     {
-        // EF-347 slice 5: the base test's own AssertTranslationFailed expects a strict
-        // InvalidOperationException, so base cannot be wrapped directly here. Its query is replicated
-        // below (decompiled from NorthwindMiscellaneousQueryTestBase.SelectMany_after_client_method,
-        // Microsoft.EntityFrameworkCore.Specification.Tests 10.0.8) and wrapped in the lenient helper:
-        // the underlying cross-collection reference SelectMany (Customer.Orders) now declines at
-        // translation time with NotSupportedException (the whole-inner-entity guard) rather than EF's
-        // generic InvalidOperationException; the shape is still unsupported, only the exception type
-        // changed.
+        // The base test's AssertTranslationFailed expects InvalidOperationException, but this cross-collection
+        // reference SelectMany (Customer.Orders) declines with NotSupportedException (the whole-inner-entity
+        // guard). Its query is replicated from NorthwindMiscellaneousQueryTestBase.SelectMany_after_client_method
+        // and wrapped in the lenient helper.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => AssertQueryScalar(
                 async,
@@ -4767,8 +4755,8 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
     public override async Task Client_OrderBy_GroupBy_Group_ordering_works(bool async)
     {
         // Fails: GroupBy issue EF-149
-        // The base test asserts EF's CoreStrings.TranslationFailed message; the native GroupBy path now
-        // surfaces a different (still-unsupported) translation failure, so assert it here leniently.
+        // The native GroupBy path throws a different translation failure than the base test's
+        // CoreStrings.TranslationFailed, so assert it leniently.
         await AssertTranslationFailed(
             () => AssertQuery(
                 async,
@@ -5380,13 +5368,9 @@ Orders.{ "$set" : { "__sort0" : { "$literal" : 8 } } }, { "$sort" : { "__sort0" 
     private static Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
         => MongoSpecTestHelpers.AssertNoMultiCollectionQuerySupportAsync(query);
 
-    // A GroupBy/aggregate shape the native translator does not support must fail as a *translation*
-    // failure, but the exact exception depends on the query mode and how far the driver-LINQ fallback
-    // gets: NativeTranslationNotSupportedException under MongoQueryMode.NativeOnly; an EF
-    // InvalidOperationException (CoreStrings.TranslationFailed or an internal guard) or a driver
-    // translation exception under the default Native mode. Data-assertion failures are NOT accepted so a
-    // future wrong-data regression still turns the test red.
-    // These three are the only exception types actually observed across the flipped GroupBy spec suites.
+    // An unsupported GroupBy/aggregate shape must fail as a translation failure: NativeTranslationNotSupportedException
+    // under NativeOnly, or an EF InvalidOperationException / driver translation exception under Native, depending
+    // on how far the fallback gets. Data-assertion failures are not accepted, so wrong-data regressions stay red.
     protected new static Task AssertTranslationFailed(Func<Task> query)
         => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 }

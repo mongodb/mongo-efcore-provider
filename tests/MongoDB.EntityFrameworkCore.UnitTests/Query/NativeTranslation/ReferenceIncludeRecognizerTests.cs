@@ -25,25 +25,17 @@ using Xunit;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// EF-392 (sibling reference Includes): <c>TryGetReferenceIncludeChain</c> replaced
-/// <c>IsSingleLevelReferenceIncludeSelector</c> to recognize N&gt;=1 nested reference Includes, not just one.
-/// The single-hop-vs-double-hop distinction from the original recognizer is preserved but reinterpreted: a
-/// double-hop <c>ti.Outer.Outer</c> base is now ADMITTED by this method alone (a pure <c>.Outer</c>* chain of
-/// any length is accepted), because that hop depth is ALSO exactly what a genuine N=2 sibling chain produces.
-/// What still rejects the user-join-with-downstream-Include shape is
-/// <c>TryConfirmReferenceIncludeChain</c>'s <c>Joins.Count != chain.Count</c> check (a different method,
-/// exercised by the functional differential tests in <c>NativeReferenceIncludeTests.cs</c>, not here) — this
-/// file only tests the STRUCTURAL recognition step in isolation.
+/// Structural recognition of reference-Include chains (<c>TryGetReferenceIncludeChain</c>) and related recognizers.
+/// A double-hop <c>ti.Outer.Outer</c> base is admitted here because a genuine N=2 sibling chain produces it too; the
+/// user-join-with-downstream-Include shape is rejected later by <c>TryConfirmReferenceIncludeChain</c>'s
+/// <c>Joins.Count != chain.Count</c> check (covered by <c>NativeReferenceIncludeTests</c>).
 /// </summary>
 public class ReferenceIncludeRecognizerTests
 {
     [Fact]
     public void Accepts_double_hop_entity_expression_as_a_length_one_chain()
     {
-        // No longer rejected by TryGetReferenceIncludeChain itself — a double hop is a valid chain base
-        // (it's what a genuine N=2 sibling chain's innermost level also produces). Disambiguating this from
-        // a user join with a downstream Include is TryConfirmReferenceIncludeChain's job (Joins.Count check),
-        // not this method's.
+        // A double hop is a valid chain base; telling it apart from a user join is TryConfirmReferenceIncludeChain's job.
         var selector = ReferenceIncludeTestTrees.Build(doubleHop: true, collectionNavigation: false);
 
         var chain = MongoQueryableMethodTranslatingExpressionVisitor.TryGetReferenceIncludeChain(selector);
@@ -105,8 +97,7 @@ public class ReferenceIncludeRecognizerTests
     [Fact]
     public void Rejects_a_reference_and_collection_combo_at_any_chain_level()
     {
-        // The OUTER level (last .Include() called) carries the collection navigation — mirrors
-        // Orders.Include(o => o.Buyer).Include(o => o.Lines) (Buyer inner, Lines outer).
+        // The outer (last-called) level is the collection: Orders.Include(o => o.Buyer).Include(o => o.Lines).
         var selector = ReferenceIncludeTestTrees.BuildSiblingChain(sameTarget: false, outerLevelIsCollection: true);
 
         Assert.Null(MongoQueryableMethodTranslatingExpressionVisitor.TryGetReferenceIncludeChain(selector));
@@ -115,9 +106,7 @@ public class ReferenceIncludeRecognizerTests
     [Fact]
     public void Mixed_recognizer_accepts_a_reference_and_collection_combo()
     {
-        // EF-392 (reference + collection combo): Orders.Include(o => o.Buyer).Include(o => o.Lines) —
-        // Buyer (reference) inner, Lines (collection) outer, the exact shape TryGetReferenceIncludeChain
-        // above declines (by design — a pure reference-only recognizer).
+        // Buyer (reference) inner, Lines (collection) outer — the shape the pure-reference recognizer declines.
         var selector = ReferenceIncludeTestTrees.BuildSiblingChain(sameTarget: false, outerLevelIsCollection: true);
 
         var matched = MongoQueryableMethodTranslatingExpressionVisitor.TryGetMixedReferenceAndCollectionIncludeChain(
@@ -171,10 +160,8 @@ public class ReferenceIncludeRecognizerTests
     [Fact]
     public void Rejects_a_ThenInclude_reached_through_an_embedded_hop()
     {
-        // Buyer.Address(owned).Region(real) — EF-407's shape. Deliberately kept declining, unchanged
-        // scope: a real navigation reached THROUGH an embedded hop is a different, harder combo than a
-        // real navigation reached DIRECTLY off a reference Include's target, and is not part of this
-        // slice (it already works correctly via the driver-LINQ fallback, per EF-407's investigation).
+        // Buyer.Address (owned) -> Region (real): a real navigation reached through an embedded hop stays
+        // declined (the driver-LINQ fallback handles it).
         var selector = ReferenceIncludeTestTrees.BuildThenIncludeChain(embeddedHopInBetween: true);
 
         Assert.Null(MongoQueryableMethodTranslatingExpressionVisitor.TryGetReferenceIncludeChain(selector));
@@ -183,8 +170,8 @@ public class ReferenceIncludeRecognizerTests
     [Fact]
     public void Accepts_an_embedded_hop_with_nothing_real_nested_past_it()
     {
-        // The already-shipped EF-368 shape: Buyer.Address (owned, auto-included), no further ThenInclude
-        // at all. Must keep working unchanged now that the walker also follows NavigationExpression.
+        // Buyer.Address (owned, auto-included) with nothing nested past it must keep working now that the
+        // walker follows NavigationExpression.
         var selector = ReferenceIncludeTestTrees.BuildThenIncludeChain(
             embeddedHopInBetween: true, stopAtEmbeddedHop: true);
 
@@ -199,9 +186,8 @@ public class ReferenceIncludeRecognizerTests
     [Fact]
     public void Rejects_a_collection_ThenInclude()
     {
-        // A collection ThenInclude is a MIXED (reference-chain + trailing collection) shape now, not a pure
-        // reference chain — TryGetReferenceIncludeChain still (correctly) declines it; the shape itself is
-        // recognized by Mixed_recognizer_accepts_a_reference_chain_with_a_trailing_collection_ThenInclude below.
+        // A collection ThenInclude is a mixed shape; see
+        // Mixed_recognizer_accepts_a_reference_chain_with_a_trailing_collection_ThenInclude.
         var selector = ReferenceIncludeTestTrees.BuildThenIncludeChain(
             embeddedHopInBetween: false, thenIncludeIsCollection: true);
 
@@ -211,10 +197,8 @@ public class ReferenceIncludeRecognizerTests
     [Fact]
     public void Mixed_recognizer_accepts_a_reference_chain_with_a_trailing_collection_ThenInclude()
     {
-        // Orders.Include(o => o.Customer.Orders) / Orders.Include(o => o.Customer).ThenInclude(c => c.Orders)
-        // — a reference Include whose ThenInclude is a collection navigation, i.e. Include_multi_level_
-        // reference_and_collection_predicate's shape. Mirrors the already-recognized SIBLING reference +
-        // collection combo, but the collection is reached transitively via NavigationExpression instead.
+        // Orders.Include(o => o.Customer).ThenInclude(c => c.Orders): the collection is reached transitively via
+        // NavigationExpression rather than as a sibling.
         var selector = ReferenceIncludeTestTrees.BuildThenIncludeChain(
             embeddedHopInBetween: false, thenIncludeIsCollection: true);
 
@@ -230,9 +214,8 @@ public class ReferenceIncludeRecognizerTests
     [Fact]
     public void Mixed_recognizer_rejects_a_further_ThenInclude_past_a_collection_ThenInclude()
     {
-        // A collection ThenInclude must be the TERMINAL hop of its chain — a further ThenInclude nested
-        // past it (e.g. Include(o => o.Customer).ThenInclude(c => c.Orders).ThenInclude(o => o.Next)) has
-        // no recognized lowering shape and must decline the whole chain, not just silently drop the extra hop.
+        // A collection ThenInclude must be terminal; a further hop past it must decline the whole chain rather than
+        // silently drop the hop.
         var selector = ReferenceIncludeTestTrees.BuildThenIncludeChain(
             embeddedHopInBetween: false, thenIncludeIsCollection: true, collectionThenIncludeHasFurtherHop: true);
 
@@ -249,12 +232,8 @@ public class ReferenceIncludeRecognizerTests
     [Fact]
     public void Mixed_recognizer_rejects_a_second_collection_reached_via_two_different_ThenInclude_levels()
     {
-        // At most ONE collection across the whole chain. TryWalkIncludeChain's collectionLevel != null guard
-        // already covers sibling-vs-sibling (Mixed_recognizer... combo tests above); this pins the SAME guard
-        // firing when the SECOND collection is reached transitively, off a DIFFERENT sibling reference level's
-        // own ThenInclude chain, rather than off the sibling axis directly — e.g.
-        // Orders.Include(o => o.Customer.Orders).Include(o => o.SecondCustomer.Orders) (both reference
-        // siblings target Customer, each carrying its own collection ThenInclude to the SAME nav).
+        // At most one collection across the chain, including when the second is reached via a different sibling's
+        // ThenInclude: Orders.Include(o => o.Customer.Orders).Include(o => o.SecondCustomer.Orders).
         var selector = ReferenceIncludeTestTrees.BuildTwoSiblingReferencesEachWithOwnCollectionThenInclude();
 
         Assert.Null(MongoQueryableMethodTranslatingExpressionVisitor.TryGetReferenceIncludeChain(selector));
@@ -267,14 +246,10 @@ public class ReferenceIncludeRecognizerTests
         Assert.Null(collectionLevel);
     }
 
-    // EF-322 (collection Include over a plain join scope): Customers.Include(c => c.Orders)
-    // .Join(Orders, ...).Where(...).OrderBy(...).Select(c => c) — nav-expansion's trailing selector is
-    // ti => Include(ti.Outer, Orders), a PURE collection Include (no reference sibling) sitting directly over
-    // the join's TransparentIdentifier, rather than over the bare parameter IsSingleLevelCollectionIncludeSelector
-    // expects. This is the fourth partition none of the three existing recognizers admit: IsSingleLevelCollection
-    // IncludeSelector requires EntityExpression == the bare parameter (no join); TryGetReferenceIncludeChain
-    // declines outright on any collection level; TryGetMixedReferenceAndCollectionIncludeChain requires at least
-    // one reference level alongside the collection one.
+    // Customers.Include(c => c.Orders).Join(Orders, ...)...Select(c => c) yields ti => Include(ti.Outer, Orders):
+    // a pure collection Include over a join scope. None of the other recognizers admit it —
+    // IsSingleLevelCollectionIncludeSelector needs a bare parameter, TryGetReferenceIncludeChain declines any
+    // collection level, and the mixed recognizer needs a reference level too.
     [Fact]
     public void Collection_include_recognizer_accepts_a_bare_collection_include_over_a_join_scope()
     {
@@ -289,7 +264,7 @@ public class ReferenceIncludeRecognizerTests
     [Fact]
     public void Collection_include_recognizer_rejects_a_bare_parameter_collection_include()
     {
-        // IsSingleLevelCollectionIncludeSelector's own shape (no join at all) — must stay partitioned away.
+        // IsSingleLevelCollectionIncludeSelector's shape (no join) must stay partitioned away.
         var navigation = ReferenceIncludeTestTrees.GetCollectionNavigation();
         var param = Expression.Parameter(navigation.DeclaringEntityType.ClrType, "c");
         var include = new IncludeExpression(param, param, navigation);
@@ -310,11 +285,8 @@ public class ReferenceIncludeRecognizerTests
 }
 
 /// <summary>
-/// Builds the tree shapes EF's nav-expansion (or a user-authored join) produces ahead of a single-level
-/// reference/collection Include, or a chain of sibling reference Includes. Needs real <see cref="INavigation"/>s,
-/// so it stands up a throwaway model — follows the same <see cref="SingleEntityDbContext"/> +
-/// <c>HasOne</c>/<c>HasMany</c> pattern <c>MongoPipelineFactoryTests.ReferenceNavigation</c>/<c>ChildrenNavigation</c>
-/// already use in this directory, rather than inventing a second model-construction approach.
+/// Builds the trees nav-expansion (or a user join) produces ahead of reference/collection Includes. Uses a throwaway
+/// <see cref="SingleEntityDbContext"/> model for real <see cref="INavigation"/>s.
 /// </summary>
 internal static class ReferenceIncludeTestTrees
 {
@@ -341,10 +313,8 @@ internal static class ReferenceIncludeTestTrees
         public List<Order>? RelatedOrders { get; set; }
     }
 
-    // For BuildThenIncludeChain: an entirely separate model — a real (non-embedded) reference navigation
-    // off Mid, a collection navigation off Mid, and an embedded (owned) hop on Mid wrapping a further real
-    // navigation to Leaf — mirrors Buyer.Address(owned).Region(real) from EF-407. Kept independent of
-    // Order/Customer/Vendor above so it can't perturb the model those other builders already rely on.
+    // Separate model for BuildThenIncludeChain: a real reference, a collection, and an owned hop wrapping a real
+    // navigation off Mid (mirrors Buyer.Address.Region). Kept apart so it can't perturb the model above.
     private class Leaf
     {
         public int Id { get; set; }
@@ -374,8 +344,7 @@ internal static class ReferenceIncludeTestTrees
         public Mid? Mid { get; set; }
     }
 
-    // Mirrors the shape of EF's own internal TransparentIdentifier<TOuter, TInner> closely enough for the
-    // recognizer's structural checks: an Outer/Inner pair, and a type name starting with "TransparentIdentifier".
+    // Close enough to EF's TransparentIdentifier<TOuter, TInner> for the recognizers: Outer/Inner and the type name.
     private class TransparentIdentifier<TOuter, TInner>
     {
         public TOuter Outer { get; set; } = default!;
@@ -411,9 +380,7 @@ internal static class ReferenceIncludeTestTrees
         return model.FindEntityType(typeof(Order))!.FindNavigation(navigationName)!;
     }
 
-    /// <summary>Standalone collection navigation, for building an <see cref="IncludeExpression"/> directly over
-    /// a bare parameter (no join scope) — the shape <see cref="GetNavigation"/>'s own model doesn't need to share
-    /// with the join-scope trees above.</summary>
+    /// <summary>A collection navigation, for an <see cref="IncludeExpression"/> over a bare parameter.</summary>
     public static INavigation GetCollectionNavigation() => GetNavigation(collectionNavigation: true);
 
     /// <summary>
@@ -434,8 +401,8 @@ internal static class ReferenceIncludeTestTrees
             return Expression.Lambda(include, param);
         }
 
-        // Double hop: ti : TransparentIdentifier<TransparentIdentifier<Order, object>, Customer>
-        // so ti.Outer.Outer resolves to Order, exactly as a user-authored join's synthesized shape does.
+        // ti : TransparentIdentifier<TransparentIdentifier<Order, object>, Customer>, so ti.Outer.Outer is Order,
+        // as in a user-authored join.
         var innerTiType = typeof(TransparentIdentifier<Order, object>);
         var outerTiType = typeof(TransparentIdentifier<,>).MakeGenericType(innerTiType, typeof(Customer));
         var outerParam = Expression.Parameter(outerTiType, "ti");
@@ -447,17 +414,10 @@ internal static class ReferenceIncludeTestTrees
     }
 
     /// <summary>
-    /// Builds the two-sibling nav-expansion shape:
-    /// <c>ti2 =&gt; Include(Include(ti2.Outer.Outer, NavA, ti2.Outer.Inner), NavB, ti2.Inner)</c> — the
-    /// nested-<see cref="IncludeExpression"/>-via-<c>EntityExpression</c> tree
-    /// <c>Docs.Include(d =&gt; d.Author).Include(d =&gt; d.Editor)</c>/
-    /// <c>Lines.Include(l =&gt; l.Order).Include(l =&gt; l.Product)</c> compile to. When
-    /// <paramref name="sameTarget"/>, both navigations target <see cref="Customer"/> (mirrors
-    /// <c>Doc.Author</c>/<c>Doc.Editor</c> both targeting <c>Buyer</c>); otherwise NavA targets
-    /// <see cref="Customer"/> and NavB targets <see cref="Vendor"/>. When
-    /// <paramref name="outerLevelIsCollection"/>, NavB (the outer/last-called level) is the collection
-    /// navigation <c>RelatedOrders</c> instead — mirrors the "reference + collection" combo
-    /// (<c>Orders.Include(o =&gt; o.Buyer).Include(o =&gt; o.Lines)</c>), which must still be rejected.
+    /// Builds the two-sibling shape <c>ti2 =&gt; Include(Include(ti2.Outer.Outer, NavA, ti2.Outer.Inner), NavB, ti2.Inner)</c>
+    /// (e.g. <c>Lines.Include(l =&gt; l.Order).Include(l =&gt; l.Product)</c>). <paramref name="sameTarget"/> makes both
+    /// navigations target <see cref="Customer"/>; <paramref name="outerLevelIsCollection"/> makes NavB the collection
+    /// <c>RelatedOrders</c> (the reference + collection combo).
     /// </summary>
     public static LambdaExpression BuildSiblingChain(bool sameTarget, bool outerLevelIsCollection = false)
     {
@@ -488,11 +448,8 @@ internal static class ReferenceIncludeTestTrees
     }
 
     /// <summary>
-    /// Builds two sibling reference levels (both targeting <see cref="Customer"/>, via <c>Customer</c> and
-    /// <c>SecondCustomer</c>) EACH carrying its own collection <c>ThenInclude</c> of <see cref="Customer.Orders"/>
-    /// — mirrors <c>Orders.Include(o =&gt; o.Customer.Orders).Include(o =&gt; o.SecondCustomer.Orders)</c>. Pins
-    /// that <c>collectionLevel</c>'s "at most one across the whole chain" guard also fires across TWO
-    /// DIFFERENT sibling levels' own transitive (<c>ThenInclude</c>) axes, not just the sibling axis itself.
+    /// Two sibling reference levels targeting <see cref="Customer"/>, each with its own collection <c>ThenInclude</c>
+    /// of <see cref="Customer.Orders"/>: <c>Orders.Include(o =&gt; o.Customer.Orders).Include(o =&gt; o.SecondCustomer.Orders)</c>.
     /// </summary>
     public static LambdaExpression BuildTwoSiblingReferencesEachWithOwnCollectionThenInclude()
     {
@@ -531,20 +488,13 @@ internal static class ReferenceIncludeTestTrees
     }
 
     /// <summary>
-    /// Builds <c>ti =&gt; Include(ti.Outer, Root.Mid, NavigationExpression)</c> — a single top-level
-    /// <c>Include</c> whose <c>NavigationExpression</c> carries a further nested chain, mirroring
-    /// nav-expansion's <c>ThenInclude</c> shape (nested via <c>NavigationExpression</c>, not
-    /// <c>EntityExpression</c> like a sibling). Three shapes, selected by the flags:
+    /// Builds <c>ti =&gt; Include(ti.Outer, Root.Mid, NavigationExpression)</c>, with a <c>ThenInclude</c> chain nested
+    /// via <c>NavigationExpression</c> (a sibling nests via <c>EntityExpression</c>):
     /// <list type="bullet">
-    /// <item><description>Default (<paramref name="embeddedHopInBetween"/> false): a plain linear 2-hop
-    /// chain, <c>Include(Mid).ThenInclude(Leaf)</c> — or, when <paramref name="thenIncludeIsCollection"/>,
-    /// <c>Include(Mid).ThenInclude(Leaves)</c> (a collection <c>ThenInclude</c>, which must decline).</description></item>
-    /// <item><description><paramref name="embeddedHopInBetween"/> true, <paramref name="stopAtEmbeddedHop"/>
-    /// false: <c>Mid.Owned</c> (embedded) wrapping a further REAL nav to <c>Leaf</c> — EF-407's shape,
-    /// which must decline.</description></item>
-    /// <item><description><paramref name="embeddedHopInBetween"/> true, <paramref name="stopAtEmbeddedHop"/>
-    /// true: just <c>Mid.Owned</c> (embedded), nothing real nested past it — the already-shipped EF-368
-    /// shape, which must keep working.</description></item>
+    /// <item><description>Default: <c>Include(Mid).ThenInclude(Leaf)</c>, or <c>ThenInclude(Leaves)</c> when
+    /// <paramref name="thenIncludeIsCollection"/>.</description></item>
+    /// <item><description><paramref name="embeddedHopInBetween"/>: <c>Mid.Owned</c> wrapping a real nav to <c>Leaf</c>,
+    /// or just <c>Mid.Owned</c> when <paramref name="stopAtEmbeddedHop"/>.</description></item>
     /// </list>
     /// </summary>
     public static LambdaExpression BuildThenIncludeChain(

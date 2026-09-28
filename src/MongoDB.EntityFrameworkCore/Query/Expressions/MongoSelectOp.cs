@@ -18,11 +18,9 @@ using System.Collections.Generic;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// One filter/sort/page operation in a <see cref="MongoSelectDefinition"/>'s ordered pipeline. The list of
-/// these is emitted verbatim by the lowerer, so their order IS the emitted stage order — this is what lets
-/// the native path represent non-canonical Skip/Take (operator-after-paging, Take-before-Skip, repeated
-/// paging). Dialect-neutral logical IR (holds <see cref="MongoExpression"/>, never BSON), like
-/// <see cref="MongoOrdering"/> / <see cref="MongoGrouping"/>.
+/// One filter/sort/page operation in a <see cref="MongoSelectDefinition"/>'s ordered pipeline. Emitted verbatim,
+/// so list order is stage order; this is how non-canonical Skip/Take (Take-before-Skip, repeated paging) is
+/// represented.
 /// </summary>
 internal abstract record MongoSelectOp;
 
@@ -39,14 +37,8 @@ internal sealed record MongoSkipOp(MongoExpression Count) : MongoSelectOp;
 internal sealed record MongoLimitOp(MongoExpression Count) : MongoSelectOp;
 
 /// <summary>
-/// A whole-document <c>Distinct()</c> over a NON-projected source (EF-322: no preceding <c>Select</c> has
-/// populated <see cref="MongoSelectDefinition.Projection"/>). Unlike a projected <c>Distinct()</c>
-/// (<see cref="MongoSelectDefinition.Grouping"/>/<see cref="MongoSelectDefinition.PostGroupOps"/>, which need
-/// field-by-field key extraction because the row shape has already been narrowed to specific aliases), a
-/// whole-entity row's shape never changes, so this needs no special post-terminal handling at all — it is
-/// just another entry in the ordinary ordered op list (<see cref="MongoSelectDefinition.PipelineOps"/> /
-/// <see cref="MongoSelectDefinition.TrailingOps"/>), lowering to the generic <c>$group{_id:"$$ROOT"}</c> +
-/// <c>$replaceRoot</c> dedup pattern already used for <c>Union</c>'s own dedup
-/// (<c>MongoPipelineFactory.RenderUnionWith</c>). A marker record — carries no data of its own.
+/// A whole-document <c>Distinct()</c> over a non-projected source. The row shape is unchanged, so unlike a
+/// projected Distinct (<see cref="MongoSelectDefinition.Grouping"/>) it is just another ordered op, lowering to the
+/// <c>$group{_id:"$$ROOT"}</c> + <c>$replaceRoot</c> dedup also used by <c>Union</c>.
 /// </summary>
 internal sealed record MongoDistinctOp : MongoSelectOp;

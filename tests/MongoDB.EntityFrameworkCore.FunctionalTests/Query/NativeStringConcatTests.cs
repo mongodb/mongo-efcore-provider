@@ -27,26 +27,14 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// Native translation of compiler-generated string concatenation (<c>a + b</c>, <c>MongoConcatExpression</c> →
-/// <c>$concat</c>). The int/string shape (<see cref="Concat_int_operand_matches_the_in_memory_oracle"/>) is the
-/// one the EF spec suite's <c>Concat_int_string</c>/<c>Concat_string_int</c> exercise; every other case here is
-/// a DIFFERENTIAL check against real server behavior for operand types whose MQL <c>$toString</c> rendering is
-/// not guaranteed to match .NET's <c>object.ToString()</c> byte-for-byte.
+/// Native translation of string concatenation (<c>a + b</c> → <c>$concat</c>), checked against real server
+/// behavior for operand types whose <c>$toString</c> may not match .NET's <c>ToString()</c>.
 /// </summary>
 /// <remarks>
-/// int/long/double/decimal/Guid all measure identically to the in-memory LINQ oracle
-/// (<see cref="AssertConcatMatchesOracle"/>). bool and DateTime do NOT — MQL's <c>$toString</c> renders a bool
-/// lowercase (<c>"true"</c>, .NET capitalizes: <c>"True"</c>) and a date as ISO-8601 (.NET's default format is
-/// culture-dependent and does not match). This is NOT a defect this feature introduces: the driver's OWN LINQ
-/// v3 bridge — the pre-existing, already-released fallback path, unmodified by this feature — ALSO renders
-/// string-concat via <c>$concat</c>/<c>$toString</c> and so carries the IDENTICAL divergence from .NET already
-/// (confirmed here by <see cref="AssertConcatMatchesDriverLinqAcceptedDivergence"/>, which asserts native ==
-/// driver-LINQ while both differ from the in-memory oracle). Per this area's "measure or decline" discipline
-/// (<c>MongoConvertExpression</c>'s remarks; <c>NativeCastTests</c>' own accepted-divergence case), the
-/// correctness bar for admitting a native shape is agreement with the pre-existing driver-LINQ answer, not
-/// agreement with CLR — declining bool/DateTime would buy nothing, since the fallback answers exactly as
-/// "wrong" today. See <c>MongoExpressionTranslator.TranslateConcatOperand</c>'s remarks for the reasoning
-/// pinned in the production code.
+/// int/long/double/decimal/Guid match the in-memory oracle. bool and DateTime don't (<c>$toString</c> gives
+/// <c>"true"</c> and ISO-8601), but the driver-LINQ fallback renders them identically, so the bar is agreement
+/// with driver-LINQ (<see cref="AssertConcatMatchesDriverLinqAcceptedDivergence"/>). See
+/// <c>MongoExpressionTranslator.TranslateConcatOperand</c>.
 /// </remarks>
 [XUnitCollection("QueryTests")]
 public class NativeStringConcatTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -113,11 +101,8 @@ public class NativeStringConcatTests(TemporaryDatabaseFixture database) : IClass
         AssertConcatMatchesDriverLinqAcceptedDivergence(collection, x => x.Tag + x.B);
     }
 
-    // `selector` MUST be Expression<Func<...>>, never a plain Func delegate — a Func parameter here would bind
-    // `IQueryable<Row>.Select(selector)` to Enumerable.Select (LINQ-to-Objects) instead of Queryable.Select
-    // (server-translated), silently pulling every row into memory and computing client-side — exactly the
-    // self-inflicted defect NativeCastTests' own remarks warn about, and the one this helper originally had
-    // (it reported all-green while never exercising the native $concat path at all).
+    // `selector` must be Expression<Func<...>>, not Func: a Func binds Select to Enumerable.Select, silently
+    // evaluating client-side and never exercising the native $concat path.
     private static void AssertConcatMatchesOracle(IMongoCollection<Row> collection, Expression<Func<Row, string>> selector)
     {
         using var oracleDb = CreateContext(collection, MongoQueryMode.Native);
@@ -133,10 +118,8 @@ public class NativeStringConcatTests(TemporaryDatabaseFixture database) : IClass
         Assert.Equal(oracle, driverLinq.Entities.AsNoTracking().Select(selector).ToList());
     }
 
-    // For bool/DateTime: native must go native under NativeOnly (proving it is admitted, not silently falling
-    // back), must equal the driver-LINQ answer (the accepted-divergence bar), and that shared answer must
-    // genuinely differ from the in-memory CLR oracle — confirming this is a real, measured, pre-existing
-    // divergence and not a vacuous check.
+    // bool/DateTime: must go native under NativeOnly, equal the driver-LINQ answer, and differ from the CLR
+    // oracle (so the check isn't vacuous).
     private static void AssertConcatMatchesDriverLinqAcceptedDivergence(
         IMongoCollection<Row> collection, Expression<Func<Row, string>> selector)
     {

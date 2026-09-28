@@ -32,24 +32,15 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// user-authored shapes EF's nav-expansion can produce.
 /// </summary>
 /// <remarks>
-/// <see cref="TryBind"/> handles the INNER-<c>Select</c> form —
-/// <c>o => o.Items.AsQueryable().Select(i => new { o.X, i.Y })</c> — where the projection is nested inside
-/// the collection selector itself. <see cref="TryBindBareNavUnwind"/> +
-/// <see cref="TryBindTransparentIdentifierProjection"/> together handle the explicit-result-selector /
-/// query-syntax form — <c>SelectMany(o => o.Items, (o, i) => new { o.X, i.Y })</c> / <c>from o in q from i
-/// in o.Items select new { o.X, i.Y }</c> — which normalizes to a BARE owned-nav collection selector (no
-/// nested <c>Select</c>) plus a SEPARATE trailing <c>Select</c> over the
-/// <c>TransparentIdentifier(Outer, Inner)</c> result: <see cref="TryBindBareNavUnwind"/> sets
-/// <see cref="MongoSelectDefinition.UnwindSource"/> from the bare nav alone, and
-/// <see cref="TryBindTransparentIdentifierProjection"/> — invoked separately, from the trailing <c>Select</c>
-/// — binds that Select's <c>ti.Outer</c>/<c>ti.Inner</c> member accesses into
-/// <see cref="MongoSelectDefinition.Projection"/>. All three binders resolve outer (closed-over) members to
-/// root field refs and inner (collection-element) members to the unwound element, prefixed with the unwind
-/// path, via two structurally separate <see cref="MongoExpressionTranslator"/>s — see the
-/// scope-by-parameter-identity invariant in <c>Query/AGENTS.md</c>. Each returns <see langword="false"/>
-/// (select/projection untouched) for any shape outside its own scope; for <see cref="TryBind"/> and
-/// <see cref="TryBindBareNavUnwind"/> the caller then returns <see langword="null"/> and EF hard-fails
-/// translation.
+/// <see cref="TryBind"/> handles the inner-<c>Select</c> form
+/// (<c>o =&gt; o.Items.AsQueryable().Select(i =&gt; new { o.X, i.Y })</c>). The result-selector / query-syntax
+/// form (<c>SelectMany(o =&gt; o.Items, (o, i) =&gt; ...)</c>) normalizes to a bare nav selector plus a separate
+/// trailing <c>Select</c> over <c>TransparentIdentifier(Outer, Inner)</c>: <see cref="TryBindBareNavUnwind"/>
+/// sets the unwind source and <see cref="TryBindTransparentIdentifierProjection"/> binds the projection.
+/// Outer and inner members resolve through two separate translators by parameter identity (see
+/// <c>Query/AGENTS.md</c>). A <see langword="false"/> return leaves the select untouched; for
+/// <see cref="TryBind"/>/<see cref="TryBindBareNavUnwind"/> the caller then returns <see langword="null"/> and
+/// EF hard-fails translation.
 /// </remarks>
 internal static class NativeSelectManyBinder
 {
@@ -66,10 +57,8 @@ internal static class NativeSelectManyBinder
             || selDecl != typeof(System.Linq.Queryable))
             return false;
 
-        // <source> must resolve to the outer parameter's owned-collection navigation. EF's nav-expansion
-        // rewrites navigation access to EF.Property(o, "Nav"), so both that and a plain MemberExpression
-        // must be accepted here. Peel any user Where(...) layers off the owned nav first — owned collections
-        // are a bare member access, so every Where here is an inner-element user filter (no FK correlation).
+        // EF's nav-expansion rewrites nav access to EF.Property(o, "Nav"), so accept both forms. Every peeled Where is
+        // an inner-element user filter (owned collections have no FK correlation).
         var userPredicates = new List<LambdaExpression>();
         var navExpr = PeelOwnedInnerWhere(selectSource, userPredicates);
         if (!navExpr.TryGetMemberOrEFProperty(out var navRoot, out var navName) || !ReferenceEquals(navRoot, outerParam))
@@ -124,17 +113,13 @@ internal static class NativeSelectManyBinder
     }
 
     /// <summary>
-    /// Binds the BARE-nav collection-selector shape of an owned-collection <c>SelectMany</c> —
-    /// <c>o =&gt; o.Items.AsQueryable()</c> (or <c>EF.Property(o,"Items")</c>), with NO nested <c>Select</c> —
-    /// which is what EF's nav-expansion produces for both the explicit-result-selector form
-    /// (<c>SelectMany(o =&gt; o.Items, (o,i) =&gt; ...)</c>) and the query-syntax equivalent.
+    /// Binds the bare-nav collection selector (<c>o =&gt; o.Items.AsQueryable()</c>, no nested <c>Select</c>) that
+    /// nav-expansion produces for the result-selector and query-syntax forms of an owned-collection
+    /// <c>SelectMany</c>.
     /// </summary>
     /// <remarks>
-    /// Sets <see cref="MongoSelectDefinition.UnwindSource"/> only — the real projection is bound later, by
-    /// <see cref="TryBindTransparentIdentifierProjection"/> against the SEPARATE trailing <c>Select</c>.
-    /// Returns <see langword="false"/> (select untouched) for a nested-<c>Select</c> body (that is
-    /// <see cref="TryBind"/>'s inner-<c>Select</c> form), a non-owned/reference navigation, or a
-    /// non-collection navigation.
+    /// Sets only <see cref="MongoSelectDefinition.UnwindSource"/>; the projection is bound later by
+    /// <see cref="TryBindTransparentIdentifierProjection"/>.
     /// </remarks>
     internal static bool TryBindBareNavUnwind(MongoQueryExpression mongoQ, LambdaExpression collectionSelector)
     {
@@ -162,32 +147,23 @@ internal static class NativeSelectManyBinder
     }
 
     /// <summary>
-    /// Binds a cross-collection REFERENCE-nav <c>SelectMany</c> — <c>SelectMany(c =&gt; c.Orders, (c, o) =&gt; new
-    /// {...})</c> / <c>from c in q from o in c.Orders select new {...}</c> — over a REFERENCE (non-embedded)
-    /// collection navigation.
+    /// Binds a cross-collection reference-nav <c>SelectMany</c>
+    /// (<c>from c in q from o in c.Orders select new {...}</c>).
     /// </summary>
     /// <remarks>
-    /// Unlike the owned bare-nav shape (<see cref="TryBindBareNavUnwind"/>), EF's nav-expansion normalizes a
-    /// reference collection selector to a CORRELATED SUBQUERY, not a bare nav: <c>Queryable.Where(EntityQueryRootExpression
-    /// &lt;Target&gt;, o =&gt; c.pk == o.fk)</c> (possibly wrapped in <c>AsQueryable</c>) — the target collection
-    /// is queried from its own root and filtered by the FK correlation, rather than read off the outer entity
-    /// directly. Recognizes that shape via <see cref="NativeCorrelationMatcher.TryMatchCorrelatedCollection"/>
-    /// (shared with <see cref="NativeProjectionBinder"/>'s projected-<c>Count</c> recognition), requiring a
-    /// REFERENCE (<c>requireEmbedded: false</c>) navigation — the mirror of <see cref="TryBindBareNavUnwind"/>'s
-    /// owned-only acceptance, so the two binders partition the shape space rather than overlap. On a match,
-    /// registers a <c>ForceUnwind</c> <c>$lookup</c> for the navigation and sets
-    /// <see cref="MongoSelectDefinition.UnwindSource"/> to a <see cref="MongoUnwindSourceKind.Reference"/> source
-    /// whose scope is the lookup's <c>_lookup_&lt;Nav&gt;</c> alias — the real projection is bound later, by the
-    /// unchanged <see cref="TryBindTransparentIdentifierProjection"/> against the separate trailing <c>Select</c>.
+    /// Nav-expansion turns the selector into a correlated subquery,
+    /// <c>Where(EntityQueryRootExpression&lt;Target&gt;, o =&gt; c.pk == o.fk)</c>, matched via
+    /// <see cref="NativeCorrelationMatcher.TryMatchCorrelatedCollection"/> with <c>requireEmbedded: false</c> so it
+    /// partitions the shape space with <see cref="TryBindBareNavUnwind"/>. Registers a <c>ForceUnwind</c>
+    /// <c>$lookup</c> and a <see cref="MongoUnwindSourceKind.Reference"/> source scoped at <c>_lookup_&lt;Nav&gt;</c>;
+    /// the projection is bound later by <see cref="TryBindTransparentIdentifierProjection"/>.
     /// </remarks>
     internal static bool TryBindReferenceNavUnwind(MongoQueryExpression mongoQ, LambdaExpression collectionSelector)
     {
         var outerParam = collectionSelector.Parameters[0];
 
-        // Peel user-predicate Where layers. A filtered inner c.Refs.Where(p1).Where(p2) nav-expands to
-        // Where(Where(Where(root, fkPred), p1), p2): the innermost Where over the query root carries the FK
-        // correlation EF injects; every outer Where is an inner-element-only user filter. (A single Where whose
-        // predicate is fkPred && userPred — the "folded" shape — is split below by TrySplitCorrelation.)
+        // c.Refs.Where(p1).Where(p2) nav-expands to Where(Where(Where(root, fkPred), p1), p2): the innermost Where
+        // carries EF's FK correlation, every outer one is a user filter. A folded fkPred && userPred is split below.
         var body = UnwrapAsQueryable(collectionSelector.Body);
         var userPredicates = new List<LambdaExpression>();
         while (body is MethodCallExpression
@@ -216,16 +192,13 @@ internal static class NativeSelectManyBinder
 
         var outerEntityType = mongoQ.CollectionExpression.EntityType;
 
-        // Isolate the FK correlation (→ the reference navigation) from any user conjunct folded into the
-        // innermost predicate; the shared matcher's own reject-extra-conjunct contract is untouched.
+        // Separate the FK correlation from any folded user conjunct; the shared matcher still rejects extra conjuncts.
         if (!TrySplitCorrelation(predicate.Body, outerEntityType, outerParam, root.EntityType,
                 out var navigation, out var foldedUserBody))
             return false;
 
-        // Translate each user filter (peeled Where layers + any folded conjunct) and AND the results into one
-        // predicate. A layer referencing only the inner element translates against the inner target entity
-        // type, prefixed with the $lookup scope; a layer also referencing outer members beyond the FK is routed
-        // to the two-scope translator instead. Declines cleanly, with no partial mutation, if either fails.
+        // AND all user filters into one predicate. Inner-only layers translate against the target prefixed with the
+        // $lookup scope; layers also referencing outer members use the two-scope translator. No partial mutation.
         var scope = LookupExpression.GetLookupAlias(navigation);
         var innerTranslator = new MongoExpressionTranslator(navigation.TargetEntityType);
         MongoExpression? filter = null;
@@ -249,26 +222,14 @@ internal static class NativeSelectManyBinder
                 : new MongoBinaryExpression(MongoBinaryOperator.AndAlso, filter, userExpr);
         }
 
-        // A cross-collection reference SelectMany flatten is always inner-join semantics (a principal with no
-        // children drops out) regardless of LookupExpression's Include-oriented default of true — explicit,
-        // since MongoSelectLowerer's ForceUnwind arm now reads this property instead of hard-coding false.
+        // A reference SelectMany flatten is always inner-join (childless principals drop out), overriding
+        // LookupExpression's Include-oriented default.
         var lookup = new LookupExpression(navigation, forceUnwind: true) { PreserveNullAndEmptyArrays = false };
-        // AddLookup dedupes on the alias (As) — if a same-nav Include-registered lookup were already pending,
-        // this call would be a no-op and UnwindSource.Lookup below would point at an instance not actually in
-        // the pending list. A same-nav Include lookup genuinely can't be pending here: a reference SelectMany
-        // is always projected-only (a bare-entity trailing selector hard-declines earlier), and EF Core drops
-        // any Include not applied to the query's final materialized entity.
-        //
-        // EF-322 final review (round 2): a same-nav collision is NOT categorically impossible here anymore —
-        // NativeReferenceCollectionCountPredicateBinder's Count/LongCount predicate over this SAME navigation
-        // CAN have a bare lookup already pending at this alias when a correlated SelectMany over it runs (e.g.
-        // `Where(o => o.Orders.Count > 1)` followed by `from r in Orders.Where(r => r.OwnerId == o.Id) ...`).
-        // That combination is kept safe today NOT by this method declining to register — it still calls
-        // AddLookup unconditionally, same as before — but by MongoSelectDefinition.Route's retroactive
-        // decline (the `_referenceCollectionCountPredicateConfirmed && _unwindSources.Count > 0` conjunct)
-        // forcing the whole query to Fallback before this potentially-colliding pipeline is ever lowered, plus
-        // driver-LINQ's own separate, pre-existing decline for this general shape. See
-        // NativeReferenceCollectionCountPredicateTests.Count_predicate_before_correlated_SelectMany_declines_cleanly_in_every_mode.
+        // AddLookup dedupes on alias, so a pending same-nav lookup would leave UnwindSource.Lookup pointing at an
+        // instance not in the pending list. An Include lookup can't collide (reference SelectMany is projected-only),
+        // but a reference-collection Count predicate over the same nav can; MongoSelectDefinition.Route declines that
+        // combination to Fallback before lowering. See NativeReferenceCollectionCountPredicateTests
+        // .Count_predicate_before_correlated_SelectMany_declines_cleanly_in_every_mode.
         mongoQ.AddLookup(lookup);
         var unwind = MongoUnwindSource.Reference(scope, navigation.TargetEntityType, lookup);
         unwind.Filter = filter;
@@ -277,33 +238,19 @@ internal static class NativeSelectManyBinder
     }
 
     /// <summary>
-    /// Binds the SECOND level of a nested (2-level) cross-collection reference <c>SelectMany</c> —
-    /// <c>from o in q from m in o.Mids from l in m.Leaves select ...</c>.
+    /// Binds the second level of a nested cross-collection reference <c>SelectMany</c>
+    /// (<c>from o in q from m in o.Mids from l in m.Leaves select ...</c>).
     /// </summary>
     /// <remarks>
-    /// EF's nav-expansion produces this as a second, sequentially-chained <c>Queryable.Where(EntityQueryRootExpression
-    /// &lt;Leaf&gt;, l => ti.Inner.Id == l.MidId)</c> correlated subquery — structurally identical to the
-    /// single-level shape <see cref="TryBindReferenceNavUnwind"/> already parses, except the correlation's
-    /// outer-key side is a transparent-identifier-rooted member access <c>ti.Inner.&lt;pk&gt;</c> (<c>ti</c> is
-    /// this SelectMany's own outer parameter, bound by nav-expansion to level 1's <c>TransparentIdentifier(Outer,
-    /// Inner)</c> result) rather than a bare parameter. Rather than teach <see cref="NativeCorrelationMatcher"/>
-    /// a new shape, this rewrites every <c>ti.Inner</c> occurrence in the predicate onto a synthetic parameter
-    /// of the level-1 target entity type first, then reuses
-    /// <see cref="NativeCorrelationMatcher.TryMatchCorrelatedCollection"/> unchanged.
+    /// Same correlated-subquery shape as <see cref="TryBindReferenceNavUnwind"/>, except the outer key is
+    /// <c>ti.Inner.&lt;pk&gt;</c> off level 1's transparent identifier. <c>ti.Inner</c> is rewritten onto a
+    /// synthetic level-1-entity parameter so <see cref="NativeCorrelationMatcher.TryMatchCorrelatedCollection"/>
+    /// can be reused unchanged.
     /// <para>
-    /// Requires the caller to have already confirmed exactly one prior REFERENCE unwind source
-    /// (<see cref="MongoSelectDefinition.IsSingleReferenceUnwindTerminalOnly"/>). Resolves the navigation off
-    /// that source's <see cref="MongoUnwindSource.InnerEntityType"/> (the level-1 target, e.g. Mid), registers
-    /// a second <c>ForceUnwind</c> <see cref="LookupExpression"/> whose <see cref="LookupExpression.LocalField"/>
-    /// is overridden to be scoped under the level-1 source's own <see cref="MongoUnwindSource.InnerScopePath"/>
-    /// (e.g. <c>_lookup_Mids._id</c>), and appends a second <see cref="MongoUnwindSource"/>. No partial
-    /// mutation on decline.
-    /// </para>
-    /// <para>
-    /// Unfiltered only: unlike <see cref="TryBindReferenceNavUnwind"/> this does not peel outer <c>Where</c>
-    /// layers — an inner filter at level 2 nav-expands to an outer <c>Where</c> wrapping the FK-correlation
-    /// <c>Where</c>, which does not match the single-<c>Where</c> shape checked here, so a filtered level 2
-    /// declines structurally.
+    /// Requires exactly one prior reference unwind source. The second <c>ForceUnwind</c> lookup's
+    /// <see cref="LookupExpression.LocalField"/> is scoped under level 1's
+    /// <see cref="MongoUnwindSource.InnerScopePath"/> (e.g. <c>_lookup_Mids._id</c>). No partial mutation on
+    /// decline. Unfiltered only: a level-2 filter adds an outer <c>Where</c>, which doesn't match and declines.
     /// </para>
     /// </remarks>
     internal static bool TryBindNestedReferenceNavUnwind(MongoQueryExpression mongoQ, LambdaExpression collectionSelector)
@@ -328,9 +275,7 @@ internal static class NativeSelectManyBinder
         if (predicate.Parameters.Count != 1)
             return false;
 
-        // Rewrite every `ti.Inner` occurrence onto a synthetic parameter of the level-1 target entity type
-        // (e.g. Mid), so the single-level matcher (which expects a bare-parameter-rooted outer side)
-        // recognizes the correlation unchanged.
+        // Rewrite `ti.Inner` onto a level-1-entity parameter so the single-level matcher recognizes the correlation.
         var level1Param = Expression.Parameter(level1Source.InnerEntityType.ClrType, "l1");
         var rewritten = new TransparentIdentifierInnerRewriter(ti, level1Param).Visit(predicate.Body);
 
@@ -339,8 +284,7 @@ internal static class NativeSelectManyBinder
             return false;
 
         var scope2 = LookupExpression.GetLookupAlias(navigation);
-        // See the level-1 flatten above: a cross-collection reference SelectMany is always inner-join
-        // semantics, set explicitly now that the lowerer no longer hard-codes it.
+        // Always inner-join, as at level 1.
         var lookup2 = new LookupExpression(navigation, forceUnwind: true) { PreserveNullAndEmptyArrays = false };
         lookup2.LocalField = level1Source.InnerScopePath + "." + lookup2.LocalField;
         mongoQ.AddLookup(lookup2);
@@ -349,10 +293,8 @@ internal static class NativeSelectManyBinder
     }
 
     /// <summary>
-    /// Rewrites every <c>tiParam.Inner</c> occurrence onto <paramref name="replacement"/>. Used by
-    /// <see cref="TryBindNestedReferenceNavUnwind"/> to turn the level-2 correlation's
-    /// transparent-identifier-rooted outer side (<c>ti.Inner.&lt;pk&gt;</c>) into a plain bare-parameter-rooted
-    /// member access <see cref="NativeCorrelationMatcher"/> already recognizes.
+    /// Rewrites <c>tiParam.Inner</c> onto <paramref name="replacement"/>, turning <c>ti.Inner.&lt;pk&gt;</c> into a
+    /// bare-parameter-rooted access <see cref="NativeCorrelationMatcher"/> recognizes.
     /// </summary>
     private sealed class TransparentIdentifierInnerRewriter(ParameterExpression tiParam, ParameterExpression replacement)
         : ExpressionVisitor
@@ -364,29 +306,18 @@ internal static class NativeSelectManyBinder
     }
 
     /// <summary>
-    /// Resolves the FK-correlated reference navigation from the innermost <c>Where</c> predicate, isolating it
-    /// from any inner-element user filter folded into the same predicate (<c>fkPred &amp;&amp; userPred</c>).
-    /// The shared <see cref="NativeCorrelationMatcher"/> is only ever fed the isolated FK-correlation
-    /// expression, so its reject-extra-conjunct contract (which keeps a filtered <c>Count</c> on fallback) is
-    /// unchanged.
+    /// Resolves the FK-correlated reference navigation from the innermost <c>Where</c> predicate, separating it
+    /// from any user filter folded into the same predicate (<c>fkPred &amp;&amp; userPred</c>).
     /// </summary>
     /// <remarks>
-    /// The folded branch is defensive-only: EF's nav-expansion emits the nested shape
-    /// (<c>Where(Where(root, fkPred), userPred)</c>), whose user predicates the caller peels off as separate
-    /// <c>Where</c> layers before this method ever sees a folded predicate — so no real query reaches the
-    /// folded branch today.
+    /// The folded branch is defensive: nav-expansion emits nested <c>Where</c>s, which the caller peels first.
     /// <para>
-    /// EF-355. A conjunctive predicate is NEVER handed to <see cref="NativeCorrelationMatcher"/> whole: the
-    /// matcher accepts <c>(x != null) AndAlso equality</c> as a null-guarded correlation without checking that
-    /// the guarded member is the equality's own key, so a folded USER conjunct shaped <c>innerField != null</c>
-    /// would be absorbed into the match and the bind would succeed with <paramref name="userBody"/>
-    /// <see langword="null"/> — silently returning every child instead of only the non-null ones. Instead every
-    /// top-level conjunct is classified here: exactly one must be the FK equality on its own; a conjunct that
-    /// is a null-guard on that SAME key (the shape EF emits when the outer key's CLR type is nullable) is the
-    /// correlation's own guard and is dropped, exactly as the matcher would have done; every OTHER conjunct is
-    /// a user filter and is returned in <paramref name="userBody"/> for translation (a translation failure
-    /// there declines the whole bind, so a user conjunct is never dropped). The distinguishing signal is key
-    /// identity, not shape — the two are otherwise structurally identical.
+    /// A conjunction is never passed to <see cref="NativeCorrelationMatcher"/> whole: it accepts
+    /// <c>(x != null) AndAlso equality</c> as a null-guarded correlation without checking the guarded member is the
+    /// equality's key, so a user <c>innerField != null</c> conjunct would be silently absorbed (returning every
+    /// child). Instead each conjunct is classified: exactly one is the FK equality, a null-guard on that same key is
+    /// dropped, and every other conjunct is returned in <paramref name="userBody"/> (whose translation failure
+    /// declines the bind). Key identity, not shape, is the distinguishing signal.
     /// </para>
     /// </remarks>
     private static bool TrySplitCorrelation(
@@ -395,13 +326,12 @@ internal static class NativeSelectManyBinder
     {
         userBody = null;
 
-        // Non-conjunctive: the whole innermost predicate IS the FK correlation (or nothing recognizable).
+        // Non-conjunctive: the whole predicate is the FK correlation (or nothing recognizable).
         if (predicateBody.RemoveConvert() is not BinaryExpression { NodeType: ExpressionType.AndAlso })
             return NativeCorrelationMatcher.TryMatchCorrelatedCollection(
                 predicateBody, outerEntityType, outerParam, targetEntityType, requireEmbedded: false, out navigation);
 
-        // Conjunctive: flatten top-level AndAlso conjuncts, find the ONE that is the FK correlation on its own,
-        // then classify the rest (see the remarks above — this is where EF-355's silent drop was).
+        // Conjunctive: find the one conjunct that is the FK correlation, then classify the rest (see remarks).
         navigation = null!;
         var conjuncts = new List<Expression>();
         FlattenAndAlso(predicateBody.RemoveConvert()!, conjuncts);
@@ -428,10 +358,8 @@ internal static class NativeSelectManyBinder
     }
 
     /// <summary>
-    /// Decides whether <paramref name="conjunct"/> is the FK correlation's OWN null-guard — <c>k != null</c>
-    /// where <c>k</c> is the very same outer-key member <paramref name="fkConjunct"/> compares — as opposed to
-    /// a user <c>!= null</c> filter on some other (inner-element) member. Only the former may be dropped; see
-    /// <see cref="TrySplitCorrelation"/>'s remarks (EF-355).
+    /// Whether <paramref name="conjunct"/> is the FK correlation's own null-guard (<c>k != null</c> on the same
+    /// outer-key member <paramref name="fkConjunct"/> compares), as opposed to a user <c>!= null</c> filter.
     /// </summary>
     private static bool IsCorrelationNullGuard(Expression conjunct, Expression fkConjunct, ParameterExpression outerParam)
     {
@@ -443,11 +371,11 @@ internal static class NativeSelectManyBinder
         else if (NativeCorrelationMatcher.IsNullConstant(notEqual.Left)) guarded = notEqual.Right;
         else return false;
 
-        // A guard on anything not rooted at the OUTER parameter is by definition an inner-element user filter.
+        // A guard not rooted at the outer parameter is an inner-element user filter.
         if (!guarded.ReferencesParameter(outerParam))
             return false;
 
-        // ...and even an outer-rooted guard only counts when it guards the key the FK equality itself uses.
+        // An outer-rooted guard counts only when it guards the FK equality's own key.
         return NativeCorrelationMatcher.TryExtractEqualitySides(fkConjunct, out var left, out var right)
                && (IsSameMemberAccess(guarded, left) || IsSameMemberAccess(guarded, right));
     }
@@ -478,12 +406,9 @@ internal static class NativeSelectManyBinder
     }
 
     /// <summary>
-    /// Translates one peeled reference-<c>SelectMany</c> inner-filter <c>Where</c> layer into a filter conjunct.
-    /// A layer referencing the outer <c>SelectMany</c> parameter (correlated beyond the FK) is translated with
-    /// the two-scope translator — inner field refs prefixed with <paramref name="scope"/>, outer field refs at
-    /// document root, routed by parameter identity — and renders as <c>$expr</c>. A layer referencing only the
-    /// inner element keeps the single-scope translate + blanket-prefix path. Returns <see langword="false"/>
-    /// (no mutation) when the layer cannot be translated.
+    /// Translates one peeled reference-<c>SelectMany</c> filter layer. A layer referencing the outer parameter
+    /// uses the two-scope translator (inner refs prefixed with <paramref name="scope"/>, outer refs at root,
+    /// rendered as <c>$expr</c>); an inner-only layer is translated then prefixed. No mutation on failure.
     /// </summary>
     private static bool TryTranslateReferenceFilterLayer(
         Expression body, MongoExpressionTranslator innerTranslator, IEntityType innerEntityType, string scope,
@@ -496,7 +421,7 @@ internal static class NativeSelectManyBinder
             var twoScope = new MongoExpressionTranslator(innerEntityType, outerParam, outerEntityType, scope);
             if (!twoScope.TryTranslate(body, out var correlated))
                 return false;
-            conjunct = correlated; // already correctly scoped — do NOT blanket-prefix
+            conjunct = correlated; // already scoped; don't prefix
             return true;
         }
 
@@ -508,26 +433,13 @@ internal static class NativeSelectManyBinder
 
 
     /// <summary>
-    /// Binds the DEFERRED explicit-result-selector / query-syntax form of an owned-collection
-    /// <c>SelectMany</c> — <c>SelectMany(o =&gt; o.Items, (o, i) =&gt; new {...})</c> and its query-syntax
-    /// equivalent.
+    /// Binds the trailing <c>Select(ti =&gt; new { ti.Outer.X, ti.Inner.Y })</c> of the result-selector /
+    /// query-syntax form of <c>SelectMany</c>, given an already-set unwind source and an empty projection.
     /// </summary>
     /// <remarks>
-    /// EF's nav-expansion normalizes both to the bare-nav collection-selector form (accepted elsewhere by the
-    /// bare-nav path) wrapped in a <c>TransparentIdentifier(Outer, Inner)</c> result selector; the real
-    /// projection is a separate trailing <c>Select(ti =&gt; new {ti.Outer.X, ti.Inner.Y})</c> over that
-    /// transparent identifier — this method binds that trailing Select, given a query whose
-    /// <see cref="MongoSelectDefinition.UnwindSource"/> is already set and whose
-    /// <see cref="MongoSelectDefinition.Projection"/> is still empty.
-    /// <para>
-    /// Each projection leaf is a nested member access on the single <c>ti</c> parameter —
-    /// <c>MemberExpression(MemberExpression(ti, "Outer"|"Inner"), &lt;member&gt;)</c> — not pre-folded by EF.
-    /// Because <see cref="MongoExpressionTranslator.TryTranslateField"/> only resolves a
-    /// <see cref="MemberExpression"/> whose own <c>Expression</c> is a bare <see cref="ParameterExpression"/>
-    /// (it rejects <c>ti.Outer.X</c> outright), each leaf's member is re-rooted onto a synthetic parameter of
-    /// the scope's own entity CLR type before translation — the same two structurally-separate translators
-    /// (outer vs. inner) <see cref="TryBind"/> already uses, just fed a re-rooted expression.
-    /// </para>
+    /// Each leaf is <c>ti.Outer.X</c>/<c>ti.Inner.Y</c>, which
+    /// <see cref="MongoExpressionTranslator.TryTranslateField"/> rejects (it needs a bare-parameter root), so each
+    /// member is re-rooted onto a synthetic parameter of its scope's entity type before translation.
     /// </remarks>
     internal static bool TryBindTransparentIdentifierProjection(
         MongoQueryExpression mongoQ, LambdaExpression selector, out string? bareLeafAlias)
@@ -544,29 +456,20 @@ internal static class NativeSelectManyBinder
         var isBareBody = !selector.Body.TryGetProjectionMembers(out var members, allowPositionalConstructorArguments: true);
         if (isBareBody)
         {
-            // Deliberately narrow: ONLY an arithmetic computed body is admitted bare. A bare member access
-            // (`ti.Inner.Name`, `ti.Outer.Name`) is a path-addressable leaf, whose alias would have to be its
-            // own document path for the late-fallback read to stay correct (NativeProjectionBinder's tier 1) —
-            // a different contract from the `_v` tier below, and outside this binder's scope; it keeps
-            // declining (and falling back) exactly as before. `ti.Inner` (the whole element) is handled by the
-            // caller's own WholeElement branch, not here.
+            // Only an arithmetic computed body is admitted bare. A bare member access would need its document path as
+            // alias for the late-fallback read (NativeProjectionBinder's tier 1), so it declines; `ti.Inner` (whole
+            // element) is handled by the caller's WholeElement branch.
             if (!IsArithmeticComputedLeaf(selector.Body))
                 return false;
 
-            // A BARE (non-`new {}`/`MemberInit`) computed body — what EF's nav-expansion folds the ONE-arg
-            // `SelectMany(o => o.Items).Select(i => i.Price * 2)` shape into (`ti => ti.Inner.Price * 2`).
-            // It carries no member name, so it is projected under the reserved `_v` alias, exactly the tier-2
-            // (ProjectionAliasTier.Synthetic) convention NativeProjectionBinder uses for a bare computed body:
-            // `_v` is what the driver itself names a bare projection, so a LATE fallback (which leaves this
-            // query's captured chain un-stripped — ShouldStripBareProjectionOnFallback keys off a
-            // DocumentPath override, and this path registers none) has the driver's own push-down write the
-            // very element the alias-addressed shaper already reads by.
+            // EF folds `SelectMany(o => o.Items).Select(i => i.Price * 2)` into `ti => ti.Inner.Price * 2`. With
+            // no member name it takes the reserved `_v` alias (ProjectionAliasTier.Synthetic): that's what the
+            // driver names a bare projection, so a late fallback (chain un-stripped) writes what the shaper reads.
             members = [(NativeProjectionBinder.SyntheticBareProjectionAlias, selector.Body)];
         }
 
         var outerEntityType = mongoQ.CollectionExpression.EntityType;
-        // One translator (+ synthetic re-rooting parameter) per scope: index 0 = the query root/owner, index
-        // k (1..sources.Count) = UnwindSources[k-1] (the k-th SelectMany level's own unwound element).
+        // Index 0 = the query root; index k = UnwindSources[k-1] (the k-th SelectMany level's element).
         var translators = new MongoExpressionTranslator[sources.Count + 1];
         var scopeParams = new ParameterExpression[sources.Count + 1];
         translators[0] = new MongoExpressionTranslator(outerEntityType);
@@ -606,12 +509,9 @@ internal static class NativeSelectManyBinder
                 return false;
             }
 
-            // A bare body's `_v` leaf mirrors NativeProjectionBinder's tier-2 arm 1b, whose boundary is a
-            // SUBTREE fact, not a top-node one: a `$size` anywhere under it renders — on the un-stripped
-            // driver fallback — as a bare `$size`, which is a hard server error (not a wrong answer) against a
-            // missing or explicitly-null array. Asked through the binder's own predicate rather than restated
-            // here, so the two can't drift. Only the bare tier is held to it: a wrapped (named-alias) leaf is
-            // read back by its own member name on either route and is unchanged by this slice.
+            // As in NativeProjectionBinder's tier-2 arm: a `$size` anywhere in a bare `_v` leaf renders as a bare
+            // `$size` on the un-stripped fallback, a hard server error on a missing/null array. Wrapped leaves are
+            // unaffected.
             if (isBareBody && !NativeProjectionBinder.IsArrayFreeComputedSubtree(projected))
                 return false;
 
@@ -627,8 +527,7 @@ internal static class NativeSelectManyBinder
     }
 
     /// <summary>
-    /// The arithmetic node shapes a computed projection leaf may take — the gate both the wrapped
-    /// (named-alias) member loop and the bare-body arm call, so the two can never admit different shapes.
+    /// Arithmetic shapes a computed leaf may take; shared by the wrapped and bare arms so they admit the same set.
     /// </summary>
     private static bool IsArithmeticComputedLeaf(Expression expression)
         => expression is BinaryExpression
@@ -638,16 +537,12 @@ internal static class NativeSelectManyBinder
         };
 
     /// <summary>
-    /// Translates an arithmetic computed projection leaf, trying the SINGLE-scope form first
-    /// (<see cref="TryTranslateSingleScopeComputedLeaf"/> — every scope-rooted operand resolving to one scope,
-    /// which re-roots the whole subtree at once) and falling back to the CROSS-scope form
-    /// (<see cref="TryTranslateCrossScopeComputedLeaf"/>) only for a leaf the former declines.
+    /// Translates an arithmetic computed leaf, trying the single-scope form first and the cross-scope form only if
+    /// it declines.
     /// </summary>
     /// <remarks>
-    /// The ordering is deliberate and not merely an optimization: the single-scope path re-roots and
-    /// translates the leaf as ONE subtree, so a wholly-inner leaf is prefixed once, at the top, exactly as it
-    /// was before this fallback existed — every previously-native leaf keeps its previous translation
-    /// byte-for-byte, and the cross-scope path is reached only by leaves that used to decline.
+    /// Order matters: the single-scope path translates the leaf as one subtree and prefixes once at the top, so
+    /// wholly-single-scope leaves keep that translation exactly.
     /// </remarks>
     private static bool TryTranslateComputedLeaf(
         Expression leaf,
@@ -660,15 +555,9 @@ internal static class NativeSelectManyBinder
            || TryTranslateCrossScopeComputedLeaf(leaf, ti, sources, translators, scopeParams, out result);
 
     /// <summary>
-    /// Translates a SINGLE-SCOPE arithmetic computed projection leaf — every scope-rooted member operand
-    /// (<c>ti.Outer…</c>/<c>ti.Inner…</c>) in the leaf must resolve to the same scope. Re-roots the whole
-    /// arithmetic subtree onto that scope's synthetic parameter, reuses
-    /// <see cref="MongoExpressionTranslator.TryTranslateValue"/>, then prefixes inner-scope field refs with the
-    /// unwind path via <see cref="MongoFieldPrefixRewriter"/>. Declines (returns <see langword="false"/>, no
-    /// mutation) for a cross-scope leaf (e.g. <c>o.Discount * i.Price</c> — handled by
-    /// <see cref="TryTranslateCrossScopeComputedLeaf"/>, which callers reach via
-    /// <see cref="TryTranslateComputedLeaf"/>), a leaf with no scope-rooted operand, or anything
-    /// <see cref="MongoExpressionTranslator.TryTranslateValue"/> rejects.
+    /// Translates a computed leaf whose scope-rooted operands all resolve to one scope: re-roots the subtree onto
+    /// that scope's parameter, uses <see cref="MongoExpressionTranslator.TryTranslateValue"/>, then prefixes inner
+    /// field refs. Declines for cross-scope leaves, leaves with no scope-rooted operand, or untranslatable values.
     /// </summary>
     private static bool TryTranslateSingleScopeComputedLeaf(
         Expression leaf,
@@ -681,26 +570,14 @@ internal static class NativeSelectManyBinder
             leaf, ti, sources, translators, scopeParams, requireScopeRooted: true, out result);
 
     /// <summary>
-    /// Translates an arithmetic computed projection leaf whose operands span TWO scopes — e.g.
-    /// <c>ti.Outer.Discount * ti.Inner.Price</c>, which <see cref="TryTranslateSingleScopeComputedLeaf"/>
-    /// declines because its re-rooting visitor flags <see cref="MongoTransparentScopeResolver.ScopeRerootingVisitor.CrossScope"/>.
+    /// Translates an arithmetic leaf whose operands span scopes (e.g. <c>ti.Outer.Discount * ti.Inner.Price</c>).
     /// </summary>
     /// <remarks>
-    /// Instead of re-rooting the WHOLE subtree onto one synthetic parameter, each operand is translated
-    /// independently, against whichever single scope IT is rooted on, and prefixed with that scope's own
-    /// unwind path before the two are recombined under the leaf's own arithmetic operator (mapped by
-    /// <see cref="MongoExpressionTranslator.MapArithmeticOperator"/> — the same mapper the single-scope path
-    /// reaches through <see cref="MongoExpressionTranslator.TryTranslateValue"/>, so the two agree on the
-    /// EF-434 integral-division split for free). An operand that is itself cross-scope recurses
-    /// (<see cref="TryTranslateScopedOperand"/>), so <c>(o.Rank * i.Price) + 1</c> binds too.
-    /// <para>
-    /// The recombined node is a field-to-field arithmetic expression, which has NO query-dialect form. That
-    /// costs nothing here: a <c>$project</c> body renders every leaf through
-    /// <see cref="MongoAggregationExpressionRenderer"/> unconditionally
-    /// (<c>MongoPipelineFactory.RenderProject</c>) — there is no dialect choice to make, and no <c>$expr</c>
-    /// wrapper either. Only a <c>$match</c> predicate has the two-dialect split, and this method is reachable
-    /// only from the projection binder.
-    /// </para>
+    /// Each operand is translated against its own scope and prefixed, then recombined under the operator from
+    /// <see cref="MongoExpressionTranslator.MapArithmeticOperator"/> (the same mapper the single-scope path uses, so
+    /// the integral-division handling agrees). Cross-scope operands recurse, so <c>(o.Rank * i.Price) + 1</c> binds.
+    /// The result has no query-dialect form, which is fine: <c>$project</c> always renders via
+    /// <see cref="MongoAggregationExpressionRenderer"/>.
     /// </remarks>
     private static bool TryTranslateCrossScopeComputedLeaf(
         Expression leaf,
@@ -716,20 +593,12 @@ internal static class NativeSelectManyBinder
             || MongoExpressionTranslator.MapArithmeticOperator(binary) is not { } op)
             return false;
 
-        // Mirrors TranslateOperand's own arithmetic guard, which this method bypasses by recombining the two
-        // operands itself: ExpressionType.Add over strings is compiler-generated concatenation, NOT arithmetic
-        // — the server rejects "$add" on strings outright. Without this, `ti.Outer.Name + ti.Inner.Name` (a
-        // perfectly cross-scope Add) would be recombined into a `$add` of two string fields.
+        // String Add is concatenation; recombining it would emit a server-rejected `$add` of two string fields.
         if (!MongoExpressionTranslator.IsNumericType(binary.Type))
             return false;
 
-        // Reachable ONLY for a leaf the single-scope path declined FOR THE SCOPE REASON. This is the whole
-        // admission boundary of this method and it is deliberately expressed as the very signal the
-        // single-scope path declines on (MongoTransparentScopeResolver.ScopeRerootingVisitor.CrossScope over the same subtree), not as a
-        // restatement of "what looks cross-scope". Both regressions this guard prevents were measured: without
-        // it, a leaf with NO scope-rooted operand at all (`2m * 3m`) binds through the scope-free operand arm,
-        // and a leaf the value translator rejected for a non-scope reason (string concat, before the numeric
-        // guard above) gets a second, weaker chance at translation here.
+        // Admit only leaves the single-scope path declined for the cross-scope reason. Otherwise a leaf with no
+        // scope-rooted operand (`2m * 3m`), or one rejected for another reason, would get a second, weaker chance here.
         var scopes = new MongoTransparentScopeResolver.ScopeRerootingVisitor(
             ti, hopNames: ["Outer", "Inner"], sources.Count, scopeParams);
         scopes.Visit(leaf);
@@ -745,9 +614,8 @@ internal static class NativeSelectManyBinder
     }
 
     /// <summary>
-    /// Translates ONE operand of a cross-scope arithmetic leaf: a wholly single-scope (or wholly
-    /// scope-free — a constant/query parameter) operand via the shared re-root-and-prefix path, otherwise a
-    /// nested cross-scope arithmetic operand by recursion.
+    /// Translates one operand of a cross-scope leaf: single-scope or scope-free (constant/parameter) operands via the
+    /// shared re-root-and-prefix path, nested cross-scope operands by recursion.
     /// </summary>
     private static bool TryTranslateScopedOperand(
         Expression operand,
@@ -761,18 +629,12 @@ internal static class NativeSelectManyBinder
            || TryTranslateCrossScopeComputedLeaf(operand, ti, sources, translators, scopeParams, out result);
 
     /// <summary>
-    /// The shared re-root / translate / prefix core, factored out of the original single-scope computed-leaf
-    /// method so the cross-scope path reuses it per operand rather than duplicating the
-    /// <see cref="MongoTransparentScopeResolver.ScopeRerootingVisitor"/> construction.
+    /// Shared re-root / translate / prefix core for the single-scope leaf and per-operand cross-scope paths.
     /// </summary>
     /// <remarks>
-    /// <paramref name="requireScopeRooted"/> is the ONLY difference between the two callers, and it preserves
-    /// the original method's behaviour exactly: a whole LEAF containing no scope-rooted member at all
-    /// (<c>2m * 3m</c>) still declines, because admitting it would push a constant-only <c>$project</c> leaf
-    /// down for a shape the binder never claimed. An OPERAND of an otherwise cross-scope leaf may legitimately
-    /// be scope-free (the <c>1</c> in <c>(o.Rank * i.Price) + 1</c>), and translating it against
-    /// <c>translators[0]</c> is immaterial — with no scope-rooted member, the translation contains no field
-    /// reference for a translator or a prefix to disagree about.
+    /// With <paramref name="requireScopeRooted"/>, a leaf with no scope-rooted member (<c>2m * 3m</c>) declines
+    /// rather than pushing down a constant-only <c>$project</c> leaf. A scope-free operand (the <c>1</c> in
+    /// <c>(o.Rank * i.Price) + 1</c>) is fine against <c>translators[0]</c>, since it contains no field reference.
     /// </remarks>
     private static bool TryTranslateScopedSubtree(
         Expression subtree,
@@ -811,12 +673,9 @@ internal static class NativeSelectManyBinder
     }
 
     /// <summary>
-    /// Translates a single already-scope-rooted member access (its <c>Expression</c> is a bare
-    /// <see cref="ParameterExpression"/> of the target scope's own CLR type) via whichever of
-    /// <paramref name="outerTranslator"/>/<paramref name="innerTranslator"/> matches <paramref name="isInner"/>,
-    /// prefixing an inner match's element name with <paramref name="unwindPath"/>. The one piece of logic both
-    /// <see cref="TryBind"/> and <see cref="TryBindTransparentIdentifierProjection"/> share once each has
-    /// resolved which scope a leaf belongs to by its own means.
+    /// Translates a member access already rooted on its scope's parameter with the outer or inner translator,
+    /// prefixing an inner field with <paramref name="unwindPath"/>. Shared by <see cref="TryBind"/> and
+    /// <see cref="TryBindTransparentIdentifierProjection"/>.
     /// </summary>
     private static bool TryTranslateScopedField(
         MongoExpressionTranslator outerTranslator, MongoExpressionTranslator innerTranslator,
@@ -845,12 +704,8 @@ internal static class NativeSelectManyBinder
     }
 
     /// <summary>
-    /// Peels user-authored <c>Where(...)</c> layers off an owned collection selector's source down to the bare
-    /// owned-nav member access, collecting each layer's predicate lambda into <paramref name="userPredicates"/>.
-    /// Owned collections nav-expand to a bare member access (<c>o.Items</c>), not an FK-correlated subquery, so
-    /// every <c>Where</c> here is an inner-element user filter (unlike <see cref="TryBindReferenceNavUnwind"/>,
-    /// there is no FK-correlation <c>Where</c> to stop at). Returns the source with all <c>Where</c> layers
-    /// removed; the caller validates it via <see cref="ExpressionExtensionMethods.TryGetMemberOrEFProperty"/>.
+    /// Peels <c>Where(...)</c> layers off an owned collection selector down to the nav access, collecting their
+    /// predicates. Owned collections have no FK-correlation <c>Where</c>, so every layer is a user filter.
     /// </summary>
     private static Expression PeelOwnedInnerWhere(Expression source, List<LambdaExpression> userPredicates)
     {
@@ -869,17 +724,12 @@ internal static class NativeSelectManyBinder
     }
 
     /// <summary>
-    /// Translates each peeled owned inner-element predicate and ANDs them into one <paramref name="filter"/>.
-    /// An inner-only layer is translated against <paramref name="innerEntityType"/> and its field refs are
-    /// prefixed with <paramref name="unwindPath"/> (e.g. <c>Price</c> becomes <c>Items.Price</c>, matching where
-    /// the unwound owned element sits before <c>$replaceRoot</c>/<c>$project</c>). A layer referencing the
-    /// outer parameter (e.g. <c>i.Name == o.Name</c>) is instead routed to the two-scope
-    /// <see cref="MongoExpressionTranslator"/> — routing is by parameter identity (see
-    /// <see cref="ExpressionExtensionMethods.ReferencesParameter"/>), never by member name, so a name shared between the outer and inner
-    /// entity types never mis-scopes; the result renders as <c>$expr</c>. Returns <see langword="true"/> with
-    /// <paramref name="filter"/> <see langword="null"/> when there are no predicates, so callers can invoke it
-    /// unconditionally. Declines (<see langword="false"/>, no mutation) only if a translator rejects the layer
-    /// — a correlated owned <c>SelectMany</c> has no driver-LINQ oracle, so a decline hard-fails in every mode.
+    /// Translates the peeled owned-element predicates and ANDs them into <paramref name="filter"/>. Inner-only
+    /// layers are prefixed with <paramref name="unwindPath"/> (<c>Price</c> becomes <c>Items.Price</c>); layers
+    /// referencing the outer parameter (e.g. <c>i.Name == o.Name</c>) use the two-scope translator, routed by
+    /// parameter identity so a shared member name can't mis-scope, rendering as <c>$expr</c>. Returns
+    /// <see langword="true"/> with a null filter when there are no predicates. A decline hard-fails in every mode,
+    /// since a correlated owned <c>SelectMany</c> has no driver-LINQ oracle.
     /// </summary>
     private static bool TryBuildOwnedInnerFilter(
         IReadOnlyList<LambdaExpression> userPredicates, IEntityType innerEntityType, string unwindPath,
@@ -898,10 +748,7 @@ internal static class NativeSelectManyBinder
             MongoExpression conjunct;
             if (userPredicate.Body.ReferencesParameter(outerParam))
             {
-                // Correlated-beyond-outer: translate with the two-scope translator (inner fields prefixed with
-                // the unwind path, outer fields at document root, routed by parameter identity), used directly
-                // — not blanket-prefixed. Renders as $expr. Declines cleanly (no mutation) if unsupported; a
-                // correlated owned SelectMany has no driver-LINQ oracle, so a decline hard-fails every mode.
+                // Two-scope translation is already scoped; don't blanket-prefix.
                 var twoScope = new MongoExpressionTranslator(innerEntityType, outerParam, outerEntityType, unwindPath);
                 if (!twoScope.TryTranslate(userPredicate.Body, out var correlated))
                     return false;

@@ -28,16 +28,11 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-347 (Task 2) native <c>Select(new {...}).Distinct()</c> → a degenerate <c>$group</c> (group by the
-/// projected value(s), zero accumulators) followed by the flattening <c>$project</c>. Proves that a
-/// supported projected-Distinct shape executes as a native aggregation pipeline and dedups correctly, and
-/// that unsupported shapes (whole-entity source, a value-converted/represented projection key, an operator
-/// applied after Distinct) fall back to driver-LINQ under <see cref="MongoQueryMode.Native"/> yet throw
-/// <see cref="NativeTranslationNotSupportedException"/> under <see cref="MongoQueryMode.NativeOnly"/> — the
-/// "went native" signal (the emitted MQL is otherwise indistinguishable from the driver-LINQ fallback for
-/// filter/sort/paging shapes). EF-395 additionally admits a BARE-scalar projection (<c>Select(o =>
-/// o.Country).Distinct()</c>) into the same native path — see
-/// <see cref="Bare_scalar_projection_Distinct_goes_native"/>.
+/// Native <c>Select(...).Distinct()</c>: a degenerate <c>$group</c> (group by the projected value(s), no
+/// accumulators) plus a flattening <c>$project</c>, including bare-scalar projections, whole-entity Distinct,
+/// and operators composed after it. Unsupported shapes (e.g. a value-converted key) fall back under
+/// <see cref="MongoQueryMode.Native"/> and throw <see cref="NativeTranslationNotSupportedException"/> under
+/// <see cref="MongoQueryMode.NativeOnly"/>, the only reliable "went native" signal.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -115,9 +110,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Bare_scalar_projection_Distinct_goes_native()
     {
-        // EF-395: TryBindDistinctFromProjection no longer declines on select.IsBareProjection, so this now
-        // goes native (NativeOnly succeeding is the "went native" signal). US/US/US, UK/UK, FR -> 3 distinct
-        // countries.
+        // US/US/US, UK/UK, FR -> 3 distinct countries.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Bare_scalar_projection_Distinct_goes_native));
 
@@ -128,10 +121,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Bare_scalar_projection_Distinct_then_OrderBy_with_identity_selector_goes_native()
     {
-        // EF-322: a bare-scalar Distinct's own OrderBy key selector is necessarily the identity function
-        // (c => c) — the projected result IS the scalar directly, with no member to access — a shape
-        // TryResolveDistinctOrderingKey previously declined (it only recognized a MemberExpression key).
-        // Resolves against the Distinct's sole (unnamed... well, alias-bearing) key part directly.
+        // A bare-scalar Distinct's OrderBy key is the identity (c => c); it resolves against the Distinct's sole
+        // key part.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Bare_scalar_projection_Distinct_then_OrderBy_with_identity_selector_goes_native));
 
@@ -160,12 +151,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Anonymous_computed_projection_Distinct_then_OrderBy_on_member_goes_native()
     {
-        // EF-322 gap: TryResolveDistinctOrderingKey only matched a key part whose FieldRef was a
-        // MongoFieldExpression, so an OrderBy composed after a Distinct over a COMPUTED projection member
-        // (A = o.Country + o.City, a concat — no backing IProperty) declined and fell back to driver-LINQ.
-        // Mirrors the Where-side fix (MongoExpressionTranslator.TryResolveDistinctAliasComputedField) by
-        // resolving the ordering key against the Distinct's own flattened alias via a MongoElementRefExpression
-        // instead of requiring an IProperty-backed field.
+        // A computed projection member (A = o.Country + o.City) has no IProperty; the ordering key resolves against
+        // the Distinct's flattened alias via a MongoElementRefExpression (as TryResolveDistinctAliasComputedField
+        // does for Where).
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Anonymous_computed_projection_Distinct_then_OrderBy_on_member_goes_native));
 
@@ -197,12 +185,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Whole_entity_Distinct_goes_native()
     {
-        // EF-322: a whole-entity Distinct() (no preceding Select) now goes native too — a new MongoDistinctOp
-        // is appended to the ordinary PipelineOps list (like Match/Sort/Skip/Limit), lowering to the SAME
-        // $group{_id:"$$ROOT"}/$replaceRoot dedup pattern already used for Union's own dedup
-        // (MongoPipelineFactory.RenderUnionWith). Every row has a unique Id, so whole-entity Distinct is
-        // structurally always a no-op here (matching driver-LINQ) — this proves it goes native and returns
-        // the right rows, not that it actually collapses duplicates (impossible with a unique key).
+        // Whole-entity Distinct appends a MongoDistinctOp, lowering to the $group{_id:"$$ROOT"}/$replaceRoot dedup
+        // that Union uses. Ids are unique, so this proves routing and rows, not collapsing.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Whole_entity_Distinct_goes_native));
 
@@ -232,10 +216,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Whole_entity_Distinct_composes_with_where_orderby_skip_take_goes_native()
     {
-        // Proves a whole-entity Distinct needs none of the projected-Distinct family's special-casing
-        // (DistinctAliasScope, PostGroupOps, PriorGrouping): it is just another op in the ordinary
-        // PipelineOps list, so everything composed around it — Where before, OrderBy/Skip/Take after —
-        // already works via the SAME pre-existing mechanisms with zero new guards.
+        // Whole-entity Distinct is an ordinary PipelineOps entry, so operators around it need no special-casing.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Whole_entity_Distinct_composes_with_where_orderby_skip_take_goes_native));
 
@@ -279,9 +260,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Where_goes_native()
     {
-        // EF-322: Where composed AFTER a projected Distinct now resolves its predicate against the Distinct's
-        // OWN flattened output alias (MongoExpressionTranslator.DistinctAliasScope), not the root entity —
-        // succeeding under NativeOnly is the "went native" signal.
+        // Where after a projected Distinct resolves against the Distinct's flattened alias (DistinctAliasScope), not
+        // the root entity.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Where_goes_native));
 
@@ -312,10 +292,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Where_on_renamed_member_filters_by_the_projected_source_not_the_colliding_entity_property()
     {
-        // Select(o => new { Country = o.City }) deliberately reuses the entity's real "Country" property name
-        // for a DIFFERENT source field (City). If Where(x => x.Country == "NYC") resolved by name against the
-        // root entity (as the ordinary MongoExpressionTranslator does), it would silently filter on the
-        // entity's real Country field ("US"/"UK"/"FR") instead of the projected City value — wrong data.
+        // `new { Country = o.City }` reuses the entity's "Country" name for City. Resolving by name against the root
+        // entity would silently filter on the real Country field.
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
@@ -335,10 +313,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Where_on_unrelated_computed_key_falls_back_under_native_only()
     {
-        // A computed predicate over the alias (not a plain equality/comparison) must still decline rather than
-        // silently resolving against the entity — the whole point of DistinctAliasScope is that anything beyond
-        // a translatable operand is out of scope, not a fallthrough. ToUpper() has no native translation
-        // (unlike .Length, which EF-322 gave one — using it here would no longer exercise this decline).
+        // A computed predicate over the alias with no native translation (ToUpper) must decline, not resolve
+        // against the entity. (.Length is translatable, so it wouldn't exercise this.)
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Where_on_unrelated_computed_key_falls_back_under_native_only));
 
@@ -379,10 +355,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_bson_represented_projection_key_falls_back()
     {
-        // A projected key with a non-default BsonRepresentation (enum stored as string) must NOT go native:
-        // the flattening $project would read the group _id back through a generic CLR-type serializer,
-        // which cannot reproduce the string-stored enum — diverging from DriverLinq. Mirrors
-        // NativeGroupByTests.GroupBy_bson_represented_key_falls_back (shared HasDefaultKeySerialization guard).
+        // A non-default BsonRepresentation key (enum as string) can't be read back through a generic CLR serializer
+        // by the flattening $project, so it must not go native (shared HasDefaultKeySerialization guard; see
+        // NativeGroupByTests.GroupBy_bson_represented_key_falls_back).
         var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(
             nameof(Distinct_bson_represented_projection_key_falls_back)) + Guid.NewGuid().ToString("N")[..8];
         var collection = database.MongoDatabase.GetCollection<Order>(collectionName);
@@ -396,7 +371,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
             seedDb.SaveChanges();
         }
 
-        // Native: falls back to driver-LINQ and returns correct results (parity with DriverLinq).
+        // Native: falls back to driver-LINQ and returns correct results.
         using (var nativeDb = Make(collection, MongoQueryMode.Native, configure))
         {
             var result = nativeDb.Entities.Select(o => new { o.Status }).Distinct()
@@ -407,7 +382,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
                 result.Select(r => r.Status).ToArray());
         }
 
-        // NativeOnly: the represented key forbids native execution and fallback is disallowed → throws.
+        // NativeOnly: fallback is disallowed, so it throws.
         using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly, configure);
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
             nativeOnlyDb.Entities.Select(o => new { o.Status }).Distinct().ToList());
@@ -416,10 +391,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Count_goes_native()
     {
-        // EF-322: a bare Count() applied AFTER a projected Distinct now goes native too — the terminal $count
-        // stage is emitted right after the $group + flattening $project (and after any PostGroupOps already
-        // recorded) instead of being dropped. Succeeding under NativeOnly is the "went native" signal (3
-        // distinct countries: US, UK, FR).
+        // $count follows the $group + flattening $project (and any PostGroupOps). 3 distinct countries.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Count_goes_native));
 
@@ -447,9 +419,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Count_with_predicate_goes_native()
     {
-        // EF-322: Count(pred) composed directly after a projected Distinct resolves its predicate against the
-        // Distinct's own flattened output alias (the SAME MongoExpressionTranslator.DistinctAliasScope
-        // mechanism Where uses) — succeeding under NativeOnly is the "went native" signal.
+        // Count(pred) resolves against the Distinct's flattened alias, as Where does.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Count_with_predicate_goes_native));
 
@@ -477,9 +447,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Count_with_predicate_on_renamed_member_counts_the_projected_source_not_the_colliding_entity_property()
     {
-        // Select(o => new { Country = o.City }) deliberately reuses the entity's real "Country" property name
-        // for a DIFFERENT source field (City). If Count(x => x.Country != "NYC") resolved by name against the
-        // root entity, it would silently count against the entity's real Country field instead of City.
+        // `new { Country = o.City }` reuses the entity's "Country" name; resolving by name would count against the
+        // real Country field instead of City.
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
@@ -537,7 +506,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Count_with_unrelated_computed_predicate_falls_back_under_native_only()
     {
-        // Same reasoning as the Where test above: ToUpper() has no native translation, unlike .Length.
+        // As the Where test above: ToUpper() has no native translation.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Count_with_unrelated_computed_predicate_falls_back_under_native_only));
 
@@ -548,10 +517,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Count_with_predicate_over_computed_projection_key_goes_native()
     {
-        // The Distinct's own projected key is a COMPUTED expression (a string concatenation), not a bare
-        // field — e.g. Select(c => new { A = c.CustomerID + c.City }).Distinct().Count(n => n.A.StartsWith(...)).
-        // Distinct groups by {Country, City} in SeedOrders, so Country+City collapses to the same 3 distinct
-        // combinations as the plain-field tests above: "USNYC", "UKLondon", "FRParis" — 2 of which start with "U".
+        // A computed Distinct key (Country + City) yields the same 3 combinations as the plain-field tests:
+        // "USNYC", "UKLondon", "FRParis", 2 starting with "U".
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Count_with_predicate_over_computed_projection_key_goes_native));
 
@@ -564,10 +531,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Where_then_Count_goes_native()
     {
-        // A Where composed before a bare Count() both land natively after the $group: the Where's $match into
-        // PostGroupOps (EF-322, previous commit), the Count's terminal $count stage after it (this commit's
-        // lowerer fix — PostGroupOps must still be emitted even when a trailing aggregate also sets
-        // Cardinality, or the Where's $match would be silently dropped).
+        // The Where's $match lands in PostGroupOps and the $count after it; PostGroupOps must still be emitted when a
+        // trailing aggregate sets Cardinality, or the $match is silently dropped.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Where_then_Count_goes_native));
 
@@ -597,8 +562,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [InlineData(MongoQueryMode.NativeOnly)]
     public void Bare_scalar_Distinct_then_Max_goes_native(MongoQueryMode mode)
     {
-        // EF-453: Sum/Min/Max/Average terminating directly on a bare-scalar-projected Distinct() now go
-        // native (NativeOnly succeeding is the "went native" signal). Distinct years: {2020, 2021}.
+        // Sum/Min/Max/Average on a bare-scalar Distinct. Distinct years: {2020, 2021}.
         using var db = CreateContext(SeedOrders(), mode, nameof(Bare_scalar_Distinct_then_Max_goes_native) + mode);
 
         Assert.Equal(2021, db.Entities.Select(o => o.Year).Distinct().Max());
@@ -637,11 +601,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Wrapped_projection_Distinct_then_Sum_goes_native()
     {
-        // EF-322: Sum(selector) over a WRAPPED (named-member) projected Distinct now goes native too — the
-        // selector resolves against the Distinct's own flattened output alias (the SAME
-        // MongoExpressionTranslator.DistinctAliasScope mechanism Where/Count(pred) use), reusing the ordinary
-        // Sum/Min/Max/Average operand-resolution machinery in NativeCardinalityBinder.TryBindAggregate.
-        // Distinct {Country, Year} pairs: (US,2020),(US,2021),(UK,2020),(FR,2021) — sum of Year = 8082.
+        // Sum(selector) over a wrapped Distinct resolves against the flattened alias, reusing
+        // NativeCardinalityBinder.TryBindAggregate. Distinct {Country, Year}: (US,2020),(US,2021),(UK,2020),(FR,2021);
+        // sum of Year = 8082.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Wrapped_projection_Distinct_then_Sum_goes_native));
 
@@ -699,10 +661,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Where_then_Sum_with_selector_goes_native()
     {
-        // Proves composition with an already-native post-Distinct Where (previous commit): the Where's $match
-        // lands in PostGroupOps, and the Sum's terminal accumulator stage still follows it correctly (the SAME
-        // MongoSelectLowerer fix that made Where-then-Count work). Distinct {Country, Year} pairs excluding
-        // FR: (US,2020),(US,2021),(UK,2020) — sum of Year = 6061.
+        // The Where's $match lands in PostGroupOps and the Sum's accumulator stage follows it. Pairs excluding FR:
+        // (US,2020),(US,2021),(UK,2020); sum of Year = 6061.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Where_then_Sum_with_selector_goes_native));
 
@@ -732,10 +692,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Wrapped_projection_Distinct_then_Sum_with_computed_selector_goes_native()
     {
-        // A computed selector (not a bare member access naming one of the Distinct's own key parts) now goes
-        // native too: NativeCardinalityBinder.TryBindAggregate resolves it via TryTranslateValue, which
-        // composes with the EF-322 alias-scope carve-out the same way a bare-member selector already did.
-        // Distinct {Country, Year} pairs: (US,2020),(US,2021),(UK,2020),(FR,2021) — sum of Year*2 = 16164.
+        // A computed selector resolves via TryTranslateValue within the alias scope. Sum of Year*2 = 16164.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Wrapped_projection_Distinct_then_Sum_with_computed_selector_goes_native));
 
@@ -747,14 +704,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_GroupBy_goes_native_and_dedups()
     {
-        // EF-322: GroupBy(key).Select(aggregate) composed AFTER a projected Distinct now goes native too — a
-        // SECOND $group (+ flattening $project) is emitted after the Distinct's own $group/$project rather
-        // than overwriting it, so the Distinct's dedup still applies before the GroupBy's own aggregation.
-        // The seed has DUPLICATE (Country, Year) rows so Distinct is NOT a no-op: distinct {Country,Year} =
-        // {US2020, US2021, UK2020, FR2021}, so grouping by Country and counting yields US=2, UK=1, FR=1. If
-        // the Distinct were dropped/overwritten (the historical wrong-data hazard this feature guards
-        // against), the raw 6 rows would give US=3, UK=2, FR=1 instead — this test is load-bearing proof that
-        // does NOT happen. Succeeding under NativeOnly is the "went native" signal.
+        // GroupBy after a Distinct emits a second $group (+ $project) rather than overwriting the Distinct's, so dedup
+        // applies first. The seed has duplicate (Country, Year) rows: expected US=2, UK=1, FR=1; dropping the Distinct
+        // would give US=3, UK=2, FR=1.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_GroupBy_goes_native_and_dedups));
 
@@ -800,9 +752,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Where_then_GroupBy_goes_native()
     {
-        // Proves composition with an already-native post-Distinct Where: the Where's $match lands in
-        // PostGroupOps (previous commit) BETWEEN the Distinct's $group and the GroupBy's own $group — not
-        // after it, since nothing can route into PostGroupOps once IsGroupBy flips true.
+        // The Where's $match lands in PostGroupOps between the two $groups; nothing can route there once IsGroupBy
+        // flips true.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Where_then_GroupBy_goes_native));
 
@@ -850,9 +801,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_GroupBy_on_renamed_member_groups_by_the_projected_source_not_the_colliding_entity_property()
     {
-        // Select(o => new { Country = o.City }) deliberately reuses the entity's real "Country" property name
-        // for a DIFFERENT source field (City). If GroupBy(x => x.Country) resolved by name against the root
-        // entity, it would silently group by the entity's real Country field instead of City.
+        // `new { Country = o.City }` reuses the entity's "Country" name; resolving by name would group by the real
+        // Country field instead of City.
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
@@ -880,13 +830,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_GroupBy_with_computed_key_goes_native_under_native_only()
     {
-        // EF-322 SP1: a computed group-by key (a string-concat over the Distinct's own flattened alias, not
-        // the entity) used to be a hard decline — NativeGroupByBinder.TryBindGroupKey only recognized a bare
-        // member/composite/constant key. It now routes through MongoExpressionTranslator.TryTranslateValue,
-        // which (via the translator's existing DistinctAliasScope — set from Select.PriorGrouping — the SAME
-        // mechanism this key selector already needed to resolve x.Country against the Distinct's own output,
-        // not the entity) resolves this computed expression correctly, so it now goes native instead of
-        // falling back.
+        // A computed group key (concat over the Distinct's alias) routes through TryTranslateValue, resolving within
+        // the DistinctAliasScope set from Select.PriorGrouping.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_GroupBy_with_computed_key_goes_native_under_native_only));
 
@@ -899,8 +844,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
             .OrderBy(r => r.Key)
             .ToList();
 
-        // Distinct (Country, Year) pairs: US/2020, US/2021, UK/2020, FR/2021 — each already unique, so each
-        // concatenated key ("US2020" etc.) groups exactly one row.
+        // Distinct (Country, Year) pairs are unique, so each concatenated key ("US2020" etc.) groups one row.
         Assert.Equal(
             [("FR2021", 1), ("UK2020", 1), ("US2020", 1), ("US2021", 1)],
             result.Select(r => (r.Key, r.Count)).ToArray());
@@ -909,18 +853,10 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Select_after_Distinct_is_unsupported_and_never_returns_silent_null_data()
     {
-        // A second projected Select applied AFTER a native projected Distinct must NEVER silently go native and
-        // return null-valued rows. Structural hazard (guarded in TranslateSelect's non-grouped projection
-        // branch): this Select reaches that branch (the shaper is no longer a GroupByShaperExpression), so it
-        // bypasses the IsDistinct slot/cardinality guards; without the guard TryPopulateNativeProjection would
-        // APPEND this Select's field-ref onto the Distinct's Projection while Grouping is still set, and the
-        // lowerer would emit a flatten $project over fields gone after the $group → nulls.
-        //
-        // In practice this provider cannot build a shaper that reads a prior anonymous projection's members
-        // (MongoProjectionBindingExpressionVisitor throws on the nested ProjectionBindingExpression BEFORE the
-        // gate), so the shape is UNSUPPORTED and throws during translation in EVERY mode — Native, DriverLinq,
-        // and NativeOnly alike. The property this locks in: Native does NOT diverge from DriverLinq by silently
-        // returning null rows — both fail identically (no wrong/null data).
+        // A second Select after a projected Distinct must never go native and return null rows: it bypasses the
+        // IsDistinct guards, and appending its field-ref to the Distinct's Projection would flatten fields gone after
+        // the $group (guarded in TranslateSelect's non-grouped branch). In practice the shaper can't read a prior
+        // anonymous projection's members, so it throws in every mode; the point is Native doesn't diverge.
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
@@ -938,14 +874,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_First_goes_native()
     {
-        // EF-322: First()/Single() (an entity-REDUCER, not a scalar aggregate) composed directly after a
-        // projected Distinct now goes native too. It has no field reference of its own to get wrong — the
-        // reducer's synthesized $limit just needs to land in the right place (PostGroupOps, via the SAME
-        // ActiveOps routing Where/OrderBy/Skip/Take already use) and Cardinality needs the SAME
-        // SetGroupedTerminalAggregate sanctioned exception Count/Sum use to coexist with Grouping.
-        // A bare (unordered) Distinct().First() is not deterministic in general (no guaranteed row order
-        // without a $sort), so an explicit OrderBy is chained between Distinct and First to stabilize the
-        // "first" row for a meaningful equality assertion.
+        // First()/Single() after a projected Distinct: the reducer's $limit lands in PostGroupOps and Cardinality uses
+        // the SetGroupedTerminalAggregate exception. OrderBy makes "first" deterministic.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_First_goes_native));
 
@@ -986,8 +916,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Where_then_First_goes_native()
     {
-        // Proves composition with an already-native post-Distinct Where: the Where's $match and the
-        // reducer's own $limit both land in PostGroupOps, in arrival order.
+        // The Where's $match and the reducer's $limit both land in PostGroupOps, in arrival order.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Where_then_First_goes_native));
 
@@ -1019,10 +948,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Take_goes_native_and_dedups()
     {
-        // EF-322: Take(n) composed directly after a projected Distinct now goes native too (it has no field
-        // reference to get wrong, unlike Where/OrderBy) — succeeding under NativeOnly is the "went native"
-        // signal. An OrderBy between Distinct and Take stabilizes which 2 of the 3 distinct countries come
-        // back (otherwise Take(n) over an unordered Distinct has no guaranteed subset).
+        // Take(n) after a Distinct; OrderBy stabilizes which 2 of the 3 countries come back.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Take_goes_native_and_dedups));
 
@@ -1053,9 +979,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_OrderBy_goes_native_and_dedups()
     {
-        // EF-322: OrderBy composed AFTER a projected Distinct now resolves its key selector against the
-        // Distinct's OWN flattened output alias (NativeGroupByBinder.TryResolveDistinctOrderingKey), not the
-        // root entity — succeeding under NativeOnly is the "went native" signal.
+        // OrderBy after a Distinct resolves against the flattened alias (TryResolveDistinctOrderingKey).
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_OrderBy_goes_native_and_dedups));
 
@@ -1086,14 +1010,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_OrderBy_with_computed_key_over_bare_scalar_goes_native()
     {
-        // EF-322: OrderBy composed after a BARE-scalar projected Distinct with a COMPUTED key selector
-        // (x.IndexOf(term)) — not the identity (c => c) or a named member — previously declined outright in
-        // NativeGroupByBinder.TryResolveDistinctOrderingKey/NativeSlotPopulator.PopulateSortSlot rather than
-        // falling through to the same computed-sort-key translator the non-Distinct path already has. Mirrors
-        // the upstream EF spec shape (NorthwindMiscellaneousQueryTestBase.Distinct_followed_by_ordering_on_condition):
-        // Select(e => e.City).Distinct().OrderBy(x => x.IndexOf(searchTerm)).ThenBy(x => x).
-        // Distinct countries: FR, UK, US; "FR".IndexOf("U") = -1, "UK".IndexOf("U") = 0, "US".IndexOf("U") = 0 —
-        // ordered by that index ascending, ties broken by the ThenBy(x => x) identity key: FR, UK, US.
+        // A computed OrderBy key (x.IndexOf(term)) over a bare-scalar Distinct, mirroring EF's
+        // Distinct_followed_by_ordering_on_condition. IndexOf("U"): FR=-1, UK=0, US=0; ThenBy(x => x) gives FR, UK, US.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_OrderBy_with_computed_key_over_bare_scalar_goes_native));
 
@@ -1125,10 +1043,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_OrderBy_on_renamed_member_sorts_by_the_projected_source_not_the_colliding_entity_property()
     {
-        // Select(o => new { Country = o.City }) deliberately reuses the entity's real "Country" property name
-        // for a DIFFERENT source field (City). If OrderBy(x => x.Country) resolved by name against the root
-        // entity (as the ordinary MongoExpressionTranslator does), it would silently sort by the entity's real
-        // Country field instead of the projected City value — wrong data. It must sort by City's value instead.
+        // `new { Country = o.City }` reuses the entity's "Country" name; resolving by name would silently sort by the
+        // real Country field instead of City.
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
@@ -1148,10 +1064,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void OrderBy_before_Distinct_goes_native_and_dedups()
     {
-        // Ordering the SOURCE before the projection/Distinct (as opposed to Operator_after_Distinct_*, which
-        // orders/filters/reduces the Distinct's OUTPUT) is a different composition seam: the $sort applies to
-        // the pre-group documents, so EMPIRICALLY it does not interfere with the degenerate-$group Distinct
-        // translation — succeeding under NativeOnly is the "went native" signal.
+        // Ordering the source before the Distinct sorts pre-group documents and doesn't interfere with the $group.
         var seed = SeedOrders();
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(OrderBy_before_Distinct_goes_native_and_dedups));
@@ -1184,22 +1097,15 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Join_falls_back_gracefully_and_matches_driver_linq()
     {
-        // A Join over a projected-Distinct source falls back GRACEFULLY (unlike a genuine GroupBy+Join, which
-        // hard-declines): Distinct produces a flat set of rows the driver-LINQ path joins correctly, so under
-        // Native it must NOT throw and must equal DriverLinq. Before the IsDistinct/IsGroupBy split this
-        // reused IsGroupBy and therefore HARD-THREW under Native (MarkGroupByFallbackUnsafe) — a
-        // correct-results→throw regression. This test is the load-bearing proof of the graceful path: it
-        // asserts no throw under Native AND parity with DriverLinq.
+        // A Join over a projected Distinct falls back gracefully (unlike GroupBy+Join, which hard-declines): under
+        // Native it must not throw and must equal DriverLinq.
         using var nativeDb = CreateDistinctJoinContext(MongoQueryMode.Native,
             nameof(Distinct_then_Join_falls_back_gracefully_and_matches_driver_linq) + "N");
         using var driverDb = CreateDistinctJoinContext(MongoQueryMode.DriverLinq,
             nameof(Distinct_then_Join_falls_back_gracefully_and_matches_driver_linq) + "D");
 
-        // The result selector projects fields of the INNER entity r (a proper entity shaper), not the outer
-        // distinct-projection-bound `a` — referencing `a.Country` in the output is a separate, pre-existing
-        // projection-binding limitation (unrelated to this fix) that fails QMTEV translation in ALL modes.
-        // Mirrors NativeGroupByTests' GroupBy+Join shape (which projects the inner entity), isolating exactly
-        // the IsDistinct-vs-IsGroupBy fallback-mode difference this fix is about.
+        // The result selector projects the inner entity r; referencing the outer `a` fails translation in all modes
+        // (a separate projection-binding limitation). Mirrors NativeGroupByTests' GroupBy+Join shape.
         (string Country, string Continent)[] Run(DistinctJoinDbContext db) =>
             db.Orders
                 .Select(o => new { o.Country })
@@ -1218,8 +1124,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Join_throws_under_native_only()
     {
-        // The graceful fallback becomes a clean decline under NativeOnly (fallback disallowed) — NOT a hard
-        // GroupBy-style decline, but the same NativeTranslationNotSupportedException surface.
+        // Under NativeOnly the graceful fallback becomes a NativeTranslationNotSupportedException.
         using var db = CreateDistinctJoinContext(MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Join_throws_under_native_only));
 

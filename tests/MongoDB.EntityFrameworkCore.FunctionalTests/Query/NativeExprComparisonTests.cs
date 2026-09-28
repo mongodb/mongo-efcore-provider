@@ -28,21 +28,17 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-329 end-to-end coverage of field-to-field and arithmetic-operand comparisons, which the native
-/// translator now accepts and routes through <c>{ $expr: … }</c> (<see cref="MongoExpressionTranslator"/> /
-/// <see cref="MongoAggregationExpressionRenderer"/>). Each shape is proven native via
-/// <see cref="MongoQueryMode.NativeOnly"/> (succeeds ⇒ went native; a fallback shape would throw
-/// <c>NativeTranslationNotSupportedException</c>), and asserted for MQL shape and result-set parity between
-/// native and driver-LINQ execution — see task-7-report.md for the empirically-captured driver MQL this
-/// mirrors.
+/// Field-to-field and arithmetic-operand comparisons, rendered natively via <c>{ $expr: … }</c>
+/// (<see cref="MongoExpressionTranslator"/> / <see cref="MongoAggregationExpressionRenderer"/>). Each shape is
+/// proven native under <see cref="MongoQueryMode.NativeOnly"/> and checked for MQL shape and result parity with
+/// driver-LINQ.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    // Public (not private): a [Theory]/[MemberData] test method below takes an
-    // Expression<Func<Customer, bool>> parameter, and xUnit requires public test methods to have
-    // at-least-as-accessible parameter types.
+    // Public: a [Theory]/[MemberData] method takes an Expression<Func<Customer, bool>> parameter, and xUnit
+    // requires parameter types at least as accessible as the test method.
     public class Customer
     {
         public ObjectId Id { get; set; }
@@ -178,16 +174,12 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
 
     // ── 3. Integer division/modulo: danger zone for truncation/sign divergence ────────────────────
     //
-    // MODULO: the driver's own LINQ translator emits a RAW $mod for int operands — it does NOT emulate C#'s
-    // dividend-sign modulo semantics — and so does the native renderer, so the two execute byte-identical
-    // $expr documents and necessarily agree, even though both diverge from in-memory C#.
+    // Modulo: driver-LINQ and native both emit raw $mod (no C# dividend-sign emulation), so they agree even where
+    // both diverge from in-memory C#.
     //
-    // DIVISION: no longer so, as of EF-434. MongoDB has no integer-division operator ($divide over two
-    // integers always yields a double), which made the shared raw-$divide shape wrong in two distinct ways —
-    // an integral projection member failed to DESERIALIZE (FormatException, "Truncation resulted in data
-    // loss"), and an integral comparison answered against a fractional quotient. Native now renders an
-    // integral-result division as $trunc-of-$divide (MongoBinaryOperator.IntegerDivide) and therefore matches
-    // C#, deliberately diverging from driver-LINQ's MQL. Non-integral division is untouched.
+    // Division: MongoDB has no integer division ($divide always yields a double), so an integral-result division
+    // renders as $trunc-of-$divide (MongoBinaryOperator.IntegerDivide) to match C#, deliberately diverging from
+    // driver-LINQ. Otherwise an int projection fails to deserialize and an int comparison sees a fraction.
 
     [Fact]
     public void NativeOnly_divide_operand_succeeds_with_expected_mql()
@@ -195,9 +187,8 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         var (collection, logs) = SeedCustomers(nameof(NativeOnly_divide_operand_succeeds_with_expected_mql));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        // Alice: 7/2 → 3 truncated (3.5 raw); both are > 1, so the ROWS do not discriminate here — the MQL
-        // assertion below does, and Integer_division_operand_truncates_toward_zero_like_csharp_EF434 carries
-        // the row-level discriminator.
+        // Alice: 7/2 → 3 (3.5 raw); both > 1, so rows don't discriminate here — the MQL does. The row-level check
+        // is Integer_division_operand_truncates_toward_zero_like_csharp_EF434.
         var results = db.Entities.Where(c => c.Age / c.Score > 1).OrderBy(c => c.Name).ToList();
 
         Assert.Equal(["Alice"], results.Select(c => c.Name).ToArray());
@@ -206,12 +197,10 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         Assert.Contains("\"$trunc\" : { \"$divide\" : [\"$Age\", \"$Score\"] }", mql);
     }
 
-    // EF-434. The rows, not the MQL, are the discriminator here: each expected value is one that ONLY C#'s
-    // truncate-toward-zero division produces.
+    // Rows are the discriminator: each expected value is one only C#'s truncate-toward-zero division produces.
     //   Alice   7/2:  C# 3   | raw $divide 3.5   | floor 3    -> "== 3" excludes raw division
     //   Carol  -7/2:  C# -3  | raw $divide -3.5  | floor -4   -> "== -3" excludes raw division AND flooring
-    // Run under NativeOnly, so a fallback to driver-LINQ (which emits the raw $divide) cannot silently supply
-    // the answer — it would throw instead.
+    // NativeOnly, so a fallback (raw $divide) throws rather than silently supplying the answer.
     [Fact]
     public void Integer_division_operand_truncates_toward_zero_like_csharp_EF434()
     {
@@ -225,10 +214,8 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         Assert.Equal(["Carol"], minusThree.Select(c => c.Name).ToArray());
     }
 
-    // EF-434, the negative half: a NON-integral division must still render a bare $divide. Alice's 7/2 = 3.5
-    // is strictly between the truncated 3 and 4, so `> 3.4` includes her only if no truncation happened —
-    // rows discriminate, not just MQL. The cast lives inside a projection because a widening cast is rejected
-    // on a bare comparison operand (a separate, pre-existing boundary).
+    // A non-integral division must still render a bare $divide: Alice's 7/2 = 3.5 satisfies `> 3.4` only if not
+    // truncated. The cast is inside a projection because a widening cast is rejected on a bare comparison operand.
     [Fact]
     public void Double_division_is_not_truncated_EF434()
     {
@@ -246,10 +233,9 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         Assert.DoesNotContain("$trunc", mql);
     }
 
-    // EF-434's projection shape (the one the Northwind spec test
-    // NorthwindSelectQueryMongoTest.Projection_when_arithmetic_expression_precedence exercises): an integral
-    // division read back into an int member. Before the fix the double result made the driver's Int32
-    // deserializer throw FormatException / "Truncation resulted in data loss".
+    // Integral division read back into an int member (as in
+    // NorthwindSelectQueryMongoTest.Projection_when_arithmetic_expression_precedence). A raw double result makes
+    // the driver's Int32 deserializer throw "Truncation resulted in data loss".
     [Fact]
     public void Integer_division_projection_into_an_int_member_truncates_EF434()
     {
@@ -279,12 +265,9 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         Assert.Contains("\"$mod\" : [\"$Age\", \"$Score\"]", mql);
     }
 
-    // Result-parity test with driver-LINQ over the negative dividend (Carol, Age=-7, Score=2). Scoped, since
-    // EF-434, to the two operations where native and driver-LINQ still agree: DOUBLE division (never
-    // truncated on either path) and modulo (raw $mod on both, so both give -7 % 2 == -1 rather than C#'s -1
-    // ... which happens to coincide here, hence the explicit Carol assertion below). Integral division is
-    // deliberately excluded — native truncates and driver-LINQ does not; see
-    // Integer_division_operand_truncates_toward_zero_like_csharp_EF434.
+    // Result parity with driver-LINQ over the negative dividend (Carol, Age=-7, Score=2), limited to double
+    // division and modulo, where both paths agree. Integral division is excluded (native truncates, driver-LINQ
+    // doesn't).
     [Fact]
     public void Divide_and_modulo_match_driver_linq_results_including_negative_dividend()
     {
@@ -302,19 +285,12 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         Assert.Equal(["Carol"], nativeMod); // confirms $mod's non-C#-matching sign for -7 % 2 is exercised
     }
 
-    // ── 4. Numeric-cast operand: EF-403 Task 3 (EF-322 slice A1) made this go NATIVE ───────────────
+    // ── 4. Numeric-cast operand ───────────────────────────────────────────────────────────────────
     //
-    // This section documents a FLIP, not a still-standing limitation — the two "NativeOnly_..._throws"
-    // pins below used to assert exactly that: a decline. Before Task 3, MongoExpressionTranslator's
-    // TranslateOperand rejected ANY type-changing convert on the comparison-operand path unconditionally
-    // (the driver's own LINQ translator renders the SAME cast inconsistently depending on shape — explicit
-    // $toDouble on a bare field-to-field comparison, silently dropped inside arithmetic — and reproducing
-    // that exactly would have meant re-deriving driver-internal numeric-promotion rules). Task 3 instead
-    // renders a type-changing cast to a renderable target (int/long/double/decimal) as an explicit
-    // MongoConvertExpression ($toX) in BOTH positions, which matches the driver's rendering for the
-    // field-to-field shape and merely differs cosmetically (cast rendered vs. dropped) for the arithmetic
-    // shape — the arithmetic OPERATORS work on the raw BSON numeric value regardless, so values agree
-    // either way (see NativeCastTests for the dedicated cast-breadth coverage this generalizes into).
+    // A type-changing cast to int/long/double/decimal renders as an explicit MongoConvertExpression ($toX) in both
+    // the bare field-to-field and arithmetic positions. Driver-LINQ renders $toDouble for the former and drops the
+    // cast in the latter; values agree either way since the arithmetic operators work on the raw BSON number. See
+    // NativeCastTests for cast-breadth coverage.
 
     [Fact]
     public void NativeOnly_cast_in_field_to_field_comparison_now_goes_native()
@@ -341,9 +317,8 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         var nativeNames = native.Entities.Where(c => (double)c.Age > c.Score).Select(c => c.Name).OrderBy(n => n).ToList();
         var driverNames = driver.Entities.Where(c => (double)c.Age > c.Score).Select(c => c.Name).OrderBy(n => n).ToList();
 
-        // Parity ALONE passes when both paths agree on the same WRONG rows — this is the direct descendant of
-        // the pre-Task-3 Native_mode_..._falls_back_and_returns_correct_results test, whose absolute-value
-        // assertion (Alice: 7.0 > 2 true; Bob: 20 > 20 false; Carol: -7 > 2 false) is restored alongside parity.
+        // Parity alone passes when both paths return the same wrong rows, so assert absolute values too
+        // (Alice: 7.0 > 2 true; Bob: 20 > 20 false; Carol: -7 > 2 false).
         Assert.Equal(["Alice"], nativeNames);
         Assert.Equal(driverNames, nativeNames);
     }
@@ -362,7 +337,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         var mql = Mql(logs);
         Assert.Contains("$expr", mql);
         Assert.Contains("$add", mql);
-        // $toDouble is the operator this task exists to add — pin it, not just the pre-existing $add/$expr.
+        // Pin $toDouble, not just $add/$expr.
         Assert.Contains("$toDouble", mql);
     }
 
@@ -379,17 +354,13 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         Assert.Equal(driverNames, nativeNames);
     }
 
-    // ── 5. The !(comparison) widening (EF-335 / EF-322 Task 1) ─────────────────────────────────────
+    // ── 5. Negated comparisons: !(comparison) ──────────────────────────────────────────────────────
     //
-    // MongoExpressionTranslator's Not arm builds MongoUnaryExpression(Not, <comparison>) for ANY of the six
-    // comparison operators — EF does not normalize any of !(a>b)/!(a==b)/etc. away (spike-confirmed), so all
-    // six are reachable from ordinary user code, not just from the All() aggregate this task's main slice
-    // targets. RenderUnary's new $not-wrapped-comparison arm (Task 1) is what makes them all render.
+    // EF doesn't normalize away !(a>b)/!(a==b)/etc., so all six operators are reachable from user code; each
+    // renders via RenderUnary's $not-wrapped-comparison arm.
     //
-    // Threshold 7 (Alice's own Age) against the fixed SeedCustomers fixture (Alice=7, Bob=20, Carol=-7) is
-    // chosen so EVERY operator below discriminates — i.e. the negated predicate is neither trivially true
-    // nor trivially false over the three seeded rows (each yields a genuine 1-2 or 2-1 split); a threshold of
-    // e.g. 100 (all fail) or -100 (all pass) would prove nothing about $not being wired correctly.
+    // Threshold 7 against Alice=7, Bob=20, Carol=-7 gives every operator a genuine 1-2 or 2-1 split, so a
+    // mis-wired $not is detectable.
 
     public static IEnumerable<object[]> NegatedComparisonCases()
     {
@@ -412,16 +383,12 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     [MemberData(nameof(NegatedComparisonCases))]
     public void Negated_comparison_predicate_goes_native(string name, Expression<Func<Customer, bool>> predicate)
     {
-        // MongoQueryLanguageRenderer.RenderUnary now renders Not over a query-native comparison as
-        // { field: { $not: { <op>: value } } }; previously it threw NativeTranslationNotSupportedException and
-        // the gate fell back to driver-LINQ. That renderer arm was added for MongoExpressionNegator (which
-        // $not-wraps relational comparisons when complementing an All() predicate), but it also widens plain
-        // Where(!(comparison)) to native as a side effect — EF does not normalize any of these six forms away
-        // (spike-confirmed), so all six are reachable from ordinary user code.
+        // MongoQueryLanguageRenderer.RenderUnary renders Not over a query-native comparison as
+        // { field: { $not: { <op>: value } } }.
         var (collection, logs) = SeedCustomers(nameof(Negated_comparison_predicate_goes_native) + name);
         using var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
-        // Whole-entity Where + ToList(), NOT a projected Select — a bare-scalar Select is its own,
-        // unrelated fallback (non-entity NativeOnly result), which would mask what this test is about.
+        // Whole-entity Where + ToList(): a bare-scalar Select falls back for unrelated reasons and would mask
+        // this.
         var nativeNames = nativeOnly.Entities.Where(predicate).ToList().Select(c => c.Name).OrderBy(n => n).ToList(); // succeeds => went native
 
         using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
@@ -430,13 +397,9 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         Assert.Equal(driverNames, nativeNames);
     }
 
-    // I-1 (final whole-branch review of EF-322-owned-collection-all-native): NegatedComparisonCases above uses
-    // inline constants only, so element.Value in RenderUnary is always a bare BSON scalar there — it never
-    // exercises the BsonDocument branch of the '$'-prefix check at all. The one thing that DOES make
-    // element.Value a BsonDocument for an Equal comparison is a captured local / EF query parameter, which
-    // renders through PlaceholderTable's sentinel { __mongoef_param__: N } instead of a bare constant. This
-    // pins that !(x.Age == capturedLocal) still goes native and substitutes correctly — the live case the
-    // rationale in RenderUnary's comment and Query/AGENTS.md now names explicitly.
+    // NegatedComparisonCases uses inline constants, so it never exercises RenderUnary's BsonDocument branch of the
+    // '$'-prefix check. A captured local renders as PlaceholderTable's { __mongoef_param__: N } document; this pins
+    // that !(x.Age == capturedLocal) still goes native and substitutes correctly.
     [Fact]
     public void Negated_equality_against_a_captured_local_goes_native()
     {
@@ -455,25 +418,16 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         Assert.Equal(["Bob", "Carol"], nativeNames); // Alice (Age=7) is the only row excluded
     }
 
-    // The two equality forms (Equal/NotEqual above) are the important ones — they are what exercise illegal
-    // form 1 ({field: {$not: <bareValue>}}, a hard server error: "$not argument must be a regex or an
-    // object"). RenderUnary wraps a bare Equal rendering in { $eq: … } to avoid emitting that form; the
-    // teeth-check for this (temporarily removing the '$'-prefix guard and confirming the server rejects the
-    // resulting bare form) is recorded in task-3-report.md, not as a permanent test — reverting the guard
-    // removal would defeat its own purpose.
+    // The equality forms matter most: RenderUnary wraps a bare Equal in { $eq: … } to avoid
+    // {field: {$not: <bareValue>}}, which the server rejects ("$not argument must be a regex or an object").
 
-    // EF-396: a Not over a conjunction is not itself a comparison, so IsQueryDialectRenderable still refuses
-    // it at the QUERY-dialect level — that boundary (only All()'s own negator does De Morgan at the query
-    // level; a bare Where(!(a && b)) does not) is unchanged. But RenderUnary's new fallback branch now asks
-    // MongoAggregationExpressionRenderer.CanRender, which DOES admit a conjunction of renderable comparisons
-    // (IsRenderableOperator includes AndAlso/OrElse) — so this shape now goes native via
-    // { $expr: { $not: [ { $and: [...] } ] } } instead of declining. This test used to pin the decline; it
-    // now pins the (correct, intended) native widening instead.
+    // A Not over a conjunction isn't query-dialect renderable (only All()'s negator applies De Morgan there), but
+    // RenderUnary falls back to MongoAggregationExpressionRenderer.CanRender, which admits a conjunction of
+    // renderable comparisons, so this goes native as { $expr: { $not: [ { $and: [...] } ] } }.
     [Fact]
     public void Negated_conjunction_predicate_now_goes_native_via_expr()
     {
-        // Values: Alice (Age=7) is the only row for which (Age > 5 && Name == "Alice") is true, so negating
-        // it yields a genuine two-row/one-row split, not a vacuous all-true/all-false predicate.
+        // Only Alice satisfies (Age > 5 && Name == "Alice"), so the negation gives a genuine two-to-one split.
         var (collection, logs) = SeedCustomers(nameof(Negated_conjunction_predicate_now_goes_native_via_expr));
         using var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 

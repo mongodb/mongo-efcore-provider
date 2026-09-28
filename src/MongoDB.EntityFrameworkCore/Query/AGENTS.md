@@ -16,11 +16,8 @@ Translates `IQueryable<T>` into aggregation pipelines. **Two paths**, chosen at 
    runs it via `IMongoCollection<>.Aggregate`.
 2. **Driver-LINQ (fallback).** Everything outside the native slice goes to the driver's LINQ v3 provider.
 
-Per the top-level `AGENTS.md` rubric: **which path a query takes, the exact MQL emitted, and the exception type
-for an unsupported shape are implementation details, not contract.**
-
-> Per-feature history (which ticket widened what, measurement tables) belongs in git history and tests, not
-> here. This file holds only what you need before touching the area.
+**Which path a query takes, the exact MQL emitted, and the exception type for an unsupported shape are not
+contract.** Keep per-feature history out of this file — it belongs in git and tests.
 
 ## Pipeline at a glance
 
@@ -61,7 +58,7 @@ Native-vs-driver and streaming-vs-DOM are compile-time-deterministic.
 | `NativeTranslation/MongoSelectLowerer` | Native IR → `MongoPipelineStage[]` (BSON-free); owns lookup-eligibility guards. |
 | `NativeTranslation/MongoQueryLanguageRenderer` | Renders **query dialect** (`$match`); keeps `&&`/`\|\|` at query level, wraps only non-expressible subtrees in `$expr` for indexability. |
 | `NativeTranslation/MongoAggregationExpressionRenderer` | Renders **aggregation-expression dialect** (`$expr`/`$project`) — field-to-field comparisons, arithmetic. |
-| `NativeTranslation/MongoPipelineFactory` | Stages → `BsonDocument[]` template + placeholder table; validates `$limit>0`/`$skip≥0`. |
+| `NativeTranslation/MongoPipelineFactory` | Stages → `BsonDocument[]` template + placeholder table; normalizes paging (`NormalizePagingStages`). |
 | `NativeTranslation/Native{SlotPopulator,ProjectionBinder,CardinalityBinder,GroupByBinder,SelectManyBinder,JoinScope*}` | Per-shape recognizers populating the IR. |
 | `NativeTranslation/MongoStreamingEntityMaterializerRewriter` + `StreamingEligibility` | One-pass forward-only `IBsonReader` → POCO; deserialization *is* materialization. |
 | `Visitors/MongoProjectionBindingRemovingExpressionVisitor` (+`Mixed…`) | DOM read side; `Mixed` sibling reads whole un-projected documents (fallback/mixed leg). |
@@ -81,21 +78,16 @@ Rules that cost real bugs to learn. Breaking one usually produces **silently wro
 - **Scope resolves by parameter identity, never member name.** Route by `ReferenceEquals` against the scope's
   parameter (shared property names across types is the regression test). Shared primitive:
   `MongoExpressionTranslator.TryBeginOwnedHopWalk`.
-- **Multi-scope join projections.** A trailing `Select` over a `Joins.Count >= 2` chain can go native for a
-  whole-entity leaf, or a scalar/computed leaf resolving to exactly one chain scope. A leaf spanning multiple
-  scopes, or a nested wrapped leaf, still declines. `Skip`/`Take`/`Where`/`OrderBy` written after such a
-  `Select` are usually hoisted ahead of the join's result selector by EF Core — see the paging bullet below.
-- **Navigation-less joins are native-eligible** exactly like navigation-backed ones, as long as
-  `RebindInnerShaperToOuterQuery`'s raw-key branch resolved both key properties (`JoinInfo.Lookup != null`).
-  Don't confuse with a navigation resolving to the *wrong* target (still declines, guarded by
-  `JoinLookupImplementsKeySelectors`). See `NativeJoinTests.cs`'s
-  `Navigation_less_key_equality_join_still_declines_cleanly_in_NativeOnly` vs.
-  `Genuinely_navigation_less_key_equality_join_goes_native_under_NativeOnly`.
-- **`Skip`/`Take` (and hoisted `Where`/`OrderBy`) ahead of a join's confirming `Select`** now goes native by
-  deferring the recorded `PipelineOps` to run after the join, unless the join is already in the
-  left-outer-reference-navigation "safe to page before `$lookup`" set. A reducer in the same position still
-  declines. Exception: a genuine 1:N collection-navigation join with paging recorded before any join existed
-  declines instead of deferring (deferring would page the joined/multiplied result, not the outer sequence).
+- **Multi-scope join projections.** A trailing `Select` over a `Joins.Count >= 2` chain is native only for a
+  whole-entity leaf or a leaf resolving to exactly one chain scope; multi-scope or nested wrapped leaves decline.
+- **Navigation-less joins** are native-eligible iff `RebindInnerShaperToOuterQuery`'s raw-key branch resolved
+  both keys (`JoinInfo.Lookup != null`). A navigation resolving to the *wrong* target must still decline
+  (`JoinLookupImplementsKeySelectors`). See `NativeJoinTests`.
+- **Paging ahead of a join's confirming `Select`.** EF Core hoists `Skip`/`Take`/`Where`/`OrderBy` ahead of the
+  join's result selector; the recorded `PipelineOps` are deferred to run after the join, unless the join is in
+  the left-outer-reference-navigation "safe to page before `$lookup`" set. Reducers there decline. A 1:N
+  collection-navigation join with paging recorded before any join declines — deferring would page the
+  multiplied result, not the outer sequence.
 - **Set ops form a tree; each `Union`'s dedup belongs to its own link, never hoisted.**
   `MongoSelectDefinition.SetOperations` is an ordered list where an operand may itself carry a link, so
   whole-entity `Concat`/`Union` nests both directions. Right-nesting (`A.Concat(B.Union(C))`) cannot be
@@ -131,7 +123,6 @@ Rules that cost real bugs to learn. Breaking one usually produces **silently wro
   `NativeArrayProjectionTests`.
 - **Guards that decline a shape often become routers, not walls** — a rejection check can later become the
   signal a feature uses to pick between two strategies. Check before loosening one.
-- **MQL shape cannot prove a query went native** — see Common pitfalls.
 - **A recognizer must not mutate then decline.** Stage into locals, commit only once every gate passes
   (`NativeProjectionBinder`'s commit block is the pattern).
 
@@ -168,15 +159,14 @@ Rules that cost real bugs to learn. Breaking one usually produces **silently wro
   delegated at the `VisitMethodCall` fall-through instead. Don't route these through the switch without first
   removing their `NativeSlotPopulator` handling, or slots double-populate.
 - **The lowerer is BSON-free**; keep `BsonDocument` construction in the renderer/factory only.
-- **Non-positive paging** — `Build` validates `$limit > 0`/`$skip ≥ 0` (throws `ArgumentOutOfRangeException`);
-  never emit `{$limit: 0}`. Normalization covers top level and `$unionWith` inner pipelines, not `$lookup`
+- **Non-positive paging** — MongoDB rejects `{$limit: 0}`, so `Build` rewrites it to an always-false `$match`;
+  negative `$limit`/`$skip` throw `ArgumentOutOfRangeException`. Normalization covers top level and `$unionWith` inner pipelines, not `$lookup`
   sub-pipelines.
 - **TPH `$lookup` joins must narrow by discriminator** when the target is a derived type, or sibling-subtype
   rows leak in (`LookupExpression`'s constructor does this).
 - **EF Core query cache** — compiled queries are cached by expression-tree shape; changing a translator's
   output for a previously-translatable tree quietly invalidates user caches.
-- **Multi-EF guards** — visitor signatures differ across EF8/EF9/EF10, e.g.
-  `Storage/MongoTypeMappingSource.cs` (`#if EF8 || EF9`), `QueryingEnumerable.cs` (`#if !EF8`).
+- **Visitor signatures differ across EF8/EF9/EF10** — guard with `#if` (see root `AGENTS.md`).
 
 ## How to test
 
@@ -185,8 +175,7 @@ Rules that cost real bugs to learn. Breaking one usually produces **silently wro
 - **Differential correctness.** For a native shape that can change results, prefer a `[Theory]` asserting the
   native result equals an in-memory LINQ oracle over ragged/missing/null/empty fixtures — see
   `NativeOwnedCollectionAllTests`, `NativeOwnedCollectionCountTests`, `NativeModeAssert`.
-- **MQL baselines are generated, not hand-written** — see SpecificationTests `AGENTS.md` for
-  `EF_TEST_REWRITE_BASELINES`.
+- **MQL baselines are generated** (`EF_TEST_REWRITE_BASELINES`) — see SpecificationTests `AGENTS.md`.
 - Unit: `tests/MongoDB.EntityFrameworkCore.UnitTests/Query/` (native under `NativeTranslation/`).
 - Functional: `tests/MongoDB.EntityFrameworkCore.FunctionalTests/Query/`.
 

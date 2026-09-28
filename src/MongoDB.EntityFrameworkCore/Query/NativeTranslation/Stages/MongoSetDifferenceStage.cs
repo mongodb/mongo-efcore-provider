@@ -19,12 +19,9 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 /// <summary>
-/// A synthesized set-difference / set-intersection terminal (LINQ <c>Intersect</c>/<c>Except</c>). MongoDB
-/// has no direct intersect/except stage; because both operands are the SAME collection (same entity type),
-/// the renderer emits a source-tagging pipeline: each side is deduped (<c>$group{_id:"$$ROOT"}</c>) and
-/// tagged (<c>_a</c>/<c>_b</c>) via <c>$unionWith</c>, re-unified by full document (<c>$group{$max}</c>),
-/// discriminated (<c>$match</c>), and unwrapped (<c>$replaceRoot</c>). <see cref="Kind"/> selects the final
-/// <c>$match</c> (Intersect: in both; Except: in the first, not the second). BSON-free, like every stage.
+/// LINQ <c>Intersect</c>/<c>Except</c> over the same collection. MongoDB has no such stage, so the renderer dedupes
+/// and tags each side (<c>_a</c>/<c>_b</c>) via <c>$unionWith</c>, regroups by full document, then <c>$match</c>es
+/// on the tags per <see cref="Kind"/> and unwraps with <c>$replaceRoot</c>.
 /// </summary>
 internal sealed class MongoSetDifferenceStage : MongoPipelineStage
 {

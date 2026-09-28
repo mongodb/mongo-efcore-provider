@@ -27,8 +27,7 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-322 Task 2 gate tests: predicates and sort keys over owned single-reference (OwnsOne) sub-properties
-/// (at any owned-ref nesting depth) must go native instead of falling back to driver-LINQ.
+/// Predicates and sort keys over owned single-reference (OwnsOne) sub-properties, at any nesting depth, go native.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
@@ -107,9 +106,8 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
         var collection = SeedPeople(nameof(Owned_subproperty_equality_goes_native));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, PersonModel);
 
-        // A bare-scalar trailing Select is itself not native (pre-existing limitation) — under NativeOnly that
-        // could throw for PROJECTION reasons and mask whether the PREDICATE went native. Materialize whole
-        // entities instead (owned whole-entity is already native) and assert on .Name in memory.
+        // Materialize whole entities rather than a bare-scalar Select, which isn't native and would mask whether
+        // the predicate went native under NativeOnly.
         var names = db.Entities.AsNoTracking().Where(p => p.Home.City == "NYC").ToList().Select(p => p.Name).ToList();
 
         Assert.Equal(["Ann"], names);
@@ -210,10 +208,8 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
         using var native = CreateContext(collection, MongoQueryMode.Native, PersonModel);
         using var driver = CreateContext(collection, MongoQueryMode.DriverLinq, PersonModel);
 
-        // Cid has no Home, so the leaf's element is absent. Projected through a NULLABLE leaf both paths
-        // agree it is null - which is exactly why Location.Nickname is declared nullable (see its comment).
-        // The REQUIRED-leaf case is a different, documented disposition; it is pinned by the sibling test
-        // below rather than folded in here, because the two paths deliberately DIVERGE for it.
+        // Cid has no Home; through a nullable leaf both paths agree on null. The required-leaf case diverges and is
+        // pinned by the next test.
         var nativeRows = native.Entities.AsNoTracking()
             .OrderBy(p => p.Name).Select(p => new { p.Name, p.Home.Nickname }).ToList();
         var driverRows = driver.Entities.AsNoTracking()
@@ -225,27 +221,17 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
         Assert.Equal(new[] { "Big Apple" , null, null }, nativeRows.Select(r => r.Nickname).ToArray());
     }
 
-    // The REQUIRED-leaf half of the case above, split out because Native and DriverLinq deliberately
-    // DIVERGE here, so it cannot be asserted as an agreement.
-    //
-    // Cid's document has no Home at all, yet Home is a REQUIRED owned navigation and Location.City is
-    // non-nullable - i.e. the stored data violates what the model promises. The native read enforces that
-    // promise and throws; the driver's own deserializer is lenient and yields the CLR default. This is the
-    // behaviour class recorded in BREAKING-CHANGES.md ("projecting a required property whose stored element
-    // is absent or null now throws"), with UseQueryMode(DriverLinq) as the documented mitigation - which is
-    // what the DriverLinq leg here pins.
-    //
-    // The load-bearing observation, and the reason this is a contract rather than an inconsistency: a
-    // WHOLE-ENTITY read of these same documents ALREADY throws, in BOTH modes ("Field 'Home' required but
-    // not present"). So the projection path is not newly strict - it has stopped being accidentally lax, and
-    // now agrees with the whole-entity path. Both legs are asserted, since that agreement is the argument.
+    // Required-leaf half of the case above; Native and DriverLinq diverge. Cid has no Home, yet Home is required and
+    // Location.City non-nullable. Native throws; the driver deserializer yields the CLR default (the mitigation noted
+    // in BREAKING-CHANGES.md). A whole-entity read already throws in both modes ("Field 'Home' required but not
+    // present"), so native projection now agrees with the whole-entity path. Both legs are asserted.
     [Fact]
     public void Owned_required_subproperty_projection_over_absent_owned_throws_natively_and_falls_back_leniently()
     {
         var collection = SeedPeople(
             nameof(Owned_required_subproperty_projection_over_absent_owned_throws_natively_and_falls_back_leniently));
 
-        // The premises, asserted rather than assumed: the navigation is required, the leaf is non-nullable.
+        // Premises: the navigation is required and the leaf is non-nullable.
         using (var probe = CreateContext(collection, MongoQueryMode.Native, PersonModel))
         {
             var homeNav = probe.Model.FindEntityType(typeof(Person))!.FindNavigation(nameof(Person.Home))!;
@@ -262,7 +248,7 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
             Assert.Contains("'City' is missing for required non-nullable property", ex.Message);
         }
 
-        // The documented mitigation: the driver's deserializer is lenient and yields the CLR default.
+        // Mitigation: the driver's deserializer is lenient and yields the CLR default.
         using (var driver = CreateContext(collection, MongoQueryMode.DriverLinq, PersonModel))
         {
             var rows = driver.Entities.AsNoTracking()
@@ -271,8 +257,7 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
             Assert.Equal(new[] { "NYC", "LA", null }, rows.Select(r => r.City).ToArray());
         }
 
-        // ...and the whole-entity read rejects this data in EVERY mode, which is what makes the native
-        // projection's throw a consistency fix rather than a new restriction.
+        // ...and the whole-entity read rejects this data in every mode, so the native throw is consistent.
         foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContext(collection, mode, PersonModel);
@@ -322,8 +307,8 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
         var nativeCode = native.Entities.AsNoTracking().Select(c => new { c.Home.Code }).Single().Code;
         var driverCode = driver.Entities.AsNoTracking().Select(c => new { c.Home.Code }).Single().Code;
 
-        // Both must return the converted CLR value "NYC" (not the raw stored "NYC!"). Before the guard,
-        // Native leaks "NYC!" and this fails; the guard makes Native fall back to the correct driver path.
+        // Both must return the converted CLR value "NYC", not the stored "NYC!"; a value-converted leaf must make
+        // Native fall back.
         Assert.Equal("NYC", driverCode);
         Assert.Equal(driverCode, nativeCode);
     }

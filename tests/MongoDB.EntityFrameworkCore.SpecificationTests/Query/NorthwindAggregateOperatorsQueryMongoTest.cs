@@ -628,12 +628,8 @@ Employees.{ "$set" : { "__sort0" : { "$literal" : 42 } } }, { "$sort" : { "__sor
     {
         await base.Select_All(async);
 
-        // Re-baselined by the owned-collection `All` / predicate-negator slice (EF-322, closing EF-335): the
-        // top-level `All` aggregate now negates its predicate via MongoExpressionNegator instead of
-        // Expression.Not, so this query goes NATIVE instead of falling back to driver-LINQ. The `$match` is
-        // byte-identical; only the fallback's trailing scalar-placeholder `$project: {_id: 0, _v: null}`
-        // disappears (the native presence-only aggregate derives its boolean from whether a row survived
-        // `$limit`, so it needs no projection). Results are unchanged — `base.Select_All` above still passes.
+        // Top-level `All` negates its predicate via MongoExpressionNegator and goes native; the $match matches the
+        // fallback's, minus its trailing `$project: {_id: 0, _v: null}` (presence-only aggregates need no projection).
         AssertMql(
             """
             Orders.{ "$match" : { "CustomerID" : { "$ne" : "ALFKI" } } }, { "$limit" : 1 }
@@ -762,8 +758,7 @@ Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null,
 
     public override async Task Sum_on_float_column(bool async)
     {
-        // EF-394: Composite-PK member access now resolves natively, so ProductID == 1 predicate uses native MongoDB $sum
-        // instead of fallback path that had truncation data loss issue EF-228. Result is now mathematically correct.
+        // Native $sum avoids the fallback's truncation (EF-228), so the result is correct.
         await base.Sum_on_float_column(async);
 
         AssertMql(
@@ -888,8 +883,7 @@ Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null,
 
     public override async Task Average_on_float_column(bool async)
     {
-        // EF-394: Composite-PK member access now resolves natively, so ProductID == 1 predicate uses native MongoDB $avg
-        // instead of fallback path that had truncation data loss issue EF-228. Result is now mathematically correct.
+        // Native $avg avoids the fallback's truncation (EF-228), so the result is correct.
         await base.Average_on_float_column(async);
 
         AssertMql(
@@ -2224,10 +2218,8 @@ Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$strLenCP" 
 
     public override async Task Contains_inside_aggregate_function_with_GroupBy(bool async)
     {
-        // EF-322 SP3: the EF-149 gap this was pinning was the predicated Count itself (g.Count(pred)),
-        // which NativeGroupByBinder.TryBindAccumulator now translates via TryTranslateAccumulatorCondition —
-        // that delegates an ordinary per-element predicate to the SAME translator Where itself uses, so an
-        // array .Contains(...) predicate (already supported there) now works here too.
+        // g.Count(pred) translates via NativeGroupByBinder.TryTranslateAccumulatorCondition, which reuses the Where
+        // translator, so an array .Contains(...) predicate works.
         await base.Contains_inside_aggregate_function_with_GroupBy(async);
 
         AssertMql(
@@ -2368,12 +2360,8 @@ Customers.{ "$group" : { "_id" : null, "v" : { "$min" : { "$cond" : { "if" : { "
     public override async Task Type_casting_inside_sum(bool async)
     {
         // Fails: Truncation data loss issue EF-228
-        // Returns 121.04000180587159838 instead of 121.040 because of conversion errors. This now executes
-        // and returns wrong data in EVERY mode: the selector is a bare Convert-to-decimal over a member, which
-        // NativeCardinalityBinder.TryBindAggregate admits (via TryTranslateValue, since the go-native-for-
-        // computed-selector change) exactly like the driver-LINQ push-down already did, so native and
-        // driver-LINQ now render and execute the identical $toDecimal pipeline and hit the identical
-        // precision bug — native-only no longer rejects this shape outright at compile time.
+        // Returns 121.04000180587159838 instead of 121.040. Native and driver-LINQ render the same $toDecimal
+        // pipeline and hit the same precision bug in every mode.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.Type_casting_inside_sum(async), typeof(EqualException));
 
@@ -2395,13 +2383,9 @@ Customers.{ "$group" : { "_id" : null, "v" : { "$min" : { "$cond" : { "if" : { "
     private static Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
         => MongoSpecTestHelpers.AssertNoMultiCollectionQuerySupportAsync(query);
 
-    // A GroupBy/aggregate shape the native translator does not support must fail as a *translation*
-    // failure, but the exact exception depends on the query mode and how far the driver-LINQ fallback
-    // gets: NativeTranslationNotSupportedException under MongoQueryMode.NativeOnly; an EF
-    // InvalidOperationException (CoreStrings.TranslationFailed or an internal guard) or a driver
-    // translation exception under the default Native mode. Data-assertion failures are NOT accepted so a
-    // future wrong-data regression still turns the test red.
-    // These three are the only exception types actually observed across the flipped GroupBy spec suites.
+    // An unsupported GroupBy/aggregate shape must fail as a translation failure:
+    // NativeTranslationNotSupportedException under NativeOnly, or an EF InvalidOperationException / driver
+    // translation exception under Native. Data-assertion failures aren't accepted, so wrong-data regressions stay red.
     protected new static Task AssertTranslationFailed(Func<Task> query)
         => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 }

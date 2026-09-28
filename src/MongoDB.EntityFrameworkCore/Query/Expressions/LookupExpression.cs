@@ -23,20 +23,14 @@ using MongoDB.EntityFrameworkCore.Extensions;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// Distinguishes WHY this lookup carries a non-empty <see cref="LookupExpression.PipelineStages"/> sub-pipeline, since
-/// each reason has a different native-eligibility answer. <see cref="None"/>: no pipeline stages.
-/// <see cref="FallbackOnly"/>: TPH discriminator narrowing — remains fallback/mixed-visitor-only (see
-/// <c>MongoSelectLowerer.AppendLookupStages</c>'s exhaustive pipeline-kind dispatch). <see cref="FilteredInclude"/>:
-/// a filtered Include (OrderBy/Skip/Take on the Include target, EF-440) — its sub-pipeline is the same
-/// <c>let</c>+<c>pipeline</c> <c>$lookup</c> shape as <see cref="NestedInclude"/> and is native-eligible for the
-/// same reason (EF-322). <see cref="NestedInclude"/>: a collection-then-collection/reference <c>ThenInclude</c>
-/// (EF-450) — its nested <c>$lookup</c>(s), staged by <c>MongoProjectionBindingExpressionVisitor</c>'s
-/// <c>ExtractNestedIncludePipeline</c>/<c>ExtractThenIncludesFromSubquery</c>/<c>AddReferenceLookupStages</c>,
-/// render via the same <c>let</c>+<c>pipeline</c> shape (<see cref="LookupExpression.ToLookupStageDocument"/>)
-/// the driver-LINQ fallback bridge already used. <see cref="CorrelatedReducer"/>: a reference-collection-nav
-/// First/FirstOrDefault projection leaf (EF-449) — rendered via the DIFFERENT localField/foreignField+pipeline
-/// shape (<c>MongoPipelineFactory.RenderLookup</c>'s own dispatch), since that shape has a real equality FK to
-/// combine with the pipeline, unlike <see cref="NestedInclude"/>'s own correlation.
+/// Why a lookup carries a non-empty <see cref="LookupExpression.PipelineStages"/> sub-pipeline; each reason has a
+/// different native-eligibility answer. <see cref="FallbackOnly"/>: TPH discriminator narrowing, fallback-only
+/// (see <c>MongoSelectLowerer.AppendLookupStages</c>). <see cref="FilteredInclude"/> and
+/// <see cref="NestedInclude"/> (filtered Include; collection-then-collection/reference <c>ThenInclude</c>): the
+/// <c>let</c>+<c>pipeline</c> shape of <see cref="LookupExpression.ToLookupStageDocument"/>, native-eligible.
+/// <see cref="CorrelatedReducer"/>: reference-collection-nav First/FirstOrDefault projection leaf, rendered via
+/// the localField/foreignField+pipeline shape (<c>MongoPipelineFactory.RenderLookup</c>) since it has a real
+/// equality FK.
 /// </summary>
 internal enum LookupPipelineKind
 {
@@ -154,11 +148,9 @@ internal sealed class LookupExpression
     /// stored under the _id document.
     /// </summary>
     /// <remarks>
-    /// Made <c>internal</c> (native-chained-join-scope plan, Task 6 fix round, Finding 2) so
-    /// <c>JoinLookupImplementsKeySelectors</c> in <c>MongoQueryableMethodTranslatingExpressionVisitor</c> can
-    /// compare against the SAME composite-key-aware path this lookup's own <see cref="ForeignField"/>/
-    /// <see cref="LocalField"/> were built from, rather than a plain <c>GetElementName()</c> that disagrees
-    /// for a property that is one component of a multi-property primary key.
+    /// <c>internal</c> so <c>JoinLookupImplementsKeySelectors</c> compares against the same composite-key-aware
+    /// path <see cref="ForeignField"/>/<see cref="LocalField"/> were built from; a plain <c>GetElementName()</c>
+    /// disagrees for a component of a multi-property key.
     /// </remarks>
     internal static string GetFieldPath(IReadOnlyProperty property)
     {
@@ -186,15 +178,10 @@ internal sealed class LookupExpression
 
     /// <summary>See <see cref="LookupPipelineKind"/>.</summary>
     /// <remarks>
-    /// Compile-time state on an object reused across executions, so the same write-once discipline
-    /// <see cref="PreserveNullAndEmptyArrays"/> enforces with <see langword="init"/> is EXPECTED of callers
-    /// here, even though it cannot be enforced by the language: this property must be settable after
-    /// construction (the fallback visitor stamps it once the lookup's disposition is known), so it stays a
-    /// plain <c>internal set</c>. Write it exactly once, at registration; never re-stamp a kind an earlier
-    /// registration already chose — in particular, an object-initializer assignment runs AFTER the
-    /// constructor and would silently overwrite the <see cref="LookupPipelineKind.FallbackOnly"/> the
-    /// TPH-discriminator branch of the constructor sets, leaving the discriminator <c>$match</c> it prepended
-    /// to <see cref="PipelineStages"/> unaccounted for.
+    /// Write exactly once, at registration (it can't be <see langword="init"/> because the fallback visitor stamps
+    /// it after construction). In particular, an object-initializer assignment would silently overwrite the
+    /// <see cref="LookupPipelineKind.FallbackOnly"/> the constructor's TPH branch sets, leaving its discriminator
+    /// <c>$match</c> unaccounted for.
     /// </remarks>
     public LookupPipelineKind PipelineKind { get; internal set; } = LookupPipelineKind.None;
 
@@ -219,40 +206,25 @@ internal sealed class LookupExpression
     public bool ForceUnwind { get; }
 
     /// <summary>
-    /// Set when this collection Include's own lookup alias was renamed away from its default
-    /// (<see cref="GetLookupAlias(IReadOnlyNavigationBase)"/>) because it collided with an already-registered,
-    /// incompatible ($unwind-ed) lookup at that alias — see the collision-detection in
-    /// <c>MongoProjectionBindingExpressionVisitor.VisitExtension</c>'s <c>IncludeExpression</c> case (EF-322
-    /// Phase 2 Group B, root cause A2). Lets
-    /// <see cref="NativeTranslation.MongoSelectLowerer.AppendLookupStages"/> recognize this
-    /// lookup as a plain (no-pipeline, non-unwound) collection Include despite its non-default alias — it
-    /// renders identically to <see cref="IsNativeCollectionLookup"/>'s case, just under a different field name.
+    /// Set when this collection Include's alias was renamed from <see cref="GetLookupAlias(IReadOnlyNavigationBase)"/>
+    /// to avoid colliding with an incompatible ($unwind-ed or <see cref="IsBareCountSizeSource"/>) lookup — see
+    /// <c>MongoProjectionBindingExpressionVisitor.VisitExtension</c>'s <c>IncludeExpression</c> case. Lets
+    /// <see cref="NativeTranslation.MongoSelectLowerer.AppendLookupStages"/> treat it as a plain collection Include
+    /// under a different field name.
     /// </summary>
     public bool RenamedToAvoidJoinCollision { get; set; }
 
     /// <summary>
-    /// Set when a reference-collection-nav <c>Count</c>/<c>LongCount</c> predicate or projection leaf's own
-    /// <see cref="MongoSizeExpression"/> reads this EXACT array — via
-    /// <see cref="NativeTranslation.NativeCorrelationMatcher.TryBuildReferenceCollectionCountLookup"/> — and
-    /// therefore needs it to stay the navigation's TRUE, unfiltered array forever, regardless of what else
-    /// registers at the same alias afterward.
+    /// Set when a reference-collection-nav <c>Count</c>/<c>LongCount</c>'s <see cref="MongoSizeExpression"/> reads
+    /// this array (via <see cref="NativeTranslation.NativeCorrelationMatcher.TryBuildReferenceCollectionCountLookup"/>),
+    /// so it must remain the navigation's unfiltered array.
     /// </summary>
     /// <remarks>
-    /// EF-322 final review (round 3, NEW Critical): this lookup is registered EAGERLY, at
-    /// <c>Where</c>/projection-translation time, before it is known whether a filtered/paged <c>Include</c> for
-    /// the SAME navigation will also register later, in the completely different, later-running
-    /// <c>MongoProjectionBindingExpressionVisitor</c> pass. Without this flag, that Include's own registration
-    /// would collide on alias and get silently MERGED into this bare entry by
-    /// <see cref="MongoQueryExpression.AddLookup"/>'s general-purpose bare-then-pipelined merge (used by many
-    /// OTHER features — plain collection Include, <c>ThenInclude</c>, joins — which this flag does NOT change:
-    /// <c>AddLookup</c>'s own merge logic is untouched), corrupting the <c>$size</c> read with the Include's
-    /// paged array instead of the true count — silently, in EVERY <see cref="Infrastructure.MongoQueryMode"/> including an
-    /// explicit <see cref="Infrastructure.MongoQueryMode.DriverLinq"/>, since the merge happens at registration time, before
-    /// native-vs-fallback is ever decided. Instead, the SAME collision-detection
-    /// <c>MongoProjectionBindingExpressionVisitor.VisitExtension</c>'s <c>IncludeExpression</c> case already
-    /// uses to avoid colliding with an incompatible ($unwind-ed) join lookup (see
-    /// <see cref="RenamedToAvoidJoinCollision"/>) also checks this flag, and renames the INCOMING Include's own
-    /// lookup instead — leaving this Count's bare entry, and its alias, untouched.
+    /// This lookup is registered at <c>Where</c>/projection time, before a later filtered/paged <c>Include</c> of the
+    /// same navigation may register at the same alias. Without this flag, <see cref="MongoQueryExpression.AddLookup"/>'s
+    /// bare-then-pipelined merge would silently fold the Include's paged array into it, corrupting the count in
+    /// every <see cref="Infrastructure.MongoQueryMode"/> (the merge precedes the native/fallback decision). Instead
+    /// the Include's collision detection (see <see cref="RenamedToAvoidJoinCollision"/>) renames the incoming Include.
     /// </remarks>
     public bool IsBareCountSizeSource { get; set; }
 
@@ -264,8 +236,7 @@ internal sealed class LookupExpression
     /// flat-nested shapes, which remain fallback-only).
     /// </summary>
     /// <remarks>
-    /// A navigation-LESS lookup (an EF-377 <c>Join</c> hop with no model navigation) is never a collection
-    /// Include, so it is excluded here rather than dereferenced — <see cref="Navigation"/> is nullable.
+    /// A navigation-less lookup (a <c>Join</c> hop) is never a collection Include; <see cref="Navigation"/> is nullable.
     /// </remarks>
     public bool IsNativeCollectionLookup
     {
@@ -281,15 +252,11 @@ internal sealed class LookupExpression
     }
 
     /// <summary>
-    /// A collection Include reached via a <c>ThenInclude</c> off a REFERENCE Include (e.g.
-    /// <c>Orders.Include(o =&gt; o.Customer.Orders)</c>) rather than off the query root: the collection nav's
-    /// declaring type is the reference's own target, so
-    /// <c>MongoProjectionBindingExpressionVisitor</c>'s "flat multi-lookup mode" prefixes both
-    /// <see cref="LocalField"/> and <see cref="As"/> with the confirmed
-    /// reference lookup's own alias ("_lookup_Mid.Something"/"_lookup_Mid._lookup_Leaves") so the shaper reads
-    /// the array nested under the unwound intermediate document rather than at the document root. Otherwise
-    /// identical to <see cref="IsNativeCollectionLookup"/> — no pipeline, not force-unwound — just with a
-    /// PREFIXED <see cref="As"/> instead of the bare alias.
+    /// A collection Include reached via <c>ThenInclude</c> off a reference Include (e.g.
+    /// <c>Orders.Include(o =&gt; o.Customer.Orders)</c>): "flat multi-lookup mode" prefixes <see cref="LocalField"/>
+    /// and <see cref="As"/> with the reference lookup's alias (<c>"_lookup_Mid._lookup_Leaves"</c>) so the shaper
+    /// reads the array under the unwound intermediate document. Otherwise like
+    /// <see cref="IsNativeCollectionLookup"/>.
     /// </summary>
     public bool IsTransitiveCollectionLookup
     {
@@ -308,17 +275,12 @@ internal sealed class LookupExpression
 
     /// <summary>
     /// Whether the <c>$unwind</c> following this <c>$lookup</c> uses <c>preserveNullAndEmptyArrays: true</c>
-    /// — LEFT-OUTER (principal survives an unmatched join) vs INNER (it is dropped).
-    /// <para>
-    /// Defaults to <see langword="true"/> so non-join registration sites (Include) get the conservative,
-    /// principal-preserving behaviour. The join-translation path overrides it from the actual LINQ operator:
-    /// <c>LeftJoin</c>/<c>GroupJoin</c> are left-outer, plain <c>Join</c> is inner — which also covers EF's
-    /// lowering of a REQUIRED reference navigation to <c>Queryable.Join</c>.
-    /// </para>
+    /// (left-outer) or not (inner). Defaults to <see langword="true"/> for Include; the join path sets it from the
+    /// LINQ operator (<c>LeftJoin</c>/<c>GroupJoin</c> outer, <c>Join</c> inner, including EF's lowering of a
+    /// required reference navigation).
     /// </summary>
     /// <remarks>
-    /// <see langword="init"/>-only: compile-time state on an object reused across executions, so it must be
-    /// written exactly once, at registration.
+    /// <see langword="init"/>-only: compile-time state on an object reused across executions.
     /// </remarks>
     public bool PreserveNullAndEmptyArrays { get; init; } = true;
 
@@ -336,11 +298,8 @@ internal sealed class LookupExpression
     /// equality as the pipeline's own leading <c>$match</c>, followed by <see cref="PipelineStages"/>).
     /// </summary>
     /// <remarks>
-    /// Shared by every <c>$lookup</c> construction site so they can't drift on shape: the driver-LINQ fallback
-    /// bridge (<c>MongoEFToLinqTranslatingExpressionVisitor.EmitLookupStages</c>), a nested ThenInclude
-    /// sub-lookup embedded in a parent's own <see cref="PipelineStages"/>
-    /// (<c>MongoProjectionBindingExpressionVisitor.BuildLookupDocument</c>), and the native pipeline
-    /// (<c>MongoPipelineFactory.RenderLookup</c>).
+    /// Shared by every <c>$lookup</c> construction site (fallback bridge, nested ThenInclude sub-lookups, native
+    /// pipeline) so they can't drift on shape.
     /// </remarks>
     public BsonDocument ToLookupStageDocument()
     {
@@ -379,18 +338,10 @@ internal sealed class LookupExpression
     /// Builds the <c>$unwind</c> stage document that flattens this lookup's output array.
     /// </summary>
     /// <remarks>
-    /// The companion to <see cref="ToLookupStageDocument"/>, shared for the same reason — the
-    /// <c>$lookup</c> builder was centralized while its co-emitted <c>$unwind</c> partner stayed
-    /// hand-written at four separate sites.
-    /// <para>
-    /// <paramref name="preserveNullAndEmptyArrays"/> is deliberately a PARAMETER rather than read from
-    /// <see cref="PreserveNullAndEmptyArrays"/>: the callers legitimately disagree on the value, and that
-    /// disagreement is load-bearing. The flat-lookup path follows the LINQ operator (so a required reference
-    /// navigation gets an inner <c>$unwind</c>), while an <c>$unwind</c> nested INSIDE a parent collection
-    /// lookup's sub-pipeline is unconditionally preserving — there, a non-preserving one would drop collection
-    /// ELEMENTS rather than principals, and an <c>Include</c> must never change the result set of the query it
-    /// decorates. Only the document SHAPE is shared here; each caller keeps its own policy.
-    /// </para>
+    /// <paramref name="preserveNullAndEmptyArrays"/> is a parameter, not read from
+    /// <see cref="PreserveNullAndEmptyArrays"/>, because callers legitimately differ: the flat-lookup path follows
+    /// the LINQ operator, while an <c>$unwind</c> nested inside a parent collection lookup's sub-pipeline is always
+    /// preserving (otherwise it would drop collection elements, changing the Include's result set).
     /// </remarks>
     public BsonDocument ToUnwindStageDocument(bool preserveNullAndEmptyArrays)
         => UnwindStageDocument(As, preserveNullAndEmptyArrays);

@@ -26,24 +26,18 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// `e.City.AsEnumerable()`/`.ToList()`/`.ToArray()` — treating a string as its own <c>IEnumerable&lt;char&gt;</c>
-/// (EF's own AsEnumerable_over_string/ToList_over_string/ToArray_over_string conformance shapes) — used to
-/// decline the WHOLE projecting Select outright. It needs no server-side computation: the wrapping call only
-/// changes the leaf's CLR materialization, never the stored value, so
-/// <c>NativeProjectionBinder.TryTranslateLeaf</c> now admits it as a bare field leaf (pushing down only the raw
-/// string) and the read side re-applies the original .NET call to the raw value it reads back — see
-/// <c>MongoProjectionBindingExpressionVisitor.Visit</c> and
-/// <c>MongoProjectionBindingRemovingExpressionVisitor</c>.
+/// `e.City.AsEnumerable()`/`.ToList()`/`.ToArray()` — a string treated as <c>IEnumerable&lt;char&gt;</c>. The call
+/// only changes CLR materialization, so <c>NativeProjectionBinder.TryTranslateLeaf</c> admits it as a bare field
+/// leaf (pushing down the raw string) and the read side re-applies the call — see
+/// <c>MongoProjectionBindingExpressionVisitor.Visit</c> and <c>MongoProjectionBindingRemovingExpressionVisitor</c>.
 /// </summary>
 /// <remarks>
-/// EVERY shape here is exercised in all three <see cref="MongoQueryMode"/>s deliberately, not just
-/// <see cref="MongoQueryMode.NativeOnly"/>. Going native for this leaf means the whole
-/// <see cref="System.Linq.Enumerable"/>-over-string call is erased from the shaper (registered as ONE
-/// projection member), which is exactly what <c>ProjectionAnalyzer.UntranslatableProjectionFinder</c> — the
-/// EF-250/EF-231 guard that keeps this shape AWAY from the driver's own LINQ v3 push-down — looks for. So
-/// <see cref="MongoQueryMode.DriverLinq"/> and the mixed shaper are the legs that regress if the native leaf
-/// forgets to announce itself (<c>MongoSelectDefinition.HasStringSequenceProjectionLeaf</c>); the
-/// <see cref="MongoQueryMode.NativeOnly"/> leg alone cannot see that class of break at all.
+/// Every shape runs in all three <see cref="MongoQueryMode"/>s. The native leaf erases the
+/// <see cref="System.Linq.Enumerable"/> call from the shaper, which is what
+/// <c>ProjectionAnalyzer.UntranslatableProjectionFinder</c> looks for to keep this shape away from the driver's
+/// LINQ push-down. If the leaf forgets to announce itself
+/// (<c>MongoSelectDefinition.HasStringSequenceProjectionLeaf</c>), only the <see cref="MongoQueryMode.DriverLinq"/>
+/// and mixed-shaper legs regress.
 /// </remarks>
 [XUnitCollection("QueryTests")]
 public class NativeStringSequenceProjectionTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -132,14 +126,11 @@ public class NativeStringSequenceProjectionTests(TemporaryDatabaseFixture databa
 
     // ── The mixed shaper ──────────────────────────────────────────────────────────
     //
-    // An owned-array or owned-reference-nav leaf in the same projection is entity/collection-typed, so
-    // ProjectionAnalyzer.CanPushDown refuses to hand the query to the driver's LINQ v3 provider and the
-    // MIXED client-side shaper (MongoMixedProjectionBindingRemovingExpressionVisitor) reads WHOLE, un-projected
-    // documents instead. That visitor sees the RAW Enumerable.*-over-string MethodCallExpression this leaf
-    // registers, which its ordinary field-access path cannot resolve — so it needs the same rebuild-around-a-
-    // raw-read handling the native read side does, just against a whole document instead of a $project alias.
-    // Without it the leaf reads as `Document element 'Property' is missing but required` (aliased arm) or hands
-    // the shaper a whole BsonDocument where a char sequence was expected (bare/null-alias arm).
+    // An owned-array or owned-reference leaf alongside makes ProjectionAnalyzer.CanPushDown refuse the driver's
+    // LINQ provider, so MongoMixedProjectionBindingRemovingExpressionVisitor reads whole documents and sees the raw
+    // Enumerable.*-over-string call. It needs the same rebuild-around-a-raw-read as the native read side;
+    // without it the leaf fails with "Document element 'Property' is missing but required" (aliased arm) or gets
+    // a whole BsonDocument (bare/null-alias arm).
 
     public class Blog
     {
@@ -200,10 +191,9 @@ public class NativeStringSequenceProjectionTests(TemporaryDatabaseFixture databa
         }
     }
 
-    // An OWNED-NESTED string field (`b.Address.City`) — the leaf translates to a DOTTED MongoFieldExpression,
-    // which TryTranslateLeaf still admits because the property is default-serialized (only a dotted AND
-    // non-default-serialized field declines). Both read sides therefore have to cope with it: the native one
-    // reads the $project alias, the mixed one resolves the owned sub-document itself.
+    // An owned-nested string (`b.Address.City`) translates to a dotted MongoFieldExpression, which TryTranslateLeaf
+    // admits because it is default-serialized. The native side reads the $project alias; the mixed side resolves
+    // the owned sub-document.
     [Fact]
     public void Owned_nested_string_field_sequence_reads_correctly()
     {
@@ -222,9 +212,8 @@ public class NativeStringSequenceProjectionTests(TemporaryDatabaseFixture databa
 
     // ── A VALUE-CONVERTED string property ────────────────────────────────────────
     //
-    // The raw read this leaf rebuilds the call around goes through the source IProperty (not a bare element
-    // read), so a value converter on that property must still apply: the stored form is "X<city>", the
-    // materialized char sequence must be "<city>".
+    // The raw read goes through the source IProperty, so its converter must apply: stored "X<city>" must
+    // materialize as "<city>".
 
     public class ConvRow
     {
@@ -242,9 +231,8 @@ public class NativeStringSequenceProjectionTests(TemporaryDatabaseFixture databa
         var name = TemporaryDatabaseFixtureBase.CreateCollectionName(
             nameof(Value_converted_string_sequence_reads_correctly));
 
-        // Seed through a BsonDocument handle, NOT IMongoCollection<ConvRow>.InsertMany: the latter uses the
-        // DRIVER's POCO serializer, which knows nothing about EF's value converter, and would store the
-        // UNPREFIXED city — the very stored shape this test needs to distinguish itself from.
+        // Seed via BsonDocument: the driver's POCO serializer ignores EF's value converter and would store the
+        // unprefixed city.
         database.MongoDatabase.GetCollection<BsonDocument>(name).InsertMany(
         [
             new BsonDocument { { "Label", "a" }, { "City", "XLondon" } },

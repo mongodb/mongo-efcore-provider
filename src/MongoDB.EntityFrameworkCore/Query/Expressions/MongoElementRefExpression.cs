@@ -19,41 +19,26 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
 /// A raw reference to a document element by its (possibly dotted) path, with no associated
-/// <see cref="Microsoft.EntityFrameworkCore.Metadata.IProperty"/>.
+/// <see cref="Microsoft.EntityFrameworkCore.Metadata.IProperty"/>. Renders as <c>"$" + Path</c>; used e.g. to lift
+/// <c>$group</c> output (<c>_id</c>, <c>_id.&lt;Name&gt;</c>, accumulator fields) into top-level aliases.
 /// </summary>
-/// <remarks>
-/// Used by the native <c>$group</c> flattening <c>$project</c> to lift grouped output (<c>_id</c>, a
-/// composite <c>_id.&lt;Name&gt;</c> sub-key, or an accumulator field) into a top-level result alias.
-/// Renders in the aggregation-expression dialect as <c>"$" + Path</c>.
-/// </remarks>
 internal sealed class MongoElementRefExpression(string path, Type clrType, bool nullSafe = false) : MongoExpression
 {
     /// <summary>
-    /// The <see cref="Path"/> spelling that means "the WHOLE current document", i.e. the aggregation system
-    /// variable <c>$$ROOT</c> — rendered as <c>"$" + "$ROOT"</c> by the ordinary <c>"$" + Path</c> rule, so no
-    /// special-casing is needed in the renderer.
+    /// <see cref="Path"/> meaning the whole current document (<c>$$ROOT</c>).
     /// </summary>
     /// <remarks>
-    /// SHARED between the emit side (<c>NativeProjectionBinder.TryTranslateLeaf</c>, which constructs the node
-    /// for a whole-root-entity projection leaf) and the read side
-    /// (<c>MongoProjectionBindingRemovingExpressionVisitor.IsWholeRootEntityAlias</c>, which recognizes it to
-    /// null out the alias on the FALLBACK leg). Those two must agree EXACTLY, and the failure mode if they
-    /// drift is asymmetric enough to be worth a named constant: the read side simply stops matching, the
-    /// fallback null-out silently stops firing, and the explicit <c>DriverLinq</c> leg regresses to
-    /// <c>Field 'c' required but not present in BsonDocument</c> — loud, but only on the non-default query
-    /// mode, so a default-mode-only test run would not see it.
+    /// Shared by <c>NativeProjectionBinder.TryTranslateLeaf</c> (emit) and
+    /// <c>MongoProjectionBindingRemovingExpressionVisitor.IsWholeRootEntityAlias</c> (read). If they drift, the
+    /// fallback null-out stops firing and only the <c>DriverLinq</c> mode fails
+    /// (<c>Field 'c' required but not present</c>), which a default-mode test run would miss.
     /// </remarks>
     internal const string WholeRootDocumentPath = "$ROOT";
 
     /// <summary>
-    /// The <see cref="Path"/> spelling that means "treat this element's contribution as though it were
-    /// entirely absent", i.e. the aggregation system variable <c>$$REMOVE</c> — rendered as <c>"$" +
-    /// "$REMOVE"</c> by the ordinary <c>"$" + Path</c> rule, exactly like <see cref="WholeRootDocumentPath"/>
-    /// above. Verified directly against a real server (not assumed from documentation): inside a $group
-    /// accumulator's own input expression, `{"$cond": [pred, value, "$$REMOVE"]}` makes Min/Max/Sum/Average/
-    /// $push/$addToSet skip that element entirely — critically different from a null/0 sentinel, which would
-    /// corrupt Min/Max (BSON comparison order places null below every number/date, so a null "else" would
-    /// silently become the reported minimum whenever any element failed the predicate).
+    /// <see cref="Path"/> meaning <c>$$REMOVE</c>. Inside a <c>$group</c> accumulator input,
+    /// <c>{"$cond": [pred, value, "$$REMOVE"]}</c> makes Min/Max/Sum/Average/$push/$addToSet skip the element;
+    /// a null sentinel would instead corrupt Min (null sorts below every number/date).
     /// </summary>
     internal const string RemoveSentinelPath = "$REMOVE";
 
@@ -61,16 +46,9 @@ internal sealed class MongoElementRefExpression(string path, Type clrType, bool 
     public string Path { get; } = path;
 
     /// <summary>
-    /// When <see langword="true"/>, the renderer wraps the reference in <c>$ifNull</c> against a literal
-    /// <c>null</c> before use, so a MISSING element (an unset owned single-reference navigation, e.g.) reads
-    /// the same as an explicitly-stored <c>null</c> one. Needed for an owned-nav null-equality check
-    /// (<c>b.Address == null</c>): unlike <see cref="WholeRootDocumentPath"/> — which can never actually be
-    /// missing, since it names the current document itself — a real element path can be entirely absent from
-    /// the stored document, and <c>$expr</c>'s <c>$eq</c> does NOT treat a missing field the same as an
-    /// explicit <c>null</c> (unlike the ORDINARY query-dialect <c>{field: null}</c>, which matches both). Kept
-    /// as an opt-in flag (mirroring <see cref="MongoSizeExpression.NullSafe"/>'s own precedent) rather than
-    /// applied unconditionally, so the pre-existing <c>WholeRootDocumentPath</c> callers' emitted MQL is
-    /// unaffected.
+    /// When <see langword="true"/>, the renderer wraps the reference in <c>$ifNull: [..., null]</c> so a missing
+    /// element (e.g. an unset owned reference) compares equal to <c>null</c>; <c>$expr</c>'s <c>$eq</c> otherwise
+    /// treats missing and <c>null</c> differently. Opt-in so existing callers' MQL is unchanged.
     /// </summary>
     public bool NullSafe { get; } = nullSafe;
 

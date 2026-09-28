@@ -54,9 +54,7 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
         Assert.All(lines, l => Assert.NotNull(l.Product));
     }
 
-    // The same seed, now asserted ACROSS QUERY MODES: the native pipeline and the driver-LINQ fallback must
-    // return the same rows over a dangling foreign key, not merely both "work". This is the assertion that
-    // would have caught EF-370's row-count divergence.
+    // Native and driver-LINQ must return the same rows over a dangling foreign key, not merely both succeed.
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]
@@ -67,7 +65,7 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
 
         var orders = db.Orders.Include(o => o.Buyer).OrderBy(o => o.OrderName).ToList();
 
-        // O3's buyer_id is dangling and Buyer is required => inner join => O3 absent, in EVERY mode.
+        // O3's buyer_id is dangling and Buyer is required => inner join => O3 absent, in every mode.
         Assert.Equal(3, orders.Count);
         Assert.All(orders, o => Assert.NotNull(o.Buyer));
         Assert.DoesNotContain(orders, o => o.Buyer == null);
@@ -132,12 +130,8 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
     {
         using var db = Setup();
 
-        // Under the native pipeline a single-level collection Include takes MongoSelectLowerer's
-        // IsNativeCollectionLookup arm: a flat $lookup with NO $unwind at all, the array materialized
-        // directly by the shaper. LookupExpression.PreserveNullAndEmptyArrays only governs an $unwind, so it
-        // is never consulted here — this is flat-array-materialization coverage, not unwind-semantics
-        // coverage, and it passes regardless of that flag. The reference-navigation tests above are what
-        // pin the EF-370 fix.
+        // Natively a single-level collection Include is a flat $lookup with no $unwind, so
+        // PreserveNullAndEmptyArrays is never consulted: this is materialization coverage, not unwind coverage.
         var orders = db.Orders.Include(o => o.Lines).OrderBy(o => o.OrderName).ToList();
 
         // An Include must never drop principals. O4 has no lines at all and must still be returned.
@@ -169,11 +163,9 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
     }
 
     // ---------------------------------------------------------------------------------------------------
-    // Optional navigations: LEFT-OUTER semantics, run on ALL THREE EF majors — EF lowers these to
-    // Queryable.LeftJoin on EF10, and onto EF Core's own internal LeftJoin dispatch shim on EF8/EF9 (which
-    // MongoQueryableMethodTranslatingExpressionVisitor.IsEf8Ef9LeftJoinShim now admits unconditionally, the
-    // same way as the real BCL method). Only a genuinely EF10-only surface — a USER LINQ query calling
-    // Queryable.LeftJoin directly, which doesn't exist as a callable method before .NET 10 — stays gated.
+    // Optional navigations: left-outer semantics, on all three EF majors. EF lowers these to Queryable.LeftJoin
+    // on EF10 and to EF Core's internal LeftJoin shim on EF8/EF9 (see IsEf8Ef9LeftJoinShim). Only a user query
+    // calling Queryable.LeftJoin directly is EF10-gated.
     // ---------------------------------------------------------------------------------------------------
 
     [Fact]
@@ -229,10 +221,8 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
     [Fact]
     public void User_authored_LeftJoin_is_left_outer()
     {
-        // Genuinely EF10-only: Queryable.LeftJoin is a BCL method added in .NET 10, so pre-.NET10 there is
-        // no such method for user LINQ to call directly at all (a compile-time surface, not a translation
-        // gap) - unlike the cases above, which reach the LeftJoin shape via EF's OWN nav-expansion/
-        // GroupJoin-flattening and so also run on EF8/EF9.
+        // EF10-only because Queryable.LeftJoin doesn't exist before .NET 10 (a compile-time surface, not a
+        // translation gap).
         using var db = Setup();
 
         var pairs = db.Lines
@@ -252,11 +242,8 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
     {
         using var db = Setup();
 
-        // Only the Buyer half exercises the unwind-semantics fix: a required reference Include emits
-        // $lookup + a non-preserving $unwind, which is why O3 is dropped below. The Lines half is a flat
-        // native $lookup with no $unwind (see the note on
-        // Collection_Include_still_preserves_principals_with_no_children), so the O4 assertion is
-        // materialization coverage rather than unwind coverage.
+        // Only the Buyer half exercises unwind semantics (non-preserving $unwind drops O3); the Lines half is a
+        // flat $lookup (see Collection_Include_still_preserves_principals_with_no_children).
         var orders = db.Orders
             .Include(o => o.Lines)
             .Include(o => o.Buyer)

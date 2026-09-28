@@ -26,13 +26,9 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// Final whole-branch review finding 2 (IMPORTANT — real regression vs. the pre-existing driver-LINQ
-/// fallback): the zero-arg <c>Trim()</c>/<c>TrimStart()</c>/<c>TrimEnd()</c> overload used to omit MQL's
-/// <c>chars</c> option, leaving MongoDB's OWN default whitespace set in effect — which, unlike .NET's
-/// <c>char.IsWhiteSpace</c>, also treats U+0000 (NUL) as whitespace. A string with an embedded/leading/
-/// trailing NUL therefore trimmed differently under the native path than under .NET/the driver-LINQ fallback.
-/// Fixed by always rendering an explicit <c>chars</c> option built from exactly the code points
-/// <c>char.IsWhiteSpace</c> considers whitespace for the zero-arg overload.
+/// Zero-arg <c>Trim()</c>/<c>TrimStart()</c>/<c>TrimEnd()</c> must render an explicit <c>chars</c> option built from
+/// <c>char.IsWhiteSpace</c>: MongoDB's default whitespace set also includes U+0000 (NUL), so omitting it trims
+/// differently from .NET and the driver-LINQ fallback.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeStringTrimTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -80,9 +76,7 @@ public class NativeStringTrimTests(TemporaryDatabaseFixture database) : IClassFi
         AssertSelectMatchesOracle(collection, x => x.S.TrimEnd());
     }
 
-    // `selector` MUST be Expression<Func<...>>, never a plain Func delegate — see NativeStringConcatTests'
-    // own remarks on why a Func parameter here would silently pull every row into memory instead of
-    // exercising the native translation at all.
+    // `selector` must be an Expression, not a Func (see NativeStringConcatTests.AssertConcatMatchesOracle).
     private static void AssertSelectMatchesOracle(IMongoCollection<Row> collection, Expression<Func<Row, string>> selector)
     {
         using var oracleDb = CreateContext(collection, MongoQueryMode.Native);

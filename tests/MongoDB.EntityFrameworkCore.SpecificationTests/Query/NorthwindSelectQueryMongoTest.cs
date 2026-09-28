@@ -139,9 +139,7 @@ Orders.{ "$project" : { "_v" : { "$cond" : { "if" : { "$cond" : { "if" : { "$eq"
 
     public override async Task Projection_when_arithmetic_expression_precedence(bool async)
     {
-        // EF-434: integer division ($divide) used to yield a double that failed to deserialize back into
-        // the int property B ("Truncation resulted in data loss", tracked as the temporary key EF-X004).
-        // Fixed by wrapping $divide in $trunc for integral operands, matching C#'s truncating semantics.
+        // Integer division must wrap $divide in $trunc; a raw double fails to deserialize into the int property.
         await base.Projection_when_arithmetic_expression_precedence(async);
 
         AssertMql(
@@ -237,10 +235,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$lt" : 10300 } } }
 
     public override async Task Select_bool_closure_with_order_parameter_with_cast_to_nullable(bool async)
     {
-        // A bare constant/parameter Select leaf now goes native with a $literal wrap (see the Query area's
-        // NativeProjectionBinder/MongoPipelineFactory widening), which also fixed this: the un-wrapped bare
-        // value used to reach the server as a naked boolean sort-key/projection field and abort with
-        // MongoCommandException (EF-X009). $literal-wrapping it closes that unrelated-looking gap too.
+        // The bare constant/parameter leaf needs a $literal wrap; a naked boolean projection value is a server
+        // error.
         await base.Select_bool_closure_with_order_parameter_with_cast_to_nullable(async);
 
         AssertMql(
@@ -955,10 +951,8 @@ Orders.{ "$sort" : { "CustomerID" : 1 } }, { "$lookup" : { "from" : "Customers",
 
     public override async Task Select_GetValueOrDefault_on_DateTime_with_null_values(bool async)
     {
-        // Fails: Unsupported by driver EF-X003. EF-436: this shape reaches the driver identically on
-        // EF8/EF9/EF10 (the stale EF8/EF9 "declines before reaching our translator at all" gate was a
-        // symptom of the same LeftJoin-recognition gap fixed for NorthwindJoinQueryMongoTest
-        // .GroupJoin_DefaultIfEmpty_multiple), so all three versions share this same partial capture.
+        // Fails: Unsupported by driver EF-X003. All EF versions reach the driver identically, so they share
+        // this partial capture.
         await AssertTranslationFailed(() =>
             base.Select_GetValueOrDefault_on_DateTime_with_null_values(async));
 
@@ -997,16 +991,9 @@ Orders.{ "$project" : { "One" : "$CustomerID", "Two" : { "$cond" : { "if" : { "$
 
     public override async Task Multiple_select_many_with_predicate(bool async)
     {
-        // Fails: Subquery selection EF-X001 — a two-level nested reference SelectMany
-        // (from c ... from o in c.Orders from od in o.OrderDetails) carrying an inner predicate AND a
-        // whole-outer `select c` result: out of scope for the EF-347 nested-reference slice (which covers
-        // only UNFILTERED two-level nesting with a projected / leaf result). It still declines cleanly, but
-        // now that the nested-reference carve-out binds BOTH levels before the whole-outer filtered shape
-        // falls back, the decline surfaces as the driver-LINQ bridge's cross-DbSet guard
-        // (InvalidOperationException, "Unsupported cross-DbSet query …") rather than EF's generic
-        // TranslationFailed message. The exact decline message of an unsupported shape is not part of the
-        // contract, so assert via the lenient translation-failure helper — which still turns red on any
-        // wrong-data (xUnit assertion) failure, so a future silent-wrong-data regression is not masked.
+        // Fails: Subquery selection EF-X001 — a filtered two-level nested reference SelectMany with a
+        // whole-outer `select c` result. Declines via the cross-DbSet guard; the lenient helper still fails on
+        // any wrong-data assertion.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Multiple_select_many_with_predicate(async));
 
         AssertMql();
@@ -1014,10 +1001,8 @@ Orders.{ "$project" : { "One" : "$CustomerID", "Two" : { "$cond" : { "if" : { "$
 
     public override async Task SelectMany_without_result_selector_naked_collection_navigation(bool async)
     {
-        // EF-347 Task 4: a bare cross-collection reference SelectMany (Kind == Reference,
-        // IsWholeElementRepresentable's eager-loaded-nav check) now goes NATIVE — Order's own navigations
-        // (Customer, OrderDetails, etc.) are not eager-loaded in this fixture, so the shape is representable
-        // and materializes correctly via $lookup + inner-join $unwind + a plain $replaceRoot.
+        // A bare reference SelectMany goes native ($lookup + inner $unwind + $replaceRoot) because Order has
+        // no eager-loaded navigations in this fixture (IsWholeElementRepresentable).
         await base.SelectMany_without_result_selector_naked_collection_navigation(async);
 
         AssertMql(
@@ -1092,13 +1077,8 @@ Orders.{ "$project" : { "One" : "$CustomerID", "Two" : { "$cond" : { "if" : { "$
 
     public override async Task FirstOrDefault_over_empty_collection_of_value_type_returns_correct_results(bool async)
     {
-        // EF-322: previously failed here (Where clause used c.CustomerID.Equals(...), which the native
-        // translator didn't recognize, forcing the whole query onto the driver-LINQ fallback bridge — which
-        // has no oracle at all for the OrderBy/Select/FirstOrDefault reference-collection-nav reduction in
-        // the projection). Now that Equals(...) method calls translate natively, the Where clause goes
-        // native and the whole query reaches the correlated-reducer projection leaf machinery (EF-449),
-        // which already supports this exact shape — so it now succeeds end-to-end, natively, with correct
-        // results (verified by AssertQuery's own data comparison below; also passes under NativeOnly).
+        // Must go native end to end: the correlated-reducer projection leaf has no driver-LINQ oracle, so the
+        // Equals(...) Where clause has to translate natively too.
         await base.FirstOrDefault_over_empty_collection_of_value_type_returns_correct_results(async);
 
         AssertMql(
@@ -1239,9 +1219,8 @@ Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$project" : { "_outer" : "$
 
     public override async Task ToList_Count_in_projection_works(bool async)
     {
-        // NEWLY PASSING as of EF-412: the mixed entity-and-count projection
-        // (new { c, c.Orders.ToList().Count() }) now goes native — the whole-root-entity leaf emits as
-        // {"c": "$$ROOT"} and the $lookup-backed count is its sibling — so this no longer fails translation.
+        // Mixed entity-and-count projection: the root entity emits as {"c": "$$ROOT"} beside the
+        // $lookup-backed count.
         await base.ToList_Count_in_projection_works(async);
 
         AssertMql(
@@ -1352,9 +1331,7 @@ Orders.{ "$project" : { "_v" : { "$ifNull" : ["$EmployeeID", { "$literal" : 0 }]
 
     public override async Task Reverse_after_multiple_orderbys(bool async)
     {
-        // EF-411: Reverse over an explicit trailing sort is now native (flips the sort direction) — was
-        // "Fails: Reverse not supported CSHARP-5836" (the driver's own LINQ provider never supported
-        // Reverse() at all, ordered or not; native coverage is what changed, not the driver).
+        // Reverse over an explicit trailing sort is native (flips the sort); the driver doesn't support Reverse.
         await base.Reverse_after_multiple_orderbys(async);
 
         AssertMql(
@@ -1365,9 +1342,7 @@ Employees.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_id" : "$_id" } }
 
     public override async Task Reverse_after_orderby_thenby(bool async)
     {
-        // EF-411: Reverse over an explicit trailing sort is now native (flips the sort direction) — was
-        // "Fails: Reverse not supported CSHARP-5836" (the driver's own LINQ provider never supported
-        // Reverse() at all, ordered or not; native coverage is what changed, not the driver).
+        // Reverse over an explicit trailing sort is native (flips the sort); the driver doesn't support Reverse.
         await base.Reverse_after_orderby_thenby(async);
 
         AssertMql(
@@ -1378,8 +1353,7 @@ Employees.{ "$sort" : { "_id" : -1, "City" : 1 } }, { "$project" : { "_id" : "$_
 
     public override async Task Reverse_in_subquery_via_pushdown(bool async)
     {
-        // EF-322: a whole-entity Distinct() now goes native, so this whole chain (OrderBy/Reverse/Take/
-        // Distinct/Select) no longer needs the driver-LINQ pushdown that used to hit CSHARP-5836.
+        // Native whole-entity Distinct() keeps the chain off the driver pushdown, which rejects Reverse.
         await base.Reverse_in_subquery_via_pushdown(async);
 
         AssertMql(
@@ -1447,10 +1421,8 @@ Customers.
 
     public override async Task Reverse_in_join_inner(bool async)
     {
-        // Fails: Reverse not supported CSHARP-5836. EF-436: this shape reaches the driver identically on
-        // EF8/EF9/EF10 (the stale EF8/EF9 "declines before reaching our translator at all" gate was a
-        // symptom of the same LeftJoin-recognition gap fixed for NorthwindJoinQueryMongoTest
-        // .GroupJoin_DefaultIfEmpty_multiple), so all three versions share this same partial capture.
+        // Fails: Reverse not supported CSHARP-5836. All EF versions reach the driver identically, so they
+        // share this partial capture.
         await AssertTranslationFailed(() =>
             base.Reverse_in_join_inner(async));
 
@@ -1469,16 +1441,10 @@ Customers.
 
     public override async Task Reverse_in_join_inner_with_skip(bool async)
     {
-        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022. The join's inner is
-        // Orders.OrderByDescending(OrderID).Skip(2).Reverse() — a sorted+paged sub-query, which driver 3.11
-        // rejects with ExpressionNotSupportedException ("expression must be a MongoDB IQueryable against a
-        // collection"); see docs/failing-spec-tests.md § EF-X022. This query never returned wrong rows on any
-        // driver version: the driver's LINQ provider ALSO separately rejects Reverse inside a join
-        // (CSHARP-5836), so this has always been a clean throw. EF-436: EF8/EF9 previously declined even
-        // earlier (before reaching our translator at all) due to the same stale LeftJoin-recognition gap
-        // fixed for NorthwindJoinQueryMongoTest.GroupJoin_DefaultIfEmpty_multiple - now all three versions
-        // reach the driver identically, and the rejection happens after the outer collection is logged, so a
-        // partial pipeline is captured on all three.
+        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022. The sorted+paged
+        // inner is rejected by the driver (ExpressionNotSupportedException), which also rejects Reverse in a
+        // join (CSHARP-5836). The rejection follows logging of the outer collection, so a partial pipeline is
+        // captured on all EF versions.
         await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
             () => base.Reverse_in_join_inner_with_skip(async));
 
@@ -1563,11 +1529,8 @@ Customers.
 
     public override async Task Custom_projection_reference_navigation_PK_to_FK_optimization(bool async)
     {
-        // native-join-scope-nested-projection ticket: this shape (`new Order { OrderID, Customer = new
-        // Customer { CustomerID = o.Customer.CustomerID, City = o.Customer.City }, OrderDate }`) is exactly
-        // the design's in-scope case — a nested MemberInit leaf sourced from a join scope, mixed with
-        // top-level scalar siblings off the query root — and now goes native with correct data instead of
-        // declining.
+        // A nested MemberInit leaf sourced from a join scope, mixed with top-level scalar siblings off the
+        // root — goes native.
         await base.Custom_projection_reference_navigation_PK_to_FK_optimization(async);
 
         AssertMql(

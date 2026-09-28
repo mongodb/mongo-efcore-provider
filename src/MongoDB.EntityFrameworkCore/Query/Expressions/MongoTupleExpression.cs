@@ -19,23 +19,17 @@ using System.Collections.Generic;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// Represents the operand of a constructed-tuple comparison (<c>new Tuple&lt;string&gt;(c.City) ==
-/// new Tuple&lt;string&gt;("London")</c>) — an ordered array of per-member value expressions, rendered as a
-/// literal MQL array so the surrounding <c>$eq</c>/<c>$ne</c> compares the two tuples element-by-element.
+/// The operand of a constructed-tuple comparison (<c>new Tuple&lt;string&gt;(c.City) ==
+/// new Tuple&lt;string&gt;("London")</c>), rendered as a literal MQL array so <c>$eq</c>/<c>$ne</c> compares
+/// element-by-element.
 /// </summary>
 /// <remarks>
-/// Deliberately a SIBLING of <see cref="MongoValueListExpression"/>, not a reuse of it: that type is pinned
-/// (see its own tests) as NOT top-level-renderable — it exists only as <see cref="MongoInExpression.Values"/>,
-/// rendered exclusively through <c>RenderInValues</c>. This node is the opposite: it is ONLY ever a top-level
-/// <c>$eq</c>/<c>$ne</c> operand, never an <c>$in</c> haystack, and its elements may be field references, not
-/// just constants/parameters.
+/// Not a reuse of <see cref="MongoValueListExpression"/>: that type is only renderable as an <c>$in</c> haystack
+/// via <c>RenderInValues</c>, whereas this is only a top-level <c>$eq</c>/<c>$ne</c> operand and its elements
+/// may be field references.
 /// </remarks>
 internal sealed class MongoTupleExpression : MongoExpression
 {
-    /// <summary>
-    /// Creates a <see cref="MongoTupleExpression"/> wrapping <paramref name="elements"/>.
-    /// </summary>
-    /// <param name="elements">The per-member value nodes, in constructor-argument order.</param>
     public MongoTupleExpression(IReadOnlyList<MongoExpression> elements)
     {
         Elements = elements;

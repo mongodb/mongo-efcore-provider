@@ -30,13 +30,9 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-359: a PREDICATED element count over an OWNED (embedded) collection navigation. Task 2 shipped the
-/// PREDICATE spelling — <c>b.Posts.Count(p =&gt; p.Rank &gt; 0)</c> compared against a threshold — as <c>$expr</c>
-/// over a null-safe <c>$size</c> of a <c>$filter</c>. Task 3 (this file's projection-leaf tests below) shipped
-/// shape A, the PROJECTION spelling, <c>Select(b =&gt; new { N = b.Posts.Count(pred) })</c>, as a <c>$project</c>
-/// leaf of the same <c>{$size: {$filter: ...}}</c> shape — see the sibling
-/// <see cref="NativeOwnedCollectionCountTests"/>'s <c>Filtered_count_projection_now_goes_native_EF359</c>, which
-/// records the bug this closed.
+/// A predicated element count over an owned (embedded) collection navigation, in both the <c>Where</c> spelling
+/// (<c>$expr</c> over a null-safe <c>$size</c> of a <c>$filter</c>) and the projection spelling (a <c>$project</c>
+/// leaf of the same shape).
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -73,19 +69,13 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             });
     }
 
-    /// <summary>
-    /// Whether the reserved <c>ProjectionAliasTier</c> <c>Synthetic</c> alias <c>_v</c> appears in the
-    /// emitted <c>$project</c> stage AS A FIELD NAME.
-    /// </summary>
-    /// <remarks>
-    /// <b>The scoping is the point (A4-3 review, M1).</b> The logged message is the WHOLE command, database and
-    /// collection names included, so a bare <c>Assert.Contains("_v", mql)</c> can pass on a <c>_v</c> that has
-    /// nothing to do with the projection — and the collection name is derived from the TEST NAME, so it would
-    /// change under a rename. Cutting to the <c>$project</c> stage and matching the QUOTED key form is what
-    /// makes the assertion mean "the projection's field name". Mirrors
-    /// <c>NativeOwnedCollectionCountTests.ProjectAliasSummary</c>, which additionally reports the member-name
-    /// alias because that file's disjointness test needs both.
-    /// </remarks>
+/// <summary>
+/// Whether the reserved Synthetic alias <c>_v</c> appears as a field name in the emitted <c>$project</c> stage.
+/// </summary>
+/// <remarks>
+/// Scoped to the <c>$project</c> stage and the quoted key: the logged command includes the collection name,
+/// which is derived from the test name, so a bare <c>Contains("_v")</c> could match unrelated text.
+/// </remarks>
     private static bool ProjectStageCommitsTheSyntheticAlias(SpyLoggerProvider spyLogger)
     {
         var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
@@ -107,23 +97,19 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
 
     public class Post
     {
-        // Nullable ON PURPOSE: a missing or explicitly-null stored field must MATERIALIZE (as null) rather
-        // than throw, or the missing-field state cannot be exercised at all.
+        // Nullable so a missing or explicitly-null stored field materializes as null instead of throwing.
         public int? Rank { get; set; }
         public string? Heading { get; set; }
         public int? Other { get; set; }
 
-        // EF-365 breadth fixture. Pinned is NON-nullable on purpose: `!p.Pinned` is the only spelling that
-        // reaches MongoUnaryExpression (a nullable bool's Not is declined earlier, at TranslateNode). Flagged is
-        // nullable on purpose: `p.Flagged!.Value` is the bare-nullable-bool spelling, which is declined at
-        // TranslateNode (not at the renderer gate) — see EF-365's tests for why the two dispose differently.
-        // Both are always written by PostDoc/PostWithComments, so Pinned never materializes from a missing
-        // element.
+        // Pinned is non-nullable: `!p.Pinned` is the only spelling that reaches MongoUnaryExpression (a
+        // nullable bool's Not is declined earlier, at TranslateNode). Flagged is nullable: `p.Flagged!.Value` is
+        // the bare-nullable-bool spelling, also declined at TranslateNode. Both are always seeded.
         public bool Pinned { get; set; }
         public bool? Flagged { get; set; }
 
-        // DELIBERATELY COLLIDES with Blog.Title so the correlated-element-predicate guard is exercised on an
-        // input that would otherwise be ACCEPTED — the element-scoped translator resolves members by NAME.
+        // Collides with Blog.Title on purpose: the element-scoped translator resolves members by name, so this
+        // exercises the correlated-element-predicate guard on an input that would otherwise be accepted.
         public string Title { get; set; } = "";
 
         public List<Comment> Comments { get; set; } = [];
@@ -144,9 +130,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         public int? Length { get; set; }
     }
 
-    // A named DTO, copied from the sibling file for fixture parity. Used by
-    // Filtered_count_projection_into_a_named_dto_goes_native (Task 3), which reaches NativeProjectionBinder's
-    // MemberInit branch — a different branch from the anonymous-type tests in this file.
+    // Named DTO: reaches NativeProjectionBinder's MemberInit branch rather than the anonymous-type (New) branch.
     public class TitleCount
     {
         public string Title { get; set; } = "";
@@ -167,8 +151,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         return Row(title, posts);
     }
 
-    // pinned defaults to "this element matches the canonical Rank > 0 predicate", so `!p.Pinned` counts exactly
-    // the elements `p.Rank > 0` does NOT — a second, independently-computable expected vector.
+    // Pinned defaults to `Rank > 0`, so `!p.Pinned` counts exactly the complement of the canonical predicate.
     private static BsonDocument PostDoc(int? rank, string? heading, bool? pinned = null, bool? flagged = null)
         => new()
         {
@@ -235,9 +218,8 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         return database.MongoDatabase.GetCollection<Blog>(coll.CollectionNamespace.CollectionName);
     }
 
-    // Rows differ in the number of elements SATISFYING the predicate — the input space a filtered count is
-    // sensitive to, and the axis LenRow alone cannot control (its ranks are 0..n-1, so "Rank > 0" and length are
-    // correlated). Each row's Posts carry `matching` elements with Rank = 5 and `nonMatching` with Rank = -5.
+    // Rows differ in how many elements satisfy the predicate — the axis LenRow cannot control (its ranks are
+    // 0..n-1, correlating "Rank > 0" with length). `matching` elements have Rank = 5, `nonMatching` Rank = -5.
     private static BsonDocument MatchRow(string title, int matching, int nonMatching)
     {
         var posts = new BsonArray();
@@ -252,14 +234,10 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         Row("empty", new BsonArray()), Row("missing", null), Row("null", BsonNull.Value)
     ];
 
-    // MatchRows() with every title carrying a shared "m_" prefix. Added by EF-405 slice A4-3 for the
-    // parameterized-Where LATE-DECLINE legs: a captured-local StartsWith is what makes the native factory
-    // decline AFTER the alias-addressed shaper has already been committed, and that route is the only one in
-    // this file where a bare projection's alias miss is SILENT. MatchRows()' own titles ("none"/"one"/"three"/
-    // "empty"/"missing"/"null") share no prefix, so a late-decline leg over that seed would quietly drop the
-    // ragged rows — and the ragged rows are the ONLY ones that discriminate a bare $size from a $size over
-    // $ifNull. Same six rows, same counts, same title ORDER (m_empty, m_missing, m_none, m_null, m_one,
-    // m_three), so [0,0,0,0,1,3] is the expected vector for either seed.
+    // MatchRows() with an "m_" title prefix, for the late-decline legs: a captured-local StartsWith makes the
+    // native factory decline after the alias-addressed shaper is committed — the one route where a bare
+    // projection's alias miss is silent. The prefix keeps the ragged rows (the only ones that discriminate a bare
+    // $size from $size over $ifNull) in the result. Same title order, so [0,0,0,0,1,3] is expected for both seeds.
     private static BsonDocument[] PrefixedMatchRows() =>
     [
         MatchRow("m_none", 0, 3), MatchRow("m_one", 1, 2), MatchRow("m_three", 3, 0),
@@ -267,19 +245,12 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     ];
 
     /// <summary>
-    /// Runs <paramref name="query"/> and describes what it did as a short string, so a caller can COLLECT every
-    /// leg's outcome and assert them together instead of aborting on the first.
+    /// Runs <paramref name="query"/> and describes the outcome as a string, so callers collect every leg's
+    /// outcome and assert them together.
     /// </summary>
     /// <remarks>
-    /// The collect-then-assert shape is not a style preference, and this file is where the defect it guards
-    /// against was found: written as a loop of direct assertions, a regression in the FIRST leg aborts the test
-    /// and the remaining legs never execute — which is exactly how
-    /// <c>Bare_filtered_count_projection_with_a_captured_parameter_goes_native_in_every_mode</c>'s mandatory
-    /// explicit-<c>DriverLinq</c> leg went unexercised while the slice claimed "zero MongoCommandException
-    /// across all runs" (EF-405 A4-2 review, I2). Adopted as the convention in A4-2 and applied to every leg
-    /// set this file's A4-3 flips introduce. Mirrors
-    /// <c>NativeComputedBareProjectionTests.LegOutcome</c> exactly, deliberately — the two files describe
-    /// outcomes with the same vocabulary so a reader can compare their assertions side by side.
+    /// Direct assertions in a loop abort on the first failing leg, leaving later legs (e.g. explicit
+    /// <c>DriverLinq</c>) silently unexercised. Mirrors <c>NativeComputedBareProjectionTests.LegOutcome</c>.
     /// </remarks>
     private static string LegOutcome(Func<object?> query)
     {
@@ -306,15 +277,8 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         var collection = Seed(nameof(Filtered_count_predicate_goes_native), MatchRows());
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
 
-        // NOTE (deviation from the brief's literal snippet, deliberate): the brief wrote
-        // `.Select(b => b.Title)` directly on the IQueryable before `.ToList()`. That would make the bare-scalar
-        // Select itself part of the server-side query — a SEPARATE, pre-existing SP3-wide boundary this task does
-        // not touch (a bare-scalar terminal projection never populates Select.Projection, so it always falls back
-        // to driver-LINQ, which NativeOnly forbids) — so the shape would throw for a reason UNRELATED to whether
-        // the count predicate itself goes native, defeating the test's purpose. Materializing whole entities
-        // FIRST (native, proven by NativeOnly succeeding) and projecting titles CLIENT-SIDE afterward — exactly
-        // the established idiom throughout this file's siblings (see e.g. NativeOwnedCollectionCountTests'
-        // AssertNativeOnlyMatches) — is what actually proves the predicate goes native.
+        // Materialize entities first and project titles client-side: a server-side bare-scalar Select would fall
+        // back to driver-LINQ for an unrelated reason and fail under NativeOnly.
         var titles = db.Entities.AsNoTracking()
             .Where(b => b.Posts.Count(p => p.Rank > 0) > 1)
             .ToList().Select(b => b.Title).OrderBy(t => t).ToList();
@@ -331,7 +295,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         var collection = Seed($"thresh_{threshold}", MatchRows());
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
 
-        // See the deviation note on Filtered_count_predicate_goes_native above: ToList() before Select, not after.
+        // ToList() before Select: see Filtered_count_predicate_goes_native.
         var titles = db.Entities.AsNoTracking()
             .Where(b => b.Posts.Count(p => p.Rank > 0) >= threshold)
             .ToList().Select(b => b.Title).OrderBy(t => t).ToList();
@@ -350,9 +314,8 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
 
         var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("$filter", mql);
-        // THE TIER-1 FAIL-CLOSED TRIPWIRE. An array-index existence test answers the UNFILTERED count's question,
-        // so if MongoFilteredSizeExpression is ever collapsed into MongoSizeExpression this returns the wrong rows
-        // with no error. Goes red the moment that happens. See MongoFilteredSizeExpression's remarks.
+        // Fail-closed tripwire: an array-index existence test answers the unfiltered count's question, so
+        // collapsing MongoFilteredSizeExpression into MongoSizeExpression would return wrong rows silently.
         Assert.DoesNotContain("Posts.2", mql);
         Assert.DoesNotContain("$exists", mql);
     }
@@ -389,47 +352,29 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     [Fact]
     public void Correlated_element_predicate_now_goes_native_via_two_scope_translator_and_returns_correct_rows()
     {
-        // Post.Title deliberately collides with Blog.Title: a NAME-based (rather than parameter-identity-based)
-        // resolution of b.Title would silently retarget it at the ELEMENT and return the wrong rows. Before
-        // EF-421 this shape declined outright (see NativeOwnedCollectionCorrelatedTests, which is this test's
-        // updated home — EF-421 upgrades exactly this shape from "decline" to "translate via a two-scope
-        // translator routed by ReferenceEquals identity, not by name").
+        // Post.Title collides with Blog.Title: a name-based resolution of b.Title would silently retarget it at
+        // the element and return the wrong rows. See also NativeOwnedCollectionCorrelatedTests.
         var collection = Seed(
             nameof(Correlated_element_predicate_now_goes_native_via_two_scope_translator_and_returns_correct_rows),
             Row("x", new BsonArray { PostDoc(rank: 1, heading: "h") }));
 
-        // ORDER IS DELIBERATE: the wrong-rows assertion runs FIRST and in its own `using` block, so it is
-        // independently load-bearing rather than merely unreachable filler after the NativeOnly assertion below.
-        // xUnit stops a test method at its first failed assertion — if the identity-routing guard were ever
-        // weakened to a by-name resolution, this Native-mode Assert.Empty would go red on its own (the element's
-        // own Title compared to itself is a tautology, returning the row instead of staying empty), independent
-        // of whatever the NativeOnly leg reports.
+        // Wrong-rows check runs first, in its own block, so it is independently load-bearing: a by-name
+        // resolution compares the element's Title to itself and returns the row.
         using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
         {
-            // "p" (PostDoc's Title) != "x" (the Blog's Title), so the correct answer is NO rows. An element-scoped
-            // misresolution would compare the element's own Title to itself and return the row.
+            // "p" (PostDoc's Title) != "x", so the correct answer is no rows.
             Assert.Empty(db.Entities.AsNoTracking().Where(b => b.Posts.Count(p => p.Title == b.Title) > 0).ToList());
         }
 
-        // EF-421: this shape (correlation to the IMMEDIATE enclosing scope) now goes native — NativeOnly no
-        // longer throws, and still returns the correct (empty) result, proving the two-scope translator resolves
-        // b.Title against the OUTER scope rather than the colliding element-scoped Title.
+        // Correlation to the immediate enclosing scope goes native; still returns the correct (empty) result.
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
             Assert.Empty(db.Entities.AsNoTracking().Where(b => b.Posts.Count(p => p.Title == b.Title) > 0).ToList());
         }
     }
 
-    // EF-322 RE-BASELINE. Was Element_predicate_outside_the_renderable_set_declines, which pinned
-    // MongoAggregationExpressionRenderer.CanRender declining a regex whose Term is a CONSTANT (the arm was
-    // scoped to a field-to-field term, on the reasoning that a constant term already had a query-dialect
-    // $regularExpression form to fall back to). That arm now admits any Term shape, because at every
-    // CanRender call site the expression is already inside an $expr/$addFields/$sort/quantifier scope where
-    // no $regularExpression alternative exists — so there was no fallback disposition left to preserve.
-    //
-    // A decline test cannot simply be deleted when the decline goes away: the disposition it pinned is now
-    // a RESULT, so it has to be re-pinned as one. Hence the second seeded row — "z" must NOT come back, or a
-    // regex rendered as match-everything would pass a single-row version of this test.
+    // A constant-term regex renders natively inside $expr (no query-dialect $regularExpression fallback exists
+    // there). The second row ("z") must not come back, so a regex rendered as match-everything fails.
     [Fact]
     public void Regex_element_predicate_in_a_Where_goes_native_EF322()
     {
@@ -455,8 +400,8 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         var collection = Seed(nameof(Primitive_element_collection_filtered_count_declines), RowWithTags("x", "a", "bb"));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
 
-        // Tags is a mapped primitive-collection PROPERTY, not a navigation — TryResolveOwnedCollectionPath's
-        // final-hop check declines it.
+        // Tags is a primitive-collection property, not a navigation — TryResolveOwnedCollectionPath's final-hop
+        // check declines it.
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.AsNoTracking().Where(b => b.Tags.Count(t => t.Length > 1) > 0).ToList());
     }
@@ -470,32 +415,21 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
 
-        // $expr is a HARD SERVER ERROR inside $elemMatch, so a filtered count there must decline at translate
-        // time — if it were admitted the whole query would throw at EXECUTION time under the default Native mode.
+        // $expr is a server error inside $elemMatch, so a filtered count there must decline at translate time
+        // rather than throw at execution under Native.
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Entities.AsNoTracking()
                 .Where(b => b.Posts.Any(p => p.Comments.Count(c => c.Age > 0) > 1)).ToList());
 
-        // REGRESSION TRIPWIRE: the UNFILTERED count in the same position renders as an array-index test and must
+        // Regression tripwire: the unfiltered count in the same position renders as an array-index test and must
         // stay native.
         Assert.Single(db.Entities.AsNoTracking().Where(b => b.Posts.Any(p => p.Comments.Count > 1)).ToList());
     }
 
-    // MECHANISM, TRACED at the whole-branch review — and it is NOT the negator, contrary to how this decline was
-    // first documented. MongoExpressionTranslator's Not arm gates on
-    // `operand is MongoBinaryExpression { Left: MongoSizeExpression }`; a MongoFilteredSizeExpression fails that
-    // pattern, so MongoExpressionNegator.TryNegate is NEVER CALLED for this shape. The node falls through to
-    // `return new MongoUnaryExpression(Not, operand)`, and — before EF-396 — the decline happened at RENDER
-    // time: MongoQueryLanguageRenderer.RenderUnary's operand is a MongoBinaryExpression that is NOT a
-    // query-native comparison (its Left is a MongoFilteredSizeExpression, not a MongoFieldExpression), so it
-    // reached the "only supports Not over a MongoFieldExpression or a query-native comparison" throw.
-    //
-    // EF-396: RenderUnary's decline branch now first asks MongoAggregationExpressionRenderer.CanRender on the
-    // operand before throwing. CanRender's MongoBinaryExpression arm recurses into a MongoFilteredSizeExpression
-    // via `CanRender(filtered.ElementPredicate)`, and the element predicate here (`p.Rank > 0`) is a plain
-    // field/constant comparison, so CanRender admits the whole operand — the shape now renders natively via
-    // `{ $expr: { $not: [ { $gt: [ { $size: { $filter: ... } }, 1 ] } ] } }` instead of declining to
-    // driver-LINQ. This test used to pin the decline; it now pins the (intended) native widening.
+    // MongoExpressionTranslator's Not arm only negates `MongoBinaryExpression { Left: MongoSizeExpression }`,
+    // so this shape becomes MongoUnaryExpression(Not, ...). RenderUnary asks
+    // MongoAggregationExpressionRenderer.CanRender, which admits the filtered count (its element predicate is a
+    // plain comparison), so it renders as `{ $expr: { $not: [ { $gt: [ { $size: { $filter: ... } }, 1 ] } ] } }`.
     [Fact]
     public void Negated_filtered_count_comparison_now_goes_native_with_correct_rows()
     {
@@ -503,11 +437,8 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             nameof(Negated_filtered_count_comparison_now_goes_native_with_correct_rows),
             MatchRow("none", 0, 3), MatchRow("one", 1, 2), MatchRow("three", 3, 0), Row("empty", new BsonArray()));
 
-        // NativeOnly succeeds (rather than throwing NativeTranslationNotSupportedException), proving this
-        // goes native. Must return the exact COMPLEMENT of the un-negated predicate over this seed
-        // (Filtered_count_predicate_goes_native's "three" is the only row with more than one matching element).
-        // Asserted as real rows, so a bug that silently returned nothing — or everything — fails here rather
-        // than passing vacuously.
+        // Must return the exact complement of the un-negated predicate ("three"), asserted as real rows so an
+        // all-or-nothing bug fails.
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
             var titles = db.Entities.AsNoTracking()
@@ -517,11 +448,10 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             Assert.Equal(["empty", "none", "one"], titles);
         }
 
-        // Native and driver-LINQ (the previous behavior) must still agree on the well-formed subset — the
-        // empty-array row is excluded here because the driver-LINQ leg renders a bare $size with no $ifNull
-        // and ABORTS the aggregate on a missing/empty array (see
+        // Native and driver-LINQ must agree on the well-formed subset. The empty-array row is excluded because
+        // driver-LINQ renders a bare $size with no $ifNull and aborts on it (see
         // NativeOwnedCollectionCountTests.Wrapped_count_projection_under_DriverLinq_works_for_present_arrays_and_
-        // aborts_on_a_missing_array), which is unrelated to this decline-to-native flip.
+        // aborts_on_a_missing_array).
         using (var native = CreateContext(collection, MongoQueryMode.Native, BlogModel))
         using (var driver = CreateContext(collection, MongoQueryMode.DriverLinq, BlogModel))
         {
@@ -537,33 +467,15 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         }
     }
 
-    // A THIRD INCIDENTAL WIDENING, unplanned, and it CONTRADICTS design §6's decline table row "two-scope
-    // (SelectMany) filtered count → declines outright" (corrected in the design doc's §11 as-built deltas, not in
-    // §6's dated body). Found at the whole-branch review. Mechanism:
     // NativeSelectManyBinder.TryBuildOwnedInnerFilter translates an inner-only owned SelectMany filter with a
-    // SINGLE-SCOPE element-scoped MongoExpressionTranslator — NOT the two-scope translator design §6 assumed —
-    // so TryResolveOwnedCollectionPath's two-scope decline never fires at all, and once Task 2 taught
-    // TranslateOperand to recognize a predicated count as an ordinary operand, this shape reached native for
-    // free. It emits, after `$unwind: "$Posts"`, a `$match` of
-    // `{$expr: {$gt: [{$size: {$filter: {input: {$ifNull: ["$Posts.Comments", []]}, as: "e",
-    // cond: {$gt: ["$$e.Age", 0]}}}}, 1]}}` — legal because that `$match` is top-level (not inside $elemMatch),
-    // and correctly addressed because `Posts.Comments` names the unwound element's own array.
+    // single-scope element-scoped translator, so the filtered count is an ordinary operand. After
+    // `$unwind: "$Posts"` it emits a top-level `$match` (legal, unlike inside $elemMatch) over
+    // `{$size: {$filter: {input: {$ifNull: ["$Posts.Comments", []]}, ...}}}`. The count's array path is
+    // element-relative and MongoFieldPrefixRewriter must prefix it — the filtered analogue of
+    // NativeOwnedCollectionCountTests.Count_inside_an_owned_SelectMany_inner_filter_goes_native.
     //
-    // This is the FILTERED analogue of
-    // NativeOwnedCollectionCountTests.Count_inside_an_owned_SelectMany_inner_filter_goes_native, which exists
-    // because the MongoFieldPrefixRewriter case is LOAD-BEARING rather than defensive: the count's array path is
-    // ELEMENT-relative ("Comments") and Rewrite must prefix it to "Posts.Comments" to address the $unwind-ed
-    // element. The filtered node goes through the SAME rewriter case, so it needs the same net.
-    //
-    // MEASURED BEFORE AND AFTER, not inferred: at the branch base 33fdc58 (throwaway worktree, probe over this
-    // exact shape) it threw InvalidOperationException containing "could not be translated" in ALL THREE modes —
-    // Native, DriverLinq and NativeOnly alike. So this is a HARD-FAIL -> native fix, NOT the fallback -> native
-    // flip the review that requested this test assumed, and there was never a driver-LINQ oracle to compare
-    // against — the row assertion below IS the oracle.
-    //
-    // The threshold is chosen so the FILTER is load-bearing in the assertion: "mid" has 2 comments but only 1
-    // with Age > 0, so an UNFILTERED `Comments.Count > 1` would include it. A rendering that dropped the $filter
-    // (or ignored its cond) would return ["many", "mid"] and fail here.
+    // No driver-LINQ oracle: this shape throws "could not be translated" there. The threshold makes the filter
+    // load-bearing: "mid" has 2 comments but only 1 with Age > 0, so dropping the $filter returns ["many", "mid"].
     [Fact]
     public void Filtered_count_inside_an_owned_SelectMany_inner_filter_goes_native()
     {
@@ -582,55 +494,18 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         Assert.Equal(new[] { "many" }, headings);
     }
 
-    // Branch-review finding (fix round 1): the projection-side gates this task widens do not make EVERY
-    // predicated-count projection native — several element-predicate/collection shapes still reach the SAME
-    // EF-359 translation-time crash (InvalidOperationException, "could not be translated", identically under
-    // Native/DriverLinq/NativeOnly) that this task's own opening test used to pin for the p.Rank > 0 shape.
-    // Not a regression — none of these ever worked — but undocumented until now, and this file's convention is
-    // to state a decline's disposition precisely ("hard-fails in EVERY mode" vs. "falls back gracefully").
+    // These predicated-count projections still throw InvalidOperationException ("could not be translated") in
+    // every mode; none ever worked.
     //
-    // MEASURED (not assumed): all four spellings below throw the identical InvalidOperationException in all
-    // three modes on the shipped tree. Mechanism, traced, and STATED PER ROW because Task 4 (the bare-spelling
-    // fix) changed what keeps two of these three rows green — a stale blanket claim here previously said the
-    // wrong thing and was corrected in fix round 1 of Task 4:
+    // Primitive (b.Tags.Count(pred)): Tags is a primitive-collection property, so
+    // TryResolveOwnedCollectionPath declines, the whole leaf fails to translate, Route = Fallback, and
+    // MongoProjectionBindingExpressionVisitor's predicated-Count arm declines too (the source is not a
+    // CollectionShaperExpression), reaching the generic `methodCallExpression.Update(...)` rebuild that crashes.
     //
-    // Correlated and Primitive (both a PREDICATED Count/LongCount): CanRender (or, for Primitive,
-    // TryResolveOwnedCollectionPath's final-hop check) declines the element predicate/collection INSIDE
-    // TranslateOperand's count branch, so TranslateOperand returns null for the WHOLE leaf — not just the count
-    // sub-expression — and NativeProjectionBinder.TryTranslateLeaf therefore fails this leaf entirely (there is
-    // no partial/fallback leaf translation). TryPopulateNativeProjection then returns false,
-    // MarkNotNativelyRepresentable() sets Route = Fallback, and the REGISTRATION block added by Task 3 (gated on
-    // Route == Projection) never runs. With Route == Fallback, control reaches
-    // MongoProjectionBindingExpressionVisitor.VisitMethodCall's Queryable switch, whose CountWithPredicate/
-    // LongCountWithPredicate arm — as of Task 4 — DOES match a predicated Count now (this is stale-corrected:
-    // it is NOT true, as of Task 4, that this switch arm matches only the predicate-less overload). What keeps
-    // BOTH rows green is that arm's own decline guards: for Correlated, the Count call is nested inside this
-    // test's `new {...}` projection rather than being the whole selector body, so the arm's
-    // `_translatedRootExpression` identity check fails and it declines (a second, independent guard,
-    // `ContainsShaperReference`, would also decline this predicate — it references the outer `b`, already
-    // rewritten to the query root's entity shaper by the time this visitor runs — but the identity mismatch is
-    // what actually fires first, short-circuiting before that second check runs); for Primitive, `Tags` is a
-    // mapped primitive-collection PROPERTY rather than a navigation, so `visitedSource` is never a
-    // CollectionShaperExpression at all and the arm declines on that pre-existing, unrelated check regardless of
-    // identity. Either way, declining here falls through to the SAME generic `methodCallExpression.Update(...)`
-    // rebuild path that crashes with the pre-existing EF-359 InvalidOperationException — unaffected by Task 4's
-    // widening, which only ever produces a WORKING result for the true bare spelling.
+    // Posts.Where(pred).Count(): EF does not fuse this into Count(pred), so it takes the predicate-less
+    // CountWithoutPredicate arm and reaches the same crash as a structurally distinct case.
     //
-    // Posts.Where(pred).Count() (a PREDICATE-LESS Count over a Where-filtered source): genuinely unaffected by
-    // Task 4 — EF Core does NOT fuse this into Count(pred) upstream of this provider's translator (measured
-    // directly), so it never reaches the predicated arm at all; it is CountWithoutPredicate, the pre-existing
-    // EF-357 arm, which Task 4 did not touch. It reaches the identical crash as its own, structurally distinct
-    // case, not merely a duplicate of the plain Count(pred) shape.
-    //
-    // EF-421 Task 7 RE-BASELINE: the CORRELATED row that used to live here (Post.Title == b.Title, wrapped in
-    // a `new {...}` projection) has been MOVED OUT to
-    // Correlated_count_filtered_projection_goes_native_EF421 below — SelfParam now reaches
-    // NativeProjectionBinder unconditionally (Task 7), so `ReferencesEnclosingScope`'s correlation-match check
-    // succeeds for it instead of declining, and it goes native with correct data in every mode, exactly like
-    // the EF-413 RE-BASELINE rows above. The other two rows (Primitive, Where(pred).Count()) are UNAFFECTED —
-    // neither one's decline reason has anything to do with SelfParam/correlation (Primitive declines on
-    // TryResolveOwnedCollectionPath's final-hop check; Where(pred).Count() never reaches the predicated arm at
-    // all) — so they stay exactly where they were.
+    // The correlated spelling is native; see Correlated_count_filtered_projection_goes_native_EF421.
     [Fact]
     public void Primitive_and_where_count_filtered_projections_still_hard_fail_in_every_mode()
     {
@@ -649,22 +524,17 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             }
         }
 
-        // Primitive collection: Tags is a mapped primitive-collection PROPERTY, not a navigation —
-        // TryResolveOwnedCollectionPath's final-hop check declines it.
+        // Primitive collection: declined by TryResolveOwnedCollectionPath's final-hop check.
         AssertHardFailsEverywhere(
             q => q.Select(b => new { b.Title, N = b.Tags.Count(t => t.Length > 1) }).Cast<object>());
 
-        // Posts.Where(pred).Count(): a DIFFERENT method-call shape from Count(pred), not fused upstream by EF.
+        // Posts.Where(pred).Count(): a different method-call shape from Count(pred), not fused upstream by EF.
         AssertHardFailsEverywhere(
             q => q.Select(b => new { b.Title, N = b.Posts.Where(p => p.Rank > 0).Count() }).Cast<object>());
     }
 
-    // EF-421 Task 7 RE-BASELINE (moved out of Primitive_and_where_count_filtered_projections_still_hard_fail_
-    // in_every_mode above — see its own remarks). Post.Title deliberately collides with Blog.Title (see the
-    // Blog/Post class comments), so this exercises the real correlation-match, not a vacuous same-named
-    // coincidence: PostDoc always writes Title = "p", which never equals either seeded Blog's own Title ("x"
-    // or "y"), so the correct count is 0 for both rows — the same non-vacuous-seed discipline
-    // AssertElementPredicateGoesNative's other EF-413 callers already use.
+    // Post.Title collides with Blog.Title, so this exercises real correlation resolution: PostDoc writes
+    // Title = "p", which never equals "x" or "y", so the correct count is 0 for both rows.
     [Fact]
     public void Correlated_count_filtered_projection_goes_native_EF421()
     {
@@ -681,11 +551,8 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             ["x=0", "y=0"]);
     }
 
-    // The three rows below are seeded WITHOUT the ragged (empty/missing/null Posts) rows MatchRows() carries.
-    // That is deliberate and is not a coverage gap: on the late-fallback route the pipeline is the DRIVER's, so
-    // ragged-array behaviour there is the driver's own pre-existing disposition and has nothing to do with
-    // EF-365. The native $ifNull-over-$filter guarantee is covered by the ragged-seeded tests elsewhere in this
-    // file, which stay native.
+    // Deliberately without ragged (empty/missing/null Posts) rows: on a late-fallback route the pipeline is the
+    // driver's, whose ragged-array behavior is out of scope. Native $ifNull-over-$filter is covered elsewhere.
     private static BsonDocument[] MatchRowsNoRagged() =>
         [MatchRow("none", 0, 3), MatchRow("one", 1, 2), MatchRow("three", 3, 0)];
 
@@ -695,8 +562,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     [Fact]
     public void Regex_element_predicate_filtered_projection_goes_native_EF365()
     {
-        // The row previously measured by the ticket author — a StartsWith regex, which has no aggregation
-        // dialect at all.
+        // A StartsWith regex, which has no aggregation-dialect form of its own.
         var collection = Seed(nameof(Regex_element_predicate_filtered_projection_goes_native_EF365),
             MatchRowsNoRagged());
 
@@ -708,23 +574,14 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             ["none=0", "one=1", "three=3"]);
     }
 
-    // EF-413 RE-BASELINE. These two used to be
-    // Contains/Unary_not_element_predicate_filtered_projection_falls_back_gracefully_EF365 — EF-365 documented
-    // both as declining gracefully because MongoAggregationExpressionRenderer had no arm for MongoInExpression
-    // or MongoUnaryExpression, so the render-time throw (inside MongoPipelineFactory.Create) was caught and
-    // turned into a driver-LINQ fallback for Native/DriverLinq, and NativeOnly threw
-    // NativeTranslationNotSupportedException outright. EF-413 added both arms (RenderIn/RenderUnary), so the
-    // SAME render call these leaves already reach — MongoFilteredSizeExpression's element predicate is rendered
-    // through this very renderer, regardless of position (sort key or filtered-count projection) — now
-    // succeeds instead of throwing. There is no separate gate to update for this position: the projection-side
-    // filtered-count branch was already deliberately gate-free (see the comment above
-    // AssertElementPredicateGoesNative), so adding a Render arm is *sufficient* on its own
-    // to flip these two rows from graceful-fallback to genuinely-native, including under NativeOnly.
+    // Contains (MongoInExpression) and unary Not (MongoUnaryExpression) element predicates render via
+    // RenderIn/RenderUnary. The projection-side filtered-count branch has no separate gate, so a render arm is
+    // sufficient to make them native (see AssertElementPredicateGoesNative).
 
     [Fact]
     public void Contains_element_predicate_filtered_projection_goes_native_EF413()
     {
-        // Contains over a captured collection translates to MongoInExpression, which now renders via RenderIn.
+        // Contains over a captured collection translates to MongoInExpression, rendered by RenderIn.
         var collection = Seed(nameof(Contains_element_predicate_filtered_projection_goes_native_EF413),
             MatchRowsNoRagged());
         var wanted = new[] { "m0", "m1" };
@@ -740,10 +597,9 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     [Fact]
     public void Unary_not_element_predicate_filtered_projection_goes_native_EF413()
     {
-        // A unary Not over a NON-nullable bool is the only spelling that actually builds a MongoUnaryExpression
-        // (a nullable bool's Not is declined earlier — see the bare-nullable-bool test below), and now renders
-        // via RenderUnary. PostDoc sets Pinned = (Rank > 0), so `!p.Pinned` counts exactly the complement of the
-        // canonical predicate: none(0 matching, 3 non) => 3, one(1, 2) => 2, three(3, 0) => 0.
+        // Not over a non-nullable bool is the only spelling that builds a MongoUnaryExpression (a nullable
+        // bool's Not is declined earlier). Pinned = (Rank > 0), so `!p.Pinned` counts the complement:
+        // none => 3, one => 2, three => 0.
         var collection = Seed(nameof(Unary_not_element_predicate_filtered_projection_goes_native_EF413),
             MatchRowsNoRagged());
 
@@ -755,20 +611,13 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             ["none=3", "one=2", "three=0"]);
     }
 
-    // NativeOnly must SUCCEED here (not throw): every caller is an element predicate that renders natively
-    // rather than declining in any mode. The list has grown by re-baselining, one renderer arm at a time —
-    // EF-413 added RenderIn/RenderUnary (Contains, unary not), and EF-322 widened the regex arm to admit a
-    // CONSTANT/parameter term and not just a field-to-field one, which moved the three StartsWith rows here
-    // from the graceful-fallback helper that used to sit above (now deleted — nothing declines any more).
+    // Asserts identical results in every mode, including NativeOnly (which must succeed).
     //
-    // Why a Render arm is *sufficient* on its own to flip a row, with no separate gate to update: the
-    // projection-side filtered-count branch is deliberately gate-free. MongoFilteredSizeExpression's element
-    // predicate is NOT checked at translate time (see MongoExpressionTranslator's count-branch remarks and
-    // NativeComputedSortTests.Filtered_owned_collection_count_sort_key_goes_native — a blanket translate-time
-    // check was tried once for this position and MEASURED WRONG: it hard-fails the whole leaf with
-    // InvalidOperationException in EVERY mode, including DriverLinq, instead of declining gracefully). The
-    // leaf is admitted, the renderer decides, and a render-time throw is what the typed catch in
-    // TryBuildPipeline turns into a fallback. So when the renderer stops throwing, the row goes native.
+    // The projection-side filtered-count branch is deliberately gate-free: the element predicate is not checked
+    // at translate time, because a translate-time check hard-fails the whole leaf with InvalidOperationException
+    // in every mode (including DriverLinq) instead of declining (see MongoExpressionTranslator's count-branch
+    // remarks and NativeComputedSortTests.Filtered_owned_collection_count_sort_key_goes_native). The renderer
+    // decides; a render-time throw is caught in TryBuildPipeline and becomes a fallback.
     private void AssertElementPredicateGoesNative(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, List<string>> run, string[] expected)
     {
@@ -779,15 +628,10 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         }
     }
 
-    // CODE-REVIEW FIX (EF-413): a filtered count's element predicate containing a Not over a VALUE-CONVERTED
-    // bool must decline (fall back), never silently answer wrong. MongoFilteredSizeExpression's element
-    // predicate is deliberately NOT checked at TRANSLATE time (see MongoExpressionTranslator's count-branch
-    // remarks and NativeComputedSortTests.Filtered_owned_collection_count_sort_key_goes_native — a blanket
-    // translate-time check was tried once for this position specifically and MEASURED WRONG: it hard-fails
-    // the whole leaf with InvalidOperationException in EVERY mode, including DriverLinq, instead of a graceful
-    // decline). So the fix for THIS position lives at RENDER time instead:
-    // MongoAggregationExpressionRenderer.RenderUnary itself throws when the operand is a non-default-serialized
-    // bare field, which the existing render-time catch turns into the correct disposition.
+    // A filtered count's element predicate with Not over a value-converted bool must decline rather than answer
+    // wrong. Because the element predicate is not checked at translate time (see
+    // AssertElementPredicateGoesNative), the guard lives in MongoAggregationExpressionRenderer.RenderUnary, which
+    // throws for a non-default-serialized bare field.
     public class ConvertedFlagOwner
     {
         public ObjectId Id { get; set; }
@@ -797,8 +641,8 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
 
     public class ConvertedFlagPost
     {
-        // Same non-empty-string-either-way converter as NativeComputedSortTests.ConvertedFlagModel, so a
-        // raw-field $not is wrong for EVERY Flag==false element, not just some.
+        // Same converter as NativeComputedSortTests.ConvertedFlagModel: both stored values are non-empty strings,
+        // so a raw-field $not is wrong for every Flag == false element.
         public bool Flag { get; set; }
     }
 
@@ -826,17 +670,9 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         ]);
         var collection = database.MongoDatabase.GetCollection<ConvertedFlagOwner>(name);
 
-        // The CLR-correct answer would be: Count(p => !p.Flag) is the number of Flag==false elements —
-        // "two-false" has 2 (Flag: N, N, Y); "one-false" has 1 (Flag: N, Y, Y). MEASURED: the MongoDB driver's
-        // own LINQ v3 provider does NOT reach that answer for this shape either — like the computed-SORT-KEY
-        // position (see NativeComputedSortTests' sibling test), it renders `!p.Flag` as the same raw-field
-        // truthiness $not, independent of this provider's translator entirely, so DriverLinq itself answers
-        // 0 for every row here (every element is truthy either way). That residual driver-level limitation is
-        // out of scope for EF-413. What this fix actually guarantees — and what's asserted below — is: (1)
-        // NativeOnly must NEVER silently succeed with wrong data, and (2) Native must never independently
-        // compute a WORSE, DIFFERENT wrong answer than DriverLinq — before the fix, Native answered 0 as well,
-        // by coincidence of the same truthiness bug running natively instead of via the driver, so this second
-        // assertion does not by itself discriminate the fix; the discriminating assertion is the first one.
+        // The CLR-correct answer is two-false=2, one-false=1, but the driver's own LINQ provider renders `!p.Flag`
+        // as raw-field truthiness too and answers 0 for every row — a driver limitation out of scope here. What is
+        // guaranteed: NativeOnly never succeeds with wrong data, and Native agrees with DriverLinq.
         List<string> Run(MongoQueryMode mode)
         {
             using var db = CreateContext(collection, mode, ConvertedFlagOwnerModel);
@@ -845,9 +681,8 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
                 .ToList().OrderBy(r => r.Title).Select(r => $"{r.Title}={r.N}").ToList();
         }
 
-        // NativeOnly: a clean decline (NativeTranslationNotSupportedException), NEVER silently-wrong data —
-        // THE load-bearing assertion of this test. Before the fix, this SUCCEEDED and silently answered every
-        // count as 0 (raw-field $not over "Y"/"N" is always false, so the $filter's cond never matches).
+        // Load-bearing: NativeOnly declines cleanly rather than returning 0 for every count (raw-field $not over
+        // "Y"/"N" is always false).
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, ConvertedFlagOwnerModel))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(
@@ -856,21 +691,17 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
                     .ToList());
         }
 
-        // Native must agree with whatever DriverLinq itself answers (the fallback it declines to), not
-        // silently diverge from it under its own, separately-wrong computation.
+        // Native must agree with the DriverLinq fallback it declines to.
         Assert.Equal(Run(MongoQueryMode.DriverLinq), Run(MongoQueryMode.Native));
     }
 
     [Fact]
     public void Mixed_projection_with_a_regex_filtered_count_goes_native_EF365()
     {
-        // THE RISK CASE (see Query/AGENTS.md, "alias-agreement and sibling-readability for mixed projections").
-        // The shaper is built alias-addressed BEFORE native-vs-fallback is decided, so a late fallback must
-        // still be read correctly. It is: this projection registers NO alias override (every alias is the
-        // projection MEMBER name), so ShouldStripBareProjectionOnFallback is false, the driver's own $project
-        // stays in place, and the driver names those members identically. THREE leaves — two plain scalars
-        // either side of the computed count — so a member/alias mis-pairing (not just a missing read) would
-        // show up as swapped VALUES, which a single-leaf test cannot detect.
+        // Risk case (see Query/AGENTS.md, "alias-agreement and sibling-readability for mixed projections"): the
+        // shaper is built alias-addressed before native-vs-fallback is decided. No alias override is registered
+        // (every alias is the member name), so a late fallback keeps the driver's $project and names match. Three
+        // leaves so a member/alias mis-pairing shows up as swapped values.
         var collection = Seed(nameof(Mixed_projection_with_a_regex_filtered_count_goes_native_EF365),
             MatchRowsNoRagged());
 
@@ -892,13 +723,9 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     [Fact]
     public void Bare_nullable_bool_element_predicate_filtered_projection_still_hard_fails_EF365()
     {
-        // MEASURED, and the one row of the ticket's required breadth that EF-365 does NOT fix. A bare nullable
-        // bool (`p.Flagged!.Value`, after TryResolveMember peels Nullable<T>.Value) is declined by
-        // TranslateNode's bare-boolean-member arm — "accept only non-nullable bools" — which runs BEFORE the
-        // gate this ticket removed. The leaf therefore never translates, Route stays Fallback, and the shape
-        // reaches the same generic fall-through crash as the correlated/primitive/Where-Count rows above.
-        // Widening that arm is a separate, correctness-bearing decision (native-vs-driver divergence on a
-        // missing/null stored element), not a fallback-plumbing one.
+        // A bare nullable bool (`p.Flagged!.Value`) is declined by TranslateNode's bare-boolean-member arm
+        // (non-nullable bools only), so the leaf never translates and hits the generic fall-through crash.
+        // Widening that arm is a correctness decision (native-vs-driver divergence on a missing/null element).
         var collection = Seed(nameof(Bare_nullable_bool_element_predicate_filtered_projection_still_hard_fails_EF365),
             Row("x", new BsonArray { PostDoc(rank: 1, heading: "hello", flagged: true) }));
 
@@ -912,9 +739,8 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         }
     }
 
-    // Two rows carrying BOTH a populated Tags primitive collection AND a Posts navigation whose elements differ
-    // in whether they satisfy the non-renderable element predicate — the seed the two array-sibling tests below
-    // need, and which neither RowWithTags (empty Posts) nor MatchRow (empty Tags) provides alone.
+    // Rows with both a populated Tags collection and Posts elements that differ on the element predicate —
+    // needed by the two array-sibling tests below.
     private static BsonDocument TagsAndPostsRow(string title, string[] tags, int matching, int nonMatching)
     {
         var posts = new BsonArray();
@@ -931,14 +757,10 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     [Fact]
     public void Primitive_collection_sibling_of_a_regex_filtered_count_goes_native_EF365()
     {
-        // MEASURED, and it corrected a prediction: a PRIMITIVE-collection leaf (`b.Tags`) is a
-        // MongoFieldExpression, not a MongoElementRefExpression, so NativeProjectionBinder does NOT count it as
-        // an array leaf and the sibling whole-document-readability gate never engages. This projection is
-        // therefore ADMITTED with a computed count sibling — which makes it the sharpest version of the
-        // mixed-projection risk case, so it asserts the DATA (a collection leaf AND a computed leaf together),
-        // not merely that nothing threw. It is safe for the documented reason: no leaf registers an alias
-        // override, so the late fallback does not strip the driver's $project and every alias is still the
-        // projection member name the driver emits.
+        // A primitive-collection leaf (`b.Tags`) is a MongoFieldExpression, not a MongoElementRefExpression, so
+        // the sibling whole-document-readability gate never engages and the projection is admitted alongside a
+        // computed count. Asserts the data. Safe because no leaf registers an alias override, so a late fallback
+        // keeps the driver's $project and its member-name aliases.
         var collection = Seed(
             nameof(Primitive_collection_sibling_of_a_regex_filtered_count_goes_native_EF365),
             TagsAndPostsRow("x", ["a", "bb"], matching: 2, nonMatching: 1),
@@ -957,13 +779,10 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     [Fact]
     public void Owned_collection_array_leaf_sibling_of_a_filtered_count_still_declines_before_mutating_EF365()
     {
-        // The OTHER half of the mixed-projection risk, and the one that really is an array leaf: an OWNED
-        // COLLECTION navigation (`b.Posts`) projected alongside the computed count. Once any array leaf is
-        // admitted, NativeProjectionBinder forces IsWholeDocumentReadableLeaf on every sibling, and a computed
-        // count is backed by no document element at all — so the WHOLE projection declines before mutating
-        // anything, Route stays Fallback, and the shape hard-fails exactly as it did before EF-365. Pinned as a
-        // tripwire: if this ever stops throwing, the alias-agreement invariant has been reopened and the
-        // stripped-back-to-whole-documents fallback would read the count leaf's alias off a raw document.
+        // An owned collection navigation (`b.Posts`) is an array leaf, which forces IsWholeDocumentReadableLeaf
+        // on every sibling; a computed count is backed by no document element, so the whole projection declines
+        // before mutating anything and hard-fails. Tripwire: if this stops throwing, the alias-agreement
+        // invariant has been reopened (a stripped fallback would read the count's alias off a raw document).
         var collection = Seed(
             nameof(Owned_collection_array_leaf_sibling_of_a_filtered_count_still_declines_before_mutating_EF365),
             TagsAndPostsRow("x", ["a"], matching: 2, nonMatching: 1));
@@ -980,10 +799,8 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     [Fact]
     public void Filtered_count_projection_goes_native()
     {
-        // This is the shape EF-359 was filed to close: Select(b => new { b.Title, N = b.Posts.Count(pred) })
-        // threw InvalidOperationException identically under Native/DriverLinq/NativeOnly before Task 3. See the
-        // flipped NativeOwnedCollectionCountTests.Filtered_count_projection_now_goes_native_EF359, which records
-        // that history; this file carries the full breadth.
+        // Select(b => new { b.Title, N = b.Posts.Count(pred) }). See also
+        // NativeOwnedCollectionCountTests.Filtered_count_projection_now_goes_native_EF359.
         var collection = Seed(nameof(Filtered_count_projection_goes_native), MatchRows());
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
 
@@ -1026,8 +843,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     [Fact]
     public void Filtered_count_projection_into_a_named_dto_goes_native()
     {
-        // The DTO spelling reaches NativeProjectionBinder's MemberInit branch, which the anonymous-type tests
-        // do not.
+        // The DTO spelling reaches NativeProjectionBinder's MemberInit branch.
         var collection = Seed(nameof(Filtered_count_projection_into_a_named_dto_goes_native), MatchRows());
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
 
@@ -1048,10 +864,8 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             .Select(b => new { b.Title, Filtered = b.Posts.Count(p => p.Rank > 0), All = b.Posts.Count })
             .OrderBy(r => r.Title).ToList();
 
-        // Full tuple list across MatchRows(), not just the "none" row (fix round 1, Minor 5) — this covers the
-        // ragged (missing/null) rows too, the one shape where a filtered $size:$filter and an unfiltered $size
-        // share a single $project. "none"/"one"/"three" each have 3 total Posts elements (All == 3) but differ in
-        // how many satisfy Rank > 0 (Filtered == 0/1/3) — otherwise a filtered/unfiltered mix-up would pass.
+        // Covers the ragged rows too, where a filtered and an unfiltered $size share one $project. "none"/"one"/
+        // "three" all have All == 3 but differ in Filtered, so a filtered/unfiltered mix-up fails.
         Assert.Equal(
             [("empty", 0, 0), ("missing", 0, 0), ("none", 0, 3), ("null", 0, 0), ("one", 1, 3), ("three", 3, 3)],
             rows.Select(r => (r.Title, r.Filtered, r.All)).ToList());
@@ -1072,24 +886,12 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         Assert.Equal([("none", 0), ("two", 1)], rows.Select(r => (r.Title, r.N)).ToList());
     }
 
-    // NOTE on the brief's step 1 "Arithmetic_over_a_filtered_count_projection_goes_native": that test is NOT
-    // added here as a second test. Arithmetic_projection_leaf_containing_a_filtered_count_goes_native (below)
-    // already pins this exact shape (Count(pred) * 2) — it predates this task (added in fix round 1 of Task 2,
-    // as an incidental widening this task's own gate change does not touch) and its assertions are a SUPERSET
-    // of what the brief's version asks for: it checks real per-row values (not just NotEmpty) AND asserts
-    // Native/NativeOnly/DriverLinq parity across the full ragged MatchRows() seed, including missing/null
-    // arrays. Adding a second, narrower copy would only duplicate coverage, so it is deliberately skipped —
-    // see this task's report for the record of that decision.
     [Fact]
     public void Arithmetic_projection_leaf_containing_a_filtered_count_goes_native()
     {
-        // SECOND WIDENING (fix round 1, unreported by the original task report). NativeProjectionBinder's
-        // pre-existing arithmetic projection-leaf branch (EF-347) gates only on a BinaryExpression arithmetic
-        // top node plus TryTranslateValue succeeding — it has no restriction on WHICH operand kinds populate
-        // that success. Now that TranslateOperand recognizes a predicated count as an ordinary operand (this
-        // task), an arithmetic wrapper around one reaches native too, with no code change to the binder itself.
-        // Measured benign and parity-preserving across all three modes, including a missing/null Posts array
-        // (the $filter/$size composition inherits the same $ifNull wrap the bare filtered-count leaf uses).
+        // NativeProjectionBinder's arithmetic projection-leaf branch places no restriction on operand kinds, so
+        // an arithmetic wrapper around a filtered count goes native. The $filter/$size composition keeps the
+        // $ifNull wrap, so missing/null Posts arrays agree across modes.
         var collection = Seed(nameof(Arithmetic_projection_leaf_containing_a_filtered_count_goes_native), MatchRows());
 
         List<(string Title, int X)> Run(MongoQueryMode mode)
@@ -1100,8 +902,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
                 .ToList().OrderBy(r => r.Title).Select(r => (r.Title, r.X)).ToList();
         }
 
-        // MatchRows(): "none" 0 matching -> 0*2=0; "one" 1 matching -> 1*2=2; "three" 3 matching -> 3*2=6;
-        // "empty"/"missing"/"null" all have 0 matches -> 0.
+        // Matching counts doubled; ragged rows have 0 matches.
         var expected = new List<(string, int)>
         {
             ("empty", 0), ("missing", 0), ("none", 0), ("null", 0), ("one", 2), ("three", 6)
@@ -1112,16 +913,9 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         Assert.Equal(expected, Run(MongoQueryMode.DriverLinq));
     }
 
-    // EF-359 Task 4 — shape C, the BARE spelling: Select(b => b.Posts.Count(p => p.Rank > 0)). EF-359 fixed a
-    // CRASH here: before it, this shape threw in every mode; after it, it folded the count client-side over an
-    // empty pipeline and returned correct values, exactly as the bare UNFILTERED count had done since
-    // owned-data slice 7. THE ROUTE HAS SINCE CHANGED AND THE VALUES HAVE NOT — EF-405 slice A4-2 admitted both
-    // size kinds as bare tier-2 projection leaves (arm 1a of NativeProjectionBinder.TryDeriveSyntheticAlias,
-    // under the reserved `_v` alias and the Synthetic tier), so the count is now computed SERVER-SIDE. The
-    // reason this test still passes unchanged is exactly the contract: a routing flip must not move a value.
-    // Its NAME, however, claimed the route rather than the values, so A4-3 corrected it in place; the routing
-    // claim now lives in Bare_filtered_count_projection_goes_native_under_NativeOnly below, which is the flipped
-    // tripwire that used to lock the decline.
+    // Bare spelling: Select(b => b.Posts.Count(pred)). Goes native as a tier-2 leaf (arm 1a of
+    // NativeProjectionBinder.TryDeriveSyntheticAlias, `_v` / Synthetic); this pins that values are correct in
+    // the non-NativeOnly modes.
     [Fact]
     public void Bare_filtered_count_projection_returns_correct_values_under_Native_and_DriverLinq()
     {
@@ -1139,28 +933,18 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         }
     }
 
-    // FLIPPED TRIPWIRE (EF-405 slice A4-3). This was
-    // `Bare_filtered_count_projection_declines_cleanly_under_NativeOnly`, and it existed to LOCK the decline so
-    // that lifting it would have to be a visible edit rather than a silently-relaxed gate. Slice A4-2 lifted it
-    // deliberately: arm 1a of NativeProjectionBinder.TryDeriveSyntheticAlias admits a MongoSizeExpression or
-    // MongoFilteredSizeExpression as the TOP node of a bare selector body whose un-stripped driver fallback
-    // cannot abort (IsFallbackSafeBareSizeLeaf), committing it under `_v` / ProjectionAliasTier.Synthetic. The
-    // NON-DOTTED array-path rule still applies to THIS (filtered) kind, which is protected structurally — the
-    // driver renders {$sum: {$map: …}} and $map tolerates a missing array — but it no longer applies to the
-    // unfiltered kind, where the gate calls the A4-0 rewrite's own matcher instead. The lock is
-    // replaced, not deleted: what the decline assertion used to pin is now pinned as a CAPABILITY — NativeOnly
-    // SUCCEEDING is the routing proof, and the values it returns are asserted against the same vector the two
-    // fallback modes return.
+    // Arm 1a of NativeProjectionBinder.TryDeriveSyntheticAlias admits a MongoSizeExpression or
+    // MongoFilteredSizeExpression as the top node of a bare selector whose un-stripped driver fallback cannot
+    // abort (IsFallbackSafeBareSizeLeaf), under `_v` / Synthetic. The filtered kind is fallback-safe because the
+    // driver renders {$sum: {$map: …}} and $map tolerates a missing array. NativeOnly succeeding is the routing
+    // proof; values match the fallback modes.
     //
-    // WHAT IS STILL DECLINED, so this flip is not read as "every neighbouring shape converted": the same count
-    // through an owned-reference HOP (b.Home.Notes.Count(pred), a DOTTED array path) is STILL declined, by that
-    // same method, and deliberately — see NativeProjectionBinder.IsFallbackSafeBareSizeLeaf's remarks and
-    // NativeComputedBareProjectionTests.Bare_FILTERED_count_leaf_through_an_owned_reference_HOP_is_declined_and_
-    // answers_correctly. A primitive-collection count (b.Tags.Count) never reaches tier 2 at all.
+    // Still declined: the same count through an owned-reference hop (b.Home.Notes.Count(pred), a dotted path) —
+    // see IsFallbackSafeBareSizeLeaf and NativeComputedBareProjectionTests.Bare_FILTERED_count_leaf_through_an_
+    // owned_reference_HOP_is_declined_and_answers_correctly. A primitive-collection count never reaches tier 2.
     //
-    // States exercised: present (one/three), empty, element ABSENT, explicitly BSON null — all four, read INTO,
-    // on the root-declared navigation. The seed is PrefixedMatchRows() rather than MatchRows() so that the
-    // late-decline legs below still cover the two ragged rows; see that helper's own comment.
+    // Covers present, empty, absent and BSON-null arrays; PrefixedMatchRows() keeps the ragged rows in the
+    // late-decline legs.
     [Fact]
     public void Bare_filtered_count_projection_goes_native_under_NativeOnly()
     {
@@ -1168,8 +952,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             nameof(Bare_filtered_count_projection_goes_native_under_NativeOnly), PrefixedMatchRows());
         var prefix = "m_";
 
-        // COLLECT-THEN-ASSERT: every leg runs, then the whole set is asserted together. See LegOutcome's
-        // remarks — the defect that convention closes was found on this file's own captured-parameter tripwire.
+        // Collect-then-assert; see LegOutcome.
         const string expected = "[0,0,0,0,1,3]";
         var legs = new List<(string Leg, string Outcome)>();
 
@@ -1181,12 +964,9 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
                     .Select(b => b.Posts.Count(p => p.Rank > 0)).ToList())));
         }
 
-        // THE MANDATORY LATE-DECLINE LEGS. A captured-local StartsWith has no native regex rendering, so the
-        // native factory declines at RENDER time, after the alias-addressed shaper has already been committed —
-        // the one route in this suite where a bare projection's alias miss is SILENT rather than loud. The
-        // explicit-DriverLinq leg is the rubric-level obligation: the native default's carve-out is conditional
-        // on UseQueryMode(DriverLinq) restoring the previous path, so a leg that never runs is a leg that
-        // cannot discharge it.
+        // Late-decline legs: a captured-local StartsWith declines at render time, after the alias-addressed
+        // shaper is committed — the one route where a bare projection's alias miss is silent. The explicit
+        // DriverLinq leg verifies UseQueryMode(DriverLinq) still restores the previous path.
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
         {
             using var db = CreateContext(collection, mode, BlogModel);
@@ -1206,29 +986,14 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             legs);
     }
 
-    // FLIPPED TRIPWIRE (EF-405 slice A4-3). This was `Bare_filtered_count_projection_folds_client_side`, and it
-    // asserted `aggregate([])` — no $project and no $size — as the MEASURED proof that the whole document,
-    // array and all, was fetched and counted in process. That claim was true, and it was the emitted-MQL half
-    // of the same lock the sibling above carried in routing form. A4-2 lifted the lock deliberately (arm 1a of
-    // TryDeriveSyntheticAlias, see that sibling's comment), so the pipeline is no longer empty and the count is
-    // no longer folded client-side. The assertion is replaced rather than weakened: it now pins the SERVER-SIDE
-    // rendering positively, and pins the absence of the old empty pipeline, so a silent revert to the fold is
-    // caught from both directions.
+    // Pins the server-side rendering: `$size` over `$filter` over `$ifNull` in the aggregation dialect, under
+    // the reserved `_v` alias the shaper reads. No array-index form exists for a predicated count
+    // (MongoFilteredSizeExpression is a sealed sibling of MongoSizeExpression so Tier 1 never fires for it).
+    // Also asserts no empty pipeline, so a revert to client-side folding fails.
     //
-    // The shape is `$size` over `$filter` over `$ifNull`, in the AGGREGATION dialect and never as a
-    // query-dialect array-index form — no array-index form exists for a PREDICATED count, which is a
-    // load-bearing invariant rather than a limitation (MongoFilteredSizeExpression is a sealed SIBLING of
-    // MongoSizeExpression precisely so Tier 1 can never fire for it). `_v` is the reserved Synthetic alias the
-    // bare arm commits under, and asserting it here is what ties the emitted key to the alias the shaper reads.
-    //
-    // KNOWN AND ACCEPTED (A4-3 review): this test has NO late-decline leg and NO explicit-DriverLinq leg — the
-    // sibling Bare_filtered_count_projection_goes_native_under_NativeOnly carries both for this shape, and
-    // duplicating them here would net nothing. The consequence worth stating rather than leaving to be
-    // rediscovered: because this test runs under NativeOnly, the emitted MQL for this shape under the DEFAULT
-    // Native mode is NOT pinned anywhere. The two modes are expected to emit the same pipeline (the gate that
-    // differs between them only decides whether a DECLINE throws or falls back), but that expectation is
-    // untested, so a divergence between them would show up as a value regression in the sibling rather than as
-    // an MQL failure here.
+    // Runs only under NativeOnly; late-decline and DriverLinq legs are in
+    // Bare_filtered_count_projection_goes_native_under_NativeOnly. The default Native mode's MQL is expected to
+    // match but is not pinned anywhere.
     [Fact]
     public void Bare_filtered_count_projection_emits_a_native_size_over_filter_under_the_reserved_alias()
     {
@@ -1240,8 +1005,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         var counts = db.Entities.AsNoTracking().OrderBy(b => b.Title)
             .Select(b => b.Posts.Count(p => p.Rank > 0)).ToList();
 
-        // NativeOnly succeeding at all is the routing proof; the values keep the MQL assertions from being the
-        // whole test, since an MQL shape alone cannot show the pipeline answers correctly.
+        // NativeOnly succeeding is the routing proof; the values show the pipeline answers correctly.
         Assert.Equal([0, 0, 0, 0, 1, 3], counts);
 
         var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
@@ -1249,48 +1013,21 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         Assert.Contains("$size", mql);
         Assert.Contains("$filter", mql);
         Assert.Contains("$ifNull", mql);
-        // SCOPED to the $project stage's field names (A4-3 review, M1) — a bare Contains("_v", mql) would match
-        // anywhere in the logged command, including the collection name, which is derived from this method's
-        // own name and so would change under a rename.
+        // Scoped to $project field names; see ProjectStageCommitsTheSyntheticAlias.
         Assert.True(ProjectStageCommitsTheSyntheticAlias(spy));
-        // The old lock, asserted in the negative so a revert to the client-side fold reddens here too.
+        // Guards against a revert to the client-side fold.
         Assert.DoesNotContain("aggregate([])", mql);
     }
 
-    // FLIPPED TRIPWIRE (EF-405 slice A4-3) — AND THE SPECIAL CASE OF THE SIX, because what it locked was not a
-    // decline-with-a-working-fallback but a HARD FAIL IN EVERY MODE.
+    // A captured-local predicate goes native in every mode. On the client-side rebuild path this shape used to
+    // hard-fail everywhere (the captured local arrived as an unevaluable query-parameter node); as a tier-2
+    // leaf (arm 1a of TryDeriveSyntheticAlias) the local is an ordinary pipeline parameter.
     //
-    // HISTORY, kept because it is the whole reason this test exists. EF-359 Task 4 took its own brief's
-    // CONTINGENCY: a captured local arrived at the CLIENT-SIDE rebuild as an EF query-parameter node the fold
-    // could not evaluate (the predicate lambda is deliberately not re-Visited), measured as
-    // ArgumentException("must be reducible node") from the lambda compiler, and a ContainsQueryParameter guard
-    // turned that into a clean InvalidOperationException("could not be translated") — identically under Native,
-    // DriverLinq AND NativeOnly. The test was renamed from the brief's literal
-    // "..._with_a_captured_parameter" (which asserted correct VALUES) to pin that decline instead, a smaller,
-    // honest fix over a half-working one. This test then LOCKED it.
-    //
-    // WHY THE LOCK IS LIFTED, and by what. That whole failure mode was a property of the client-side rebuild,
-    // which this shape no longer reaches: EF-405 slice A4-2 admits the bare filtered count as a tier-2
-    // projection leaf (arm 1a of NativeProjectionBinder.TryDeriveSyntheticAlias, `_v` /
-    // ProjectionAliasTier.Synthetic), so the count is computed SERVER-SIDE and the captured local is an
-    // ordinary query parameter substituted into the pipeline. The ContainsQueryParameter guard is not what
-    // changed — the shape simply stops arriving at it.
-    //
-    // AN ORACLE EXISTS, AND IT IS USED — the spike recorded this flip as INFERRED-an-improvement and UNVERIFIED
-    // against one, which is not good enough for a shape whose whole prior behaviour was "returns nothing".
-    // The oracle is IN-MEMORY LINQ over the SAME Expression object: `selector` is sent to the server on one leg
-    // and `selector.Compile()` is applied to whole entities materialized under Native on the other, so the two
-    // sides cannot silently drift apart the way two hand-written predicates can. The oracle is legitimate here
-    // for a reason worth stating rather than assuming: this seed's element predicate is `p.Rank > threshold`
-    // over ranks of exactly 5 and -5, with NO missing or explicitly-null Rank FIELD anywhere, so it sits
-    // squarely in the AGREEING half of the documented BSON-total-order divergence (see the "gt" row of
-    // FilteredCountSelectors and the two documented-divergence tests below) — the ragged states this seed does
-    // carry are ARRAY-level (empty / element absent / explicit BSON null), which the $ifNull wrap and EF's own
-    // missing-array normalization both answer as 0. A `<`-family captured predicate would NOT be oracle-checkable
-    // this way, and must not be added here on the strength of this one passing.
-    //
-    // States exercised: present (m_one/m_three), empty, element ABSENT, explicitly BSON null — all four, read
-    // INTO, on the root-declared navigation.
+    // Oracle: in-memory LINQ over the same Expression object (`selector` server-side vs `selector.Compile()`
+    // over materialized entities). Valid here because the predicate is `p.Rank > threshold` over ranks of 5 and
+    // -5 with no missing/null Rank field — the agreeing half of the BSON-total-order divergence (see the "gt"
+    // row of FilteredCountSelectors). The ragged states here are array-level, which $ifNull and EF both answer
+    // as 0. A `<`-family predicate would not be oracle-checkable this way.
     [Fact]
     public void Bare_filtered_count_projection_with_a_captured_parameter_goes_native_in_every_mode()
     {
@@ -1300,9 +1037,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         var threshold = 0;
         var prefix = "m_";
 
-        // ONE Expression object, used both ways. `threshold` is a captured local either way — the compiler
-        // still emits a display-class field access, which EF still extracts as a query parameter — so hoisting
-        // the lambda into a variable does not change the shape under test.
+        // One Expression object used both ways; `threshold` is still extracted as a query parameter.
         Expression<Func<Blog, int>> selector = b => b.Posts.Count(p => p.Rank > threshold);
 
         List<int> oracle;
@@ -1314,11 +1049,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
 
         var expected = "[" + string.Join(",", oracle) + "]";
 
-        // EVERY MODE'S LEG EXECUTES, and the outcomes are collected before any of them is asserted. Written as
-        // a foreach of direct assertions, a change of behaviour in the FIRST mode aborts the test and the
-        // remaining legs never run at all — which is exactly how this shape's mandatory explicit-DriverLinq leg
-        // went silently unexercised while a slice claimed "zero MongoCommandException across all runs" (EF-405
-        // A4-2 review, I2). Collecting first means a regression reports what every mode did, not just the first.
+        // Collect every leg's outcome before asserting; see LegOutcome.
         var legs = new List<(string Leg, string Outcome)>();
 
         foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
@@ -1328,9 +1059,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
                 () => db.Entities.AsNoTracking().OrderBy(b => b.Title).Select(selector).ToList())));
         }
 
-        // The mandatory late-decline legs, for the reason the sibling capability test states: a captured-local
-        // StartsWith declines at RENDER time, after the alias-addressed shaper has been committed, and that is
-        // the only route in this suite where a bare projection's alias miss is silent.
+        // Late-decline legs; see Bare_filtered_count_projection_goes_native_under_NativeOnly.
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
         {
             using var db = CreateContext(collection, mode, BlogModel);
@@ -1339,8 +1068,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
                     .Select(selector).ToList())));
         }
 
-        // The oracle is asserted EXPLICITLY as well as used, so a leg set that agreed with a silently-wrong
-        // oracle (e.g. one that had itself started returning zeros) cannot pass vacuously.
+        // Assert the oracle itself so agreement with a silently-wrong oracle cannot pass.
         Assert.Equal([0, 0, 0, 0, 1, 3], oracle);
 
         Assert.Equal(
@@ -1354,24 +1082,9 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             legs);
     }
 
-    // EF-421 RE-BASELINE (Task 7). History: Fix round 1 (Quality review, pre-EF-421) established that a BARE
-    // correlated predicate — Select(b => b.Posts.Count(p => p.Title == b.Title)) — is a DIFFERENT shape from
-    // the WRAPPED one below (Correlated_primitive_and_where_count_filtered_projections_still_hard_fail_in_
-    // every_mode): this Count call IS the top-level selector body, so the (now-obsolete) top-level-identity
-    // guard held and the predicated arm proceeded, which used to regress to a WORSE failure
-    // (KeyNotFoundException) than the pre-existing InvalidOperationException("could not be translated") every
-    // other declined shape got — fixed at the time by declining whenever the predicate body contains a
-    // provider/EF shaper node.
-    //
-    // EF-421 Task 7 wired MongoExpressionTranslator.SelfParam through NativeProjectionBinder's own translator
-    // (selector.Parameters[0], unconditionally, for EVERY Select — bare or wrapped alike), so
-    // ReferencesEnclosingScope's correlation-match check now succeeds for this exact predicate instead of
-    // declining, and Count(pred) is exactly NativeProjectionBinder.TryTranslateLeaf's admitted
-    // MongoFilteredSizeExpression leaf shape. This bare-selector-body spelling is admitted by the SAME
-    // mechanism as the wrapped one — there is no separate gate specific to "bare vs wrapped" for this leaf
-    // kind — so it goes native under EVERY mode (mode is read only on decline, never gates the attempt; see
-    // this file's own MongoQueryMode remarks elsewhere). Measured: Native, DriverLinq, and NativeOnly all now
-    // return the correct count instead of throwing.
+    // Bare correlated predicate: the Count is the whole selector body. MongoExpressionTranslator.SelfParam is
+    // wired through NativeProjectionBinder for every Select, so ReferencesEnclosingScope resolves b.Title
+    // against the outer scope and the MongoFilteredSizeExpression leaf goes native in every mode.
     [Fact]
     public void Bare_correlated_element_predicate_now_goes_native_EF421()
     {
@@ -1379,9 +1092,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             nameof(Bare_correlated_element_predicate_now_goes_native_EF421),
             Row("x", new BsonArray { PostDoc(rank: 1, heading: "hello") }));
 
-        // PostDoc always writes Title = "p" (see its own remarks), which never equals the Blog's own Title
-        // ("x") — so the correct count is 0, proving this is a genuinely-correct native result, not merely
-        // "didn't throw".
+        // PostDoc writes Title = "p", never equal to "x", so the correct count is 0.
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
         {
             using var db = CreateContext(collection, mode, BlogModel);
@@ -1390,21 +1101,14 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         }
     }
 
-    // ------------------------------------------------------------------
-    // Task 5 — the differential in-memory oracle
-    // ------------------------------------------------------------------
+    // ---- Differential in-memory oracle ----
     //
-    // A filtered count can return a silently WRONG NUMBER rather than an error, so an in-memory oracle over the
-    // SAME Expression object (sent to the server and, separately, compiled for client-side evaluation) is the
-    // gate here — not driver-LINQ parity. Driver-LINQ is not usable as the oracle for this shape: a WRAPPED count
-    // renders a bare $size with no $ifNull under DriverLinq and aborts on ragged data (see the sibling
-    // NativeOwnedCollectionCountTests' Wrapped_count_projection_under_DriverLinq_works_for_present_arrays_and_
-    // aborts_on_a_missing_array), so a driver-LINQ oracle leg simply cannot run over this seed at all.
+    // A filtered count can silently return a wrong number, so the oracle is in-memory LINQ over the same
+    // Expression object. Driver-LINQ can't serve: a wrapped count renders a bare $size with no $ifNull there and
+    // aborts on ragged data.
     //
-    // Array states: multi / single / empty / MISSING / explicit BSON null. Element states, within the multi rows:
-    // predicate matches, does not match, the predicate's field is MISSING, and the predicate's field is
-    // explicitly BSON null — the two states a $filter cond evaluates against a non-existent value, and the ones
-    // an in-memory oracle over nullable CLR properties disagrees with if the rendering is wrong.
+    // Array states: multi / single / empty / missing / BSON null. Element states in the multi rows: match,
+    // non-match, predicate field missing, predicate field explicitly null.
     private static BsonDocument[] DifferentialRows() =>
     [
         Row("multi_mixed", new BsonArray
@@ -1414,12 +1118,8 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             PostDoc(rank: null, heading: "c"),   // Rank explicitly null
             NoRankPostDoc("d")                   // Rank field ABSENT
         }),
-        // The CONTROL for multi_mixed's ragged pair: the same two "real" elements (rank=5 match, rank=-5
-        // non-match), WITHOUT the explicit-null/missing pair. Exists solely to prove the oracle theory's seed
-        // is non-vacuous on the ELEMENT axis — see Filtered_count_oracle_is_non_vacuous_on_the_element_axis
-        // below, which is a DIFFERENT axis from the one the $ifNull-removal mutation (task report step 4)
-        // proves (that one is array-level: it aborts the aggregate on a missing/null Posts ARRAY, and says
-        // nothing about a missing/null element FIELD within a present array).
+        // Control for multi_mixed: same two real elements without the null/missing pair. Used by
+        // Filtered_count_oracle_is_non_vacuous_on_the_element_axis.
         Row("multi_mixed_no_ragged", new BsonArray { PostDoc(rank: 5, heading: "a"), PostDoc(rank: -5, heading: "b") }),
         Row("multi_all_match", new BsonArray { PostDoc(rank: 1, heading: "a"), PostDoc(rank: 2, heading: "b") }),
         Row("multi_none_match", new BsonArray { PostDoc(rank: -1, heading: "a"), PostDoc(rank: -2, heading: "b") }),
@@ -1430,51 +1130,24 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         Row("null", BsonNull.Value)
     ];
 
-    // PostDoc always writes a Rank element (BsonNull when the argument is null), so a MISSING Rank needs its own
-    // builder — missing-vs-null is exactly the distinction this oracle exists to check, and conflating them would
-    // silently drop the "field absent" state DifferentialRows needs.
+    // PostDoc always writes Rank (BsonNull for null), so a missing Rank needs its own builder.
     private static BsonDocument NoRankPostDoc(string heading)
         => new()
         {
             { "Heading", heading }, { "Other", 0 }, { "Title", "p" }, { "Comments", new BsonArray() },
-            // Pinned is non-nullable (EF-365 fixture): every seeded post must carry it or materialization fails.
-            // Only Rank's absence is under test here.
+            // Pinned is non-nullable, so every seeded post must carry it.
             { "Pinned", false }, { "Flagged", BsonNull.Value }
         };
 
-    // ---- Oracle-theory rows: MEASURED (not assumed) to AGREE with in-memory LINQ across every
-    // DifferentialRows() state, including the ragged (missing-field / explicit-null-field) elements. ----
+    // Selectors that agree with in-memory LINQ across every DifferentialRows() state, including ragged elements.
+    // BSON total order is missing < null < numbers:
+    // "gt" (p.Rank > 0): null/missing > 0 is false, matching LINQ's lifted null semantics.
+    // "eq"/"ne": equality against a non-null constant agrees.
+    // "and" (p.Rank > 0 && p.Rank < 6): contains "<" but the "> 0" conjunct masks the divergence.
+    // "field_to_field" (p.Rank > p.Other): agrees only in this direction; p.Rank < p.Other diverges like "lt".
+    // "arithmetic" (p.Rank + 1 > 0): gt-family; agrees.
     //
-    // "gt" (p.Rank > 0): a GREATER-THAN comparison over a nullable leaf. Measured to agree: BSON's total element
-    // order is missing < null < numbers, so both "null > 0" and "missing > 0" render false — the same answer
-    // LINQ's lifted-operator null propagation gives for (int?)null > 0. (Mirror image of "lt", which is why only
-    // the LESS-THAN family diverges here, not every relational operator.)
-    // "eq"/"ne" (p.Rank == 5 / != 5): equality against a non-null CONSTANT. Measured to agree.
-    // "and" (p.Rank > 0 && p.Rank < 6): CONTAINS a "<" sub-clause, yet measured to AGREE with in-memory LINQ —
-    // the divergence is MASKED here: for a null/missing Rank the "> 0" conjunct is already false in BOTH
-    // dialects (per the "gt" finding above), so the AND is false either way regardless of what "< 6" alone would
-    // have answered. Do not generalize from "lt" alone diverging to "any predicate containing <" diverging —
-    // it depends on whether a sibling conjunct already resolves the ragged rows to the same answer.
-    // "field_to_field" (p.Rank > p.Other): GREATER-THAN-family, so the same "gt" reasoning applies; measured to
-    // agree. This agreement is DIRECTIONAL, not a property of "comparing two fields" in general — the REVERSED
-    // direction, p.Rank < p.Other, was measured to diverge exactly like "lt" (multi_mixed: in-memory LINQ N=1,
-    // native N=3, because Other is 0 for every seeded Post, making this structurally identical to "Rank < 0").
-    // Do not add a "<" field-to-field variant here expecting it to still agree.
-    // "arithmetic" (p.Rank + 1 > 0): GREATER-THAN-family; measured to agree, including on the ragged elements —
-    // see Filtered_count_oracle_is_non_vacuous_on_the_element_axis below for why this row (unlike "ne") turns
-    // out NOT to be sensitive to whether the ragged elements are present at all.
-    //
-    // NOT here, each MEASURED to diverge and moved to a documented-divergence test below. ALL THREE are now
-    // covered by the SAME owner ruling — accept and document, no rendering change, no null-guard, no decline
-    // (this comment previously said "null_check" was a SEPARATE, NOT-YET-RULED finding; the ruling was made in
-    // Task 6 and it is corrected here):
-    // "lt" (named in the brief) and "or" (an UNMASKED instance of the same relational divergence, reached via a
-    // disjunct) — see Filtered_count_relational_operator_diverges_from_in_memory_linq_on_ragged_data_by_owner_
-    // ruling. "null_check" (p.Rank == null) is kept in its own test,
-    // Filtered_count_null_check_diverges_from_in_memory_linq_by_owner_ruling, only because the predicate CLASS
-    // differs (an EQUALITY comparison rather than a relational one) — the disposition is identical, and so is
-    // the mechanism: ONE BSON total order, missing < null < numbers, serves $eq and the relational operators
-    // alike.
+    // Diverging predicates ("lt", "or", "null_check") are accepted and documented in the divergence tests below.
     public static IEnumerable<object[]> FilteredCountSelectors() =>
     [
         ["gt", (Expression<Func<Blog, TitleCount>>)(b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank > 0) })],
@@ -1492,9 +1165,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     {
         var collection = Seed($"diff_{name}", DifferentialRows());
 
-        // Oracle: materialize whole entities, then evaluate the SAME selector in memory. Sending one Expression
-        // object to both sides is what makes this a differential test rather than two hand-written predicates
-        // that can silently diverge.
+        // Oracle: evaluate the same selector in memory over materialized entities.
         List<(string, int)> expected;
         using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
         {
@@ -1502,7 +1173,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
                 .Select(selector.Compile()).Select(r => (r.Title, r.N)).OrderBy(r => r.Item1).ToList();
         }
 
-        // Server: must go NATIVE (NativeOnly is the only reliable signal) and agree exactly.
+        // Server: must go native (NativeOnly) and agree exactly.
         List<(string, int)> actual;
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
@@ -1513,36 +1184,12 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         Assert.Equal(expected, actual);
     }
 
-    // Fix round 1: proves the oracle theory's seed is non-vacuous on the ELEMENT axis — that a ragged element
-    // (a Rank field that is missing, or present-but-explicitly-null) actually MOVES a count on this seed. That
-    // is a DIFFERENT axis from the one the task report's $ifNull-removal mutation proves (that one is
-    // array-level — it aborts the aggregate on a missing/null Posts ARRAY entirely, and says nothing about a
-    // ragged FIELD inside an array that IS present).
+    // Proves a ragged element (Rank missing or explicitly null) actually moves a count on this seed — i.e. ragged
+    // elements are not silently dropped. Detects presence/absence, not missing-vs-null discrimination (that is
+    // pinned by Filtered_count_null_check_diverges_from_in_memory_linq_by_owner_ruling).
     //
-    // WHAT THIS TEST PROVES, STATED NARROWLY — the original wording here OVERCLAIMED and is corrected in place
-    // (Task 6). It used to say "a rendering that could not tell a missing element field from an explicitly-null
-    // one would still pass every row of
-    // Filtered_count_projection_equals_the_in_memory_oracle_for_every_array_and_element_state above". This test
-    // does NOT establish that: removing the ragged PAIR moves "ne"'s count 3 -> 1 whichever ragged element is
-    // removed, so what it detects is ragged-element PRESENCE/ABSENCE, not missing-vs-null DISCRIMINATION. The
-    // genuine missing-vs-null discrimination proof already exists in this file — the "null_check" divergence
-    // row in Filtered_count_null_check_diverges_from_in_memory_linq_by_owner_ruling below, where the same
-    // `p.Rank == null` predicate counts 1 for an EXPLICIT-null Rank and 0 for a MISSING Rank. Read that test
-    // for the missing-vs-null property; read this one for "ragged elements are not silently dropped".
-    //
-    // "ne" (p.Rank != 5) is MEASURED to be the row that is actually sensitive to the ragged elements' PRESENCE:
-    // on "multi_mixed" (rank=5, rank=-5, rank=explicit-null, rank=MISSING) it counts 3 — the -5 element plus
-    // BOTH the null and the missing element (neither equals 5, so both satisfy !=); on "multi_mixed_no_ragged"
-    // (the same rank=5/rank=-5 pair with the ragged two removed) it counts 1. A rendering that silently dropped,
-    // miscounted, or mishandled a ragged element would move this number, and this is the row that would catch
-    // it.
-    //
-    // CORRECTION TO A FIX-ROUND-1 REVIEW CLAIM: the review that requested this test also named "arithmetic"
-    // (p.Rank + 1 > 0) as sensitive to the ragged elements, alongside "ne". Measured directly (not taken on
-    // trust): it is NOT — mixed=1, no_ragged=1, identical — because Rank+1>0 already evaluates false for both
-    // the null and the missing element (same "gt"-family reasoning as the oracle-theory comment above), so
-    // removing them changes nothing. Recorded as a correction rather than silently repeating the unverified
-    // claim; "ne" alone is the row this test relies on.
+    // "ne" (p.Rank != 5) is the sensitive row: multi_mixed counts 3 (-5, null, missing), multi_mixed_no_ragged
+    // counts 1. "arithmetic" is not sensitive (Rank + 1 > 0 is false for null and missing alike).
     [Fact]
     public void Filtered_count_oracle_is_non_vacuous_on_the_element_axis()
     {
@@ -1558,10 +1205,8 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         Assert.NotEqual(rows["multi_mixed_no_ragged"], rows["multi_mixed"]);
     }
 
-    // Shared helper for the two documented-divergence tests below: proves NativeOnly agrees with DriverLinq
-    // (parity — both apply the same BSON dialect semantics) AND that the pair genuinely diverges from the
-    // in-memory LINQ oracle (so a future fix that removes the divergence turns this red instead of staying
-    // vacuously green), then pins the exact measured multi_mixed count.
+    // Asserts NativeOnly agrees with DriverLinq (same BSON semantics), that both diverge from in-memory LINQ (so
+    // a fix that removes the divergence turns this red), and pins the multi_mixed count.
     private void AssertDivergesFromLinqOracle(
         IMongoCollection<Blog> collection, Expression<Func<Blog, TitleCount>> selector, int expectedMultiMixedN)
     {
@@ -1572,8 +1217,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
                 .Select(selector.Compile()).Select(r => (r.Title, r.N)).OrderBy(r => r.Item1).ToList();
         }
 
-        // NativeOnly, not Native: Native would fall back SILENTLY if the shape ever declined, so this leg is
-        // what actually proves the shape goes native (a decline here would throw, not pass vacuously).
+        // NativeOnly, not Native: Native would fall back silently if the shape declined.
         List<(string, int)> nativeOnly;
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
@@ -1588,41 +1232,23 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
                 .Select(r => (r.Title, r.N)).OrderBy(r => r.Item1).ToList();
         }
 
-        // Parity: native and DriverLinq agree with each other (both apply the same BSON dialect semantics).
         Assert.Equal(driverLinq, nativeOnly);
 
-        // The divergence itself, not just its absence from the parity check: if a future rendering change
-        // type-brackets the dialect and native starts agreeing with LINQ, this line — not just a comment —
-        // goes red.
+        // A rendering change that removes the divergence fails here.
         Assert.NotEqual(linqOracle, nativeOnly);
 
-        // The exact measured count on the one row carrying all four element states, pinned so a silent shift
-        // in either direction is caught.
+        // multi_mixed carries all four element states.
         Assert.Equal(expectedMultiMixedN, nativeOnly.Single(r => r.Item1 == "multi_mixed").Item2);
     }
 
-    // THE DOCUMENTED, ACCEPTED DIVERGENCE (owner ruling, EF-359 Task 5). A RELATIONAL element predicate over a
-    // NULLABLE element leaf can diverge from in-memory LINQ semantics on ragged data (a missing or
-    // explicitly-null element field), because MongoDB's $filter `cond` dialect is NOT TYPE-BRACKETED: there is
-    // one consistent BSON total order, missing < null < numbers, that plain LINQ null-propagation does not
-    // reproduce. Native and the driver's own LINQ v3 provider (DriverLinq) AGREE WITH EACH OTHER on every ragged
-    // row measured below — both take the same BSON semantics — and both DIVERGE from in-memory LINQ. The repo
-    // owner ruled: accept and document, no rendering change, no null-guard, no decline.
+    // Accepted, documented divergence: a relational element predicate over a nullable leaf diverges from
+    // in-memory LINQ on ragged data because $filter's cond is not type-bracketed — BSON orders
+    // missing < null < numbers. Native and DriverLinq agree with each other. No rendering change, null-guard or
+    // decline.
     //
-    // MEASURED per row, against DifferentialRows()'s "multi_mixed" row (rank=5 match, rank=-5 non-match,
-    // rank=EXPLICIT NULL, rank=MISSING):
-    //
-    //   "lt" (p.Rank < 0), NAMED BY THE BRIEF: in-memory LINQ N=1 (only rank=-5); native/DriverLinq N=3 — BOTH
-    //     the explicit-null AND the missing element ALSO satisfy "$lt: [Rank, 0]", because missing and null both
-    //     sort below every number (including negatives) in the BSON total order, so "null < 0" and "missing < 0"
-    //     render true, where LINQ's lifted "(int?)null < 0" is false.
-    //
-    //   "or" (p.Rank > 4 || p.Rank < -4): NOT a new mechanism — it is the SAME already-ruled relational
-    //     divergence as "lt", reached through a disjunct instead of a bare comparison, with nothing masking it
-    //     (contrast "and" above, whose sibling ">0" conjunct DOES mask the same "<" sub-clause). In-memory LINQ
-    //     N=2 (rank=5 satisfies "> 4"; rank=-5 satisfies "< -4"; null/missing satisfy neither); native/DriverLinq
-    //     N=4 — the explicit-null AND missing elements both additionally satisfy "< -4" for the same BSON-order
-    //     reason as "lt", adding 2 more matches this OR does not mask.
+    // On multi_mixed (5, -5, null, missing):
+    //   "lt" (p.Rank < 0): LINQ N=1; native N=3 (null and missing sort below every number).
+    //   "or" (p.Rank > 4 || p.Rank < -4): LINQ N=2; native N=4 — the same divergence, unmasked via a disjunct.
     [Fact]
     public void Filtered_count_relational_operator_diverges_from_in_memory_linq_on_ragged_data_by_owner_ruling()
     {
@@ -1636,30 +1262,13 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             collection, b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank > 4 || p.Rank < -4) }, expectedMultiMixedN: 4);
     }
 
-    // RULED, and the ruling is the SAME as for the two relational rows above: ACCEPT AND DOCUMENT — no
-    // rendering change, no null-guard, no decline. This test carried a deliberately NEUTRAL name
-    // ("..._pending_owner_ruling") and a "NOT-YET-RULED" comment while the question was open (escalated in fix
-    // round 1 of this task); the owner ruled in Task 6, so both are corrected in place here. It stays a
-    // SEPARATE Fact from the relational pair only because the predicate CLASS differs ("==" against null rather
-    // than a relational comparison) — the disposition is identical, and the mechanism turns out to be identical
-    // too (see MECHANISM below: one BSON total order serves $eq and the relational operators alike).
+    // Accepted, documented divergence (same disposition as the relational test; separate only because the
+    // predicate class is equality). "null_check" (p.Rank == null): LINQ N=2 on multi_mixed (null and missing both
+    // materialize as null); native/DriverLinq N=1 — only the explicit null matches `{$eq: ["$$e.Rank", null]}`.
     //
-    // "null_check" (p.Rank == null): the brief's own stated premise — "a missing BSON field materializes as a
-    // null CLR property, so this should agree" — was measured FALSE. In-memory LINQ N=2 on "multi_mixed" (both
-    // the explicit-null AND the missing element materialize as a null int? and satisfy `== null`); native/
-    // DriverLinq N=1 — ONLY the explicit-null element matches `{$eq: ["$$e.Rank", null]}`. Isolated directly
-    // (two single-element rows, one explicit-null-Rank, one missing-Rank): the explicit-null row counts 1, the
-    // missing-Rank row counts 0.
-    //
-    // MECHANISM (corrected in fix round 1 — the original wording, "a divide within the dialect's own equality
-    // operator," was wrong; a live-server probe with $unwind + $project against an absent field measured
-    // $type = "missing", $cmp: [field, null] = -1, $eq: [field, null] = false, $lt: [field, 0] = true, and
-    // $cmp = 0 for an explicit null): there is ONE CONSISTENT BSON TOTAL ORDER, missing < null < numbers, used
-    // by $eq AND the relational operators ALIKE — $eq is false because $cmp != 0, and $lt is true for exactly
-    // the same reason. There is no inconsistency between MongoDB's own operators. The actual gap is that the
-    // CLR collapses two distinct BSON values (missing and explicit null) into a single `null`, so ANY dialect
-    // comparison that can distinguish them (as $eq legitimately can, via $cmp != 0) will disagree with a CLR
-    // model that cannot.
+    // Mechanism: one BSON total order serves $eq and relational operators alike; a missing field has
+    // $cmp: [field, null] = -1, so $eq is false. The CLR collapses missing and null into one `null`, so any
+    // comparison that distinguishes them disagrees with it.
     [Fact]
     public void Filtered_count_null_check_diverges_from_in_memory_linq_by_owner_ruling()
     {
@@ -1670,14 +1279,10 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
             collection, b => new TitleCount { Title = b.Title, N = b.Posts.Count(p => p.Rank == null) }, expectedMultiMixedN: 1);
     }
 
-    // ---- Predicate spelling: b.Posts.Count(p => p.Rank > 0) compared against a threshold. ----
+    // ---- Predicate spelling: b.Posts.Count(p => p.Rank > 0) compared against a threshold ----
     //
     // Mirrors NativeOwnedCollectionCountTests.Count_result_equals_the_in_memory_oracle_for_every_array_length_
-    // and_state exactly: the SAME Expression<Func<Blog, bool>> is sent to the server and compiled for in-memory
-    // evaluation. This predicate uses only "Rank > 0" (a relational comparison already proven to AGREE with
-    // in-memory LINQ on DifferentialRows() above — see the "gt" row of FilteredCountSelectors), so every
-    // threshold row here belongs in the ordinary oracle theory; no row needs to move to the documented-divergence
-    // treatment.
+    // and_state. "Rank > 0" agrees with in-memory LINQ (the "gt" row above), so every threshold belongs here.
     public static IEnumerable<object[]> FilteredCountPredicates() =>
     [
         [0, (Expression<Func<Blog, bool>>)(b => b.Posts.Count(p => p.Rank > 0) >= 0)],
@@ -1695,7 +1300,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
     {
         var collection = Seed($"diffpred_{name}", DifferentialRows());
 
-        // Oracle: materialize every row, then evaluate the SAME predicate in memory.
+        // Oracle: evaluate the same predicate in memory over materialized rows.
         List<string> expected;
         using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
         {
@@ -1703,7 +1308,7 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
                 .Where(predicate.Compile()).Select(b => b.Title).OrderBy(t => t).ToList();
         }
 
-        // Server: the query must go NATIVE (NativeOnly is the only reliable signal) and agree exactly.
+        // Server: must go native (NativeOnly) and agree exactly.
         List<string> actual;
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {

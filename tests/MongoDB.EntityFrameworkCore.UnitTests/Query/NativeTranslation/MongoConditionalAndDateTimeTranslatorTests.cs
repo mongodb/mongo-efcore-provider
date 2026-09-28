@@ -46,10 +46,8 @@ public class MongoConditionalAndDateTimeTranslatorTests
     }
 
     /// <summary>
-    /// Same as <see cref="BuildValueBody"/>, but lets the caller attach a non-default serialization
-    /// (a <c>ValueConverter</c> or <c>[BsonRepresentation]</c>-equivalent) to a <see cref="Row"/> property, so
-    /// <c>AllFieldsDefaultSerialized</c>'s guard against a raw MQL operator running over a non-raw-BSON field
-    /// can be pinned.
+    /// Like <see cref="BuildValueBody"/>, but attaches a non-default serialization to a <see cref="Row"/> property to
+    /// pin <c>AllFieldsDefaultSerialized</c>'s guard.
     /// </summary>
     private static (MongoExpressionTranslator Translator, Expression Body) BuildValueBodyWithNonDefaultSerialization(
         Expression<Func<Row, object?>> valueSelector, Action<ModelBuilder> configure)
@@ -103,8 +101,7 @@ public class MongoConditionalAndDateTimeTranslatorTests
     [Fact]
     public void Conditional_declines_when_a_branch_is_unsupported()
     {
-        // string.Concat has no native translation at all, so a branch that reaches it must decline the
-        // WHOLE conditional, not silently drop that branch.
+        // int.Parse has no native translation, so a branch reaching it must decline the whole conditional.
         var (translator, body) = BuildValueBody(r => r.Flag ? r.Amount : int.Parse("x"));
 
         Assert.False(translator.TryTranslateValue(body, out _));
@@ -193,9 +190,8 @@ public class MongoConditionalAndDateTimeTranslatorTests
     [Fact]
     public void DatePart_over_a_value_converted_DateTime_declines()
     {
-        // Occurred carries a ValueConverter here, so a raw $year over the stored (converted) representation
-        // would run against a value that is not actually a raw BSON date — AllFieldsDefaultSerialized must
-        // catch this via MongoDatePartExpression's operand, not fall into the catch-all.
+        // A raw $year over a value-converted field wouldn't see a BSON date; AllFieldsDefaultSerialized must recurse
+        // through MongoDatePartExpression's operand.
         var (translator, body) = BuildValueBodyWithNonDefaultSerialization(
             r => r.Occurred.Year,
             mb => mb.Entity<Row>().Property(r => r.Occurred)
@@ -207,9 +203,7 @@ public class MongoConditionalAndDateTimeTranslatorTests
     [Fact]
     public void DatePart_over_a_value_converted_DateTimeOffset_declines()
     {
-        // Same hazard as above, but through the DateTimeOffset local-time-reconstruction path: the
-        // MongoDateTimeOffsetLocalExpression wrapping the field must also be caught by recursing through its
-        // operand, not just the outer MongoDatePartExpression.
+        // Same hazard through MongoDateTimeOffsetLocalExpression's operand.
         var (translator, body) = BuildValueBodyWithNonDefaultSerialization(
             r => r.OccurredOffset!.Value.Year,
             mb => mb.Entity<Row>().Property(r => r.OccurredOffset)
@@ -221,8 +215,7 @@ public class MongoConditionalAndDateTimeTranslatorTests
     [Fact]
     public void Conditional_branch_over_a_value_converted_field_declines()
     {
-        // The MongoConditionalExpression arm added alongside the two above: a branch that is itself a raw
-        // non-default-serialized field read must decline the whole conditional too.
+        // A branch that is a raw non-default-serialized field read must decline the whole conditional.
         var (translator, body) = BuildValueBodyWithNonDefaultSerialization(
             r => r.Flag ? r.Amount : r.Amount,
             mb => mb.Entity<Row>().Property(r => r.Amount)
@@ -261,8 +254,7 @@ public class MongoConditionalAndDateTimeTranslatorTests
     [Fact]
     public void Coalesce_declines_when_a_branch_is_unsupported()
     {
-        // string.Concat has no native translation at all, so a branch that reaches it must decline the
-        // WHOLE coalesce, not silently drop that branch.
+        // int.Parse has no native translation, so a branch reaching it must decline the whole coalesce.
         var (translator, body) = BuildValueBody(r => r.NullableAmount ?? int.Parse("x"));
 
         Assert.False(translator.TryTranslateValue(body, out _));

@@ -26,66 +26,31 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// <see cref="MongoExpressionTranslator"/> — root-entity KEY-BASED equality against a DIFFERENT, non-null
-/// entity value (<c>c == local</c>, <c>c == new Customer{...}</c>, and their <c>.Equals(...)</c>/<c>!=</c>
-/// forms).
+/// <see cref="MongoExpressionTranslator"/> — key-based equality of the root entity against a different, non-null
+/// entity value (<c>c == local</c>, <c>c == new Customer{...}</c>, and <c>.Equals(...)</c>/<c>!=</c> forms).
 /// </summary>
 /// <remarks>
-/// EF Core has no PROVIDER-AGNOSTIC entity-equality rewrite: turning a structural (entity-to-entity)
-/// comparison into a primary-key comparison is implemented separately by each provider that wants it
-/// (see <c>RelationalSqlTranslatingExpressionVisitor.StructuralEquality.cs</c>, and the InMemory/Cosmos
-/// equivalents) — there was previously no such rewrite here, so EVERY <c>c == entityValue</c> predicate
-/// fell back to driver-LINQ, taking the whole query (including an otherwise-native trailing projection)
-/// with it.
+/// EF Core has no provider-agnostic entity-equality rewrite (cf. relational's
+/// <c>RelationalSqlTranslatingExpressionVisitor.StructuralEquality.cs</c>); without this, such predicates fall back
+/// to driver-LINQ.
 /// <para>
-/// <b>Boundary with <see cref="TranslateComparisonCore"/>'s own whole-entity check.</b> A null comparand
-/// (<c>c == null</c>) and a self-compare (<c>c == c</c>) are DELIBERATELY declined here and fall through to
-/// <see cref="TranslateComparisonCore"/>'s own $$ROOT-vs-null / $$ROOT-vs-$$ROOT mechanism — a document-
-/// identity check needing no key lookup at all. THIS file only handles the remaining case that mechanism
-/// explicitly does not: comparing the root entity against a DIFFERENT, non-null entity value, which is EF's
-/// key-based equality semantics, not document equality, and needs genuinely different machinery (see
-/// "Mechanism" below).
+/// <c>c == null</c> and <c>c == c</c> decline here and are handled by <see cref="TranslateComparisonCore"/>'s
+/// $$ROOT document-identity check. One operand must be reference-identical to <see cref="SelfParam"/>; the other a
+/// constant, object initializer, or EF query parameter of the same CLR type. Reference-navigation operands and
+/// two-sided join comparisons (EF-216) are out of scope.
 /// </para>
 /// <para>
-/// <b>Scope, deliberately narrow.</b> Only the WHOLE-ROOT-ENTITY shape is handled: one operand must be
-/// reference-identical (<see cref="object.ReferenceEquals(object, object)"/>, never by type alone) to
-/// <see cref="SelfParam"/> — the query's own root lambda parameter — and the other must be a captured/inline,
-/// non-null entity value (a <see cref="ConstantExpression"/>, a <see cref="MemberInitExpression"/>/
-/// <see cref="NewExpression"/> object initializer, or an EF query parameter of the same CLR type). Both the
-/// binary <c>==</c>/<c>!=</c> spelling and the <c>.Equals(...)</c> spelling (the ONLY one available for a
-/// composite-key entity type, since C# doesn't synthesize a <c>==</c> operator for one) are recognized. A
-/// reference-navigation-typed operand (<c>o.Customer == local</c>) and a two-sided join entity comparison
-/// are out of scope here — the latter is EF-216 (cross-document navigation), tracked separately, and stays
-/// a fallback.
+/// Rewritten, as relational does, to per-key comparisons: <c>Equal</c> is an AND of key equalities;
+/// <c>NotEqual</c> its exact De Morgan complement (safe because <c>$eq</c>/<c>$ne</c> partition the value space).
+/// Composite-key components use the <c>_id.&lt;element&gt;</c> paths of
+/// <see cref="MongoExpressionTranslator.TryResolveMember"/>.
 /// </para>
 /// <para>
-/// <b>Mechanism.</b> The comparison is rewritten into a conjunction/disjunction of primary-key-property
-/// comparisons, mirroring relational's own rewrite: <c>Equal</c> → AND of per-key equalities (OR of
-/// per-key nullity checks against a <see langword="null"/> comparand); <c>NotEqual</c> → the exact
-/// De Morgan complement (OR of per-key inequalities; AND of per-key non-nullity checks) — safe to invert
-/// outright because <c>$eq</c>/<c>$ne</c> partition the value space (see the negator invariant in this
-/// area's <c>AGENTS.md</c>). Composite-PK components resolve through the SAME <c>_id.&lt;element&gt;</c>
-/// dotted-path convention <see cref="MongoExpressionTranslator.TryResolveMember"/> already uses, so the
-/// rendered <c>$match</c> is identical in shape to an ordinary hand-written composite-key predicate.
-/// </para>
-/// <para>
-/// <b>Extracting the comparand's key value.</b> A <see cref="ConstantExpression"/> operand (a captured
-/// local, OR an inline <c>new Customer { CustomerID = "ANATR" }</c> — EF's
-/// <c>ParameterExtractingExpressionVisitor</c> parameterizes both identically, as a whole object with no
-/// reference to the query source) has its key member extracted immediately via
-/// <see cref="IPropertyBase.GetGetter"/> into a <see cref="MongoConstantExpression"/>. A QUERY PARAMETER
-/// operand can't be extracted at translate (compile) time — the whole-entity runtime value isn't known
-/// until execution — so it is carried as a <see cref="MongoParameterExpression"/> with
-/// <see cref="MongoParameterExpression.ExtractFromEntityValue"/> set; <see cref="PlaceholderTable"/> /
-/// <see cref="MongoPipelineFactory"/> apply the same <see cref="IPropertyBase.GetGetter"/> extraction
-/// per execution, once the raw parameter value is available (mirrors the deferred regex-pattern
-/// computation <see cref="PlaceholderTable.CreateRegexPlaceholder"/> already does for a parameterized
-/// search term — same reason: the value needed to finish translating isn't known until Build time).
-/// </para>
-/// <para>
-/// A shadow-property primary key declines (falls back) rather than being admitted: a plain captured
-/// POCO has no shadow-property storage for <see cref="IPropertyBase.GetGetter"/> to read from, so there
-/// is no correct value to extract.
+/// A constant comparand's key is read immediately via <see cref="IPropertyBase.GetGetter"/>. A query-parameter
+/// comparand isn't known until execution, so it becomes a <see cref="MongoParameterExpression"/> with
+/// <see cref="MongoParameterExpression.ExtractFromEntityValue"/>, extracted per execution by
+/// <see cref="PlaceholderTable"/>/<see cref="MongoPipelineFactory"/>. Shadow-property keys decline: a captured POCO
+/// has no value to read.
 /// </para>
 /// </remarks>
 internal sealed partial class MongoExpressionTranslator
@@ -94,12 +59,8 @@ internal sealed partial class MongoExpressionTranslator
         => TryTranslateEntityEquality(be.Left, be.Right, be.NodeType == ExpressionType.NotEqual, out result);
 
     /// <summary>
-    /// The <c>.Equals(...)</c> spelling of entity equality — composite-key entity types have no <c>==</c>
-    /// operator (C# doesn't synthesize one), so EF Core's own Northwind spec suite (and presumably real
-    /// user queries over such types) spells this comparison as <c>od.Equals(local)</c> instead. Recognized
-    /// as the exact same shape, minus a <c>!=</c> form (there is no "NotEquals" method) — a negated
-    /// <c>!od.Equals(local)</c> arrives as a <see cref="UnaryExpression"/> wrapping this method call, which
-    /// is outside this rewrite's scope and is handled (or declined) by the ordinary <c>Not</c> dispatch.
+    /// The <c>.Equals(...)</c> spelling, the only one available for composite-key types (C# synthesizes no
+    /// <c>==</c>). <c>!od.Equals(local)</c> arrives as a <c>Not</c> and is handled by the ordinary <c>Not</c> dispatch.
     /// </summary>
     private bool TryTranslateEntityEqualityCall(MethodCallExpression call, [NotNullWhen(true)] out MongoExpression? result)
     {
@@ -124,8 +85,7 @@ internal sealed partial class MongoExpressionTranslator
         var leftIsSelf = ReferenceEquals(left, SelfParam);
         var rightIsSelf = ReferenceEquals(right, SelfParam);
 
-        // Exactly one side must be the bare root entity — a self-compare (c == c, declines to the ordinary
-        // path, which has no coverage for it either) or neither side being the root entity isn't this shape.
+        // Exactly one side must be the root entity; self-compare and neither-side decline.
         if (leftIsSelf == rightIsSelf)
             return false;
 
@@ -139,12 +99,8 @@ internal sealed partial class MongoExpressionTranslator
         if (keyProperties.Any(p => p.IsShadowProperty()))
             return false;
 
-        // A null comparand is NOT this rewrite's concern — TranslateComparisonCore's own whole-entity
-        // null/self-equality check (see its remarks) already handles `c == null`/`c != null` via the
-        // $$ROOT-vs-null mechanism, for both single- and composite-key entities alike, so this declines
-        // and falls through to it. (A literal `null` compiles to `Expression.Constant(null)` with NO type
-        // argument, which C# gives Type == typeof(object) anyway — never the entity's own CLR type — so the
-        // type check below would reject it regardless; this early-out just makes the deferral explicit.)
+        // A null comparand is handled by TranslateComparisonCore's $$ROOT-vs-null check; decline explicitly (the type
+        // check below would reject the object-typed null constant anyway).
         if (otherSide is ConstantExpression { Value: null })
             return false;
 
@@ -163,8 +119,7 @@ internal sealed partial class MongoExpressionTranslator
                     new MongoFieldExpression(keyProperty, GetKeyFieldPath(keyProperty)),
                     valueExpr);
             },
-            // Equal: every key component must match (AND). NotEqual: the exact complement — any key
-            // component differing is enough (OR).
+            // Equal: all key components match (AND). NotEqual: any differs (OR).
             combineWithAnd: !isNotEqual);
 
         return result is not null;
@@ -194,16 +149,9 @@ internal sealed partial class MongoExpressionTranslator
         => IsCompositeKeyComponent(property) ? "_id." + property.GetElementName() : property.GetElementName();
 
     /// <summary>
-    /// Extracts <paramref name="property"/>'s value from the entity-typed comparand <paramref name="entityValue"/>.
-    /// Handles two distinct shapes EF hands us, un-normalized: a captured local (or an inline
-    /// <c>new Customer{...}</c> whose OWN sub-expressions are — see remarks) survives as a
-    /// <see cref="ConstantExpression"/>/query-parameter WHOLE-ENTITY value needing per-property
-    /// GETTER-based extraction, whereas an inline <c>new Customer { CustomerID = "ANATR" }</c> is NEVER
-    /// itself collapsed into a single parameter (there is nothing for
-    /// <c>ParameterExtractingExpressionVisitor</c> to extract — the object-initializer syntax has no
-    /// captured runtime state at its own top level), so it survives as a genuine
-    /// <see cref="MemberInitExpression"/>/<see cref="NewExpression"/> whose PER-MEMBER bindings must be
-    /// matched to <paramref name="property"/> by name instead.
+    /// Extracts <paramref name="property"/>'s value from the entity-typed comparand: a whole-entity constant or query
+    /// parameter is read via its getter; a surviving <see cref="MemberInitExpression"/>/<see cref="NewExpression"/>
+    /// is matched to <paramref name="property"/> by member binding name.
     /// </summary>
     private static bool TryExtractEntityMemberValue(Expression entityValue, IProperty property, [NotNullWhen(true)] out MongoExpression? result)
     {
@@ -239,11 +187,8 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
-    /// Translates the expression bound to one member of an inline <c>new Customer{...}</c> — a plain
-    /// constant, or (when that ONE member was itself a separately captured variable, e.g.
-    /// <c>new Customer { CustomerID = someLocal }</c>) an ordinary EF query parameter. Never itself a
-    /// further whole-entity value, so — unlike <see cref="TryExtractEntityMemberValue"/>'s own parameter
-    /// case — no per-execution extraction step is needed here.
+    /// Translates one member binding of an inline <c>new Customer{...}</c>: a constant, or an ordinary query
+    /// parameter when that member was captured (<c>CustomerID = someLocal</c>). No per-execution extraction needed.
     /// </summary>
     private static bool TryTranslateBoundMemberValue(Expression memberValue, IProperty property, [NotNullWhen(true)] out MongoExpression? result)
     {
@@ -262,24 +207,13 @@ internal sealed partial class MongoExpressionTranslator
         => member == property.PropertyInfo || member == property.FieldInfo || member.Name == property.Name;
 
     /// <summary>
-    /// <c>customers.Contains(c)</c> — the LIST generalization of
-    /// <see cref="TryTranslateEntityEquality(BinaryExpression, out MongoExpression?)"/>'s single-comparand shape: the root entity tested against a CLIENT-SIDE collection of entity values
-    /// (rather than exactly one). Rewritten to a primary-key <c>$in</c> rather than an OR-chain of per-element
-    /// key comparisons — unlike the driver-LINQ bridge's <c>TryRewriteEntityContains</c>, which runs fresh per
-    /// execution and can size an OR-chain to the list's actual runtime length, this runs ONCE at compile time
-    /// and the list's length isn't known until execution, so the rewrite must be a single, list-length-
-    /// independent construct. A <see langword="null"/> element (comparing the root entity, which a real
-    /// fetched document is never absent-as-null, to a null list entry) can never match a real row either way,
-    /// so it is passed through into the <c>$in</c> values verbatim (mirroring Cosmos's own
-    /// <c>IN (null, "ALFKI")</c> translation of the same shape) rather than filtered out — cheaper than
-    /// proving it dead at every call site.
+    /// <c>customers.Contains(c)</c> against a client-side list of entities, rewritten to a primary-key <c>$in</c>.
+    /// Unlike driver-LINQ's per-execution OR-chain, this compiles once, so it must not depend on the list's length.
+    /// Null elements pass through into <c>$in</c> (as Cosmos does); they can never match a real row.
     /// </summary>
     /// <remarks>
-    /// Scoped to a SINGLE-property, non-shadow primary key, like
-    /// <see cref="TryTranslateEntityEquality(BinaryExpression, out MongoExpression?)"/> —
-    /// a composite key would need a multi-field <c>$in</c> (an array of per-key-component tuples), which
-    /// <see cref="MongoInExpression"/> cannot express; that shape declines (falls back) rather than being
-    /// admitted here.
+    /// Single-property, non-shadow keys only; a composite key would need a tuple <c>$in</c> that
+    /// <see cref="MongoInExpression"/> can't express, so it declines.
     /// </remarks>
     internal bool TryTranslateEntityListContains(MethodCallExpression call, [NotNullWhen(true)] out MongoExpression? result)
     {
@@ -295,7 +229,7 @@ internal sealed partial class MongoExpressionTranslator
 
         var primaryKey = _entityType.FindPrimaryKey();
         if (primaryKey is null || primaryKey.Properties.Count != 1)
-            return false; // composite keys need a multi-field $in — out of scope here, decline
+            return false; // composite key: no multi-field $in
 
         var keyProperty = primaryKey.Properties[0];
         if (keyProperty.IsShadowProperty())
@@ -311,14 +245,10 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
-    /// Translates the collection side of <see cref="TryTranslateEntityListContains"/> into the <c>$in</c>
-    /// values node: a <see cref="MongoConstantExpression"/> of extracted keys for a compile-time-known list
-    /// (each element's key read immediately via <see cref="IPropertyBase.GetGetter"/>, a null element passed
-    /// through as <see langword="null"/>), or a <see cref="MongoParameterExpression"/> with
-    /// <see cref="MongoParameterExpression.ExtractEntityKeyFromArrayElements"/> set for a query-parameter
-    /// list — the per-element analog of <see cref="TryExtractEntityMemberValue"/>'s single-entity parameter
-    /// case, deferring the extraction to per-execution time via <see cref="PlaceholderTable"/> /
-    /// <see cref="MongoPipelineFactory"/>.
+    /// Translates the collection side of <see cref="TryTranslateEntityListContains"/> into <c>$in</c> values: a
+    /// <see cref="MongoConstantExpression"/> of extracted keys for a known list, or a
+    /// <see cref="MongoParameterExpression"/> with <see cref="MongoParameterExpression.ExtractEntityKeyFromArrayElements"/>
+    /// for a parameter list, extracted per execution.
     /// </summary>
     internal static MongoExpression? TranslateEntityKeyInValues(Expression collectionExpr, IProperty keyProperty)
     {

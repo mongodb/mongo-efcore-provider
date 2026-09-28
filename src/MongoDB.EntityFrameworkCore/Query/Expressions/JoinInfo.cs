@@ -63,11 +63,10 @@ internal sealed class JoinInfo(IEntityType innerEntityType, bool isLeftOuter)
     public LookupExpression? Lookup { get; set; }
 
     /// <summary>
-    /// Whether THIS join, on its own, satisfies every conjunct the native join-scope mechanism requires
-    /// (a resolved navigation, not a left-outer collection nav, its $lookup reproduces the written key
-    /// equality, and neither side is GroupBy/Distinct-sourced) — set once, at join-registration time, by
-    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.TranslateJoinCore</c>. A CHAIN is native-scope-
-    /// eligible only when every join in it is; see <c>MongoSelectDefinition.JoinScope</c>.
+    /// Whether this join alone satisfies the native join-scope requirements (resolved navigation, not a left-outer
+    /// collection nav, $lookup reproduces the key equality, neither side GroupBy/Distinct-sourced). Set by
+    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.TranslateJoinCore</c>; a chain is eligible only when
+    /// every join is. See <c>MongoSelectDefinition.JoinScope</c>.
     /// </summary>
     public bool IsNativelyEligible { get; set; }
 }

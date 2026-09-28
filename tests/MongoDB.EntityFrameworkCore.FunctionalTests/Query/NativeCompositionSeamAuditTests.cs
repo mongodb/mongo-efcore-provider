@@ -28,24 +28,10 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// Composition-seam regression tests for the post-terminal invariant: a native <c>SelectMany</c> composed
-/// AFTER a native terminal (<c>Union</c>/<c>Concat</c>). Before the fix, <c>TranslateSelectMany</c> set
-/// <c>UnwindSource</c> without gating on <see cref="Expressions.MongoSelectDefinition.HasTerminalOperator"/>,
-/// so the SelectMany's <c>UnwindSource</c> coexisted with the earlier <c>SetOperation</c> on the same select;
-/// the lowerer (<c>MongoSelectLowerer.Lower</c>) selects exactly ONE terminal by fixed precedence
-/// (<c>SetOperation &gt; UnwindSource &gt; Grouping &gt; Projection &gt; Cardinality</c>) and returns early, so
-/// the SelectMany's <c>$unwind</c>/<c>$project</c> was SILENTLY DROPPED — the query returned whole outer rows
-/// (wrong row count, or a shaper crash when a projected alias is absent at top level) under BOTH
-/// <see cref="MongoQueryMode.Native"/> and <see cref="MongoQueryMode.NativeOnly"/> (Route stayed non-Fallback,
-/// so NativeOnly did not even throw).
-/// <para>
-/// The fix adds the missing <c>HasTerminalOperator</c> guard at the top of <c>TranslateSelectMany</c>, which
-/// returns <see langword="null"/> (reaching EF Core's own translation-failure path) for this shape — a clean
-/// HARD-FAIL in EVERY <see cref="MongoQueryMode"/>, never silent wrong data. A graceful driver-LINQ fallback
-/// is not viable here because the native SelectMany builds a by-index projection shaper the fallback cannot
-/// re-read (the same shaper-rebuild limitation that makes operators composed AFTER a SelectMany hard-fail in
-/// every mode — see <c>NativeSelectManyTests</c>).
-/// </para>
+/// A native <c>SelectMany</c> composed after a native terminal (<c>Union</c>/<c>Concat</c>). The lowerer emits only
+/// one terminal (by precedence), so without the <c>HasTerminalOperator</c> guard in <c>TranslateSelectMany</c> the
+/// SelectMany was silently dropped. The guard makes this a hard failure in every mode; fallback isn't possible
+/// because the by-index projection shaper can't be re-read (see <c>NativeSelectManyTests</c>).
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -98,9 +84,7 @@ public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) 
     [Fact]
     public void Union_then_SelectMany_hard_fails_cleanly_in_every_mode()
     {
-        // Regression: this shape used to go native, silently drop the SelectMany, and return whole outer rows
-        // (or crash the shaper) with NO exception under Native/NativeOnly. It must now hard-fail cleanly (an
-        // exception, never silent wrong data) in every mode.
+        // Must hard-fail in every mode, never silently return whole outer rows.
         var seed = SeedOwners();
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
         {
@@ -133,11 +117,8 @@ public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) 
     [Fact]
     public void Union_then_SelectMany_projecting_only_outer_member_does_not_silently_return_wrong_rows()
     {
-        // The pure silent-wrong-data manifestation of the pre-fix bug: projecting ONLY an outer member that
-        // exists at top level on the Owner document did NOT crash — it silently returned one row per OWNER
-        // (2: Alice, Carol) instead of one row per flattened ITEM (3). Post-fix it must not silently return a
-        // result at all; it hard-fails. Guarding the negative directly (no result, or if some future change
-        // makes it succeed, the row count must be correct — never the wrong 2).
+        // Projecting only an outer member doesn't crash, so this is the pure wrong-data case (2 owner rows instead
+        // of 3 item rows). Must throw, or if it ever succeeds, return the correct count.
         var seed = SeedOwners();
         using var db = CreateContext(seed, MongoQueryMode.Native,
             nameof(Union_then_SelectMany_projecting_only_outer_member_does_not_silently_return_wrong_rows));
@@ -153,7 +134,7 @@ public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) 
         }
         catch
         {
-            // Hard-fail is the accepted outcome — never the silent wrong result below.
+            // Hard-fail is the accepted outcome.
             return;
         }
 
@@ -163,8 +144,7 @@ public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) 
     [Fact]
     public void Plain_SelectMany_without_a_preceding_terminal_still_goes_native()
     {
-        // Guard against over-gating: a FIRST SelectMany (no preceding terminal) must still bind natively.
-        // Succeeding under NativeOnly is the "went native" signal.
+        // Guards against over-gating: a first SelectMany must still bind natively (NativeOnly succeeds).
         var seed = SeedOwners();
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(Plain_SelectMany_without_a_preceding_terminal_still_goes_native));
@@ -184,11 +164,8 @@ public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) 
     }
 
     // ── Include (cross-collection) then owned SelectMany ─────────────────────────────────────────
-    // The SelectMany guard keys on Select.HasTerminalOperator, which does NOT track cross-collection
-    // $lookup (Include) state (that lives on MongoQueryExpression, not MongoSelectDefinition). So
-    // Include(collection).SelectMany(owned) bypasses the guard. This asserts the combination is NOT
-    // silent wrong data: EF drops the dangling Include (the result projects to a non-entity type), so
-    // the SelectMany result is correct — one row per owned Tag, per Blog.
+    // HasTerminalOperator doesn't track Include's $lookup state (that lives on MongoQueryExpression), so
+    // Include(collection).SelectMany(owned) bypasses the guard. Pins that the result is still correct.
 
     private class Blog
     {
@@ -281,10 +258,8 @@ public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) 
                 .OrderBy(r => r.Item1).ThenBy(r => r.Item2)
                 .ToList();
 
-        // Correct = one row per owned Tag per Blog: (Alice,x),(Alice,y),(Bob,z). The Include is dangling
-        // (the query projects to an anonymous type) so EF drops it — the SelectMany result is unaffected.
-        // (A clean hard-fail would also be acceptable per the audit invariant; empirically EF drops the
-        // Include and this returns the correct rows.)
+        // One row per owned Tag per Blog. The Include is dangling (anonymous projection) so EF drops it; a clean
+        // hard-fail would also be acceptable.
         Assert.Equal([("Alice", "x"), ("Alice", "y"), ("Bob", "z")], Run());
     }
 }

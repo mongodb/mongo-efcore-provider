@@ -28,8 +28,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// an entity that has its own <see cref="DbSet{TEntity}"/> and is reached by a navigation into a
 /// SEPARATE collection via a foreign key (not embedded). These tests cover the write/lifecycle path
 /// (Group A — version-agnostic where it does not execute an Include query) and serialization /
-/// change-tracking behavior through the <c>$lookup</c>-based Include (Groups B and C — run on all
-/// three EF majors; EF8/EF9's own optional-reference-nav Include gap, EF-X020, is fixed).
+/// change-tracking behavior through the <c>$lookup</c>-based Include (Groups B and C).
 /// C# property names intentionally differ from BSON element names to verify element-name mapping.
 /// </summary>
 [XUnitCollection("QueryTests")]
@@ -197,8 +196,7 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
     }
 
     // ---------------------------------------------------------------------------------------------
-    // Group B — Serialization through Include. Runs on all three EF majors (EF8/EF9's own
-    // optional-reference-nav Include gap, EF-X020, is fixed).
+    // Group B — Serialization through Include.
     // ---------------------------------------------------------------------------------------------
 
     [Fact]
@@ -370,7 +368,7 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
     }
 
     // ---------------------------------------------------------------------------------------------
-    // Group C — Change tracking through Include. Runs on all three EF majors.
+    // Group C — Change tracking through Include.
     // ---------------------------------------------------------------------------------------------
 
     [Fact]
@@ -504,15 +502,10 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         Assert.All(order.PriorityItems, i => Assert.IsType<PriorityChainItem>(i));
     }
 
-    // EF-373. An operator composed BETWEEN two cross-collection joins is SUPPORTED: the driver-LINQ
-    // bridge's StripInterleavedJoinChain splits the join-replacing $lookup stages along the join order and
-    // emits each at its own reattachment boundary, so the interleaved operator lands between the two
-    // $lookup stages rather than above both of them. Before that, the operator was hoisted above both and
-    // the paging ran before the second join had filtered anything - a silently wrong page.
-    //
-    // Each of these asserts the ROW IDENTITIES, never just the count: hoisting the operator returns the
-    // right NUMBER of rows from the wrong window, which a count assertion cannot distinguish. Seed is
-    // L1(O1), L2(O2), L3(O1), L4(O1), every line pointing at the one product.
+    // An operator between two cross-collection joins must land between their $lookup stages
+    // (StripInterleavedJoinChain); hoisting it above both pages before the second join filters - a silently
+    // wrong page. Assert row identities, not counts: the wrong window has the right count.
+    // Seed: L1(O1), L2(O2), L3(O1), L4(O1), every line pointing at the one product.
     [Fact]
     public void Take_between_two_joins_returns_the_correct_page()
     {
@@ -576,9 +569,8 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
     }
 
     // EF-373 (review follow-up): InnerCollections is keyed by IEntityType, so two navigations that join
-    // to the SAME target entity type (e.g. a self-join) collapse to one entry there - the split must not
-    // rely on that count, or this shape would be mispositioned even though the two-different-types one is
-    // handled. Both navigations here target Order.
+    // to the same target entity type (e.g. a self-join) collapse to one entry there - the split must not
+    // rely on that count. Both navigations here target Order.
     [Fact]
     public void Take_between_two_joins_to_same_target_entity_type_returns_the_correct_page()
     {
@@ -601,9 +593,8 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Include_sibling_then_includes_through_same_target_type_do_not_collapse()
     {
-        // EF-376 repro: two sibling reference navigations (PrimaryMid, SecondaryMid) targeting the SAME
-        // entity type, each further ThenInclude'd through the SAME navigation name (Leaf). Both branches
-        // must produce their own $lookup rather than colliding on a shared "_lookup_Leaf" alias.
+        // Sibling navigations (PrimaryMid, SecondaryMid) to the same type, each ThenInclude'd through Leaf:
+        // each branch needs its own $lookup rather than colliding on a shared "_lookup_Leaf" alias.
         var rootsName = TemporaryDatabaseFixtureBase.CreateCollectionName("SibRoots") + Guid.NewGuid().ToString("N")[..8];
         var midsName = TemporaryDatabaseFixtureBase.CreateCollectionName("SibMids") + Guid.NewGuid().ToString("N")[..8];
         var leavesName = TemporaryDatabaseFixtureBase.CreateCollectionName("SibLeaves") + Guid.NewGuid().ToString("N")[..8];
@@ -1360,8 +1351,8 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         }
     }
 
-    // Sibling reference navigations targeting the SAME entity type, each ThenInclude'd through the
-    // same navigation name (EF-376 repro): Root -(ref)-> PrimaryMid / SecondaryMid -(ref)-> Leaf.
+    // Sibling reference navigations to the same type, each ThenInclude'd through the same navigation name:
+    // Root -(ref)-> PrimaryMid / SecondaryMid -(ref)-> Leaf.
     class SiblingRoot
     {
         public ObjectId _id { get; set; }

@@ -22,22 +22,16 @@ using MongoDB.EntityFrameworkCore.Serializers;
 namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
-/// Unit tests for <see cref="MongoPipelineFactory"/>'s <em>deferred</em> stage slots — a slot whose
-/// document is constructed at Build time because its BSON shape, not merely its values, depends on
-/// runtime state.
+/// Tests for <see cref="MongoPipelineFactory"/>'s deferred stage slots — documents built at Build time because
+/// their BSON shape, not just their values, depends on runtime state. Slots are hand-built fakes so these pin
+/// the mechanism independently of <c>$vectorSearch</c>.
 /// </summary>
-/// <remarks>
-/// Nothing in the tree produces a deferred slot yet, so every slot here is a hand-built fake. That is
-/// deliberate: these tests pin the slot mechanism itself, independently of the first stage
-/// (<c>$vectorSearch</c>) that will use it.
-/// </remarks>
 public class MongoPipelineFactoryDeferredSlotTests
 {
     private static readonly BsonDocument MatchStage = BsonDocument.Parse("{ $match: { Age: { $gt: 21 } } }");
     private static readonly BsonDocument LimitStage = BsonDocument.Parse("{ $limit: 5 }");
 
-    // The two services a deferred slot may need are not exercised by any fake in this file (Task 1 adds no
-    // real deferred slot), so a real BsonSerializerFactory is cheap to supply and the logger is left null.
+    // No fake here uses the serializer factory or logger, so the logger is left null.
     private static MongoNativeBuildContext Context(
         IReadOnlyDictionary<string, object?>? parameterValues = null,
         IDictionary<string, object>? additionalState = null)
@@ -102,14 +96,14 @@ public class MongoPipelineFactoryDeferredSlotTests
     }
 
     // ------------------------------------------------------------------
-    // (b) Sentinels INSIDE the deferred document are substituted by the same pass
+    // (b) Sentinels inside the deferred document are substituted by the same pass
     // ------------------------------------------------------------------
 
     [Fact]
     public void Sentinels_inside_a_deferred_document_are_substituted_by_the_same_pass()
     {
-        // A pre-filter rendered at COMPILE time into the shared placeholder table, embedded verbatim inside
-        // a document the deferred slot builds at EXECUTION time. Its sentinel must still resolve.
+        // A sentinel rendered at compile time, embedded in a document the slot builds at execution time,
+        // must still resolve.
         var placeholders = new PlaceholderTable();
         var sentinel = placeholders.CreatePlaceholder("p0", serializer: null);
 
@@ -210,15 +204,14 @@ public class MongoPipelineFactoryDeferredSlotTests
     }
 
     // ------------------------------------------------------------------
-    // (d) Paging validation still keys on a TOP-LEVEL $limit/$skip only
+    // (d) Paging validation keys on a top-level $limit/$skip only
     // ------------------------------------------------------------------
 
     [Fact]
     public void Paging_validation_ignores_a_limit_nested_one_level_down()
     {
-        // A $vectorSearch body carries its own `limit`, which is NOT a $limit stage. Normalizing it here
-        // would rewrite it into an always-false $match for a shape that must instead surface the driver's
-        // own vector-search error — see the design's limit:0 parity rule.
+        // A $vectorSearch body's `limit` is not a $limit stage; normalizing it would hide the vector-search
+        // error the driver-LINQ path surfaces for limit: 0.
         var factory = new MongoPipelineFactory(
             [
                 MongoPipelineFactory.StageSlot.Deferred(
@@ -234,8 +227,7 @@ public class MongoPipelineFactoryDeferredSlotTests
     [Fact]
     public void Paging_validation_still_normalizes_a_top_level_limit_of_zero()
     {
-        // The discriminating control for the test above: the normalizer is not simply switched off — a
-        // genuine top-level $limit: 0 stage is still rewritten to an always-false $match.
+        // Control for the test above: a genuine top-level $limit: 0 is still rewritten to an always-false $match.
         var factory = new MongoPipelineFactory(
             [
                 MongoPipelineFactory.StageSlot.Deferred(_ => BsonDocument.Parse("{ $vectorSearch: { limit: 4 } }")),

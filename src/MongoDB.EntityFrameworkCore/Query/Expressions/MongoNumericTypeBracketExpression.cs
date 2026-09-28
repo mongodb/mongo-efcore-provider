@@ -18,36 +18,21 @@ using System;
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
-/// Query-dialect <c>{ field: { $type: "number" } }</c> test that a stored field is present and holds a
-/// numeric BSON value (<c>int</c>/<c>long</c>/<c>double</c>/<c>decimal128</c>) — excluding both a missing
-/// element and an explicit BSON <c>null</c>, and (unlike <c>{ field: { $ne: null } }</c>) every other foreign
-/// BSON type as well.
+/// Query-dialect <c>{ field: { $type: "number" } }</c>: the field is present and numeric, excluding missing, null,
+/// and every other BSON type.
 /// </summary>
 /// <remarks>
-/// <para>
-/// Produced only by <see cref="MongoDB.EntityFrameworkCore.Query.NativeTranslation.MongoExpressionTranslator"/>
-/// as the <c>Left</c> conjunct of an <see cref="MongoBinaryExpression"/>
-/// (<see cref="MongoBinaryOperator.AndAlso"/>) whose <c>Right</c> is a relational comparison rendered through
-/// <c>$expr</c> over a <see cref="MongoConvertExpression"/> — the fall-through a numeric-cast relational
-/// comparison over a NULLABLE property takes. The query dialect itself type-brackets a relational operator
-/// (<c>&lt; &lt;= &gt; &gt;=</c>): it matches neither a missing element nor an explicit <c>null</c>, and
-/// admits only the same BSON "Numbers" comparison class this node tests for. <c>$expr</c>'s own comparison
-/// does not: it converts both a missing element and <c>null</c> to <c>null</c>, and BSON total order sorts
-/// <c>Null</c> below every number, so an un-bracketed <c>$expr</c> comparison would silently admit those rows
-/// under <c>&lt;</c>/<c>&lt;=</c>. This node is what makes the combined <c>$and</c> the EXACT complement the
-/// query dialect would have produced, rather than the approximation <c>{ field: { $ne: null } }</c> would be
-/// (that form excludes a missing/null field but not a genuinely foreign BSON type such as a stray string).
-/// </para>
-/// <para>
-/// Query-dialect only — there is no aggregation-expression form, because this node is never itself nested
-/// inside an <c>$expr</c>; it always sits beside one as a top-level <c>$match</c> conjunct.
-/// </para>
+/// Emitted by <see cref="MongoDB.EntityFrameworkCore.Query.NativeTranslation.MongoExpressionTranslator"/> as the left
+/// <see cref="MongoBinaryOperator.AndAlso"/> conjunct beside a numeric-cast relational comparison over a nullable
+/// property that renders via <c>$expr</c>. The query dialect type-brackets relational operators, but <c>$expr</c>
+/// treats missing as null and sorts null below every number, so without this bracket <c>&lt;</c>/<c>&lt;=</c> would
+/// silently admit missing/null rows. <c>{ $ne: null }</c> wouldn't exclude foreign types. Query-dialect only: it is
+/// always a top-level <c>$match</c> conjunct, never inside <c>$expr</c>.
 /// </remarks>
 internal sealed class MongoNumericTypeBracketExpression(MongoFieldExpression field) : MongoExpression
 {
     /// <summary>The field whose stored BSON type is tested.</summary>
-    // 'new' hides the inherited Expression.Field(...) method; used for semantic clarity (matches
-    // MongoArrayContainsExpression's own Field property).
+    // 'new' hides Expression.Field(...).
     public new MongoFieldExpression Field { get; } = field;
 
     /// <inheritdoc />

@@ -27,10 +27,9 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-322: an Any quantifier over an OWNED (embedded) collection navigation translates natively to
-/// $elemMatch. Each admitted shape asserts a NativeOnly routing proof plus NativeOnly == DriverLinq value
-/// parity; each excluded shape asserts a clean decline (throws only under NativeOnly, correct results
-/// under Native).
+/// Any/All/Count over an owned (embedded) collection translates natively to <c>$elemMatch</c>/<c>$exists</c>.
+/// Admitted shapes assert a NativeOnly routing proof plus NativeOnly == DriverLinq parity; excluded shapes
+/// assert a clean decline.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture database)
@@ -63,12 +62,8 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     private class Post
     {
         public string Heading { get; set; } = "";
-        // DELIBERATELY COLLIDES with Blog.Title (same name, same CLR type). Without a colliding name the
-        // correlated-element-predicate guard cannot be exercised: the element-scoped translator resolves
-        // members by NAME, so an owner-rooted `b.Title` inside the Any lambda only MIS-RESOLVES (rather than
-        // declining for the unrelated reason "no such property on Post") when Post declares a Title too.
-        // Seeded so the two interpretations give different answers — see
-        // Correlated_element_predicate_now_goes_native_since_EF421.
+        // Deliberately collides with Blog.Title, so an owner-rooted `b.Title` in an Any lambda would mis-resolve
+        // (not just fail) under by-name resolution. See Correlated_element_predicate_now_goes_native_since_EF421.
         public string Title { get; set; } = "";
         public int Rank { get; set; }
         public int Other { get; set; }
@@ -106,24 +101,13 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         mb.Entity<Blog>().OwnsOne(b => b.Home, h => h.OwnsMany(x => x.Notes));
     };
 
-    // ------------------------------------------------------------------
-    // Shared row builders
-    // ------------------------------------------------------------------
+    // Shared row builders, so SeedBlogs and SeedWellFormedBlogs stay identical for the rows they share (several
+    // expectations are derived from one another). Each call returns a fresh document.
     //
-    // Fix round 2 (M-c): SeedBlogs and SeedWellFormedBlogs both need the "match"/"nomatch"/"empty" rows to be
-    // BYTE-IDENTICAL — the two seeds are the two legs of the same tests, and nine hand-computed assertions
-    // depend on the rows agreeing (e.g. Negated_owned_collection_Any_goes_native's well-formed expectation is
-    // derived by subtracting the missing/null rows from the full-matrix one). These rows used to be duplicated
-    // verbatim in both seeds, where a one-sided edit could silently desynchronize the legs, so they are built
-    // here exactly once. Each builder returns a FRESH document (new ObjectId) per call.
-    //
-    // Post.Title is present on every seeded post because it is a required non-nullable property (a post
-    // document missing it would fail materialization); its VALUES are chosen so that owner-scoped and
-    // element-scoped readings of `b.Title` give DIFFERENT answers — see
-    // Correlated_element_predicate_now_goes_native_since_EF421.
+    // Post.Title is required; its values make owner-scoped and element-scoped readings of `b.Title` differ.
 
-    // Posts with a matching element (plus a second, non-matching element). NOTE neither post's own Title is
-    // "match" (the OWNER's Title is) — that asymmetry is what makes the correlation test discriminating.
+    // Posts with a matching element (plus a non-matching one). Neither post's own Title is "match" (the
+    // owner's is), which makes the correlation test discriminating.
     private static BsonDocument MatchRow()
         => new()
         {
@@ -148,8 +132,8 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
             }
         };
 
-    // Posts present, no element matches. Its single post's own Title IS "match" — deliberately the value the
-    // OWNER of MatchRow carries — so a mis-scoped `b.Title == "match"` selects THIS row instead of MatchRow.
+    // Posts present, no element matches. Its post's Title is "match", so a mis-scoped `b.Title == "match"`
+    // selects this row instead of MatchRow.
     private static BsonDocument NoMatchRow()
         => new()
         {
@@ -178,12 +162,8 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
             { "Posts", new BsonArray() }
         };
 
-    // "missing"/"null" only omit/null-out Posts (the field under test) — Home/Tags are seeded the same as
-    // "empty" (empty-but-present) purely so the entity still materializes: both are separate required
-    // (non-nullable) properties on Blog, unrelated to what these two rows are testing, and a document missing
-    // them entirely would fail materialization with an unrelated "Document element is missing for required
-    // non-nullable property" error the moment any test's predicate returns one of these rows as a full Blog
-    // (confirmed empirically — this is exactly what happened before this fix).
+    // "missing"/"null" only vary Posts; Home/Tags are present (as in "empty") because they are required and the
+    // rows must still materialize.
 
     // No Posts element at all.
     private static BsonDocument MissingPostsRow()
@@ -214,24 +194,12 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     private IMongoCollection<Blog> SeedBlogs(string name)
         => Seed(name, MatchRow(), NoMatchRow(), EmptyPostsRow(), MissingPostsRow(), NullPostsRow());
 
-    // Fix round 1 (Task 4 review): the SAME three rows as SeedBlogs's "match"/"nomatch"/"empty" — i.e. every
-    // row whose Posts is a real (non-null) array — but DELIBERATELY OMITS the "missing" and "null" rows.
-    // Those two rows are exactly what makes the DriverLinq oracle unusable (see AssertNativeOnlyMatches's
-    // comment below: the driver's Any()/Count() translation throws MongoCommandException the instant it
-    // scans a document whose array field is missing/explicit-null — a pre-existing driver limitation, not a
-    // property of the Any-quantifier SHAPES themselves). On this well-formed seed the DriverLinq oracle works
-    // fine, so accept-shape tests can additionally assert NativeOnly == DriverLinq parity here (via
-    // AssertNativeAndParity) — the independent check that would catch a mis-built $elemMatch (e.g. the
-    // multi-condition "one element must satisfy ALL conjuncts" semantic) — while the full SeedBlogs matrix
-    // (via AssertNativeOnlyMatches) remains the coverage for the missing/null/empty edge states that
-    // DriverLinq itself cannot exercise.
+    // SeedBlogs without the "missing"/"null" rows, on which the DriverLinq oracle crashes (see
+    // AssertNativeOnlyMatches). Lets accept tests also assert NativeOnly == DriverLinq parity.
     private IMongoCollection<Blog> SeedWellFormedBlogs(string name)
         => Seed(name, MatchRow(), NoMatchRow(), EmptyPostsRow());
 
-    // Runs the query under NativeOnly (routing proof) and under DriverLinq (value oracle), asserts the two
-    // agree on the matched set, and returns the matched titles.
-    // Runs `query` in one mode and reduces it to the comparable Title list every assertion below compares on.
-    // The MODE ORCHESTRATION lives in NativeModeAssert; this is just this class's own plumbing.
+    // Runs `query` in one mode and returns the sorted titles; mode orchestration lives in NativeModeAssert.
     private List<string> RunTitles(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query, MongoQueryMode mode)
     {
@@ -243,58 +211,20 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
         => NativeModeAssert.NativeAndParity(mode => RunTitles(collection, query, mode));
 
-    // Asserts a shape is NOT native: it throws NativeTranslationNotSupportedException under NativeOnly
-    // (a clean decline, not a crash), AND that the fallback it relies on actually delivers correct,
-    // independently-cross-checked results — Native == DriverLinq, both returned to the caller to assert
-    // against a hand-verified expected value. This is what a GRACEFUL decline actually promises: not just
-    // "every mode throws" (that alone doesn't distinguish a graceful decline from a crash — see
-    // AssertDeclinesCleanlyNoFallbackOracle below, which is what's left when this constructor's own
-    // DriverLinq leg can't run at all) but "NativeOnly proves the decline, and the fallback path is proven
-    // trustworthy by an independent oracle."
     private List<string> AssertDeclinesCleanly(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
         => NativeModeAssert.DeclinesCleanly(mode => RunTitles(collection, query, mode));
 
-    // EMPIRICAL FINDING (Task 4, confirmed via isolated single-document probes, not assumed): the MongoDB C#
-    // driver's own LINQ v3 translation of Any()/Count() over a collection navigation renders as an
-    // $expr-based $anyElementTrue/$allElementsTrue/$size — and MongoDB's aggregation runtime throws
-    // MongoCommandException ("...'s argument must be an array, but is null"/"...but was of type: missing")
-    // the instant it evaluates that operator against a document whose array field is missing or explicit BSON
-    // null. This aborts the WHOLE aggregate command, not just that one document — so a DriverLinq run over
-    // SeedBlogs's "missing"/"null" rows crashes outright, for EVERY Any()/Count()-based query, unless an
-    // earlier $and conjunct happens to short-circuit past those rows (as in
-    // Owned_collection_Any_composes_with_other_conjuncts_natively, which the Title=="match" conjunct saves).
-    // $elemMatch/$exists (the native query dialect this feature emits) has NO such limitation — treating a
-    // missing/null array as "no element matches" without erroring is exactly the robustness this feature is
-    // built to prove, and this crash is direct empirical evidence of the contrast. There is therefore no
-    // working DriverLinq oracle for this seed's full state matrix FOR ANY SHAPE THAT READS Posts — every
-    // caller of this helper except one queries Posts, whose "missing"/"null" rows are exactly what crashes
-    // DriverLinq. (The one exception, Owned_collection_Any_through_owned_reference_goes_native, queries only
-    // Home.Notes, which SeedBlogs seeds as a present, non-null array on ALL FIVE rows — that test's
-    // full-matrix leg has a working DriverLinq oracle too, this helper just doesn't exercise it; the
-    // independent-oracle leg below covers that separately, on the well-formed seed, via AssertNativeAndParity.)
-    // Per this repo's established convention for shapes without one (see the SelectMany notes in
-    // Query/AGENTS.md — "proven via NativeOnly succeeding plus an expected-in-memory-result-set assertion, not
-    // Native == DriverLinq parity"), these are proven via NativeOnly (the routing proof) plus the
-    // hand-verified expected titles each test already asserts.
-    // NativeOnly forbids the fallback, so a result here is proof the shape went native.
+    // The driver's Any()/Count() translation ($expr $anyElementTrue/$size) throws MongoCommandException for the
+    // whole aggregate when a document's array is missing or null, so there's no DriverLinq oracle over the full
+    // SeedBlogs matrix. Native $elemMatch/$exists has no such limitation. These shapes are proven by NativeOnly
+    // succeeding plus hand-verified expected titles.
     private List<string> AssertNativeOnlyMatches(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
         => RunTitles(collection, query, MongoQueryMode.NativeOnly);
 
-    // Same root cause as AssertNativeOnlyMatches above, applied to a shape that correctly DECLINES native
-    // translation: NativeOnly still proves the clean, intended decline (NativeTranslationNotSupportedException
-    // — this shape genuinely is out of scope for this slice), but the FALLBACK that decline would normally
-    // exercise (Native mode, and explicit DriverLinq) both execute the underlying Any()/Count() against
-    // SeedBlogs's mixed missing/null array states and crash with MongoCommandException — the SAME unrelated,
-    // pre-existing driver limitation, not a scope escape and not silently-wrong data. Every mode therefore
-    // throws, but only NativeOnly's exception is the one this slice actually guarantees. Unlike the
-    // ThrowsAny + IsNotType<KeyNotFoundException> pattern in
-    // NativeSelectManyTests.Filtered_owned_nested_subproperty_predicate_hard_fails_in_every_mode_not_double_prefixed
-    // (which discriminates a real provider partial-execution failure from a crash), the exception here is
-    // always the driver's own MongoCommandException from the empirical finding above — so the assertion is
-    // tightened to that concrete type rather than the weaker "any exception that isn't KeyNotFoundException"
-    // check, which would never fail regardless of what actually gets thrown.
+    // For a declining shape over the full matrix: NativeOnly declines cleanly, and the fallback hits the same
+    // driver MongoCommandException described above (asserted by concrete type).
     private void AssertDeclinesCleanlyNoFallbackOracle(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
     {
@@ -320,8 +250,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
 
         Assert.Equal(["match"], titles);
 
-        // Independent-oracle leg (fix round 1): well-formed seed (no missing/null Posts), so DriverLinq can
-        // actually run — NativeOnly == DriverLinq parity, not just a hand-verified expectation.
+        // Independent-oracle leg on the well-formed seed.
         var wellFormed = SeedWellFormedBlogs(nameof(Owned_collection_Any_with_predicate_goes_native) + "_WellFormed");
         var wfTitles = AssertNativeAndParity(wellFormed, q => q.Where(b => b.Posts.Any(p => p.Heading == "x")));
         Assert.Equal(["match"], wfTitles);
@@ -332,9 +261,8 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     {
         var collection = SeedBlogs(nameof(Owned_collection_Any_multi_condition_requires_one_element_to_satisfy_all));
 
-        // "match" has an element with Heading "x" AND Rank 5, so it matches. Crucially, the conditions
-        // Heading == "z" && Rank == 5 are each satisfied by DIFFERENT elements of "match" and must NOT match
-        // — this is the semantic a dotted-path translation would get wrong.
+        // Heading == "z" && Rank == 5 are satisfied by different elements of "match", so it must not match;
+        // a dotted-path translation would get this wrong.
         var both = AssertNativeOnlyMatches(
             collection, q => q.Where(b => b.Posts.Any(p => p.Heading == "x" && p.Rank == 5)));
         Assert.Equal(["match"], both);
@@ -343,11 +271,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
             collection, q => q.Where(b => b.Posts.Any(p => p.Heading == "z" && p.Rank == 5)));
         Assert.Empty(split);
 
-        // Independent-oracle leg (fix round 1) — the MOST IMPORTANT parity check in this file: this is
-        // exactly the "one element must satisfy ALL conjuncts" semantic that motivated a real $elemMatch AST
-        // node over a cheaper dotted-path translation (which would wrongly match when different elements
-        // each satisfy a different conjunct). A well-formed seed lets DriverLinq actually run, so this proves
-        // (not just hand-verifies) that the emitted $elemMatch has the correct semantics.
+        // Independent-oracle leg: proves the "one element must satisfy all conjuncts" $elemMatch semantics.
         var wellFormed = SeedWellFormedBlogs(
             nameof(Owned_collection_Any_multi_condition_requires_one_element_to_satisfy_all) + "_WellFormed");
 
@@ -370,8 +294,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
 
         Assert.Equal(["match", "nomatch"], titles);
 
-        // Independent-oracle leg (fix round 1): well-formed seed (match/nomatch/empty only — missing/null
-        // excluded, per SeedWellFormedBlogs), so the expected set is the same as above.
+        // Independent-oracle leg on the well-formed seed; same expected set.
         var wellFormed = SeedWellFormedBlogs(nameof(Owned_collection_bare_Any_goes_native) + "_WellFormed");
         var wfTitles = AssertNativeAndParity(wellFormed, q => q.Where(b => b.Posts.Any()));
         Assert.Equal(["match", "nomatch"], wfTitles);
@@ -389,9 +312,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         var negatedBare = AssertNativeOnlyMatches(collection, q => q.Where(b => !b.Posts.Any()));
         Assert.Equal(["empty", "missing", "null"], negatedBare);
 
-        // Independent-oracle leg (fix round 1): well-formed seed only has match/nomatch/empty, so the negated
-        // sets are SMALLER than the full-matrix ones above (missing/null are gone) — computed fresh from the
-        // well-formed seed, not assumed to match the full-matrix expectations.
+        // Independent-oracle leg: the negated sets lose the missing/null rows.
         var wellFormed = SeedWellFormedBlogs(nameof(Negated_owned_collection_Any_goes_native) + "_WellFormed");
 
         var wfNegatedPredicate = AssertNativeAndParity(
@@ -412,7 +333,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
 
         Assert.Equal(["match"], titles);
 
-        // Independent-oracle leg (fix round 1).
+        // Independent-oracle leg.
         var wellFormed = SeedWellFormedBlogs(nameof(Nested_owned_collection_Any_goes_native) + "_WellFormed");
         var wfTitles = AssertNativeAndParity(
             wellFormed, q => q.Where(b => b.Posts.Any(p => p.Comments.Any(c => c.Text == "t"))));
@@ -428,7 +349,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
 
         Assert.Equal(["match"], titles);
 
-        // Independent-oracle leg (fix round 1).
+        // Independent-oracle leg.
         var wellFormed = SeedWellFormedBlogs(
             nameof(Owned_collection_Any_through_owned_reference_goes_native) + "_WellFormed");
         var wfTitles = AssertNativeAndParity(wellFormed, q => q.Where(b => b.Home.Notes.Any(n => n.Body == "b")));
@@ -438,21 +359,15 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     [Fact]
     public void Owned_collection_Any_composes_with_other_conjuncts_natively()
     {
-        // Fix round 2 (M-d): the full-matrix leg is now ORACLE-FREE (AssertNativeOnlyMatches + a hand-verified
-        // expectation), and the parity check moved to a well-formed-seed leg, matching every other accept test
-        // in this file. Previously this test ran the full matrix through AssertNativeAndParity, whose DriverLinq
-        // leg only survived because the aggregation runtime happened to evaluate the `Title == "match"` conjunct
-        // of the $and first and so never reached the $anyElementTrue on the missing/null-Posts rows — conjunct
-        // evaluation order is not a documented guarantee, so that leg was one server-side reordering away from
-        // failing for a reason unrelated to what it tests.
+        // Full matrix without an oracle: DriverLinq would only survive the missing/null rows if the server
+        // happened to evaluate the Title conjunct first, which isn't guaranteed.
         var collection = SeedBlogs(nameof(Owned_collection_Any_composes_with_other_conjuncts_natively));
 
         var titles = AssertNativeOnlyMatches(
             collection, q => q.Where(b => b.Title == "match" && b.Posts.Any(p => p.Rank > 3)));
         Assert.Equal(["match"], titles);
 
-        // Independent-oracle leg: well-formed seed only (no missing/null Posts), so DriverLinq runs regardless
-        // of conjunct order — NativeOnly == DriverLinq parity.
+        // Independent-oracle leg on the well-formed seed.
         var wellFormed = SeedWellFormedBlogs(
             nameof(Owned_collection_Any_composes_with_other_conjuncts_natively) + "_WellFormed");
         var wfTitles = AssertNativeAndParity(
@@ -463,10 +378,9 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     [Fact]
     public void Owned_collection_Any_with_captured_parameter_element_predicate_goes_native()
     {
-        // A captured value in the element predicate becomes an EF query parameter — and on EF8/EF9 an EF query
-        // parameter IS a ParameterExpression (a "__"-prefixed name), unlike EF10's typed
-        // QueryParameterExpression. The correlated-element-predicate guard therefore has to exempt query
-        // parameters explicitly, or this shape would decline on EF8/EF9 only. This test pins that it does not.
+        // On EF8/EF9 a captured value becomes a "__"-prefixed ParameterExpression (not EF10's
+        // QueryParameterExpression), so the correlated-predicate handling must exempt query parameters or this
+        // would decline on EF8/EF9 only.
         var collection = SeedBlogs(nameof(Owned_collection_Any_with_captured_parameter_element_predicate_goes_native));
         var heading = "x";
 
@@ -482,32 +396,20 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     [Fact]
     public void Correlated_element_predicate_now_goes_native_since_EF421()
     {
-        // SUPERSEDED by EF-421 (was CRITICAL-FINDING REGRESSION TEST, review fix C1, asserting a DECLINE — see
-        // git history for the pre-EF-421 version of this test). An element predicate that reaches OUT of the
-        // element into the enclosing entity used to decline outright, because the (single-scope) element-scoped
-        // translator resolves members by NAME with no parameter-identity check: `b.Title` (the OWNER's Title)
-        // would silently resolve against Post, which also declares a Title, emitting the WRONG condition — one
-        // scoped to the ELEMENT, not the owner. EF-421's two-scope translator resolves `b.Title` by
-        // `ReferenceEquals` against the captured `SelfParam`, not by name, so it now correctly routes to the
-        // OUTER scope and renders as `$anyElementTrue`-over-`$map`. GUARD REACHABILITY (this repo's convention
-        // for a guard test) still applies to the seed even though the guard no longer declines: it is built so
-        // the two readings give DIFFERENT answers, so a regression back to by-name resolution would silently
-        // flip this test's expected rows rather than merely failing to throw.
+        // An element predicate reaching the owner (`b.Title`) must resolve by parameter identity to the outer
+        // scope ($anyElementTrue over $map), not by name against Post.Title. The seed makes the readings differ:
         //
-        //   owner-scoped (CORRECT): blogs whose own Title == "match" and that have at least one post -> ["match"]
-        //   element-scoped (WRONG): blogs having a post whose Title == "match"                        -> ["nomatch"]
+        //   owner-scoped (correct): blogs whose own Title == "match" and that have at least one post -> ["match"]
+        //   element-scoped (wrong): blogs having a post whose Title == "match"                        -> ["nomatch"]
         //
-        // The well-formed seed is used because DriverLinq's own Any() translation crashes on the full matrix's
-        // missing/null Posts rows (see AssertNativeOnlyMatches's comment above), so the well-formed seed is what
-        // lets AssertNativeAndParity's DriverLinq leg actually run.
+        // Well-formed seed so the DriverLinq leg can run.
         var wellFormed = SeedWellFormedBlogs(nameof(Correlated_element_predicate_now_goes_native_since_EF421));
 
         var titles = AssertNativeAndParity(wellFormed, q => q.Where(b => b.Posts.Any(p => b.Title == "match")));
         Assert.Equal(["match"], titles);
 
-        // Mixed form: one element-only conjunct plus one correlated conjunct. Same discrimination —
-        // owner-scoped gives ["match"] (its Title is "match" and it has a post with Rank 5 > 3), element-scoped
-        // gives [] (the only post titled "match" has Rank 2).
+        // Mixed element-only and correlated conjuncts: owner-scoped gives ["match"], element-scoped gives []
+        // (the only post titled "match" has Rank 2).
         var mixed = SeedWellFormedBlogs(
             nameof(Correlated_element_predicate_now_goes_native_since_EF421) + "_Mixed");
         var mixedTitles = AssertNativeAndParity(
@@ -524,8 +426,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         var blogs = db.Entities.Where(b => b.Posts.Any(p => p.Heading == "x")).ToList();
 
         Assert.Equal(["match"], blogs.Select(b => b.Title));
-        // Element CONTENTS, not just cardinality (fix round 2, M-f) — proves the owned collection actually
-        // materialized, in stored order, rather than merely counting two elements.
+        // Element contents in stored order, not just the count.
         Assert.Equal(["x", "z"], blogs[0].Posts.Select(p => p.Heading));
     }
 
@@ -536,10 +437,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
 
         AssertDeclinesCleanlyNoFallbackOracle(collection, q => q.Where(b => b.Posts.Any(p => p.Rank > p.Other)));
 
-        // Independent-oracle leg (fix round 1): on the full SeedBlogs matrix, every mode throws (see
-        // AssertDeclinesCleanlyNoFallbackOracle's comment), which proves NativeOnly declines but does NOT
-        // distinguish a graceful decline (correct fallback) from a crash. A well-formed seed lets the
-        // fallback actually run: NativeOnly still throws, and Native == DriverLinq with correct values.
+        // On the well-formed seed the fallback can run, distinguishing a graceful decline from a crash.
         var wellFormed = SeedWellFormedBlogs(
             nameof(Field_to_field_element_predicate_declines_cleanly) + "_WellFormed");
         var wfTitles = AssertDeclinesCleanly(wellFormed, q => q.Where(b => b.Posts.Any(p => p.Rank > p.Other)));
@@ -549,23 +447,14 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     [Fact]
     public void Nested_owned_scalar_leaf_in_element_now_goes_native_via_EF424()
     {
-        // FLIPPED BY EF-424: this test USED TO ASSERT A DECLINE (as "..._declines_cleanly"), because
-        // TryResolveOwnedFieldPath (MongoExpressionTranslator.Members.cs) declined unconditionally whenever
-        // its own _entityType was not a document root — which the element-scoped translator built for this
-        // Any's predicate always is (Post, not Blog). EF-424 replaced that GetDocumentPath()-based, root-only
-        // construction with a SCOPE-RELATIVE one (joining each hop's own containing element name, mirroring
-        // the sibling TryResolveOwnedCollectionPath), so p.Geo.Country now resolves to "Geo.Country" relative
-        // to the element scope, which composes correctly with the enclosing $elemMatch — no double-prefixing,
-        // and no root-relative path fighting a scope it was never built against. This is the SAME shape as
-        // Owned_collection_Any_through_owned_reference_goes_native above (an owned single-reference hop reached
-        // through Any), just with the hop INSIDE the collection element instead of before it.
+        // TryResolveOwnedFieldPath builds scope-relative paths, so p.Geo.Country resolves to "Geo.Country"
+        // inside the element's $elemMatch, with no double-prefixing.
         var collection = SeedBlogs(nameof(Nested_owned_scalar_leaf_in_element_now_goes_native_via_EF424));
 
         var titles = AssertNativeOnlyMatches(collection, q => q.Where(b => b.Posts.Any(p => p.Geo.Country == "US")));
         Assert.Equal(["match"], titles);
 
-        // Independent-oracle leg: well-formed seed (no missing/null Posts), so DriverLinq can actually run —
-        // NativeOnly == DriverLinq parity, not just a hand-verified expectation.
+        // Independent-oracle leg on the well-formed seed.
         var wellFormed = SeedWellFormedBlogs(
             nameof(Nested_owned_scalar_leaf_in_element_now_goes_native_via_EF424) + "_WellFormed");
         var wfTitles = AssertNativeAndParity(wellFormed, q => q.Where(b => b.Posts.Any(p => p.Geo.Country == "US")));
@@ -575,16 +464,8 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     [Fact]
     public void Primitive_collection_Any_now_goes_native_via_the_Contains_path()
     {
-        // EF's AllAnyToContainsRewritingExpressionVisitor rewrites `Tags.Any(t => t == "x")` into
-        // `Tags.Contains("x")` before the native translator sees it, so this shape never reaches the
-        // quantifier matcher at all — it is handled entirely by the Contains path in
-        // MongoExpressionTranslator, unchanged by the owned-collection-quantifier slice this file otherwise
-        // covers.
-        //
-        // Before EF-382, that Contains path only recognized `values.Contains(e.Field)` ($in) — the mirror
-        // shape here, `arrayField.Contains(constant)`, declined. EF-382 added the mirror arm
-        // (MongoArrayContainsExpression), so this now goes native too — routing proof is NativeOnly
-        // succeeding, per the Query AGENTS.md "MQL shape cannot prove a query went native" pitfall.
+        // EF rewrites `Tags.Any(t => t == "x")` to `Tags.Contains("x")`, so this is handled by the Contains
+        // path's `arrayField.Contains(constant)` arm (MongoArrayContainsExpression), not the quantifier matcher.
         var collection = SeedBlogs(nameof(Primitive_collection_Any_now_goes_native_via_the_Contains_path));
 
         List<string> native;
@@ -604,7 +485,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         Assert.Equal(driver, native);
         Assert.Equal(["match"], native);
 
-        // Routing proof: now goes native (EF-382) — NativeOnly succeeds rather than throwing.
+        // Routing proof: NativeOnly succeeds.
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
             var nativeOnly = db.Entities.AsNoTracking().Where(b => b.Tags.Any(t => t == "x"))
@@ -616,30 +497,12 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     [Fact]
     public void Owned_SelectMany_with_an_inner_Any_filter_now_works()
     {
-        // EMERGENT NEW CAPABILITY (spike-confirmed), WITH A CORRECTED PROJECTION SHAPE. Before this slice
-        // this shape hard-fails in EVERY mode (including DriverLinq) with InvalidOperationException "could
-        // not be translated": the owned SelectMany binder's inner-filter translator could not handle Any, so
-        // it declined after the binder had already engaged, and there is no driver-LINQ oracle. It works once
-        // $elemMatch exists — NativeSelectManyBinder.TryBuildOwnedInnerFilter's element-scoped translator
-        // resolves "Comments" relative to Post, and its existing MongoFieldPrefixRewriter.Rewrite(...,
-        // "Posts") call composes that into "Posts.Comments", which correctly addresses the $unwind-ed
-        // element.
+        // An Any filter inside an owned SelectMany: TryBuildOwnedInnerFilter resolves "Comments" relative to Post
+        // and MongoFieldPrefixRewriter composes "Posts.Comments" for the unwound element. No driver-LINQ oracle
+        // (it fails in every mode there). Uses an anonymous projection because TryReadProjection rejects a bare
+        // scalar SelectMany leaf for unrelated reasons.
         //
-        // IMPLEMENTER CORRECTION: the brief's original result selector, `(b, p) => p.Heading` (a BARE SCALAR,
-        // not an anonymous/DTO projection), does NOT exercise this at all — it fails for a completely
-        // unrelated, pre-existing reason: NativeSelectManyBinder.TryBindTransparentIdentifierProjection's
-        // TryReadProjection only accepts a NewExpression/MemberInitExpression leaf, so a bare `ti.Inner.Heading`
-        // member access is rejected regardless of whether the inner Any-filter translates — confirmed
-        // empirically (NativeOnly threw the GENERIC "Query projects a non-entity result" fallback exception,
-        // not evidence of the Any-filter itself failing). A bare-scalar SelectMany projection is a separate,
-        // long-documented limitation (see Query/AGENTS.md), not something this slice touches either way.
-        // Using an anonymous projection (`new { p.Heading }`) — the same shape every other SelectMany test in
-        // this codebase uses — lets the REAL capability under test (the inner Any-filter) actually reach
-        // native translation; Heading is then extracted client-side, after materialization, which exercises
-        // no further query translation.
-        //
-        // No oracle exists, so the expected value is hand-computed from the seed data: only the "match" blog
-        // has a Post whose Comments contain Text "t", and that Post's Heading is "x".
+        // Expected value is hand-computed: only "match" has a Post with Comment Text "t", Heading "x".
         var collection = SeedBlogs(nameof(Owned_SelectMany_with_an_inner_Any_filter_now_works));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
 
@@ -655,20 +518,12 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     [Fact]
     public void All_over_owned_collection_goes_native()
     {
-        // EF-322 Task 2 (commit 3759cb7, immediately before EF-335's top-level-All slice) made this shape go
-        // native: All(pred) translates to a NEGATED $elemMatch over the EXACT complement of pred
-        // ({ Posts: { $not: { $elemMatch: { Heading: { $ne: "x" } } } } }) — no element may satisfy ¬pred. That
-        // form is also correct for an empty, missing, or explicitly-null array: $elemMatch can never match a
-        // non-array/absent field, so the enclosing $not is true and All is (correctly) true, mirroring LINQ's
-        // "All is vacuously true over an empty sequence" semantics. This test used to assert a clean DECLINE
-        // (pre-Task-2 behavior) and was not updated when Task 2 landed — a scoping gap in that task's
-        // verification (it ran the unit-test project, not this functional one), caught late by EF-335's
-        // required whole-Query-subset sweep. Flipped here per the "invert, don't delete; keep a proof of
-        // correctness" rule: NativeOnly is the routing proof, and the full SeedBlogs matrix is the value proof.
+        // All(pred) translates to a negated $elemMatch over the exact complement of pred
+        // ({ Posts: { $not: { $elemMatch: { Heading: { $ne: "x" } } } } }). $elemMatch never matches an empty,
+        // missing or null array, so All is vacuously true there, as in LINQ.
         var collection = SeedBlogs(nameof(All_over_owned_collection_goes_native));
 
-        // Full-matrix leg (SeedBlogs: match/nomatch/empty/missing/null) — hand-derived, then verified against
-        // the actual database rather than assumed:
+        // Full-matrix leg, hand-derived:
         //   "match"  — Posts = [Heading:"x", Heading:"z"]. The "z" element satisfies ¬pred (Heading != "x"),
         //              so the $elemMatch DOES find a violator ⇒ the enclosing $not is false ⇒ All is false.
         //   "nomatch" — Posts = [Heading:"y"]. "y" != "x" satisfies ¬pred ⇒ same as above ⇒ All is false.
@@ -679,12 +534,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         var titles = AssertNativeOnlyMatches(collection, q => q.Where(b => b.Posts.All(p => p.Heading == "x")));
         Assert.Equal(["empty", "missing", "null"], titles);
 
-        // Independent-oracle leg (well-formed seed: match/nomatch/empty only, no missing/null — see
-        // SeedWellFormedBlogs's comment for why DriverLinq can't run over the full matrix). All() semantics
-        // are unchanged by this routing change — LINQ's All() is vacuously true over an empty sequence, so
-        // "empty" (Posts: []) satisfies All(p => p.Heading == "x") trivially, while "match" (Headings "x" and
-        // "z") and "nomatch" (Heading "y") both have an element that fails — same expectation as before the
-        // flip, just now proven via NativeOnly == DriverLinq parity instead of a clean-decline assertion.
+        // Independent-oracle leg on the well-formed seed: only "empty" satisfies All vacuously.
         var wellFormed = SeedWellFormedBlogs(nameof(All_over_owned_collection_goes_native) + "_WellFormed");
         var wfTitles = AssertNativeAndParity(wellFormed, q => q.Where(b => b.Posts.All(p => p.Heading == "x")));
         Assert.Equal(["empty"], wfTitles);
@@ -693,14 +543,8 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     [Fact]
     public void Owned_collection_Count_predicate_goes_native()
     {
-        // FLIPPED by EF-322 Task 6 (the eligibility change): .Count in a predicate now goes native, via the
-        // array-index existence form ({"Posts.1": {$exists: true}}) rather than declining. That form is a
-        // plain dotted-path match — no $size, no $expr — so unlike the driver's own Count() translation
-        // (which renders $expr-based $size and crashes on a missing/explicit-null array field, per the
-        // AssertDeclinesCleanlyNoFallbackOracle comment above) it does NOT crash on SeedBlogs's missing/null
-        // rows. So this is now proven via AssertNativeOnlyMatches (NativeOnly routing proof, full matrix —
-        // DriverLinq still has no working oracle over missing/null rows for this shape) plus the well-formed
-        // independent-oracle leg (NativeOnly == DriverLinq parity), exactly like the sibling Any/All tests.
+        // .Count in a predicate uses the array-index existence form ({"Posts.1": {$exists: true}}), a plain
+        // dotted-path match that, unlike the driver's $size, doesn't crash on missing/null arrays.
         var collection = SeedBlogs(nameof(Owned_collection_Count_predicate_goes_native));
 
         var titles = AssertNativeOnlyMatches(collection, q => q.Where(b => b.Posts.Count > 1));
@@ -710,8 +554,7 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         // materialized-as-empty-list reading of a missing/null owned collection).
         Assert.Equal(["match"], titles);
 
-        // Independent-oracle leg: well-formed seed (no missing/null Posts), so DriverLinq can actually run —
-        // NativeOnly == DriverLinq parity, not just a hand-verified expectation.
+        // Independent-oracle leg on the well-formed seed.
         var wellFormed = SeedWellFormedBlogs(nameof(Owned_collection_Count_predicate_goes_native) + "_WellFormed");
         var wfTitles = AssertNativeAndParity(wellFormed, q => q.Where(b => b.Posts.Count > 1));
         Assert.Equal(["match"], wfTitles);

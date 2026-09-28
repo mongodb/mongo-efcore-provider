@@ -150,17 +150,13 @@ internal static class BsonBinding
     }
 
     /// <summary>
-    /// Resolves <paramref name="name"/> against <paramref name="document"/>, walking a DOTTED name segment by
-    /// segment instead of looking it up as a single literal key.
+    /// Resolves <paramref name="name"/> against <paramref name="document"/>, walking a dotted name segment by
+    /// segment rather than as one literal key.
     /// </summary>
     /// <remarks>
-    /// A dotted name reaches here only from an alias that is a leaf's root-relative document path, so a
-    /// dotted-path read and a nested-document read are the same read — MongoDB itself renders
-    /// <c>$project: {"Home.Notes": "$Home.Notes"}</c> as a nested output document, not a flat dotted key. An
-    /// absent segment anywhere along the path yields <see langword="false"/>, same as a missing top-level
-    /// element; an intermediate segment that is present but not a document also yields
-    /// <see langword="false"/> rather than throwing, so this never turns a readable document into a cast
-    /// failure.
+    /// A dotted name here is a root-relative document path, and MongoDB renders a dotted <c>$project</c> key as
+    /// nested documents, so the two reads coincide. An absent segment, or a non-document intermediate, yields
+    /// <see langword="false"/> rather than throwing.
     /// </remarks>
     private static bool TryGetValueAtPath(BsonDocument document, string name, out BsonValue? value)
     {
@@ -229,11 +225,8 @@ internal static class BsonBinding
     /// <paramref name="path"/> segment by segment.
     /// </summary>
     /// <remarks>
-    /// This is deliberately a SEPARATE entry point from <see cref="CreateGetElementValue"/> rather than a
-    /// dotted-name overload of it: <see cref="GetElementValue{T}"/> looks its name up as a single LITERAL
-    /// document key (a dotted name there finds nothing), and several existing callers pass aliases that may
-    /// legitimately contain dots, so widening that method's semantics would change their reads. Callers that
-    /// genuinely mean "walk into a sub-document" say so explicitly here.
+    /// Separate from <see cref="CreateGetElementValue"/> because <see cref="GetElementValue{T}"/> treats its name
+    /// as a literal key, and existing callers may pass aliases containing dots.
     /// </remarks>
     internal static MethodCallExpression CreateGetElementValueAtPath(Expression bsonDocExpression, string[] path, Type type) =>
         Expression.Call(null, GetElementValueAtPathMethodInfo.MakeGenericMethod(type), bsonDocExpression,
@@ -241,16 +234,13 @@ internal static class BsonBinding
 
     /// <summary>
     /// Create the expression which reads a value nested under one or more parent documents, walking
-    /// <paramref name="path"/> segment by segment and reading the LAST segment through
-    /// <paramref name="property"/>'s own serializer / nullability, exactly as
-    /// <see cref="GetPropertyValueAtElement{T}"/> does for a top-level element.
+    /// <paramref name="path"/> and reading the last segment through <paramref name="property"/>'s serializer and
+    /// nullability.
     /// </summary>
     /// <remarks>
-    /// The path-walking sibling of the <c>(name, property, mappedType)</c> overload of
-    /// <see cref="CreateGetValueExpression(Expression, string?, IProperty, Type)"/>, and the property-aware
-    /// sibling of <see cref="CreateGetElementValueAtPath"/> (which uses a bare TYPE serializer and so cannot
-    /// honour a value converter or a non-default BSON representation). Used when a projection leaf's alias and
-    /// its root-relative document path differ and the shaper is reading WHOLE, un-projected documents.
+    /// Property-aware sibling of <see cref="CreateGetElementValueAtPath"/> (which can't honor value converters or
+    /// non-default representations). Used when a leaf's alias differs from its document path and the shaper
+    /// reads whole, un-projected documents.
     /// </remarks>
     internal static MethodCallExpression CreateGetPropertyValueAtPath(
         Expression bsonDocExpression, string[] path, IProperty property, Type mappedType)
@@ -273,18 +263,10 @@ internal static class BsonBinding
         {
             if (!current.TryGetValue(path[i], out var segmentValue) || segmentValue is not BsonDocument segmentDocument)
             {
-                // An absent INTERMEDIATE segment is the ordinary shape of an unmatched left-outer join row: the
-                // whole joined sub-document ("_lookup_<Nav>") is not there. That is a structurally different
-                // condition from "the document is here but this leaf is missing", so it is deliberately NOT
-                // dispatched on property.IsNullable (the rule the leaf read below uses) but on whether the
-                // REQUESTED CLR TYPE can hold absence — i.e. exactly the rule GetElementValue{T} applies.
-                //
-                // MEASURED, and this is why it matters (EF-444 Task 4): the native leg reads the same unmatched
-                // row's leaf through GetElementValue{T} and yields null for a `string Region` — dispatching on
-                // property.IsNullable here instead made the DriverLinq/late-fallback leg THROW for that same
-                // row while Native succeeded, a mode-dependent divergence. See NativeJoinTests
-                // .LeftJoin_unmatched_row_reads_a_dotted_scalar_leaf_through_the_whole_document_path, which pins
-                // the two legs against EACH OTHER rather than against a hard-coded disposition.
+                // An absent intermediate segment is an unmatched left-outer join row (no "_lookup_<Nav>"). Dispatch
+                // on whether T can hold absence, as GetElementValue{T} does, not on property.IsNullable — otherwise
+                // the DriverLinq/late-fallback leg throws where Native yields null. Pinned by NativeJoinTests
+                // .LeftJoin_unmatched_row_reads_a_dotted_scalar_leaf_through_the_whole_document_path.
                 if (typeof(T).IsNullableType())
                 {
                     return default;

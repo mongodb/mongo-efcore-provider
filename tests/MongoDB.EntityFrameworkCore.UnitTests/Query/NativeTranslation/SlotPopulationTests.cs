@@ -28,7 +28,7 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 
 /// <summary>
 /// Tests that <see cref="MongoQueryableMethodTranslatingExpressionVisitor"/> populates the native-query
-/// slots on <see cref="MongoQueryExpression"/> (EF-323 Task 6: QMTEV slot population).
+/// slots on <see cref="MongoQueryExpression"/>.
 /// </summary>
 public class SlotPopulationTests
 {
@@ -41,8 +41,7 @@ public class SlotPopulationTests
         public string Name { get; set; } = "";
     }
 
-    // Used only by Mixed_owned_reference_entity_and_arithmetic_leaves_do_not_populate_projection: an
-    // OWNED-reference entity leaf is the "entity leaf that still declines" control for EF-412's root-entity arm.
+    // An owned-reference entity leaf: the "entity leaf that still declines" control for the root-entity arm.
     private class CustomerWithOwnedAddress
     {
         public ObjectId Id { get; set; }
@@ -55,11 +54,9 @@ public class SlotPopulationTests
         public string City { get; set; } = "";
     }
 
-    // Used only by Non_embedded_owned_reference_entity_leaf_declines_to_fallback (final-review Finding 1): a
-    // non-embedded owned navigation — one with its own Mongo:CollectionName annotation, so it is its own
-    // document root stored in a SEPARATE collection rather than a nested sub-document of its owner — must NOT
-    // be admitted by the EF-441 owned-nav-entity-leaf gate. IsOwned() is true for BOTH this shape and the
-    // embedded CustomerWithOwnedAddress/OwnedAddress shape above; only IsEmbedded() tells them apart.
+    // A non-embedded owned navigation (own Mongo:CollectionName, stored in a separate collection) must not be
+    // admitted by the owned-nav-entity-leaf gate. IsOwned() is true for both this and OwnedAddress; only
+    // IsEmbedded() tells them apart.
     private class ProbeCustomer
     {
         public ObjectId Id { get; set; }
@@ -76,22 +73,17 @@ public class SlotPopulationTests
     // ── Test harness ─────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Drives a LINQ query expression through the real QMTEV pipeline and returns the resulting
-    /// <see cref="MongoQueryExpression"/> so tests can inspect its native slots.
-    ///
-    /// Strategy: obtain a real <see cref="IQueryable{T}"/> from the DbSet so the expression tree is
-    /// rooted in a proper <see cref="EntityQueryRootExpression"/>, apply operators to get a method-call
-    /// chain, then feed that chain through the QMTEV directly — bypassing the preprocessing step
-    /// (which is not needed for these simple flat-entity tests).
+    /// Drives a LINQ query through the real QMTEV and returns the resulting <see cref="MongoQueryExpression"/>.
+    /// The chain is rooted in an <see cref="EntityQueryRootExpression"/> and fed to the QMTEV directly, skipping
+    /// preprocessing (not needed for these flat-entity tests).
     /// </summary>
     /// <typeparam name="T">The entity type.</typeparam>
     /// <param name="buildQuery">
-    /// A function that applies LINQ operators to the DbSet's <see cref="IQueryable{T}"/> — e.g.
-    /// <c>q => q.Where(c => c.Age > 21)</c>. The result's <c>.Expression</c> is fed into the visitor.
+    /// Applies LINQ operators to the root <see cref="IQueryable{T}"/>, e.g. <c>q => q.Where(c => c.Age > 21)</c>.
     /// </param>
     /// <param name="modelBuilderAction">
-    /// Optional model customization, for the few tests whose shape needs more than a flat entity (e.g. an
-    /// owned navigation). Threaded straight through to <see cref="SingleEntityDbContext.Create{T}"/>.
+    /// Optional model customization (e.g. an owned navigation), passed to <see
+    /// cref="SingleEntityDbContext.Create{T}"/>.
     /// </param>
     private static MongoQueryExpression TranslateToMongoQuery<T>(
         Func<IQueryable<T>, IQueryable> buildQuery,
@@ -99,27 +91,20 @@ public class SlotPopulationTests
     {
         using var db = SingleEntityDbContext.Create<T>(modelBuilderAction);
 
-        // Obtain the factory and compilation context from EF's DI container.
         var visitorFactory = db.GetService<IQueryableMethodTranslatingExpressionVisitorFactory>();
         var ccFactory = db.GetService<IQueryCompilationContextFactory>();
         var compilationContext = ccFactory.Create(async: false);
 
-        // Create the QMTEV.
         var visitor = visitorFactory.Create(compilationContext);
 
-        // Build the expression tree: the DbSet<T> implements IQueryable<T>, so its .Expression
-        // is a ConstantExpression(DbSet<T>). We need an EntityQueryRootExpression at the bottom.
-        // Use the entity type from the compiled model to build the root directly.
+        // DbSet<T>.Expression is a ConstantExpression; build an EntityQueryRootExpression from the model instead.
         var entityType = db.Model.FindEntityType(typeof(T))!;
         var rootExpression = new EntityQueryRootExpression(entityType);
 
-        // Wrap it in a minimal stub IQueryable so we can apply LINQ operators.
-        // The stub's .Expression property returns the EntityQueryRootExpression.
-        // This mimics the preprocessed form the QMTEV normally receives.
+        // A stub IQueryable over the root lets LINQ operators build the preprocessed-shaped tree.
         var rootQueryable = new RootExpressionQueryable<T>(rootExpression);
         var query = buildQuery(rootQueryable);
 
-        // Visit the top-level expression tree.
         var result = visitor.Visit(query.Expression);
 
         Assert.NotNull(result);
@@ -128,14 +113,9 @@ public class SlotPopulationTests
     }
 
     /// <summary>
-    /// Like <see cref="TranslateToMongoQuery{T}"/>, but builds a <c>Union</c> of two independently-constructed
-    /// operand queries over the SAME entity type and root, then feeds the combined tree through the QMTEV. Used
-    /// by the EF-441 set-op-gate regression test — this harness bypasses EF's nav-expansion/preprocessing
-    /// phase entirely (like <see cref="TranslateToMongoQuery{T}"/> does), so it does NOT exercise the
-    /// nav-expansion-level operand-sharing quirk a full functional-test Union hits for a wrapped projected
-    /// operand (see the functional test file's own remarks); it exists to isolate and pin the ONE fact this
-    /// task owns — the emit-side gate (<c>HasArrayProjectionLeaf</c>/<c>IsPlainProjectedSelect</c>) — from that
-    /// separate, deeper concern.
+    /// Like <see cref="TranslateToMongoQuery{T}"/>, but for a <c>Union</c> of two operand queries over the same root.
+    /// Skips nav-expansion, so it isolates the set-op emit-side gate
+    /// (<c>HasArrayProjectionLeaf</c>/<c>IsPlainProjectedSelect</c>) from nav-expansion operand-sharing issues.
     /// </summary>
     private static MongoQueryExpression TranslateUnionToMongoQuery<T, TResult>(
         Func<IQueryable<T>, IQueryable<TResult>> buildLeft,
@@ -162,13 +142,8 @@ public class SlotPopulationTests
     }
 
     /// <summary>
-    /// A minimal <see cref="IQueryable{T}"/> and <see cref="IOrderedQueryable{T}"/> stub that wraps
-    /// a root expression node. When LINQ operators such as <c>Where</c>, <c>OrderBy</c>, <c>Take</c>,
-    /// <c>Select</c> are applied to this queryable via <see cref="Queryable"/>-extension methods, the
-    /// C# compiler constructs <see cref="MethodCallExpression"/> trees rooted in <see cref="Expression"/>.
-    /// Those trees can then be fed directly to the QMTEV.
-    /// Implements both <see cref="IOrderedQueryable{T}"/> and <see cref="IQueryable{T}"/> so that both
-    /// <c>OrderBy</c> (which requires <c>IOrderedQueryable</c> for <c>ThenBy</c>) and plain operators work.
+    /// Minimal <see cref="IOrderedQueryable{T}"/> over a root expression, so <see cref="Queryable"/> operators
+    /// (including <c>ThenBy</c>) build <see cref="MethodCallExpression"/> trees for the QMTEV.
     /// </summary>
     private sealed class RootExpressionQueryable<T> : IOrderedQueryable<T>
     {
@@ -186,7 +161,7 @@ public class SlotPopulationTests
         System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => throw new NotSupportedException("Test stub only.");
 
         /// <summary>
-        /// A provider that throws on any attempt to execute — this stub is only used to build expression trees.
+        /// Throws on execution; only used to build expression trees.
         /// </summary>
         private sealed class ThrowingProvider : IQueryProvider
         {
@@ -198,7 +173,7 @@ public class SlotPopulationTests
         }
     }
 
-    // ── Test 1: Where → Predicate slot populated ─────────────────────────────────
+    // ── Where → Predicate slot populated ─────────────────────────────────────────
 
     [Fact]
     public void Where_populates_the_predicate_slot()
@@ -210,7 +185,7 @@ public class SlotPopulationTests
         Assert.NotNull(mongoQ.CapturedExpression);
     }
 
-    // ── Test 2: OrderBy + ThenByDescending → Orderings slot populated ─────────────
+    // ── OrderBy + ThenByDescending → Orderings slot populated ──────────────────────
 
     [Fact]
     public void OrderBy_then_ThenBy_preserves_order()
@@ -224,9 +199,8 @@ public class SlotPopulationTests
         Assert.False(sort.Orderings[1].Ascending);
     }
 
-    // ── Test 3: Where after Take → non-canonical, now natively representable (EF-347 Task 2) ────
-    // The lowerer emits PipelineOps verbatim in arrival order, so a $match recorded AFTER a $limit
-    // is emitted AFTER it too — correct by MongoDB's sequential pipeline semantics. No more guard.
+    // ── Where after Take → non-canonical but native ──────────────────────────────
+    // PipelineOps are emitted in arrival order, so a $match after a $limit stays after it.
 
     [Fact]
     public void Where_after_Take_is_native_representable()
@@ -240,11 +214,9 @@ public class SlotPopulationTests
         Assert.NotNull(mongoQ.CapturedExpression);
     }
 
-    // ── EF-347 Task 2: non-canonical Skip/Take families now go native ────────────────────────────
-    // Correctness is by MongoDB's sequential pipeline semantics — PipelineOps are emitted verbatim
-    // in arrival order, so these are no longer forced to Fallback. See QueryModeGateTests for the
-    // end-to-end (NativeOnly) proof that these shapes actually execute natively and return correct
-    // rows; these unit tests assert only the recorded op ordering / Route.
+    // ── Non-canonical Skip/Take families are native ───────────────────────────────
+    // PipelineOps are emitted in arrival order. These assert op ordering / Route only; QueryModeGateTests has
+    // the end-to-end NativeOnly proof.
 
     [Fact]
     public void Take_before_Skip_is_native_representable()
@@ -280,17 +252,10 @@ public class SlotPopulationTests
         Assert.False(mongoQ.Select.Route == NativeRoute.Fallback);
     }
 
-    // ── Test 4: a Select the projection binder DECLINES → Route = Fallback ───────
+    // ── A Select the projection binder declines → Route = Fallback ───────────────
 
-    // FLIPPED by EF-322 step 3a. This test used to use a BARE scalar body (`c => c.Name`) as its example of a
-    // non-representable projection; that shape is now native (see Bare_scalar_projection_is_native above), so the
-    // example has to be one the binder still declines or the test would be asserting the opposite of the truth.
-    // A WIDENING cast (`(long)c.Age`) was this test's example through EF-410; that shape is now ALSO native (a
-    // widening Convert is admitted as a bare MongoFieldExpression — see NativeProjectionBinder's tier-2 gate),
-    // so the example moved again, to a NARROWING cast with no admissible MQL conversion operator ($toShort does
-    // not exist — see MongoConvertExpression.ToOperatorFor). That is the still-declining computed long tail,
-    // unrelated to the bare/wrapped boundary — so what this test pins is unchanged: a declined projection drives
-    // Route to Fallback.
+    // Uses a narrowing cast with no MQL conversion operator ($toShort doesn't exist; see
+    // MongoConvertExpression.ToOperatorFor), which the binder still declines.
     [Fact]
     public void A_declined_projecting_Select_is_not_native_representable()
     {
@@ -300,7 +265,7 @@ public class SlotPopulationTests
         Assert.Empty(mongoQ.Select.Projection);
     }
 
-    // ── Test 5: Native projection slot population (EF-331 Task 4) ────────────────
+    // ── Native projection slot population ─────────────────────────────────────────
 
     [Fact]
     public void Anonymous_member_projection_populates_projection_slot()
@@ -314,13 +279,9 @@ public class SlotPopulationTests
         Assert.IsType<MongoFieldExpression>(mongoQuery.Select.Projection[0].Expression);
     }
 
-    // ── EF-347 Task 3: arithmetic computed leaves are natively representable ─────
-    // Before this, ANY computed member projection (arithmetic included) fell back to driver-LINQ. Now a
-    // top-level arithmetic (+ - * / %) binary leaf populates Select.Projection as a MongoBinaryExpression,
-    // provided every operand is a numeric type with no integer-division divergence and no value-converted
-    // field (see MongoExpressionTranslator.TryTranslateValue). This supersedes the old
-    // Computed_member_projection_is_not_native test, which asserted `c.Age * 2` fell back — that assertion
-    // is now the opposite of correct behavior.
+    // ── Arithmetic computed leaves are native ─────────────────────────────────────
+    // A top-level arithmetic leaf populates Select.Projection as a MongoBinaryExpression when every operand is
+    // numeric with no integer-division divergence and no value-converted field (see TryTranslateValue).
 
     [Fact]
     public void Arithmetic_member_projection_is_native()
@@ -336,8 +297,7 @@ public class SlotPopulationTests
     [Fact]
     public void String_concat_leaf_populates_projection_as_MongoConcatExpression()
     {
-        // String concatenation now translates via a dedicated MongoConcatExpression ($concat) branch instead
-        // of declining — see MongoExpressionTranslator.TranslateStringConcat.
+        // String concatenation translates via MongoConcatExpression ($concat); see TranslateStringConcat.
         var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { X = c.Name + "!" }));
 
         Assert.Equal(NativeRoute.Projection, mongoQuery.Select.Route);
@@ -350,10 +310,8 @@ public class SlotPopulationTests
     [Fact]
     public void Integer_division_leaf_populates_projection_as_IntegerDivide()
     {
-        // Was Integer_division_leaf_does_not_populate_projection. EF-434 replaced TryTranslateValue's blanket
-        // integer-division decline with a truncating translation, so this leaf is native now; the operator, not
-        // just the route, is asserted, because a plain Divide here would silently reintroduce the double result
-        // that failed to deserialize into an int member.
+        // Integer division is translated with truncation. Assert the operator, not just the route: a plain
+        // Divide would produce a double that fails to deserialize into the int member.
         var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { X = c.Age / c.Age }));
 
         Assert.Equal(NativeRoute.Projection, mongoQuery.Select.Route);
@@ -387,14 +345,8 @@ public class SlotPopulationTests
         Assert.IsType<MongoBinaryExpression>(mongoQuery.Select.Projection[1].Expression);
     }
 
-    // INVERTED by EF-412, which is the whole point of that slice. This test previously asserted
-    // Route == Fallback / Projection empty for `new { c, Total = ... }`, on the premise that a whole-entity
-    // leaf is never natively representable. That premise is now false for the specific case of the WHOLE ROOT
-    // ENTITY: NativeProjectionBinder.TryTranslateLeaf admits the selector's own parameter as a
-    // MongoElementRefExpression("$ROOT") when it appears inside a WRAPPED (new{}/member-init) body, so the
-    // projection populates and emits {"c": "$$ROOT", "Total": {...}}. The removed assertion's INTENT — that
-    // SOME entity leaves still decline — is not lost: it moved to the sibling test below, which pins an
-    // entity leaf that is genuinely still out of scope.
+    // The whole root entity inside a wrapped body is admitted as MongoElementRefExpression("$ROOT"), emitting
+    // {"c": "$$ROOT", "Total": {...}}. The sibling test below pins an entity leaf that still declines.
     [Fact]
     public void Mixed_whole_root_entity_and_arithmetic_leaves_populate_projection()
     {
@@ -408,23 +360,14 @@ public class SlotPopulationTests
         Assert.IsType<MongoBinaryExpression>(mongoQuery.Select.Projection[1].Expression);
     }
 
-    // The SIBLING that carries the inverted test's original intent. As of EF-441, an OWNED single-reference
-    // navigation entity leaf (`c.Address`, an embedded sub-document) DOES have its own native arm
-    // (TryGetOwnedReferenceNavigationLeaf) and is, on its own, admitted — so this is no longer a case of
-    // TryTranslateLeaf outright rejecting the leaf (that was true before EF-441, when no such arm existed).
-    // What still declines the WHOLE projection is the sibling-readability sweep
-    // (NativeProjectionBinder.IsWholeDocumentReadableLeaf, run over every OTHER leaf once an owned-array or
-    // owned-nav-entity leaf is admitted): a computed leaf like `Total = c.Age * c.Age` has no document path of
-    // its own, so it fails that sweep and the whole projection declines before anything is mutated — Route
-    // stays Fallback and Projection stays empty, same observable result as before EF-441, for a different and
-    // now more precise reason.
+    // An owned single-reference nav entity leaf (`c.Address`) is admitted on its own
+    // (TryGetOwnedReferenceNavigationLeaf), but it triggers the sibling-readability sweep
+    // (IsWholeDocumentReadableLeaf), and a computed sibling like `Total = c.Age * c.Age` has no document path,
+    // so the whole projection declines before anything is mutated.
     //
-    // This matters beyond bookkeeping: Route == Fallback here is the precondition that keeps the
-    // Route == NativeRoute.Projection-gated arms in MongoProjectionBindingExpressionVisitor from firing for a
-    // shape the native shaper cannot read, so the arithmetic sibling is never registered as a native leaf the
-    // mixed shaper would then misread. If a future slice widens the sibling-readability sweep (or gives a
-    // computed leaf its own document-path story) to admit this shape, this test must fail rather than the
-    // widening landing silently.
+    // Route == Fallback here keeps the Route == Projection arms in MongoProjectionBindingExpressionVisitor from
+    // registering a leaf the mixed shaper would misread. If the sweep is widened to admit this, this test must
+    // fail rather than the widening landing silently.
     [Fact]
     public void Mixed_owned_reference_entity_and_arithmetic_leaves_do_not_populate_projection()
     {
@@ -436,9 +379,8 @@ public class SlotPopulationTests
         Assert.Empty(mongoQuery.Select.Projection);
     }
 
-    // The POSITIVE case (EF-441): an owned single-reference navigation entity leaf mixed with a plain FIELD
-    // sibling (as opposed to the computed sibling above) is fully native — the field sibling is
-    // whole-document-readable, so the sibling-readability sweep admits it instead of declining the projection.
+    // Positive case: an owned-nav entity leaf with a plain field sibling is native — the field is
+    // whole-document-readable, so the sweep admits it.
     [Fact]
     public void Mixed_owned_reference_entity_and_field_leaves_populate_projection_natively()
     {
@@ -452,16 +394,14 @@ public class SlotPopulationTests
         Assert.Equal(
             "Address", Assert.IsType<MongoElementRefExpression>(mongoQuery.Select.Projection[0].Expression).Path);
         Assert.Equal("Age", mongoQuery.Select.Projection[1].Alias);
-        // The owner-key retention (EF-441, mirroring the owned-array leaf): a $project that carried only the
-        // requested aliases would have no _id, and the owned Address element's shadow-key read resolves the
+        // Owner key retained (as for the owned-array leaf): the owned Address's shadow-key read resolves the
         // owner's _id off the document root.
         Assert.Equal("_id", mongoQuery.Select.Projection[2].Alias);
         Assert.True(mongoQuery.Select.HasArrayProjectionLeaf);
     }
 
-    // The RENAMED-alias negative control: `new { Addr = c.Address, c.Age }` must decline outright, because the
-    // late-fallback leg's correctness depends on the emitted alias naming a real element the driver-LINQ bridge
-    // also renders under that same name (see TryTranslateLeaf's alias-must-equal-document-path conjunct).
+    // Renamed-alias control: `new { Addr = c.Address, c.Age }` must decline, because the late-fallback leg needs
+    // the alias to name a real element the driver-LINQ bridge renders under the same name (see TryTranslateLeaf).
     [Fact]
     public void Renamed_owned_reference_entity_leaf_declines()
     {
@@ -473,14 +413,9 @@ public class SlotPopulationTests
         Assert.Empty(mongoQuery.Select.Projection);
     }
 
-    // Final-review Finding 1: before the fix, TryGetOwnedReferenceNavigationLeaf gated on
-    // `!nav.TargetEntityType.IsOwned()`, which is FALSE for both an embedded owned type (a nested sub-document
-    // of the same document — what this feature handles) and a non-embedded owned type (its own document root,
-    // in its own collection, per a Mongo:CollectionName annotation) — so the gate wrongly admitted the
-    // non-embedded shape too, and would have emitted `"Address": "$Address"` in the $project for data that
-    // isn't in the document at all. The fix keys on `!nav.IsEmbedded()` instead, matching every other owned-nav
-    // gate in this codebase (MongoExpressionTranslator.Members.cs, MongoSelectLowerer.cs). This must decline to
-    // Fallback; before the fix it incorrectly showed Route == Projection.
+    // A non-embedded owned type lives in its own collection, so admitting it would emit `"Address": "$Address"`
+    // for data not in the document. The gate keys on !nav.IsEmbedded() (not IsOwned()), like other owned-nav
+    // gates (MongoExpressionTranslator.Members.cs, MongoSelectLowerer.cs). Must decline to Fallback.
     [Fact]
     public void Non_embedded_owned_reference_entity_leaf_declines_to_fallback()
     {
@@ -502,15 +437,10 @@ public class SlotPopulationTests
         Assert.Empty(mongoQuery.Select.Projection);
     }
 
-    // Final-review Finding 3: the re-entrancy guard at the top of NativeProjectionBinder.TryPopulateNativeProjection
-    // (a wrapped body reached with Projection already populated declines rather than re-running every leaf arm)
-    // has zero coverage in the existing suite — every shape that reaches it in practice also hits a separate,
-    // pre-existing InvalidCastException bug first (see Query/AGENTS.md's EF-441 paragraph), so the guard's own
-    // return value never gets a chance to matter end-to-end. This test reaches the guard DIRECTLY (bypassing
-    // both nav-expansion and that unrelated bug) by calling NativeProjectionBinder.TryPopulateNativeProjection a
-    // second time on a MongoQueryExpression whose Projection is already populated — exactly the precondition the
-    // guard's own `Projection.Count > 0` check tests. A mutation removing the guard would re-run every leaf arm
-    // and duplicate the Projection list (or throw from AddProjectionAliasOverride's write-once Dictionary.Add).
+    // Re-entrancy guard in NativeProjectionBinder.TryPopulateNativeProjection: a second call with Projection
+    // already populated must decline. Called directly because end-to-end shapes hit an unrelated
+    // InvalidCastException first. Without the guard every leaf arm re-runs, duplicating Projection (or throwing
+    // from AddProjectionAliasOverride's Dictionary.Add).
     [Fact]
     public void Reentrant_wrapped_projection_call_declines_without_duplicating_projection()
     {
@@ -531,11 +461,8 @@ public class SlotPopulationTests
     }
 
     [Fact]
-    // FLIPPED by EF-322 step 3a (the bare-projection boundary), which is the whole point of that slice: a bare
-    // selector body now populates the native Projection with the leaf's own document path as the alias, so this
-    // asserts the opposite of what it used to. The alias, its tier, and the every-leaf-kind decline set are
-    // covered by NativeProjectionBinderBareBodyTests; what belongs HERE is only that slot population reaches
-    // Route == Projection for the shape this file is about.
+    // A bare selector body populates Projection with the leaf's document path as alias. Alias/tier details and
+    // the decline set are in NativeProjectionBinderBareBodyTests; this pins only Route == Projection.
     public void Bare_scalar_projection_is_native()
     {
         var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => c.Name));
@@ -547,9 +474,8 @@ public class SlotPopulationTests
     }
 
     [Fact]
-    // A WIDENING cast member (`(long)c.Age`) was this test's example through EF-410; that shape is now native
-    // (see NativeCastTests.Widening_cast_projection_leaf_now_goes_native), so this uses a NARROWING cast to a
-    // target with no admissible MQL conversion operator ($toShort does not exist) instead, which still declines.
+    // A narrowing cast with no MQL conversion operator ($toShort doesn't exist) still declines; widening casts
+    // are native (NativeCastTests).
     public void Cast_member_projection_is_not_native()
     {
         var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { Position = (short)c.Age }));
@@ -567,10 +493,9 @@ public class SlotPopulationTests
         Assert.Empty(mongoQuery.Select.Projection);
     }
 
-    // ── GroupBy wiring (EF-344 Task 5) ────────────────────────────────────────────
-    // These prove the QMTEV no longer HARD-THROWS on GroupBy(k).Select(agg) (it previously produced
-    // NotTranslatedExpression and failed translation): a supported group routes native (Route = GroupBy);
-    // any unsupported shape marks the query non-native (Route = Fallback) so it falls back to driver-LINQ.
+    // ── GroupBy wiring ────────────────────────────────────────────────────────────
+    // GroupBy(k).Select(agg) must never hard-throw: a supported group routes native (Route = GroupBy); an
+    // unsupported shape marks the query non-native (Route = Fallback).
 
     [Fact]
     public void GroupBy_key_with_aggregate_Select_routes_native_GroupBy()
@@ -596,10 +521,7 @@ public class SlotPopulationTests
     [Fact]
     public void GroupBy_key_with_computed_expression_routes_native_GroupBy()
     {
-        // EF-322 SP1: a computed key (c.Age + 1) is now natively representable via
-        // NativeGroupByBinder.TryBindGroupKey's TryTranslateValue fallthrough — this used to fall back to
-        // driver-LINQ (pinned here as "falls back without throwing"); it now goes native instead, still
-        // without a hard-throw.
+        // A computed key (c.Age + 1) binds via NativeGroupByBinder.TryBindGroupKey's TryTranslateValue path.
         var mongoQuery = TranslateToMongoQuery<Customer>(
             q => q.GroupBy(c => c.Age + 1).Select(g => new { g.Key, Count = g.Count() }));
 
@@ -621,15 +543,9 @@ public class SlotPopulationTests
     [Fact]
     public void Skip_on_bare_GroupBy_result_defers_to_PendingGroupPaging_without_marking_non_native()
     {
-        // EF-322 SP6: Skip/Take composed directly on the still-ungrouped GroupBy(key) result must be
-        // deferred (PendingGroupPaging), not declined by the general post-terminal guard — mirrors this
-        // file's own OrderBy/ThenBy carve-out proof for the identical composition position. Route is still
-        // Fallback here (same as GroupBy_without_terminal_Select_falls_back_without_throwing, immediately
-        // above) because no terminal Select ever finalizes Grouping in THIS query either — the point of this
-        // test is that HasUnsupportedOperator stays false and the Skip was actually recognized and deferred,
-        // not silently declined via the catch-all MarkNotNativelyRepresentable (which would ALSO leave Route
-        // at Fallback, so Route alone cannot distinguish the two — HasUnsupportedOperator and
-        // PendingGroupPaging are the actual discriminators here).
+        // Skip/Take on the ungrouped GroupBy(key) result must be deferred (PendingGroupPaging), not declined by
+        // the post-terminal guard. Route is Fallback either way (no terminal Select finalizes Grouping), so
+        // HasUnsupportedOperator and PendingGroupPaging are the discriminators.
         var mongoQuery = TranslateToMongoQuery<Customer>(q => q.GroupBy(c => c.Age).Skip(0));
 
         Assert.False(mongoQuery.Select.HasUnsupportedOperator);
@@ -640,11 +556,8 @@ public class SlotPopulationTests
     [Fact]
     public void Where_HAVING_after_Skip_on_bare_GroupBy_result_declines_instead_of_misordering()
     {
-        // EF-322 fix round: a HAVING Where arriving AFTER a Skip already recorded into PendingGroupPaging
-        // (GroupBy(key).Skip(1).Where(g => g.Count() >= 2)) must decline outright — MongoSelectLowerer always
-        // emits GroupHavingPredicate BEFORE GroupPagingOps regardless of LINQ arrival order, so silently
-        // stashing this HAVING comparison on top of the already-recorded paging would apply it before the
-        // paging that, in the real LINQ chain, ran first — a wrong evaluation order, not a clean decline.
+        // A HAVING Where after a Skip already in PendingGroupPaging must decline: the lowerer always emits
+        // GroupHavingPredicate before GroupPagingOps, which would reverse the LINQ evaluation order.
         var mongoQuery = TranslateToMongoQuery<Customer>(
             q => q.GroupBy(c => c.Age).Skip(1).Where(g => g.Count() >= 2));
 
@@ -655,10 +568,8 @@ public class SlotPopulationTests
     [Fact]
     public void OrderBy_after_Skip_on_bare_GroupBy_result_declines_instead_of_misordering()
     {
-        // EF-322 fix round: an OrderBy arriving AFTER a Skip already recorded into PendingGroupPaging
-        // (GroupBy(key).Skip(1).OrderByDescending(k => k)) must decline outright — mirrors the Where/HAVING
-        // guard immediately above for the identical reason (GroupOrderOp is always emitted BEFORE
-        // GroupPagingOps by the lowerer, regardless of LINQ arrival order).
+        // An OrderBy after a recorded Skip must decline for the same reason: GroupOrderOp is always emitted
+        // before GroupPagingOps.
         var mongoQuery = TranslateToMongoQuery<Customer>(
             q => q.GroupBy(c => c.Age).Skip(1).OrderByDescending(g => g.Key));
 
@@ -666,16 +577,10 @@ public class SlotPopulationTests
         Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
     }
 
-    // The set-op-gate regression (EF-441 Task 1's "also decide and implement" item): a nav-entity-leaf
-    // projection's emitted _id would leak into a set operation's whole-document comparison/dedup key exactly
-    // like the owned-ARRAY leaf's does, so NativeProjectionBinder sets the SAME HasArrayProjectionLeaf flag
-    // for this leaf kind (rather than inventing a parallel one) — MongoQueryableMethodTranslatingExpressionVisitor
-    // .IsPlainProjectedSelect already gates set-op operand admission on that flag, so no change was needed
-    // there. This pins that the flag really does end up true on the operand's select once combined into a
-    // Union — i.e. the gate has real data to decline on, not that the whole query throws (a full round-trip
-    // Union of two wrapped nav-entity-leaf projections hits a SEPARATE, deeper concern in the nav-expansion/
-    // shaper-binding layer once real preprocessing is involved — see the functional test file's own coverage
-    // and remarks; this unit-level test isolates the ONE fact this task owns).
+    // A nav-entity-leaf projection's emitted _id would leak into a set operation's dedup key like the owned-array
+    // leaf's does, so NativeProjectionBinder sets the same HasArrayProjectionLeaf flag, which IsPlainProjectedSelect
+    // gates on. This pins that the flag is set on the combined operand (a full round-trip Union of such operands
+    // hits a separate nav-expansion issue; see the functional tests).
     [Fact]
     public void Owned_reference_entity_leaf_projection_sets_HasArrayProjectionLeaf_for_the_set_op_gate()
     {
@@ -685,20 +590,18 @@ public class SlotPopulationTests
             mb => mb.Entity<CustomerWithOwnedAddress>().OwnsOne(c => c.Address));
 
         Assert.True(mongoQuery.Select.HasArrayProjectionLeaf);
-        // The SAME flag is what IsPlainProjectedSelect gates on, so the Union must NOT have gone native as a
-        // projected-operand set op (SetOperation stays unset) — it must instead have marked non-natively
-        // representable, the graceful-fallback disposition Union/Concat get (see TryTranslateSetOperation).
+        // IsPlainProjectedSelect gates on that flag, so SetOperation stays unset and the query is marked
+        // non-native (Union/Concat's graceful fallback; see TryTranslateSetOperation).
         Assert.Null(mongoQuery.Select.SetOperation);
     }
 
     // ══════════════════════════════════════════════════════════════════════════════════════════════
-    //  EF-447: a CONSTRUCTED (non-navigation) sub-entity leaf — `new { Copy = new CustomerDto { Id =
-    //  c.Id, ... } }` — mixed with a computed sibling in a projection.
+    //  A constructed (non-navigation) sub-entity leaf — `new { Copy = new CustomerDto { Id = c.Id, ... } }` —
+    //  mixed with a computed sibling in a projection.
     // ══════════════════════════════════════════════════════════════════════════════════════════════
 
-    // A plain, unmapped DTO type reconstructed from root-level scalar fields — NOT a navigation, and not
-    // itself part of the model. Distinguishes this leaf from EF-441's owned-nav-entity leaf, which aliases an
-    // ALREADY-STORED owned sub-document.
+    // An unmapped DTO rebuilt from root-level scalar fields — unlike the owned-nav-entity leaf, which aliases an
+    // already-stored owned sub-document.
     private class CustomerDto
     {
         public ObjectId Id { get; set; }
@@ -721,17 +624,13 @@ public class SlotPopulationTests
         Assert.Equal("_id", Assert.IsType<MongoFieldExpression>(construction.Members[0].Value).ElementName);
         Assert.Equal("Name", construction.Members[1].MemberName);
         Assert.Equal("Age", construction.Members[2].MemberName);
-        // This leaf carries NO owner-key hazard (every member is a plain root-relative field, readable at its
-        // own natural path on a whole/un-projected document too — see the mixed-visitor read side), so unlike
-        // the owned-array/owned-nav-entity leaves it must NOT set HasArrayProjectionLeaf.
+        // No owner-key hazard (every member is a root-relative field readable on an unprojected document), so
+        // unlike the owned-array/owned-nav-entity leaves it must not set HasArrayProjectionLeaf.
         Assert.False(mongoQuery.Select.HasArrayProjectionLeaf);
     }
 
-    // The POSITIVE case this ticket is actually about: a constructed sub-entity leaf mixed with a COMPUTED
-    // sibling goes native, unlike EF-441's owned-nav-entity leaf (which forces the sibling-readability sweep
-    // and therefore declines a computed sibling). No sweep applies here because this leaf's own members are
-    // independently readable off a whole document by their own natural paths, so a computed sibling's lack of
-    // a document path is not a hazard for THIS leaf the way it is for the array/owned-nav-entity leaves.
+    // A constructed sub-entity leaf with a computed sibling goes native: its members are readable off a whole
+    // document by their natural paths, so no sibling-readability sweep is needed (unlike owned-nav-entity leaves).
     [Fact]
     public void Document_construction_leaf_mixed_with_computed_sibling_populates_projection_natively()
     {
@@ -750,9 +649,8 @@ public class SlotPopulationTests
         Assert.IsType<MongoBinaryExpression>(mongoQuery.Select.Projection[1].Expression);
     }
 
-    // A member value that is not a plain top-level scalar field (here, `c.Name.Length` — a MemberExpression
-    // whose OWN receiver is `c.Name`, not the selector parameter `c` itself) declines the WHOLE leaf, not just
-    // that member — this is a strict, minimal widening, not a general nested-projection engine.
+    // A member that isn't a plain top-level field (`c.Name.Length`) declines the whole leaf — this is a minimal
+    // widening, not a general nested-projection engine.
     [Fact]
     public void Document_construction_leaf_with_computed_member_declines_to_fallback()
     {
