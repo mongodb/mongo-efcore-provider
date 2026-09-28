@@ -747,6 +747,22 @@ internal sealed partial class MongoExpressionTranslator
                     return new MongoInExpression(fieldExpr2, valuesNode, negated: false);
                 }
 
+                // A constructed Tuple/ValueTuple needle over entity fields (`ids.Contains(new Tuple<int, int>(o.OrderID,
+                // o.ProductID))`) renders as an MQL array, like the tuple-equality operand. Only a query-PARAMETER haystack
+                // is admitted: its elements serialize through the driver's tuple serializer (one BSON array per tuple, see
+                // MongoAggregationExpressionRenderer.RenderInValues); a constant haystack would go through BsonValue.Create,
+                // which cannot serialize a tuple.
+                if (IsTupleType(itemExpr.Type)
+                    && TryDecomposeTupleOperand(Unwrap(itemExpr), out var tupleElements)
+                    && new MongoTupleExpression(tupleElements) is var tupleNeedle
+                    && AllFieldsDefaultSerialized(tupleNeedle)
+                    && MongoAggregationExpressionRenderer.CanRender(tupleNeedle))
+                {
+                    return TranslateInValuesRaw(collectionExpr, itemExpr.Type) is MongoParameterExpression tupleValues
+                        ? new MongoComputedInExpression(tupleNeedle, tupleValues, negated: false)
+                        : null;
+                }
+
                 // A computed needle (`data.Contains(c.CustomerID + "x")`, `dates.Contains(o.OrderDate!.Value.Date)`,
                 // or an anonymous-type tuple of entity fields) has no query-dialect form, so it uses $expr's array
                 // $in via MongoComputedInExpression. Limited to types TranslateInValuesRaw can serialize without a

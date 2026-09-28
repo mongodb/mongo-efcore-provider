@@ -716,8 +716,16 @@ internal sealed class MongoPipelineFactory
         }
 
         // Entity equality (`c == local`): the value is an entity; extract its key before normal serialization.
-        if (entityMemberProperty is not null && rawValue is not null)
+        // A NULL entity (`local == null` at run time, or a terminal `Contains(null)`) has no key: compare against BSON
+        // null. No persisted primary key matches it ("an entity never equals null"), while a navigation comparison
+        // (`o.Customer == local`) correctly matches the null-FK rows. Handing null to the key serializer would throw.
+        if (entityMemberProperty is not null)
+        {
+            if (rawValue is null)
+                return BsonNull.Value;
+
             rawValue = entityMemberProperty.GetGetter().GetClrValue(rawValue);
+        }
 
         // `args[0]` into a compiled query's array parameter (NativeQueryParameter.TryGetParameterArrayElementIndex)
         // or an element of a funcletized Tuple (MongoExpressionTranslator.TryDecomposeTupleOperand): the value is

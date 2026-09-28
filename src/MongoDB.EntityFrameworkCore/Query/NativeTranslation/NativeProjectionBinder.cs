@@ -38,6 +38,18 @@ internal static class NativeProjectionBinder
 {
     internal static bool TryPopulateNativeProjection(MongoQueryExpression mongoQ, LambdaExpression selector)
     {
+        // A reference upcast around a constructed DTO (`x => (BaseDto)new DerivedDto { ... }`, produced when a
+        // covariant IQueryable<Derived> is consumed as IQueryable<Base>) changes nothing server-side: bind the
+        // construction itself; the Convert stays on the shaper, which TranslateSelect builds from the original
+        // selector. Method == null excludes a user-defined operator (C# forbids one to a base type anyway).
+        if (selector.Body is UnaryExpression { NodeType: ExpressionType.Convert, Method: null, Operand: NewExpression or MemberInitExpression } upcast
+            && !upcast.Type.IsValueType
+            && !upcast.Operand.Type.IsValueType
+            && upcast.Type.IsAssignableFrom(upcast.Operand.Type))
+        {
+            selector = Expression.Lambda(upcast.Operand, selector.Parameters);
+        }
+
         // A wrapped body re-entered with Projection already populated (EF nav-expansion re-visiting a wrapped
         // nav-entity-leaf projection under Distinct/Union/Concat). Re-running would duplicate Projection entries and
         // throw from AddProjectionAliasOverride's write-once Dictionary.Add. Declines rather than claiming success,

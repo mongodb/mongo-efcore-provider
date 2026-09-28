@@ -2337,6 +2337,21 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         return new Seed([owner], orders, lines);
     }
 
+    [Fact]
+    public void First_over_required_reference_nav_projection_with_dangling_first_row_is_correct_in_every_mode()
+    {
+        // Order.OwnerId is non-nullable, so EF inner-joins: the dangling first order is DROPPED by the join and
+        // First() must answer with the matched order's owner. A $limit emitted before this (non-row-count-preserving)
+        // $lookup would keep only the dangling order and return nothing — the reducer must decline (or be correct).
+        var seed = SeedDanglingOrderFirstThenMatched();
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = CreateContext(seed, mode,
+                nameof(First_over_required_reference_nav_projection_with_dangling_first_row_is_correct_in_every_mode) + mode);
+            Assert.Equal("Alice", db.Orders.OrderBy(o => o.Region).Select(o => o.Owner!.Name).First());
+        }
+    }
+
     public class Owner
     {
         public ObjectId Id { get; set; }

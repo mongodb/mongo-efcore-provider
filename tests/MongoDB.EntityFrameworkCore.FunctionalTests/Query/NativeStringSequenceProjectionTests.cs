@@ -308,4 +308,46 @@ public class NativeStringSequenceProjectionTests(TemporaryDatabaseFixture databa
                 b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
+
+    [Fact]
+    public void FirstOrDefault_over_string_projection_goes_native_in_every_mode()
+    {
+        var collection = Seed(nameof(FirstOrDefault_over_string_projection_goes_native_in_every_mode));
+        collection.InsertOne(new Row { Id = ObjectId.GenerateNewId(), Label = "c", City = "" });
+
+        foreach (var mode in AllModes)
+        {
+            using var db = CreateContext(collection, mode);
+            var bare = db.Entities.AsNoTracking().OrderBy(x => x.Label).Select(x => x.City.FirstOrDefault()).ToList();
+            Assert.Equal(['L', 'B', '\0'], bare);
+
+            var wrapped = db.Entities.AsNoTracking().OrderBy(x => x.Label)
+                .Select(x => new { x.Label, Initial = x.City.FirstOrDefault() }).ToList();
+            Assert.Equal([('a', 'L'), ('b', 'B'), ('c', '\0')], wrapped.Select(r => (r.Label[0], r.Initial)));
+        }
+    }
+
+    // Distinct after the scalar FirstOrDefault leaf must dedupe the CHARS, not the underlying strings: the native
+    // path declines rather than $group-ing the raw strings (which returned 'L' twice for "London"/"Lisbon").
+    [Fact]
+    public void Distinct_over_FirstOrDefault_projection_dedupes_the_characters()
+    {
+        var collection = Seed(nameof(Distinct_over_FirstOrDefault_projection_dedupes_the_characters));
+        collection.InsertOne(new Row { Id = ObjectId.GenerateNewId(), Label = "c", City = "Lisbon" });
+
+        foreach (var mode in AllModes)
+        {
+            using var db = CreateContext(collection, mode);
+            char[]? result = null;
+            var ex = Record.Exception(() => result = db.Entities.Select(x => x.City.FirstOrDefault()).Distinct().ToArray());
+            if (ex is null)
+                Assert.Equal(['B', 'L'], result!.Order());
+            else if (mode == MongoQueryMode.NativeOnly)
+                Assert.IsType<MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException>(ex);
+            else
+                // The driver-LINQ fallback cannot translate this shape at all ("StringSerializer must implement
+                // IBsonArraySerializer") — a loud failure, never duplicated rows, which is all this test guards.
+                Assert.IsType<InvalidOperationException>(ex);
+        }
+    }
 }

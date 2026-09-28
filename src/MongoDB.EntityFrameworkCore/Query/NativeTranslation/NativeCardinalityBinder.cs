@@ -14,7 +14,10 @@
  */
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
+using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
@@ -48,8 +51,10 @@ internal static class NativeCardinalityBinder
         // A reducer after a confirmed two-sided join must fall back: its $limit lands in PipelineOps, emitted
         // before the join's $lookup/$unwind, so First() would limit to the first outer row and then drop it if it
         // has no match. Scalar aggregates are safe (their stage follows the lookups). See
-        // MongoSelectDefinition.HasConfirmedJoinLookup.
-        if (select.HasConfirmedJoinLookup)
+        // MongoSelectDefinition.HasConfirmedJoinLookup. Exempt: every join is row-count-preserving (a left-outer
+        // reference-navigation $lookup, e.g. `Select(o => o.Customer.City).First()`), whose $unwind neither drops nor
+        // multiplies rows, so a $limit before it equals one after it (the same argument the paging path relies on).
+        if (select.HasConfirmedJoinLookup && !mongoQ.AreAllJoinsRowCountPreserving())
             return false;
 
         // No HasLimit guard: AppendLimit appends to the tail, and consecutive $limits narrow monotonically, so
@@ -84,6 +89,111 @@ internal static class NativeCardinalityBinder
     }
 
     /// <summary>
+    /// The single server-computed value a preceding bare scalar <c>Select</c> projected — <c>Select(o =&gt; o.OrderID)</c>,
+    /// <c>Select(o =&gt; o.OrderID * 2)</c>, <c>Select(o =&gt; (long)o.OrderID)</c> — when <paramref name="sourceShaper"/>
+    /// reads exactly that value back with no client-side computation layered on top; otherwise
+    /// <see langword="null"/>. A selector-less terminal (<c>Sum()</c>/<c>Min()</c>/<c>Max()</c>/<c>Average()</c>,
+    /// <c>Contains(item)</c>) reduces this value.
+    /// </summary>
+    /// <remarks>
+    /// The shaper check is what rejects a client-evaluated projection: a client method call or other client
+    /// computation leaves a non-<see cref="ProjectionBindingExpression"/> node in the shaper. The string-sequence
+    /// leaf is the one client-applied leaf that ERASES its call from the shaper (it is registered as one projection
+    /// member — see <see cref="MongoSelectDefinition.HasStringSequenceProjectionLeaf"/>), so it is excluded by flag.
+    /// The alias is deliberately NOT checked: a bare member leaf keeps its document-path alias, only a computed one
+    /// takes <see cref="NativeProjectionBinder.SyntheticBareProjectionAlias"/>. A one-member anonymous/DTO
+    /// projection has a single projection too, but its shaper is a construction, not a bare binding.
+    /// </remarks>
+    internal static MongoProjection? TryGetBareServerValueProjection(MongoQueryExpression mongoQ, Expression sourceShaper)
+    {
+        var select = mongoQ.Select;
+        if (select.Grouping != null
+            || select.HasTerminalOperator
+            || select.HasStringSequenceProjectionLeaf
+            || select.Projection is not [var projection])
+        {
+            return null;
+        }
+
+        while (sourceShaper is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
+            sourceShaper = convert.Operand;
+
+        return sourceShaper is ProjectionBindingExpression ? projection : null;
+    }
+
+    /// <summary>
+    /// Binds a terminal <c>source.Contains(item)</c> as the equivalent <c>source.Any(x =&gt; x == item)</c>:
+    /// over a bare scalar-field <c>Select</c> (<c>Select(c =&gt; c.CustomerID).Contains("ALFKI")</c>) as an equality
+    /// <c>$match</c> on that field, or over a whole-entity source (<c>Where(...).Contains(order)</c>,
+    /// <c>.Contains(null)</c>) via the ordinary entity-equality translation. Returns <see langword="false"/> for any
+    /// other shape (a computed or joined projection, a client-wrapped shaper), so the caller marks the query non-native.
+    /// </summary>
+    internal static bool TryBindContains(MongoQueryExpression mongoQ, Expression sourceShaper, Expression item)
+    {
+        var select = mongoQ.Select;
+
+        if (TryGetBareServerValueProjection(mongoQ, sourceShaper) is { } bareSource)
+        {
+            // Joins.Count == 0: a joined field (`_lookup_X.City`) would be matched in PipelineOps, BEFORE its $lookup.
+            // An ARRAY-typed field is excluded too: a query-dialect {field: value} match also matches element-wise
+            // (`Select(r => r.Tags).Contains(null)` would match a Tags array CONTAINING a null), whereas LINQ compares
+            // the item with each whole array.
+            if (mongoQ.Joins.Count != 0
+                || bareSource.Expression is not MongoFieldExpression field
+                || IsArrayTyped(field.Property.ClrType)
+                || !TryTranslateContainsItem(item, field.Property, out var itemNode))
+            {
+                return false;
+            }
+
+            if (!TryBindAggregate(mongoQ, MongoAggregateOperator.Any, selector: null, predicate: null, typeof(bool)))
+                return false;
+
+            // Committed only after TryBindAggregate succeeded (no mutate-then-decline). AddPredicateConjunct appends
+            // at the TAIL of the op list, so a Take/Skip recorded earlier still runs first.
+            select.AddPredicateConjunct(new MongoBinaryExpression(MongoBinaryOperator.Equal, field, itemNode));
+            return true;
+        }
+
+        // Joins.Count == 0 / !HasConfirmedJoinLookup: a whole-entity source reached THROUGH a navigation or join
+        // (`Select(e => e.Manager).Contains(emp)`, a bare `ti => ti.Inner` leaf) keeps Route == WholeEntity and the
+        // root CLR type (a self-referencing navigation), but its elements are the JOINED entities — translating
+        // `e == item` against the root would answer "is item any root row?" instead.
+        var elementType = sourceShaper.Type;
+        if (select.Route != NativeRoute.WholeEntity
+            || mongoQ.Joins.Count != 0
+            || select.HasConfirmedJoinLookup
+            || select.HasClientWrappedWholeEntityShaper
+            || !mongoQ.CollectionExpression.EntityType.ClrType.IsAssignableFrom(elementType)
+            || !elementType.IsAssignableFrom(item.Type))
+        {
+            return false;
+        }
+
+        var element = Expression.Parameter(elementType, "e");
+        var comparand = item.Type == elementType ? item : Expression.Convert(item, elementType);
+        var predicate = Expression.Lambda(Expression.Equal(element, comparand), element);
+        return TryBindAggregate(mongoQ, MongoAggregateOperator.Any, selector: null, predicate, typeof(bool));
+    }
+
+    private static bool IsArrayTyped(Type type)
+        => type != typeof(string) && type != typeof(byte[]) && typeof(System.Collections.IEnumerable).IsAssignableFrom(type);
+
+    private static bool TryTranslateContainsItem(
+        Expression item, IProperty property, [NotNullWhen(true)] out MongoExpression? node)
+    {
+        var unwrapped = MongoExpressionTranslator.Unwrap(item);
+        node = unwrapped switch
+        {
+            ConstantExpression constant => new MongoConstantExpression(constant.Value, property),
+            _ when NativeQueryParameter.TryGetQueryParameterName(unwrapped, out var name)
+                => new MongoParameterExpression(name, property),
+            _ => null
+        };
+        return node != null;
+    }
+
+    /// <summary>
     /// Attempts to bind a scalar aggregate terminal operator (Count/LongCount/Any/All/Sum/Min/Max/Average)
     /// to <see cref="MongoSelectDefinition.Cardinality"/>. Returns <see langword="false"/> for any shape
     /// outside the current native acceptance set (e.g. a computed selector), so the caller marks the query
@@ -94,7 +204,8 @@ internal static class NativeCardinalityBinder
         MongoAggregateOperator op,
         LambdaExpression? selector,
         LambdaExpression? predicate,
-        Type resultType)
+        Type resultType,
+        MongoProjection? bareSourceProjection = null)
     {
         var select = mongoQ.Select;
 
@@ -171,6 +282,18 @@ internal static class NativeCardinalityBinder
                 // Reduce the preceding Select's single flattened output field; there is no selector.
                 var flattened = select.Projection[0];
                 operand = new MongoElementRefExpression(flattened.Alias, flattened.Expression.Type);
+            }
+            else if (selector is null && bareSourceProjection is { } bareSource)
+            {
+                // The $group reduces the STORED value, so a value-converted/non-default-represented leaf must decline
+                // ($sum ignores a string-stored int, $max compares it lexicographically), as TryTranslateValue does for
+                // a selector.
+                if (!MongoExpressionTranslator.AllFieldsDefaultSerialized(bareSource.Expression))
+                    return false;
+
+                // Selector-less Sum()/Min()/Max()/Average() over a bare scalar Select: reduce that Select's $project
+                // output field, which the lowerer emits before this aggregate's $group.
+                operand = new MongoElementRefExpression(bareSource.Alias, bareSource.Expression.Type);
             }
             // TryTranslateValue accepts member access, widening/nullable Converts and numeric arithmetic, and
             // rejects anything not exactly value-preserving — required by Sum/Average and sufficient for Min/Max.

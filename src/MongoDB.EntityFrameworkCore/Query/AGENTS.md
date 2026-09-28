@@ -25,7 +25,7 @@ contract.** Keep per-feature history out of this file — it belongs in git and 
 IQueryable<T>  (EF Core)
    │
    ▼  MongoQueryCompilationContext           (preserves original LINQ tree; carries MongoQueryMode)
-   ▼  MongoQueryTranslationPreprocessor      (hoist final predicates; lift VectorSearch out before nav expansion)
+   ▼  MongoQueryTranslationPreprocessor      (hoist final predicates; fold closed Where over a local Contains collection; lift VectorSearch out before nav expansion)
    ▼  MongoQueryableMethodTranslatingExpressionVisitor (QMTEV)
    │      ├─ accepts only Queryable / MongoQueryableExtensions / MongoDB.Driver.Linq.MongoQueryable
    │      ├─ delegates slot population to NativeSlotPopulator, projection binding to NativeProjectionBinder

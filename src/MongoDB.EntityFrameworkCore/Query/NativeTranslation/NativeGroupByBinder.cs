@@ -1329,6 +1329,11 @@ internal static class NativeGroupByBinder
     internal static bool TryBindDistinctFromProjection(MongoQueryExpression mongoQ)
     {
         var select = mongoQ.Select;
+        // A string-sequence leaf (AsEnumerable/ToList/ToArray over a string) pushes down the raw string and applies
+        // the .NET call in the shaper, so a $group would dedupe the underlying strings, not the projected values.
+        if (select.HasStringSequenceProjectionLeaf)
+            return false;
+
         // Declines:
         // - A projected SelectMany (UnwindSource set): the lowerer's UnwindSource branch runs first and returns
         //   early, silently dropping the $group and reading never-grouped "_id.<alias>" fields as nulls.

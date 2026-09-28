@@ -201,9 +201,10 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             // the read side would decode the $toInt/$toLong/... result with the pre-cast property's serializer (see
             // MongoProjectionBindingRemovingExpressionVisitor's ProjectionBindingExpression case). Route == Projection
             // as for arithmetic. The `Operand is not StructuralTypeShaperExpression` exclusion keeps this disjoint from
-            // the navigation Convert(shaper, T) shape VisitMember handles.
+            // the navigation Convert(shaper, T) shape VisitMember handles; a NewExpression/MemberInitExpression operand
+            // is a reference upcast of a constructed DTO, whose members NativeProjectionBinder binds individually.
             case UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked,
-                    Operand: not StructuralTypeShaperExpression } castExpression
+                    Operand: not (StructuralTypeShaperExpression or NewExpression or MemberInitExpression) } castExpression
                 when _queryExpression.Select.Route == NativeRoute.Projection:
                 var castProjectionMember = GetCurrentProjectionMember();
                 _projectionMapping[castProjectionMember] = castExpression;
