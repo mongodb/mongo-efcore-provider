@@ -14,7 +14,9 @@
  */
 
 using System.Linq;
+using System.Runtime.CompilerServices;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Serializers;
@@ -586,8 +588,13 @@ internal static class MongoAggregationExpressionRenderer
                 // serializer for RawElementType.
                 var elementSerializer = parameter.ForSerialization is not null
                     ? BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization).Serializer
-                    : parameter.RawElementType is not null
-                        ? BsonSerializerFactory.CreateTypeSerializer(parameter.RawElementType)
+                    : parameter.RawElementType is { } rawElementType
+                        ? typeof(ITuple).IsAssignableFrom(rawElementType)
+                            // The driver's own Tuple/ValueTuple serializers write one BSON array per tuple, matching how
+                            // a MongoTupleExpression needle renders; BsonSerializerFactory.CreateTypeSerializer would fall
+                            // through to a class-map (document) serializer for a tuple type.
+                            ? BsonSerializer.LookupSerializer(rawElementType)
+                            : BsonSerializerFactory.CreateTypeSerializer(rawElementType)
                         : StringSerializer.Instance;
                 return parameter.ExtractEntityKeyFromArrayElements
                     ? placeholders.CreateEntityKeyArrayPlaceholder(parameter.Name, parameter.ForSerialization!, elementSerializer)

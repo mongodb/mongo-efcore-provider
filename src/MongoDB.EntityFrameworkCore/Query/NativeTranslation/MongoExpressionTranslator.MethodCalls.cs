@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
@@ -271,7 +272,8 @@ internal sealed partial class MongoExpressionTranslator
 
     /// <summary>
     /// Recognizes <c>Enumerable.Contains(source, item)</c> or an instance <c>Contains(item)</c> on an
-    /// <c>ICollection&lt;T&gt;</c> implementation, matched by method shape rather than name alone.
+    /// <c>ICollection&lt;T&gt;</c> implementation or a set interface that declares its own <c>Contains</c>
+    /// (<c>IReadOnlySet&lt;T&gt;</c>, <c>IImmutableSet&lt;T&gt;</c>), matched by method shape rather than name alone.
     /// </summary>
     internal static bool TryMatchContainsMethod(
         MethodCallExpression call,
@@ -293,14 +295,21 @@ internal sealed partial class MongoExpressionTranslator
             return true;
         }
 
-        // Instance ICollection<T>.Contains(item) (List<T>, HashSet<T>, IList<T>, ...).
+        // Instance ICollection<T>.Contains(item) (List<T>, HashSet<T>, IList<T>, ...), plus the set interfaces that
+        // declare their own Contains. ISet<T> needs no entry: its Contains is inherited from ICollection<T>.
         if (!call.Method.IsStatic && call.Object is not null && call.Arguments.Count == 1)
         {
             var declaringType = call.Method.DeclaringType;
             if (declaringType is { IsGenericType: true })
             {
                 var def = declaringType.GetGenericTypeDefinition();
-                if (def == typeof(List<>) || def == typeof(HashSet<>) || def == typeof(IList<>) || def == typeof(ICollection<>))
+                // An explicit whitelist, deliberately: generalizing to "any IEnumerable<T> with a Contains(T)" would also
+                // capture string.Contains(char).
+                if (def == typeof(List<>) || def == typeof(HashSet<>) || def == typeof(IList<>) || def == typeof(ICollection<>)
+                    || def == typeof(IReadOnlySet<>) || def == typeof(IImmutableSet<>)
+                    // EF8 hands these concrete-type instance calls over un-normalized (EF9+ rewrites them to
+                    // Enumerable.Contains before the provider sees them).
+                    || def == typeof(System.Collections.ObjectModel.ReadOnlyCollection<>) || def == typeof(ImmutableHashSet<>))
                 {
                     collection = call.Object;
                     item = call.Arguments[0];
@@ -505,6 +514,16 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
+    /// Whether <paramref name="type"/> is one of the framework's own collection types (<c>List&lt;T&gt;</c>,
+    /// <c>HashSet&lt;T&gt;</c>, <c>ImmutableList&lt;T&gt;</c>, …) — whose parameterless constructor is known to produce an
+    /// empty collection — rather than a user-defined one.
+    /// </summary>
+    private static bool IsFrameworkCollectionType(Type type)
+        => type.Namespace?.StartsWith("System.Collections", StringComparison.Ordinal) == true
+           && type.Assembly.GetName().Name is { } assemblyName
+           && (assemblyName.StartsWith("System.", StringComparison.Ordinal) || assemblyName == "mscorlib");
+
+    /// <summary>
     /// Translates the collection side of a <c>Contains</c> call into a <see cref="MongoConstantExpression"/>
     /// (a captured/inline collection) or <see cref="MongoParameterExpression"/> (a query-parameter
     /// collection), using <paramref name="property"/> as the element serialization context. Returns
@@ -530,6 +549,18 @@ internal sealed partial class MongoExpressionTranslator
 
         if (unwrapped is ConstantExpression { Value: System.Collections.IEnumerable } constant)
             return new MongoConstantExpression(constant.Value, property);
+
+        // `new List<string>()` inline (EF's Contains_with_local_collection_empty_inline): EF's parameter extraction
+        // leaves an argument-less collection construction as a bare NewExpression rather than folding it to a
+        // constant. For a BCL collection type that is always empty, so it is an empty $in/$nin haystack. Restricted to
+        // the framework's own System.Collections* types: a user collection's parameterless constructor may
+        // pre-populate it, and treating that as empty would silently drop its elements from the match.
+        if (unwrapped is NewExpression { Arguments.Count: 0 } emptyCollection
+            && typeof(System.Collections.IEnumerable).IsAssignableFrom(emptyCollection.Type)
+            && IsFrameworkCollectionType(emptyCollection.Type))
+        {
+            return new MongoConstantExpression(Array.CreateInstance(elementType, 0), property);
+        }
 
         if (NativeQueryParameter.TryGetQueryParameterName(unwrapped, out var parameterName))
             return new MongoParameterExpression(parameterName, property);

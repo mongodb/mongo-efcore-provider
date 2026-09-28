@@ -768,13 +768,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         if (mongoQueryExpression.Select.Cardinality?.Reducer != null)
         {
             // Reducer case (First/FirstOrDefault/Single/...).
-            foreach (var level in mongoQueryExpression.Joins)
+            if (!mongoQueryExpression.AreAllJoinsRowCountPreserving())
             {
-                if (level.Lookup is not { } levelLookup
-                    || !(level.IsLeftOuter && levelLookup.Navigation is { IsCollection: false }))
-                {
-                    return false;
-                }
+                return false;
             }
         }
         else if (mongoQueryExpression.Select.HasPaging)
@@ -788,16 +784,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 return false;
             }
 
-            var everyJoinPreLookupSafe = true;
-            foreach (var level in mongoQueryExpression.Joins)
-            {
-                if (level.Lookup is not { } levelLookup
-                    || !(level.IsLeftOuter && levelLookup.Navigation is { IsCollection: false }))
-                {
-                    everyJoinPreLookupSafe = false;
-                    break;
-                }
-            }
+            var everyJoinPreLookupSafe = mongoQueryExpression.AreAllJoinsRowCountPreserving();
 
             // Keep paging before the $lookup when every join is 1:1-safe; otherwise defer it past the
             // $lookup/$unwind. Accepted consequence: paging recorded before a required reference dereference in a
@@ -1781,7 +1768,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         => ReshapeShaperExpression(source, castType);
 
     protected override ShapedQueryExpression TranslateContains(ShapedQueryExpression source, Expression item)
-        => ReshapeShaperExpression(source, typeof(bool)); // We don't support but a later step has a better error message
+    {
+        var mongoQ = (MongoQueryExpression)source.QueryExpression;
+        if (!NativeCardinalityBinder.TryBindContains(mongoQ, source.ShaperExpression, item))
+            mongoQ.Select.MarkNotNativelyRepresentable();
+        return ReshapeShaperExpression(source, typeof(bool));
+    }
 
     protected override ShapedQueryExpression TranslateCount(ShapedQueryExpression source, LambdaExpression? predicate)
         => BindAggregateOrFallback(source, MongoAggregateOperator.Count, null, predicate, typeof(int));
@@ -1809,7 +1801,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         LambdaExpression? selector, LambdaExpression? predicate, Type resultType)
     {
         var mongoQ = (MongoQueryExpression)source.QueryExpression;
-        if (!NativeCardinalityBinder.TryBindAggregate(mongoQ, op, selector, predicate, resultType))
+        var bareSource = selector is null && predicate is null
+            ? NativeCardinalityBinder.TryGetBareServerValueProjection(mongoQ, source.ShaperExpression)
+            : null;
+        if (!NativeCardinalityBinder.TryBindAggregate(mongoQ, op, selector, predicate, resultType, bareSource))
             mongoQ.Select.MarkNotNativelyRepresentable();
         return ReshapeShaperExpression(source, resultType);
     }

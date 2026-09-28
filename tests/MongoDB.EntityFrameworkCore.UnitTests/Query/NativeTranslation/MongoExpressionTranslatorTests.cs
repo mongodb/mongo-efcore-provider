@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
@@ -730,6 +731,36 @@ public class MongoExpressionTranslatorTests
         var inExpr = Assert.IsType<MongoInExpression>(result);
         Assert.False(inExpr.Negated);
         Assert.Equal("Age", inExpr.Field.ElementName);
+    }
+
+    [Theory]
+    [InlineData(typeof(IReadOnlySet<int>))]
+    [InlineData(typeof(IImmutableSet<int>))]
+    // EF8 hands these concrete-type instance calls over un-normalized (EF9+ rewrites them to Enumerable.Contains).
+    [InlineData(typeof(System.Collections.ObjectModel.ReadOnlyCollection<int>))]
+    [InlineData(typeof(ImmutableHashSet<int>))]
+    public void Instance_set_interface_contains_is_matched(Type setInterface)
+    {
+        var set = Expression.Parameter(setInterface, "set");
+        var item = Expression.Parameter(typeof(int), "item");
+        var call = Expression.Call(set, setInterface.GetMethod("Contains", [typeof(int)])!, item);
+
+        Assert.True(MongoExpressionTranslator.TryMatchContainsMethod(call, out var collection, out var matchedItem));
+        Assert.Same(set, collection);
+        Assert.Same(item, matchedItem);
+    }
+
+    [Fact]
+    public void Negated_contains_over_empty_inline_list_translates_to_negated_in_with_empty_values()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        var body = PredicateBody<Customer>(c => !new List<int>().Contains(c.Age));
+
+        Assert.True(translator.TryTranslate(body, out var result));
+        var inExpr = Assert.IsType<MongoInExpression>(result);
+        Assert.True(inExpr.Negated);
+        var values = Assert.IsType<MongoConstantExpression>(inExpr.Values);
+        Assert.Empty((System.Collections.IEnumerable)values.Value!);
     }
 
     // ------------------------------------------------------------------

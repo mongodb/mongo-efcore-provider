@@ -597,6 +597,7 @@ internal static class NativeSlotPopulator
            || methodDefinition == QueryableMethods.CountWithoutPredicate
            || methodDefinition == QueryableMethods.LongCountWithoutPredicate
            || methodDefinition == QueryableMethods.AnyWithoutPredicate
+           || methodDefinition == QueryableMethods.Contains
            || methodDefinition == QueryableMethods.All
            || QueryableMethods.IsSumWithoutSelector(methodDefinition)
            || QueryableMethods.IsSumWithSelector(methodDefinition)

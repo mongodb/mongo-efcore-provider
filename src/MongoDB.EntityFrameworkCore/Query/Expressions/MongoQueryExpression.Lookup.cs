@@ -210,6 +210,23 @@ internal sealed partial class MongoQueryExpression
     public IReadOnlyList<JoinInfo> Joins => _joins;
 
     /// <summary>
+    /// Whether every recorded join lowers to a row-count-preserving <c>$lookup</c>/<c>$unwind</c>: a left-outer join
+    /// over a reference (non-collection) navigation, whose <c>$unwind</c> (<c>preserveNullAndEmptyArrays: true</c>)
+    /// neither drops nor multiplies rows — so a <c>$skip</c>/<c>$limit</c> placed before the join is equivalent to the
+    /// same stage placed after it.
+    /// </summary>
+    internal bool AreAllJoinsRowCountPreserving()
+    {
+        foreach (var join in _joins)
+        {
+            if (join.Lookup is not { } lookup || !(join.IsLeftOuter && lookup.Navigation is { IsCollection: false }))
+                return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Register a cross-collection join. The returned <see cref="JoinInfo"/> is filled in with the
     /// join's navigation and <c>$lookup</c> once they have been resolved from the join's key selector.
     /// </summary>
