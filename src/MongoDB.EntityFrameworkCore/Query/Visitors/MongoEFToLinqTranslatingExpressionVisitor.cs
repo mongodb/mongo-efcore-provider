@@ -688,6 +688,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
     protected override Expression VisitMethodCall(MethodCallExpression node)
     {
+        // The driver renders g.Key inside a $group accumulator as the input document's _id; see the GroupingKey partial.
+        node = RewriteGroupingKeyReferencesInElementLambdas(node);
+
         if (node.Method.Name == nameof(Enumerable.Contains))
         {
             var rewrite = VisitContainsMethod(node);
