@@ -313,6 +313,12 @@ internal static class NativeCardinalityBinder
             // rejects anything not exactly value-preserving — required by Sum/Average and sufficient for Min/Max.
             else if (selector is null || !translator.TryTranslateValue(selector.Body, out operand))
                 return false; // untranslatable selector shape (e.g. a correlated method call) — fall back
+
+            // A non-nullable Min/Max/Average of a Length/IndexOf over a possibly-null string reduces all-null rows to
+            // null, read back as 0 where EF throws; as for the grouped accumulators. Sum skips a null, as EF's SUM does.
+            if (op is not MongoAggregateOperator.Sum
+                && MongoAggregationExpressionRenderer.ReadsNullAsDefault(resultType, operand))
+                return false;
         }
 
         // Injecting a predicate $match is safe after Take/Skip: AddPredicateConjunct appends to the tail, so

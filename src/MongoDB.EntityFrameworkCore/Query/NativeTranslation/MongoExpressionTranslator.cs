@@ -222,7 +222,10 @@ internal sealed partial class MongoExpressionTranslator
                 case nameof(DateTimeOffset.UtcDateTime):
                     if (receiverExpr is not MongoFieldExpression utcField)
                         return false;
-                    result = new MongoElementRefExpression(utcField.ElementName + ".DateTime", typeof(DateTime));
+                    // The DateTimeOffset property backs the value; it carries no DateTimeKind, so the kind-aware read-back
+                    // (NativeDateTimeKindReadBack) classifies it as kind-free rather than untraceable.
+                    result = new MongoElementRefExpression(
+                        utcField.ElementName + ".DateTime", typeof(DateTime), valueProperty: utcField.Property);
                     return true;
 
                 case nameof(DateTimeOffset.DateTime):

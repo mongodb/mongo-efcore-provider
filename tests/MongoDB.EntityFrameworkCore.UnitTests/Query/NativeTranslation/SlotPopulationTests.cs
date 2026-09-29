@@ -669,17 +669,17 @@ public class SlotPopulationTests
     // ── Computed-leaf shaper wrapping (NativeComputedLeafExpression) ─────────────
 
     // The native alias reader replaces the wrapper with one raw read of the server-computed value; every other
-    // reader goes through ClientExpression, which must be the unchanged client-side form (receiver binding plus
-    // the call), so non-native paths behave exactly as without the wrapper.
+    // reader goes through ClientExpression, which binds the whole leaf to the same member, so the mixed reader
+    // re-evaluates it over whole documents (bound operand by operand, every operand would read as the last one bound).
     [Fact]
-    public void Native_computed_leaf_is_wrapped_around_its_unchanged_client_side_form()
+    public void Native_computed_leaf_is_wrapped_around_a_whole_leaf_client_side_binding()
     {
         var shaped = TranslateToShapedQuery<Customer>(q => q.Select(c => c.Name.Substring(1)));
 
         var leaf = Assert.IsType<NativeComputedLeafExpression>(shaped.ShaperExpression);
-        var clientCall = Assert.IsAssignableFrom<MethodCallExpression>(leaf.ClientExpression);
-        Assert.Equal(nameof(string.Substring), clientCall.Method.Name);
-        Assert.IsType<ProjectionBindingExpression>(clientCall.Object);
+        var clientBinding = Assert.IsType<ProjectionBindingExpression>(leaf.ClientExpression);
+        Assert.Equal(leaf.Binding.ProjectionMember, clientBinding.ProjectionMember);
+        Assert.Equal(typeof(string), clientBinding.Type);
     }
 
     // ToLower/ToUpper stage only their receiver (a plain field, or a computed leaf) and stay in the shaper as a

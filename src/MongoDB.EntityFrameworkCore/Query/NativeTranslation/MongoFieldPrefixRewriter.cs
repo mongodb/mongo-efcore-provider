@@ -107,7 +107,7 @@ internal static class MongoFieldPrefixRewriter
             // Carry NullSafe: dropping it removes the $ifNull, so a missing element stops comparing equal to null
             // and `d.Ship == null` in a prefixed scope loses rows.
             MongoElementRefExpression er => new MongoElementRefExpression(
-                prefix + "." + er.Path, er.Type, er.NullSafe),
+                prefix + "." + er.Path, er.Type, er.NullSafe, er.ValueProperty),
             // Root-anchored by definition, so prefixing would be wrong.
             MongoOuterFieldExpression => expr,
             MongoConcatExpression concat => new MongoConcatExpression(

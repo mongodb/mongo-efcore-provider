@@ -301,8 +301,8 @@ Customers.{ "$project" : { "City" : "$City", "_id" : 0 } }
 
         AssertMql(
             """
-            Customers.{ "$project" : { "CustomerID" : "$_id", "Expression" : { "$add" : [{ "$strLenCP" : "$_id" }, 5] }, "_id" : 0 } }
-            """);
+Customers.{ "$project" : { "CustomerID" : "$_id", "Expression" : { "$add" : [{ "$strLenCP" : "$_id" }, 5] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_anonymous_conditional_expression(bool async)
@@ -549,7 +549,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$strLenCP" : "$CustomerID" }, "_id" : 0 } }
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$toLong" : { "$strLenCP" : "$CustomerID" } }, "_id" : 0 } }
 """);
     }
 
@@ -985,7 +985,7 @@ Customers.
 
         AssertMql(
             """
-Orders.{ "$project" : { "One" : "$CustomerID", "Two" : { "$cond" : { "if" : { "$eq" : ["$CustomerID", { "$literal" : "ALFKI" }] }, "then" : { "X" : "$_id", "Y" : { "$strLenCP" : "$CustomerID" } }, "else" : { "$literal" : null } } }, "_id" : 0 } }
+Orders.{ "$project" : { "One" : "$CustomerID", "Two" : { "$cond" : { "if" : { "$eq" : ["$CustomerID", { "$literal" : "ALFKI" }] }, "then" : { "X" : "$_id", "Y" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$CustomerID", null] }, null] }, "then" : null, "else" : { "$strLenCP" : "$CustomerID" } } } }, "else" : { "$literal" : null } } }, "_id" : 0 } }
 """);
     }
 
@@ -1155,9 +1155,9 @@ Orders.{ "$project" : { "One" : "$CustomerID", "Two" : { "$cond" : { "if" : { "$
         // Test changed between EF8 and EF9
 #if EF8
         AssertMql(
-            """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexOfCP" : ["$ContactName", { "$literal" : "" }] }, "_id" : 0 } }
-            """);
+"""
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$indexOfCP" : ["$ContactName", ""] }, "_id" : 0 } }
+""");
 #else
         AssertMql(
             """
@@ -1580,8 +1580,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "local
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 10 }, { "$project" : { "Aggregate" : { "$concat" : ["$_id", { "$literal" : " " }, "$City"] }, "_id" : 0 } }
-            """);
+Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 10 }, { "$project" : { "Aggregate" : { "$concat" : [{ "$ifNull" : ["$_id", ""] }, { "$literal" : " " }, { "$ifNull" : ["$City", ""] }] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Projection_skip_projection_doesnt_project_intermittent_column(bool async)
@@ -1590,8 +1590,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "local
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$skip" : 7 }, { "$project" : { "Aggregate" : { "$concat" : ["$_id", { "$literal" : " " }, "$City"] }, "_id" : 0 } }
-            """);
+Customers.{ "$sort" : { "_id" : 1 } }, { "$skip" : 7 }, { "$project" : { "Aggregate" : { "$concat" : [{ "$ifNull" : ["$_id", ""] }, { "$literal" : " " }, { "$ifNull" : ["$City", ""] }] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Projection_Distinct_projection_preserves_columns_used_for_distinct_in_subquery(bool async)
@@ -1609,8 +1609,8 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "local
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 10 }, { "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "Aggregate" : { "$concat" : ["$_id", { "$literal" : " " }, "$City"] }, "_id" : 0 } }
-            """);
+Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 10 }, { "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "Aggregate" : { "$concat" : [{ "$ifNull" : ["$_id", ""] }, { "$literal" : " " }, { "$ifNull" : ["$City", ""] }] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Do_not_erase_projection_mapping_when_adding_single_projection(bool async)

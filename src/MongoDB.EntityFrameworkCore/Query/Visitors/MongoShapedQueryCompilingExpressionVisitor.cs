@@ -225,6 +225,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             && shapedQueryExpression.ShaperExpression is GroupByShaperExpression)
         {
             ThrowIfNativeOnlyForbidsFallback(queryMode, "Query groups without a supported aggregate projection");
+            ThrowIfDriverLinqCaseMapsGroupedResult(mongoQueryExpression.CapturedExpression);
         }
 
         VerifyNoClientConstant(shapedQueryExpression.ShaperExpression);
@@ -269,6 +270,12 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             if (aggregateFactory != null)
             {
                 var cardinality = mongoQueryExpression.Select.Cardinality!;
+
+                // Min/Max return one of the stored values, so a Local-kind DateTime operand reads back with that kind.
+                var dateTimeKindSource =
+                    cardinality is { Aggregate: MongoAggregateOperator.Min or MongoAggregateOperator.Max, Selector: { } operand }
+                        ? NativeDateTimeKindReadBack.FindForAggregateOperand(mongoQueryExpression.Select, operand)
+                        : null;
                 return Expression.Call(null,
                     ExecuteAggregateMethodInfo.MakeGenericMethod(rootEntityType.ClrType, cardinality.ResultType),
                     QueryCompilationContext.QueryContextParameter,
@@ -278,7 +285,12 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                     Expression.Constant(_contextType),
                     Expression.Constant(_threadSafetyChecksEnabled),
                     Expression.Constant(cardinality),
-                    Expression.Constant(aggregateFactory));
+                    Expression.Constant(aggregateFactory),
+                    Expression.Constant(
+                        dateTimeKindSource == null
+                            ? null
+                            : BsonSerializerFactory.CreateTypeSerializer(cardinality.ResultType, dateTimeKindSource),
+                        typeof(IBsonSerializer)));
             }
 
             // Fell back (Native only; NativeOnly already threw): the predicate/selector couldn't be lowered.
@@ -305,6 +317,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // Any other projected query runs through driver-LINQ push-down or the mixed client-side shaper, so it is
         // a coverage failure under NativeOnly.
         ThrowIfNativeOnlyForbidsFallback(queryMode, "Query projects a non-entity result");
+        ThrowIfDriverLinqCaseMapsGroupedResult(mongoQueryExpression.CapturedExpression);
 
         // HasStringSequenceProjectionLeaf restores what ProjectionAnalyzer.CanPushDown can no longer see: the
         // native string-sequence leaf (an Enumerable.* operator applied to a string) erases that call from the
@@ -314,10 +327,13 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         //
         // A projected ToLower/ToUpper also takes the mixed shaper (the driver's $toLower/$toUpper are ASCII-only),
         // but only when the Select can be stripped: otherwise (a Distinct after it) the shaper would read fields the
-        // driver's projected documents don't have, so it stays on push-down.
+        // driver's projected documents don't have, so it stays on push-down. So does an index-based positional-ctor
+        // shaper: its synthetic `_ctorArg<N>` aliases aren't in a whole document, where a nullable argument would read
+        // as null (TranslateSelect already routed every such shape the mixed reader can bind per argument away from it).
         if (!mongoQueryExpression.Select.HasStringSequenceProjectionLeaf
             && ProjectionAnalyzer.CanPushDown(shapedQueryExpression.ShaperExpression)
             && !(ProjectionAnalyzer.HasCaseMappingProjectedValue(shapedQueryExpression.ShaperExpression)
+                 && !mongoQueryExpression.Select.HasPositionalCtorProjectionShaper
                  && !ReferenceEquals(
                      StripPushedDownSelect(mongoQueryExpression.CapturedExpression), mongoQueryExpression.CapturedExpression)))
         {
@@ -496,6 +512,75 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
               ?? type;
 
     /// <summary>
+    /// Throws when the captured chain, about to run on driver-LINQ, is a grouped query holding a case mapping
+    /// (<c>ToUpper</c>/<c>ToLower</c> and the Invariant forms) anywhere in the <c>GroupBy</c>'s key, element or result
+    /// selector, in an operator composed after it (a <c>Select</c> over the groups, its accumulator lambdas, a
+    /// <c>Where</c>), or in any lambda anywhere in an ungrouped source it groups or combines with (including either side
+    /// of a set op or join: a <c>Select</c>, <c>Where</c> or <c>OrderBy</c> before the <c>GroupBy</c>). The driver would compute it with <c>$toUpper</c>/<c>$toLower</c>,
+    /// which are ASCII-only and map null to <c>""</c>, so the answer would be silently wrong.
+    /// </summary>
+    /// <remarks>
+    /// The native <c>$group</c> answers a projected case-mapped member by projecting the receiver and re-applying the
+    /// call client-side (<c>NativeGroupByBinder.TryBindGroupProjection</c>); this is only reached when the query doesn't
+    /// run natively. Uses the case-mapping predicate the binder peels by
+    /// (<see cref="NativeGroupByBinder.ContainsCaseMappingCall"/>). An ungrouped query is never affected.
+    /// </remarks>
+    private static void ThrowIfDriverLinqCaseMapsGroupedResult(Expression? captured)
+    {
+        if (Scan(captured).CaseMapped)
+        {
+            throw new InvalidOperationException(
+                "A grouped query uses ToUpper/ToLower (or ToUpperInvariant/ToLowerInvariant), which this query could only "
+                + "evaluate on the server with $toUpper/$toLower. Those are ASCII-only and map null to an empty string, so "
+                + "the results would not match .NET. Apply the case mapping after the query (e.g. after AsEnumerable()), "
+                + "or use a GroupBy projection the native query translator supports.");
+        }
+
+        // Walks the operator chain (every source argument, so a set op's or join's other source too); lambdas are only
+        // searched for a case mapping. Grouped: this call is, or is composed over, a GroupBy.
+        static (bool Grouped, bool CaseMapped) Scan(Expression? expression)
+        {
+            if (expression is not MethodCallExpression call)
+            {
+                return (false, false);
+            }
+
+            var grouped = false;
+            var caseMapped = false;
+            var sources = new List<(Expression Argument, bool Grouped)>();
+            foreach (var argument in call.Arguments)
+            {
+                var (sourceGrouped, sourceCaseMapped) = Scan(argument);
+                grouped |= sourceGrouped;
+                caseMapped |= sourceCaseMapped;
+                sources.Add((argument, sourceGrouped));
+            }
+
+            grouped |= call.Method.DeclaringType == typeof(Queryable) && call.Method.Name == nameof(Queryable.GroupBy);
+
+            // Grouped: this call's own lambdas, and every ungrouped source it combines with or groups (the GroupBy's own
+            // source, or a set op's/join's other side).
+            caseMapped |= grouped
+                          && (HasCaseMappingLambda(call)
+                              || sources.Any(source => !source.Grouped && HasCaseMappingInSource(source.Argument)));
+
+            return (grouped, caseMapped);
+        }
+
+        static bool HasCaseMappingLambda(MethodCallExpression call)
+            => call.Arguments.Select(a => a.UnwrapQuote()).OfType<LambdaExpression>()
+                .Any(l => NativeGroupByBinder.ContainsCaseMappingCall(l.Body));
+
+        // A case mapping in any lambda of any call anywhere in an ungrouped source, through every source argument (so
+        // both sides of a set op or join): `Select(x => new { U = x.S.ToUpper() }).Distinct().GroupBy(x => x.U)`,
+        // `Where(x => x.S.ToUpper() == x.T).GroupBy(...)`, `OrderBy(x => x.S.ToUpper()).GroupBy(...)`,
+        // `a.Concat(q.Select(x => new { U = x.S.ToUpper() })).GroupBy(x => x.U)`.
+        static bool HasCaseMappingInSource(Expression source)
+            => source is MethodCallExpression sourceCall
+               && (HasCaseMappingLambda(sourceCall) || sourceCall.Arguments.Any(HasCaseMappingInSource));
+    }
+
+    /// <summary>
     /// Whether a native-factory decline on the <see cref="NativeRoute.Projection"/> route must strip the
     /// pushed-down <c>Select</c> from the captured chain before handing it to the driver-LINQ bridge.
     /// </summary>
@@ -561,6 +646,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // The native-vs-driver gate is decided once at compile time; per execution the factory is only re-bound
         // (factory.Build), never re-translated. So exactly one shaper is compiled.
         var nativeFactory = TryBuildNativeFactory(mode, mongoQueryExpression);
+        if (nativeFactory == null)
+        {
+            ThrowIfDriverLinqCaseMapsGroupedResult(mongoQueryExpression.CapturedExpression);
+        }
 
         // Late-fallback strip: the driver renders the pushed-down Select with its own aliases, which disagree with
         // the alias-addressed shaper built above. See ShouldStripBareProjectionOnFallback (DocumentPath tier) and
@@ -747,7 +836,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         Type contextType,
         bool threadSafetyChecksEnabled,
         MongoCardinality cardinality,
-        MongoPipelineFactory nativeFactory)
+        MongoPipelineFactory nativeFactory,
+        IBsonSerializer? kindAwareScalarSerializer)
     {
         var (mongoQueryContext, executableQuery) = TranslateQuery<TEntity>(
             queryContext, entityType, bsonSerializerFactory, queryExpression, ResultCardinality.Single,
@@ -766,7 +856,11 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
                 // Any/All are presence-only: Any's $match holds the predicate; All's holds the negated predicate,
                 // so a surviving row means All is false.
-                value = cardinality.PresenceOnly ? (TResult)cardinality.PresentValue! : DeserializeScalar<TResult>(doc);
+                value = cardinality.PresenceOnly
+                    ? (TResult)cardinality.PresentValue!
+                    : kindAwareScalarSerializer != null
+                        ? DeserializeKindAwareScalar<TResult>(doc, kindAwareScalarSerializer)
+                        : DeserializeScalar<TResult>(doc);
             }
             else
             {
@@ -803,6 +897,21 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             await Task.CompletedTask.ConfigureAwait(false);
             yield return value;
         }
+    }
+
+    // Reads a Min/Max "v" field holding a Local-kind DateTime property's stored value through the TResult serializer
+    // with that property's kind (BsonTypeMapper would return Kind=Utc), built at compile time. BSON null is Min/Max over
+    // all-null values.
+    private static TResult DeserializeKindAwareScalar<TResult>(BsonDocument doc, IBsonSerializer serializer)
+    {
+        var bsonValue = doc[BsonValueSerializer.ScalarField];
+        if (bsonValue.IsBsonNull)
+        {
+            return default!;
+        }
+
+        var serializationInfo = new BsonSerializationInfo(BsonValueSerializer.ScalarField, serializer, typeof(TResult));
+        return (TResult)serializationInfo.DeserializeValue(bsonValue);
     }
 
     // Reads the terminal stage's "v" field and coerces it to TResult (e.g. long for LongCount, double for Average).

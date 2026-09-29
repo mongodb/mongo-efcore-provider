@@ -919,6 +919,179 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal([("North", "5,10,20"), ("South", "30")], result);
     }
 
+    // A computed value over a left join's possibly-unmatched inner side must propagate null the way EF does: for Dora
+    // (no orders) o is the DefaultIfEmpty null, so EF's answer for (decimal?)Math.Max(o.Total, 7m) is a null key. On
+    // the server the side is missing, and an operator that doesn't propagate missing answers a plausible, wrong value:
+    // $max ignores it (Dora merges into the 7 group), Math.Sign's $switch orders it below 0 (-1). Native must decline.
+    // NativeOnly only: driver-LINQ answers the same wrong values, so it is no oracle. (String operators are
+    // null-guarded at render instead; see Null_guarded_string_key_over_an_unmatched_left_join_side_stays_native.)
+    [Theory]
+    [InlineData("Math.Max")]
+    [InlineData("Math.Sign")]
+    [InlineData("ToUpper")]
+    public void Non_null_propagating_computed_key_over_an_unmatched_left_join_side_declines(string shape)
+    {
+        var seed = CreateSeedWithOrderlessOwner();
+        Assert.Throws<NativeTranslationNotSupportedException>(() =>
+        {
+            using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+                nameof(Non_null_propagating_computed_key_over_an_unmatched_left_join_side_declines) + shape.Length);
+            var rows = from w in db.Owners join o in db.Orders on w.Id equals o.OwnerId into gj from o in gj.DefaultIfEmpty() select new { w, o };
+            return shape switch
+            {
+                // Case mapping is never emitted natively (see Query/AGENTS.md), and $toUpper of a missing value is "",
+                // so pin the decline in case case mapping ever joins the allow-list.
+                "ToUpper" => rows.GroupBy(x => x.o.Region.ToUpper()).Select(g => new { g.Key, C = g.Count() }).AsEnumerable().Select(x => x.Key + x.C).ToList(),
+                "Math.Max" => rows.GroupBy(x => (decimal?)Math.Max(x.o.Total, 7m)).Select(g => new { g.Key, C = g.Count() }).AsEnumerable().Select(x => x.Key + ":" + x.C).ToList(),
+                _ => rows.GroupBy(x => (int?)Math.Sign(x.o.Total)).Select(g => new { g.Key, C = g.Count() }).AsEnumerable().Select(x => x.Key + ":" + x.C).ToList(),
+            };
+        });
+    }
+
+    // $substrCP/$strLenCP over the missing side are null-guarded and $concat coalesces it to "" at render, so a key or
+    // accumulator operand over Dora's unmatched row gets EF's value and stays native. NativeOnly against a hand oracle:
+    // driver-LINQ answers "" for the Substring (and null for the Concat), so it is no oracle. Rows (owner, region):
+    // Alice North, Alice North, Bob South, Cara North, Dora <unmatched>.
+    [Theory]
+    [InlineData("Substring", "<null>:1|N:3|S:1")]
+    [InlineData("To-end Substring", "<null>:1|orth:3|outh:1")]
+    [InlineData("Substring ?? constant", "N:3|S:1|none:1")]
+    [InlineData("Concat", "Northx:3|Southx:1|x:1")]
+    [InlineData("Length", "5:4|<null>:1")]
+    [InlineData("Max(selector)", "Alice:N|Bob:S|Cara:N|Dora:<null>")]
+    [InlineData("Select().ToList()", "Alice:N,N|Bob:S|Cara:N|Dora:<null>")]
+    [InlineData("Select().Max()", "Alice:N|Bob:S|Cara:N|Dora:<null>")]
+    [InlineData("Where().Max(selector)", "Alice:N|Bob:<null>|Cara:N|Dora:<null>")]
+    public void Null_guarded_string_key_over_an_unmatched_left_join_side_stays_native(string shape, string expected)
+    {
+        var seed = CreateSeedWithOrderlessOwner();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Null_guarded_string_key_over_an_unmatched_left_join_side_stays_native) + shape.Length);
+        var rows = from w in db.Owners join o in db.Orders on w.Id equals o.OwnerId into gj from o in gj.DefaultIfEmpty() select new { w, o };
+        IEnumerable<string> r = shape switch
+        {
+            "Substring" => rows.GroupBy(x => x.o.Region.Substring(0, 1)).Select(g => new { g.Key, C = g.Count() }).AsEnumerable().Select(x => (x.Key ?? "<null>") + ":" + x.C),
+            "To-end Substring" => rows.GroupBy(x => x.o.Region.Substring(1)).Select(g => new { g.Key, C = g.Count() }).AsEnumerable().Select(x => (x.Key ?? "<null>") + ":" + x.C),
+            "Substring ?? constant" => rows.GroupBy(x => x.o.Region.Substring(0, 1) ?? "none").Select(g => new { g.Key, C = g.Count() }).AsEnumerable().Select(x => (x.Key ?? "<null>") + ":" + x.C),
+            "Concat" => rows.GroupBy(x => x.o.Region + "x").Select(g => new { g.Key, C = g.Count() }).AsEnumerable().Select(x => (x.Key ?? "<null>") + ":" + x.C),
+            "Length" => rows.GroupBy(x => (int?)x.o.Region.Length).Select(g => new { g.Key, C = g.Count() }).AsEnumerable().Select(x => (x.Key?.ToString() ?? "<null>") + ":" + x.C),
+            "Max(selector)" => rows.GroupBy(x => x.w.Name).Select(g => new { g.Key, V = g.Max(x => x.o.Region.Substring(0, 1)) }).AsEnumerable().Select(x => x.Key + ":" + (x.V ?? "<null>")),
+            "Select().ToList()" => rows.GroupBy(x => x.w.Name).Select(g => new { g.Key, V = g.Select(x => x.o.Region.Substring(0, 1)).ToList() }).AsEnumerable().Select(x => x.Key + ":" + string.Join(",", x.V.Select(v => v ?? "<null>"))),
+            "Select().Max()" => rows.GroupBy(x => x.w.Name).Select(g => new { g.Key, V = g.Select(x => x.o.Region.Substring(0, 1)).Max() }).AsEnumerable().Select(x => x.Key + ":" + (x.V ?? "<null>")),
+            _ => rows.GroupBy(x => x.w.Name).Select(g => new { g.Key, V = g.Where(x => x.w.Rank > 0).Max(x => x.o.Region.Substring(0, 1)) }).AsEnumerable().Select(x => x.Key + ":" + (x.V ?? "<null>")),
+        };
+
+        Assert.Equal(expected, string.Join("|", r.OrderBy(x => x, StringComparer.Ordinal)));
+    }
+
+    [Fact]
+    public void Null_guarded_string_key_over_an_optional_navigation_stays_native()
+    {
+        // Nav-expansion's left join: o2/o5 have no reviewer and o4's dangles, so EF's key for all three is null; o1's
+        // reviewer is Bob, o3's Alice. Hand oracle: driver-LINQ answers "" for the three.
+        var seed = CreateSeed();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Null_guarded_string_key_over_an_optional_navigation_stays_native));
+        var result = db.Orders
+            .GroupBy(o => o.Reviewer!.Name.Substring(0, 1))
+            .Select(g => new { g.Key, Count = g.Count() })
+            .AsEnumerable().Select(x => (x.Key ?? "<null>") + ":" + x.Count).OrderBy(x => x, StringComparer.Ordinal);
+
+        Assert.Equal("<null>:3|A:1|B:1", string.Join("|", result));
+    }
+
+    // A non-nullable Length over the unmatched side would read Dora's null as 0 (EF throws), so it declines; the
+    // nullable spelling stays native.
+    [Fact]
+    public void Non_nullable_Length_projection_over_an_unmatched_left_join_side_declines()
+    {
+        var seed = CreateSeedWithOrderlessOwner();
+        using (var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Non_nullable_Length_projection_over_an_unmatched_left_join_side_declines)))
+        {
+            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+                (from w in db.Owners join o in db.Orders on w.Id equals o.OwnerId into gj from o in gj.DefaultIfEmpty() select new { w.Name, L = o.Region.Length }).ToList());
+        }
+
+        using (var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Non_nullable_Length_projection_over_an_unmatched_left_join_side_declines) + "N"))
+        {
+            Assert.Equal(
+                "Alice:5|Alice:5|Bob:5|Cara:5|Dora:<null>",
+                string.Join("|", (from w in db.Owners join o in db.Orders on w.Id equals o.OwnerId into gj from o in gj.DefaultIfEmpty() select new { w.Name, L = (int?)o.Region.Length })
+                    .AsEnumerable().Select(x => x.Name + ":" + (x.L?.ToString() ?? "<null>")).OrderBy(x => x, StringComparer.Ordinal)));
+        }
+    }
+
+    // Not grouped: a left join's projection over the unmatched side. EF's answer for Dora is null for a member-style
+    // call and "" + "x" for a concatenation. Hand oracle: driver-LINQ answers "" and null.
+    [Theory]
+    [InlineData("Substring", "Alice:N|Alice:N|Bob:S|Cara:N|Dora:<null>")]
+    [InlineData("Concat", "Alice:Northx|Alice:Northx|Bob:Southx|Cara:Northx|Dora:x")]
+    [InlineData("Trim", "Alice:North|Alice:North|Bob:South|Cara:North|Dora:<null>")]
+    [InlineData("Replace", "Alice:N0rth|Alice:N0rth|Bob:S0uth|Cara:N0rth|Dora:<null>")]
+    [InlineData("IndexOf", "Alice:1|Alice:1|Bob:1|Cara:1|Dora:<null>")]
+    [InlineData("Substring ?? constant", "Alice:N|Alice:N|Bob:S|Cara:N|Dora:none")]
+    public void Null_guarded_string_projection_over_an_unmatched_left_join_side(string shape, string expected)
+    {
+        var seed = CreateSeedWithOrderlessOwner();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Null_guarded_string_projection_over_an_unmatched_left_join_side) + shape.Length);
+        IEnumerable<string> r = shape switch
+        {
+            "Substring" => (from w in db.Owners join o in db.Orders on w.Id equals o.OwnerId into gj from o in gj.DefaultIfEmpty() select new { w.Name, V = o.Region.Substring(0, 1) }).AsEnumerable().Select(x => x.Name + ":" + (x.V ?? "<null>")),
+            "Concat" => (from w in db.Owners join o in db.Orders on w.Id equals o.OwnerId into gj from o in gj.DefaultIfEmpty() select new { w.Name, V = o.Region + "x" }).AsEnumerable().Select(x => x.Name + ":" + (x.V ?? "<null>")),
+            "Trim" => (from w in db.Owners join o in db.Orders on w.Id equals o.OwnerId into gj from o in gj.DefaultIfEmpty() select new { w.Name, V = o.Region.Trim() }).AsEnumerable().Select(x => x.Name + ":" + (x.V ?? "<null>")),
+            "Replace" => (from w in db.Owners join o in db.Orders on w.Id equals o.OwnerId into gj from o in gj.DefaultIfEmpty() select new { w.Name, V = o.Region.Replace("o", "0") }).AsEnumerable().Select(x => x.Name + ":" + (x.V ?? "<null>")),
+            "Substring ?? constant" => (from w in db.Owners join o in db.Orders on w.Id equals o.OwnerId into gj from o in gj.DefaultIfEmpty() select new { w.Name, V = o.Region.Substring(0, 1) ?? "none" }).AsEnumerable().Select(x => x.Name + ":" + (x.V ?? "<null>")),
+            _ => (from w in db.Owners join o in db.Orders on w.Id equals o.OwnerId into gj from o in gj.DefaultIfEmpty() select new { w.Name, V = (int?)o.Region.IndexOf("o") }).AsEnumerable().Select(x => x.Name + ":" + (x.V?.ToString() ?? "<null>")),
+        };
+
+        Assert.Equal(expected, string.Join("|", r.OrderBy(x => x, StringComparer.Ordinal)));
+    }
+
+    // The null-propagating counterparts stay native with EF's null for Dora's unmatched row. Keys: every order's
+    // Region is North (o1, o2, o4) or South (o3) and every Total is distinct (10, 20, 30, 5).
+    [Theory]
+    [InlineData("Plain", "<null>:1|North:3|South:1")]
+    [InlineData("Arithmetic", "11:1|21:1|31:1|6:1|<null>:1")]
+    [InlineData("Math.Abs", "10:1|20:1|30:1|5:1|<null>:1")]
+    [InlineData("Convert", "10:1|20:1|30:1|5:1|<null>:1")]
+    [InlineData("Coalesce", "North:3|South:1|none:1")]
+    [InlineData("Trim", "<null>:1|North:3|South:1")]
+    [InlineData("Replace", "<null>:1|N0rth:3|S0uth:1")]
+    [InlineData("IndexOf", "1:4|<null>:1")]
+    [InlineData("Max(plain)", "Alice:North|Bob:South|Cara:North|Dora:<null>")]
+    [InlineData("Sum(arithmetic)", "Alice:32|Bob:31|Cara:6|Dora:0")]
+    [InlineData("Where().Max(plain)", "Alice:North|Bob:<null>|Cara:North|Dora:<null>")]
+    [InlineData("Outer-side Substring", "A:2|B:1|C:1|D:1")]
+    public void Null_propagating_value_over_an_unmatched_left_join_side_stays_native(string shape, string expected)
+    {
+        var seed = CreateSeedWithOrderlessOwner();
+        var result = LeftJoinNativeAndParity<string>(mode =>
+        {
+            using var db = CreateContext(seed, mode,
+                nameof(Null_propagating_value_over_an_unmatched_left_join_side_stays_native) + shape.Length + mode);
+            var rows = from w in db.Owners join o in db.Orders on w.Id equals o.OwnerId into gj from o in gj.DefaultIfEmpty() select new { w, o };
+            IEnumerable<string> r = shape switch
+            {
+                "Plain" => rows.GroupBy(x => x.o.Region).Select(g => new { g.Key, C = g.Count() }).AsEnumerable().Select(x => (x.Key ?? "<null>") + ":" + x.C),
+                "Arithmetic" => rows.GroupBy(x => (decimal?)x.o.Total + 1).Select(g => new { g.Key, C = g.Count() }).AsEnumerable().Select(x => (x.Key?.ToString() ?? "<null>") + ":" + x.C),
+                "Math.Abs" => rows.GroupBy(x => (decimal?)Math.Abs(x.o.Total)).Select(g => new { g.Key, C = g.Count() }).AsEnumerable().Select(x => (x.Key?.ToString() ?? "<null>") + ":" + x.C),
+                "Convert" => rows.GroupBy(x => (double?)(double)x.o.Total).Select(g => new { g.Key, C = g.Count() }).AsEnumerable().Select(x => (x.Key?.ToString() ?? "<null>") + ":" + x.C),
+                "Coalesce" => rows.GroupBy(x => x.o.Region ?? "none").Select(g => new { g.Key, C = g.Count() }).AsEnumerable().Select(x => (x.Key ?? "<null>") + ":" + x.C),
+                "Trim" => rows.GroupBy(x => x.o.Region.Trim()).Select(g => new { g.Key, C = g.Count() }).AsEnumerable().Select(x => (x.Key ?? "<null>") + ":" + x.C),
+                "Replace" => rows.GroupBy(x => x.o.Region.Replace("o", "0")).Select(g => new { g.Key, C = g.Count() }).AsEnumerable().Select(x => (x.Key ?? "<null>") + ":" + x.C),
+                "IndexOf" => rows.GroupBy(x => (int?)x.o.Region.IndexOf("o")).Select(g => new { g.Key, C = g.Count() }).AsEnumerable().Select(x => (x.Key?.ToString() ?? "<null>") + ":" + x.C),
+                "Max(plain)" => rows.GroupBy(x => x.w.Name).Select(g => new { g.Key, V = g.Max(x => x.o.Region) }).AsEnumerable().Select(x => x.Key + ":" + (x.V ?? "<null>")),
+                "Sum(arithmetic)" => rows.GroupBy(x => x.w.Name).Select(g => new { g.Key, V = g.Sum(x => (decimal?)x.o.Total + 1) }).AsEnumerable().Select(x => x.Key + ":" + (x.V?.ToString() ?? "<null>")),
+                "Where().Max(plain)" => rows.GroupBy(x => x.w.Name).Select(g => new { g.Key, V = g.Where(x => x.w.Rank > 0).Max(x => x.o.Region) }).AsEnumerable().Select(x => x.Key + ":" + (x.V ?? "<null>")),
+                // The outer side is never unmatched, so a non-propagating operator over it is fine.
+                _ => rows.GroupBy(x => x.w.Name.Substring(0, 1)).Select(g => new { g.Key, C = g.Count() }).AsEnumerable().Select(x => x.Key + ":" + x.C),
+            };
+            return new List<string> { string.Join("|", r.OrderBy(x => x, StringComparer.Ordinal)) };
+        });
+
+        Assert.Equal([expected], result);
+    }
+
     // EF8/EF9 nav-expand these left joins to a shape that explicit DriverLinq can't translate under a GroupBy (it
     // threw before native GroupBy-over-join existed too: ArgumentException "Property 'Key' is not defined for type
     // IGrouping", now ExpressionNotSupportedException from the driver's Join translator). With no driver-LINQ

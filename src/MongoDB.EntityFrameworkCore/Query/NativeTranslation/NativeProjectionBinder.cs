@@ -382,9 +382,10 @@ internal static class NativeProjectionBinder
 
     /// <summary>
     /// The receiver of a (possibly repeated) case-mapping call, which is what the leaf stages; the call itself stays
-    /// in the shaper (see <c>MongoProjectionBindingExpressionVisitor.Visit</c>).
+    /// in the shaper (see <c>MongoProjectionBindingExpressionVisitor.Visit</c>, and for a positional-ctor projection
+    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.BindPositionalCtorProjectionMember</c>).
     /// </summary>
-    private static Expression PeelCaseMapping(Expression leafExpression)
+    internal static Expression PeelCaseMapping(Expression leafExpression)
     {
         while (leafExpression is MethodCallExpression call && IsCaseMappingCall(call))
             leafExpression = call.Object!;
@@ -502,6 +503,27 @@ internal static class NativeProjectionBinder
     /// returns <see langword="false"/> when it is not natively representable.
     /// </summary>
     private static bool TryTranslateLeaf(
+        MongoQueryExpression mongoQ,
+        MongoExpressionTranslator translator,
+        ParameterExpression outerParameter,
+        Expression leafExpression,
+        string alias,
+        List<LookupExpression> pendingLookups,
+        List<MongoCorrelatedReducerLeaf> pendingReducerLeaves,
+        List<LookupExpression> pendingBareCountStamps,
+        out MongoExpression result,
+        out bool isArrayLeaf,
+        out bool isOwnedNavEntityLeaf,
+        bool allowWholeRootEntityLeaf = false)
+        // A non-nullable Length/IndexOf over a possibly-null string would read its null as 0; see
+        // MongoAggregationExpressionRenderer.MayBeNullBehindNonNullableType.
+        => TryTranslateLeafCore(
+               mongoQ, translator, outerParameter, leafExpression, alias, pendingLookups, pendingReducerLeaves,
+               pendingBareCountStamps, out result, out isArrayLeaf, out isOwnedNavEntityLeaf, allowWholeRootEntityLeaf)
+           && !MongoAggregationExpressionRenderer.ReadsNullAsDefault(
+               NativeSlotPopulator.UnwrapBoxingToObjectType(leafExpression), result);
+
+    private static bool TryTranslateLeafCore(
         MongoQueryExpression mongoQ,
         MongoExpressionTranslator translator,
         ParameterExpression outerParameter,
@@ -2022,7 +2044,8 @@ internal static class NativeProjectionBinder
         pendingReducerLeaves.Add(
             new MongoCorrelatedReducerLeaf(alias, lookup, memberField.ElementName, throwOnEmpty));
 
-        result = new MongoElementRefExpression($"{lookup.As}.{memberField.ElementName}", leafType);
+        result = new MongoElementRefExpression(
+            $"{lookup.As}.{memberField.ElementName}", leafType, valueProperty: memberField.Property);
         return true;
     }
 

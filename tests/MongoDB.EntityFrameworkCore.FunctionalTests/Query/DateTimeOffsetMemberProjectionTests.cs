@@ -18,6 +18,7 @@ using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
@@ -51,6 +52,23 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
         var result = db.Entities.Select(e => e.DateTimeOffset.DateTime).Single();
 
         Assert.Equal(TestValue.DateTime, result);
+    }
+
+    // UtcDateTime alone, in a wrapped projection and under NativeOnly: the sibling members in
+    // Select_DateTimeOffset_remaining_components (TimeOfDay) make that query fall back, which hid a native decline here.
+    [Fact]
+    public void Select_DateTimeOffset_UtcDateTime_goes_native()
+    {
+        using var db = SingleEntityDbContext.Create(CreateSeededCollection(), optionsBuilderAction: b =>
+        {
+            b.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.CoreEventId.ManyServiceProvidersCreatedWarning));
+            new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+        });
+
+        var result = db.Entities.Select(e => new { e.Id, U = e.DateTimeOffset.UtcDateTime }).Single();
+
+        Assert.Equal(TestValue.UtcDateTime, result.U);
+        Assert.Equal(DateTimeKind.Utc, result.U.Kind);
     }
 
     [Fact]

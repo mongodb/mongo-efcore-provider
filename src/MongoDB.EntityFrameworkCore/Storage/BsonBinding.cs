@@ -221,11 +221,30 @@ internal static class BsonBinding
         Expression.Call(null, GetElementValueMethodInfo.MakeGenericMethod(type), bsonDocExpression, Expression.Constant(name));
 
     /// <summary>
+    /// As <see cref="CreateGetElementValue(Expression, string, Type)"/>, but when <paramref name="dateTimeKindSource"/>
+    /// is non-null a <see cref="DateTime"/> reads back with that property's configured <see cref="DateTimeKind"/>.
+    /// </summary>
+    /// <remarks>
+    /// For an element holding the unchanged stored value of <paramref name="dateTimeKindSource"/> whose alias has no
+    /// backing property of its own (a <c>$group</c> key or <c>$min</c>/<c>$max</c> output, a cast leaf). Only the
+    /// kind is taken from the property; the serializer is still the one for <paramref name="type"/>, so nullability
+    /// follows <paramref name="type"/> rather than the property. The serializer is built once here, at shaper
+    /// compile time, not per row.
+    /// </remarks>
+    internal static MethodCallExpression CreateGetElementValue(
+        Expression bsonDocExpression, string name, Type type, IReadOnlyProperty? dateTimeKindSource) =>
+        dateTimeKindSource == null
+            ? CreateGetElementValue(bsonDocExpression, name, type)
+            : Expression.Call(null, GetKindAwareElementValueMethodInfo.MakeGenericMethod(type), bsonDocExpression,
+                Expression.Constant(name),
+                Expression.Constant(BsonSerializerFactory.CreateTypeSerializer(type, dateTimeKindSource), typeof(IBsonSerializer)));
+
+    /// <summary>
     /// Create the expression which reads an element nested under one or more parent documents, walking
     /// <paramref name="path"/> segment by segment.
     /// </summary>
     /// <remarks>
-    /// Separate from <see cref="CreateGetElementValue"/> because <see cref="GetElementValue{T}"/> treats its name
+    /// Separate from <see cref="CreateGetElementValue(Expression, string, Type)"/> because <see cref="GetElementValue{T}"/> treats its name
     /// as a literal key, and existing callers may pass aliases containing dots.
     /// </remarks>
     internal static MethodCallExpression CreateGetElementValueAtPath(Expression bsonDocExpression, string[] path, Type type) =>
@@ -233,12 +252,25 @@ internal static class BsonBinding
             Expression.Constant(path));
 
     /// <summary>
+    /// As <see cref="CreateGetElementValueAtPath(Expression, string[], Type)"/>, honouring
+    /// <paramref name="dateTimeKindSource"/>'s configured <see cref="DateTimeKind"/> as
+    /// <see cref="CreateGetElementValue(Expression, string, Type, IReadOnlyProperty?)"/> does.
+    /// </summary>
+    internal static MethodCallExpression CreateGetElementValueAtPath(
+        Expression bsonDocExpression, string[] path, Type type, IReadOnlyProperty? dateTimeKindSource) =>
+        dateTimeKindSource == null
+            ? CreateGetElementValueAtPath(bsonDocExpression, path, type)
+            : Expression.Call(null, GetKindAwareElementValueAtPathMethodInfo.MakeGenericMethod(type), bsonDocExpression,
+                Expression.Constant(path),
+                Expression.Constant(BsonSerializerFactory.CreateTypeSerializer(type, dateTimeKindSource), typeof(IBsonSerializer)));
+
+    /// <summary>
     /// Create the expression which reads a value nested under one or more parent documents, walking
     /// <paramref name="path"/> and reading the last segment through <paramref name="property"/>'s serializer and
     /// nullability.
     /// </summary>
     /// <remarks>
-    /// Property-aware sibling of <see cref="CreateGetElementValueAtPath"/> (which can't honor value converters or
+    /// Property-aware sibling of <see cref="CreateGetElementValueAtPath(Expression, string[], Type)"/> (which can't honor value converters or
     /// non-default representations). Used when a leaf's alias differs from its document path and the shaper
     /// reads whole, un-projected documents.
     /// </remarks>
@@ -298,6 +330,14 @@ internal static class BsonBinding
     private static readonly MethodInfo GetElementValueAtPathMethodInfo
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetElementValueAtPath));
+
+    private static readonly MethodInfo GetKindAwareElementValueMethodInfo
+        = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Single(mi => mi.Name == nameof(GetKindAwareElementValue));
+
+    private static readonly MethodInfo GetKindAwareElementValueAtPathMethodInfo
+        = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Single(mi => mi.Name == nameof(GetKindAwareElementValueAtPath));
 
     internal static T? GetPropertyValue<T>(BsonDocument? document, IReadOnlyProperty property)
     {
@@ -398,10 +438,16 @@ internal static class BsonBinding
     }
 
     internal static T? GetElementValueAtPath<T>(BsonDocument document, string[] path)
+        => ReadElementValueAtPath<T>(document, path, BsonSerializerFactory.CreateTypeSerializer(typeof(T)));
+
+    // `serializer` is BsonSerializerFactory.CreateTypeSerializer(typeof(T), dateTimeKindSource), built at compile time.
+    internal static T? GetKindAwareElementValueAtPath<T>(BsonDocument document, string[] path, IBsonSerializer serializer)
+        => ReadElementValueAtPath<T>(document, path, serializer);
+
+    private static T? ReadElementValueAtPath<T>(BsonDocument document, string[] path, IBsonSerializer serializer)
     {
         var type = typeof(T);
-        var serializationInfo =
-            BsonSerializationInfo.CreateWithPath(path, BsonSerializerFactory.CreateTypeSerializer(type), type);
+        var serializationInfo = BsonSerializationInfo.CreateWithPath(path, serializer, type);
         if (TryReadElementValue(document, serializationInfo, out T? value) || type.IsNullableType())
         {
             return value;
@@ -411,9 +457,16 @@ internal static class BsonBinding
     }
 
     internal static T? GetElementValue<T>(BsonDocument document, string elementName)
+        => ReadElementValue<T>(document, elementName, BsonSerializerFactory.CreateTypeSerializer(typeof(T)));
+
+    // `serializer` is BsonSerializerFactory.CreateTypeSerializer(typeof(T), dateTimeKindSource), built at compile time.
+    internal static T? GetKindAwareElementValue<T>(BsonDocument document, string elementName, IBsonSerializer serializer)
+        => ReadElementValue<T>(document, elementName, serializer);
+
+    private static T? ReadElementValue<T>(BsonDocument document, string elementName, IBsonSerializer serializer)
     {
         var type = typeof(T);
-        var serializationInfo = new BsonSerializationInfo(elementName, BsonSerializerFactory.CreateTypeSerializer(type), type);
+        var serializationInfo = new BsonSerializationInfo(elementName, serializer, type);
         if (TryReadElementValue(document, serializationInfo, out T? value) || type.IsNullableType())
         {
             return value;

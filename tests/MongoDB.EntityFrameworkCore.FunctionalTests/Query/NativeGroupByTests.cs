@@ -3302,20 +3302,28 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         Assert.Equal([("UK", 2)], result);
     }
 
-    [Fact]
-    public void Post_group_where_over_an_untranslatable_alias_expression_declines_cleanly()
+    [Theory]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Post_group_where_over_a_case_mapped_alias_throws(MongoQueryMode mode)
     {
-        // ToUpper has no native translation, and the alias scope never falls through to the entity (which has a
-        // Country property of its own).
-        var result = NativeModeAssert.DeclinesCleanly(mode => RunOrders(mode,
-            nameof(Post_group_where_over_an_untranslatable_alias_expression_declines_cleanly),
+        // ToUpper has no native translation (and the alias scope never falls through to the entity, which has a Country
+        // property of its own), so NativeOnly declines. DriverLinq and Native throw by deliberate decline: driver-LINQ
+        // would answer this comparison correctly (a Unicode-aware case-insensitive match), but the case-mapping gate is
+        // broad over grouped chains, and v10.0.4 threw for this query too.
+        var exception = Assert.ThrowsAny<Exception>(() => RunOrders(mode,
+            nameof(Post_group_where_over_a_case_mapped_alias_throws),
             q => q.GroupBy(o => o.Country)
                 .Select(g => new { Country = g.Key, N = g.Count() })
                 .Where(x => x.Country.ToUpper() == "UK")
                 .AsEnumerable()
                 .Select(x => (x.Country, x.N)).ToList()));
 
-        Assert.Equal([("UK", 2)], result);
+        if (mode == MongoQueryMode.NativeOnly)
+            Assert.IsType<NativeTranslationNotSupportedException>(exception);
+        else
+            Assert.Contains("$toUpper/$toLower", Assert.IsType<InvalidOperationException>(exception).Message);
     }
 
     [Fact]
@@ -3866,11 +3874,12 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     public void Nested_group_by_over_a_distinct_then_where_counts_the_nested_groups()
     {
         // Distinct countries A, B, C, D; without A that leaves three, grouped by their length (all 1): one group.
+        // (int?): a non-nullable Length key over a possibly-null string declines (see NativeStringNullPropagationTests).
         var result = NativeModeAssert.NativeAndParity(mode => RunNestedGroups(mode,
             nameof(Nested_group_by_over_a_distinct_then_where_counts_the_nested_groups), q =>
                 new List<int>
                 {
-                    q.Select(o => new { o.Country }).Distinct().Where(x => x.Country != "A").GroupBy(x => x.Country.Length).Count()
+                    q.Select(o => new { o.Country }).Distinct().Where(x => x.Country != "A").GroupBy(x => (int?)x.Country.Length).Count()
                 }));
 
         Assert.Equal([1], result);

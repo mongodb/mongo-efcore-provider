@@ -105,7 +105,9 @@ Rules that cost real bugs to learn. Breaking one usually produces **silently wro
   changes group counts. A finalized grouping or Distinct takes precedence over a confirmed join's inner
   access; a non-nullable key part or `$min`/`$max`/`$avg` accumulator that may read an unmatched left-outer
   join side declines rather than answer a plausible default, as does an accumulator condition that may (`$expr`
-  orders null below every value). See `NativeGroupByOverJoinTests`.
+  orders null below every value), as does any key part or accumulator operand computed over that side unless
+  every operator in it propagates missing as EF's null (an allow-list, `MongoGroupElementTranslator
+  .PropagatesMissingAsNull`: `$max` skips the missing value). See `NativeGroupByOverJoinTests`.
 - **Post-group operators after a keyed GroupBy.Select resolve by the Select's output alias**
   (`MongoProjectedAliasScope`), never key-part name or entity property; only `Where` is native (ordering/paging
   after the grouped Select decline). A pushed list (`g.Select(e => e.X).ToList()`/`ToArray()` → `$push`) is
@@ -151,7 +153,42 @@ Rules that cost real bugs to learn. Breaking one usually produces **silently wro
 - **`$toLower`/`$toUpper` are never emitted natively** (ASCII-only). In a `Where` a case mapping becomes an
   anchored case-insensitive regex; in a `Select` the raw string is projected and the mapping re-applied
   client-side. After such a leaf (`MongoSelectDefinition.HasClientCaseMappingProjectionLeaf`), value-reading
-  operators decline — the server would read the unmapped value.
+  operators decline — the server would read the unmapped value. A member-less construction holding one
+  (`new KeyValuePair<,>(x.S.ToUpper(), x.T)`) declines natively when the mixed reader can bind its arguments per member
+  (`TryMatchConstructorArgumentMembers`), since its index-based positional shaper can't be read off whole documents.
+  Otherwise (parameters naming no member) it stays native and the positional shaper re-applies the call; under
+  DriverLinq that shape is pushed down, and the driver rejects the constructor. A grouped result member (or bare body)
+  projecting one (`g.Key.ToUpper()`, `g.Max(x => x.S).ToLower()`) stages the receiver in the `$group` output and the
+  result shaper re-applies the call (`NativeGroupByBinder.PeelResultMemberCaseMapping`). Any other case mapping in a
+  grouped query declines natively, and driver-LINQ would compute it with `$toUpper`/`$toLower`, so every read path about
+  to run a grouped query on driver-LINQ throws if one appears anywhere in its `GroupBy` key/element/result selectors, in
+  an operator composed after it (accumulator lambdas included), or in any lambda of any operator anywhere in an
+  ungrouped source it groups or combines with, through every source argument (a `Select`/`Where`/`OrderBy` before it,
+  either side of a set op or join) (`ThrowIfDriverLinqCaseMapsGroupedResult`, via
+  `NativeGroupByBinder.ContainsCaseMappingCall`). That also declines shapes the driver would answer correctly (a
+  fallen-back `Where(x => x.S.ToUpper() == "ÉCOLE")` before a `GroupBy`, native otherwise); accepted, as released
+  versions threw on every GroupBy. Ungrouped queries are untouched.
+- **String operators that don't propagate null/missing are null-guarded at render**
+  (`MongoAggregationExpressionRenderer.NullPropagating`: `$substrCP` answers `""`, `$strLenCP` and a `$indexOfCP`
+  needle error), so a member-style call on a null receiver is null as in EF; `$concat` coalesces each
+  possibly-null operand to `""` (C# concatenation). Guarded only when `MayBeNull`, which must see the guarded node.
+  A non-nullable-typed value read of a guarded `Length`/`IndexOf`, also through arithmetic/casts/conditionals
+  (projection leaf, group key, `$min`/`$max`/`$avg`/`$push` operand, terminal `Min`/`Max`/`Average`), declines
+  (`MayBeNullBehindNonNullableType`) rather than read null as `0`. First/LastOrDefault is
+  null only as a comparison operand (`RenderComparisonOperand`); a projected value stays `'\0'`.
+- **The mixed reader reads a computed scalar leaf whole.** Operand-by-operand binding registers every operand under
+  the leaf's one projection member, so each reads as the last bound (`S.IndexOf(T)` as `T.IndexOf(T)`). Outside a
+  native projection (and in a native computed leaf's client form) `MongoProjectionBindingExpressionVisitor
+  .IsClientComputedLeaf` registers the leaf whole, and the mixed reader re-evaluates it client-side over its own
+  property reads (`TryBindClientComputedLeaf`) as written: C#, except that a string instance call on a null receiver
+  answers null where its result is nullable, and a nullable cast (or a reference-typed leaf) answers null when a
+  document read it null-propagates from is null; a non-nullable value over a null throws, as EF does. The admitted
+  node set is explicit (`ClientLeafChecker`: constants, property reads incl. owned hops, string/value-type members,
+  string/`Math`/value-type methods, operators, conversions, conditionals); anything else keeps the operand walk. A
+  member-less constructor's arguments (`new KeyValuePair<,>(a, b)`) are bound under the members their parameters
+  initialize, for the same reason. Where they can't be (parameters naming no member, or an initializer assigning one),
+  arguments registering different expressions under the one enclosing member are recorded
+  (`MongoQueryExpression.AliasedConstructionMembers`) and the mixed reader declines them loudly.
 - **Top-level aggregation `$eq`/`$ne` against null is `$ifNull`-wrapped** (missing ≡ null, as in the query
   dialect and .NET), but not inside a `$filter`/`$map` element scope, where driver-LINQ keeps them distinct.
 - **A `NativeComputedLeafExpression` is read whole only by the native alias reader**; every other shaper visitor
@@ -169,6 +206,21 @@ Rules that cost real bugs to learn. Breaking one usually produces **silently wro
   signal a feature uses to pick between two strategies. Check before loosening one.
 - **A recognizer must not mutate then decline.** Stage into locals, commit only once every gate passes
   (`NativeProjectionBinder`'s commit block is the pattern).
+- **Scalar DateTime read-back must honour the property's configured `DateTimeKind`.** `NativeDateTimeKindReadBack`
+  traces a read-back (shaper alias read, `$group` key, `$min`/`$max`/`$first`/`$last` accumulator, terminal
+  scalar) to the backing `IProperty` and reads it through `BsonSerializerFactory`'s property-aware serializer
+  (incl. via `MongoElementRefExpression.ValueProperty`). A DateTime-typed value it can't trace to a property fails
+  closed and declines, and so does a leaf read back whole through a class map (a composite `g.Key`'s `_id`) whose
+  DateTime members come from a kind-sensitive source, since the class map ignores the configured kind.
+  `NativeGroupByBinder` rebuilds such a key as a document construction so each part reads kind-aware; only a key
+  shape it can't rebuild reaches the decline. A set op reads every combined row through the outer side's leaves, so
+  it declines when the operands' leaves differ in kind shape at any kind-sensitive position (including a rebuilt
+  key paired with the same key type read whole by class map). Either way, no silently wrong `Kind`/ticks from a
+  generic read.
+  Deliberately not a `HasDefaultKeySerialization` change — that gate's inputs stay converter + `BsonRepresentation`
+  (adding a kind check there would over-decline correct filters over Local-kind properties). Server-side date computations
+  (`.Hour`, `.Date`, etc.) over Local-kind properties still compute in UTC on both paths — tracked as EF-459, out
+  of scope here.
 
 ## Boundaries with adjacent areas
 
@@ -181,6 +233,12 @@ Rules that cost real bugs to learn. Breaking one usually produces **silently wro
 - **vs driver LINQ v3.** Only the fallback uses it; we do not build on the driver's internal AST.
 
 ## Common pitfalls
+
+- **Known gap: driver-side case mapping the grouped-query decline doesn't reach.** `ThrowIfDriverLinqCaseMapsGroupedResult`
+  walks the operator chain only, so a `GroupBy` inside a lambda (a correlated subquery) isn't searched. Chains with no
+  `GroupBy` are never declined, so ungrouped driver-LINQ shapes that consume a case mapping (a fallen-back
+  `Distinct`/set op over a case-mapped `Select`, `x.S.ToUpper().Length`, `Where(x => x.S.ToUpper() == x.T)`) still run
+  `$toUpper`/`$toLower`.
 
 - **MQL shape cannot prove a query went native.** Native and fallback pipelines are often structurally
   identical for filter/sort/paging. The only reliable signal is `NativeOnly` mode.

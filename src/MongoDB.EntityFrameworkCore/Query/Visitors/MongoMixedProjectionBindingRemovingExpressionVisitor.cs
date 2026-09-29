@@ -14,7 +14,9 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -42,6 +44,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     private readonly ParameterExpression _docParameter;
 
     private readonly bool _ownerKeyMayBeAbsent;
+    private readonly bool _pushedDownSelectRetained;
 
     /// <param name="rootEntityType">The root entity type of the query.</param>
     /// <param name="queryExpression">The query being shaped.</param>
@@ -67,6 +70,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         // The owned key only feeds identity: under NoTracking it's unobservable (TrackAll already rejects an owned
         // entity projected without its owner), but identity resolution would merge every row onto the placeholder.
         _ownerKeyMayBeAbsent = pushedDownSelectRetained && trackingBehavior == QueryTrackingBehavior.NoTracking;
+        _pushedDownSelectRetained = pushedDownSelectRetained;
     }
 
     /// <inheritdoc />
@@ -88,6 +92,19 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         {
             if (projectionBindingExpression.ProjectionMember != null)
             {
+                // A member-less construction whose arguments all registered under this one member: each would read
+                // as the last one registered, so decline loudly rather than return another argument's value.
+                if (_queryExpression.AliasedConstructionMembers.TryGetValue(
+                        projectionBindingExpression.ProjectionMember, out var aliasedConstructionType))
+                {
+                    throw new InvalidOperationException(
+                        $"The projection constructs '{aliasedConstructionType.ShortDisplayName()}' from arguments that "
+                        + "can't each be read from the document: its constructor's parameters don't each initialize a "
+                        + "distinct property or field of the same name, or a member initializer also assigns one of them. "
+                        + "Project into an anonymous type or a type with settable properties instead, or construct it "
+                        + "client-side after 'AsEnumerable()'.");
+                }
+
                 var mappedExpression = _queryExpression.GetMappedProjection(
                     projectionBindingExpression.ProjectionMember);
 
@@ -154,6 +171,16 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                 if (sourceExpression is MongoDocumentConstructionExpression documentConstruction)
                 {
                     return BuildDocumentConstructionExpression(documentConstruction, alias!);
+                }
+
+                // A computed scalar leaf (`new { U = p.Name.ToUpper(), I = p.Name.IndexOf(p.Code) }`,
+                // `p.Name.Trim().Length + 1`), registered whole by MongoProjectionBindingExpressionVisitor
+                // (IsClientComputedLeaf). Re-evaluate it client-side over its own property reads; resolving it as a
+                // member path would read an element named after the member ("Length"), and operand by operand every
+                // operand would read the same value. Before the arithmetic arm on purpose (it subsumes it).
+                if (TryBindClientComputedLeaf(sourceExpression, projectionBindingExpression.Type, out var clientLeafRead))
+                {
+                    return clientLeafRead;
                 }
 
                 // A computed-arithmetic leaf (e.g. select new { c, Total = c.Age * c.Score }) mixed alongside
@@ -406,6 +433,202 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     /// rebuilds the original call around that read. Returns <see langword="false"/> if not such a leaf or the
     /// argument doesn't resolve to a property.
     /// </remarks>
+    // See the call site. Every scalar property access in the leaf becomes a document read and the rest (string/Math
+    // calls, Length, arithmetic, comparisons, casts, conditionals, coalesces) runs client-side as written, so every
+    // operand reads its own value. C# answers what EF answers except where EF propagates a null that C# dereferences:
+    // a string instance call on a null receiver answers null where its result is nullable
+    // (NullPropagatingReceiverRewriter), and where the value is read nullable (a nullable cast in the leaf, or the
+    // leaf's own reference type) the cast answers null when a document read it null-propagates from is null
+    // (NullPropagatingCastRewriter). A non-nullable value over a null (`p.Name.Length`) throws, as EF does.
+    // Declines (returns false) if any entity reference is left, and over a retained pushed-down Select (Distinct, a set
+    // op): the driver then returns projected documents, which don't hold the properties the leaf reads, so every read
+    // would answer null.
+    private bool TryBindClientComputedLeaf(Expression? mappedExpression, Type resultType, out Expression result)
+    {
+        result = null!;
+
+        if (_pushedDownSelectRetained
+            || mappedExpression is null || !MongoProjectionBindingExpressionVisitor.IsClientComputedLeaf(mappedExpression))
+        {
+            return false;
+        }
+
+        var rewriter = new ClientPropertyReadRewriter(this);
+        var rewritten = rewriter.Visit(mappedExpression);
+        if (rewriter.Unresolved)
+        {
+            return false;
+        }
+
+        var body = rewritten.Type == resultType ? rewritten : Expression.Convert(rewritten, resultType);
+        var propagator = new NullPropagatingCastRewriter(rewriter.Reads);
+        result = propagator.Visit(body);
+        if (!resultType.IsValueType)
+        {
+            // A reference-typed leaf (`p.Name.Length.ToString()`) has no cast to carry the null.
+            result = propagator.Guard(body, result);
+        }
+
+        result = new NullPropagatingReceiverRewriter(rewriter.Reads).Visit(result)!;
+        return true;
+    }
+
+    // `receiver == null ? null : receiver.M(args)` for every string instance call with a nullable result
+    // (`p.Name.Trim()`, `p.Name.ToUpper()`, `p.Name.Replace("b", p.Code)`), evaluating the receiver once. Document reads
+    // are left alone.
+    private sealed class NullPropagatingReceiverRewriter(IReadOnlySet<Expression> reads) : ExpressionVisitor
+    {
+        public override Expression? Visit(Expression? node)
+            => node is not null && reads.Contains(node) ? node : base.Visit(node);
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            var visited = base.VisitMethodCall(node);
+            if (visited is not MethodCallExpression { Object: { } receiver } call
+                || receiver.Type != typeof(string)
+                || call.Method.DeclaringType != typeof(string)
+                || (call.Type.IsValueType && !call.Type.IsNullableValueType()))
+            {
+                return visited;
+            }
+
+            var value = Expression.Variable(typeof(string), "receiver");
+            return Expression.Block(
+                call.Type,
+                [value],
+                Expression.Assign(value, receiver),
+                Expression.Condition(
+                    Expression.Equal(value, Expression.Constant(null, typeof(string))),
+                    Expression.Constant(null, call.Type),
+                    call.Update(value, call.Arguments)));
+        }
+    }
+
+    // Makes each nullable cast `(int?)e` in a client-evaluated leaf answer null when EF's value of `e` is null, which is
+    // derivable (and sound) only from document reads that force it: a read, and every null-propagating operator over
+    // one (Length, the native string operators, arithmetic, numeric casts, ToString). Anything else (a conditional, a
+    // coalesce, a concatenation, a comparison) contributes no read, so it is evaluated as written - still EF's answer
+    // unless C# throws. Null-checking the reads rather than an operator's receiver keeps the check itself from
+    // dereferencing a null (`(int?)p.Name.Trim().Length`).
+    private sealed class NullPropagatingCastRewriter(IReadOnlySet<Expression> reads) : ExpressionVisitor
+    {
+        private static readonly HashSet<string> NullPropagatingStringMethods =
+        [
+            nameof(string.Substring), nameof(string.Trim), nameof(string.TrimStart), nameof(string.TrimEnd),
+            nameof(string.ToUpper), nameof(string.ToLower), nameof(string.ToUpperInvariant),
+            nameof(string.ToLowerInvariant), nameof(string.Replace), nameof(string.IndexOf)
+        ];
+
+        protected override Expression VisitUnary(UnaryExpression node)
+        {
+            var visited = base.VisitUnary(node);
+            return node.NodeType is ExpressionType.Convert or ExpressionType.ConvertChecked
+                   && node.Type.IsNullableValueType()
+                   && node.Operand.Type.IsValueType
+                   && !node.Operand.Type.IsNullableValueType()
+                ? Guard(node.Operand, visited)
+                : visited;
+        }
+
+        // `original` is the pre-rewrite operand (whose read nodes are shared with `rewritten`); `rewritten` is nullable.
+        internal Expression Guard(Expression original, Expression rewritten)
+        {
+            var anyNull = NullForcingReads(original).Distinct()
+                .Select(read => (Expression)Expression.Equal(read, Expression.Constant(null, read.Type)))
+                .Aggregate((Expression?)null, (acc, isNull) => acc is null ? isNull : Expression.OrElse(acc, isNull));
+            return anyNull is null
+                ? rewritten
+                : Expression.Condition(anyNull, Expression.Constant(null, rewritten.Type), rewritten);
+        }
+
+        private IEnumerable<Expression> NullForcingReads(Expression node)
+            => node switch
+            {
+                _ when reads.Contains(node) => node.Type.IsNullableType() ? [node] : [],
+                MemberExpression { Expression: { } receiver } member when IsStringLength(member) => NullForcingReads(receiver),
+                // A null argument EF propagates is one C# throws on; Replace's new value may be null in C# (it removes).
+                MethodCallExpression { Object: { } receiver } call
+                    when call.Method.DeclaringType == typeof(string) && NullPropagatingStringMethods.Contains(call.Method.Name)
+                    => NullForcingReads(receiver).Concat(
+                        (call.Method.Name == nameof(string.Replace) ? call.Arguments.Take(1) : call.Arguments)
+                        .SelectMany(NullForcingReads)),
+                MethodCallExpression { Object: { } receiver, Method.Name: nameof(ToString), Arguments.Count: 0 }
+                    when receiver.Type.IsValueType
+                    => NullForcingReads(receiver),
+                UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked
+                    or ExpressionType.Negate or ExpressionType.NegateChecked or ExpressionType.UnaryPlus } unary
+                    when unary.Operand.Type.IsValueType
+                    => NullForcingReads(unary.Operand),
+                BinaryExpression { NodeType: ExpressionType.Add or ExpressionType.AddChecked or ExpressionType.Subtract
+                    or ExpressionType.SubtractChecked or ExpressionType.Multiply or ExpressionType.MultiplyChecked
+                    or ExpressionType.Divide or ExpressionType.Modulo } arithmetic
+                    when arithmetic.Left.Type.IsValueType && arithmetic.Right.Type.IsValueType
+                    => NullForcingReads(arithmetic.Left).Concat(NullForcingReads(arithmetic.Right)),
+                _ => []
+            };
+    }
+
+    private static bool IsStringLength(MemberExpression member)
+        => member.Member.Name == nameof(string.Length) && member.Member.DeclaringType == typeof(string);
+
+    // Replaces each scalar property access with its document read (as ResolveArithmeticOperand does); anything else
+    // that still references an entity (a shaper, parameter or unresolvable member) marks the leaf unresolved.
+    private sealed class ClientPropertyReadRewriter(MongoMixedProjectionBindingRemovingExpressionVisitor owner) : ExpressionVisitor
+    {
+        internal bool Unresolved { get; private set; }
+
+        // The document reads substituted for property accesses (reference identity).
+        internal HashSet<Expression> Reads { get; } = [];
+
+        protected override Expression VisitMember(MemberExpression node)
+        {
+            if (IsStringLength(node) && node.Expression is { } receiver)
+            {
+                return node.Update(Visit(receiver));
+            }
+
+            return TryRead(node) ?? base.VisitMember(node);
+        }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+            => node.TryGetEFPropertyArguments(out _, out _) ? TryRead(node) ?? MarkUnresolved(node) : base.VisitMethodCall(node);
+
+        protected override Expression VisitParameter(ParameterExpression node) => MarkUnresolved(node);
+
+        protected override Expression VisitExtension(Expression node) => MarkUnresolved(node);
+
+        private Expression? TryRead(Expression node)
+        {
+            if (owner.TryBindNavigationMemberAccess(node, node.Type, out var navRead))
+            {
+                Reads.Add(navRead);
+                return navRead;
+            }
+
+            var fieldAccess = owner.TryResolveFieldAccess(node);
+            if (fieldAccess.Property is not { } property)
+            {
+                return null;
+            }
+
+            var docExpr = fieldAccess.DocumentExpression ?? owner._docParameter;
+            if (owner._queryExpression.UsesDriverJoinFields && ReferenceEquals(docExpr, owner._docParameter))
+            {
+                docExpr = owner.CreateGetValueExpression(owner._docParameter, "_outer", true, typeof(BsonDocument));
+            }
+
+            var read = owner.CreateGetValueExpression(docExpr, property, node.Type);
+            Reads.Add(read);
+            return read;
+        }
+
+        private Expression MarkUnresolved(Expression node)
+        {
+            Unresolved = true;
+            return node;
+        }
+    }
+
     private bool TryBindStringSequenceLeaf(Expression? mappedExpression, Type resultType, out Expression result)
     {
         result = null!;

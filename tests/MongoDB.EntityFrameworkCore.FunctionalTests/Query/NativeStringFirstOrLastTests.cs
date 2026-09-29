@@ -85,13 +85,14 @@ public class NativeStringFirstOrLastTests(TemporaryDatabaseFixture database) : I
         public string? S { get; set; }
     }
 
-    // $strLenCP is a server error for a null/missing argument; a null field must yield '\0' like an empty
-    // string. No client-side oracle (FirstOrDefault on a null string throws), so expected rows are hand-written.
+    // $strLenCP is a server error for a null/missing argument, so the query must not abort; and, as C#/EF compare a
+    // null with a char, a null field does not equal '\0' (only the empty string does). No client-side oracle
+    // (FirstOrDefault on a null string throws), so expected rows are hand-written.
     [Fact]
-    public void FirstOrDefault_equals_null_char_on_null_field_no_longer_throws_a_server_error()
+    public void FirstOrDefault_equals_null_char_on_null_field_does_not_throw_and_does_not_match()
     {
         var collection = database.MongoDatabase.GetCollection<NullableRow>(UniqueCollectionName(
-            nameof(FirstOrDefault_equals_null_char_on_null_field_no_longer_throws_a_server_error)));
+            nameof(FirstOrDefault_equals_null_char_on_null_field_does_not_throw_and_does_not_match)));
         collection.InsertMany(
         [
             new NullableRow { Label = "null-field", S = null },
@@ -100,14 +101,14 @@ public class NativeStringFirstOrLastTests(TemporaryDatabaseFixture database) : I
         ]);
 
         AssertNullableFieldMatchesExpected(
-            collection, x => x.S!.FirstOrDefault() == '\0', ["null-field", "empty"]);
+            collection, x => x.S!.FirstOrDefault() == '\0', ["empty"]);
     }
 
     [Fact]
-    public void LastOrDefault_equals_null_char_on_null_field_no_longer_throws_a_server_error()
+    public void LastOrDefault_equals_null_char_on_null_field_does_not_throw_and_does_not_match()
     {
         var collection = database.MongoDatabase.GetCollection<NullableRow>(UniqueCollectionName(
-            nameof(LastOrDefault_equals_null_char_on_null_field_no_longer_throws_a_server_error)));
+            nameof(LastOrDefault_equals_null_char_on_null_field_does_not_throw_and_does_not_match)));
         collection.InsertMany(
         [
             new NullableRow { Label = "null-field", S = null },
@@ -116,7 +117,7 @@ public class NativeStringFirstOrLastTests(TemporaryDatabaseFixture database) : I
         ]);
 
         AssertNullableFieldMatchesExpected(
-            collection, x => x.S!.LastOrDefault() == '\0', ["null-field", "empty"]);
+            collection, x => x.S!.LastOrDefault() == '\0', ["empty"]);
     }
 
     private static void AssertNullableFieldMatchesExpected(

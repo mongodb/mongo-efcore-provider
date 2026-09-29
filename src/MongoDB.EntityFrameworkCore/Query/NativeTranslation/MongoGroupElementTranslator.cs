@@ -15,6 +15,7 @@
 
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
@@ -100,6 +101,76 @@ internal sealed class MongoGroupElementTranslator
 
         return false;
     }
+
+    /// <summary>
+    /// In join mode, whether <paramref name="translated"/> (the translation of <paramref name="body"/>) may read an
+    /// unmatched join side (see <see cref="MayReadAnUnmatchedJoinSide"/>) through an operator that doesn't turn the
+    /// missing value into EF's null. EF null-propagates over the DefaultIfEmpty null
+    /// (<c>(decimal?)Math.Max(o.Total, 7)</c> is null), but on the server the side is missing and, e.g., <c>$max</c>
+    /// ignores it and <c>Math.Sign</c>'s <c>$switch</c> orders it below 0. Such a value must decline.
+    /// </summary>
+    /// <remarks>
+    /// Same calling contract as <see cref="MayReadAnUnmatchedJoinSide"/>: only after a successful translation of
+    /// <paramref name="body"/>. The operator check is an allow-list (<see cref="PropagatesMissingAsNull"/>), so a
+    /// node kind added later fails closed.
+    /// </remarks>
+    internal bool MayMiscomputeAnUnmatchedJoinSide(Expression body, MongoExpression translated)
+        => !PropagatesMissingAsNull(translated) && MayReadAnUnmatchedJoinSide(body);
+
+    /// <summary>
+    /// Whether every operator in <paramref name="node"/> answers what EF answers when a field it reads is missing:
+    /// null for a propagating operator (arithmetic, <c>$toX</c>, math, date parts, <c>$trim</c>,
+    /// <c>$replaceAll</c>, <c>$indexOfCP</c> over a missing input, and the render-time null-guarded
+    /// <c>$substrCP</c>/<c>$strLenCP</c>), the right operand for <c>$ifNull</c>, which is C#'s <c>??</c>, or
+    /// <c>""</c> for C#'s concatenation of null (the operand-coalescing <c>$concat</c>). Anything not listed,
+    /// including every condition (declined separately, see <c>NativeGroupByBinder</c>'s <c>ConditionFinder</c>),
+    /// answers <see langword="false"/>.
+    /// </summary>
+    internal static bool PropagatesMissingAsNull(MongoExpression node)
+        => node switch
+        {
+            MongoFieldExpression or MongoElementRefExpression or MongoOuterFieldExpression
+                or MongoConstantExpression or MongoParameterExpression => true,
+            MongoBinaryExpression
+            {
+                Operator: MongoBinaryOperator.Add or MongoBinaryOperator.Subtract or MongoBinaryOperator.Multiply
+                or MongoBinaryOperator.Divide or MongoBinaryOperator.IntegerDivide or MongoBinaryOperator.Modulo
+            } arithmetic => PropagatesMissingAsNull(arithmetic.Left) && PropagatesMissingAsNull(arithmetic.Right),
+            MongoConvertExpression convert => PropagatesMissingAsNull(convert.Operand),
+            MongoMathExpression math => IsNullPropagatingMathFunction(math.Function) && math.Operands.All(PropagatesMissingAsNull),
+            MongoDatePartExpression datePart => PropagatesMissingAsNull(datePart.Operand),
+            MongoCoalesceExpression coalesce => PropagatesMissingAsNull(coalesce.Left) && PropagatesMissingAsNull(coalesce.Right),
+            MongoTrimExpression trim => PropagatesMissingAsNull(trim.Source) && (trim.Chars is null || PropagatesMissingAsNull(trim.Chars)),
+            MongoReplaceExpression replace
+                => PropagatesMissingAsNull(replace.Input) && PropagatesMissingAsNull(replace.Find)
+                   && PropagatesMissingAsNull(replace.Replacement),
+            MongoStringIndexOfExpression indexOf
+                => PropagatesMissingAsNull(indexOf.Haystack) && PropagatesMissingAsNull(indexOf.Needle)
+                   && (indexOf.Start is null || PropagatesMissingAsNull(indexOf.Start)),
+            // $substrCP/$strLenCP are null-guarded at render (MongoAggregationExpressionRenderer.NullPropagating),
+            // but only over the string: a missing start/length is still a server error, so those must be values.
+            MongoSubstringExpression substring
+                => PropagatesMissingAsNull(substring.Source) && IsValue(substring.Start)
+                   && (substring.Length is null || IsValue(substring.Length)),
+            MongoStringLengthExpression length => PropagatesMissingAsNull(length.Operand),
+            // Each possibly-null operand is coalesced to "" at render, which is EF's concatenation of its null.
+            MongoConcatExpression concat => concat.Operands.All(PropagatesMissingAsNull),
+            _ => false
+        };
+
+    private static bool IsValue(MongoExpression node) => node is MongoConstantExpression or MongoParameterExpression;
+
+    // Not Max/Min ($max/$min skip a missing operand, answering the other one) or Sign (its $switch orders a missing
+    // operand below 0, answering -1).
+    private static bool IsNullPropagatingMathFunction(MongoMathFunction function)
+        => function is MongoMathFunction.Abs or MongoMathFunction.Ceiling or MongoMathFunction.Floor
+            or MongoMathFunction.Exp or MongoMathFunction.Sqrt or MongoMathFunction.Truncate or MongoMathFunction.Round
+            or MongoMathFunction.RoundDigits or MongoMathFunction.Ln or MongoMathFunction.Log10 or MongoMathFunction.Log2
+            or MongoMathFunction.LogNewBase or MongoMathFunction.DegreesToRadians or MongoMathFunction.RadiansToDegrees
+            or MongoMathFunction.Acos or MongoMathFunction.Acosh or MongoMathFunction.Asin or MongoMathFunction.Asinh
+            or MongoMathFunction.Atan or MongoMathFunction.Atanh or MongoMathFunction.Cos or MongoMathFunction.Cosh
+            or MongoMathFunction.Sin or MongoMathFunction.Sinh or MongoMathFunction.Tan or MongoMathFunction.Tanh
+            or MongoMathFunction.Pow or MongoMathFunction.Atan2;
 
     internal bool TryTranslateValue(Expression body, [NotNullWhen(true)] out MongoExpression? result)
         => TryTranslateCore(body, valueMode: true, out result);

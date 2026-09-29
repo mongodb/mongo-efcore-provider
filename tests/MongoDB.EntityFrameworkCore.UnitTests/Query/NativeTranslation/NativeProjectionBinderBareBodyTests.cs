@@ -306,7 +306,8 @@ public class NativeProjectionBinderBareBodyTests
     public void Bare_string_Length_leaf_is_admitted_under_the_reserved_synthetic_alias()
     {
         var mongoQ = TestQuery();
-        Expression<Func<Order, int>> selector = o => o.Country.Length;
+        // Nullable: a non-nullable Length would read a null string's length as 0 (see the next test).
+        Expression<Func<Order, int?>> selector = o => o.Country.Length;
 
         Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
 
@@ -317,6 +318,15 @@ public class NativeProjectionBinderBareBodyTests
         Assert.Equal("_v", alias);
         Assert.Equal(ProjectionAliasTier.Synthetic, mongoQ.Select.BareProjectionTier);
         Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
+    }
+
+    [Fact]
+    public void Bare_non_nullable_string_Length_leaf_over_a_possibly_null_string_declines()
+    {
+        var mongoQ = TestQuery();
+        Expression<Func<Order, int>> selector = o => o.Country.Length;
+
+        Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
     }
 
     [Fact]

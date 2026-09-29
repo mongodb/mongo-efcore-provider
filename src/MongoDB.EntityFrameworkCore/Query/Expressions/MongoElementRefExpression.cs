@@ -14,6 +14,7 @@
  */
 
 using System;
+using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
@@ -22,7 +23,8 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// <see cref="Microsoft.EntityFrameworkCore.Metadata.IProperty"/>. Renders as <c>"$" + Path</c>; used e.g. to lift
 /// <c>$group</c> output (<c>_id</c>, <c>_id.&lt;Name&gt;</c>, accumulator fields) into top-level aliases.
 /// </summary>
-internal sealed class MongoElementRefExpression(string path, Type clrType, bool nullSafe = false) : MongoExpression
+internal sealed class MongoElementRefExpression(
+    string path, Type clrType, bool nullSafe = false, IProperty? valueProperty = null) : MongoExpression
 {
     /// <summary>
     /// <see cref="Path"/> meaning the whole current document (<c>$$ROOT</c>).
@@ -51,6 +53,15 @@ internal sealed class MongoElementRefExpression(string path, Type clrType, bool 
     /// treats missing and <c>null</c> differently. Opt-in so existing callers' MQL is unchanged.
     /// </summary>
     public bool NullSafe { get; } = nullSafe;
+
+    /// <summary>
+    /// The property backing the element's value, when the producer knows it: a correlated reducer's reduced member
+    /// under <c>_lookup_&lt;Nav&gt;.&lt;Element&gt;</c> (its unchanged stored value), or the <c>DateTimeOffset</c>
+    /// property whose <c>.DateTime</c> sub-field a <c>UtcDateTime</c> read reaches. Otherwise <see langword="null"/>.
+    /// Lets the read side decide whether a configured <c>DateTimeKind</c> applies
+    /// (<see cref="NativeTranslation.NativeDateTimeKindReadBack"/>).
+    /// </summary>
+    public IProperty? ValueProperty { get; } = valueProperty;
 
     /// <inheritdoc />
     public override Type Type { get; } = clrType;

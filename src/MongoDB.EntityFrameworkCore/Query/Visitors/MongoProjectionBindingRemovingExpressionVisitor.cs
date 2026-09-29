@@ -201,18 +201,18 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                             Expression.Call(
                                 IsElementAbsentOrNullMethodInfo, DocParameter, Expression.Constant(projection.Alias)),
                             Expression.Default(projectionBindingExpression.Type),
-                            BsonBinding.CreateGetElementValue(
-                                DocParameter, projection.Alias, projectionBindingExpression.Type));
+                            CreateAliasRead(projection.Alias, projectionBindingExpression.Type));
                     }
 
                     // A native numeric-cast leaf (`new { X = (int)x.D }`) holds the converted value under its alias.
                     // TryResolveFieldAccess would strip the Convert and read via the pre-cast property's serializer
                     // (or trip the type-mismatch guard below in every mode), so use the raw alias read like other
                     // computed leaves. Safe because the emit side's Guard B (AllFieldsDefaultSerialized) never admits
-                    // a cast over a value-converted or non-default-representation field.
+                    // a cast over a value-converted or non-default-representation field. A nullable cast over a
+                    // Local-kind DateTime (`(DateTime?)o.LocalDate`) still reads with that kind (CreateAliasRead).
                     if (projection.Expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked })
                     {
-                        return BsonBinding.CreateGetElementValue(DocParameter, projection.Alias, projectionBindingExpression.Type);
+                        return CreateAliasRead(projection.Alias, projectionBindingExpression.Type);
                     }
 
                     // Native string-to-char-sequence leaf: only the raw string was pushed down (BSON has no
@@ -288,19 +288,17 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                                     SequenceContainsNoElementsConstructorInfo,
                                     Expression.Constant("Sequence contains no elements")),
                                 projectionBindingExpression.Type),
-                            BsonBinding.CreateGetElementValue(
-                                DocParameter, projection.Alias, projectionBindingExpression.Type));
+                            CreateAliasRead(projection.Alias, projectionBindingExpression.Type));
                     }
 
                     // For non-property expressions (arithmetic, constants, Mql.Field) — and for
                     // key-property bindings — the push-down result document carries the value under
                     // the projection alias as its BSON element name (e.g. `{ OrderID: "$_id" }`), so
                     // read it raw by that alias. projection.Expression is non-nullable (see
-                    // ProjectionExpression), so there is no null-source path to handle here.
-                    return BsonBinding.CreateGetElementValue(
-                        DocParameter,
-                        projection.Alias,
-                        projectionBindingExpression.Type);
+                    // ProjectionExpression), so there is no null-source path to handle here. A GroupBy key,
+                    // $min/$max output or join-scope leaf over a Local-kind DateTime reads with that kind
+                    // (CreateAliasRead).
+                    return CreateAliasRead(projection.Alias, projectionBindingExpression.Type);
                 }
 
             case CollectionShaperExpression collectionShaperExpression:
@@ -900,9 +898,45 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     /// or constant value) by element path. <paramref name="readType"/> is the value's own translated type, not the
     /// possibly-widened declared type.
     /// </summary>
+    /// <remarks>
+    /// A member holding a Local-kind DateTime property's unchanged value (a <c>g.Key</c> or <c>$max</c> read) reads with
+    /// that kind; see <see cref="NativeDateTimeKindReadBack"/>.
+    /// </remarks>
     protected virtual Expression ReadDocumentConstructionMemberGeneric(
         MongoDocumentConstructionExpression construction, string[] path, string memberName, Type readType)
-        => BsonBinding.CreateGetElementValueAtPath(DocParameter, [..path, memberName], readType);
+        => BsonBinding.CreateGetElementValueAtPath(DocParameter, [..path, memberName], readType,
+            FindDateTimeKindSource(construction, memberName, readType));
+
+    // The Local-kind property a construction member's value passes through unchanged, if any.
+    private IReadOnlyProperty? FindDateTimeKindSource(
+        MongoDocumentConstructionExpression construction, string memberName, Type readType)
+    {
+        if (readType.UnwrapNullableType() != typeof(DateTime))
+            return null;
+
+        foreach (var (name, value) in construction.Members)
+        {
+            if (name == memberName)
+                return NativeDateTimeKindReadBack.FindForProjectionValue(_queryExpression.Select, value);
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Reads a projection output by alias through the generic serializer for <paramref name="type"/>. When the alias
+    /// holds the unchanged value of a Local-kind DateTime property (a GroupBy key, a <c>$min</c>/<c>$max</c>, a cast or
+    /// join-scope leaf), the value reads back with that kind, as the property's own serializer would; see
+    /// <see cref="NativeDateTimeKindReadBack"/>.
+    /// </summary>
+    private Expression CreateAliasRead(string alias, Type type)
+        => BsonBinding.CreateGetElementValue(
+            DocParameter,
+            alias,
+            type,
+            type.UnwrapNullableType() == typeof(DateTime)
+                ? NativeDateTimeKindReadBack.FindForProjectionAlias(_queryExpression.Select, alias)
+                : null);
 
     /// <summary>
     /// Reads one member of a <see cref="MongoDocumentConstructionExpression"/> leaf. The native implementation
