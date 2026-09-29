@@ -37,11 +37,13 @@ The 6 deferred methods were delivered by `docs/superpowers/plans/2026-09-28-nati
 as a knock-on: `GroupBy_optional_navigation_member_Aggregate`, `GroupBy_principal_key_property_optimization`,
 `GroupBy_with_group_key_access_thru_nested_navigation`, `GroupJoin_GroupBy_Aggregate_2`,
 `GroupJoin_GroupBy_Aggregate_3`, `GroupJoin_GroupBy_Aggregate_4`, `GroupJoin_GroupBy_Aggregate_5`, and
-`GroupBy_Min_Where_optional_relationship`/`_2` (the latter two mode-split on EF10: native under default, still
-declining under `NativeOnly` because the post-group `Where` isn't native yet; on EF8/EF9 they decline in every
-mode, because a pre-existing driver-LINQ bug throws for this left-outer-join shape regardless of mode). Paging
-recorded ahead of a non-1:1 grouped join declines rather than defers — deferring it past the `$lookup` would
-silently change group counts.
+`GroupBy_Min_Where_optional_relationship`/`_2` (originally mode-split on EF10 — native under default, still
+declining under `NativeOnly` because the post-group `Where` wasn't native yet; on EF8/EF9 they declined in every
+mode. **Delivered** via `docs/superpowers/plans/2026-09-29-native-groupby-post-group-where-and-push-list.md`:
+post-group `Where` over a keyed GroupBy's projected alias is now native, so both methods run the identical
+pipeline on every EF version and mode — the mode/version split and the `AssertTranslationFailed` overrides were
+removed). Paging recorded ahead of a non-1:1 grouped join declines rather than defers — deferring it past the
+`$lookup` would silently change group counts.
 
 This design covers the remaining **30 methods**, split into 9 independently shippable slices (SP1–SP9),
 stacked in the order below (each depends on the previous landing, per this repo's stacked-PR convention —
@@ -104,6 +106,12 @@ design doesn't have a bucket for yet (closer to Bucket I's "GroupBy over an alre
 HAVING). Moved out of SP2's scope; needs its own bucket/slice once that capability exists — do not fold it back
 into SP2 without first confirming the OTHER three targets' shapes the same way (all three are directly on
 `Set<Order>` with no prior `Select`, confirmed by re-reading `NorthwindGroupByQueryTestBase.cs`).
+
+**Delivered.** `GroupBy_count_filter`'s bucket — a post-group `Where` over a keyed GroupBy's projected Select
+alias, resolved by output alias rather than key-part name or entity property — shipped via
+`docs/superpowers/plans/2026-09-29-native-groupby-post-group-where-and-push-list.md` (`MongoProjectedAliasScope`;
+see Query `AGENTS.md`'s durable-invariants bullet). `GroupBy_count_filter` goes native on all three EF versions,
+in both default and `NativeOnly` mode.
 
 **Gap:** `TryBindGroupProjection` explicitly declines whenever `select.PendingGroupPredicate != null` — a
 documented, deliberate EF-449 gap: "this predicate has NO native $match-after-$group mechanism on the
@@ -241,6 +249,12 @@ false*` case, which must keep declining for a different reason — read the surr
 touching the shared conditional).
 
 ## SP8 — Group elements materialized as a list (1 test)
+
+**Delivered** via `docs/superpowers/plans/2026-09-29-native-groupby-post-group-where-and-push-list.md`: a new
+`$push` accumulator (`NativeGroupByBinder.TryBindPushAccumulator`), a null-safe wrap for nullable/reference
+element types (missing and null both read back as `null`), and a scalar-element allowlist that declines entity
+and owned-type elements. `GroupBy_selecting_grouping_key_list` goes native on all three EF versions, in both
+default and `NativeOnly` mode. See Query `AGENTS.md`'s durable-invariants bullet.
 
 **Test:** `GroupBy_selecting_grouping_key_list` — `g.Select(e => e.CustomerID).ToList()`.
 

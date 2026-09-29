@@ -581,6 +581,12 @@ internal sealed class MongoSelectDefinition
     internal void SnapshotPriorGroupingForNestedGroupBy()
     {
         PriorGrouping = _grouping;
+
+        // Cleared so nothing reads the prior stage's grouping as this stage's: until the nested GroupBy finalizes,
+        // Grouping == null keeps it on the pending-key paths (a bare nested Count() binds via
+        // TryBindGroupTerminalAggregate) and Route on Fallback if it never does. A stale Grouping instead matched the
+        // post-GroupBy.Select aggregate path, which re-emitted the prior $group and dropped the nested key.
+        _grouping = null;
         PriorGroupingProjection = [.. _projections];
         PriorGroupHavingPredicate = GroupHavingPredicate;
         GroupHavingPredicate = null;
@@ -670,6 +676,21 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     internal bool HasTerminalOperator
         => IsGroupBy || IsDistinct || IsSetOp || Grouping != null || UnwindSources.Count > 0;
+
+    /// <summary>
+    /// <see langword="true"/> for a finalized keyed <c>GroupBy(key).Select(...)</c> with no terminal yet, where a
+    /// predicate recorded now (<see cref="AddPredicateConjunct"/> into <see cref="PostGroupOps"/>) lowers right
+    /// after this grouping's flattening <c>$project</c>, so it can filter the <c>Select</c>'s output aliases.
+    /// </summary>
+    /// <remarks>
+    /// Excludes a GroupBy nested on a prior grouping (<see cref="PriorGrouping"/>: <see cref="PostGroupOps"/> then
+    /// lower after the <i>prior</i> flatten, ahead of this <c>$group</c>) and any set op (<see cref="ActiveOps"/> is
+    /// then <see cref="TrailingOps"/>, which lower ahead of a <c>$group</c> composed after the combine). In both, the
+    /// predicate would run before the aliases it reads exist, and silently answer over the wrong rows.
+    /// </remarks>
+    internal bool IsFinalizedKeyedGroupOutput
+        => IsGroupBy && !IsDistinct && Grouping != null && Cardinality == null
+           && PriorGrouping == null && SetOperation == null;
 
     /// <summary>
     /// <see langword="true"/> when a set op is the only thing done so far (no grouping/distinct/unwind, no

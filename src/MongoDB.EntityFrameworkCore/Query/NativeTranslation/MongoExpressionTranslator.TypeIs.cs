@@ -36,12 +36,9 @@ internal sealed partial class MongoExpressionTranslator
         if (SelfParam is null)
             return false;
 
-        if (!ReferenceEquals(Unwrap(typeBinary.Expression), SelfParam))
-            return false;
-
         // In a Distinct/GroupBy-aggregate scope SelfParam may be a projected value, not the root entity; the
-        // constant fold is only valid for the root.
-        if (SelfParam.Type != _entityType.ClrType)
+        // constant fold is only valid for the root. See IsSelfParamTheEntity.
+        if (!IsSelfParamTheEntity(Unwrap(typeBinary.Expression)))
             return false;
 
         // Hierarchy types need a discriminator predicate, not a constant; decline.

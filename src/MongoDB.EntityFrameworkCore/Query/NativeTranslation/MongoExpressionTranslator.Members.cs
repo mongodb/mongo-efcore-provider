@@ -60,11 +60,16 @@ internal sealed partial class MongoExpressionTranslator
             node = nullableReceiver;
         }
 
+        // A keyed GroupBy.Select's output aliases have no IProperty and must never resolve against the entity or a
+        // key-part name; TryResolveFlattenedAlias owns them. See ProjectedAliasScope.
+        if (ProjectedAliasScope is not null)
+            return false;
+
         // A bare-scalar Distinct's parameter (`Select(o => o.Country).Distinct().OrderBy(x => x.IndexOf(term))`)
         // resolves by identity to the sole field-backed key part. A computed sole key has no IProperty and
-        // declines. Accumulators.Count == 0 matters: after GroupBy(key).Select(g => g.Sum(...)) a bare SelfParam
-        // names the accumulator, not the key (handled by TranslateComparisonCore's bare-accumulator-alias branch),
-        // and binding it here would use the key's serializer.
+        // declines. Accumulators.Count == 0 keeps a grouping with accumulator outputs (a prior
+        // GroupBy(key).Select(aggregate) under a nested GroupBy) from binding a bare parameter to the key's
+        // serializer.
         if (SelfParam is not null && ReferenceEquals(node, SelfParam)
             && DistinctAliasScope is { Accumulators.Count: 0, Key: [{ FieldRef: MongoFieldExpression soleField } soleKeyPart] })
         {
@@ -142,19 +147,30 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
-    /// Resolves a single-hop member access on a Distinct alias whose key part is computed (e.g. <c>A</c> in
-    /// <c>Select(c =&gt; new { A = c.CustomerID + c.City }).Distinct()</c>), which <see cref="TryResolveMember"/>
-    /// can't express since there is no <see cref="IProperty"/>. Used only where a path suffices (the
-    /// StartsWith/EndsWith/Contains regex arm of <see cref="TryTranslate"/>); other operators decline.
+    /// Resolves a reference to a flattened output alias that has no <see cref="IProperty"/>, and so can't be
+    /// expressed by <see cref="TryResolveMember"/>, to a top-level <see cref="MongoElementRefExpression"/>:
+    /// <list type="bullet">
+    /// <item>under <see cref="ProjectedAliasScope"/>, any output alias of a keyed <c>GroupBy(key).Select(...)</c>
+    /// (a single-hop member on the scope's parameter, or the bare parameter over a bare <c>Select</c>);</item>
+    /// <item>under <see cref="DistinctAliasScope"/>, a Distinct alias whose key part is computed (e.g. <c>A</c> in
+    /// <c>Select(c =&gt; new { A = c.CustomerID + c.City }).Distinct()</c>), or a prior grouping's accumulator
+    /// alias.</item>
+    /// </list>
+    /// Used by <see cref="TranslateOperand"/> (so every operator bottoming out there accepts it) and the
+    /// StartsWith/EndsWith/Contains regex arm of <see cref="TryTranslate"/>.
     /// </summary>
     /// <remarks>
-    /// Declines for a plain-field key part, which <see cref="TryResolveMember"/> handles, so the two never both
-    /// claim a member.
+    /// Under <see cref="DistinctAliasScope"/> it declines for a plain-field key part, which
+    /// <see cref="TryResolveMember"/> handles, so the two never both claim a member. Under
+    /// <see cref="ProjectedAliasScope"/> <see cref="TryResolveMember"/> always declines, so this is the only resolver.
     /// </remarks>
-    private bool TryResolveDistinctAliasComputedField(
+    private bool TryResolveFlattenedAlias(
         Expression node, [NotNullWhen(true)] out MongoElementRefExpression? fieldRef)
     {
         fieldRef = null;
+
+        if (ProjectedAliasScope is { } projectedScope)
+            return TryResolveProjectedAlias(projectedScope, node, out fieldRef);
 
         if (DistinctAliasScope is not { } scope || node is not MemberExpression { Expression: ParameterExpression } me)
             return false;
@@ -182,6 +198,81 @@ internal sealed partial class MongoExpressionTranslator
 
         return false;
     }
+
+    // The ProjectedAliasScope half of TryResolveFlattenedAlias. The root must be the scope's own parameter (by
+    // reference). An alias is looked up by the Select's member name only; an unmatched name declines.
+    //
+    // The result has no IProperty, so every comparison over it renders in the aggregation dialect ($expr). That is
+    // deliberate: a post-group $match runs over $group output, where no index applies, so the query dialect would
+    // buy nothing.
+    private static bool TryResolveProjectedAlias(
+        MongoProjectedAliasScope scope, Expression node, [NotNullWhen(true)] out MongoElementRefExpression? fieldRef)
+    {
+        fieldRef = null;
+
+        string alias;
+        if (ReferenceEquals(node, scope.Parameter))
+        {
+            // A bare Select(g => g.Sum(...)) projects its sole output under the reserved bare alias; a wrapped
+            // projection has no single implied target for the bare parameter.
+            if (scope.Projections is not [{ Alias: NativeProjectionBinder.SyntheticBareProjectionAlias }])
+                return false;
+
+            alias = NativeProjectionBinder.SyntheticBareProjectionAlias;
+        }
+        else if (node is MemberExpression { Expression: ParameterExpression memberParam } member
+                 && ReferenceEquals(memberParam, scope.Parameter))
+        {
+            alias = member.Member.Name;
+        }
+        else
+        {
+            return false;
+        }
+
+        foreach (var projection in scope.Projections)
+        {
+            if (projection.Alias != alias)
+                continue;
+
+            // A nested construction is a sub-document, not a comparable or reducible scalar.
+            if (projection.Expression is MongoDocumentConstructionExpression)
+                return false;
+
+            // Typed from the projection's read, which the lambda's view of the alias must agree with up to
+            // nullability; the nullable side is kept so the aggregation renderer's null-ordering guard still fires.
+            var readType = projection.Expression.Type;
+            var viewType = node.Type;
+            var scalarType = Nullable.GetUnderlyingType(readType) ?? readType;
+            if (scalarType != (Nullable.GetUnderlyingType(viewType) ?? viewType))
+                return false;
+
+            // The alias has no IProperty, so a constant or parameter compared with it serializes by CLR type
+            // (BsonValue.Create), which throws for e.g. Guid rather than declining. Admit only types it maps to their
+            // default stored form.
+            if (!IsRawComparableAliasType(scalarType))
+                return false;
+
+            fieldRef = new MongoElementRefExpression(
+                projection.Alias, Nullable.GetUnderlyingType(viewType) is not null ? viewType : readType);
+            return true;
+        }
+
+        return false;
+    }
+
+    // Scalar CLR types BsonValue.Create maps to the same BSON form the default serializer stores. Enums are admitted
+    // because a C# enum comparison arrives as a Convert to the underlying integer on both sides (a key needs default
+    // serialization, i.e. stored as that integer).
+    //
+    // Narrower than NativeGroupByBinder.IsPushableScalarElementType on purpose: a pushed list is read back through a
+    // typed CLR serializer, whereas the value compared with an alias is serialized by BsonValue.Create with no type
+    // to go on. byte/short/float are left out because nothing here has verified how their constants and parameters
+    // map (C# widens byte/short comparisons to int, so those declines cost little).
+    private static bool IsRawComparableAliasType(Type type)
+        => type == typeof(string) || type == typeof(bool) || type == typeof(int) || type == typeof(long)
+           || type == typeof(double) || type == typeof(decimal) || type == typeof(DateTime)
+           || type == typeof(MongoDB.Bson.ObjectId) || type.IsEnum;
 
     /// <summary>
     /// Shared preamble of the owned-path resolvers: rejects an inner-prefixed scope, collects hop names root-first,
@@ -225,6 +316,10 @@ internal sealed partial class MongoExpressionTranslator
         names = null;
         scopeType = null;
         isOuter = false;
+
+        // A keyed GroupBy.Select's flattened output has no entity to walk; see ProjectedAliasScope.
+        if (ProjectedAliasScope is not null)
+            return false;
 
         // A chain inside a SelectMany element scope (inner prefix set) is out of scope; only the outer-param
         // two-scope case is handled.
@@ -326,7 +421,9 @@ internal sealed partial class MongoExpressionTranslator
     /// <see cref="TranslateComparison"/>'s entity-vs-null and entity-vs-itself arms.
     private bool TryResolveEntityTypedOperand(Expression node, [NotNullWhen(true)] out MongoElementRefExpression? elementRef)
     {
-        if (SelfParam is not null && ReferenceEquals(node, SelfParam))
+        // Over a projected/grouped output SelfParam is a row or a bare scalar alias, not the entity: `v == null` over a
+        // nullable bare aggregate must compare the alias, not "$$ROOT". See IsSelfParamTheEntity.
+        if (IsSelfParamTheEntity(node))
         {
             elementRef = new MongoElementRefExpression(MongoElementRefExpression.WholeRootDocumentPath, _entityType.ClrType);
             return true;

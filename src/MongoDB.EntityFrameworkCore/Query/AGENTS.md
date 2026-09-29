@@ -106,6 +106,10 @@ Rules that cost real bugs to learn. Breaking one usually produces **silently wro
   access; a non-nullable key part or `$min`/`$max`/`$avg` accumulator that may read an unmatched left-outer
   join side declines rather than answer a plausible default, as does an accumulator condition that may (`$expr`
   orders null below every value). See `NativeGroupByOverJoinTests`.
+- **Post-group operators after a keyed GroupBy.Select resolve by the Select's output alias**
+  (`MongoProjectedAliasScope`), never key-part name or entity property; only `Where` is native (ordering/paging
+  after the grouped Select decline). A pushed list (`g.Select(e => e.X).ToList()`/`ToArray()` → `$push`) is
+  null-safe for a nullable/reference element (missing or null both read back as `null`); entity elements decline.
 - **Set ops form a tree; each `Union`'s dedup belongs to its own link, never hoisted.**
   `MongoSelectDefinition.SetOperations` is an ordered list where an operand may itself carry a link, so
   whole-entity `Concat`/`Union` nests both directions. Right-nesting (`A.Concat(B.Union(C))`) cannot be

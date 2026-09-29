@@ -1310,8 +1310,8 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 }, "Count" 
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "Order", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "Name" : "$_id", "Count" : "$__agg0", "_id" : 0 } }, { "$match" : { "Count" : { "$gt" : 0 } } }
-            """);
+Orders.{ "$group" : { "_id" : { "$literal" : "Order" }, "Count" : { "$sum" : 1 } } }, { "$project" : { "Name" : "$_id", "Count" : "$Count", "_id" : 0 } }, { "$match" : { "$expr" : { "$gt" : ["$Count", 0] } } }
+""");
     }
 
     public override async Task GroupBy_filter_count_OrderBy_count_Select_sum(bool async)
@@ -2124,78 +2124,28 @@ Customers.{ "$group" : { "_id" : "$City", "_orderAgg0" : { "$sum" : 1 }, "Count"
 
     public override async Task GroupBy_Min_Where_optional_relationship(bool async)
     {
-#if EF8 || EF9
-        // Post-group Where isn't native yet; on EF8/EF9 the driver-LINQ fallback for a left-outer-join-then-
-        // GroupBy shape also throws (pre-existing; see Task 2's NativeGroupByOverJoinTests LeftJoinNativeAndParity
-        // note), so it declines on every mode here, not just NativeOnly. The rejection happens after the outer
-        // collection is logged, so a partial pipeline is captured under the driver-LINQ fallback.
-        await AssertTranslationFailed(() => base.GroupBy_Min_Where_optional_relationship(async));
+        // Post-group Where over a keyed GroupBy's projected Count alias is now native (see
+        // docs/superpowers/plans/2026-09-29-native-groupby-post-group-where-and-push-list.md); the confirmed-join
+        // GroupBy runs the same way in every mode and on every EF version, so this asserts data and MQL directly.
+        await base.GroupBy_Min_Where_optional_relationship(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-                """
-                Orders.
-                """);
-        }
-#else
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            // Post-group Where isn't native yet; the fallback runs the confirmed-join shape correctly.
-            await AssertTranslationFailed(() => base.GroupBy_Min_Where_optional_relationship(async));
-            AssertMql();
-        }
-        else
-        {
-            await base.GroupBy_Min_Where_optional_relationship(async);
-            AssertMql(
-                """
-Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$group" : { "_id" : "$Inner._id", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$__agg0", "_id" : 0 } }, { "$match" : { "Count" : { "$ne" : 2 } } }
+        AssertMql(
+            """
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : "$_lookup_Customer._id", "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }, { "$match" : { "$expr" : { "$ne" : ["$Count", 2] } } }
 """);
-        }
-#endif
     }
 
     public override async Task GroupBy_Min_Where_optional_relationship_2(bool async)
     {
-#if EF8 || EF9
-        // Post-group Where isn't native yet; on EF8/EF9 the driver-LINQ fallback for a left-outer-join-then-
-        // GroupBy shape also throws (pre-existing; see Task 2's NativeGroupByOverJoinTests LeftJoinNativeAndParity
-        // note), so it declines on every mode here, not just NativeOnly. The rejection happens after the outer
-        // collection is logged, so a partial pipeline is captured under the driver-LINQ fallback.
-        await AssertTranslationFailed(() => base.GroupBy_Min_Where_optional_relationship_2(async));
+        // Post-group Where over a keyed GroupBy's projected Count alias is now native (see
+        // docs/superpowers/plans/2026-09-29-native-groupby-post-group-where-and-push-list.md); the confirmed-join
+        // GroupBy runs the same way in every mode and on every EF version, so this asserts data and MQL directly.
+        await base.GroupBy_Min_Where_optional_relationship_2(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-                """
-                Orders.
-                """);
-        }
-#else
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            // Post-group Where isn't native yet; the fallback runs the confirmed-join shape correctly.
-            await AssertTranslationFailed(() => base.GroupBy_Min_Where_optional_relationship_2(async));
-            AssertMql();
-        }
-        else
-        {
-            await base.GroupBy_Min_Where_optional_relationship_2(async);
-            AssertMql(
-                """
-Orders.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$unwind" : { "path" : "$_inner", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$group" : { "_id" : "$Inner._id", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$__agg0", "_id" : 0 } }, { "$match" : { "$or" : [{ "Count" : { "$lt" : 2 } }, { "Count" : { "$gt" : 2 } }] } }
+        AssertMql(
+            """
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : "$_lookup_Customer._id", "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }, { "$match" : { "$or" : [{ "$expr" : { "$lt" : ["$Count", 2] } }, { "$expr" : { "$gt" : ["$Count", 2] } }] } }
 """);
-        }
-#endif
     }
 
     public override async Task GroupBy_aggregate_over_a_subquery(bool async)
@@ -2297,8 +2247,8 @@ Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", nul
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : "$CustomerID", "__agg0" : { "$push" : "$CustomerID" } } }, { "$project" : { "Key" : "$_id", "Data" : "$__agg0", "_id" : 0 } }
-            """);
+Orders.{ "$group" : { "_id" : "$CustomerID", "Data" : { "$push" : { "$ifNull" : ["$CustomerID", null] } } } }, { "$project" : { "Key" : "$_id", "Data" : "$Data", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_with_grouping_key_using_Like(bool async)

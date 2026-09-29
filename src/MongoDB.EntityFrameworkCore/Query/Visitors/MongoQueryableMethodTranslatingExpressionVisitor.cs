@@ -2066,6 +2066,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         {
             mongoQueryExpression.Select.MarkNotNativelyRepresentable();
         }
+        // A third grouping level: there is a single Prior* slot, so snapshotting again would overwrite it and the first
+        // $group would silently vanish from the pipeline. N-level chains aren't supported; decline.
+        else if (hasFinalizedPriorGrouping && mongoQueryExpression.Select.PriorGrouping != null)
+        {
+            mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+        }
         else
         {
             if (hasFinalizedPriorGrouping)

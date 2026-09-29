@@ -265,13 +265,27 @@ internal static class NativeCardinalityBinder
         if (select.HasTerminalOperator && !select.IsSetOpTerminalOnly && !isPostGroupTerminalAggregate)
             return false;
 
+        // A predicate after a keyed GroupBy.Select records into ActiveOps, which lower right after this grouping's
+        // flatten only when IsFinalizedKeyedGroupOutput holds. Over a nested GroupBy or a set op it would run ahead of
+        // the $group, before the aliases it reads exist (GroupBy.Select.GroupBy.Select.All(pred) answered wrongly).
+        // Predicate-free and selector-only forms are unaffected: the terminal stage follows every op.
+        if (isPostGroupBySelectAggregate && (op is MongoAggregateOperator.All || predicate != null)
+            && !select.IsFinalizedKeyedGroupOutput)
+            return false;
+
         // predicate is null for selector aggregates and bare Any()/Count(); SelfParam is then unused.
         var translator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType, predicate?.Parameters[0]);
 
-        // Post-group aggregates resolve their predicate/selector against the Select's flattened output alias,
-        // not the entity (see MongoExpressionTranslator.DistinctAliasScope).
-        if (isPostGroupTerminalAggregate)
+        // Post-group aggregates resolve their predicate/selector against the preceding stage's flattened output,
+        // never the entity. After a projected Distinct its key-part names are the aliases (DistinctAliasScope). After
+        // a keyed GroupBy.Select the aliases are the Select's member names, which may shadow a key-part name with a
+        // different value, so only the projection is consulted (ProjectedAliasScope). At most one of predicate and
+        // selector is non-null; with neither, the translator is unused (isPostGroupBySelectlessMinMax reads the sole
+        // projection directly below).
+        if (isPostDistinctAggregate)
             translator.DistinctAliasScope = select.Grouping;
+        else if (isPostGroupBySelectAggregate && (predicate ?? selector)?.Parameters[0] is { } aliasParameter)
+            translator.ProjectedAliasScope = new MongoProjectedAliasScope(aliasParameter, select.Projection);
 
         MongoExpression? operand = null;
         if (op is MongoAggregateOperator.Sum or MongoAggregateOperator.Min

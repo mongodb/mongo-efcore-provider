@@ -286,7 +286,8 @@ internal static class NativeGroupByBinder
                 continue;
             }
 
-            if (TryBindAccumulator(valueExpr, memberName, groupingParameter, keyParts, isComposite, translator, out var acc, out var flattenRead))
+            if (TryBindAccumulator(valueExpr, memberName, groupingParameter, keyParts, isComposite, translator, out var acc, out var flattenRead)
+                || TryBindPushAccumulator(valueExpr, memberName, groupingParameter, translator, out acc, out flattenRead))
             {
                 accumulators.Add(acc);
                 flatten.Add(new MongoProjection(memberName, flattenRead));
@@ -413,7 +414,8 @@ internal static class NativeGroupByBinder
             var syntheticField = $"_nestedAgg{nestedAccumulatorCounter++}";
             if (TryBindAccumulator(
                     nestedValue, syntheticField, groupingParameter, keyParts, isComposite, translator,
-                    out var acc, out var flattenRead))
+                    out var acc, out var flattenRead)
+                || TryBindPushAccumulator(nestedValue, syntheticField, groupingParameter, translator, out acc, out flattenRead))
             {
                 accumulators.Add(acc);
                 translatedMembers.Add((nestedMemberName, flattenRead));
@@ -664,6 +666,116 @@ internal static class NativeGroupByBinder
         accumulator = new MongoGroupAccumulator(outputField, op, operand);
         flattenRead = new MongoElementRefExpression(outputField, call.Method.ReturnType);
         return true;
+    }
+
+    /// <summary>
+    /// A list projection member, <c>g.Select(e =&gt; e.X).ToList()</c> / <c>.ToArray()</c> (EF's form is
+    /// <c>Enumerable.ToList(Queryable.Select(g.AsQueryable(), selector))</c>), bound as a <c>$push</c> accumulator
+    /// read back as the method's <c>List&lt;T&gt;</c>/<c>T[]</c>. Only called for projection members: a list isn't a
+    /// sort key or a HAVING operand.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Element order inside the list is the <c>$group</c>'s input order, which is unspecified without a prior sort
+    /// (as for driver-LINQ's own <c>$push</c>). Accepted: a caller needing an order sorts the list.
+    /// </para>
+    /// <para>
+    /// Declines:
+    /// <list type="bullet">
+    /// <item>A non-scalar element type (a whole entity, <c>g.Select(e =&gt; e)</c>, an owned or anonymous type): pushing
+    /// entities would need per-element materialization and tracking. <c>g.ToList()</c> itself never reaches here (its
+    /// source is <c>g</c>, not a <c>Select</c>). Today <see cref="MongoGroupElementTranslator.TryTranslateValue"/> also
+    /// rejects every entity-typed operand, so this gate is the explicit statement of the rule rather than the only
+    /// wall.</item>
+    /// <item>An untranslatable selector, including a value-converted or non-default-represented property:
+    /// <see cref="MongoGroupElementTranslator.TryTranslateValue"/> requires default serialization, which the list's
+    /// generic CLR readback depends on.</item>
+    /// <item>A <c>DateTime</c> element that isn't a plain field with no configured <c>DateTimeKind</c> (see the
+    /// inline comment).</item>
+    /// <item>A non-nullable element (or one containing a condition) that may read an unmatched left-outer join side:
+    /// its value is missing, so there is no correct element to push.</item>
+    /// </list>
+    /// </para>
+    /// <para>
+    /// A bare <c>$push</c> skips an element whose value is missing (measured: <c>{$push: "$F"}</c> over F = 1, null,
+    /// missing is <c>[1, null]</c>), while C# yields <c>null</c> for both. A nullable or reference-typed element is
+    /// therefore read null-safe (<c>$ifNull: [operand, null]</c>), decided from the LINQ element type: over a left
+    /// join, <c>(decimal?)x.Total</c> translates to the non-nullable <c>Total</c> field, missing for an unmatched row.
+    /// </para>
+    /// </remarks>
+    private static bool TryBindPushAccumulator(
+        Expression expr,
+        string outputField,
+        ParameterExpression groupingParameter,
+        MongoGroupElementTranslator translator,
+        [NotNullWhen(true)] out MongoGroupAccumulator? accumulator,
+        [NotNullWhen(true)] out MongoExpression? flattenRead)
+    {
+        accumulator = null;
+        flattenRead = null;
+
+        if (outputField == GroupIdFieldName)
+            return false;
+
+        if (Unwrap(expr) is not MethodCallExpression { Method.IsGenericMethod: true, Arguments.Count: 1 } call)
+            return false;
+
+        var definition = call.Method.GetGenericMethodDefinition();
+        if (definition != EnumerableMethods.ToList && definition != EnumerableMethods.ToArray)
+            return false;
+
+        if (Unwrap(call.Arguments[0]) is not MethodCallExpression { Method.IsGenericMethod: true, Arguments.Count: 2 } selectCall
+            || (selectCall.Method.GetGenericMethodDefinition() != QueryableMethods.Select
+                && selectCall.Method.GetGenericMethodDefinition() != EnumerableMethods.Select)
+            || !IsGroupingSource(selectCall.Arguments[0], groupingParameter)
+            || selectCall.Arguments[1].UnwrapLambdaFromQuote() is not { } selector)
+            return false;
+
+        var elementType = selector.ReturnType;
+        if (!IsPushableScalarElementType(elementType))
+            return false;
+
+        if (!translator.TryTranslateValue(selector.Body, out var operand))
+            return false;
+
+        // The list's generic DateTime readback is the serializer of a property with no configured DateTimeKind. A
+        // HasDateTimeKind property reads back differently (Local silently became Utc), and a computed date has no
+        // property to ask, so a DateTime element must be a plain field with the default kind.
+        if ((Nullable.GetUnderlyingType(elementType) ?? elementType) == typeof(DateTime)
+            && !(operand is MongoFieldExpression dateField && dateField.Property.GetDateTimeKind() == DateTimeKind.Unspecified))
+            return false;
+
+        if ((IsNonNullableValueType(elementType) || ConditionFinder.Contains(selector.Body))
+            && translator.MayReadAnUnmatchedJoinSide(selector.Body))
+            return false;
+
+        // A non-nullable element keeps the bare operand, so a missing value (a malformed document) is skipped, the
+        // same as driver-LINQ's $push.
+        if (!IsNonNullableValueType(elementType))
+        {
+            operand = operand switch
+            {
+                MongoConstantExpression or MongoParameterExpression or MongoFieldExpression { NullSafe: true } => operand,
+                MongoFieldExpression field => new MongoFieldExpression(field.Property, field.ElementName, nullSafe: true),
+                _ => new MongoCoalesceExpression(operand, new MongoConstantExpression(null, forSerialization: null))
+            };
+        }
+
+        accumulator = new MongoGroupAccumulator(outputField, "$push", operand);
+        flattenRead = new MongoElementRefExpression(outputField, call.Method.ReturnType);
+        return true;
+    }
+
+    // Scalar element types whose generic CLR serializer (BsonSerializerFactory.CreateTypeSerializer, used to read the
+    // pushed list back) reproduces a default-serialized property's stored form. Anything else, notably an entity or
+    // other class/struct element, declines.
+    private static bool IsPushableScalarElementType(Type type)
+    {
+        type = Nullable.GetUnderlyingType(type) ?? type;
+        return type == typeof(string) || type == typeof(bool) || type == typeof(byte) || type == typeof(short)
+               || type == typeof(int) || type == typeof(long) || type == typeof(float) || type == typeof(double)
+               || type == typeof(decimal) || type == typeof(DateTime) || type == typeof(global::MongoDB.Bson.ObjectId)
+               || type.IsEnum;
     }
 
     // Over a left join, an unmatched outer row (Owners.GroupJoin(Orders).DefaultIfEmpty() grouped by owner, for an
