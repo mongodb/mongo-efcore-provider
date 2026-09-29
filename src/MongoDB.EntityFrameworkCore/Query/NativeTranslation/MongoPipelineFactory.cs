@@ -746,13 +746,15 @@ internal sealed class MongoPipelineFactory
         // MongoQueryLanguageRenderer.RenderRegex's constant branch.
         if (regexKind is not null)
         {
-            var pattern = MongoRegexPatternBuilder.BuildPattern((string)rawValue!, regexKind.Value);
+            var term = rawValue is char ch ? ch.ToString() : (string)rawValue!;
+            var pattern = MongoRegexPatternBuilder.BuildPattern(term, regexKind.Value);
             return new BsonRegularExpression(pattern, regexCaseInsensitive ? "is" : "s");
         }
 
-        // Property-less primitive (e.g. Skip/Take count): serialize via BsonValue.Create.
+        // Property-less primitive (e.g. Skip/Take count): serialize via BsonValue.Create. A char has no BSON form;
+        // it only reaches here as a string-operator operand (TranslateCharAsString), so it is a one-char string.
         if (serializer is null)
-            return BsonValue.Create(rawValue);
+            return rawValue is char c ? new BsonString(c.ToString()) : BsonValue.Create(rawValue);
 
         // Parameterized $in/$nin collection: serialize each element with the element serializer.
         if (isArray)

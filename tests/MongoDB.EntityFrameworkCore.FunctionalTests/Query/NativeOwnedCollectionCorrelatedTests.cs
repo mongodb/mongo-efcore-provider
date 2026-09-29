@@ -16,6 +16,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using MongoDB.Bson;
@@ -113,6 +114,81 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
 
         var titles = AssertNativeOnlyMatches(
             collection, q => q.Where(b => b.Posts.Any(p => p.Title == b.Title)));
+
+        Assert.Equal(new[] { "match" }, titles);
+    }
+
+    [Fact]
+    public void Correlated_Any_with_Equals_OrdinalIgnoreCase_constant_term_non_ASCII_folding_goes_native()
+    {
+        // Correlated via "&& b.Title.Length > 0" (references the enclosing Blog), which forces this through the
+        // two-scope MongoQuantifierExpression path (rendered by MongoAggregationExpressionRenderer), unlike a
+        // plain (non-correlated) Any which renders as $elemMatch instead. Only Unicode-correct OrdinalIgnoreCase
+        // folding (the regex "i" option), not $toLower's ASCII-only folding, matches "École" against "éCOLE".
+        var collection = Seed(
+            nameof(Correlated_Any_with_Equals_OrdinalIgnoreCase_constant_term_non_ASCII_folding_goes_native),
+            ("match", [("École", 1)]),
+            ("other", [("Portland", 1)]));
+
+        var titles = AssertNativeOnlyMatches(
+            collection,
+            q => q.Where(b => b.Posts.Any(
+                p => p.Title.Equals("éCOLE", StringComparison.OrdinalIgnoreCase) && b.Title.Length > 0)));
+
+        Assert.Equal(new[] { "match" }, titles);
+    }
+
+    [Fact]
+    public void Correlated_Any_with_StartsWith_OrdinalIgnoreCase_parameterized_term_non_ASCII_folding_goes_native()
+    {
+        // Parameterized variant of the above: the term is a closure variable (an EF query parameter), so the
+        // aggregation renderer must build a regex placeholder (PlaceholderTable.CreateRegexPlaceholder), and
+        // MongoPipelineFactory must substitute it correctly nested inside $expr, not just at the top level.
+        var term = "éCO";
+        var collection = Seed(
+            nameof(Correlated_Any_with_StartsWith_OrdinalIgnoreCase_parameterized_term_non_ASCII_folding_goes_native),
+            ("match", [("École", 1)]),
+            ("other", [("Portland", 1)]));
+
+        var titles = AssertNativeOnlyMatches(
+            collection,
+            q => q.Where(b => b.Posts.Any(
+                p => p.Title.StartsWith(term, StringComparison.OrdinalIgnoreCase) && b.Title.Length > 0)));
+
+        Assert.Equal(new[] { "match" }, titles);
+    }
+
+    [Fact]
+    public void Correlated_Any_with_Equals_OrdinalIgnoreCase_parameterized_term_declines()
+    {
+        // A parameterized Equals(…, OrdinalIgnoreCase) term may be null per execution, which has no regex form.
+        var term = "éCOLE";
+        var collection = Seed(
+            nameof(Correlated_Any_with_Equals_OrdinalIgnoreCase_parameterized_term_declines),
+            ("match", [("École", 1)]));
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() => AssertNativeOnlyMatches(
+            collection,
+            q => q.Where(b => b.Posts.Any(
+                p => p.Title.Equals(term, StringComparison.OrdinalIgnoreCase) && b.Title.Length > 0))));
+    }
+
+    [Fact]
+    public void Correlated_Any_with_negated_Regex_IsMatch_constant_pattern_goes_native()
+    {
+        // Correlated via "&& b.Title.Length > 0" forces the two-scope MongoQuantifierExpression path (rendered
+        // by MongoAggregationExpressionRenderer), unlike a plain (non-correlated) Any which renders as
+        // $elemMatch instead. Exercises MongoRegexKind.Pattern's aggregation-dialect $regexMatch rendering
+        // (RenderRegexAsExpr's Pattern branch), not the query-dialect $regularExpression path.
+        var collection = Seed(
+            nameof(Correlated_Any_with_negated_Regex_IsMatch_constant_pattern_goes_native),
+            ("match", [("apple", 1)]),
+            ("other", [("Seattle", 1)]));
+
+        var titles = AssertNativeOnlyMatches(
+            collection,
+            q => q.Where(b => b.Posts.Any(
+                p => !Regex.IsMatch(p.Title, "^S", RegexOptions.IgnoreCase) && b.Title.Length > 0)));
 
         Assert.Equal(new[] { "match" }, titles);
     }

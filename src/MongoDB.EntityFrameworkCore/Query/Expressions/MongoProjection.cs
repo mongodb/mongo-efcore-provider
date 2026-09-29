@@ -21,4 +21,10 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 /// <param name="Alias">The output element name; must match the alias the DOM shaper reads by.</param>
 /// <param name="Expression">The source expression.</param>
-internal readonly record struct MongoProjection(string Alias, MongoExpression Expression);
+/// <param name="Source">
+/// The LINQ selector subtree <paramref name="Expression"/> was translated from, rebased onto the source shaper
+/// (see <see cref="MongoSelectDefinition.RebaseProjectionSources"/>), or <see langword="null"/> when not recorded.
+/// Lets the projection binding visitor recognize, structurally, the exact node the server computed.
+/// </param>
+internal readonly record struct MongoProjection(
+    string Alias, MongoExpression Expression, System.Linq.Expressions.Expression? Source = null);

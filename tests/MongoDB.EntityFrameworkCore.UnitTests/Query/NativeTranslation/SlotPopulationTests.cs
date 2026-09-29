@@ -88,6 +88,11 @@ public class SlotPopulationTests
     private static MongoQueryExpression TranslateToMongoQuery<T>(
         Func<IQueryable<T>, IQueryable> buildQuery,
         Action<ModelBuilder>? modelBuilderAction = null) where T : class
+        => Assert.IsType<MongoQueryExpression>(TranslateToShapedQuery(buildQuery, modelBuilderAction).QueryExpression);
+
+    private static ShapedQueryExpression TranslateToShapedQuery<T>(
+        Func<IQueryable<T>, IQueryable> buildQuery,
+        Action<ModelBuilder>? modelBuilderAction = null) where T : class
     {
         using var db = SingleEntityDbContext.Create<T>(modelBuilderAction);
 
@@ -108,8 +113,7 @@ public class SlotPopulationTests
         var result = visitor.Visit(query.Expression);
 
         Assert.NotNull(result);
-        var shaped = Assert.IsAssignableFrom<ShapedQueryExpression>(result);
-        return Assert.IsType<MongoQueryExpression>(shaped.QueryExpression);
+        return Assert.IsAssignableFrom<ShapedQueryExpression>(result);
     }
 
     /// <summary>
@@ -661,4 +665,67 @@ public class SlotPopulationTests
         Assert.Empty(mongoQuery.Select.Projection);
     }
 
+
+    // ── Computed-leaf shaper wrapping (NativeComputedLeafExpression) ─────────────
+
+    // The native alias reader replaces the wrapper with one raw read of the server-computed value; every other
+    // reader goes through ClientExpression, which must be the unchanged client-side form (receiver binding plus
+    // the call), so non-native paths behave exactly as without the wrapper.
+    [Fact]
+    public void Native_computed_leaf_is_wrapped_around_its_unchanged_client_side_form()
+    {
+        var shaped = TranslateToShapedQuery<Customer>(q => q.Select(c => c.Name.Substring(1)));
+
+        var leaf = Assert.IsType<NativeComputedLeafExpression>(shaped.ShaperExpression);
+        var clientCall = Assert.IsAssignableFrom<MethodCallExpression>(leaf.ClientExpression);
+        Assert.Equal(nameof(string.Substring), clientCall.Method.Name);
+        Assert.IsType<ProjectionBindingExpression>(clientCall.Object);
+    }
+
+    // ToLower/ToUpper stage only their receiver (a plain field, or a computed leaf) and stay in the shaper as a
+    // null-propagating client call, whose server forms ($toLower/$toUpper) are ASCII-only.
+    [Fact]
+    public void Case_mapping_stages_only_its_receiver_and_stays_client_side()
+    {
+        var overField = TranslateToShapedQuery<Customer>(q => q.Select(c => c.Name.ToUpper()));
+        var fieldLeaf = Assert.Single(((MongoQueryExpression)overField.QueryExpression).Select.Projection);
+        Assert.IsType<MongoFieldExpression>(fieldLeaf.Expression);
+        Assert.True(MongoProjectionBindingExpressionVisitor.IsClientCaseMapping(overField.ShaperExpression));
+        Assert.True(ProjectionAnalyzer.HasCaseMappingProjectedValue(overField.ShaperExpression));
+
+        var overTrim = TranslateToShapedQuery<Customer>(q => q.Select(c => new { U = c.Name.Trim().ToLowerInvariant() }));
+        var trimLeaf = Assert.Single(((MongoQueryExpression)overTrim.QueryExpression).Select.Projection);
+        Assert.IsType<MongoTrimExpression>(trimLeaf.Expression);
+        Assert.True(ProjectionAnalyzer.HasCaseMappingProjectedValue(overTrim.ShaperExpression));
+        var block = Assert.IsAssignableFrom<BlockExpression>(Assert.IsAssignableFrom<NewExpression>(overTrim.ShaperExpression).Arguments[0]);
+        var receiver = Assert.IsAssignableFrom<BinaryExpression>(block.Expressions[0]).Right;
+        Assert.IsType<NativeComputedLeafExpression>(receiver);
+
+        // Consumed by further computation: not a projected value, so it doesn't force the client shaper.
+        var nested = TranslateToShapedQuery<Customer>(q => q.Select(c => c.Name.ToUpper() + "!"));
+        Assert.False(ProjectionAnalyzer.HasCaseMappingProjectedValue(nested.ShaperExpression));
+    }
+
+    // Matching is structural against the staged leaf's own source subtree, not by member name/type: a client call
+    // over the computed leaf keeps that call outside the wrapper, and a different subtree of the same type under
+    // the same member is not wrapped.
+    [Fact]
+    public void Only_the_exact_staged_subtree_is_wrapped()
+    {
+        var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => c.Name.Trim()));
+        var staged = Assert.Single(mongoQuery.Select.Projection);
+        var source = Assert.IsAssignableFrom<MethodCallExpression>(staged.Source);
+
+        var overLeaf = Expression.Call(source, typeof(string).GetMethod(nameof(string.Normalize), Type.EmptyTypes)!);
+        var outer = Assert.IsAssignableFrom<MethodCallExpression>(
+            new MongoProjectionBindingExpressionVisitor().Translate(mongoQuery, overLeaf));
+        Assert.Equal(nameof(string.Normalize), outer.Method.Name);
+        Assert.IsType<NativeComputedLeafExpression>(outer.Object);
+
+        var sameTypeOtherSubtree = Expression.Call(
+            source.Object!, typeof(string).GetMethod(nameof(string.Substring), [typeof(int)])!, Expression.Constant(1));
+        var other = new MongoProjectionBindingExpressionVisitor().Translate(mongoQuery, sameTypeOtherSubtree);
+        Assert.IsNotType<NativeComputedLeafExpression>(other);
+        Assert.Equal(nameof(string.Substring), Assert.IsAssignableFrom<MethodCallExpression>(other).Method.Name);
+    }
 }

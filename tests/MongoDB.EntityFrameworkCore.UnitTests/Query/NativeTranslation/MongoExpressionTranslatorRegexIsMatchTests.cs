@@ -103,18 +103,6 @@ public class MongoExpressionTranslatorRegexIsMatchTests
         Assert.Null(result);
     }
 
-    // The forward shape (field input, constant pattern) declines here; it succeeds only via the driver-LINQ
-    // fallback, which this translator-level test can't exercise.
-    [Fact]
-    public void Field_input_against_constant_pattern_forward_shape_still_declines()
-    {
-        var translator = BuildTranslator();
-        Expression<Func<Entity, bool>> predicate = e => Regex.IsMatch(e.Text, "^S");
-
-        Assert.False(translator.TryTranslate(predicate.Body, out var result));
-        Assert.Null(result);
-    }
-
     // Both operands computed/non-constant (no fixed input, no resolvable field pattern) declines.
     [Fact]
     public void Non_constant_input_declines()
@@ -124,5 +112,66 @@ public class MongoExpressionTranslatorRegexIsMatchTests
 
         Assert.False(translator.TryTranslate(predicate.Body, out var result));
         Assert.Null(result);
+    }
+
+    // ------------------------------------------------------------------
+    // Forward shape: Regex.IsMatch(field, constantPattern[, options]) → MongoRegexKind.Pattern.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Forward_IsMatch_with_constant_pattern_translates_to_Pattern_kind()
+    {
+        Expression<Func<Entity, bool>> predicate = e => Regex.IsMatch(e.Text, "^S");
+
+        Assert.True(BuildTranslator().TryTranslate(predicate.Body, out var result));
+        var regex = Assert.IsType<MongoRegexExpression>(result);
+        Assert.Equal(MongoRegexKind.Pattern, regex.Kind);
+        Assert.Equal("", regex.PatternOptions);
+    }
+
+    [Fact]
+    public void Forward_IsMatch_maps_IgnoreCase_and_Multiline()
+    {
+        Expression<Func<Entity, bool>> predicate
+            = e => Regex.IsMatch(e.Text, "^s", RegexOptions.IgnoreCase | RegexOptions.Multiline);
+
+        Assert.True(BuildTranslator().TryTranslate(predicate.Body, out var result));
+        Assert.Equal("im", Assert.IsType<MongoRegexExpression>(result).PatternOptions);
+    }
+
+    [Theory]
+    [InlineData(RegexOptions.RightToLeft)]
+    [InlineData(RegexOptions.ECMAScript)]
+    [InlineData(RegexOptions.NonBacktracking)]
+    public void Forward_IsMatch_with_unsupported_options_declines(RegexOptions options)
+    {
+        var e = Expression.Parameter(typeof(Entity), "e");
+        var body = Expression.Call(
+            typeof(Regex).GetMethod(nameof(Regex.IsMatch), [typeof(string), typeof(string), typeof(RegexOptions)])!,
+            Expression.Property(e, nameof(Entity.Text)), Expression.Constant("^S"), Expression.Constant(options));
+
+        Assert.False(BuildTranslator().TryTranslate(body, out _));
+    }
+
+    [Fact]
+    public void Forward_IsMatch_with_parameterized_pattern_declines()
+    {
+        var pattern = "^S";
+        Expression<Func<Entity, bool>> predicate = e => Regex.IsMatch(e.Text, pattern);
+
+        Assert.False(BuildTranslator().TryTranslate(predicate.Body, out var result));
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void Negated_forward_IsMatch_flips_Negated_and_keeps_PatternOptions()
+    {
+        Expression<Func<Entity, bool>> predicate = e => !Regex.IsMatch(e.Text, "^S");
+
+        Assert.True(BuildTranslator().TryTranslate(predicate.Body, out var result));
+        var regex = Assert.IsType<MongoRegexExpression>(result);
+        Assert.Equal(MongoRegexKind.Pattern, regex.Kind);
+        Assert.True(regex.Negated);
+        Assert.Equal("", regex.PatternOptions);
     }
 }

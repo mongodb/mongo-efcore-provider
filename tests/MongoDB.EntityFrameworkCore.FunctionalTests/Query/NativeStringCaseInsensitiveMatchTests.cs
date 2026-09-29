@@ -174,6 +174,25 @@ public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture data
     }
 
     [Fact]
+    public void Equals_OrdinalIgnoreCase_non_ASCII_folding_matches_natively()
+    {
+        // École (with the leading E accented) vs. an ASCII-folded-looking needle in a different case: only
+        // Unicode-correct OrdinalIgnoreCase folding (the regex "i" option), not $toLower's ASCII-only folding,
+        // matches this row.
+        var collection = Seed(
+            nameof(Equals_OrdinalIgnoreCase_non_ASCII_folding_matches_natively),
+            ("match", "École", ""),
+            ("no-match", "Portland", ""));
+
+        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        var result = nativeOnly.Entities.AsNoTracking()
+            .Where(x => x.S.Equals("éCOLE", StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.Label).ToList();
+
+        Assert.Equal(["match"], result);
+    }
+
+    [Fact]
     public void Field_to_field_term_Ordinal_case_sensitive_still_translates_natively()
     {
         // The decline is case-insensitive-only; the case-sensitive field-to-field shape still goes native.
@@ -185,6 +204,68 @@ public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture data
 
         AssertWhereMatchesOracle(
             collection, x => x.S.StartsWith(x.T, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Exact_case_insensitive_match_does_not_match_before_a_trailing_newline()
+    {
+        // A regex "$" also matches just before a trailing "\n"; the driver's $strcasecmp/$toLower forms don't.
+        var collection = Seed(
+            nameof(Exact_case_insensitive_match_does_not_match_before_a_trailing_newline),
+            ("match", "Seattle", ""),
+            ("trailing-newline", "seattle\n", ""));
+
+        using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly);
+        Assert.Equal(["match"], nativeOnly.Entities.AsNoTracking()
+            .Where(x => x.S.Equals("seattle", StringComparison.OrdinalIgnoreCase)).Select(x => x.Label).ToList());
+        Assert.Equal(["match"], nativeOnly.Entities.AsNoTracking()
+            .Where(x => x.S.ToLower() == "seattle").Select(x => x.Label).ToList());
+    }
+
+    public class NullableRow
+    {
+        public ObjectId Id { get; set; }
+        public string Label { get; set; } = "";
+        public string? S { get; set; }
+    }
+
+    [Fact]
+    public void Equals_OrdinalIgnoreCase_against_a_null_parameter_falls_back_and_matches_null_and_missing()
+    {
+        var name = UniqueCollectionName(nameof(Equals_OrdinalIgnoreCase_against_a_null_parameter_falls_back_and_matches_null_and_missing));
+        var collection = database.MongoDatabase.GetCollection<NullableRow>(name);
+        collection.InsertMany([new NullableRow { Label = "value", S = "Seattle" }, new NullableRow { Label = "null", S = null }]);
+        database.MongoDatabase.GetCollection<BsonDocument>(name)
+            .InsertOne(new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Label", "missing" } });
+
+        string? term = null;
+
+        // A parameter may be null per execution, which has no regex form, so the parameterized shape declines.
+        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
+        {
+            Assert.Throws<MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException>(
+                () => nativeOnly.Entities.AsNoTracking()
+                    .Where(x => string.Equals(x.S, term, StringComparison.OrdinalIgnoreCase)).ToList());
+            Assert.Throws<MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException>(
+                () => nativeOnly.Entities.AsNoTracking()
+                    .Where(x => x.S!.Equals(term, StringComparison.OrdinalIgnoreCase)).ToList());
+
+            // The constant form stays native.
+            Assert.Equal(["value"], nativeOnly.Entities.AsNoTracking()
+                .Where(x => string.Equals(x.S, "SEATTLE", StringComparison.OrdinalIgnoreCase)).Select(x => x.Label).ToList());
+        }
+
+        using var native = CreateContext(collection, MongoQueryMode.Native);
+        Assert.Equal(["missing", "null"], native.Entities.AsNoTracking()
+            .Where(x => string.Equals(x.S, term, StringComparison.OrdinalIgnoreCase)).Select(x => x.Label).ToList()
+            .OrderBy(x => x, StringComparer.Ordinal));
+        Assert.Equal(["missing", "null"], native.Entities.AsNoTracking()
+            .Where(x => x.S!.Equals(term, StringComparison.OrdinalIgnoreCase)).Select(x => x.Label).ToList()
+            .OrderBy(x => x, StringComparer.Ordinal));
+
+        term = "SEATTLE";
+        Assert.Equal(["value"], native.Entities.AsNoTracking()
+            .Where(x => string.Equals(x.S, term, StringComparison.OrdinalIgnoreCase)).Select(x => x.Label).ToList());
     }
 
     // `predicate` must be an Expression, not a Func: a Func would run client-side over every row and never
@@ -217,7 +298,8 @@ public class NativeStringCaseInsensitiveMatchTests(TemporaryDatabaseFixture data
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
 
-    private static SingleEntityDbContext<Row> CreateContext(IMongoCollection<Row> collection, MongoQueryMode mode)
+    private static SingleEntityDbContext<T> CreateContext<T>(IMongoCollection<T> collection, MongoQueryMode mode)
+        where T : class
         => SingleEntityDbContext.Create(
             collection,
             optionsBuilderAction: b =>

@@ -421,23 +421,24 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     // The equality forms matter most: RenderUnary wraps a bare Equal in { $eq: … } to avoid
     // {field: {$not: <bareValue>}}, which the server rejects ("$not argument must be a regex or an object").
 
-    // A Not over a conjunction isn't query-dialect renderable (only All()'s negator applies De Morgan there), but
-    // RenderUnary falls back to MongoAggregationExpressionRenderer.CanRender, which admits a conjunction of
-    // renderable comparisons, so this goes native as { $expr: { $not: [ { $and: [...] } ] } }.
+    // A Not over a conjunction of query-native comparisons De Morgan's exactly (MongoExpressionNegator): each
+    // comparison negates on its own (a relational operator $not-wraps, $eq/$ne inverts), so the whole thing stays
+    // in the query dialect as $or of the two negated comparisons — no $expr needed at all.
     [Fact]
-    public void Negated_conjunction_predicate_now_goes_native_via_expr()
+    public void Negated_conjunction_predicate_goes_native_via_query_dialect_de_morgan()
     {
         // Only Alice satisfies (Age > 5 && Name == "Alice"), so the negation gives a genuine two-to-one split.
-        var (collection, logs) = SeedCustomers(nameof(Negated_conjunction_predicate_now_goes_native_via_expr));
+        var (collection, logs) = SeedCustomers(nameof(Negated_conjunction_predicate_goes_native_via_query_dialect_de_morgan));
         using var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
         var nativeNames = nativeOnly.Entities.Where(c => !(c.Age > 5 && c.Name == "Alice"))
             .ToList().Select(c => c.Name).OrderBy(n => n).ToList(); // succeeds => went native
 
         var mql = Mql(logs);
-        Assert.Contains("$expr", mql);
+        Assert.Contains("\"$or\"", mql);
         Assert.Contains("\"$not\"", mql);
-        Assert.Contains("\"$and\"", mql);
+        Assert.Contains("\"$ne\"", mql);
+        Assert.DoesNotContain("$expr", mql);
 
         using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
         var driverNames = driver.Entities.Where(c => !(c.Age > 5 && c.Name == "Alice")).Select(c => c.Name).OrderBy(n => n).ToList();

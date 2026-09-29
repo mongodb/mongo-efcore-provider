@@ -161,6 +161,15 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     {
         switch (extensionExpression)
         {
+            // The alias holds the whole computed value (native $project, or a driver-LINQ push-down of the same
+            // Select), so read it once instead of re-applying the call over it. The mixed visitor overrides this
+            // to evaluate ClientExpression over whole documents.
+            case NativeComputedLeafExpression computedLeaf:
+                {
+                    var computedProjection = GetProjection(computedLeaf.Binding);
+                    return BsonBinding.CreateGetElementValue(DocParameter, computedProjection.Alias!, computedLeaf.Type);
+                }
+
             case ProjectionBindingExpression projectionBindingExpression:
                 {
                     var projection = GetProjection(projectionBindingExpression);

@@ -271,8 +271,12 @@ internal sealed class MongoQueryLanguageRenderer
 
                 // "s" matches driver-LINQ and is inert (patterns are escaped, so no bare "."). Like has no
                 // driver-LINQ precedent; it is case-insensitive to match SQL LIKE collation and EF's spec suite.
+                // Pattern carries its own options verbatim (mapped from RegexOptions).
                 body = new BsonRegularExpression(
-                    pattern, regex.Kind == MongoRegexKind.Like ? "is" : regex.CaseInsensitive ? "is" : "s");
+                    pattern,
+                    regex.Kind == MongoRegexKind.Pattern ? regex.PatternOptions
+                    : regex.Kind == MongoRegexKind.Like ? "is"
+                    : regex.CaseInsensitive ? "is" : "s");
                 break;
 
             case MongoParameterExpression parameter:
@@ -433,6 +437,9 @@ internal sealed class MongoQueryLanguageRenderer
             MongoStringLengthExpression => false,
             MongoMathExpression => false,
             MongoTrimExpression => false,
+            MongoSubstringExpression => false,
+            MongoReplaceExpression => false,
+            MongoStringCompareExpression => false,
             MongoStringFirstOrLastExpression => false,
             MongoDateTimeOffsetLocalExpression => false,
             MongoOuterFieldExpression => false,

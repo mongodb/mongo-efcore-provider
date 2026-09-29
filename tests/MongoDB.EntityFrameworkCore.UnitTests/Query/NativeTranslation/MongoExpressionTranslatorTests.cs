@@ -292,9 +292,9 @@ public class MongoExpressionTranslatorTests
     [Fact]
     public void Unsupported_method_call_reports_not_translatable()
     {
-        // ToUpper has no query-dialect equivalent.
+        // PadLeft has no native translation.
         var entityType = GetEntityType<Customer>();
-        var body = PredicateBody<Customer>(c => c.Name.ToUpper() == "A");
+        var body = PredicateBody<Customer>(c => c.Name.PadLeft(3) == "A");
         var translator = NewTranslator(entityType);
 
         var translated = translator.TryTranslate(body, out var result);
@@ -461,6 +461,17 @@ public class MongoExpressionTranslatorTests
         Assert.True(translated);
         Assert.NotNull(result);
         Assert.IsType<MongoBinaryExpression>(result);
+    }
+
+    // A negated conjunction with a field-to-field (aggregation-only) leaf has no exact query-dialect De Morgan
+    // complement, and a $not wrap would change rows for missing/null fields, so the whole predicate declines.
+    [Fact]
+    public void Negated_mixed_dialect_conjunction_declines()
+    {
+        var translator = NewTranslator(GetEntityType<Customer>());
+        Expression<Func<Customer, bool>> predicate = c => !(c.Age == c.Score && c.NullableAge == 1);
+
+        Assert.False(translator.TryTranslate(predicate.Body, out _));
     }
 
     // ------------------------------------------------------------------

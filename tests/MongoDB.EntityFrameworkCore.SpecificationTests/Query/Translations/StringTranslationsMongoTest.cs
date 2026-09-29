@@ -60,7 +60,7 @@ BasicTypesEntities.{ "$match" : { "String" : "Seattle" } }
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$strcasecmp" : ["$String", "seattle"] }, 0] } } }
+BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "^seattle\\z", "options" : "is" } } } }
 """);
     }
 
@@ -70,7 +70,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$strcasecmp" : ["$Stri
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : ["$String", "Seattle"] } } }
+BasicTypesEntities.{ "$match" : { "String" : "Seattle" } }
 """);
     }
 
@@ -90,7 +90,7 @@ BasicTypesEntities.{ "$match" : { "String" : "Seattle" } }
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$strcasecmp" : ["$String", "seattle"] }, 0] } } }
+BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "^seattle\\z", "options" : "is" } } } }
 """);
     }
 
@@ -100,7 +100,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$strcasecmp" : ["$Stri
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : ["$String", "Seattle"] } } }
+BasicTypesEntities.{ "$match" : { "String" : "Seattle" } }
 """);
     }
 
@@ -120,11 +120,11 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$strLenCP" : "$String"
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "^SEATTLE$", "options" : "is" } } } }
+BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "^SEATTLE\\z", "options" : "is" } } } }
 """,
             //
             """
-BasicTypesEntities.{ "$project" : { "_v" : { "$toUpper" : "$String" }, "_id" : 0 } }
+BasicTypesEntities.{ "$project" : { "String" : "$String", "_id" : 0 } }
 """);
     }
 
@@ -134,11 +134,11 @@ BasicTypesEntities.{ "$project" : { "_v" : { "$toUpper" : "$String" }, "_id" : 0
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "^seattle$", "options" : "is" } } } }
+BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "^seattle\\z", "options" : "is" } } } }
 """,
             //
             """
-BasicTypesEntities.{ "$project" : { "_v" : { "$toLower" : "$String" }, "_id" : 0 } }
+BasicTypesEntities.{ "$project" : { "String" : "$String", "_id" : 0 } }
 """);
     }
 
@@ -148,7 +148,7 @@ BasicTypesEntities.{ "$project" : { "_v" : { "$toLower" : "$String" }, "_id" : 0
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$ne" : [{ "$indexOfCP" : ["$String", "eattl"] }, -1] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$ne" : [{ "$indexOfCP" : ["$String", { "$literal" : "eattl" }] }, -1] } } }
 """);
     }
 
@@ -158,7 +158,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$ne" : [{ "$indexOfCP" : ["$Strin
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$ne" : [{ "$indexOfCP" : ["$String", "e"] }, -1] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$ne" : [{ "$indexOfCP" : ["$String", { "$literal" : "e" }] }, -1] } } }
 """);
     }
 
@@ -168,7 +168,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$ne" : [{ "$indexOfCP" : ["$Strin
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$String", ""] }, 0] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$String", { "$literal" : "" }] }, 0] } } }
 """);
     }
 
@@ -178,7 +178,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$Strin
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$String", "eattl"] }, 1] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$String", { "$literal" : "eattl" }] }, 1] } } }
 """);
     }
 
@@ -188,7 +188,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$Strin
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern" : "^[^e]{1}e", "options" : "s" } } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$String", { "$literal" : "e" }] }, 1] } } }
 """);
     }
 
@@ -198,7 +198,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" : { "pattern" : "^.{3,}$", "options" : "s" } } }, { "String" : { "$regularExpression" : { "pattern" : "^.{2}(?!.{0,3}e).{4}e", "options" : "s" } } }] } }
+BasicTypesEntities.{ "$match" : { "$and" : [{ "$expr" : { "$gt" : [{ "$strLenCP" : "$String" }, 2] } }, { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$String", { "$literal" : "e" }, 2] }, 6] } }] } }
 """);
     }
 
@@ -208,7 +208,7 @@ BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" : { "pattern" : "^.{3,}$", "options" : "s" } } }, { "String" : { "$regularExpression" : { "pattern" : "^.{2}[^e]{4}e", "options" : "s" } } }] } }
+BasicTypesEntities.{ "$match" : { "$and" : [{ "$expr" : { "$gt" : [{ "$strLenCP" : "$String" }, 2] } }, { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$String", { "$literal" : "e" }, 2] }, 6] } }] } }
 """);
     }
 
@@ -218,7 +218,7 @@ BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" : { "pattern" : "^.{3,}$", "options" : "s" } } }, { "String" : { "$regularExpression" : { "pattern" : "^.{2}(?!.{0,3}e).{4}e", "options" : "s" } } }] } }
+BasicTypesEntities.{ "$match" : { "$and" : [{ "$expr" : { "$gt" : [{ "$strLenCP" : "$String" }, 2] } }, { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$String", { "$literal" : "e" }, 2] }, 6] } }] } }
 """);
     }
 
@@ -228,7 +228,7 @@ BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" : { "pattern" : "^.{3,}$", "options" : "s" } } }, { "String" : { "$regularExpression" : { "pattern" : "^.{2}[^e]{4}e", "options" : "s" } } }] } }
+BasicTypesEntities.{ "$match" : { "$and" : [{ "$expr" : { "$gt" : [{ "$strLenCP" : "$String" }, 2] } }, { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$String", { "$literal" : "e" }, 2] }, 6] } }] } }
 """);
     }
 
@@ -238,7 +238,7 @@ BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : [{ "$toString" : "$Int" }, "55"] }, 1] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : [{ "$toString" : "$Int" }, { "$literal" : "55" }] }, 1] } } }
 """);
     }
 
@@ -248,7 +248,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : [{ "$toS
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["12559", { "$toString" : "$Int" }] }, 1] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : [{ "$literal" : "12559" }, { "$toString" : "$Int" }] }, 1] } } }
 """);
     }
 
@@ -258,7 +258,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["12559"
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$replaceAll" : { "input" : "$String", "find" : "Sea", "replacement" : "Rea" } }, "Reattle"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$replaceAll" : { "input" : "$String", "find" : { "$literal" : "Sea" }, "replacement" : { "$ifNull" : [{ "$literal" : "Rea" }, ""] } } }, { "$literal" : "Reattle" }] } } }
 """);
     }
 
@@ -268,7 +268,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$replaceAll" : { "inpu
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$replaceAll" : { "input" : "$String", "find" : "S", "replacement" : "R" } }, "Reattle"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$replaceAll" : { "input" : "$String", "find" : { "$literal" : "S" }, "replacement" : { "$ifNull" : [{ "$literal" : "R" }, ""] } } }, { "$literal" : "Reattle" }] } } }
 """);
     }
 
@@ -278,7 +278,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$replaceAll" : { "inpu
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$ne" : "" } }, { "$expr" : { "$eq" : [{ "$replaceAll" : { "input" : "$String", "find" : "$String", "replacement" : "" } }, ""] } }] } }
+BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$ne" : "" } }, { "$expr" : { "$eq" : [{ "$replaceAll" : { "input" : "$String", "find" : "$String", "replacement" : { "$ifNull" : [{ "$literal" : "" }, ""] } } }, { "$literal" : "" }] } }] } }
 """);
     }
 
@@ -288,7 +288,7 @@ BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$ne" : "" } }, { "$e
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$ne" : "" } }, { "$expr" : { "$eq" : [{ "$replaceAll" : { "input" : "$String", "find" : "$String", "replacement" : { "$toString" : "$Int" } } }, { "$toString" : "$Int" }] } }] } }
+BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$ne" : "" } }, { "$expr" : { "$eq" : [{ "$replaceAll" : { "input" : "$String", "find" : "$String", "replacement" : { "$ifNull" : [{ "$toString" : "$Int" }, ""] } } }, { "$toString" : "$Int" }] } }] } }
 """);
     }
 
@@ -298,7 +298,7 @@ BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$ne" : "" } }, { "$e
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" : { "pattern" : "^.{3,}$", "options" : "s" } } }, { "$expr" : { "$eq" : [{ "$substrCP" : ["$String", 1, 2] }, "ea"] } }] } }
+BasicTypesEntities.{ "$match" : { "$and" : [{ "$expr" : { "$gte" : [{ "$strLenCP" : "$String" }, 3] } }, { "$expr" : { "$eq" : [{ "$substrCP" : ["$String", 1, 2] }, { "$literal" : "ea" }] } }] } }
 """);
     }
 
@@ -308,7 +308,7 @@ BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$substrCP" : ["$String", 0, { "$strLenCP" : "$String" }] }, "Seattle"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$substrCP" : ["$String", 0, { "$subtract" : [{ "$strLenCP" : { "$ifNull" : ["$String", ""] } }, 0] }] }, { "$literal" : "Seattle" }] } } }
 """);
     }
 
@@ -318,7 +318,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$substrCP" : ["$String
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" : { "pattern" : "^.{1,}$", "options" : "s" } } }, { "$expr" : { "$eq" : [{ "$substrCP" : ["$String", 1, { "$subtract" : [{ "$strLenCP" : "$String" }, 1] }] }, "eattle"] } }] } }
+BasicTypesEntities.{ "$match" : { "$and" : [{ "$expr" : { "$gte" : [{ "$strLenCP" : "$String" }, 1] } }, { "$expr" : { "$eq" : [{ "$substrCP" : ["$String", 1, { "$subtract" : [{ "$strLenCP" : { "$ifNull" : ["$String", ""] } }, 1] }] }, { "$literal" : "eattle" }] } }] } }
 """);
     }
 
@@ -328,7 +328,7 @@ BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" : { "pattern" : "^.{2,}$", "options" : "s" } } }, { "$expr" : { "$eq" : [{ "$substrCP" : ["$String", 2, { "$subtract" : [{ "$strLenCP" : "$String" }, 2] }] }, "attle"] } }] } }
+BasicTypesEntities.{ "$match" : { "$and" : [{ "$expr" : { "$gte" : [{ "$strLenCP" : "$String" }, 2] } }, { "$expr" : { "$eq" : [{ "$substrCP" : ["$String", 2, { "$subtract" : [{ "$strLenCP" : { "$ifNull" : ["$String", ""] } }, 2] }] }, { "$literal" : "attle" }] } }] } }
 """);
     }
 
@@ -338,7 +338,7 @@ BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" : { "pattern" : "^.{3,}$", "options" : "s" } } }, { "$expr" : { "$eq" : [{ "$substrCP" : ["$String", 0, 3] }, "Sea"] } }] } }
+BasicTypesEntities.{ "$match" : { "$and" : [{ "$expr" : { "$gte" : [{ "$strLenCP" : "$String" }, 3] } }, { "$expr" : { "$eq" : [{ "$substrCP" : ["$String", 0, 3] }, { "$literal" : "Sea" }] } }] } }
 """);
     }
 
@@ -348,7 +348,7 @@ BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" : { "pattern" : "^.{2,}$", "options" : "s" } } }, { "$expr" : { "$eq" : [{ "$substrCP" : ["$String", 2, 0] }, ""] } }] } }
+BasicTypesEntities.{ "$match" : { "$and" : [{ "$expr" : { "$gte" : [{ "$strLenCP" : "$String" }, 2] } }, { "$expr" : { "$eq" : [{ "$substrCP" : ["$String", 2, 0] }, { "$literal" : "" }] } }] } }
 """);
     }
 
@@ -358,7 +358,7 @@ BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" : { "pattern" : "^.{5,}$", "options" : "s" } } }, { "$expr" : { "$eq" : [{ "$substrCP" : ["$String", 2, 3] }, "att"] } }] } }
+BasicTypesEntities.{ "$match" : { "$and" : [{ "$expr" : { "$gte" : [{ "$strLenCP" : "$String" }, 5] } }, { "$expr" : { "$eq" : [{ "$substrCP" : ["$String", 2, 3] }, { "$literal" : "att" }] } }] } }
 """);
     }
 
@@ -368,7 +368,7 @@ BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" : { "pattern" : "a", "options" : "s" } } }, { "$expr" : { "$eq" : [{ "$substrCP" : ["$String", { "$indexOfCP" : ["$String", "a"] }, 3] }, "att"] } }] } }
+BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" : { "pattern" : "a", "options" : "s" } } }, { "$expr" : { "$eq" : [{ "$substrCP" : ["$String", { "$indexOfCP" : ["$String", { "$literal" : "a" }] }, 3] }, { "$literal" : "att" }] } }] } }
 """);
     }
 
@@ -378,11 +378,11 @@ BasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$regularExpression" 
 
         AssertMql(
             """
-NullableBasicTypesEntities.{ "$match" : { "String" : { "$in" : [null, ""] } } }
+NullableBasicTypesEntities.{ "$match" : { "$or" : [{ "String" : null }, { "String" : "" }] } }
 """,
             //
             """
-NullableBasicTypesEntities.{ "$project" : { "_v" : { "$in" : ["$String", [null, ""]] }, "_id" : 0 } }
+NullableBasicTypesEntities.{ "$project" : { "_v" : { "$or" : [{ "$eq" : [{ "$ifNull" : ["$String", null] }, null] }, { "$eq" : ["$String", { "$literal" : "" }] }] }, "_id" : 0 } }
 """);
     }
 
@@ -392,11 +392,11 @@ NullableBasicTypesEntities.{ "$project" : { "_v" : { "$in" : ["$String", [null, 
 
         AssertMql(
             """
-NullableBasicTypesEntities.{ "$match" : { "String" : { "$nin" : [null, ""] } } }
+NullableBasicTypesEntities.{ "$match" : { "$and" : [{ "String" : { "$ne" : null } }, { "String" : { "$ne" : "" } }] } }
 """,
             //
             """
-NullableBasicTypesEntities.{ "$project" : { "_v" : { "$not" : { "$in" : ["$String", [null, ""]] } }, "_id" : 0 } }
+NullableBasicTypesEntities.{ "$project" : { "_v" : { "$and" : [{ "$ne" : [{ "$ifNull" : ["$String", null] }, null] }, { "$ne" : ["$String", { "$literal" : "" }] }] }, "_id" : 0 } }
 """);
     }
 
@@ -406,7 +406,7 @@ NullableBasicTypesEntities.{ "$project" : { "_v" : { "$not" : { "$in" : ["$Strin
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$in" : [null, { "$regularExpression" : { "pattern" : "^\\s*$", "options" : "" } }] } } }
+BasicTypesEntities.{ "$match" : { "$or" : [{ "String" : null }, { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$String", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, { "$literal" : "" }] } }] } }
 """);
     }
 
@@ -604,7 +604,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$not" : { "$regularExpression" :
 """,
             //
             """
-BasicTypesEntities.{ "$project" : { "_v" : { "$not" : { "$gte" : [{ "$indexOfCP" : ["$String", "eattle"] }, 0] } }, "_id" : 0 } }
+BasicTypesEntities.{ "$project" : { "_v" : { "$not" : [{ "$regexMatch" : { "input" : "$String", "regex" : { "$regularExpression" : { "pattern" : "eattle", "options" : "s" } } } }] }, "_id" : 0 } }
 """);
     }
 
@@ -658,7 +658,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$String", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, "Boston  "] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$String", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, { "$literal" : "Boston  " }] } } }
 """);
     }
 
@@ -668,7 +668,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$String", "chars" : "S" } }, "eattle"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$String", "chars" : { "$literal" : "S" } } }, { "$literal" : "eattle" }] } } }
 """);
     }
 
@@ -678,7 +678,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$String", "chars" : "Se" } }, "attle"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$String", "chars" : { "$literal" : "Se" } } }, { "$literal" : "attle" }] } } }
 """);
     }
 
@@ -688,7 +688,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$String", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, "  Boston"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$String", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, { "$literal" : "  Boston" }] } } }
 """);
     }
 
@@ -698,7 +698,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$String", "chars" : "e" } }, "Seattl"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$String", "chars" : { "$literal" : "e" } } }, { "$literal" : "Seattl" }] } } }
 """);
     }
 
@@ -708,7 +708,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$String", "chars" : "le" } }, "Seatt"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$String", "chars" : { "$literal" : "le" } } }, { "$literal" : "Seatt" }] } } }
 """);
     }
 
@@ -718,7 +718,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$String", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, "Boston"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$String", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, { "$literal" : "Boston" }] } } }
 """);
     }
 
@@ -728,7 +728,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$String", "chars" : "S" } }, "eattle"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$String", "chars" : { "$literal" : "S" } } }, { "$literal" : "eattle" }] } } }
 """);
     }
 
@@ -738,7 +738,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$String", "chars" : "Se" } }, "attl"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$String", "chars" : { "$literal" : "Se" } } }, { "$literal" : "attl" }] } } }
 """);
     }
 
@@ -812,27 +812,27 @@ BasicTypesEntities.{ "$match" : { "_id" : 1 } }, { "$limit" : 2 }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$gt" : "Seattle" } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$String", { "$literal" : "Seattle" }] }, 1] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$lt" : "Seattle" } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$String", { "$literal" : "Seattle" }] }, -1] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$lte" : "Seattle" } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$lt" : [{ "$cmp" : ["$String", { "$literal" : "Seattle" }] }, 1] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$lte" : "Seattle" } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$lt" : [{ "$cmp" : ["$String", { "$literal" : "Seattle" }] }, 1] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle" } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$String", { "$literal" : "Seattle" }] }, -1] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle" } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$String", { "$literal" : "Seattle" }] }, -1] } } }
 """);
     }
 
@@ -842,15 +842,15 @@ BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle" } } }
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$String", "Seattle"] }, 42] } } }
+BasicTypesEntities.{ "$match" : { "_id" : { "$type" : -1 } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$String", "Seattle"] }, 42] } } }
+BasicTypesEntities.{ "$match" : { "_id" : { "$type" : -1 } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$gt" : [42, { "$cmp" : ["$String", "Seattle"] }] } } }
+BasicTypesEntities.{ "$match" : { } }
 """);
     }
 
@@ -860,27 +860,27 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$gt" : [42, { "$cmp" : ["$String"
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$String", { "$concat" : ["M", "$String"] }] }, 0] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$String", { "$concat" : [{ "$literal" : "M" }, "$String"] }] }, 0] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$ne" : [0, { "$cmp" : ["$String", { "$substrCP" : ["$String", 0, 0] }] }] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$ne" : [{ "$cmp" : ["$String", { "$substrCP" : ["$String", 0, 0] }] }, 0] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$String", { "$replaceAll" : { "input" : "Seattle", "find" : "Sea", "replacement" : "$String" } }] }, 0] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$String", { "$replaceAll" : { "input" : { "$literal" : "Seattle" }, "find" : { "$literal" : "Sea" }, "replacement" : { "$ifNull" : ["$String", ""] } } }] }, 0] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$gte" : [0, { "$cmp" : ["$String", { "$concat" : ["M", "$String"] }] }] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$lte" : [{ "$cmp" : ["$String", { "$concat" : [{ "$literal" : "M" }, "$String"] }] }, 0] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [1, { "$cmp" : ["$String", { "$substrCP" : ["$String", 0, 0] }] }] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$String", { "$substrCP" : ["$String", 0, 0] }] }, 1] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$String", { "$replaceAll" : { "input" : "Seattle", "find" : "Sea", "replacement" : "$String" } }] }, -1] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$String", { "$replaceAll" : { "input" : { "$literal" : "Seattle" }, "find" : { "$literal" : "Sea" }, "replacement" : { "$ifNull" : ["$String", ""] } } }] }, -1] } } }
 """);
     }
 
@@ -890,7 +890,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$String", { 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle" } } }, { "$match" : { "String" : { "$lt" : "Toronto" } } }
+BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle", "$lt" : "Toronto" } } }
 """);
     }
 
@@ -964,27 +964,27 @@ BasicTypesEntities.{ "$match" : { "_id" : 1 } }, { "$limit" : 2 }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$gt" : "Seattle" } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$String", { "$literal" : "Seattle" }] }, 1] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$lt" : "Seattle" } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$String", { "$literal" : "Seattle" }] }, -1] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$lte" : "Seattle" } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$lt" : [{ "$cmp" : ["$String", { "$literal" : "Seattle" }] }, 1] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$lte" : "Seattle" } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$lt" : [{ "$cmp" : ["$String", { "$literal" : "Seattle" }] }, 1] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle" } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$String", { "$literal" : "Seattle" }] }, -1] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle" } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$String", { "$literal" : "Seattle" }] }, -1] } } }
 """);
     }
 
@@ -994,15 +994,15 @@ BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle" } } }
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$String", "Seattle"] }, 42] } } }
+BasicTypesEntities.{ "$match" : { "_id" : { "$type" : -1 } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$String", "Seattle"] }, 42] } } }
+BasicTypesEntities.{ "$match" : { "_id" : { "$type" : -1 } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$gt" : [42, { "$cmp" : ["$String", "Seattle"] }] } } }
+BasicTypesEntities.{ "$match" : { } }
 """);
     }
 
@@ -1012,27 +1012,27 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$gt" : [42, { "$cmp" : ["$String"
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$String", { "$concat" : ["M", "$String"] }] }, 0] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$String", { "$concat" : [{ "$literal" : "M" }, "$String"] }] }, 0] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$ne" : [0, { "$cmp" : ["$String", { "$substrCP" : ["$String", 0, 0] }] }] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$ne" : [{ "$cmp" : ["$String", { "$substrCP" : ["$String", 0, 0] }] }, 0] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$String", { "$replaceAll" : { "input" : "Seattle", "find" : "Sea", "replacement" : "$String" } }] }, 0] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$String", { "$replaceAll" : { "input" : { "$literal" : "Seattle" }, "find" : { "$literal" : "Sea" }, "replacement" : { "$ifNull" : ["$String", ""] } } }] }, 0] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$gte" : [0, { "$cmp" : ["$String", { "$concat" : ["M", "$String"] }] }] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$lte" : [{ "$cmp" : ["$String", { "$concat" : [{ "$literal" : "M" }, "$String"] }] }, 0] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [1, { "$cmp" : ["$String", { "$substrCP" : ["$String", 0, 0] }] }] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$String", { "$substrCP" : ["$String", 0, 0] }] }, 1] } } }
 """,
             //
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$String", { "$replaceAll" : { "input" : "Seattle", "find" : "Sea", "replacement" : "$String" } }] }, -1] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$String", { "$replaceAll" : { "input" : { "$literal" : "Seattle" }, "find" : { "$literal" : "Sea" }, "replacement" : { "$ifNull" : ["$String", ""] } } }] }, -1] } } }
 """);
     }
 
@@ -1042,7 +1042,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$String", { 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle" } } }, { "$match" : { "String" : { "$lt" : "Toronto" } } }
+BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle", "$lt" : "Toronto" } } }
 """);
     }
 
@@ -1068,7 +1068,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$gte" : "Seattle" } } }, { "$mat
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$String", { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "|" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "foo" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "|" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : null }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "|" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "bar" }, { "$literal" : "" }] }] }, "Seattle|foo||bar"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$String", { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "|" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "foo" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "|" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : null }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "|" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "bar" }, { "$literal" : "" }] }] }, { "$literal" : "Seattle|foo||bar" }] } } }
 """);
     }
 
@@ -1078,7 +1078,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["$String", "Boston"] }, "SeattleBoston"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["$String", { "$literal" : "Boston" }] }, { "$literal" : "SeattleBoston" }] } } }
 """);
     }
 
@@ -1092,7 +1092,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["$String",
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["$String", { "$toString" : 10 }] }, "Seattle10"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["$String", { "$toString" : 10 }] }, { "$literal" : "Seattle10" }] } } }
 """);
     }
 
@@ -1102,7 +1102,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["$String",
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : 10 }, "$String"] }, "10Seattle"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : 10 }, "$String"] }, { "$literal" : "10Seattle" }] } } }
 """);
     }
 
@@ -1112,7 +1112,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toStri
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : 30 }, "$String", { "$toString" : 21 }, { "$toString" : 42 }] }, "30Seattle2142"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : 30 }, "$String", { "$toString" : 21 }, { "$toString" : 42 }] }, { "$literal" : "30Seattle2142" }] } } }
 """);
     }
 
@@ -1122,7 +1122,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toStri
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : "$Int" }, "$String"] }, "8Seattle"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toString" : "$Int" }, "$String"] }, { "$literal" : "8Seattle" }] } } }
 """);
     }
 
@@ -1132,7 +1132,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$toStri
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["A", "$String"] }, "ASeattle"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$literal" : "A" }, "$String"] }, { "$literal" : "ASeattle" }] } } }
 """);
     }
 
@@ -1142,7 +1142,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["A", "$Str
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["A", "$String"] }, "ASeattle"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$literal" : "A" }, "$String"] }, { "$literal" : "ASeattle" }] } } }
 """);
     }
 
@@ -1152,7 +1152,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["A", "$Str
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["A", "B", "$String"] }, "ABSeattle"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$literal" : "A" }, { "$literal" : "B" }, "$String"] }, { "$literal" : "ABSeattle" }] } } }
 """);
     }
 
@@ -1162,7 +1162,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["A", "B", 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["A", "B", "C", "$String"] }, "ABCSeattle"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$literal" : "A" }, { "$literal" : "B" }, { "$literal" : "C" }, "$String"] }, { "$literal" : "ABCSeattle" }] } } }
 """);
     }
 
@@ -1172,7 +1172,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : ["A", "B", 
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : { "$ifNull" : ["$String", ""] } }, 0] }, "then" : "\u0000", "else" : { "$substrCP" : [{ "$ifNull" : ["$String", ""] }, 0, 1] } } }, "S"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : { "$ifNull" : ["$String", ""] } }, 0] }, "then" : "\u0000", "else" : { "$substrCP" : [{ "$ifNull" : ["$String", ""] }, 0, 1] } } }, { "$literal" : "S" }] } } }
 """);
     }
 
@@ -1182,7 +1182,7 @@ BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : { "$ifNull" : ["$String", ""] } }, 0] }, "then" : "\u0000", "else" : { "$substrCP" : [{ "$ifNull" : ["$String", ""] }, { "$subtract" : [{ "$strLenCP" : { "$ifNull" : ["$String", ""] } }, 1] }, 1] } } }, "e"] } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : { "$ifNull" : ["$String", ""] } }, 0] }, "then" : "\u0000", "else" : { "$substrCP" : [{ "$ifNull" : ["$String", ""] }, { "$subtract" : [{ "$strLenCP" : { "$ifNull" : ["$String", ""] } }, 1] }, 1] } } }, { "$literal" : "e" }] } } }
 """);
     }
 
@@ -1202,7 +1202,7 @@ BasicTypesEntities.{ "$match" : { "String" : { "$regularExpression" : { "pattern
 
         AssertMql(
             """
-BasicTypesEntities.{ "$match" : { "$expr" : { "$regexMatch" : { "input" : "Seattle", "regex" : "$String", "options" : "" } } } }
+BasicTypesEntities.{ "$match" : { "$expr" : { "$regexMatch" : { "input" : { "$literal" : "Seattle" }, "regex" : "$String", "options" : "" } } } }
 """);
     }
 

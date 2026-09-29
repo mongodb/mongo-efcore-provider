@@ -471,7 +471,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
                 .ToList().OrderBy(r => r.Name).Select(r => r.X).ToArray());
     }
 
-    // ── String-method leaf (ToUpper) has no native translation: graceful fallback except under NativeOnly.
+    // ── String-method leaf (Split) has no native translation: graceful fallback except under NativeOnly.
     // (Concatenation is native; see NativeStringConcatTests.)
 
     [Fact]
@@ -481,18 +481,20 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
 
         using (var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly))
         {
-            var query = nativeOnly.Entities.Select(c => new { X = c.Name.ToUpper() });
+            var query = nativeOnly.Entities.Select(c => new { X = c.Name.Split('o', StringSplitOptions.None)[0] });
             Assert.Throws<NativeTranslationNotSupportedException>(() => query.ToList());
         }
 
         using var native = CreateContext(collection, [], MongoQueryMode.Native);
         using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
 
-        var nativeResults = native.Entities.Select(c => new { X = c.Name.ToUpper() }).OrderBy(r => r.X).ToList();
-        var driverResults = driver.Entities.Select(c => new { X = c.Name.ToUpper() }).OrderBy(r => r.X).ToList();
+        var nativeResults = native.Entities.Select(c => new { X = c.Name.Split('o', StringSplitOptions.None)[0] })
+            .OrderBy(r => r.X).ToList();
+        var driverResults = driver.Entities.Select(c => new { X = c.Name.Split('o', StringSplitOptions.None)[0] })
+            .OrderBy(r => r.X).ToList();
 
         Assert.Equal(driverResults, nativeResults);
-        Assert.Equal(["ALICE", "BOB", "CAROL"], nativeResults.Select(r => r.X).ToArray());
+        Assert.Equal(["Alice", "B", "Car"], nativeResults.Select(r => r.X).ToArray());
     }
 
     // ── Mixed whole-entity + computed-arithmetic ───────────────────────────────────────────────────────

@@ -27,12 +27,18 @@ internal static class MongoRegexPatternBuilder
 {
     /// <summary>
     /// Escapes <paramref name="term"/> and anchors it per <paramref name="kind"/>, matching the pattern driver-LINQ
-    /// v3 emits for <c>string.StartsWith</c>/<c>EndsWith</c>/<c>Contains</c>.
+    /// v3 emits for <c>string.StartsWith</c>/<c>EndsWith</c>/<c>Contains</c>. For <see cref="MongoRegexKind.Pattern"/>
+    /// (<c>Regex.IsMatch(field, pattern)</c>), <paramref name="term"/> is returned unescaped and unanchored — it is
+    /// already a live .NET regex pattern.
     /// </summary>
     public static string BuildPattern(string term, MongoRegexKind kind)
     {
         if (kind == MongoRegexKind.Like)
             return BuildLikePattern(term);
+
+        // Pattern (Regex.IsMatch(field, pattern)): a live .NET pattern passed to PCRE unchanged, never escaped.
+        if (kind == MongoRegexKind.Pattern)
+            return term;
 
         var escaped = Regex.Escape(term);
         return kind switch
@@ -40,6 +46,8 @@ internal static class MongoRegexPatternBuilder
             MongoRegexKind.StartsWith => "^" + escaped,
             MongoRegexKind.EndsWith => escaped + "$",
             MongoRegexKind.Contains => escaped,
+            // "\z", not "$": "$" also matches before a trailing "\n", so "a\n" would equal "a".
+            MongoRegexKind.Exact => "^" + escaped + "\\z",
             _ => throw new NativeTranslationNotSupportedException($"Unsupported regex kind '{kind}'.")
         };
     }

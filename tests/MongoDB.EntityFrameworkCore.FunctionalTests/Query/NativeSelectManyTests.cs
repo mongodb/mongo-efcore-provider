@@ -927,14 +927,15 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Filtered_owned_computed_operator_hard_fails_in_every_mode()
     {
-        // An unsupported filter operator (string.ToUpper) declines normally; no oracle, so hard-fail in every mode.
+        // An unsupported filter operator (ToUpper over a computed receiver) declines normally; no oracle, so
+        // hard-fail in every mode.
         var seed = SeedOwners();
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
         {
             using var db = CreateContext(seed, mode,
                 nameof(Filtered_owned_computed_operator_hard_fails_in_every_mode) + mode);
             Assert.ThrowsAny<Exception>(() =>
-                db.Entities.SelectMany(o => o.Items.Where(i => i.Name.ToUpper() == "WIDGET"), (o, i) => new { o.Name, i.Price }).ToList());
+                db.Entities.SelectMany(o => o.Items.Where(i => i.Name.Trim().ToUpper() == "WIDGET"), (o, i) => new { o.Name, i.Price }).ToList());
         }
     }
 
@@ -2428,7 +2429,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     [Fact]
     public void Reference_form_computed_filter_operator_hard_fails_in_every_mode()
     {
-        // Unsupported filter operator (string.ToUpper): the inner-scope translator rejects it, so hard-fail in every
+        // Unsupported filter operator (ToUpper over a computed receiver): the inner-scope translator rejects it, so hard-fail in every
         // mode.
         foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly })
         {
@@ -2436,7 +2437,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 nameof(Reference_form_computed_filter_operator_hard_fails_in_every_mode) + mode, out _, out _);
 
             Assert.ThrowsAny<Exception>(() =>
-                db.Owners.SelectMany(o => o.Refs.Where(r => r.Tag.ToUpper() == "WIDGET"), (o, r) => new { o.Name, r.Tag }).ToList());
+                db.Owners.SelectMany(o => o.Refs.Where(r => r.Tag.Trim().ToUpper() == "WIDGET"), (o, r) => new { o.Name, r.Tag }).ToList());
         }
     }
 

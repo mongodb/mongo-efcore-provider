@@ -226,6 +226,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         if (source is ShapedQueryExpression shapedQueryExpression)
         {
             var methodDefinition = method.IsGenericMethod ? method.GetGenericMethodDefinition() : method;
+            var sourceHasCaseMappingLeaf =
+                ((MongoQueryExpression)shapedQueryExpression.QueryExpression).Select.HasClientCaseMappingProjectionLeaf;
             switch (method.Name)
             {
                 // Operations that need tweaks
@@ -283,6 +285,15 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     }
             }
 
+            // The native projection holds the raw receiver of a client-reapplied ToLower/ToUpper, so an operator that
+            // reads projected values would see the wrong value (Distinct dedups "Seattle" and "SEATTLE" apart). Read
+            // on the source, but marked after the switch: base.VisitMethodCall re-translates the source into a new
+            // query expression.
+            if (sourceHasCaseMappingLeaf && !IsProjectedValueFreeOperator(methodDefinition))
+            {
+                ((MongoQueryExpression)shapedQueryExpression.QueryExpression).Select.MarkNotNativelyRepresentable();
+            }
+
             // Operates on the already-visited source; never re-traverse.
             NativeSlotPopulator.PopulateNativeSlots(shapedQueryExpression, methodDefinition, methodCallExpression);
 
@@ -302,6 +313,24 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         return QueryCompilationContext.NotTranslatedExpression;
     }
+
+    /// <summary>
+    /// Operators that never read the projected values (paging, and cardinality/count terminals without a
+    /// predicate), so they stay native over a client-reapplied case-mapping projection
+    /// (<see cref="MongoSelectDefinition.HasClientCaseMappingProjectionLeaf"/>).
+    /// </summary>
+    private static bool IsProjectedValueFreeOperator(MethodInfo methodDefinition)
+        => methodDefinition == QueryableMethods.Take
+           || methodDefinition == QueryableMethods.Skip
+           || methodDefinition == QueryableMethods.FirstWithoutPredicate
+           || methodDefinition == QueryableMethods.FirstOrDefaultWithoutPredicate
+           || methodDefinition == QueryableMethods.SingleWithoutPredicate
+           || methodDefinition == QueryableMethods.SingleOrDefaultWithoutPredicate
+           || methodDefinition == QueryableMethods.LastWithoutPredicate
+           || methodDefinition == QueryableMethods.LastOrDefaultWithoutPredicate
+           || methodDefinition == QueryableMethods.CountWithoutPredicate
+           || methodDefinition == QueryableMethods.LongCountWithoutPredicate
+           || methodDefinition == QueryableMethods.AnyWithoutPredicate;
 
     protected override ShapedQueryExpression TranslateSelect(ShapedQueryExpression source, LambdaExpression selector)
     {
@@ -638,6 +667,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         var newSelectorBody =
             ReplacingExpressionVisitor.Replace(selector.Parameters.Single(), source.ShaperExpression, selector.Body);
+
+        // Same replacement over each recorded leaf source, so the binding visitor can match a leaf against the
+        // exact subtree it visits (structural equality) rather than by member name.
+        mongoQueryExpression.Select.RebaseProjectionSources(
+            leafSource => ReplacingExpressionVisitor.Replace(selector.Parameters.Single(), source.ShaperExpression, leafSource));
+
         var newShaper = _projectionBindingExpressionVisitor.Translate(mongoQueryExpression, newSelectorBody);
 
         return source.UpdateShaperExpression(newShaper);
@@ -3032,6 +3067,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         => mongo.Select.Route == NativeRoute.Projection
            && mongo.Select.Projection.Count > 0
            && !mongo.Select.HasArrayProjectionLeaf
+           // The raw case-mapping receiver would be what the combine dedups/compares.
+           && !mongo.Select.HasClientCaseMappingProjectionLeaf
            && mongo.Select.SetOperation == null
            && !mongo.Select.IsSetOp
            && mongo.Select.Grouping == null

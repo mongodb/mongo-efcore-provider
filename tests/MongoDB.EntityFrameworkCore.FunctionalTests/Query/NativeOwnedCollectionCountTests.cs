@@ -779,7 +779,7 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
         db.Entities.AsNoTracking().Where(b => b.Posts.Count > threshold).ToList();
 
         // One fragment rather than separate Contains checks, so the nesting order of $expr/$size/$ifNull is pinned.
-        spy.AssertExecutedMqlContains("{ \"$expr\" : { \"$gt\" : [{ \"$size\" : { \"$ifNull\" : [\"$Posts\", []] } }, 1] } }");
+        spy.AssertExecutedMqlContains("{ \"$expr\" : { \"$gt\" : [{ \"$size\" : { \"$ifNull\" : [\"$Posts\", []] } }, { \"$literal\" : 1 }] } }");
     }
 
     [Fact]

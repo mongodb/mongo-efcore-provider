@@ -311,8 +311,15 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // shaper, and NativeProjectionBinder runs even under DriverLinq. Without this, CanPushDown flips to true
         // and the driver throws ("unable to determine which serializer to use" / "StringSerializer must implement
         // IBsonArraySerializer"). The mixed shaper re-applies the operator to the materialized value.
+        //
+        // A projected ToLower/ToUpper also takes the mixed shaper (the driver's $toLower/$toUpper are ASCII-only),
+        // but only when the Select can be stripped: otherwise (a Distinct after it) the shaper would read fields the
+        // driver's projected documents don't have, so it stays on push-down.
         if (!mongoQueryExpression.Select.HasStringSequenceProjectionLeaf
-            && ProjectionAnalyzer.CanPushDown(shapedQueryExpression.ShaperExpression))
+            && ProjectionAnalyzer.CanPushDown(shapedQueryExpression.ShaperExpression)
+            && !(ProjectionAnalyzer.HasCaseMappingProjectedValue(shapedQueryExpression.ShaperExpression)
+                 && !ReferenceEquals(
+                     StripPushedDownSelect(mongoQueryExpression.CapturedExpression), mongoQueryExpression.CapturedExpression)))
         {
             // Push-down path: scalar/anonymous projections handled entirely by LINQ V3
             return Expression.Call(null,

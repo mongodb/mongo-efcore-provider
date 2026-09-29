@@ -67,7 +67,8 @@ internal static class MongoFieldPrefixRewriter
             MongoArrayContainsExpression ac => new MongoArrayContainsExpression(
                 (MongoFieldExpression)Rewrite(ac.Field, prefix), Rewrite(ac.Value, prefix), ac.Negated),
             MongoRegexExpression r => new MongoRegexExpression(
-                (MongoFieldExpression)Rewrite(r.Field, prefix), r.Kind, Rewrite(r.Term, prefix), r.Negated, r.CaseInsensitive),
+                (MongoFieldExpression)Rewrite(r.Field, prefix), r.Kind, Rewrite(r.Term, prefix), r.Negated, r.CaseInsensitive,
+                r.PatternOptions),
             // Prefix the array path only: the element predicate is element-relative, as $elemMatch requires.
             MongoElemMatchExpression e => new MongoElemMatchExpression(
                 prefix + "." + e.ArrayPath, e.ElementPredicate, e.Negated),
@@ -87,12 +88,19 @@ internal static class MongoFieldPrefixRewriter
             MongoDateAddExpression da => new MongoDateAddExpression(
                 Rewrite(da.StartDate, prefix), da.Unit, Rewrite(da.Amount, prefix)),
             MongoStringIndexOfExpression io => new MongoStringIndexOfExpression(
-                Rewrite(io.Haystack, prefix), Rewrite(io.Needle, prefix)),
+                Rewrite(io.Haystack, prefix), Rewrite(io.Needle, prefix),
+                io.Start is null ? null : Rewrite(io.Start, prefix)),
             MongoStringLengthExpression sl => new MongoStringLengthExpression(Rewrite(sl.Operand, prefix)),
             MongoMathExpression m => new MongoMathExpression(
                 m.Function, m.Operands.Select(o => Rewrite(o, prefix)).ToList(), m.Type),
             MongoTrimExpression t => new MongoTrimExpression(
                 Rewrite(t.Source, prefix), t.Side, t.Chars is null ? null : Rewrite(t.Chars, prefix)),
+            MongoSubstringExpression s => new MongoSubstringExpression(
+                Rewrite(s.Source, prefix), Rewrite(s.Start, prefix), s.Length is null ? null : Rewrite(s.Length, prefix)),
+            MongoReplaceExpression r => new MongoReplaceExpression(
+                Rewrite(r.Input, prefix), Rewrite(r.Find, prefix), Rewrite(r.Replacement, prefix)),
+            MongoStringCompareExpression cmp => new MongoStringCompareExpression(
+                Rewrite(cmp.Left, prefix), Rewrite(cmp.Right, prefix)),
             MongoStringFirstOrLastExpression fl => new MongoStringFirstOrLastExpression(Rewrite(fl.Source, prefix), fl.Kind),
             MongoDateTimeOffsetLocalExpression l => new MongoDateTimeOffsetLocalExpression(
                 (MongoFieldExpression)Rewrite(l.Operand, prefix)),

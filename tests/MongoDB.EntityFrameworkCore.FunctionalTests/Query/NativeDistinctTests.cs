@@ -313,13 +313,33 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Where_on_unrelated_computed_key_falls_back_under_native_only()
     {
-        // A computed predicate over the alias with no native translation (ToUpper) must decline, not resolve
+        // A computed predicate over the alias with no native translation (ToUpper over Trim) must decline, not resolve
         // against the entity. (.Length is translatable, so it wouldn't exercise this.)
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Where_on_unrelated_computed_key_falls_back_under_native_only));
 
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
-            db.Entities.Select(o => new { o.Country }).Distinct().Where(r => r.Country.ToUpper() == "US").ToList());
+            db.Entities.Select(o => new { o.Country }).Distinct().Where(r => r.Country.Trim().ToUpper() == "US").ToList());
+    }
+
+    [Fact]
+    public void Distinct_then_Where_with_ToUpper_on_renamed_member_resolves_against_the_distinct_alias()
+    {
+        // ToUpper() == constant is a native regex; it must address the projected City under its "Country" alias, not
+        // the entity's real Country field (never "NYC").
+        var seed = SeedOrders();
+        using var nativeOnlyDb = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Distinct_then_Where_with_ToUpper_on_renamed_member_resolves_against_the_distinct_alias) + "N");
+        using var driverDb = CreateContext(seed, MongoQueryMode.DriverLinq,
+            nameof(Distinct_then_Where_with_ToUpper_on_renamed_member_resolves_against_the_distinct_alias) + "D");
+
+        string[] Run(SingleEntityDbContext<Order> db) =>
+            db.Entities.Select(o => new { Country = o.City }).Distinct().Where(r => r.Country.ToUpper() == "NYC")
+                .AsEnumerable().Select(r => r.Country).ToArray();
+
+        var native = Run(nativeOnlyDb);
+        Assert.Equal(["NYC"], native);
+        Assert.Equal(Run(driverDb), native);
     }
 
     [Fact]
@@ -506,12 +526,12 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Count_with_unrelated_computed_predicate_falls_back_under_native_only()
     {
-        // As the Where test above: ToUpper() has no native translation.
+        // As the Where test above: ToUpper() over Trim() has no native translation.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Count_with_unrelated_computed_predicate_falls_back_under_native_only));
 
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
-            db.Entities.Select(o => new { o.Country }).Distinct().Count(r => r.Country.ToUpper() == "US"));
+            db.Entities.Select(o => new { o.Country }).Distinct().Count(r => r.Country.Trim().ToUpper() == "US"));
     }
 
     [Fact]

@@ -478,12 +478,23 @@ internal sealed partial class MongoExpressionTranslator
             MongoDateAddExpression dateAdd
                 => AllFieldsDefaultSerialized(dateAdd.StartDate) && AllFieldsDefaultSerialized(dateAdd.Amount),
             MongoStringIndexOfExpression indexOf
-                => AllFieldsDefaultSerialized(indexOf.Haystack) && AllFieldsDefaultSerialized(indexOf.Needle),
+                => AllFieldsDefaultSerialized(indexOf.Haystack) && AllFieldsDefaultSerialized(indexOf.Needle)
+                    && (indexOf.Start is null || AllFieldsDefaultSerialized(indexOf.Start)),
             MongoStringLengthExpression length => AllFieldsDefaultSerialized(length.Operand),
             MongoMathExpression math => math.Operands.All(AllFieldsDefaultSerialized),
             MongoTrimExpression trim => AllFieldsDefaultSerialized(trim.Source)
                 && (trim.Chars is null || AllFieldsDefaultSerialized(trim.Chars)),
+            MongoSubstringExpression substring => AllFieldsDefaultSerialized(substring.Source)
+                && AllFieldsDefaultSerialized(substring.Start)
+                && (substring.Length is null || AllFieldsDefaultSerialized(substring.Length)),
+            MongoReplaceExpression replace => AllFieldsDefaultSerialized(replace.Input)
+                && AllFieldsDefaultSerialized(replace.Find) && AllFieldsDefaultSerialized(replace.Replacement),
+            MongoStringCompareExpression compare => AllFieldsDefaultSerialized(compare.Left)
+                && AllFieldsDefaultSerialized(compare.Right),
             MongoStringFirstOrLastExpression firstOrLast => AllFieldsDefaultSerialized(firstOrLast.Source),
+            // As a value (projection/sort key) a regex renders as $regexMatch/$indexOfCP over the raw stored value,
+            // which errors for a non-string stored representation.
+            MongoRegexExpression regex => AllFieldsDefaultSerialized(regex.Field) && AllFieldsDefaultSerialized(regex.Term),
             MongoTupleExpression tuple => tuple.Elements.All(AllFieldsDefaultSerialized),
             // No arm needed (catch-all): MongoInExpression serializes candidates through the field's own serializer,
             // so it compares like-for-like; MongoSizeExpression has no property serialization; and
@@ -586,8 +597,22 @@ internal sealed partial class MongoExpressionTranslator
                 when TryTranslateBooleanPredicateComparison(boolPredEq, out var boolPredicateComparison):
                 return boolPredicateComparison;
 
+            // a.CompareTo(b) / string.Compare(a, b) against a constant; see MongoExpressionTranslator.StringCompare.cs.
+            case BinaryExpression stringCompare when IsComparison(stringCompare.NodeType)
+                                                     && TryTranslateStringCompare(stringCompare, out var stringCompareResult):
+                return stringCompareResult;
+
+            // x.S.ToLower()/ToUpper() == constant; see MongoExpressionTranslator.CaseMapping.cs.
+            case BinaryExpression caseMapping when TryTranslateCaseMappingComparison(caseMapping, out var caseMappingResult):
+                return caseMappingResult;
+
             case BinaryExpression be when IsComparison(be.NodeType):
                 return TranslateComparison(be);
+
+            // --- string.Equals with an explicit StringComparison; see MongoExpressionTranslator.StringEquals.cs ---
+            case MethodCallExpression stringEqualsCall
+                when TryTranslateStringEqualsWithComparison(stringEqualsCall, out var stringEquals):
+                return stringEquals;
 
             // --- Instance Equals(T): e.Field.Equals(value) ≡ e.Field == value ---
             //
@@ -674,6 +699,23 @@ internal sealed partial class MongoExpressionTranslator
                     return MongoExpressionNegator.TryNegate(operand, out var countComplement)
                         ? countComplement
                         : null;
+                // !(a || b) / !(a && b): exact De Morgan via the negator, or decline — never the generic $not wrap
+                // below, which renders in the aggregation dialect and differs from the query dialect in three ways:
+                // $eq doesn't equate missing with null ({f: null} does), relational operators order null/missing
+                // below every value (the query dialect never matches them), and a field path doesn't match array
+                // elements implicitly. Each would silently return wrong rows.
+                // Exception: the wrap is exact when every leaf answers the same in both dialects — a numeric type
+                // bracket ({$type: "number"} ≡ $isNumber) or a leaf that already renders only in $expr — which covers
+                // a negated bracketed relational cast (see MongoNumericTypeBracketExpression).
+                if (operand is MongoBinaryExpression { Operator: MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse })
+                {
+                    if (MongoExpressionNegator.TryNegate(operand, out var conjunctionComplement))
+                        return conjunctionComplement;
+
+                    return IsDialectInvariantForNegation(operand)
+                        ? new MongoUnaryExpression(MongoUnaryOperator.Not, operand)
+                        : null;
+                }
                 // Nullable bools (field or outer-scoped field) decline: Not could diverge from driver rendering.
                 if (TryGetBareFieldProperty(operand, out var notOperandProperty) && notOperandProperty.IsNullable)
                     return null; // conservative: nullable bool Not could diverge from driver rendering
@@ -782,6 +824,21 @@ internal sealed partial class MongoExpressionTranslator
                 return null;
             }
 
+            // --- string.IsNullOrEmpty(s) / IsNullOrWhiteSpace(s): translate the equivalent `s == null || s == ""`
+            // (`s.Trim() == ""` for whitespace) so the existing null/missing semantics apply.
+            case MethodCallExpression { Method.IsStatic: true, Arguments: [var nullOrArg] } nullOrCall
+                when nullOrCall.Method.DeclaringType == typeof(string)
+                     && nullOrCall.Method.Name is nameof(string.IsNullOrEmpty) or nameof(string.IsNullOrWhiteSpace):
+            {
+                var tested = nullOrCall.Method.Name == nameof(string.IsNullOrWhiteSpace)
+                    ? (Expression)Expression.Call(nullOrArg, typeof(string).GetMethod(nameof(string.Trim), Type.EmptyTypes)!)
+                    : nullOrArg;
+
+                return TranslateNode(Expression.OrElse(
+                    Expression.Equal(nullOrArg, Expression.Constant(null, typeof(string))),
+                    Expression.Equal(tested, Expression.Constant(string.Empty))));
+            }
+
             // --- String prefix/suffix/substring: string.StartsWith/EndsWith/Contains(string) ---
 
             case MethodCallExpression call when TryMatchRegexMethod(call, out var kind, out var receiver, out var termExpr, out var caseInsensitive):
@@ -817,7 +874,12 @@ internal sealed partial class MongoExpressionTranslator
                     return null; // receiver must resolve to a bare string field or a computed Distinct alias
                 }
 
-                var termNode = TranslateValue(Unwrap(termExpr), property);
+                var termNode = termExpr.Type == typeof(char)
+                    ? TranslateCharAsString(Unwrap(termExpr))
+                    : TranslateValue(Unwrap(termExpr), property);
+                if (termNode is null && termExpr.Type == typeof(char))
+                    return null; // a computed char (e.g. c.Text[0]) has no regex-term form
+
                 if (termNode is null)
                 {
                     // Field-to-field (`c.ContactName.StartsWith(c.ContactName)`, as EF's All_top_level_column
@@ -1480,16 +1542,52 @@ internal sealed partial class MongoExpressionTranslator
         if (TryTranslateDateAdd(node, allowNumericWidening, out var dateAdd))
             return dateAdd;
 
-        // string.IndexOf(term); both operands recurse here. These method-call/computed-member arms precede
-        // TryResolveMember, which never matches them.
-        if (TryMatchIndexOfMethod(node, out var indexOfReceiver, out var indexOfTerm))
+        // string.IndexOf(term[, start]); operands recurse here. A char term becomes a one-char string. These
+        // method-call/computed-member arms precede TryResolveMember, which never matches them.
+        if (TryMatchIndexOfMethod(node, out var indexOfReceiver, out var indexOfTerm, out var indexOfStart))
         {
             var haystack = TranslateOperand(indexOfReceiver, allowNumericWidening);
-            var needle = haystack is null ? null : TranslateOperand(indexOfTerm, allowNumericWidening);
-            if (haystack is not null && needle is not null)
-                return new MongoStringIndexOfExpression(haystack, needle);
+            var needle = haystack is null ? null
+                : indexOfTerm.Type == typeof(char) ? TranslateCharAsString(indexOfTerm)
+                : TranslateOperand(indexOfTerm, allowNumericWidening);
+            MongoExpression? start = null;
+            if (needle is not null && indexOfStart is not null)
+            {
+                start = TranslateOperand(indexOfStart, allowNumericWidening);
+                if (start is null)
+                    return null;
+            }
 
-            return null;
+            return haystack is not null && needle is not null
+                ? new MongoStringIndexOfExpression(haystack, needle, start)
+                : null;
+        }
+
+        // string.Substring(start[, length]); operands recurse here.
+        if (TryMatchSubstring(node, out var substringReceiver, out var substringStart, out var substringLength))
+        {
+            var source = TranslateOperand(substringReceiver, allowNumericWidening);
+            var start = source is null ? null : TranslateOperand(substringStart, allowNumericWidening);
+            if (start is null)
+                return null;
+
+            MongoExpression? length = null;
+            if (substringLength is not null && (length = TranslateOperand(substringLength, allowNumericWidening)) is null)
+                return null;
+
+            return new MongoSubstringExpression(source!, start, length);
+        }
+
+        // string.Replace(find, replacement); a char operand becomes a one-char string.
+        if (TryMatchReplace(node, out var replaceReceiver, out var replaceFind, out var replaceWith))
+        {
+            MongoExpression? Operand(Expression e)
+                => e.Type == typeof(char) ? TranslateCharAsString(e) : TranslateOperand(e, allowNumericWidening);
+
+            var input = TranslateOperand(replaceReceiver, allowNumericWidening);
+            var find = input is null ? null : Operand(replaceFind);
+            var with = find is null ? null : Operand(replaceWith);
+            return with is null ? null : new MongoReplaceExpression(input!, find!, with);
         }
 
         // string.Length (no backing IProperty, so TryResolveMember wouldn't match).
@@ -1520,6 +1618,19 @@ internal sealed partial class MongoExpressionTranslator
         // string.Join(separator, elements) over a fixed-arity array literal.
         if (TryTranslateStringJoin(node, out var joinResult))
             return joinResult;
+
+        // Integral x.ToString() → $toString (see TryMatchIntegralToString for the admissible receivers).
+        if (TryMatchIntegralToString(node, out var toStringReceiver))
+        {
+            var toStringOperand = TranslateOperand(toStringReceiver, allowNumericWidening);
+            return toStringOperand is null || !AllFieldsDefaultSerialized(toStringOperand)
+                ? null
+                : new MongoConvertExpression(toStringOperand, typeof(string));
+        }
+
+        // string.Concat(a, b[, c[, d]]) — the method spelling of `+`.
+        if (TryTranslateStringConcatMethod(node, allowNumericWidening) is { } concatMethod)
+            return concatMethod;
 
         if (TryResolveMember(node, out var property, out var fieldPath, out var operandIsOuter))
         {
@@ -1613,13 +1724,20 @@ internal sealed partial class MongoExpressionTranslator
             return new MongoBinaryExpression(MongoBinaryOperator.Subtract, new MongoConstantExpression(0, forSerialization: null), negatedOperand);
         }
 
-        // A client-collection Contains or a Not used as a value (e.g. a computed sort key
-        // OrderBy(x => !x.Flag)): hand off to TranslateNode's predicate translation. Deliberately limited to these
-        // two shapes (plus comparisons below); aggregation renderability is decided later by CanRender.
+        // A predicate used as a value (a computed sort key OrderBy(x => !x.Flag), or a bare boolean projection
+        // Select(x => x.Name.StartsWith("A"))): hand off to TranslateNode. Limited to Contains, Not, string
+        // predicate methods, logical and/or, and comparisons; aggregation renderability is decided by CanRender.
         if (node is MethodCallExpression containsCall && TryMatchContainsMethod(containsCall, out _, out _))
             return TranslateNode(node);
 
-        if (node is UnaryExpression { NodeType: ExpressionType.Not })
+        if (node is MethodCallExpression { Type: var predicateType } predicateCall && predicateType == typeof(bool)
+            && (TryMatchRegexMethod(predicateCall, out _, out _, out _, out _)
+                || predicateCall.Method.DeclaringType == typeof(string)
+                || predicateCall.Method.DeclaringType == typeof(System.Text.RegularExpressions.Regex)))
+            return TranslateNode(node);
+
+        if (node is UnaryExpression { NodeType: ExpressionType.Not }
+            or BinaryExpression { NodeType: ExpressionType.AndAlso or ExpressionType.OrElse })
             return TranslateNode(node);
 
         // A comparison used as a value (`p.Discontinued == ((p.ProductID > 50) != prm)`); same hand-off.
@@ -1831,6 +1949,18 @@ internal sealed partial class MongoExpressionTranslator
 
         return (fromType == typeof(char) && toType == typeof(int)) || toType == typeof(object);
     }
+
+    // Whether an aggregation $not over this AndAlso/OrElse tree is its exact complement: every leaf is either a numeric
+    // type bracket (same answer as $isNumber) or already aggregation-only, so no leaf changes dialect when wrapped.
+    private static bool IsDialectInvariantForNegation(MongoExpression node)
+        => node switch
+        {
+            MongoBinaryExpression { Operator: MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse } logical
+                => IsDialectInvariantForNegation(logical.Left) && IsDialectInvariantForNegation(logical.Right),
+            MongoNumericTypeBracketExpression => true,
+            _ => !MongoQueryLanguageRenderer.IsQueryDialectRenderable(node)
+                 && MongoAggregationExpressionRenderer.CanRender(node)
+        };
 
     // Mirrors a relational operator when the member is on the right-hand side.
     private static ExpressionType Mirror(ExpressionType nodeType)

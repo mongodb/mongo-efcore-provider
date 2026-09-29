@@ -323,7 +323,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
         await base.Include_collection_OrderBy_list_does_not_contains(async);
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$set" : { "__sort0" : { "$not" : [{ "$in" : ["$_id", ["ALFKI"]] }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$skip" : 1 }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$set" : { "__sort0" : { "$not" : [{ "$in" : ["$_id", { "$literal" : ["ALFKI"] }] }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$skip" : 1 }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
 """);
     }
 
@@ -485,7 +485,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
         await base.Include_collection_OrderBy_empty_list_contains(async);
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$set" : { "__sort0" : { "$in" : ["$_id", []] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$skip" : 1 }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$set" : { "__sort0" : { "$in" : ["$_id", { "$literal" : [] }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$skip" : 1 }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
 """);
     }
 
@@ -663,7 +663,7 @@ Customers.{ "$match" : { "City" : "Seattle" } }, { "$lookup" : { "from" : "Order
         await base.Include_collection_OrderBy_list_contains(async);
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$set" : { "__sort0" : { "$in" : ["$_id", ["ALFKI"]] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$skip" : 1 }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$set" : { "__sort0" : { "$in" : ["$_id", { "$literal" : ["ALFKI"] }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$skip" : 1 }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
 """);
     }
 
@@ -867,7 +867,7 @@ Customers.{ "$sort" : { "CompanyName" : -1 } }, { "$limit" : 1 }, { "$lookup" : 
         await base.Include_collection_OrderBy_empty_list_does_not_contains(async);
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$set" : { "__sort0" : { "$not" : [{ "$in" : ["$_id", []] }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$skip" : 1 }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$set" : { "__sort0" : { "$not" : [{ "$in" : ["$_id", { "$literal" : [] }] }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$skip" : 1 }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
 """);
     }
 
@@ -1037,7 +1037,7 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 10248 } }, { "$lookup" : { "from" : 
         await base.Include_collection_with_conditional_order_by(async);
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$set" : { "__sort0" : { "$cond" : { "if" : { "$eq" : [{ "$indexOfCP" : ["$_id", "S"] }, 0] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 2 } } } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$set" : { "__sort0" : { "$cond" : { "if" : { "$regexMatch" : { "input" : "$_id", "regex" : { "$regularExpression" : { "pattern" : "^S", "options" : "s" } } } }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 2 } } } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }
 """);
     }
 

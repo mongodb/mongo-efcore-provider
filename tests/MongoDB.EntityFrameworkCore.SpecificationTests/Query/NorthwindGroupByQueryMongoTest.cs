@@ -275,7 +275,7 @@ Orders.{ "$group" : { "_id" : { "Name" : { "$literal" : "CustomerID" }, "Value" 
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$OrderDate", "Sum" : { "$sum" : "$_id" } } }, { "$project" : { "Key" : { "$cond" : { "if" : { "$eq" : ["$_id", null] }, "then" : { "$literal" : "is null" }, "else" : { "$literal" : "is not null" } } }, "Sum" : "$Sum", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : "$OrderDate", "Sum" : { "$sum" : "$_id" } } }, { "$project" : { "Key" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$_id", null] }, null] }, "then" : { "$literal" : "is null" }, "else" : { "$literal" : "is not null" } } }, "Sum" : "$Sum", "_id" : 0 } }
 """);
     }
 
@@ -875,7 +875,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : { "$add" : ["$_id
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : { "OrderID" : "$_id" }, "Aggregate" : { "$sum" : { "$cond" : { "if" : { "$eq" : ["$CustomerID", "ALFKI"] }, "then" : { "$cond" : { "if" : { "$gt" : ["$_id", 1000] }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "else" : { "$subtract" : [0, { "$cond" : { "if" : { "$gt" : ["$_id", 1000] }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }] } } } } } }, { "$project" : { "OrderID" : "$_id.OrderID", "Aggregate" : "$Aggregate", "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : { "OrderID" : "$_id" }, "Aggregate" : { "$sum" : { "$cond" : { "if" : { "$eq" : ["$CustomerID", { "$literal" : "ALFKI" }] }, "then" : { "$cond" : { "if" : { "$gt" : ["$_id", 1000] }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }, "else" : { "$subtract" : [0, { "$cond" : { "if" : { "$gt" : ["$_id", 1000] }, "then" : "$_id", "else" : { "$subtract" : [0, "$_id"] } } }] } } } } } }, { "$project" : { "OrderID" : "$_id.OrderID", "Aggregate" : "$Aggregate", "_id" : 0 } }
             """);
     }
 
@@ -1284,7 +1284,7 @@ Customers.{ "$match" : { "ContactTitle" : "Owner" } }, { "$unionWith" : { "coll"
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$CustomerID", "c" : { "$sum" : 1 } } }, { "$match" : { "$expr" : { "$eq" : ["$_id", "ALFKI"] } } }, { "$project" : { "Key" : "$_id", "c" : "$c", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : "$CustomerID", "c" : { "$sum" : 1 } } }, { "$match" : { "$expr" : { "$eq" : ["$_id", { "$literal" : "ALFKI" }] } } }, { "$project" : { "Key" : "$_id", "c" : "$c", "_id" : 0 } }
 """);
     }
 
@@ -1482,7 +1482,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "_v" : { "$sum" : { "$literal" : 1 
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$match" : { "$expr" : { "$ne" : ["$_id", "ALFKI"] } } }, { "$limit" : 1 }
+Orders.{ "$group" : { "_id" : "$CustomerID" } }, { "$match" : { "$expr" : { "$ne" : ["$_id", { "$literal" : "ALFKI" }] } } }, { "$limit" : 1 }
 """);
     }
 
@@ -1819,7 +1819,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "Max" : { "$addToSet" : "$OrderDate
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$CustomerID", "Max" : { "$addToSet" : { "$cond" : { "if" : { "$ne" : ["$OrderDate", null] }, "then" : "$OrderDate", "else" : "$$REMOVE" } } } } }, { "$project" : { "Key" : "$_id", "Max" : { "$max" : "$Max" }, "_id" : 0 } }
+Orders.{ "$group" : { "_id" : "$CustomerID", "Max" : { "$addToSet" : { "$cond" : { "if" : { "$ne" : [{ "$ifNull" : ["$OrderDate", null] }, null] }, "then" : "$OrderDate", "else" : "$$REMOVE" } } } } }, { "$project" : { "Key" : "$_id", "Max" : { "$max" : "$Max" }, "_id" : 0 } }
 """);
     }
 

@@ -322,10 +322,11 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
-    /// Recognizes <c>string.StartsWith/EndsWith/Contains(string)</c>, plus the <see cref="StringComparison"/>
-    /// overload for <see cref="StringComparison.Ordinal"/>/<see cref="StringComparison.OrdinalIgnoreCase"/> only —
-    /// the members MongoDB regex can reproduce exactly. Culture-sensitive comparisons are left unmatched (the
-    /// driver-LINQ path silently treats them as ordinal; not replicated in a new native path).
+    /// Recognizes <c>string.StartsWith/EndsWith/Contains(string)</c> or <c>(char)</c>, plus the
+    /// <see cref="StringComparison"/> overload for <see cref="StringComparison.Ordinal"/>/
+    /// <see cref="StringComparison.OrdinalIgnoreCase"/> only — the members MongoDB regex can reproduce exactly.
+    /// Culture-sensitive comparisons are left unmatched (the driver-LINQ path silently treats them as ordinal;
+    /// not replicated in a new native path).
     /// </summary>
     private static bool TryMatchRegexMethod(
         MethodCallExpression call,
@@ -359,7 +360,7 @@ internal sealed partial class MongoExpressionTranslator
 
         switch (call.Arguments.Count)
         {
-            case 1 when call.Arguments[0].Type == typeof(string):
+            case 1 when call.Arguments[0].Type == typeof(string) || call.Arguments[0].Type == typeof(char):
                 break;
 
             case 2 when call.Arguments[0].Type == typeof(string)
@@ -380,24 +381,85 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
-    /// Recognizes only the single-argument <c>string.IndexOf(string)</c> (<c>$indexOfCP</c>), the overload the
-    /// driver-LINQ path translates, so native and fallback behavior match. Other overloads fall through.
+    /// A <see langword="char"/> constant or query parameter as a one-character string operand. BSON has no char
+    /// type and the default char serialization is Int32, so string operators need the string form.
+    /// </summary>
+    private static MongoExpression? TranslateCharAsString(Expression node)
+    {
+        if (node is ConstantExpression { Value: char ch })
+            return new MongoConstantExpression(ch.ToString(), forSerialization: null);
+
+        if (node.Type == typeof(char) && NativeQueryParameter.TryGetQueryParameterName(node, out var name))
+            return new MongoParameterExpression(name, forSerialization: null);
+
+        return null;
+    }
+
+    /// <summary>
+    /// Recognizes <c>string.IndexOf(string|char)</c> and <c>IndexOf(string|char, int startIndex)</c> (<c>$indexOfCP</c>,
+    /// code points). <see cref="StringComparison"/> and count overloads fall through.
     /// </summary>
     private static bool TryMatchIndexOfMethod(
-        Expression node, [NotNullWhen(true)] out Expression? receiver, [NotNullWhen(true)] out Expression? term)
+        Expression node,
+        [NotNullWhen(true)] out Expression? receiver,
+        [NotNullWhen(true)] out Expression? term,
+        out Expression? start)
     {
         receiver = null;
         term = null;
+        start = null;
 
         if (node is not MethodCallExpression call || call.Method.IsStatic || call.Object is null
             || call.Object.Type != typeof(string) || call.Method.Name != nameof(string.IndexOf))
             return false;
 
-        if (call.Arguments.Count != 1 || call.Arguments[0].Type != typeof(string))
+        if (call.Arguments.Count is < 1 or > 2
+            || (call.Arguments[0].Type != typeof(string) && call.Arguments[0].Type != typeof(char))
+            || (call.Arguments.Count == 2 && call.Arguments[1].Type != typeof(int)))
             return false;
 
         receiver = call.Object;
         term = call.Arguments[0];
+        start = call.Arguments.Count == 2 ? call.Arguments[1] : null;
+        return true;
+    }
+
+    /// <summary>
+    /// Recognizes <c>string.Substring(start[, length])</c> (<c>$substrCP</c>, code points).
+    /// </summary>
+    private static bool TryMatchSubstring(
+        Expression node, [NotNullWhen(true)] out Expression? receiver, [NotNullWhen(true)] out Expression? start,
+        out Expression? length)
+    {
+        receiver = start = length = null;
+        if (node is not MethodCallExpression { Method.Name: nameof(string.Substring), Object: { } obj } call
+            || obj.Type != typeof(string) || call.Arguments.Count is < 1 or > 2)
+            return false;
+
+        receiver = obj;
+        start = call.Arguments[0];
+        length = call.Arguments.Count == 2 ? call.Arguments[1] : null;
+        return true;
+    }
+
+    /// <summary>
+    /// Recognizes <c>string.Replace(oldValue, newValue)</c> / <c>Replace(oldChar, newChar)</c> (<c>$replaceAll</c>).
+    /// The three-argument <see cref="StringComparison"/>/<see langword="bool"/> overloads fall through.
+    /// </summary>
+    private static bool TryMatchReplace(
+        Expression node, [NotNullWhen(true)] out Expression? receiver, [NotNullWhen(true)] out Expression? find,
+        [NotNullWhen(true)] out Expression? replacement)
+    {
+        receiver = find = replacement = null;
+        if (node is not MethodCallExpression { Method.Name: nameof(string.Replace), Object: { } obj } call
+            || obj.Type != typeof(string) || call.Arguments.Count != 2
+            || call.Arguments[0].Type != call.Arguments[1].Type
+            || (call.Arguments[0].Type != typeof(string) && call.Arguments[0].Type != typeof(char)))
+            return false;
+
+        receiver = obj;
+        find = call.Arguments[0];
+        replacement = call.Arguments[1];
         return true;
     }
 
@@ -708,6 +770,51 @@ internal sealed partial class MongoExpressionTranslator
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Zero-arg <c>ToString()</c> on an integral receiver, whose <c>$toString</c> output matches .NET's invariant
+    /// integer formatting. Floating-point, decimal, bool and date receivers decline: <c>$toString</c> formats them
+    /// differently from .NET.
+    /// </summary>
+    private static bool TryMatchIntegralToString(Expression node, [NotNullWhen(true)] out Expression? receiver)
+    {
+        receiver = null;
+        if (node is not MethodCallExpression { Method.Name: nameof(ToString), Object: { } obj, Arguments.Count: 0 })
+            return false;
+
+        var type = obj.Type;
+        if (type != typeof(int) && type != typeof(long) && type != typeof(short) && type != typeof(byte))
+            return false;
+
+        receiver = obj;
+        return true;
+    }
+
+    /// <summary>
+    /// <c>string.Concat(string, string[, string[, string]])</c>: same semantics as the <c>+</c> operator, so the
+    /// operands go through <see cref="TranslateConcatOperand"/>. Object/array/span overloads decline.
+    /// </summary>
+    private MongoExpression? TryTranslateStringConcatMethod(Expression node, bool allowNumericWidening)
+    {
+        if (node is not MethodCallExpression { Method.IsStatic: true } call
+            || call.Method.DeclaringType != typeof(string)
+            || call.Method.Name != nameof(string.Concat)
+            || call.Arguments.Count is < 2 or > 4
+            || call.Method.GetParameters().Any(p => p.ParameterType != typeof(string)))
+            return null;
+
+        var operands = new List<MongoExpression>();
+        foreach (var argument in call.Arguments)
+        {
+            var operand = TranslateConcatOperand(argument, allowNumericWidening);
+            if (operand is null)
+                return null;
+
+            operands.AddRange(operand is MongoConcatExpression nested ? nested.Operands : [operand]);
+        }
+
+        return new MongoConcatExpression(operands);
     }
 
     private static Type? GetEnumerableElementType(Type type)

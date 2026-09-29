@@ -463,12 +463,12 @@ public class NativeGateRoutingTests(TemporaryDatabaseFixture database)
     public void D_string_computed_projection_throws_under_NativeOnly()
     {
         // Only numeric arithmetic and string concatenation (see NativeStringConcatTests) computed leaves go native;
-        // ToUpper has no native translation, so NativeOnly throws.
+        // PadLeft has no native translation, so NativeOnly throws.
         var collection = SeedCustomer(nameof(D_string_computed_projection_throws_under_NativeOnly));
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
         Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.Entities.Select(c => new { Greeting = c.Name.ToUpper() }).ToList());
+            () => db.Entities.Select(c => new { Greeting = c.Name.PadLeft(10) }).ToList());
     }
 
     [Fact]

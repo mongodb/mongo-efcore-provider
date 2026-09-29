@@ -164,6 +164,10 @@ public class MongoExpressionNodeCoverageTests
             new MongoStringLengthExpression(headingField),
             new MongoMathExpression(MongoMathFunction.Abs, [rankField], typeof(int)),
             new MongoTrimExpression(headingField, MongoTrimSide.Both, chars: null),
+            new MongoSubstringExpression(headingField, new MongoConstantExpression(1, null), length: null),
+            new MongoReplaceExpression(
+                headingField, new MongoConstantExpression("a", null), new MongoConstantExpression("b", null)),
+            new MongoStringCompareExpression(headingField, new MongoConstantExpression("a", null)),
             new MongoStringFirstOrLastExpression(headingField, MongoStringFirstOrLastKind.First),
             new MongoDocumentConstructionExpression(
                 Expression.New(typeof(object)), [(nameof(Post.Rank), rankField)]),
@@ -620,7 +624,7 @@ public class MongoExpressionNodeCoverageTests
         ["MongoRegexExpression|Agg.CanRender"] = "true",
         ["MongoRegexExpression|Agg.Render"] = "rendered",
         ["MongoRegexExpression|AllFieldsDefaultSerialized"] = "true",
-        ["MongoRegexExpression|AllFieldsDefaultSerialized(converted)"] = "true",
+        ["MongoRegexExpression|AllFieldsDefaultSerialized(converted)"] = "false",
         ["MongoRegexExpression|Negator.TryNegate"] = "true",
         ["MongoRegexExpression|PrefixRewriter.Rewrite"] = "rendered",
         ["MongoRegexExpression|QL.IsQueryDialectRenderable"] = "true",
@@ -675,6 +679,36 @@ public class MongoExpressionNodeCoverageTests
         ["MongoTrimExpression|PrefixRewriter.Rewrite"] = "rendered",
         ["MongoTrimExpression|QL.IsQueryDialectRenderable"] = "false",
         ["MongoTrimExpression|QL.Render"] = "rendered",
+
+        // $substrCP over raw BSON; no query-dialect form (QL.Render wraps in $expr), no negator arm.
+        ["MongoSubstringExpression|Agg.CanRender"] = "true",
+        ["MongoSubstringExpression|Agg.Render"] = "rendered",
+        ["MongoSubstringExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoSubstringExpression|AllFieldsDefaultSerialized(converted)"] = "false",
+        ["MongoSubstringExpression|Negator.TryNegate"] = "false",
+        ["MongoSubstringExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoSubstringExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoSubstringExpression|QL.Render"] = "rendered",
+
+        // $replaceAll over raw BSON; no query-dialect form (QL.Render wraps in $expr), no negator arm.
+        ["MongoReplaceExpression|Agg.CanRender"] = "true",
+        ["MongoReplaceExpression|Agg.Render"] = "rendered",
+        ["MongoReplaceExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoReplaceExpression|AllFieldsDefaultSerialized(converted)"] = "false",
+        ["MongoReplaceExpression|Negator.TryNegate"] = "false",
+        ["MongoReplaceExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoReplaceExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoReplaceExpression|QL.Render"] = "rendered",
+
+        // $cmp over raw BSON; no query-dialect form (QL.Render wraps in $expr), no negator arm.
+        ["MongoStringCompareExpression|Agg.CanRender"] = "true",
+        ["MongoStringCompareExpression|Agg.Render"] = "rendered",
+        ["MongoStringCompareExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoStringCompareExpression|AllFieldsDefaultSerialized(converted)"] = "false",
+        ["MongoStringCompareExpression|Negator.TryNegate"] = "false",
+        ["MongoStringCompareExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoStringCompareExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoStringCompareExpression|QL.Render"] = "rendered",
 
         // $cond/$strLenCP/$substrCP over raw BSON; no query-dialect form (QL.Render wraps in $expr), no negator arm.
         ["MongoStringFirstOrLastExpression|Agg.CanRender"] = "true",

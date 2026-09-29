@@ -839,8 +839,8 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     // leaf's `_v` push-down, since fixed (MongoSelectDefinition.HasBareJoinInnerEntityLeaf) — so as of this change
     // NO test fails with the conjunct removed (MEASURED: EF10 unit/functional/spec all green without it). The
     // conjunct is kept as defence in depth; these tests pin this shape's results in every mode, and the NativeOnly
-    // half pins that each predicate still declines (Trim stopped declining once native string translations landed,
-    // so re-check the predicates if this test starts going native).
+    // half pins that each predicate still declines (Trim, Replace and Substring stopped declining once native string
+    // translations landed, so re-check the predicates if this test starts going native).
     [Theory]
     [InlineData(MongoQueryMode.Native, "Replace")]
     [InlineData(MongoQueryMode.DriverLinq, "Replace")]
@@ -848,6 +848,8 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     [InlineData(MongoQueryMode.DriverLinq, "ToString")]
     [InlineData(MongoQueryMode.Native, "Substring")]
     [InlineData(MongoQueryMode.DriverLinq, "Substring")]
+    [InlineData(MongoQueryMode.Native, "Split")]
+    [InlineData(MongoQueryMode.DriverLinq, "Split")]
     public void Inner_side_Where_that_declines_natively_does_not_confirm_the_join(MongoQueryMode mode, string shape)
     {
         var seed = SeedOwnersAndOrders();
@@ -862,9 +864,8 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 
     [Theory]
-    [InlineData("Replace")]
     [InlineData("ToString")]
-    [InlineData("Substring")]
+    [InlineData("Split")]
     public void Inner_side_Where_that_declines_natively_throws_under_NativeOnly(string shape)
     {
         var seed = SeedOwnersAndOrders();
@@ -883,6 +884,8 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
                 .Where(x => x.r.Total.ToString() == "10").Select(x => x.r).AsEnumerable().Select(r => r.Total).ToList(),
             "Substring" => owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
                 .Where(x => x.r.Region.Substring(0, 1) == "N").Select(x => x.r).AsEnumerable().Select(r => r.Total).ToList(),
+            "Split" => owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Where(x => x.r.Region.Split(' ')[0] == "North").Select(x => x.r).AsEnumerable().Select(r => r.Total).ToList(),
             _ => throw new ArgumentOutOfRangeException(nameof(shape))
         };
 

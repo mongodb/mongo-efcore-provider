@@ -42,7 +42,20 @@ internal enum MongoRegexKind
     /// field-valued pattern.
     /// </para>
     /// </summary>
-    IsMatch
+    IsMatch,
+
+    /// <summary>
+    /// Whole-string equality (<c>^term\z</c>) against a constant string, used for <c>Equals(…, OrdinalIgnoreCase)</c>
+    /// and <c>ToLower()/ToUpper() == constant</c> with <see cref="MongoRegexExpression.CaseInsensitive"/>.
+    /// </summary>
+    Exact,
+
+    /// <summary>
+    /// <c>Regex.IsMatch(field, pattern)</c>: the term is a live .NET pattern passed to PCRE unchanged (dialect
+    /// differences, e.g. <c>\p{...}</c> classes, are the caller's). Options come from
+    /// <see cref="MongoRegexExpression.PatternOptions"/>.
+    /// </summary>
+    Pattern,
 }
 
 /// <summary>
@@ -69,14 +82,20 @@ internal sealed class MongoRegexExpression : MongoExpression
     /// <see langword="true"/> for <c>StringComparison.OrdinalIgnoreCase</c>; <see langword="false"/> (default) for
     /// ordinal case-sensitive.
     /// </param>
+    /// <param name="patternOptions">
+    /// The <c>$regularExpression</c>/<c>$regexMatch</c> options string for <see cref="MongoRegexKind.Pattern"/>;
+    /// unused for every other kind.
+    /// </param>
     public MongoRegexExpression(
-        MongoExpression field, MongoRegexKind kind, MongoExpression term, bool negated, bool caseInsensitive = false)
+        MongoExpression field, MongoRegexKind kind, MongoExpression term, bool negated, bool caseInsensitive = false,
+        string patternOptions = "")
     {
         Field = field;
         Kind = kind;
         Term = term;
         Negated = negated;
         CaseInsensitive = caseInsensitive;
+        PatternOptions = patternOptions;
     }
 
     /// <summary>
@@ -100,6 +119,12 @@ internal sealed class MongoRegexExpression : MongoExpression
     /// <see langword="true"/> for <c>StringComparison.OrdinalIgnoreCase</c>; <see langword="false"/> for ordinal.
     /// </summary>
     public bool CaseInsensitive { get; }
+
+    /// <summary>
+    /// The <c>$regularExpression</c>/<c>$regexMatch</c> options string for <see cref="MongoRegexKind.Pattern"/>
+    /// (e.g. <c>"im"</c>); unused for every other kind.
+    /// </summary>
+    public string PatternOptions { get; }
 
     /// <inheritdoc />
     public override Type Type => typeof(bool);

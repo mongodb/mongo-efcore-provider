@@ -17,6 +17,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
+using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
@@ -35,6 +36,25 @@ internal static class ProjectionAnalyzer
     public static bool CanPushDown(Expression shaperExpression)
         => !ContainsEntityReference(shaperExpression)
            && !ContainsUntranslatableProjection(shaperExpression);
+
+    /// <summary>
+    /// True when a projected value (the shaper itself, or a member/argument of the constructed result) is a
+    /// <c>ToLower</c>/<c>ToUpper</c> call, which the driver would render as the ASCII-only <c>$toLower</c>/<c>$toUpper</c>.
+    /// The client shaper applies the .NET call instead (see <c>MongoProjectionBindingExpressionVisitor</c>). A call
+    /// consumed by further computation (<c>x.S.ToLower().Length</c>) isn't a projected value and is left to push-down.
+    /// </summary>
+    public static bool HasCaseMappingProjectedValue(Expression shaperExpression)
+        => shaperExpression switch
+        {
+            NewExpression newExpression => newExpression.Arguments.Any(HasCaseMappingProjectedValue),
+            MemberInitExpression memberInit
+                => HasCaseMappingProjectedValue(memberInit.NewExpression)
+                   || memberInit.Bindings.Any(b => b is MemberAssignment assignment
+                                                   && HasCaseMappingProjectedValue(assignment.Expression)),
+            UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert
+                => HasCaseMappingProjectedValue(convert.Operand),
+            _ => MongoProjectionBindingExpressionVisitor.IsClientCaseMapping(shaperExpression)
+        };
 
     private static bool ContainsUntranslatableProjection(Expression expression)
     {
@@ -131,6 +151,13 @@ internal static class ProjectionAnalyzer
 
             case LambdaExpression lambdaExpression:
                 return ContainsEntityReference(lambdaExpression.Body);
+
+            case NativeComputedLeafExpression computedLeaf:
+                return ContainsEntityReference(computedLeaf.ClientExpression);
+
+            // The binding visitor's null-propagating client call (see IsClientCaseMapping).
+            case BlockExpression blockExpression:
+                return blockExpression.Expressions.Any(ContainsEntityReference);
 
             case ProjectionBindingExpression:
             case ConstantExpression:
