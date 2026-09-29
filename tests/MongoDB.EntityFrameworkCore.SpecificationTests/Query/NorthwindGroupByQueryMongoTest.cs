@@ -1161,11 +1161,12 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
     public override async Task GroupBy_complex_key_aggregate(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.GroupBy_complex_key_aggregate(async));
+        await base.GroupBy_complex_key_aggregate(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$group" : { "_id" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$_lookup_Customer._id", null] }, null] }, "then" : null, "else" : { "$substrCP" : ["$_lookup_Customer._id", 0, 1] } } }, "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
+""");
     }
 
     public override async Task GroupBy_complex_key_aggregate_2(bool async)
@@ -2363,7 +2364,7 @@ Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A"
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$CustomerID", "Sum" : { "$sum" : { "$add" : ["$_id", { "$strLenCP" : "$CustomerID" }] } } } }, { "$project" : { "Key" : "$_id", "Sum" : "$Sum", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : "$CustomerID", "Sum" : { "$sum" : { "$add" : ["$_id", { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$CustomerID", null] }, null] }, "then" : null, "else" : { "$strLenCP" : "$CustomerID" } } }] } } } }, { "$project" : { "Key" : "$_id", "Sum" : "$Sum", "_id" : 0 } }
 """);
     }
 

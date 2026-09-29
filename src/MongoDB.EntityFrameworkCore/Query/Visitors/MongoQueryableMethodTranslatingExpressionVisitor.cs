@@ -594,8 +594,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 mongoQueryExpression.Select.MarkNotNativelyRepresentable();
             }
             // A multi-argument positional-ctor DTO needs the index-based shaper, not the generic fold below (see
-            // MongoSelectDefinition.HasPositionalCtorProjectionShaper).
-            else if (mongoQueryExpression.Select.HasPositionalCtorProjectionShaper)
+            // MongoSelectDefinition.HasPositionalCtorProjectionShaper), unless it holds a client case mapping the
+            // mixed reader can bind per argument (see DeclinePositionalCtorCaseMappingForMemberBinding).
+            else if (mongoQueryExpression.Select.HasPositionalCtorProjectionShaper
+                     && !DeclinePositionalCtorCaseMappingForMemberBinding(mongoQueryExpression, selector, source.ShaperExpression))
             {
                 return source.UpdateShaperExpression(
                     BuildPositionalCtorProjectionShaper(mongoQueryExpression, selector.Body));
@@ -745,6 +747,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     // instead of the raw MemberInitExpression. Otherwise the shaper does a plain alias read of the whole nested
     // CLR type, which throws or silently misreads members (a decimal came back as Decimal128). Same carve-out
     // as BindResultMember.
+    //
+    // A client case mapping (`K = g.Key.ToUpper()`) staged only its receiver (NativeGroupByBinder
+    // .PeelResultMemberCaseMapping), so the receiver is read and the call re-applied over it client-side, null
+    // propagated. Never read on driver-LINQ, which declines such a selector (ThrowIfDriverLinqCaseMapsGroupedResult).
     private static Expression BindGroupMember(MongoQueryExpression mongoQueryExpression, string alias, Expression valueExpression)
     {
         if (mongoQueryExpression.Select.TryGetDocumentConstructionProjection(alias, valueExpression.Type, out var construction))
@@ -753,9 +759,28 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return new ProjectionBindingExpression(mongoQueryExpression, constructionIndex, valueExpression.Type);
         }
 
-        var index = mongoQueryExpression.AddToProjection(valueExpression, alias);
-        return new ProjectionBindingExpression(mongoQueryExpression, index, valueExpression.Type);
+        var receiver = NativeGroupByBinder.PeelResultMemberCaseMapping(valueExpression);
+        var index = mongoQueryExpression.AddToProjection(receiver, alias);
+        var boundReceiver = new ProjectionBindingExpression(mongoQueryExpression, index, receiver.Type);
+        return ReapplyCaseMapping(valueExpression, receiver, boundReceiver);
     }
+
+    // Re-applies the case-mapping chain peeled off `original` down to `receiver` (NativeProjectionBinder.PeelCaseMapping,
+    // or NativeGroupByBinder.PeelResultMemberCaseMapping, which also peels through a Convert) over `boundReceiver`,
+    // null propagated as MongoProjectionBindingExpressionVisitor does for a named member. Answers `boundReceiver`
+    // when nothing was peeled.
+    private static Expression ReapplyCaseMapping(Expression original, Expression receiver, Expression boundReceiver)
+        => original switch
+        {
+            _ when ReferenceEquals(original, receiver) => boundReceiver,
+            UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert
+                => convert.Update(ReapplyCaseMapping(convert.Operand, receiver, boundReceiver)),
+            MethodCallExpression call when NativeProjectionBinder.IsCaseMappingCall(call)
+                => MongoProjectionBindingExpressionVisitor.NullPropagatingStringCall(
+                    call, ReapplyCaseMapping(call.Object!, receiver, boundReceiver)),
+            _ => throw new InvalidOperationException(
+                $"Unexpected case-mapped projection shape '{original.GetType().Name}'.")
+        };
 
     /// <summary>
     /// Builds the index-based result shaper for a multi-argument positional-ctor DTO <c>Select</c>
@@ -785,13 +810,50 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     // Registers one positional-ctor-DTO member and returns an index-based binding. The alias goes through
     // Select.TryGetProjectionAlias because an owned-array/owned-nav-entity leaf may have registered a
     // document-path alias that differs from the synthetic "_ctorArg<N>" member name.
+    //
+    // A client case mapping (`x.S.ToUpper()`) was peeled by NativeProjectionBinder, which staged only its receiver
+    // ($toUpper/$toLower are ASCII-only), so bind the receiver and re-apply the call chain client-side over it, null
+    // propagated, as MongoProjectionBindingExpressionVisitor does for a named member.
     private static Expression BindPositionalCtorProjectionMember(MongoQueryExpression mongoQueryExpression, string memberName, Expression valueExpression)
     {
         var alias = mongoQueryExpression.Select.TryGetProjectionAlias(memberName, out var overriddenAlias)
             ? overriddenAlias
             : memberName;
-        var index = mongoQueryExpression.AddToProjection(valueExpression, alias);
-        return new ProjectionBindingExpression(mongoQueryExpression, index, valueExpression.Type);
+        var receiver = NativeProjectionBinder.PeelCaseMapping(valueExpression);
+        var index = mongoQueryExpression.AddToProjection(receiver, alias);
+        return ReapplyCaseMapping(
+            valueExpression, receiver, new ProjectionBindingExpression(mongoQueryExpression, index, receiver.Type));
+    }
+
+    /// <summary>
+    /// For a positional-ctor projection holding a client case mapping (<c>new KeyValuePair&lt;string, string&gt;(
+    /// x.S.ToUpper(), x.T)</c>) whose arguments the mixed reader can bind each under a member of their own, declines
+    /// the native projection so the generic fold binds it that way; returns <see langword="true"/> when it declined.
+    /// </summary>
+    /// <remarks>
+    /// The index-based positional shaper can only be read off the native <c>$project</c>: a whole-document read of a
+    /// synthetic <c>_ctorArg&lt;N&gt;</c> alias finds nothing. So on driver-LINQ (explicitly, or a late decline) this
+    /// shape would be pushed down, where <c>$toUpper</c>/<c>$toLower</c> are ASCII-only and map null to <c>""</c>. Bound
+    /// per argument, the mixed reader applies the .NET call in every mode. When the arguments can't be bound per
+    /// member (a constructor-only DTO whose parameters match no member), the native shaper stays: it re-applies the
+    /// call itself (<see cref="BindPositionalCtorProjectionMember"/>), and there is no correct mixed reading to prefer.
+    /// Calls the binder's own peel and the binding visitor's own member match, so neither can drift from this gate.
+    /// </remarks>
+    private static bool DeclinePositionalCtorCaseMappingForMemberBinding(
+        MongoQueryExpression mongoQueryExpression, LambdaExpression selector, Expression sourceShaper)
+    {
+        if (selector.Body is not NewExpression positionalNew
+            || positionalNew.Arguments.All(a => ReferenceEquals(NativeProjectionBinder.PeelCaseMapping(a), a))
+            || MongoProjectionBindingExpressionVisitor.TryMatchConstructorArgumentMembers(
+                (NewExpression)ReplacingExpressionVisitor.Replace(selector.Parameters.Single(), sourceShaper, positionalNew),
+                memberInitBindingNames: null) is null)
+        {
+            return false;
+        }
+
+        mongoQueryExpression.Select.HasPositionalCtorProjectionShaper = false;
+        mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+        return true;
     }
 
     /// <summary>

@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using MongoDB.Bson;
@@ -118,30 +119,24 @@ internal static class MongoAggregationExpressionRenderer
                 }),
             MongoDatePartExpression datePart => RenderDatePart(datePart, placeholders, elementVariable),
             MongoDateAddExpression dateAdd => RenderDateAdd(dateAdd, placeholders, elementVariable),
-            MongoStringIndexOfExpression indexOf
-                => new BsonDocument("$indexOfCP", indexOf.Start is null
-                    ? new BsonArray
-                    {
-                        RenderOperand(indexOf.Haystack, placeholders, elementVariable),
-                        RenderBranch(indexOf.Needle, placeholders, elementVariable)
-                    }
-                    : new BsonArray
-                    {
-                        RenderOperand(indexOf.Haystack, placeholders, elementVariable),
-                        RenderBranch(indexOf.Needle, placeholders, elementVariable),
-                        Render(indexOf.Start, placeholders, elementVariable)
-                    }),
+            MongoStringIndexOfExpression indexOf => RenderIndexOf(indexOf, placeholders, elementVariable),
             // Code points, not UTF-16 code units: a surrogate pair counts as 1, not 2 as in .NET. Same as
-            // driver-LINQ; see MongoExpressionTranslator.TryMatchStringLength.
+            // driver-LINQ; see MongoExpressionTranslator.TryMatchStringLength. $strLenCP of null/missing is a
+            // server error; EF answers null.
             MongoStringLengthExpression length
-                => new BsonDocument("$strLenCP", RenderOperand(length.Operand, placeholders, elementVariable)),
+                => RenderLength(length, placeholders, elementVariable),
             MongoMathExpression math => RenderMath(math, placeholders, elementVariable),
             MongoTrimExpression trim => RenderTrim(trim, placeholders, elementVariable),
             MongoSubstringExpression substring => RenderSubstring(substring, placeholders, elementVariable),
+            // $cmp orders missing below null, where string.Compare(null, null) is 0, so a stored field compared with
+            // an operand that may be null reads missing as null. Unlike $eq/$ne this applies inside a $filter/$map
+            // element scope too. The $eq/$ne exception exists only to agree with driver-LINQ's element-scope equality;
+            // here the wrap changes nothing but a missing-vs-null pair, which .NET (reading both as null) compares as 0.
             MongoStringCompareExpression cmp
                 => new BsonDocument("$cmp", new BsonArray
                 {
-                    RenderBranch(cmp.Left, placeholders, elementVariable), RenderBranch(cmp.Right, placeholders, elementVariable)
+                    MissingAsNullWhenOtherMayBeNull(cmp.Left, cmp.Right, RenderBranch(cmp.Left, placeholders, elementVariable)),
+                    MissingAsNullWhenOtherMayBeNull(cmp.Right, cmp.Left, RenderBranch(cmp.Right, placeholders, elementVariable))
                 }),
             MongoReplaceExpression replace
                 => new BsonDocument("$replaceAll", new BsonDocument
@@ -151,7 +146,8 @@ internal static class MongoAggregationExpressionRenderer
                     { "replacement", new BsonDocument("$ifNull", new BsonArray
                         { RenderBranch(replace.Replacement, placeholders, elementVariable), "" }) }
                 }),
-            MongoStringFirstOrLastExpression firstOrLast => RenderStringFirstOrLast(firstOrLast, placeholders, elementVariable),
+            MongoStringFirstOrLastExpression firstOrLast
+                => RenderStringFirstOrLast(firstOrLast, placeholders, elementVariable, nullForNullSource: false),
             MongoQuantifierExpression quantifier => RenderQuantifier(quantifier, placeholders, elementVariable),
             // Constructed nested sub-document (`new Book { Id = e.Id, Title = e.Title }`). Members go through
             // RenderBranch so constants/parameters get $literal-wrapped as at top level; otherwise MongoDB reads a
@@ -159,9 +155,12 @@ internal static class MongoAggregationExpressionRenderer
             MongoDocumentConstructionExpression construction
                 => new BsonDocument(construction.Members.Select(
                     m => new BsonElement(m.MemberName, RenderBranch(m.Value, placeholders, elementVariable)))),
+            // $concat answers null if any operand is null or missing; C# (and EF) concatenation reads null as "".
             MongoConcatExpression concat
                 => new BsonDocument("$concat",
-                    new BsonArray(concat.Operands.Select(o => RenderOperand(o, placeholders, elementVariable)))),
+                    new BsonArray(concat.Operands.Select(o => ConcatOperandMayBeNull(o)
+                        ? new BsonDocument("$ifNull", new BsonArray { RenderOperand(o, placeholders, elementVariable), "" })
+                        : RenderOperand(o, placeholders, elementVariable)))),
             // Any Term shape: callers are all in aggregation scopes with no $regularExpression alternative
             // (top-level $match regexes are rendered by MongoQueryLanguageRenderer instead).
             MongoRegexExpression regex => RenderRegexAsExpr(regex, placeholders, elementVariable),
@@ -420,7 +419,68 @@ internal static class MongoAggregationExpressionRenderer
             {
                 new BsonDocument("$strLenCP", new BsonDocument("$ifNull", new BsonArray { source, "" })), start
             });
-        return new BsonDocument("$substrCP", new BsonArray { source, start, length });
+        return NullPropagating(
+            new BsonDocument("$substrCP", new BsonArray { source, start, length }), (node.Source, source));
+    }
+
+    private static BsonValue RenderLength(MongoStringLengthExpression node, PlaceholderTable placeholders, string? elementVariable)
+    {
+        var operand = RenderOperand(node.Operand, placeholders, elementVariable);
+        return NullPropagating(new BsonDocument("$strLenCP", operand), (node.Operand, operand));
+    }
+
+    // $indexOfCP already answers null for a null/missing haystack, but a null/missing needle is a server error.
+    private static BsonValue RenderIndexOf(MongoStringIndexOfExpression node, PlaceholderTable placeholders, string? elementVariable)
+    {
+        var haystack = RenderOperand(node.Haystack, placeholders, elementVariable);
+        var needle = RenderBranch(node.Needle, placeholders, elementVariable);
+        var args = new BsonArray { haystack, needle };
+        if (node.Start is not null)
+            args.Add(Render(node.Start, placeholders, elementVariable));
+
+        return NullPropagating(new BsonDocument("$indexOfCP", args), (node.Needle, needle));
+    }
+
+    // Narrower than MayBeNull for two operand shapes the translator builds that can't be null: $toString of a
+    // non-null constant (a non-string `+` operand), and string.Join's elements, already coalesced to a non-null
+    // constant. Not $toString of a non-nullable field: it may be missing (an unmatched join side), answering null.
+    private static bool ConcatOperandMayBeNull(MongoExpression operand)
+        => operand is not (MongoConvertExpression { Operand: MongoConstantExpression { Value: not null } }
+               or MongoCoalesceExpression { Right: MongoConstantExpression { Value: not null } })
+           && MayBeNull(operand);
+
+    /// <summary>
+    /// C#/EF null propagation for a member-style string call (<c>s.Substring(0, 1)</c> is null for a null
+    /// <c>s</c>) whose server operator doesn't propagate a null or missing operand: <c>$substrCP</c> answers
+    /// <c>""</c>, <c>$strLenCP</c> and a <c>$indexOfCP</c> needle are server errors. Wraps <paramref name="rendered"/>
+    /// in <c>$cond</c> answering null when any listed operand that <see cref="MayBeNull"/> is null or missing
+    /// (<c>$cond</c> is lazy, so the operator never sees it). Operands that can't be null leave the MQL unchanged.
+    /// </summary>
+    /// <remarks>
+    /// Reuses each operand's rendered value (cloned) rather than rendering it again, so a parameter operand keeps a
+    /// single placeholder-table entry. Operators that already propagate (<c>$trim</c>, <c>$replaceAll</c>,
+    /// <c>$toString</c>, a <c>$indexOfCP</c> haystack) aren't wrapped.
+    /// </remarks>
+    private static BsonValue NullPropagating(BsonValue rendered, params (MongoExpression Node, BsonValue Rendered)[] operands)
+    {
+        var tests = new BsonArray();
+        foreach (var (node, operand) in operands)
+        {
+            if (MayBeNull(node))
+                tests.Add(new BsonDocument("$eq", new BsonArray
+                {
+                    new BsonDocument("$ifNull", new BsonArray { operand.DeepClone(), BsonNull.Value }), BsonNull.Value
+                }));
+        }
+
+        return tests.Count == 0
+            ? rendered
+            : new BsonDocument("$cond", new BsonDocument
+            {
+                { "if", tests.Count == 1 ? tests[0] : new BsonDocument("$or", tests) },
+                { "then", BsonNull.Value },
+                { "else", rendered }
+            });
     }
 
     /// <summary>
@@ -439,11 +499,17 @@ internal static class MongoAggregationExpressionRenderer
     // empty string) is a server error, so both kinds gate on strLenCP == 0 via $cond (which short-circuits).
     // Both branches yield a one-char string — the empty branch is "\0", not Int32 0 — so a comparison against
     // '\0' never crosses BSON type brackets. Source and its $strLenCP are rendered once and reused.
+    //
+    // nullForNullSource: a comparison operand (see RenderComparisonOperand) answers null for a null/missing source,
+    // as EF's comparison over the null receiver does. Everywhere else (a projected value) a null source behaves like
+    // empty and yields '\0'.
     private static BsonValue RenderStringFirstOrLast(
-        MongoStringFirstOrLastExpression node, PlaceholderTable placeholders, string? elementVariable)
+        MongoStringFirstOrLastExpression node, PlaceholderTable placeholders, string? elementVariable, bool nullForNullSource)
     {
-        // $strLenCP errors on a null/missing source, so coalesce to "" first; null then behaves like empty.
-        var source = new BsonDocument("$ifNull", new BsonArray { RenderOperand(node.Source, placeholders, elementVariable), "" });
+        // $strLenCP errors on a null/missing source, so coalesce to "" first; null then behaves like empty
+        // (a comparison operand is null-guarded on top; see nullForNullSource).
+        var rawSource = RenderOperand(node.Source, placeholders, elementVariable);
+        var source = new BsonDocument("$ifNull", new BsonArray { rawSource, "" });
         var length = new BsonDocument("$strLenCP", source);
         var isEmpty = new BsonDocument("$eq", new BsonArray { length, 0 });
 
@@ -457,12 +523,14 @@ internal static class MongoAggregationExpressionRenderer
 
         var extract = new BsonDocument("$substrCP", new BsonArray { source, start, 1 });
 
-        return new BsonDocument("$cond", new BsonDocument
+        var rendered = new BsonDocument("$cond", new BsonDocument
         {
             { "if", isEmpty },
             { "then", "\0" },
             { "else", extract }
         });
+
+        return nullForNullSource ? NullPropagating(rendered, (node.Source, rawSource)) : rendered;
     }
 
     private static BsonValue RenderDateAdd(MongoDateAddExpression node, PlaceholderTable placeholders, string? elementVariable)
@@ -798,10 +866,10 @@ internal static class MongoAggregationExpressionRenderer
             or MongoBinaryOperator.LessThan or MongoBinaryOperator.LessThanOrEqual
             or MongoBinaryOperator.GreaterThan or MongoBinaryOperator.GreaterThanOrEqual;
         var left = isComparison
-            ? RenderOperand(binary.Left, placeholders, elementVariable)
+            ? RenderComparisonOperand(binary.Left, placeholders, elementVariable)
             : Render(binary.Left, placeholders, elementVariable);
         var right = isComparison
-            ? RenderOperand(binary.Right, placeholders, elementVariable)
+            ? RenderComparisonOperand(binary.Right, placeholders, elementVariable)
             : Render(binary.Right, placeholders, elementVariable);
 
         // Document root only: inside a $filter/$map element scope, missing-vs-null stays distinguished, matching
@@ -833,13 +901,31 @@ internal static class MongoAggregationExpressionRenderer
             : rendered;
     }
 
+    // A comparison operand that is a string FirstOrDefault()/LastOrDefault() renders null (not '\0') for a
+    // null/missing receiver (see RenderStringFirstOrLast), as C#/EF compare the null: `== '\0'` is false, `!= '\0'`
+    // true, and the relational null guard below makes `<` false. Negation stays exact: $eq/$ne partition the null
+    // form too, and a negated relational comparison $not-wraps the guarded node.
+    private static BsonValue RenderComparisonOperand(
+        MongoExpression node, PlaceholderTable placeholders, string? elementVariable)
+        => node is MongoStringFirstOrLastExpression firstOrLast
+            ? RenderStringFirstOrLast(firstOrLast, placeholders, elementVariable, nullForNullSource: true)
+            : RenderOperand(node, placeholders, elementVariable);
+
     // $eq/$ne don't equate a missing field with null (the query dialect's { field: null } does, and so does .NET,
     // which reads both as null), so `x.S == null` would be false for a missing S. Wrap a bare stored field in
     // { $ifNull: [ field, null ] } against a null constant, or a parameter (null only known per execution).
     // Computed operands already yield null (not missing) for a missing input.
     private static BsonValue MissingAsNullWhenComparedToNull(MongoExpression operand, MongoExpression other, BsonValue rendered)
         => other is MongoConstantExpression { Value: null } or MongoParameterExpression
-           && operand is MongoFieldExpression { NullSafe: false } or MongoOuterFieldExpression
+            ? MissingAsNull(operand, rendered)
+            : rendered;
+
+    // $cmp counterpart: missing and null only compare differently against an operand that may itself be null.
+    private static BsonValue MissingAsNullWhenOtherMayBeNull(MongoExpression operand, MongoExpression other, BsonValue rendered)
+        => MayBeNull(other) ? MissingAsNull(operand, rendered) : rendered;
+
+    private static BsonValue MissingAsNull(MongoExpression operand, BsonValue rendered)
+        => operand is MongoFieldExpression { NullSafe: false } or MongoOuterFieldExpression
                or MongoElementRefExpression { NullSafe: false, Path: not MongoElementRefExpression.WholeRootDocumentPath }
             ? new BsonDocument("$ifNull", new BsonArray { rendered, BsonNull.Value })
             : rendered;
@@ -886,8 +972,95 @@ internal static class MongoAggregationExpressionRenderer
             MongoConvertExpression convert => IsNullableClrType(convert.Type) || MayBeNull(convert.Operand),
             MongoDatePartExpression datePart => MayBeNull(datePart.Operand),
             MongoMathExpression math => IsNullableClrType(math.Type) || math.Operands.Any(MayBeNull),
+            // Null-guarded or null-propagating over a possibly-null string (see NullPropagating), so null where
+            // EF answers null.
+            MongoStringLengthExpression length => MayBeNull(length.Operand),
+            MongoStringIndexOfExpression indexOf => MayBeNull(indexOf.Haystack) || MayBeNull(indexOf.Needle),
+            // Every possibly-null operand is coalesced to "".
+            MongoConcatExpression => false,
+            // Only its comparison-operand form is ever null (see RenderComparisonOperand); elsewhere it's '\0'.
+            MongoStringFirstOrLastExpression firstOrLast => MayBeNull(firstOrLast.Source),
             _ => IsNullableClrType(node.Type)
         };
+
+    /// <summary>
+    /// Whether <paramref name="node"/>, whose CLR type is a non-nullable value type, may nonetheless evaluate to null:
+    /// <c>$strLenCP</c>/<c>$indexOfCP</c> over a possibly-null string (null-guarded, see <see cref="NullPropagating"/>),
+    /// directly or through arithmetic, a cast, a math function or a conditional branch. Read back as that non-nullable type, the null would
+    /// silently become <c>default(T)</c> (a <c>0</c> length) where EF throws, so a value read of it (a projection
+    /// leaf, group key, <c>$min</c>/<c>$max</c>/<c>$avg</c> or <c>$push</c> operand) declines; a nullable cast
+    /// (<c>(int?)s.Length</c>) reads the null and stays native. Filters are unaffected: the relational null guard
+    /// covers them.
+    /// </summary>
+    internal static bool MayBeNullBehindNonNullableType(MongoExpression node)
+        => MayBeNullBehindNonNullableType(node, []);
+
+    // nonNull: operands a conditional's test has proven non-null on the branch being inspected
+    // (`s == null ? 0 : s.Length` reads Length only where s isn't null).
+    private static bool MayBeNullBehindNonNullableType(MongoExpression node, IReadOnlyList<MongoExpression> nonNull)
+        => node switch
+        {
+            MongoStringLengthExpression length => MayBeNullUnlessProven(length.Operand, nonNull),
+            MongoStringIndexOfExpression indexOf
+                => MayBeNullUnlessProven(indexOf.Haystack, nonNull) || MayBeNullUnlessProven(indexOf.Needle, nonNull),
+            MongoBinaryExpression { Operator: not (MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse
+                or MongoBinaryOperator.Equal or MongoBinaryOperator.NotEqual or MongoBinaryOperator.LessThan
+                or MongoBinaryOperator.LessThanOrEqual or MongoBinaryOperator.GreaterThan
+                or MongoBinaryOperator.GreaterThanOrEqual) } arithmetic
+                => MayBeNullBehindNonNullableType(arithmetic.Left, nonNull)
+                   || MayBeNullBehindNonNullableType(arithmetic.Right, nonNull),
+            MongoConvertExpression convert => MayBeNullBehindNonNullableType(convert.Operand, nonNull),
+            MongoMathExpression math => math.Operands.Any(o => MayBeNullBehindNonNullableType(o, nonNull)),
+            // Either branch may be the value read, each under what the test proves on it: `s == null ? a : b` and
+            // `string.IsNullOrEmpty(s) ? a : b` make s non-null in b; `s != null ? a : b` makes it non-null in a.
+            MongoConditionalExpression conditional
+                => MayBeNullBehindNonNullableType(conditional.IfTrue, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, true)])
+                   || MayBeNullBehindNonNullableType(conditional.IfFalse, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, false)]),
+            _ => false
+        };
+
+    private static bool MayBeNullUnlessProven(MongoExpression operand, IReadOnlyList<MongoExpression> nonNull)
+        => MayBeNull(operand) && !nonNull.Any(proven => IsSameStoredValue(proven, operand));
+
+    // The operands that `test` answering `outcome` proves non-null. Structural: only a null comparison of a stored
+    // value, combined through ||/&&/! the way that preserves the proof (a false `a || b` makes both false; a true
+    // `a && b` makes both true).
+    private static IEnumerable<MongoExpression> ProvenNonNullWhen(MongoExpression test, bool outcome)
+        => test switch
+        {
+            MongoBinaryExpression { Operator: MongoBinaryOperator.Equal or MongoBinaryOperator.NotEqual } comparison
+                when (comparison.Operator == MongoBinaryOperator.NotEqual) == outcome
+                     && NullComparedOperand(comparison) is { } operand
+                => [operand],
+            MongoBinaryExpression { Operator: MongoBinaryOperator.OrElse } orElse when !outcome
+                => ProvenNonNullWhen(orElse.Left, false).Concat(ProvenNonNullWhen(orElse.Right, false)),
+            MongoBinaryExpression { Operator: MongoBinaryOperator.AndAlso } andAlso when outcome
+                => ProvenNonNullWhen(andAlso.Left, true).Concat(ProvenNonNullWhen(andAlso.Right, true)),
+            MongoUnaryExpression { Operator: MongoUnaryOperator.Not } negation => ProvenNonNullWhen(negation.Operand, !outcome),
+            _ => []
+        };
+
+    private static MongoExpression? NullComparedOperand(MongoBinaryExpression comparison)
+        => comparison.Right is MongoConstantExpression { Value: null } ? comparison.Left
+            : comparison.Left is MongoConstantExpression { Value: null } ? comparison.Right
+            : null;
+
+    // The same stored value by document path (a field's NullSafe rendering is irrelevant to whether it is null).
+    private static bool IsSameStoredValue(MongoExpression a, MongoExpression b)
+        => (a, b) switch
+        {
+            (MongoFieldExpression fa, MongoFieldExpression fb) => fa.ElementName == fb.ElementName,
+            (MongoOuterFieldExpression oa, MongoOuterFieldExpression ob) => oa.ElementName == ob.ElementName,
+            (MongoElementRefExpression ea, MongoElementRefExpression eb) => ea.Path == eb.Path,
+            _ => false
+        };
+
+    /// <summary>
+    /// <see cref="MayBeNullBehindNonNullableType(MongoExpression)"/> for a value read back as <paramref name="readType"/>: true only
+    /// when that type is a non-nullable value type.
+    /// </summary>
+    internal static bool ReadsNullAsDefault(Type readType, MongoExpression node)
+        => readType.IsValueType && Nullable.GetUnderlyingType(readType) is null && MayBeNullBehindNonNullableType(node);
 
     private static bool IsNullableClrType(Type type)
         => !type.IsValueType || Nullable.GetUnderlyingType(type) is not null;

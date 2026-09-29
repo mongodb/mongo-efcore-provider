@@ -185,6 +185,18 @@ internal sealed partial class MongoQueryExpression : Expression
             : property.Name;
     }
 
+    /// <summary>
+    /// Projection members at which a member-less construction's arguments were each registered under that one member
+    /// (see <c>MongoProjectionBindingExpressionVisitor.VisitNew</c>), keyed to the constructed type. Read back from
+    /// whole documents, every such argument would read as the last one registered, so the mixed reader declines
+    /// them (<c>MongoMixedProjectionBindingRemovingExpressionVisitor</c>). Replaced by every projection binding.
+    /// </summary>
+    internal IReadOnlyDictionary<ProjectionMember, Type> AliasedConstructionMembers { get; private set; }
+        = new Dictionary<ProjectionMember, Type>();
+
+    internal void ReplaceAliasedConstructionMembers(IReadOnlyDictionary<ProjectionMember, Type> aliasedConstructionMembers)
+        => AliasedConstructionMembers = new Dictionary<ProjectionMember, Type>(aliasedConstructionMembers);
+
     public void ReplaceProjectionMapping(IDictionary<ProjectionMember, Expression> projectionMapping)
     {
         _projectionMapping.Clear();

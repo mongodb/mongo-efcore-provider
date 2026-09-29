@@ -251,6 +251,13 @@ internal static class NativeJoinScopeProjectionBinder
                 return false; // one untranslatable leaf declines the whole projection — no partial commit
             }
 
+            // A non-nullable Length/IndexOf over a possibly-null (or unmatched) string would read its null as 0.
+            if (MongoAggregationExpressionRenderer.ReadsNullAsDefault(
+                    NativeSlotPopulator.UnwrapBoxingToObjectType(leafBody), computedLeaf))
+            {
+                return false;
+            }
+
             if (!seenAliases.Add(alias))
             {
                 return false;

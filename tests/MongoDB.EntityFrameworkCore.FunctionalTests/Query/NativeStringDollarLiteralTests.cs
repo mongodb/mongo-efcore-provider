@@ -104,8 +104,9 @@ public class NativeStringDollarLiteralTests(TemporaryDatabaseFixture database) :
     {
         using var context = CreateContext(nameof(IndexOf_over_dollar_prefixed_constant_haystack_is_literal));
 
-        Assert.Equal(Rows.Select(r => "$Order".IndexOf(r.Text, StringComparison.Ordinal)),
-            context.Entities.OrderBy(x => x.Order).Select(x => "$Order".IndexOf(x.Text)).ToList());
+        // (int?): a non-nullable IndexOf over a possibly-null needle declines (see NativeStringNullPropagationTests).
+        Assert.Equal(Rows.Select(r => (int?)"$Order".IndexOf(r.Text, StringComparison.Ordinal)),
+            context.Entities.OrderBy(x => x.Order).Select(x => (int?)"$Order".IndexOf(x.Text)).ToList());
     }
 
     [Fact]

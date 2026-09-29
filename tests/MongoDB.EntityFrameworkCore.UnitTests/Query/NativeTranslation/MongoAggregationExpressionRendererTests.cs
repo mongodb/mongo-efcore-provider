@@ -959,7 +959,7 @@ public class MongoAggregationExpressionRendererTests
         var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
 
         Assert.Equal(
-            """{ "$substrCP" : ["$Text", 1, { "$subtract" : [{ "$strLenCP" : { "$ifNull" : ["$Text", ""] } }, 1] }] }""",
+            """{ "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$Text", null] }, null] }, "then" : null, "else" : { "$substrCP" : ["$Text", 1, { "$subtract" : [{ "$strLenCP" : { "$ifNull" : ["$Text", ""] } }, 1] }] } } }""",
             result.ToJson());
     }
 
@@ -1054,7 +1054,7 @@ public class MongoAggregationExpressionRendererTests
 
         var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
 
-        Assert.Equal("""{ "$gt" : [{ "$strLenCP" : "$Text" }, 5] }""", result.ToJson());
+        Assert.Equal("""{ "$gt" : [{ "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$Text", null] }, null] }, "then" : null, "else" : { "$strLenCP" : "$Text" } } }, 5] }""", result.ToJson());
     }
 
     [Fact]
@@ -1066,7 +1066,7 @@ public class MongoAggregationExpressionRendererTests
         var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
 
         Assert.Equal(
-            $$"""{ "$concat" : ["$Text", { "$literal" : "$Order" }, { "$literal" : { "{{PlaceholderTable.SentinelKey}}" : 0 } }] }""",
+            $$"""{ "$concat" : [{ "$ifNull" : ["$Text", ""] }, { "$literal" : "$Order" }, { "$ifNull" : [{ "$literal" : { "{{PlaceholderTable.SentinelKey}}" : 0 } }, ""] }] }""",
             result.ToJson());
     }
 
@@ -1077,7 +1077,7 @@ public class MongoAggregationExpressionRendererTests
 
         var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
 
-        Assert.Equal("""{ "$indexOfCP" : [{ "$literal" : "$Order" }, "$Text"] }""", result.ToJson());
+        Assert.Equal("""{ "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$Text", null] }, null] }, "then" : null, "else" : { "$indexOfCP" : [{ "$literal" : "$Order" }, "$Text"] } } }""", result.ToJson());
     }
 
     [Fact]
@@ -1290,6 +1290,93 @@ public class MongoAggregationExpressionRendererTests
         Assert.False(MongoAggregationExpressionRenderer.MayBeNull(
             new MongoBinaryExpression(MongoBinaryOperator.Add, nonNullable, new MongoConstantExpression(1, forSerialization: null))));
         Assert.False(MongoAggregationExpressionRenderer.MayBeNull(new MongoSizeExpression("Posts", typeof(int))));
+    }
+
+    [Fact]
+    public void MayBeNull_sees_null_guarded_string_operators()
+    {
+        var length = new MongoStringLengthExpression(TextField());
+        var indexOf = new MongoStringIndexOfExpression(Dollar("abc"), TextField());
+
+        Assert.True(MongoAggregationExpressionRenderer.MayBeNull(length));
+        Assert.True(MongoAggregationExpressionRenderer.MayBeNull(indexOf));
+        Assert.False(MongoAggregationExpressionRenderer.MayBeNull(new MongoStringLengthExpression(Dollar("abc"))));
+        // Every possibly-null operand is coalesced to "".
+        Assert.False(MongoAggregationExpressionRenderer.MayBeNull(new MongoConcatExpression([TextField(), Dollar("x")])));
+    }
+
+    [Fact]
+    public void Null_guard_is_omitted_for_a_receiver_that_cannot_be_null()
+    {
+        var substring = new MongoSubstringExpression(
+            Dollar("abc"), new MongoConstantExpression(0, forSerialization: null), new MongoConstantExpression(1, forSerialization: null));
+
+        Assert.Equal(
+            """{ "$substrCP" : [{ "$literal" : "abc" }, 0, 1] }""",
+            MongoAggregationExpressionRenderer.Render(substring, new PlaceholderTable()).ToJson());
+        Assert.Equal(
+            """{ "$strLenCP" : { "$literal" : "abc" } }""",
+            MongoAggregationExpressionRenderer.Render(new MongoStringLengthExpression(Dollar("abc")), new PlaceholderTable()).ToJson());
+    }
+
+    [Fact]
+    public void Null_guard_reuses_a_parameter_needle_as_one_placeholder()
+    {
+        var placeholders = new PlaceholderTable();
+        var expr = new MongoStringIndexOfExpression(TextField(), new MongoParameterExpression("p", forSerialization: null));
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, placeholders);
+
+        Assert.Single(placeholders.Entries);
+        Assert.Equal(
+            $$"""{ "$cond" : { "if" : { "$eq" : [{ "$ifNull" : [{ "$literal" : { "{{PlaceholderTable.SentinelKey}}" : 0 } }, null] }, null] }, "then" : null, "else" : { "$indexOfCP" : ["$Text", { "$literal" : { "{{PlaceholderTable.SentinelKey}}" : 0 } }] } } }""",
+            result.ToJson());
+    }
+
+    [Fact]
+    public void Concat_does_not_recoalesce_an_operand_already_coalesced_to_a_non_null_value()
+    {
+        var expr = new MongoConcatExpression(
+            [new MongoCoalesceExpression(TextField(), Dollar("")), Dollar(",")]);
+
+        Assert.Equal(
+            """{ "$concat" : [{ "$ifNull" : ["$Text", { "$literal" : "" }] }, { "$literal" : "," }] }""",
+            MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable()).ToJson());
+    }
+
+    [Fact]
+    public void Compare_reads_a_missing_field_as_null_only_against_an_operand_that_may_be_null()
+    {
+        var againstConstant = new MongoStringCompareExpression(TextField(), Dollar("a"));
+        var againstField = new MongoStringCompareExpression(TextField(), TextField());
+
+        Assert.Equal(
+            """{ "$cmp" : ["$Text", { "$literal" : "a" }] }""",
+            MongoAggregationExpressionRenderer.Render(againstConstant, new PlaceholderTable()).ToJson());
+        Assert.Equal(
+            """{ "$cmp" : [{ "$ifNull" : ["$Text", null] }, { "$ifNull" : ["$Text", null] }] }""",
+            MongoAggregationExpressionRenderer.Render(againstField, new PlaceholderTable()).ToJson());
+    }
+
+    [Fact]
+    public void FirstOrDefault_is_null_for_a_null_receiver_only_as_a_comparison_operand()
+    {
+        var first = new MongoStringFirstOrLastExpression(TextField(), MongoStringFirstOrLastKind.First);
+        var b = new MongoConstantExpression("B", forSerialization: null);
+
+        var relational = MongoAggregationExpressionRenderer.Render(
+            new MongoBinaryExpression(MongoBinaryOperator.LessThan, first, b), new PlaceholderTable()).AsBsonDocument;
+        var equality = MongoAggregationExpressionRenderer.Render(
+            new MongoBinaryExpression(MongoBinaryOperator.Equal, first, b), new PlaceholderTable()).AsBsonDocument;
+        var projected = MongoAggregationExpressionRenderer.Render(first, new PlaceholderTable());
+
+        // Relational: the guarded form (null for a null receiver) under the $gt: [lower, null] null guard.
+        var guardedLower = relational["$and"][0]["$gt"][0].AsBsonDocument;
+        Assert.Equal(BsonNull.Value, guardedLower["$cond"]["then"]);
+        Assert.Equal(projected, guardedLower["$cond"]["else"]);
+        // Equality: the same guarded form, with no relational guard; the bare value keeps the '\0' form.
+        Assert.Equal(guardedLower, equality["$eq"][0]);
+        Assert.Equal("\0", projected["$cond"]["then"].AsString);
     }
 
     // --- Helper methods ---

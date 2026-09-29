@@ -164,8 +164,9 @@ public class NativeStringPredicateProjectionTests(TemporaryDatabaseFixture datab
         var (context, _) = Seed(nameof(Length_projection_goes_native));
         using (context)
         {
+            // (int?): a non-nullable Length over a possibly-null string declines (see NativeStringNullPropagationTests).
             Assert.Equal([7, 5], context.Entities.Where(x => x.Order < 2).OrderBy(x => x.Order)
-                .Select(x => x.Text!.Length).ToList());
+                .Select(x => (int?)x.Text!.Length).ToList());
         }
     }
 
@@ -213,9 +214,9 @@ public class NativeStringPredicateProjectionTests(TemporaryDatabaseFixture datab
         var (context, rows) = Seed(nameof(IndexOf_projection_goes_native));
         using (context)
         {
-            Assert.Equal(rows.Where(r => r.Order < 3).Select(r => r.Text!.IndexOf('e')),
+            Assert.Equal(rows.Where(r => r.Order < 3).Select(r => (int?)r.Text!.IndexOf('e')),
                 context.Entities.Where(x => x.Order < 3).OrderBy(x => x.Order)
-                    .Select(x => x.Text!.IndexOf('e')).ToList());
+                    .Select(x => (int?)x.Text!.IndexOf('e')).ToList());
         }
     }
 
