@@ -78,5 +78,5 @@ internal sealed partial class MongoExpressionTranslator
     private bool IsRootGetTypeCall(Expression expression)
         => expression is MethodCallExpression { Method: var method, Object: { } receiver }
             && method == GetTypeMethodInfo
-            && ReferenceEquals(Unwrap(receiver), SelfParam);
+            && IsSelfParamTheEntity(Unwrap(receiver));
 }

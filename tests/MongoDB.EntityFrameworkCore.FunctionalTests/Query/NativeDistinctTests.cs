@@ -152,8 +152,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     public void Anonymous_computed_projection_Distinct_then_OrderBy_on_member_goes_native()
     {
         // A computed projection member (A = o.Country + o.City) has no IProperty; the ordering key resolves against
-        // the Distinct's flattened alias via a MongoElementRefExpression (as TryResolveDistinctAliasComputedField
-        // does for Where).
+        // the Distinct's flattened alias via a MongoElementRefExpression (as TryResolveFlattenedAlias does for
+        // Where).
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Anonymous_computed_projection_Distinct_then_OrderBy_on_member_goes_native));
 

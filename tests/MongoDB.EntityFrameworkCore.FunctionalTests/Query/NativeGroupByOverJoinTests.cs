@@ -555,15 +555,14 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
     [Theory]
     [InlineData(1, true, 1)]
     [InlineData(2, false, 0)]
-    public void Any_and_Count_over_a_navigation_group_after_an_inner_side_where_decline_cleanly(int moreThan, bool expectedAny, int expectedCount)
+    public void Any_and_Count_over_a_navigation_group_after_an_inner_side_where(int moreThan, bool expectedAny, int expectedCount)
     {
-        // EF rewrites Any(pred)/Count(pred) to a post-group Where, which declines (see
-        // Post_group_where_after_a_confirmed_join_group_declines_cleanly), so these don't reach the All path. If a
-        // later slice makes them native, flip to NativeAndParity.
+        // EF rewrites Any(pred)/Count(pred) to a post-group Where (see
+        // Post_group_where_after_a_confirmed_join_group_goes_native), which must also land in PostGroupOps.
         var seed = CreateSeed();
-        var result = NativeModeAssert.DeclinesCleanly(mode =>
+        var result = NativeModeAssert.NativeAndParity(mode =>
         {
-            using var db = CreateContext(seed, mode, nameof(Any_and_Count_over_a_navigation_group_after_an_inner_side_where_decline_cleanly) + moreThan + mode);
+            using var db = CreateContext(seed, mode, nameof(Any_and_Count_over_a_navigation_group_after_an_inner_side_where) + moreThan + mode);
             var groups = db.Orders
                 .Where(o => o.Owner!.Name != "Cara")
                 .GroupBy(o => o.Owner!.Region)
@@ -674,16 +673,15 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
     }
 
     [Fact]
-    public void Post_group_where_after_a_confirmed_join_group_declines_cleanly()
+    public void Post_group_where_after_a_confirmed_join_group_goes_native()
     {
-        // Review Focus #5: the grouped Select confirms the join (registering its $lookup), and then the post-group
-        // Where declines. The fallback must still be correct with the confirmed (flat _lookup_) document shape.
-        // When a later slice makes post-GroupBy Where native, this will throw from DeclinesCleanly's NativeOnly
-        // half. That is the signal to flip it to NativeAndParity.
+        // The grouped Select confirms the join (registering its $lookup), and the post-group Where then filters the
+        // grouped output: a finalized grouping takes precedence in MongoSelectDefinition.ActiveOps, so the $match
+        // lands in PostGroupOps, after the $lookup/$unwind and the $group, not ahead of the $lookup.
         var seed = CreateSeed();
-        var result = NativeModeAssert.DeclinesCleanly(mode =>
+        var result = NativeModeAssert.NativeAndParity(mode =>
         {
-            using var db = CreateContext(seed, mode, nameof(Post_group_where_after_a_confirmed_join_group_declines_cleanly) + mode);
+            using var db = CreateContext(seed, mode, nameof(Post_group_where_after_a_confirmed_join_group_goes_native) + mode);
             return db.Orders
                 .GroupBy(o => o.Owner!.Region)
                 .Select(g => new { g.Key, Count = g.Count() })
@@ -854,6 +852,71 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
                 .AsEnumerable().Select(x => x.Name).OrderBy(n => n).ToList();
             Assert.Equal(["Alice", "Cara"], less);
         }
+    }
+
+    [Fact]
+    public void Push_list_over_a_nullable_unmatched_left_join_side_holds_null()
+    {
+        // Dora has no orders, so her group's only element is the DefaultIfEmpty null, and C#'s (decimal?)x.Total is
+        // null for it. The translated field is the non-nullable Total, missing for Dora's row, which a bare $push would
+        // skip ([] instead of [null]); the element is read null-safe from the LINQ type. Driver-LINQ answers [] for Dora
+        // on EF10 (and can't translate the left join on EF8/EF9), so the hand oracle is the only check.
+        var seed = CreateSeedWithOrderlessOwner();
+        List<(string, string)> Run(MongoQueryMode mode)
+        {
+            using var db = CreateContext(seed, mode, nameof(Push_list_over_a_nullable_unmatched_left_join_side_holds_null) + mode);
+            return (from w in db.Owners
+                    join o in db.Orders on w.Id equals o.OwnerId into gj
+                    from o in gj.DefaultIfEmpty()
+                    group o by w.Name into g
+                    select new { g.Key, Totals = g.Select(x => (decimal?)x.Total).ToList() })
+                .AsEnumerable().OrderBy(x => x.Key)
+                .Select(x => (x.Key, string.Join(",", x.Totals.OrderBy(t => t).Select(t => t is null ? "null" : ((decimal)t / 1.0000000000000000000000000000m).ToString(System.Globalization.CultureInfo.InvariantCulture))))).ToList();
+        }
+
+        var result = Run(MongoQueryMode.NativeOnly);
+
+        Assert.Equal([("Alice", "10,20"), ("Bob", "30"), ("Cara", "5"), ("Dora", "null")], result);
+    }
+
+    [Fact]
+    public void Push_list_over_a_non_nullable_unmatched_left_join_side_declines()
+    {
+        // The non-nullable spelling has no correct list for Dora: C# throws reading x.Total off the DefaultIfEmpty null,
+        // and a native $push would silently answer [] (missing skipped) or a 0. Native must decline.
+        var seed = CreateSeedWithOrderlessOwner();
+        List<(string, int)> Run(MongoQueryMode mode)
+        {
+            using var db = CreateContext(seed, mode, nameof(Push_list_over_a_non_nullable_unmatched_left_join_side_declines) + mode);
+            return (from w in db.Owners
+                    join o in db.Orders on w.Id equals o.OwnerId into gj
+                    from o in gj.DefaultIfEmpty()
+                    group o by w.Name into g
+                    select new { g.Key, Totals = g.Select(x => x.Total).ToList() })
+                .AsEnumerable().Select(x => (x.Key, x.Totals.Count)).ToList();
+        }
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
+    }
+
+    [Fact]
+    public void Push_list_over_an_inner_join_side_goes_native()
+    {
+        // An inner join: every element has a matched inner side, so the non-nullable element is safe. North: o1 10,
+        // o2 20, o4 5; South: o3 30 (o5's owner dangles and is dropped).
+        var seed = CreateSeed();
+        var result = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(seed, mode, nameof(Push_list_over_an_inner_join_side_goes_native) + mode);
+            return (from o in db.Orders
+                    join w in db.Owners on o.OwnerId equals w.Id
+                    group o by w.Region into g
+                    select new { g.Key, Totals = g.Select(x => x.Total).ToList() })
+                .AsEnumerable().OrderBy(x => x.Key)
+                .Select(x => (x.Key, string.Join(",", x.Totals.OrderBy(t => t).Select(t => (t / 1.0000000000000000000000000000m).ToString(System.Globalization.CultureInfo.InvariantCulture))))).ToList();
+        });
+
+        Assert.Equal([("North", "5,10,20"), ("South", "30")], result);
     }
 
     // EF8/EF9 nav-expand these left joins to a shape that explicit DriverLinq can't translate under a GroupBy (it

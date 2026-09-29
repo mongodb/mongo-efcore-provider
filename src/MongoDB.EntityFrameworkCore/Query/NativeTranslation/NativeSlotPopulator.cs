@@ -75,7 +75,9 @@ internal static class NativeSlotPopulator
         // accumulator that doesn't exist until the terminal Select, so defer the raw selector onto
         // PendingGroupOrderings; NativeGroupByBinder.TryBindGroupProjection resolves it (or declines) then.
         // Grouping == null deliberately excludes OrderBy composed after the Select (must hit the guard below; see
-        // GroupBy_post_group_OrderBy_by_aggregate_matches_driver_linq) and a GroupBy nested on a prior grouping.
+        // GroupBy_post_group_OrderBy_by_aggregate_matches_driver_linq). A GroupBy nested on a prior grouping is
+        // admitted: SnapshotPriorGroupingForNestedGroupBy clears Grouping, and the ordering lowers around the nested
+        // $group (see Nested_group_by_with_having_ordering_and_paging_on_the_nested_group).
         if (mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping == null && mongoQ.Select.PendingGroupKey != null
             && (methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.OrderByDescending
                 || methodDefinition == QueryableMethods.ThenBy || methodDefinition == QueryableMethods.ThenByDescending))
@@ -129,8 +131,14 @@ internal static class NativeSlotPopulator
         var isPostDistinctSlot = mongoQ.Select.IsDistinct && !mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping != null
             && IsSevenSlotOperator(methodDefinition);
 
+        // Also exempt: a Where directly after a finalized keyed GroupBy(key).Select(...), which resolves against the
+        // Select's output aliases (MongoExpressionTranslator.ProjectedAliasScope) or declines, and lands in
+        // PostGroupOps after the flatten $project. Where only: ordering/paging/Distinct over the grouped output
+        // aren't supported yet.
+        var isPostGroupWhere = methodDefinition == QueryableMethods.Where && mongoQ.Select.IsFinalizedKeyedGroupOutput;
+
         if (mongoQ.Select.HasTerminalOperator && !mongoQ.Select.IsSetOpTerminalOnly
-            && IsSevenSlotOperator(methodDefinition) && !isPostDistinctSlot)
+            && IsSevenSlotOperator(methodDefinition) && !isPostDistinctSlot && !isPostGroupWhere)
         {
             mongoQ.Select.MarkNotNativelyRepresentable();
             return;
@@ -148,13 +156,29 @@ internal static class NativeSlotPopulator
         // only, so it commutes with the join (see JoinScopeWhereSlotPopulationTests). Reducers are gated in
         // NativeCardinalityBinder.TryBindReducer; scalar aggregates need no gate (their stage follows the lookup
         // block).
-        if (mongoQ.Select.HasConfirmedJoinLookup && IsSevenSlotOperator(methodDefinition))
+        //
+        // A post-group Where is exempt: a finalized grouping takes precedence in ActiveOps, so it records into
+        // PostGroupOps, after the $lookup/$unwind and the $group (a GroupBy over a confirmed join scope).
+        if (mongoQ.Select.HasConfirmedJoinLookup && IsSevenSlotOperator(methodDefinition) && !isPostGroupWhere)
         {
             mongoQ.Select.MarkNotNativelyRepresentable();
             return;
         }
 
-        if (methodDefinition == QueryableMethods.Where)
+        if (isPostGroupWhere)
+        {
+            // Resolve against the grouped Select's output aliases only. On a decline, mark rather than try the arms
+            // below: they resolve members against the entity or a join scope by name, which an alias can shadow.
+            var postGroupPredicate = call.Arguments[1].UnwrapLambdaFromQuote();
+            translator.SelfParam = postGroupPredicate.Parameters[0];
+            translator.ProjectedAliasScope = new MongoProjectedAliasScope(
+                postGroupPredicate.Parameters[0], mongoQ.Select.Projection);
+            if (translator.TryTranslate(postGroupPredicate.Body, out var postGroupNode))
+                mongoQ.Select.AddPredicateConjunct(postGroupNode);
+            else
+                mongoQ.Select.MarkNotNativelyRepresentable();
+        }
+        else if (methodDefinition == QueryableMethods.Where)
         {
             // PipelineOps lower in arrival order, so a Where after paging correctly runs after it.
             var predicate = call.Arguments[1].UnwrapLambdaFromQuote();

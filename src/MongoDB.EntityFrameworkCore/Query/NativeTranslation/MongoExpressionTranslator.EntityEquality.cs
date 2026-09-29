@@ -82,8 +82,9 @@ internal sealed partial class MongoExpressionTranslator
         var left = Unwrap(leftSide);
         var right = Unwrap(rightSide);
 
-        var leftIsSelf = ReferenceEquals(left, SelfParam);
-        var rightIsSelf = ReferenceEquals(right, SelfParam);
+        // Only the root entity has a primary key to compare; a projected/grouped row declines (IsSelfParamTheEntity).
+        var leftIsSelf = IsSelfParamTheEntity(left);
+        var rightIsSelf = IsSelfParamTheEntity(right);
 
         // Exactly one side must be the root entity; self-compare and neither-side decline.
         if (leftIsSelf == rightIsSelf)
@@ -220,7 +221,7 @@ internal sealed partial class MongoExpressionTranslator
         result = null;
 
         if (SelfParam is null || !TryMatchContainsMethod(call, out var collection, out var item)
-            || !ReferenceEquals(Unwrap(item), SelfParam))
+            || !IsSelfParamTheEntity(Unwrap(item)))
             return false;
 
         var elementType = GetEnumerableElementType(Unwrap(collection).Type);

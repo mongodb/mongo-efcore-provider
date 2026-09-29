@@ -96,6 +96,41 @@ internal sealed partial class MongoExpressionTranslator
     internal MongoGrouping? DistinctAliasScope { get; set; }
 
     /// <summary>
+    /// When set, the lambda runs over a keyed <c>GroupBy(key).Select(...)</c>'s flattened output: a single-hop
+    /// member on the scope's parameter resolves to the <c>Select</c>'s output alias of that name (a top-level
+    /// <see cref="MongoElementRefExpression"/> typed from the projection's read), and the bare parameter to the sole
+    /// <see cref="NativeProjectionBinder.SyntheticBareProjectionAlias"/> output of a bare <c>Select</c>. See
+    /// <see cref="TryResolveFlattenedAlias"/>.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="DistinctAliasScope"/>, never consults key-part names: for a keyed GroupBy the output aliases
+    /// are the <c>Select</c>'s member names, which can shadow a key part of the same name with a different value
+    /// (<c>Select(g =&gt; new { Country = g.Count(), C = g.Key.Country })</c>). Nothing resolves against the entity
+    /// either (<see cref="TryResolveMember"/> and the owned-path walk decline), so an unmatched name declines.
+    /// Never set together with <see cref="DistinctAliasScope"/>.
+    /// </remarks>
+    internal MongoProjectedAliasScope? ProjectedAliasScope { get; set; }
+
+    /// <summary>
+    /// Whether <paramref name="node"/> is <see cref="SelfParam"/> standing for the root entity itself. Gates every arm
+    /// that treats the parameter as the entity (<c>$$ROOT</c> null/self checks, <c>GetType()</c>/<c>is</c> folds,
+    /// primary-key equality, entity-list <c>Contains</c>).
+    /// </summary>
+    /// <remarks>
+    /// After a projected Distinct or a keyed GroupBy.Select, a lambda's parameter is a projected row or scalar alias,
+    /// not the entity; folding <c>x.GetType() == typeof(Order)</c> over it would answer true for every grouped row.
+    /// Structural (the parameter's CLR type must be the entity type or a subtype), plus the scope flag as a second
+    /// line. Admitting a subtype doesn't make the folds TPH-safe on its own: that comes from each site's own
+    /// hierarchy decline (the <c>GetType()</c>/<c>is</c> folds decline any entity with a base or derived type; key
+    /// equality and <c>Contains</c> require the other side's type to be exactly the entity's).
+    /// </remarks>
+    private bool IsSelfParamTheEntity(Expression node)
+        => SelfParam is not null
+           && ReferenceEquals(node, SelfParam)
+           && ProjectedAliasScope is null
+           && _entityType.ClrType.IsAssignableFrom(SelfParam.Type);
+
+    /// <summary>
     /// Attempts to translate a predicate or key-selector body. Returns <see langword="false"/> if the shape is not
     /// natively representable; the caller should fall back to driver-LINQ.
     /// </summary>
@@ -862,11 +897,12 @@ internal sealed partial class MongoExpressionTranslator
                     property = receiverProperty;
                     fieldNode = new MongoFieldExpression(receiverProperty, fieldPath!);
                 }
-                else if (TryResolveDistinctAliasComputedField(Unwrap(receiver), out var aliasFieldRef)
+                else if (TryResolveFlattenedAlias(Unwrap(receiver), out var aliasFieldRef)
                          && aliasFieldRef.Type == typeof(string))
                 {
-                    // A Distinct alias whose key part is computed (no backing IProperty). RenderRegex only reads the
-                    // document path, so the flattened alias works. See TryResolveDistinctAliasComputedField.
+                    // A flattened alias with no backing IProperty (a computed Distinct key part, or a keyed GroupBy
+                    // output alias). RenderRegex only reads the document path, so the flattened alias works. See
+                    // TryResolveFlattenedAlias.
                     fieldNode = aliasFieldRef;
                 }
                 else
@@ -1162,7 +1198,7 @@ internal sealed partial class MongoExpressionTranslator
 
         // --- Entity_equality_self (`c == c`): both sides are SelfParam (by reference), so trivially true/false.
         // Comparing two different entity-typed operands is not admitted.
-        if (SelfParam is not null && ReferenceEquals(leftUnwrapped, SelfParam) && ReferenceEquals(rightUnwrapped, SelfParam))
+        if (IsSelfParamTheEntity(leftUnwrapped) && IsSelfParamTheEntity(rightUnwrapped))
         {
             var selfOp = MapComparisonOperator(nodeType);
             if (selfOp is null)
@@ -1172,29 +1208,9 @@ internal sealed partial class MongoExpressionTranslator
             return new MongoBinaryExpression(selfOp.Value, rootRef, rootRef);
         }
 
-        // --- Bare accumulator alias: SelfParam is a scalar aggregate's sole output, e.g.
-        // `.Select(g => g.Sum(o => o.OrderID)).All(v => v >= 0)`. Must precede the query-native branch: the key may
-        // also be a single field-backed part, but a bare SelfParam here names the accumulator. Exactly one
-        // accumulator only; otherwise there's no single implied target.
-        if (SelfParam is not null && DistinctAliasScope is { Accumulators: [{ OutputField: var soleAccField }] }
-            && (ReferenceEquals(leftUnwrapped, SelfParam) || ReferenceEquals(rightUnwrapped, SelfParam)))
-        {
-            var selfOnLeft = ReferenceEquals(leftUnwrapped, SelfParam);
-            var valueSide = selfOnLeft ? rightUnwrapped : leftUnwrapped;
-            if (!IsSimpleValue(valueSide))
-                return null; // no other branch resolves this SelfParam correctly
-
-            var accOp = MapComparisonOperator(selfOnLeft ? nodeType : Mirror(nodeType));
-            if (accOp is null)
-                return null;
-
-            var accValue = TranslateValue(valueSide, forSerialization: null);
-            if (accValue is null)
-                return null;
-
-            var accFieldRef = new MongoElementRefExpression(soleAccField, (selfOnLeft ? leftUnwrapped : rightUnwrapped).Type);
-            return new MongoBinaryExpression(accOp.Value, accFieldRef, accValue);
-        }
+        // A bare flattened alias (`.Select(g => g.Sum(o => o.OrderID)).All(v => v >= 0)`) and a named one
+        // (`x.Total > 100`) need no arm here: under ProjectedAliasScope TryResolveMember declines, so both fall
+        // through to the $expr path, where TranslateOperand resolves them via TryResolveFlattenedAlias.
 
         // --- Query-native shape: member on exactly one side, value on the other ---
 
@@ -1642,9 +1658,10 @@ internal sealed partial class MongoExpressionTranslator
                 : new MongoFieldExpression(property, fieldPath!);
         }
 
-        // A post-Distinct computed alias (no backing IProperty) resolves to its flattened output path, so every
-        // operator bottoming out here accepts it. See TryResolveDistinctAliasComputedField.
-        if (TryResolveDistinctAliasComputedField(node, out var aliasFieldRef))
+        // A flattened alias with no backing IProperty (a post-Distinct computed key part, or any output alias of a
+        // keyed GroupBy.Select) resolves to its top-level output path, so every operator bottoming out here accepts
+        // it. See TryResolveFlattenedAlias.
+        if (TryResolveFlattenedAlias(node, out var aliasFieldRef))
             return aliasFieldRef;
 
         // An owned-collection element count (b.Posts.Count / .Count() / .LongCount()). The renderer picks the

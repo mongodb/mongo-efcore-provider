@@ -3061,14 +3061,18 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     }
 
     [Fact]
-    public void Post_group_bare_accumulator_alias_where_declines_cleanly()
+    public void Post_group_bare_accumulator_alias_where_excludes_the_all_null_group()
     {
-        // A Where over the bare accumulator alias (EF's normalization of Count(pred)) isn't native. Pinned so the null
-        // handling is re-checked when it becomes native.
-        var name = nameof(Post_group_bare_accumulator_alias_where_declines_cleanly);
-        var result = NativeModeAssert.DeclinesCleanly(mode => RunRanked(mode, name,
-            q => new List<int> { q.GroupBy(o => o.Name).Select(g => g.Max(x => x.Rank)).Count(v => v < 100) }));
-        Assert.Equal([3], result);
+        // A Where over the bare accumulator alias (EF's normalization of Count(pred)) resolves the bare parameter to the
+        // sole "_v" output (MongoExpressionTranslator.ProjectedAliasScope). Bob's Max is null: null < 100 is false, and
+        // v == null must compare the alias, not the whole document.
+        var name = nameof(Post_group_bare_accumulator_alias_where_excludes_the_all_null_group);
+        var result = NativeModeAssert.NativeAndParity(mode => RunRanked(mode, name, q =>
+        {
+            var maxima = q.GroupBy(o => o.Name).Select(g => g.Max(x => x.Rank));
+            return new List<int> { maxima.Count(v => v < 100), maxima.Count(v => v == null) };
+        }));
+        Assert.Equal([3, 1], result);
     }
 
     [Fact]
@@ -3169,5 +3173,753 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
                 .Select(x => (x.Key, x.F)).ToList());
 
         Assert.Equal([((int?)null, 0), (7, 1), (20, 1), (50, 1), (150, 0)], result);
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // Post-group Where over a keyed GroupBy(key).Select(...)'s projected aliases, and the post-group terminal-aggregate
+    // path's alias resolution. Members resolve against the Select's output alias, never a key-part name or the entity.
+    // SeedOrders: US {100, 200}, UK {50, 25}, FR {300}.
+    // ---------------------------------------------------------------------------------------------------------------
+
+    private List<T> RunOrders<T>(MongoQueryMode mode, string name, Func<IQueryable<Order>, List<T>> query)
+    {
+        using var db = CreateContext(SeedOrders(), mode, name + mode);
+        return query(db.Entities);
+    }
+
+    [Fact]
+    public void Post_group_where_over_a_constant_key_goes_native()
+    {
+        // The NorthwindGroupByQueryMongoTest.GroupBy_count_filter shape: nav-expansion folds the first Select into
+        // the key, which arrives as the constant "Order".
+        var result = NativeModeAssert.NativeAndParity(mode => RunOrders(mode, nameof(Post_group_where_over_a_constant_key_goes_native),
+            q => q.Select(e => new { e.Id, Name = "Order" })
+                .GroupBy(o => o.Name)
+                .Select(g => new { Name = g.Key, Count = g.Count() })
+                .Where(o => o.Count > 0)
+                .AsEnumerable()
+                .Select(x => (x.Name, x.Count)).ToList()));
+
+        Assert.Equal([("Order", 5)], result);
+    }
+
+    [Fact]
+    public void Post_group_where_over_an_accumulator_alias_goes_native()
+    {
+        var result = NativeModeAssert.NativeAndParity(mode => RunOrders(mode, nameof(Post_group_where_over_an_accumulator_alias_goes_native),
+            q => q.GroupBy(o => o.Country)
+                .Select(g => new { g.Key, Total = g.Sum(o => o.Amount) })
+                .Where(x => x.Total > 100m)
+                .AsEnumerable().OrderBy(x => x.Key)
+                .Select(x => (x.Key, x.Total)).ToList()));
+
+        Assert.Equal([("FR", 300m), ("US", 300m)], result);
+    }
+
+    [Fact]
+    public void Post_group_where_over_a_renamed_key_alias_goes_native()
+    {
+        var result = NativeModeAssert.NativeAndParity(mode => RunOrders(mode, nameof(Post_group_where_over_a_renamed_key_alias_goes_native),
+            q => q.GroupBy(o => o.Country)
+                .Select(g => new { Land = g.Key, N = g.Count() })
+                .Where(x => x.Land == "UK")
+                .AsEnumerable()
+                .Select(x => (x.Land, x.N)).ToList()));
+
+        Assert.Equal([("UK", 2)], result);
+    }
+
+    [Fact]
+    public void Post_group_where_over_an_alias_shadowing_a_key_part_name_reads_the_alias()
+    {
+        // Review Focus #1. The alias Country holds the count, while the key part is also named Country (a string).
+        // Resolving by key-part name would bind the string key property and serialize 1 as a string.
+        var result = NativeModeAssert.NativeAndParity(mode => RunOrders(mode,
+            nameof(Post_group_where_over_an_alias_shadowing_a_key_part_name_reads_the_alias),
+            q => q.GroupBy(o => new { o.Country })
+                .Select(g => new { Country = g.Count(), C = g.Key.Country })
+                .Where(x => x.Country > 1)
+                .AsEnumerable().OrderBy(x => x.C)
+                .Select(x => (x.C, x.Country)).ToList()));
+
+        Assert.Equal([("UK", 2), ("US", 2)], result);
+    }
+
+    [Fact]
+    public void Post_group_terminal_aggregates_over_an_alias_shadowing_a_key_part_name_read_the_alias()
+    {
+        // The terminal-aggregate path (All, and Any/Count with a predicate) had the same key-part-name resolution.
+        // Counts: US 2, UK 2, FR 1.
+        var name = nameof(Post_group_terminal_aggregates_over_an_alias_shadowing_a_key_part_name_read_the_alias);
+        var result = NativeModeAssert.NativeAndParity(mode => RunOrders(mode, name, q =>
+        {
+            var groups = q.GroupBy(o => new { o.Country }).Select(g => new { Country = g.Count(), C = g.Key.Country });
+            return new List<(bool, bool, bool, int)>
+            {
+                (groups.All(x => x.Country > 1), groups.All(x => x.Country > 0), groups.Any(x => x.Country > 1),
+                    groups.Count(x => x.Country > 1))
+            };
+        }));
+
+        Assert.Equal([(false, true, true, 2)], result);
+    }
+
+    [Fact]
+    public void Post_group_where_less_than_over_a_nullable_key_alias_excludes_the_null_key_group()
+    {
+        // Review Focus #2. In the aggregation dialect null orders below every value; C# null < 100 is false.
+        // By Rank: 7, 20, 50, 150 (one row each) and null (three rows).
+        var name = nameof(Post_group_where_less_than_over_a_nullable_key_alias_excludes_the_null_key_group);
+        var result = NativeModeAssert.NativeAndParity(mode => RunRanked(mode, name,
+            q => q.GroupBy(o => o.Rank)
+                .Select(g => new { g.Key, C = g.Count() })
+                .Where(x => x.Key < 100)
+                .AsEnumerable().OrderBy(x => x.Key)
+                .Select(x => (x.Key, x.C)).ToList()));
+        Assert.Equal([((int?)7, 1), (20, 1), (50, 1)], result);
+
+        // Renamed alias, <=, and the constant on the left (100 > R flips to R < 100).
+        var renamed = NativeModeAssert.NativeAndParity(mode => RunRanked(mode, name + "R",
+            q => q.GroupBy(o => o.Rank)
+                .Select(g => new { R = g.Key, C = g.Count() })
+                .Where(x => x.R <= 20 || 100 > x.R)
+                .AsEnumerable().OrderBy(x => x.R)
+                .Select(x => (x.R, x.C)).ToList()));
+        Assert.Equal([((int?)7, 1), (20, 1), (50, 1)], renamed);
+    }
+
+    [Fact]
+    public void Post_group_where_with_a_compound_predicate_over_two_aliases_goes_native()
+    {
+        var result = NativeModeAssert.NativeAndParity(mode => RunOrders(mode,
+            nameof(Post_group_where_with_a_compound_predicate_over_two_aliases_goes_native),
+            q => q.GroupBy(o => o.Country)
+                .Select(g => new { Land = g.Key, N = g.Count() })
+                .Where(x => x.N > 1 && x.Land != "US")
+                .AsEnumerable()
+                .Select(x => (x.Land, x.N)).ToList()));
+
+        Assert.Equal([("UK", 2)], result);
+    }
+
+    [Fact]
+    public void Post_group_where_over_an_untranslatable_alias_expression_declines_cleanly()
+    {
+        // ToUpper has no native translation, and the alias scope never falls through to the entity (which has a
+        // Country property of its own).
+        var result = NativeModeAssert.DeclinesCleanly(mode => RunOrders(mode,
+            nameof(Post_group_where_over_an_untranslatable_alias_expression_declines_cleanly),
+            q => q.GroupBy(o => o.Country)
+                .Select(g => new { Country = g.Key, N = g.Count() })
+                .Where(x => x.Country.ToUpper() == "UK")
+                .AsEnumerable()
+                .Select(x => (x.Country, x.N)).ToList()));
+
+        Assert.Equal([("UK", 2)], result);
+    }
+
+    [Fact]
+    public void Post_group_order_by_declines_cleanly()
+    {
+        // Only Where is admitted after a keyed GroupBy(key).Select(...); OrderBy/ThenBy/Skip/Take/Distinct over the
+        // grouped output are a separate follow-up.
+        var result = NativeModeAssert.DeclinesCleanly(mode => RunOrders(mode, nameof(Post_group_order_by_declines_cleanly),
+            q => q.GroupBy(o => o.Country)
+                .Select(g => new { Land = g.Key, N = g.Count() })
+                .OrderBy(x => x.N).ThenBy(x => x.Land)
+                .AsEnumerable()
+                .Select(x => (x.Land, x.N)).ToList()));
+
+        Assert.Equal([("FR", 1), ("UK", 2), ("US", 2)], result);
+    }
+
+    [Fact]
+    public void Post_group_where_before_a_nested_group_by_filters_the_first_grouping()
+    {
+        // The Where lands in PostGroupOps, which the lowerer emits after the first grouping's flatten $project and
+        // before the nested $group. Without FR: US 2, UK 2, so one group of N = 2 with two members.
+        var result = NativeModeAssert.NativeAndParity(mode => RunOrders(mode,
+            nameof(Post_group_where_before_a_nested_group_by_filters_the_first_grouping),
+            q => q.GroupBy(o => o.Country)
+                .Select(g => new { Land = g.Key, N = g.Count() })
+                .Where(x => x.Land != "FR")
+                .GroupBy(x => x.N)
+                .Select(g => new { g.Key, M = g.Count() })
+                .AsEnumerable()
+                .Select(x => (x.Key, x.M)).ToList()));
+
+        Assert.Equal([(2, 2)], result);
+    }
+
+    [Fact]
+    public void Post_group_where_after_a_nested_group_by_declines_cleanly()
+    {
+        // With a prior grouping, PostGroupOps lower after the prior stage's flatten $project, ahead of the outer
+        // $group, where the outer aliases don't exist yet. So a Where over the outer grouping declines.
+        var result = NativeModeAssert.DeclinesCleanly(mode => RunOrders(mode,
+            nameof(Post_group_where_after_a_nested_group_by_declines_cleanly),
+            q => q.GroupBy(o => o.Country)
+                .Select(g => new { Land = g.Key, N = g.Count() })
+                .GroupBy(x => x.N)
+                .Select(g => new { g.Key, M = g.Count() })
+                .Where(x => x.M > 1)
+                .AsEnumerable()
+                .Select(x => (x.Key, x.M)).ToList()));
+
+        Assert.Equal([(2, 2)], result);
+    }
+
+    [Fact]
+    public void Post_group_terminal_aggregate_predicate_after_a_nested_group_by_declines_cleanly()
+    {
+        // Same placement hazard for the terminal-aggregate path: the predicate would run ahead of the outer $group
+        // and answer All(M > 0) = false. Groups by N: {2: US, UK}, {1: FR}, so M = 2, 1.
+        var name = nameof(Post_group_terminal_aggregate_predicate_after_a_nested_group_by_declines_cleanly);
+        var result = NativeModeAssert.DeclinesCleanly(mode => RunOrders(mode, name, q =>
+        {
+            var groups = q.GroupBy(o => o.Country)
+                .Select(g => new { Land = g.Key, N = g.Count() })
+                .GroupBy(x => x.N)
+                .Select(g => new { g.Key, M = g.Count() });
+            return new List<(bool, bool)> { (groups.All(x => x.M > 0), groups.All(x => x.M < 2)) };
+        }));
+
+        Assert.Equal([(true, false)], result);
+    }
+
+    [Fact]
+    public void Post_group_terminal_aggregate_predicate_after_a_whole_entity_concat_declines()
+    {
+        // TrailingOps lower ahead of a GroupBy composed after a whole-entity set op, so the predicate would run
+        // before the $group. US 4, UK 4, FR 2 over the concatenation, so All(N < 3) is false. Driver-LINQ throws a
+        // NullReferenceException for this shape, so there's no oracle: only the NativeOnly decline is asserted.
+        Assert.Throws<NativeTranslationNotSupportedException>(() => RunOrders(MongoQueryMode.NativeOnly,
+            nameof(Post_group_terminal_aggregate_predicate_after_a_whole_entity_concat_declines),
+            q => new List<bool>
+            {
+                q.Concat(q).GroupBy(o => o.Country).Select(g => new { g.Key, N = g.Count() }).All(x => x.N < 3)
+            }));
+    }
+
+    [Fact]
+    public void Post_group_where_over_enum_and_date_key_aliases_with_parameters_goes_native()
+    {
+        // An alias has no IProperty, so a parameter compared with it serializes by CLR type. Status: New {US 2020,
+        // UK 2020, FR}, Shipped {US 2021, UK 2020}. OrderDate: 2020-01-01 x3, 2021-01-01 x2.
+        var status = OrderStatus.Shipped;
+        var after = new DateTime(2020, 6, 1);
+        var result = NativeModeAssert.NativeAndParity(mode => RunOrders<string>(mode,
+            nameof(Post_group_where_over_enum_and_date_key_aliases_with_parameters_goes_native), q =>
+            [
+                .. q.GroupBy(o => o.Status).Select(g => new { S = g.Key, N = g.Count() })
+                    .Where(x => x.S == status).AsEnumerable().Select(x => $"{x.S}:{x.N}"),
+                .. q.GroupBy(o => o.OrderDate).Select(g => new { D = g.Key, N = g.Count() })
+                    .Where(x => x.D > after).AsEnumerable().Select(x => $"{x.D.Year}:{x.N}")
+            ]));
+
+        Assert.Equal(["Shipped:2", "2021:2"], result);
+    }
+
+    [Fact]
+    public void Post_group_where_over_a_guid_key_alias_declines_cleanly()
+    {
+        // A Guid constant can't serialize by CLR type (BsonValue.Create throws), and the alias has no IProperty to
+        // serialize through, so the alias scope declines rather than crash at render time. Every ExternalId is empty.
+        var result = NativeModeAssert.DeclinesCleanly(mode => RunOrders(mode,
+            nameof(Post_group_where_over_a_guid_key_alias_declines_cleanly),
+            q => q.GroupBy(o => o.ExternalId)
+                .Select(g => new { E = g.Key, N = g.Count() })
+                .Where(x => x.E == Guid.Empty)
+                .AsEnumerable()
+                .Select(x => x.N).ToList()));
+
+        Assert.Equal([5], result);
+    }
+
+    private class Parcel
+    {
+        public ObjectId Id { get; set; }
+        public string Region { get; set; } = "";
+        public ParcelInfo Info { get; set; } = new();
+    }
+
+    private class ParcelInfo
+    {
+        public int N { get; set; }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Post_group_where_over_a_nested_alias_never_resolves_an_owned_navigation_of_the_same_name(bool nullCheck)
+    {
+        // The entity has an owned Info (stored as "info") with an int N, and the Select projects an alias Info with
+        // an N of its own. Neither x.Info.N nor x.Info != null may walk the entity's owned path ("info"/"info.N",
+        // which the flattened output doesn't have: the null check would answer "missing, so null" for every group).
+        // A construction alias isn't comparable and a member chain through it isn't supported, so both decline.
+        // Regions: A has two parcels, B one.
+        var name = nameof(Post_group_where_over_a_nested_alias_never_resolves_an_owned_navigation_of_the_same_name);
+        var result = NativeModeAssert.DeclinesCleanly(mode =>
+        {
+            var collection = database.MongoDatabase.GetCollection<Parcel>(
+                TemporaryDatabaseFixtureBase.CreateCollectionName(name) + nullCheck + mode + Guid.NewGuid().ToString("N")[..8]);
+            using var db = SingleEntityDbContext.Create(
+                collection,
+                modelBuilderAction: mb => mb.Entity<Parcel>().OwnsOne(p => p.Info, b => b.HasElementName("info")),
+                optionsBuilderAction: b =>
+                {
+                    b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                    new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                });
+            db.Entities.AddRange(
+                new Parcel { Id = ObjectId.GenerateNewId(), Region = "A", Info = new() { N = 5 } },
+                new Parcel { Id = ObjectId.GenerateNewId(), Region = "A", Info = new() { N = 5 } },
+                new Parcel { Id = ObjectId.GenerateNewId(), Region = "B", Info = new() { N = 5 } });
+            db.SaveChanges();
+
+            var groups = db.Entities
+                .GroupBy(p => p.Region)
+                .Select(g => new { g.Key, Info = new { N = g.Count() } });
+            return (nullCheck ? groups.Where(x => x.Info != null) : groups.Where(x => x.Info.N > 1))
+                .AsEnumerable()
+                .OrderBy(x => x.Key)
+                .Select(x => (x.Key, x.Info.N)).ToList();
+        });
+
+        Assert.Equal(nullCheck ? [("A", 2), ("B", 1)] : [("A", 2)], result);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Post_group_get_type_comparison_over_a_grouped_row_declines_cleanly(bool equal)
+    {
+        // The row is an anonymous grouped output, never an Order, so GetType() == typeof(Order) is false for every group
+        // (and != true). Folding it as if the parameter were the root entity would invert both. See
+        // MongoExpressionTranslator.IsSelfParamTheEntity.
+        var name = nameof(Post_group_get_type_comparison_over_a_grouped_row_declines_cleanly) + equal;
+        var result = NativeModeAssert.DeclinesCleanly(mode => RunOrders(mode, name, q =>
+        {
+            var groups = q.GroupBy(o => o.Country).Select(g => new { g.Key, N = g.Count() });
+            var filtered = equal
+                ? groups.Where(x => x.GetType() == typeof(Order))
+                : groups.Where(x => x.GetType() != typeof(Order));
+            return filtered.AsEnumerable().Select(x => x.Key).OrderBy(k => k).ToList();
+        }));
+
+        Assert.Equal(equal ? [] : ["FR", "UK", "US"], result);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Post_group_terminal_all_over_a_get_type_comparison_declines_cleanly(bool equal)
+    {
+        var name = nameof(Post_group_terminal_all_over_a_get_type_comparison_declines_cleanly) + equal;
+        var result = NativeModeAssert.DeclinesCleanly(mode => RunOrders(mode, name, q =>
+        {
+            var groups = q.GroupBy(o => o.Country).Select(g => new { g.Key, N = g.Count() });
+            return new List<bool>
+            {
+                equal ? groups.All(x => x.GetType() == typeof(Order)) : groups.All(x => x.GetType() != typeof(Order))
+            };
+        }));
+
+        Assert.Equal([!equal], result);
+    }
+
+    [Fact]
+    public void Get_type_comparison_over_a_projected_distinct_row_declines_cleanly()
+    {
+        // Same fold hazard under DistinctAliasScope (no ProjectedAliasScope): the structural half of
+        // MongoExpressionTranslator.IsSelfParamTheEntity (the parameter's CLR type isn't the entity's) guards it.
+        var result = NativeModeAssert.DeclinesCleanly(mode => RunOrders(mode,
+            nameof(Get_type_comparison_over_a_projected_distinct_row_declines_cleanly),
+            q => q.Select(o => new { o.Country }).Distinct()
+                .Where(x => x.GetType() == typeof(Order))
+                .AsEnumerable().Select(x => x.Country).ToList()));
+
+        Assert.Equal([], result);
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // $push list projection members: g.Select(e => e.X).ToList() / ToArray(). Element order inside a list follows the
+    // $group's input order, which is unspecified without a prior sort (as for driver-LINQ), so every list is compared
+    // sorted. SeedOrders: US {2020 100, 2021 200}, UK {2020 50, 2020 25}, FR {2021 300}.
+    // ---------------------------------------------------------------------------------------------------------------
+
+    // Formats a list order-insensitively, with null spelled out and decimals normalized (Decimal128 may keep a scale).
+    private static string SortedList<T>(IEnumerable<T>? items)
+        => items is null
+            ? "<null list>"
+            : string.Join(",", items
+                .Select(i => i switch
+                {
+                    null => "null",
+                    decimal d => (d / 1.0000000000000000000000000000m).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    IFormattable f => f.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
+                    _ => i.ToString()!
+                })
+                .OrderBy(s => s, StringComparer.Ordinal));
+
+    [Fact]
+    public void Push_list_of_the_grouping_key_property_goes_native()
+    {
+        // The NorthwindGroupByQueryMongoTest.GroupBy_selecting_grouping_key_list shape.
+        var result = NativeModeAssert.NativeAndParity(mode => RunOrders(mode,
+            nameof(Push_list_of_the_grouping_key_property_goes_native),
+            q => q.GroupBy(o => o.Country)
+                .Select(g => new { g.Key, Data = g.Select(e => e.Country).ToList() })
+                .AsEnumerable().OrderBy(x => x.Key)
+                .Select(x => (x.Key, SortedList(x.Data))).ToList()));
+
+        Assert.Equal([("FR", "FR"), ("UK", "UK,UK"), ("US", "US,US")], result);
+    }
+
+    [Fact]
+    public void Push_array_and_list_of_numeric_elements_go_native()
+    {
+        var result = NativeModeAssert.NativeAndParity(mode => RunOrders(mode,
+            nameof(Push_array_and_list_of_numeric_elements_go_native),
+            q => q.GroupBy(o => o.Country)
+                .Select(g => new { g.Key, Years = g.Select(e => e.Year).ToArray(), Amounts = g.Select(e => e.Amount).ToList() })
+                .AsEnumerable().OrderBy(x => x.Key)
+                .Select(x => (x.Key, x.Years.GetType().IsArray, SortedList(x.Years), SortedList(x.Amounts))).ToList()));
+
+        Assert.Equal(
+            [("FR", true, "2021", "300"), ("UK", true, "2020,2020", "25,50"), ("US", true, "2020,2021", "100,200")],
+            result);
+    }
+
+    [Fact]
+    public void Push_list_inside_a_nested_construction_goes_native()
+    {
+        var result = NativeModeAssert.NativeAndParity(mode => RunOrders(mode,
+            nameof(Push_list_inside_a_nested_construction_goes_native),
+            q => q.GroupBy(o => o.Country)
+                .Select(g => new { g.Key, Inner = new { N = g.Count(), Years = g.Select(e => e.Year).ToList() } })
+                .AsEnumerable().OrderBy(x => x.Key)
+                .Select(x => (x.Key, x.Inner.N, SortedList(x.Inner.Years))).ToList()));
+
+        Assert.Equal([("FR", 1, "2021"), ("UK", 2, "2020,2020"), ("US", 2, "2020,2021")], result);
+    }
+
+    [Fact]
+    public void Push_list_of_a_computed_element_goes_native()
+    {
+        var result = NativeModeAssert.NativeAndParity(mode => RunOrders(mode,
+            nameof(Push_list_of_a_computed_element_goes_native),
+            q => q.GroupBy(o => o.Country)
+                .Select(g => new { g.Key, Doubled = g.Select(e => e.Amount * 2).ToList() })
+                .AsEnumerable().OrderBy(x => x.Key)
+                .Select(x => (x.Key, SortedList(x.Doubled))).ToList()));
+
+        Assert.Equal([("FR", "600"), ("UK", "100,50"), ("US", "200,400")], result);
+    }
+
+    [Fact]
+    public void Push_list_over_a_group_by_element_selector_goes_native()
+    {
+        // GroupBy(key, elementSelector) with g.ToList(): EF re-expresses it as g.AsQueryable().Select(elementSelector),
+        // so it reaches the $push arm with the element selector inlined.
+        var result = NativeModeAssert.NativeAndParity(mode => RunOrders(mode,
+            nameof(Push_list_over_a_group_by_element_selector_goes_native),
+            q => q.GroupBy(o => o.Country, o => o.Year)
+                .Select(g => new { g.Key, Years = g.ToList() })
+                .AsEnumerable().OrderBy(x => x.Key)
+                .Select(x => (x.Key, SortedList(x.Years))).ToList()));
+
+        Assert.Equal([("FR", "2021"), ("UK", "2020,2020"), ("US", "2020,2021")], result);
+    }
+
+    [Fact]
+    public void Bare_push_list_projection_goes_native()
+    {
+        var result = NativeModeAssert.NativeAndParity(mode => RunOrders(mode,
+            nameof(Bare_push_list_projection_goes_native),
+            q => q.GroupBy(o => o.Country)
+                .Select(g => g.Select(e => e.Year).ToList())
+                .AsEnumerable()
+                .Select(SortedList).OrderBy(s => s, StringComparer.Ordinal).ToList()));
+
+        Assert.Equal(["2020,2020", "2020,2021", "2021"], result);
+    }
+
+    [Fact]
+    public void Push_list_over_a_ragged_nullable_element_holds_null_for_null_and_missing()
+    {
+        // By Region: North {7, 150}, South {null, null}, East {50, null, 20} plus Fay, inserted without a Rank element
+        // at all. C#'s g.Select(x => x.Rank) yields null for both the null and the missing Rank, so East has two nulls. A
+        // bare $push skips a missing value, so the operand must be read null-safe. Driver-LINQ pushes the bare field and
+        // answers East "20,50,null" (Fay's missing Rank dropped), so the hand oracle is the only check.
+        var name = nameof(Push_list_over_a_ragged_nullable_element_holds_null_for_null_and_missing);
+        List<(string, string)> Run(MongoQueryMode mode)
+        {
+            var collectionName = TemporaryDatabaseFixtureBase.CreateCollectionName(name) + mode + Guid.NewGuid().ToString("N")[..8];
+            var collection = database.MongoDatabase.GetCollection<RankedOwner>(collectionName);
+            collection.InsertMany(SeedRankedOwners());
+            database.MongoDatabase.GetCollection<BsonDocument>(collectionName).InsertOne(
+                new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Fay" }, { "Region", "East" } });
+
+            using var db = SingleEntityDbContext.Create(
+                collection,
+                optionsBuilderAction: b =>
+                {
+                    b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                    new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                });
+
+            return db.Entities
+                .GroupBy(o => o.Region)
+                .Select(g => new { g.Key, Ranks = g.Select(x => x.Rank).ToList() })
+                .AsEnumerable().OrderBy(x => x.Key)
+                .Select(x => (x.Key, SortedList(x.Ranks))).ToList();
+        }
+
+        var result = Run(MongoQueryMode.NativeOnly);
+
+        Assert.Equal([("East", "20,50,null,null"), ("North", "150,7"), ("South", "null,null")], result);
+    }
+
+    [Theory]
+    [InlineData("g.ToList()")]
+    [InlineData("g.Select(e => e).ToList()")]
+    public void Push_list_of_whole_entity_elements_declines(string shape)
+    {
+        // Pushing whole entities needs per-element entity materialization and tracking, which the $push arm doesn't
+        // do; an entity-typed element must never be taken as a scalar $push. NativeOnly only: driver-LINQ fails to
+        // deserialize the pushed entities (FormatException wrapping NotImplementedException, pre-existing), so there is
+        // no oracle for DeclinesCleanly; the throw is pinned so a driver fix is noticed.
+        var name = nameof(Push_list_of_whole_entity_elements_declines) + shape.Length;
+        List<(string, int)> Run(MongoQueryMode mode) => RunOrders(mode, name, q =>
+            (shape == "g.ToList()"
+                ? q.GroupBy(o => o.Country).Select(g => new { g.Key, Items = g.ToList() })
+                : q.GroupBy(o => o.Country).Select(g => new { g.Key, Items = g.Select(e => e).ToList() }))
+            .AsEnumerable().Select(x => (x.Key, x.Items.Count)).ToList());
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
+        Assert.ThrowsAny<FormatException>(() => Run(MongoQueryMode.DriverLinq));
+    }
+
+    [Fact]
+    public void Push_list_of_owned_entity_elements_declines()
+    {
+        // An owned reference is entity-typed too: pushing it would need owned-entity materialization.
+        var name = nameof(Push_list_of_owned_entity_elements_declines);
+        List<(string, int)> Run(MongoQueryMode mode)
+        {
+            var collection = database.MongoDatabase.GetCollection<Parcel>(
+                TemporaryDatabaseFixtureBase.CreateCollectionName(name) + mode + Guid.NewGuid().ToString("N")[..8]);
+            using var db = SingleEntityDbContext.Create(
+                collection,
+                modelBuilderAction: mb => mb.Entity<Parcel>().OwnsOne(p => p.Info),
+                optionsBuilderAction: b =>
+                {
+                    b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                    new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
+                });
+            db.Entities.AddRange(
+                new Parcel { Id = ObjectId.GenerateNewId(), Region = "A", Info = new() { N = 1 } },
+                new Parcel { Id = ObjectId.GenerateNewId(), Region = "A", Info = new() { N = 2 } },
+                new Parcel { Id = ObjectId.GenerateNewId(), Region = "B", Info = new() { N = 3 } });
+            db.SaveChanges();
+
+            return db.Entities
+                .GroupBy(p => p.Region)
+                .Select(g => new { g.Key, Infos = g.Select(p => p.Info).ToList() })
+                .AsEnumerable().OrderBy(x => x.Key)
+                .Select(x => (x.Key, x.Infos.Sum(i => i.N))).ToList();
+        }
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
+    }
+
+    [Fact]
+    public void Post_group_where_over_a_pushed_list_alias_declines_cleanly()
+    {
+        // A list alias isn't a comparable scalar, so a post-group predicate over it (here its Count) declines.
+        var result = NativeModeAssert.DeclinesCleanly(mode => RunOrders(mode,
+            nameof(Post_group_where_over_a_pushed_list_alias_declines_cleanly),
+            q => q.GroupBy(o => o.Country)
+                .Select(g => new { g.Key, Years = g.Select(e => e.Year).ToList() })
+                .Where(x => x.Years.Count > 1)
+                .AsEnumerable().Select(x => x.Key).OrderBy(k => k).ToList()));
+
+        Assert.Equal(["UK", "US"], result);
+    }
+
+    [Theory]
+    [InlineData(DateTimeKind.Utc)]
+    [InlineData(DateTimeKind.Local)]
+    public void Push_list_over_a_date_time_kind_configured_property_matches_entity_materialization(DateTimeKind kind)
+    {
+        // HasDateTimeKind changes how the property reads back, but the pushed list is read through a generic
+        // List<DateTime> serializer that knows nothing of it, so the element must decline rather than return the wrong
+        // Kind. The oracle is the entity's own materialized OrderDate.
+        var name = nameof(Push_list_over_a_date_time_kind_configured_property_matches_entity_materialization) + kind;
+        List<(string, string)> Run(MongoQueryMode mode, bool viaEntities)
+        {
+            var collection = database.MongoDatabase.GetCollection<Order>(
+                TemporaryDatabaseFixtureBase.CreateCollectionName(name) + mode + viaEntities + Guid.NewGuid().ToString("N")[..8]);
+            using var db = Make(collection, mode, mb => mb.Entity<Order>().Property(o => o.OrderDate).HasDateTimeKind(kind));
+            db.Entities.AddRange(SeedOrders());
+            db.SaveChanges();
+
+            return viaEntities
+                ? db.Entities.AsNoTracking().AsEnumerable().GroupBy(o => o.Country).OrderBy(g => g.Key)
+                    .Select(g => (g.Key, SortedList(g.Select(e => e.OrderDate.Kind + "@" + e.OrderDate.Ticks)))).ToList()
+                : db.Entities.GroupBy(o => o.Country)
+                    .Select(g => new { g.Key, Dates = g.Select(e => e.OrderDate).ToList() })
+                    .AsEnumerable().OrderBy(x => x.Key)
+                    .Select(x => (x.Key, SortedList(x.Dates.Select(d => d.Kind + "@" + d.Ticks)))).ToList();
+        }
+
+        var oracle = Run(MongoQueryMode.NativeOnly, viaEntities: true);
+        Assert.All(oracle, g => Assert.StartsWith(kind.ToString(), g.Item2));
+
+        var native = Run(MongoQueryMode.Native, viaEntities: false);
+        Assert.Equal(oracle, native);
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly, viaEntities: false));
+    }
+
+    [Fact]
+    public void Push_list_over_a_value_converted_property_declines_cleanly()
+    {
+        // Status is stored as its string name. The pushed list would be read back through a generic List<OrderStatus>
+        // serializer that expects the integer form, so the element must decline.
+        var name = nameof(Push_list_over_a_value_converted_property_declines_cleanly);
+        var result = NativeModeAssert.DeclinesCleanly(mode =>
+        {
+            var collection = database.MongoDatabase.GetCollection<Order>(
+                TemporaryDatabaseFixtureBase.CreateCollectionName(name) + mode + Guid.NewGuid().ToString("N")[..8]);
+            using var db = Make(collection, mode, mb => mb.Entity<Order>().Property(o => o.Status).HasConversion<string>());
+            db.Entities.AddRange(SeedOrders());
+            db.SaveChanges();
+
+            return db.Entities
+                .GroupBy(o => o.Country)
+                .Select(g => new { g.Key, Statuses = g.Select(e => e.Status).ToList() })
+                .AsEnumerable().OrderBy(x => x.Key)
+                .Select(x => (x.Key, SortedList(x.Statuses.Select(s => s.ToString())))).ToList();
+        });
+
+        Assert.Equal([("FR", "New"), ("UK", "New,Shipped"), ("US", "New,Shipped")], result);
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // A bare terminal aggregate on a GroupBy nested over a keyed GroupBy(key).Select(...). The nested GroupBy must bind
+    // its own key: a stale prior Grouping once routed it through the post-GroupBy.Select aggregate path, which
+    // re-emitted the first $group and dropped the nested key. Seed: countries A, B, C have one order each and D has
+    // two, so N is {1, 1, 1, 2}.
+    // ---------------------------------------------------------------------------------------------------------------
+
+    private static Order[] SeedNestedGroups() =>
+    [
+        new() { Id = ObjectId.GenerateNewId(), Country = "A", Year = 2020, Amount = 1 },
+        new() { Id = ObjectId.GenerateNewId(), Country = "B", Year = 2020, Amount = 2 },
+        new() { Id = ObjectId.GenerateNewId(), Country = "C", Year = 2020, Amount = 3 },
+        new() { Id = ObjectId.GenerateNewId(), Country = "D", Year = 2020, Amount = 4 },
+        new() { Id = ObjectId.GenerateNewId(), Country = "D", Year = 2021, Amount = 5 },
+    ];
+
+    private List<T> RunNestedGroups<T>(MongoQueryMode mode, string name, Func<IQueryable<Order>, List<T>> query)
+    {
+        using var db = CreateContext(SeedNestedGroups(), mode, name + mode);
+        return query(db.Entities);
+    }
+
+    // Without the Where: nested groups N = 1 (A, B, C) and N = 2 (D). With Where(Land != "A"): N = 1 (B, C) and N = 2
+    // (D). With the stale Grouping (fix removed) Count/LongCount answered 1 in both forms, and the predicate forms
+    // declined.
+    [Theory]
+    [InlineData("Count", false, 2L)]
+    [InlineData("LongCount", false, 2L)]
+    [InlineData("AnySize3", false, 1L)]
+    [InlineData("CountSize1", false, 1L)]
+    [InlineData("Count", true, 2L)]
+    [InlineData("LongCount", true, 2L)]
+    [InlineData("AnySize3", true, 0L)]
+    [InlineData("CountSize1", true, 1L)]
+    public void Nested_group_by_bare_terminal_aggregate_counts_the_nested_groups(string aggregate, bool postGroupWhere, long expected)
+    {
+        var name = nameof(Nested_group_by_bare_terminal_aggregate_counts_the_nested_groups) + aggregate + postGroupWhere;
+        var result = NativeModeAssert.NativeAndParity(mode => RunNestedGroups(mode, name, q =>
+        {
+            var first = q.GroupBy(o => o.Country).Select(g => new { Land = g.Key, N = g.Count() });
+            var nested = (postGroupWhere ? first.Where(x => x.Land != "A") : first).GroupBy(x => x.N);
+            return new List<long>
+            {
+                aggregate switch
+                {
+                    "Count" => nested.Count(),
+                    "LongCount" => nested.LongCount(),
+                    "AnySize3" => nested.Any(g => g.Count() == 3) ? 1 : 0,
+                    _ => nested.Count(g => g.Count() == 1)
+                }
+            };
+        }));
+
+        Assert.Equal([expected], result);
+    }
+
+    [Fact]
+    public void Nested_group_by_over_a_distinct_then_where_counts_the_nested_groups()
+    {
+        // Distinct countries A, B, C, D; without A that leaves three, grouped by their length (all 1): one group.
+        var result = NativeModeAssert.NativeAndParity(mode => RunNestedGroups(mode,
+            nameof(Nested_group_by_over_a_distinct_then_where_counts_the_nested_groups), q =>
+                new List<int>
+                {
+                    q.Select(o => new { o.Country }).Distinct().Where(x => x.Country != "A").GroupBy(x => x.Country.Length).Count()
+                }));
+
+        Assert.Equal([1], result);
+    }
+
+    [Fact]
+    public void Nested_group_by_with_having_ordering_and_paging_on_the_nested_group()
+    {
+        // Now that the nested GroupBy is pending (Grouping cleared at the snapshot), its HAVING, ordering and paging use
+        // the ungrouped-GroupBy arms and are emitted around the nested $group. Nested groups: N = 1 (3 members) and
+        // N = 2 (1 member).
+        var name = nameof(Nested_group_by_with_having_ordering_and_paging_on_the_nested_group);
+        var result = NativeModeAssert.NativeAndParity(mode => RunNestedGroups<string>(mode, name, q =>
+        {
+            var first = q.GroupBy(o => o.Country).Select(g => new { Land = g.Key, N = g.Count() });
+            var having = first.GroupBy(x => x.N).Where(g => g.Count() > 1).Select(g => new { g.Key, M = g.Count() })
+                .AsEnumerable().Select(x => $"h{x.Key}:{x.M}");
+            var ordered = first.GroupBy(x => x.N).OrderByDescending(g => g.Key).Take(1).Select(g => new { g.Key, M = g.Count() })
+                .AsEnumerable().Select(x => $"o{x.Key}:{x.M}");
+            var skipped = first.GroupBy(x => x.N).OrderBy(g => g.Key).Skip(1).Select(g => new { g.Key, M = g.Count() })
+                .AsEnumerable().Select(x => $"s{x.Key}:{x.M}");
+            return [.. having, .. ordered, .. skipped];
+        }));
+
+        Assert.Equal(["h1:3", "o2:1", "s2:1"], result);
+    }
+
+    [Theory]
+    [InlineData("Count")]
+    [InlineData("Select")]
+    [InlineData("Having")]
+    public void Third_level_group_by_declines_cleanly(string shape)
+    {
+        // There is one Prior* slot: a third GroupBy would overwrite it, and the first $group would silently vanish.
+        // Levels: N = {A: 1, B: 1, C: 1, D: 2}; by N: {1: 3 members, 2: 1 member}, so M = {3, 1}; by M: {1: 1, 3: 1}.
+        var name = nameof(Third_level_group_by_declines_cleanly) + shape;
+        var result = NativeModeAssert.DeclinesCleanly(mode => RunNestedGroups<string>(mode, name, q =>
+        {
+            var third = q.GroupBy(o => o.Country).Select(g => new { Land = g.Key, N = g.Count() })
+                .GroupBy(x => x.N).Select(g => new { K = g.Key, M = g.Count() })
+                .GroupBy(x => x.M);
+            return shape switch
+            {
+                "Count" => [third.Count().ToString()],
+                "Select" => [.. third.Select(g => new { g.Key, C = g.Count() }).AsEnumerable().OrderBy(x => x.Key).Select(x => $"{x.Key}:{x.C}")],
+                _ => [.. third.Where(g => g.Key > 2).Select(g => new { g.Key, C = g.Count() }).AsEnumerable().Select(x => $"{x.Key}:{x.C}")]
+            };
+        }));
+
+        Assert.Equal(shape switch { "Count" => ["2"], "Select" => ["1:1", "3:1"], _ => ["3:1"] }, result);
     }
 }
