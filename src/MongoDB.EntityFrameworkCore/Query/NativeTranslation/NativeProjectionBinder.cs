@@ -91,6 +91,8 @@ internal static class NativeProjectionBinder
         // MongoShapedQueryCompilingExpressionVisitor.VisitProjectedQuery). Derived syntactically from the leaf: only
         // TryTranslateLeaf's string-sequence arm can admit that shape.
         var hasStringSequenceLeaf = false;
+        // Any leaf had a client-reapplied case mapping peeled off; committed to HasClientCaseMappingProjectionLeaf.
+        var hasCaseMappingLeaf = false;
         // Alias a bare selector body was admitted under (null otherwise); registered in the commit block with
         // AddProjection.
         string? bareProjectionAlias = null;
@@ -109,14 +111,16 @@ internal static class NativeProjectionBinder
             // TryGetProjectionMembers falls through to the bare-body case.
             case NewExpression or MemberInitExpression
                 when selector.Body.TryGetProjectionMembers(out var wrappedMembers):
-                foreach (var (memberName, memberValue) in wrappedMembers)
+                foreach (var (memberName, member) in wrappedMembers)
                 {
+                    var memberValue = PeelCaseMapping(member);
+                    hasCaseMappingLeaf |= !ReferenceEquals(memberValue, member);
                     var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], memberValue, memberName);
                     if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
                         return false;
                     if (!seenAliases.Add(alias))
                         return false;
-                    projections.Add(new MongoProjection(alias, leaf));
+                    projections.Add(new MongoProjection(alias, leaf, memberValue));
                     // The nav-entity leaf always registers a DocumentPath override, even though its alias equals the
                     // member name: the late-fallback strip it triggers is what supplies the retained _id.
                     if (alias != memberName || isOwnedNavEntityLeaf)
@@ -171,14 +175,16 @@ internal static class NativeProjectionBinder
             // avoids VisitNew's shared-ambient-member collision (see that flag's remarks).
             case NewExpression { Members: null, Arguments: { Count: > 1 } } when
                 selector.Body.TryGetProjectionMembers(out var positionalMembers, allowPositionalConstructorArguments: true):
-                foreach (var (memberName, memberValue) in positionalMembers)
+                foreach (var (memberName, member) in positionalMembers)
                 {
+                    var memberValue = PeelCaseMapping(member);
+                    hasCaseMappingLeaf |= !ReferenceEquals(memberValue, member);
                     var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], memberValue, memberName);
                     if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
                         return false;
                     if (!seenAliases.Add(alias))
                         return false;
-                    projections.Add(new MongoProjection(alias, leaf));
+                    projections.Add(new MongoProjection(alias, leaf, memberValue));
                     if (alias != memberName || isOwnedNavEntityLeaf)
                         namedAliasOverrides.Add((memberName, alias));
                     leafIsArray.Add(isArrayLeaf);
@@ -257,6 +263,9 @@ internal static class NativeProjectionBinder
         // strip works.
         bool TryBindAsBareProjection(Expression bareLikeExpr, string provisionalAlias, bool allowWholeRootEntityLeafForThis)
         {
+            var peeled = PeelCaseMapping(bareLikeExpr);
+            hasCaseMappingLeaf |= !ReferenceEquals(peeled, bareLikeExpr);
+            bareLikeExpr = peeled;
             if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], bareLikeExpr, provisionalAlias,
                     pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var bareLeaf, out var bareIsArrayLeaf, out _,
                     allowWholeRootEntityLeafForThis))
@@ -282,7 +291,7 @@ internal static class NativeProjectionBinder
 
             bareProjectionAlias = derivedAlias;
             seenAliases.Add(derivedAlias);
-            projections.Add(new MongoProjection(derivedAlias, bareLeaf));
+            projections.Add(new MongoProjection(derivedAlias, bareLeaf, bareLikeExpr));
             leafIsArray.Add(bareIsArrayLeaf);
             hasArrayLeaf |= bareIsArrayLeaf;
             hasStringSequenceLeaf |= bareLikeExpr is MethodCallExpression bareStringSequenceCall
@@ -349,6 +358,8 @@ internal static class NativeProjectionBinder
             mongoQ.Select.HasArrayProjectionLeaf = true;
         if (hasStringSequenceLeaf)
             mongoQ.Select.HasStringSequenceProjectionLeaf = true;
+        if (hasCaseMappingLeaf)
+            mongoQ.Select.HasClientCaseMappingProjectionLeaf = true;
         if (hasPositionalCtorProjection)
             mongoQ.Select.HasPositionalCtorProjectionShaper = true;
         return true;
@@ -356,6 +367,30 @@ internal static class NativeProjectionBinder
 
     private static bool IsEnumType(Type type)
         => (Nullable.GetUnderlyingType(type) ?? type).IsEnum;
+
+    /// <summary>
+    /// True for zero-argument <c>ToLower</c>/<c>ToUpper</c>/<c>ToLowerInvariant</c>/<c>ToUpperInvariant</c> on a
+    /// <see langword="string"/>. Their server forms are ASCII-only, so a projected leaf stages only the receiver (see
+    /// <see cref="PeelCaseMapping"/>) and the call is re-applied client-side.
+    /// </summary>
+    internal static bool IsCaseMappingCall(MethodCallExpression call)
+        => call is { Object.Type: var objectType, Arguments.Count: 0 }
+           && objectType == typeof(string)
+           && call.Method.DeclaringType == typeof(string)
+           && call.Method.Name is nameof(string.ToLower) or nameof(string.ToUpper)
+               or nameof(string.ToLowerInvariant) or nameof(string.ToUpperInvariant);
+
+    /// <summary>
+    /// The receiver of a (possibly repeated) case-mapping call, which is what the leaf stages; the call itself stays
+    /// in the shaper (see <c>MongoProjectionBindingExpressionVisitor.Visit</c>).
+    /// </summary>
+    private static Expression PeelCaseMapping(Expression leafExpression)
+    {
+        while (leafExpression is MethodCallExpression call && IsCaseMappingCall(call))
+            leafExpression = call.Object!;
+
+        return leafExpression;
+    }
 
     /// <summary>
     /// True for <c>Enumerable.AsEnumerable</c>/<c>ToList</c>/<c>ToArray</c> over a <see langword="string"/>
@@ -665,7 +700,13 @@ internal static class NativeProjectionBinder
             && (value is MongoSizeExpression or MongoFilteredSizeExpression or MongoConvertExpression
                     or MongoConditionalExpression or MongoDatePartExpression or MongoDateTimeOffsetLocalExpression
                     or MongoElementRefExpression or MongoDateAddExpression or MongoCoalesceExpression
-                    or MongoMathExpression or MongoTrimExpression or MongoStringFirstOrLastExpression
+                    or MongoMathExpression or MongoTrimExpression or MongoSubstringExpression or MongoReplaceExpression
+                    or MongoStringFirstOrLastExpression
+                // Predicate/string-scalar leaves only render in $project via the aggregation dialect, so decline a
+                // shape it can't render here (as gate 1c4 does for a bare body) rather than fail at render time.
+                || ((value is MongoRegexExpression or MongoStringLengthExpression or MongoStringIndexOfExpression
+                        || IsProjectablePredicate(value))
+                    && MongoAggregationExpressionRenderer.CanRender(value))
                 || (value is MongoConstantExpression or MongoParameterExpression
                     && NativeSlotPopulator.TryProbeBareValueRenders(
                         value, NativeSlotPopulator.UnwrapBoxingToObjectType(leafExpression)))
@@ -1389,8 +1430,17 @@ internal static class NativeProjectionBinder
             case MongoMathExpression when IsArrayFreeComputedSubtree(leaf):
                 break;
 
-            // Gate 1c3: Trim/TrimStart/TrimEnd and string FirstOrDefault/LastOrDefault; same subtree check.
-            case MongoTrimExpression or MongoStringFirstOrLastExpression when IsArrayFreeComputedSubtree(leaf):
+            // Gate 1c3: Trim/TrimStart/TrimEnd, Substring, Replace, and string FirstOrDefault/LastOrDefault; same subtree check.
+            case MongoTrimExpression or MongoSubstringExpression or MongoReplaceExpression or MongoStringFirstOrLastExpression
+                when IsArrayFreeComputedSubtree(leaf):
+                break;
+
+            // Gate 1c4: string predicates, Length/IndexOf, comparisons, and logical and/or/not, rendered as operator
+            // documents. CanRender because a predicate node can hold shapes the aggregation dialect declines.
+            case MongoRegexExpression or MongoStringLengthExpression or MongoStringIndexOfExpression
+                    or MongoBinaryExpression or MongoUnaryExpression
+                when (leaf is not (MongoBinaryExpression or MongoUnaryExpression) || IsProjectablePredicate(leaf))
+                     && IsArrayFreeComputedSubtree(leaf) && MongoAggregationExpressionRenderer.CanRender(leaf):
                 break;
 
             // Gate 1d: coalesce (`??`, rendered as $ifNull); the subtree check covers the whole right-nested chain.
@@ -1408,6 +1458,38 @@ internal static class NativeProjectionBinder
         alias = SyntheticBareProjectionAlias;
         return true;
     }
+
+    /// <summary>
+    /// Whether a comparison, logical and/or, or logical not can be projected as a value: its aggregation rendering
+    /// must answer what .NET does, including for a null or missing field.
+    /// </summary>
+    /// <remarks>
+    /// A lifted relational comparison (<c>x.NullableInt &lt; 5</c>) declines: .NET answers <see langword="false"/>
+    /// for null, but <c>$lt</c> orders null/missing below every number and answers <see langword="true"/>. (The
+    /// query dialect type-brackets, so the same node is exact in <c>$match</c>.) <c>$eq</c>/<c>$ne</c> against null
+    /// are exact via the renderer's <c>$ifNull</c> wrap.
+    /// </remarks>
+    private static bool IsProjectablePredicate(MongoExpression expression)
+        => expression switch
+        {
+            MongoBinaryExpression
+            {
+                Operator: MongoBinaryOperator.LessThan or MongoBinaryOperator.LessThanOrEqual
+                or MongoBinaryOperator.GreaterThan or MongoBinaryOperator.GreaterThanOrEqual
+            } relational
+                => Nullable.GetUnderlyingType(relational.Left.Type) is null
+                    && Nullable.GetUnderlyingType(relational.Right.Type) is null,
+            MongoBinaryExpression { Operator: MongoBinaryOperator.Equal or MongoBinaryOperator.NotEqual } => true,
+            MongoBinaryExpression { Operator: MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse } logical
+                => IsProjectablePredicateOperand(logical.Left) && IsProjectablePredicateOperand(logical.Right),
+            MongoUnaryExpression { Operator: MongoUnaryOperator.Not } not => IsProjectablePredicateOperand(not.Operand),
+            _ => false
+        };
+
+    // Operands of and/or/not: nested predicates are held to the same rule; other nodes (regex, bare bool field,
+    // constants) are left to CanRender.
+    private static bool IsProjectablePredicateOperand(MongoExpression operand)
+        => operand is not (MongoBinaryExpression or MongoUnaryExpression) || IsProjectablePredicate(operand);
 
     /// <summary>
     /// Whether a bare size leaf's un-stripped driver fallback cannot abort on a missing or null array — gate 1a's
@@ -1474,7 +1556,20 @@ internal static class NativeProjectionBinder
             MongoMathExpression math => math.Operands.All(IsArrayFreeComputedSubtree),
             MongoTrimExpression trim
                 => IsArrayFreeComputedSubtree(trim.Source) && (trim.Chars is null || IsArrayFreeComputedSubtree(trim.Chars)),
+            MongoSubstringExpression s => IsArrayFreeComputedSubtree(s.Source) && IsArrayFreeComputedSubtree(s.Start)
+                && (s.Length is null || IsArrayFreeComputedSubtree(s.Length)),
+            MongoReplaceExpression r => IsArrayFreeComputedSubtree(r.Input) && IsArrayFreeComputedSubtree(r.Find)
+                && IsArrayFreeComputedSubtree(r.Replacement),
+            MongoStringCompareExpression cmp => IsArrayFreeComputedSubtree(cmp.Left) && IsArrayFreeComputedSubtree(cmp.Right),
             MongoStringFirstOrLastExpression firstOrLast => IsArrayFreeComputedSubtree(firstOrLast.Source),
+            MongoRegexExpression r => IsArrayFreeComputedSubtree(r.Field) && IsArrayFreeComputedSubtree(r.Term),
+            MongoStringLengthExpression l => IsArrayFreeComputedSubtree(l.Operand),
+            MongoStringIndexOfExpression io => IsArrayFreeComputedSubtree(io.Haystack) && IsArrayFreeComputedSubtree(io.Needle)
+                && (io.Start is null || IsArrayFreeComputedSubtree(io.Start)),
+            MongoUnaryExpression u => IsArrayFreeComputedSubtree(u.Operand),
+            // A regex Field can be a Distinct alias ref. Applies to every gate using this check: an element ref is a
+            // plain path read (never $size), so it can't abort a fallback on a missing array.
+            MongoElementRefExpression => true,
             MongoFieldExpression or MongoConstantExpression or MongoParameterExpression => true,
             // A $type/$isNumber test on its field; never touches an array.
             MongoNumericTypeBracketExpression => true,

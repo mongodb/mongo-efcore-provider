@@ -407,6 +407,52 @@ internal sealed class MongoSelectDefinition
     }
 
     /// <summary>
+    /// Rewrites every recorded <see cref="MongoProjection.Source"/> (built over the selector parameter) into the
+    /// form the projection binding visitor sees (the parameter replaced by the source shaper).
+    /// </summary>
+    internal void RebaseProjectionSources(Func<Expression, Expression> rebase)
+    {
+        for (var i = 0; i < _projections.Count; i++)
+        {
+            if (_projections[i].Source is { } source)
+            {
+                _projections[i] = _projections[i] with { Source = rebase(source) };
+            }
+        }
+    }
+
+    /// <summary>
+    /// Looks up the leaf the emit side staged into <see cref="Projection"/> for <paramref name="memberName"/>
+    /// (<see langword="null"/> for a bare selector body), applying any alias override.
+    /// </summary>
+    internal bool TryGetProjectionLeaf(string? memberName, [NotNullWhen(true)] out MongoProjection? leaf)
+    {
+        leaf = null;
+
+        if (Route != NativeRoute.Projection)
+        {
+            return false;
+        }
+
+        var alias = TryGetProjectionAlias(memberName, out var overriddenAlias) ? overriddenAlias : memberName;
+        if (alias is null)
+        {
+            return false;
+        }
+
+        foreach (var projection in Projection)
+        {
+            if (projection.Alias == alias)
+            {
+                leaf = projection;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// <see langword="true"/> when a bare selector body populated <see cref="Projection"/>.
     /// </summary>
     internal bool IsBareProjection
@@ -707,6 +753,18 @@ internal sealed class MongoSelectDefinition
     /// shaper.
     /// </remarks>
     internal bool HasStringSequenceProjectionLeaf { get; set; }
+
+    /// <summary>
+    /// <see langword="true"/> when a <see cref="Projection"/> leaf is the receiver of a client-reapplied
+    /// <c>ToLower</c>/<c>ToUpper</c> (<c>NativeProjectionBinder.IsCaseMappingCall</c>): the projected document holds
+    /// the raw receiver, not the value the query sees.
+    /// </summary>
+    /// <remarks>
+    /// So a later operator that reads projected values (Distinct, a set op, Where, OrderBy, an aggregate, a
+    /// predicate terminal) must decline natively; see
+    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.IsProjectedValueFreeOperator</c>.
+    /// </remarks>
+    internal bool HasClientCaseMappingProjectionLeaf { get; set; }
 
     /// <summary>
     /// <see langword="true"/> when <see cref="Route"/> is <see cref="NativeRoute.WholeEntity"/> only because the

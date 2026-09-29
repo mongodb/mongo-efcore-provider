@@ -557,6 +557,32 @@ public class MongoQueryLanguageRendererTests
     }
 
     [Fact]
+    public void Renders_pattern_kind_as_regex_with_its_own_options()
+    {
+        // Regex.IsMatch(field, constantPattern): pattern is unescaped and options come verbatim from
+        // PatternOptions, not from CaseInsensitive/"s".
+        var name = GetProperty<Customer>("Name");
+        var expr = new MongoRegexExpression(new MongoFieldExpression(name, "Name"),
+            MongoRegexKind.Pattern, new MongoConstantExpression("^S", name), negated: false, patternOptions: "");
+        var rendered = new MongoQueryLanguageRenderer().Render(expr, new PlaceholderTable());
+        Assert.Equal(
+            BsonDocument.Parse("{ Name: { $regularExpression: { pattern: '^S', options: '' } } }"),
+            rendered);
+    }
+
+    [Fact]
+    public void Renders_negated_pattern_kind_as_not_wrapped_regex()
+    {
+        var name = GetProperty<Customer>("Name");
+        var expr = new MongoRegexExpression(new MongoFieldExpression(name, "Name"),
+            MongoRegexKind.Pattern, new MongoConstantExpression("^S", name), negated: true, patternOptions: "");
+        var rendered = new MongoQueryLanguageRenderer().Render(expr, new PlaceholderTable());
+        Assert.Equal(
+            BsonDocument.Parse("{ Name: { $not: { $regularExpression: { pattern: '^S', options: '' } } } }"),
+            rendered);
+    }
+
+    [Fact]
     public void Field_to_field_regex_falls_through_to_expr()
     {
         var name = GetProperty<Customer>("Name");

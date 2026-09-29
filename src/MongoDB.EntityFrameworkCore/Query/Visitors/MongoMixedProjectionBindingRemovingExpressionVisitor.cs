@@ -77,6 +77,13 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
 
     protected override Expression VisitExtension(Expression extensionExpression)
     {
+        // Whole documents come back here (no $project), so the server-computed alias doesn't exist: evaluate the
+        // client-side form over the document reads instead.
+        if (extensionExpression is NativeComputedLeafExpression computedLeaf)
+        {
+            return Visit(computedLeaf.ClientExpression);
+        }
+
         if (extensionExpression is ProjectionBindingExpression projectionBindingExpression)
         {
             if (projectionBindingExpression.ProjectionMember != null)

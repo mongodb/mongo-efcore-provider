@@ -208,7 +208,7 @@ public class MongoAggregationExpressionRendererTests
 
         var placeholders = new PlaceholderTable();
         var rendered = MongoAggregationExpressionRenderer.Render(node, placeholders);
-        Assert.Equal(new BsonDocument("$in", new BsonArray { "$Status", new BsonArray { "A", "B" } }), rendered);
+        Assert.Equal(new BsonDocument("$in", new BsonArray { "$Status", new BsonDocument("$literal", new BsonArray { "A", "B" }) }), rendered);
     }
 
     [Fact]
@@ -224,7 +224,7 @@ public class MongoAggregationExpressionRendererTests
         var placeholders = new PlaceholderTable();
         var rendered = MongoAggregationExpressionRenderer.Render(node, placeholders);
         Assert.Equal(
-            new BsonDocument("$not", new BsonArray { new BsonDocument("$in", new BsonArray { "$Status", new BsonArray { "A" } }) }),
+            new BsonDocument("$not", new BsonArray { new BsonDocument("$in", new BsonArray { "$Status", new BsonDocument("$literal", new BsonArray { "A" }) }) }),
             rendered);
     }
 
@@ -262,7 +262,7 @@ public class MongoAggregationExpressionRendererTests
         var rendered = Assert.IsType<BsonDocument>(MongoAggregationExpressionRenderer.Render(node, placeholders));
         var operands = Assert.IsType<BsonArray>(rendered["$in"]);
         Assert.Equal("$Status", operands[0]);
-        var inArray = Assert.IsType<BsonArray>(operands[1]);
+        var inArray = Assert.IsType<BsonArray>(Assert.IsType<BsonDocument>(operands[1])["$literal"]);
         Assert.Equal(2, inArray.Count);
         Assert.True(PlaceholderTable.TryGetPlaceholderIndex(inArray[0], out var index0));
         Assert.Equal(0, index0);
@@ -659,8 +659,8 @@ public class MongoAggregationExpressionRendererTests
     }
 
     // ------------------------------------------------------------------
-    // MongoRegexExpression with a constant Term — every CanRender caller is in an aggregation scope with no
-    // $regularExpression alternative, so it renders like the field-term case via $indexOfCP/$strLenCP.
+    // MongoRegexExpression with a constant/parameter Term — $regexMatch with the same BSON regex the query dialect
+    // uses (Unicode-correct "i", unlike the ASCII-only $toLower fold of the field-term case).
     // ------------------------------------------------------------------
 
     [Fact]
@@ -675,17 +675,211 @@ public class MongoAggregationExpressionRendererTests
     }
 
     [Fact]
-    public void Renders_constant_term_starts_with_via_indexOfCP()
+    public void Renders_constant_term_starts_with_via_regexMatch()
     {
         var status = GetProperty<Customer>("Status");
         var expr = new MongoRegexExpression(
             new MongoFieldExpression(status, "Status"), MongoRegexKind.StartsWith,
-            new MongoConstantExpression("S", forSerialization: null), negated: false);
+            new MongoConstantExpression("S.", forSerialization: null), negated: false);
 
         var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
 
         Assert.Equal(
-            """{ "$eq" : [{ "$indexOfCP" : ["$Status", "S"] }, 0] }""",
+            """{ "$regexMatch" : { "input" : "$Status", "regex" : { "$regularExpression" : { "pattern" : "^S\\.", "options" : "s" } } } }""",
+            result.ToJson());
+    }
+
+    [Fact]
+    public void Renders_negated_case_insensitive_constant_term_contains_via_regexMatch_not_toLower()
+    {
+        var status = GetProperty<Customer>("Status");
+        var expr = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.Contains,
+            new MongoConstantExpression("ÉCO", forSerialization: null), negated: true, caseInsensitive: true);
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$not" : [{ "$regexMatch" : { "input" : "$Status", "regex" : { "$regularExpression" : { "pattern" : "ÉCO", "options" : "is" } } } }] }""",
+            result.ToJson());
+    }
+
+    [Fact]
+    public void Renders_parameter_term_ends_with_via_a_regex_placeholder()
+    {
+        var status = GetProperty<Customer>("Status");
+        var expr = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.EndsWith,
+            new MongoParameterExpression("__p_0", forSerialization: null), negated: false, caseInsensitive: true);
+        var placeholders = new PlaceholderTable();
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, placeholders);
+
+        Assert.Equal(
+            """{ "$regexMatch" : { "input" : "$Status", "regex" : { "__mongoef_param__" : 0 } } }""",
+            result.ToJson());
+        var entry = Assert.Single(placeholders.Entries);
+        Assert.Equal(MongoRegexKind.EndsWith, entry.RegexKind);
+        Assert.True(entry.RegexCaseInsensitive);
+    }
+
+    [Fact]
+    public void Like_with_a_constant_pattern_renders_via_case_insensitive_regexMatch()
+    {
+        var status = GetProperty<Customer>("Status");
+        var expr = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.Like,
+            new MongoConstantExpression("S%", forSerialization: null), negated: false);
+
+        Assert.True(MongoAggregationExpressionRenderer.CanRender(expr));
+        Assert.Equal(
+            """{ "$regexMatch" : { "input" : "$Status", "regex" : { "$regularExpression" : { "pattern" : "^S.*$", "options" : "is" } } } }""",
+            MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable()).ToJson());
+    }
+
+    // ------------------------------------------------------------------
+    // Equal/NotEqual against null: $eq/$ne don't equate missing with null, so the other side is $ifNull-wrapped.
+    // ------------------------------------------------------------------
+
+    [Theory]
+    [InlineData(nameof(MongoBinaryOperator.Equal), "$eq")]
+    [InlineData(nameof(MongoBinaryOperator.NotEqual), "$ne")]
+    public void Comparison_against_a_null_constant_treats_a_missing_field_as_null(string op, string mql)
+    {
+        var status = GetProperty<Customer>("Status");
+        var expr = new MongoBinaryExpression(
+            Enum.Parse<MongoBinaryOperator>(op), new MongoFieldExpression(status, "Status"), new MongoConstantExpression(null, forSerialization: null));
+
+        Assert.Equal(
+            $$"""{ "{{mql}}" : [{ "$ifNull" : ["$Status", null] }, null] }""",
+            MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable()).ToJson());
+    }
+
+    [Fact]
+    public void Comparison_against_a_parameter_treats_a_missing_field_as_null_on_either_side()
+    {
+        var status = GetProperty<Customer>("Status");
+        var expr = new MongoBinaryExpression(
+            MongoBinaryOperator.Equal,
+            new MongoParameterExpression("__p_0", forSerialization: null),
+            new MongoFieldExpression(status, "Status"));
+
+        Assert.Equal(
+            """{ "$eq" : [{ "$literal" : { "__mongoef_param__" : 0 } }, { "$ifNull" : ["$Status", null] }] }""",
+            MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable()).ToJson());
+    }
+
+    [Fact]
+    public void Comparison_against_a_non_null_constant_is_not_ifNull_wrapped()
+    {
+        var status = GetProperty<Customer>("Status");
+        var expr = new MongoBinaryExpression(
+            MongoBinaryOperator.Equal, new MongoFieldExpression(status, "Status"), new MongoConstantExpression("S", forSerialization: null));
+
+        Assert.Equal(
+            """{ "$eq" : ["$Status", { "$literal" : "S" }] }""",
+            MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable()).ToJson());
+    }
+
+    // ------------------------------------------------------------------
+    // MongoRegexExpression.Exact — always $regexMatch with a literal BSON regex, never $toLower-folded $eq
+    // (see MongoExpressionTranslatorStringEqualsTests / NativeStringCaseInsensitiveMatchTests for why: $toLower
+    // is ASCII-only).
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Renders_exact_case_insensitive_constant_term_via_regexMatch()
+    {
+        var status = GetProperty<Customer>("Status");
+        var expr = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.Exact,
+            new MongoConstantExpression("seattle", forSerialization: null), negated: false, caseInsensitive: true);
+
+        Assert.True(MongoAggregationExpressionRenderer.CanRender(expr));
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$regexMatch" : { "input" : "$Status", "regex" : { "$regularExpression" : { "pattern" : "^seattle\\z", "options" : "is" } } } }""",
+            result.ToJson());
+    }
+
+    // "$" also matches before a trailing "\n", so "seattle\n" would equal "seattle"; "\z" is end-of-string only.
+    [Fact]
+    public void Exact_pattern_is_anchored_at_the_absolute_end()
+    {
+        Assert.Equal("^seattle\\z", MongoRegexPatternBuilder.BuildPattern("seattle", MongoRegexKind.Exact));
+    }
+
+    [Fact]
+    public void CanRender_reports_false_for_a_field_to_field_exact_term()
+    {
+        var status = GetProperty<Customer>("Status");
+        var nickname = GetProperty<Customer>("Nickname");
+        var node = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.Exact,
+            new MongoFieldExpression(nickname, "Nickname"), negated: false, caseInsensitive: true);
+
+        Assert.False(MongoAggregationExpressionRenderer.CanRender(node));
+        Assert.Throws<NativeTranslationNotSupportedException>(
+            () => MongoAggregationExpressionRenderer.Render(node, new PlaceholderTable()));
+    }
+
+    // ------------------------------------------------------------------
+    // MongoRegexExpression.Pattern — Regex.IsMatch(field, constantPattern[, options]) — always $regexMatch with
+    // the pattern unescaped/unanchored and options taken verbatim from PatternOptions, never $toLower-folded.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void CanRender_reports_true_for_a_constant_pattern_term()
+    {
+        var status = GetProperty<Customer>("Status");
+        var node = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.Pattern,
+            new MongoConstantExpression("^S", forSerialization: null), negated: false, patternOptions: "im");
+
+        Assert.True(MongoAggregationExpressionRenderer.CanRender(node));
+    }
+
+    [Fact]
+    public void CanRender_reports_false_for_a_field_to_field_pattern_term()
+    {
+        var status = GetProperty<Customer>("Status");
+        var nickname = GetProperty<Customer>("Nickname");
+        var node = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.Pattern,
+            new MongoFieldExpression(nickname, "Nickname"), negated: false);
+
+        Assert.False(MongoAggregationExpressionRenderer.CanRender(node));
+    }
+
+    [Fact]
+    public void Renders_pattern_term_via_regexMatch_with_its_own_options()
+    {
+        var status = GetProperty<Customer>("Status");
+        var expr = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.Pattern,
+            new MongoConstantExpression("^S", forSerialization: null), negated: false, patternOptions: "im");
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$regexMatch" : { "input" : "$Status", "regex" : { "$literal" : "^S" }, "options" : "im" } }""",
+            result.ToJson());
+    }
+
+    [Fact]
+    public void Renders_negated_pattern_term_wraps_regexMatch_in_not()
+    {
+        var status = GetProperty<Customer>("Status");
+        var expr = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.Pattern,
+            new MongoConstantExpression("^S", forSerialization: null), negated: true, patternOptions: "");
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$not" : [{ "$regexMatch" : { "input" : "$Status", "regex" : { "$literal" : "^S" }, "options" : "" } }] }""",
             result.ToJson());
     }
 
@@ -734,6 +928,184 @@ public class MongoAggregationExpressionRendererTests
 
         Assert.Equal(
             """{ "$cond" : { "if" : { "$eq" : ["$Status", "$Nickname"] }, "then" : { "$literal" : "match" }, "else" : { "$literal" : "$Year" } } }""",
+            result.ToJson());
+    }
+
+    [Fact]
+    public void IndexOf_needle_dollar_prefixed_constant_is_literal_wrapped()
+    {
+        var status = GetProperty<Customer>("Status");
+        var expr = new MongoStringIndexOfExpression(
+            new MongoFieldExpression(status, "Text"),
+            new MongoConstantExpression("$Text", forSerialization: null),
+            new MongoConstantExpression(2, forSerialization: null));
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$indexOfCP" : ["$Text", { "$literal" : "$Text" }, 2] }""",
+            result.ToJson());
+    }
+
+    [Fact]
+    public void Substring_one_arg_length_derived_from_strLenCP()
+    {
+        var status = GetProperty<Customer>("Status");
+        var expr = new MongoSubstringExpression(
+            new MongoFieldExpression(status, "Text"),
+            new MongoConstantExpression(1, forSerialization: null),
+            length: null);
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$substrCP" : ["$Text", 1, { "$subtract" : [{ "$strLenCP" : { "$ifNull" : ["$Text", ""] } }, 1] }] }""",
+            result.ToJson());
+    }
+
+    [Fact]
+    public void Replace_find_and_replacement_are_literal_wrapped()
+    {
+        var status = GetProperty<Customer>("Status");
+        var textField = new MongoFieldExpression(status, "Text");
+        var expr = new MongoReplaceExpression(
+            textField,
+            new MongoConstantExpression("$Text", forSerialization: null),
+            new MongoConstantExpression("x", forSerialization: null));
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$replaceAll" : { "input" : "$Text", "find" : { "$literal" : "$Text" }, "replacement" : { "$ifNull" : [{ "$literal" : "x" }, ""] } } }""",
+            result.ToJson());
+    }
+
+    [Fact]
+    public void StringCompare_dollar_prefixed_constant_is_literal_wrapped()
+    {
+        var status = GetProperty<Customer>("Status");
+        var textField = new MongoFieldExpression(status, "Text");
+        var expr = new MongoStringCompareExpression(textField, new MongoConstantExpression("$Text", forSerialization: null));
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$cmp" : ["$Text", { "$literal" : "$Text" }] }""",
+            result.ToJson());
+    }
+
+    // ------------------------------------------------------------------
+    // Every string constant/parameter operand is $literal-wrapped; a "$"-prefixed value would otherwise be read
+    // as a field path (e.g. comparing against a "$PasswordHash" search term compares against that field).
+    // ------------------------------------------------------------------
+
+    private static MongoExpression TextField() => new MongoFieldExpression(GetProperty<Customer>("Status"), "Text");
+
+    private static MongoExpression Dollar(string value = "$Text") => new MongoConstantExpression(value, forSerialization: null);
+
+    [Theory]
+    [InlineData("Equal", "$eq")]
+    [InlineData("NotEqual", "$ne")]
+    [InlineData("LessThan", "$lt")]
+    [InlineData("GreaterThanOrEqual", "$gte")]
+    public void Comparison_dollar_prefixed_constant_operand_is_literal_wrapped(string op, string mql)
+    {
+        var expr = new MongoBinaryExpression(
+            Enum.Parse<MongoBinaryOperator>(op),
+            new MongoReplaceExpression(TextField(), Dollar("zz"), Dollar("yy")),
+            Dollar());
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            $$"""{ "{{mql}}" : [{ "$replaceAll" : { "input" : "$Text", "find" : { "$literal" : "zz" }, "replacement" : { "$ifNull" : [{ "$literal" : "yy" }, ""] } } }, { "$literal" : "$Text" }] }""",
+            result.ToJson());
+    }
+
+    [Fact]
+    public void Comparison_parameter_operand_is_literal_wrapped()
+    {
+        var expr = new MongoBinaryExpression(
+            MongoBinaryOperator.Equal,
+            new MongoReplaceExpression(TextField(), Dollar("zz"), Dollar("yy")),
+            new MongoParameterExpression("p", forSerialization: null));
+
+        var placeholders = new PlaceholderTable();
+        var result = MongoAggregationExpressionRenderer.Render(expr, placeholders);
+
+        Assert.Equal(
+            $$"""{ "$literal" : { "{{PlaceholderTable.SentinelKey}}" : 0 } }""",
+            result["$eq"][1].ToJson());
+    }
+
+    [Fact]
+    public void Comparison_numeric_constant_operand_is_not_wrapped()
+    {
+        var expr = new MongoBinaryExpression(
+            MongoBinaryOperator.GreaterThan,
+            new MongoStringLengthExpression(TextField()),
+            new MongoConstantExpression(5, forSerialization: null));
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal("""{ "$gt" : [{ "$strLenCP" : "$Text" }, 5] }""", result.ToJson());
+    }
+
+    [Fact]
+    public void Concat_dollar_prefixed_constant_and_parameter_operands_are_literal_wrapped()
+    {
+        var expr = new MongoConcatExpression(
+            [TextField(), Dollar("$Order"), new MongoParameterExpression("p", forSerialization: null)]);
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            $$"""{ "$concat" : ["$Text", { "$literal" : "$Order" }, { "$literal" : { "{{PlaceholderTable.SentinelKey}}" : 0 } }] }""",
+            result.ToJson());
+    }
+
+    [Fact]
+    public void IndexOf_dollar_prefixed_constant_haystack_is_literal_wrapped()
+    {
+        var expr = new MongoStringIndexOfExpression(Dollar("$Order"), TextField());
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal("""{ "$indexOfCP" : [{ "$literal" : "$Order" }, "$Text"] }""", result.ToJson());
+    }
+
+    [Fact]
+    public void Trim_dollar_constant_chars_are_literal_wrapped()
+    {
+        var expr = new MongoTrimExpression(TextField(), MongoTrimSide.Both, Dollar("$"));
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal("""{ "$trim" : { "input" : "$Text", "chars" : { "$literal" : "$" } } }""", result.ToJson());
+    }
+
+    [Fact]
+    public void Computed_in_constant_string_values_are_literal_wrapped()
+    {
+        var expr = new MongoComputedInExpression(
+            new MongoReplaceExpression(TextField(), Dollar("zz"), Dollar("yy")),
+            new MongoConstantExpression(new[] { "$Text", "a" }, forSerialization: null),
+            negated: false);
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal("""{ "$literal" : ["$Text", "a"] }""", result["$in"][1].ToJson());
+    }
+
+    [Fact]
+    public void IsMatch_dollar_prefixed_constant_input_is_literal_wrapped()
+    {
+        var expr = new MongoRegexExpression(TextField(), MongoRegexKind.IsMatch, Dollar("$Order"), negated: false);
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$regexMatch" : { "input" : { "$literal" : "$Order" }, "regex" : "$Text", "options" : "" } }""",
             result.ToJson());
     }
 

@@ -249,6 +249,26 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 _projectionMapping[dateAddMember] = dateAddCandidate;
                 return new ProjectionBindingExpression(_queryExpression, dateAddMember, expression.Type);
 
+            // ToLower/ToUpper (and the Invariant forms) over any string receiver: $toLower/$toUpper are ASCII-only, so
+            // the call always runs client-side over the bound receiver (NativeProjectionBinder stages only the
+            // receiver), with null propagated. As a projected value it also stays off driver-LINQ push-down (see
+            // ProjectionAnalyzer.HasCaseMappingProjectedValue).
+            case MethodCallExpression caseMappingCall when NativeProjectionBinder.IsCaseMappingCall(caseMappingCall):
+                return NullPropagatingStringCall(caseMappingCall, NullPropagatingReceiver(Visit(caseMappingCall.Object)!));
+
+            // A computed string/math/predicate leaf (`x.S.Substring(1, 2)`, `x.S.Contains("a")`, `!x.S.Contains("a")`,
+            // `x.S == null`) that the native $project computes whole. Bind it as usual (receiver to the alias, the
+            // call re-applied client-side), so the mixed shaper and driver-LINQ push-down analysis keep working in
+            // every query mode, and wrap it so the native alias reader can instead read the computed value once
+            // (see NativeComputedLeafExpression). Matched structurally against the leaf the emit side staged for
+            // this member, so only the exact subtree the server computed is wrapped.
+            case MethodCallExpression or UnaryExpression { NodeType: ExpressionType.Not } or BinaryExpression
+                when IsNativeComputedLeaf(expression):
+                var computedMember = GetCurrentProjectionMember();
+                var clientExpression = base.Visit(expression);
+                return new NativeComputedLeafExpression(
+                    clientExpression, new ProjectionBindingExpression(_queryExpression, computedMember, expression.Type));
+
             case MethodCallExpression methodCallExpression
                 when IsScalarMethodPropertyAccess(methodCallExpression):
                 var projMember = GetCurrentProjectionMember();
@@ -335,6 +355,54 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
         return false;
     }
+
+    // `receiver == null ? null : receiver.M(args)`, evaluating the receiver once.
+    private static Expression NullPropagatingStringCall(MethodCallExpression call, Expression receiver)
+    {
+        var value = Expression.Variable(typeof(string), "value");
+        var nullString = Expression.Constant(null, typeof(string));
+        return Expression.Block(
+            typeof(string),
+            [value],
+            Expression.Assign(value, receiver),
+            Expression.Condition(
+                Expression.Equal(value, nullString), nullString, Expression.Call(value, call.Method, call.Arguments)));
+    }
+
+    /// <summary>
+    /// True for the client-side case-mapping form <see cref="Visit"/> produces for <c>x.S.ToLower()</c> et al.
+    /// (read by <c>ProjectionAnalyzer.HasCaseMappingProjectedValue</c>).
+    /// </summary>
+    internal static bool IsClientCaseMapping(Expression expression)
+        => expression is BlockExpression { Result: ConditionalExpression { IfFalse: MethodCallExpression call } }
+           && NativeProjectionBinder.IsCaseMappingCall(call);
+
+    // Null propagation down a client-side chain of string instance calls (`x.S.Trim()` under `.ToUpper()`), as over
+    // the server-computed value. A native computed leaf keeps its raw read; only its client form (which the mixed
+    // shaper evaluates over whole documents) is rewritten.
+    private static Expression NullPropagatingReceiver(Expression receiver)
+        => receiver switch
+        {
+            NativeComputedLeafExpression computedLeaf
+                => new NativeComputedLeafExpression(
+                    NullPropagatingReceiver(computedLeaf.ClientExpression), computedLeaf.Binding),
+            MethodCallExpression { Object: { Type: var objectType } instance } call
+                when objectType == typeof(string) && call.Method.DeclaringType == typeof(string)
+                     && call.Type == typeof(string)
+                => NullPropagatingStringCall(call, NullPropagatingReceiver(instance)),
+            _ => receiver
+        };
+
+    private bool IsNativeComputedLeaf(Expression expression)
+        => _queryExpression.Select.TryGetProjectionLeaf(GetCurrentProjectionMember().Last?.Name, out var projection)
+           && projection.Value.Source is { } source
+           && ExpressionEqualityComparer.Instance.Equals(source, expression)
+           && projection.Value.Expression is MongoRegexExpression or MongoStringIndexOfExpression or MongoBinaryExpression
+               or MongoUnaryExpression or MongoMathExpression or MongoTrimExpression or MongoSubstringExpression
+               or MongoReplaceExpression or MongoStringFirstOrLastExpression
+               // A translate-time fold of a computed node (`x.S.ToLower() == "Seattle"` is false): the alias holds
+               // the folded value, not the receiver the client form would read.
+               or MongoConstantExpression;
 
     private static bool IsArithmeticNodeType(ExpressionType nodeType)
         => nodeType is ExpressionType.Add or ExpressionType.Subtract or ExpressionType.Multiply

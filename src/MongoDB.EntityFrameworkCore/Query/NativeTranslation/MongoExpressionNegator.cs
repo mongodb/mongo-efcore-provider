@@ -25,7 +25,8 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <para>
 /// Used for universal quantifiers: <c>All(pred)</c> renders as a negated <c>$elemMatch</c> over <c>¬pred</c>
 /// (<c>MongoExpressionTranslator</c>), and a top-level <c>All</c> aggregate's predicate is negated into a
-/// <c>$match</c> conjunct (<c>NativeCardinalityBinder</c>).
+/// <c>$match</c> conjunct (<c>NativeCardinalityBinder</c>). <c>MongoExpressionTranslator</c>'s <c>Not</c> case also
+/// uses it to De Morgan a negated <c>&amp;&amp;</c>/<c>||</c>, which must not become an aggregation <c>$not</c>.
 /// </para>
 /// <para>
 /// <b>Exact complement or decline, never an approximation</b> — an approximate complement returns wrong rows
@@ -40,9 +41,10 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// </para>
 /// <para>
 /// <b>Output is query-dialect renderable</b> (never the <c>$expr</c> catch-all, a server error inside
-/// <c>$elemMatch</c>), except for <see cref="MongoQuantifierExpression"/> and a field-to-field
-/// <see cref="MongoRegexExpression"/>. Those are admitted only because their callers place the negation at a
-/// top-level <c>$match</c> conjunct or re-check renderability; a new caller must check placement, not just
+/// <c>$elemMatch</c>), including each operand of an <c>AndAlso</c>/<c>OrElse</c> complement. The exceptions are
+/// <see cref="MongoQuantifierExpression"/> and a field-to-field <see cref="MongoRegexExpression"/>, admitted on
+/// their own only (never as an <c>AndAlso</c>/<c>OrElse</c> operand) because their callers place the negation at
+/// a top-level <c>$match</c> conjunct or re-check renderability; a new caller must check placement, not just
 /// result type.
 /// </para>
 /// </remarks>
@@ -65,7 +67,7 @@ internal static class MongoExpressionNegator
             MongoInExpression e => new MongoInExpression(e.Field, e.Values, !e.Negated),
             MongoComputedInExpression e => new MongoComputedInExpression(e.Needle, e.Values, !e.Negated),
             MongoArrayContainsExpression e => new MongoArrayContainsExpression(e.Field, e.Value, !e.Negated),
-            MongoRegexExpression e => new MongoRegexExpression(e.Field, e.Kind, e.Term, !e.Negated, e.CaseInsensitive),
+            MongoRegexExpression e => new MongoRegexExpression(e.Field, e.Kind, e.Term, !e.Negated, e.CaseInsensitive, e.PatternOptions),
             MongoElemMatchExpression e => new MongoElemMatchExpression(e.ArrayPath, e.ElementPredicate, !e.Negated),
             _ => null
         };

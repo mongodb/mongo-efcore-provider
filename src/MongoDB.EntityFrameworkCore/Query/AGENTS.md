@@ -69,6 +69,11 @@ Native-vs-driver and streaming-vs-DOM are compile-time-deterministic.
 
 Rules that cost real bugs to learn. Breaking one usually produces **silently wrong rows**, not a failure.
 
+- **Every string constant/parameter rendered in the aggregation dialect is `$literal`-wrapped** — an unwrapped
+  `"$..."` string is read as a field path, so user input like `"$PasswordHash"` compares against that field.
+  `MongoAggregationExpressionRenderer.RenderBranch` always wraps (branches, constructed members);
+  `RenderOperand` wraps string/array/document constants and every parameter (comparison, `$concat`, `$in`,
+  string-operator operands). A new operand position must go through one of them.
 - **Post-terminal gating.** After a terminal operator (`GroupBy`, `Distinct`, a set op, `SelectMany` unwind —
   `HasTerminalOperator`), every later operator must decide explicitly whether it can still go native. Any
   operator with its own `Translate*` override bypasses the shared gates and must replicate the check itself.
@@ -106,6 +111,9 @@ Rules that cost real bugs to learn. Breaking one usually produces **silently wro
   (they partition every value including missing/null); the four relational operators must be `$not`-wrapped,
   never inverted (they don't partition missing/null). Ask whether the *rendered* pair partitions the value
   space.
+- **A negated `&&`/`||` is exactly De Morgan'd via `MongoExpressionNegator`, or declines** — never wrapped in an
+  aggregation `$not`. The dialects differ on missing vs. null, on relational ordering of null/missing, and on
+  implicit array-element matching, so a `$not` wrap silently changes rows.
 - **Negator ↔ dialect classifier ↔ both renderers must agree**, enforced by
   `MongoExpressionNodeCoverageTests` (reflection-discovers every `MongoExpression` subtype, checks all seven
   dispatchers). The matrix is keyed by node type, so it's blind to shape-conditional dispatch (e.g.
@@ -117,6 +125,14 @@ Rules that cost real bugs to learn. Breaking one usually produces **silently wro
 - **A non-default-serialized bool is truthiness-tested and answers the wrong boolean.**
   `HasConversion<string>()` bools store `"True"`/`"False"` — both truthy. Gate `$not`, `$and`/`$or` operands,
   and bare boolean predicate roots via `MongoExpressionTranslator.IsUnsafeTruthinessRoot`.
+- **`$toLower`/`$toUpper` are never emitted natively** (ASCII-only). In a `Where` a case mapping becomes an
+  anchored case-insensitive regex; in a `Select` the raw string is projected and the mapping re-applied
+  client-side. After such a leaf (`MongoSelectDefinition.HasClientCaseMappingProjectionLeaf`), value-reading
+  operators decline — the server would read the unmapped value.
+- **Top-level aggregation `$eq`/`$ne` against null is `$ifNull`-wrapped** (missing ≡ null, as in the query
+  dialect and .NET), but not inside a `$filter`/`$map` element scope, where driver-LINQ keeps them distinct.
+- **A `NativeComputedLeafExpression` is read whole only by the native alias reader**; every other shaper visitor
+  (mixed/DOM reads, driver-LINQ push-down, projection analysis) must use its `ClientExpression`.
 - **A node needing different handling at 3+ call sites should be a sealed sibling type, not a bool flag** (e.g.
   `MongoFilteredSizeExpression` beside `MongoSizeExpression`) — a flag leaves sites wrong by default.
 - **Element-scoped children must not be prefixed.** `MongoFilteredSizeExpression`/`MongoElemMatchExpression`/

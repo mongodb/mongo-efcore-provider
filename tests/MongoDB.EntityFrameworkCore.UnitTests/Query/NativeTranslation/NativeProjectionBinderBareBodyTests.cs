@@ -40,6 +40,7 @@ public class NativeProjectionBinderBareBodyTests
         public double Weight { get; set; }
         public int Age { get; set; }
         public double Score { get; set; }
+        public int? Rank { get; set; }
         public List<string> Tags { get; set; } = null!;
         public Address Address { get; set; } = null!;
         public List<Line> Lines { get; set; } = null!;
@@ -242,17 +243,80 @@ public class NativeProjectionBinderBareBodyTests
     }
 
     [Fact]
-    public void Bare_comparison_leaf_is_declined_although_it_is_a_MongoBinaryExpression()
+    public void Bare_comparison_leaf_is_admitted_under_the_reserved_synthetic_alias()
     {
         var mongoQ = TestQuery();
         Expression<Func<Order, bool>> selector = o => o.Amount > 2;
 
-        // A comparison is also a MongoBinaryExpression, but renders as a boolean, so `{_v: false}` is the
-        // bare-value-as-flag hazard; that's why the tier-2 gate matches on the operator. TryTranslateLeaf also
-        // declines it earlier — two independent gates on purpose.
+        // Renders as an operator document ({ $gt: [...] }), never a bare flag value.
+        Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
+
+        var projection = Assert.Single(mongoQ.Select.Projection);
+        Assert.Equal("_v", projection.Alias);
+        Assert.Equal(
+            MongoBinaryOperator.GreaterThan,
+            Assert.IsType<MongoBinaryExpression>(projection.Expression).Operator);
+        Assert.Equal(ProjectionAliasTier.Synthetic, mongoQ.Select.BareProjectionTier);
+        Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
+    }
+
+    [Fact]
+    public void Bare_lifted_relational_comparison_leaf_is_declined()
+    {
+        var mongoQ = TestQuery();
+        Expression<Func<Order, bool>> selector = o => o.Rank < 2;
+
+        // .NET answers false for null < 2; aggregation $lt orders null/missing below every number and answers true.
         Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
         Assert.Empty(mongoQ.Select.Projection);
         Assert.False(mongoQ.Select.IsBareProjection);
+    }
+
+    [Fact]
+    public void Bare_string_predicate_leaf_is_admitted_under_the_reserved_synthetic_alias()
+    {
+        var mongoQ = TestQuery();
+        Expression<Func<Order, bool>> selector = o => o.Country.StartsWith("a");
+
+        Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
+
+        var projection = Assert.Single(mongoQ.Select.Projection);
+        Assert.Equal("_v", projection.Alias);
+        Assert.Equal(MongoRegexKind.StartsWith, Assert.IsType<MongoRegexExpression>(projection.Expression).Kind);
+        Assert.True(mongoQ.Select.TryGetProjectionAlias(null, out var alias));
+        Assert.Equal("_v", alias);
+        Assert.Equal(ProjectionAliasTier.Synthetic, mongoQ.Select.BareProjectionTier);
+        Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
+    }
+
+    [Fact]
+    public void Bare_negated_string_predicate_leaf_is_admitted_as_a_self_negated_regex()
+    {
+        var mongoQ = TestQuery();
+        Expression<Func<Order, bool>> selector = o => !o.Country.Contains("a");
+
+        Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
+
+        var projection = Assert.Single(mongoQ.Select.Projection);
+        Assert.Equal("_v", projection.Alias);
+        Assert.True(Assert.IsType<MongoRegexExpression>(projection.Expression).Negated);
+    }
+
+    [Fact]
+    public void Bare_string_Length_leaf_is_admitted_under_the_reserved_synthetic_alias()
+    {
+        var mongoQ = TestQuery();
+        Expression<Func<Order, int>> selector = o => o.Country.Length;
+
+        Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
+
+        var projection = Assert.Single(mongoQ.Select.Projection);
+        Assert.Equal("_v", projection.Alias);
+        Assert.IsType<MongoStringLengthExpression>(projection.Expression);
+        Assert.True(mongoQ.Select.TryGetProjectionAlias(null, out var alias));
+        Assert.Equal("_v", alias);
+        Assert.Equal(ProjectionAliasTier.Synthetic, mongoQ.Select.BareProjectionTier);
+        Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
     }
 
     [Fact]

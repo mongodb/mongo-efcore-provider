@@ -281,8 +281,8 @@ Customers.{ "$sort" : { "_id" : -1 } }, { "$project" : { "_id" : "$_id" } }
 
         AssertMql(
             """
-            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : ["$$ROOT", null] }, "then" : null, "else" : { "$concat" : ["", { "$toString" : "$_id" }, ""] } } }, "1"] } } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$$ROOT", null] }, "then" : null, "else" : { "$concat" : ["", { "$toString" : "$_id" }, ""] } } }, "_id" : 0 } }, { "$limit" : 1 }
-            """);
+Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : ["$$ROOT", null] }, "then" : { "$literal" : null }, "else" : { "$concat" : [{ "$literal" : "" }, { "$toString" : "$_id" }, { "$literal" : "" }] } } }, { "$literal" : "1" }] } } }, { "$limit" : 1 }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$$ROOT", null] }, "then" : { "$literal" : null }, "else" : { "$concat" : [{ "$literal" : "" }, { "$toString" : "$_id" }, { "$literal" : "" }] } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Ternary_Null_StartsWith(bool async)
@@ -1115,7 +1115,7 @@ Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "
         await base.Join_Customers_Orders_Projection_With_String_Concat_Skip_Take(async);
         AssertMql(
             """
-Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$sort" : { "_lookup_Orders._id" : 1 } }, { "$skip" : 10 }, { "$limit" : 5 }, { "$project" : { "Contact" : { "$concat" : ["$ContactName", " ", "$ContactTitle"] }, "OrderID" : "$_lookup_Orders._id", "_id" : 0 } }
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$sort" : { "_lookup_Orders._id" : 1 } }, { "$skip" : 10 }, { "$limit" : 5 }, { "$project" : { "Contact" : { "$concat" : ["$ContactName", { "$literal" : " " }, "$ContactTitle"] }, "OrderID" : "$_lookup_Orders._id", "_id" : 0 } }
 """);
     }
 
@@ -2131,7 +2131,7 @@ Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", { "$literal" : "ZZ"
 
         AssertMql(
             """
-Customers.{ "$set" : { "__sort0" : { "$cond" : { "if" : { "$eq" : ["$Region", null] }, "then" : { "$literal" : "ZZ" }, "else" : "$Region" } } } }, { "$sort" : { "__sort0" : 1, "_id" : 1 } }, { "$unset" : ["__sort0"] }
+Customers.{ "$set" : { "__sort0" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$Region", null] }, null] }, "then" : { "$literal" : "ZZ" }, "else" : "$Region" } } } }, { "$sort" : { "__sort0" : 1, "_id" : 1 } }, { "$unset" : ["__sort0"] }
 """);
     }
 
@@ -2171,7 +2171,7 @@ Customers.{ "$project" : { "Result" : { "$literal" : false }, "_id" : 0 } }
 
         AssertMql(
             """
-            Customers.{ "$set" : { "__sort0" : { "$eq" : ["$Region", "ASK"] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }
+            Customers.{ "$set" : { "__sort0" : { "$eq" : ["$Region", { "$literal" : "ASK" }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }
             """);
     }
 
@@ -2192,12 +2192,12 @@ Customers.{ "$project" : { "CustomerID" : "$_id", "CompanyName" : "$CompanyName"
 #if EF8
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ifNull" : ["$CompanyName", "$ContactName"] }, "The Big Cheese"] } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ifNull" : ["$CompanyName", "$ContactName"] }, { "$literal" : "The Big Cheese" }] } } }
             """);
 #else
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ifNull" : ["$ContactName", "$CompanyName"] }, "Liz Nixon"] } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ifNull" : ["$ContactName", "$CompanyName"] }, { "$literal" : "Liz Nixon" }] } } }
             """);
 #endif
     }
@@ -2352,7 +2352,7 @@ Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", { "$literal" : "ZZ"
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : { "$concat" : ["-", { "$toString" : "$_id" }] }, "_id" : 0 } }
+            Orders.{ "$project" : { "_v" : { "$concat" : [{ "$literal" : "-" }, { "$toString" : "$_id" }] }, "_id" : 0 } }
             """);
     }
 
@@ -2362,7 +2362,7 @@ Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", { "$literal" : "ZZ"
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : { "$concat" : ["-", { "$toString" : "$_id" }] }, "_id" : 0 } }
+            Orders.{ "$project" : { "_v" : { "$concat" : [{ "$literal" : "-" }, { "$toString" : "$_id" }] }, "_id" : 0 } }
             """);
     }
 
@@ -2371,7 +2371,7 @@ Customers.{ "$set" : { "__sort0" : { "$ifNull" : ["$Region", { "$literal" : "ZZ"
         await base.String_concat_with_navigation1(async);
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : { "$concat" : ["$CustomerID", " ", "$_lookup_Customer.City"] }, "_id" : 0 } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : { "$concat" : ["$CustomerID", { "$literal" : " " }, "$_lookup_Customer.City"] }, "_id" : 0 } }
 """);
     }
 
@@ -2380,7 +2380,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
         await base.String_concat_with_navigation2(async);
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : { "$concat" : ["$_lookup_Customer.City", " ", "$_lookup_Customer.City"] }, "_id" : 0 } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : { "$concat" : ["$_lookup_Customer.City", { "$literal" : " " }, "$_lookup_Customer.City"] }, "_id" : 0 } }
 """);
     }
 
@@ -2561,7 +2561,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
         AssertMql(
             """
-Orders.{ "$match" : { "$and" : [{ "_id" : { "$lt" : 10400 } }, { "$or" : [{ "_id" : { "$type" : -1 } }, { "$and" : [{ "OrderDate" : { "$ne" : null } }, { "$expr" : { "$eq" : [{ "$month" : "$OrderDate" }, 7] } }, { "$expr" : { "$eq" : [{ "$year" : "$OrderDate" }, 1996] } }] }] }] } }
+Orders.{ "$match" : { "$and" : [{ "_id" : { "$lt" : 10400 } }, { "$or" : [{ "_id" : { "$type" : -1 } }, { "$and" : [{ "OrderDate" : { "$ne" : null } }, { "$expr" : { "$eq" : [{ "$month" : "$OrderDate" }, { "$literal" : 7 }] } }, { "$expr" : { "$eq" : [{ "$year" : "$OrderDate" }, { "$literal" : 1996 }] } }] }] }] } }
 """,
             //
             """
@@ -2575,7 +2575,7 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10400 } } }
 
         AssertMql(
             """
-            Orders.{ "$match" : { "$and" : [{ "_id" : { "$lt" : 10400 } }, { "OrderDate" : { "$ne" : null } }, { "$expr" : { "$eq" : [{ "$month" : "$OrderDate" }, 7] } }, { "$expr" : { "$eq" : [{ "$year" : "$OrderDate" }, 1996] } }] } }
+            Orders.{ "$match" : { "$and" : [{ "_id" : { "$lt" : 10400 } }, { "OrderDate" : { "$ne" : null } }, { "$expr" : { "$eq" : [{ "$month" : "$OrderDate" }, { "$literal" : 7 }] } }, { "$expr" : { "$eq" : [{ "$year" : "$OrderDate" }, { "$literal" : 1996 }] } }] } }
             """,
             //
             """
@@ -2590,7 +2590,7 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10400 } } }
 #if EF8
         AssertMql(
             """
-Orders.{ "$match" : { "$or" : [{ "_id" : { "$lt" : 10400 } }, { "_id" : { "$type" : -1 } }, { "$and" : [{ "OrderDate" : { "$ne" : null } }, { "$expr" : { "$eq" : [{ "$month" : "$OrderDate" }, 7] } }, { "$expr" : { "$eq" : [{ "$year" : "$OrderDate" }, 1996] } }] }] } }
+Orders.{ "$match" : { "$or" : [{ "_id" : { "$lt" : 10400 } }, { "_id" : { "$type" : -1 } }, { "$and" : [{ "OrderDate" : { "$ne" : null } }, { "$expr" : { "$eq" : [{ "$month" : "$OrderDate" }, { "$literal" : 7 }] } }, { "$expr" : { "$eq" : [{ "$year" : "$OrderDate" }, { "$literal" : 1996 }] } }] }] } }
 """,
             //
             """
@@ -2599,7 +2599,7 @@ Orders.{ "$match" : { } }
     #else
         AssertMql(
             """
-Orders.{ "$match" : { "$or" : [{ "_id" : { "$lt" : 10400 } }, { "$and" : [{ "OrderDate" : { "$ne" : null } }, { "$expr" : { "$eq" : [{ "$month" : "$OrderDate" }, 7] } }, { "$expr" : { "$eq" : [{ "$year" : "$OrderDate" }, 1996] } }] }] } }
+Orders.{ "$match" : { "$or" : [{ "_id" : { "$lt" : 10400 } }, { "$and" : [{ "OrderDate" : { "$ne" : null } }, { "$expr" : { "$eq" : [{ "$month" : "$OrderDate" }, { "$literal" : 7 }] } }, { "$expr" : { "$eq" : [{ "$year" : "$OrderDate" }, { "$literal" : 1996 }] } }] }] } }
 """,
             //
             """
@@ -2641,7 +2641,7 @@ Orders.{ "$match" : { } }
         await base.Select_expression_long_to_string(async);
         AssertMql(
             """
-Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "ShipName" : { "$toString" : { "$toLong" : "$_id" } }, "_id" : 0 } }
+Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "ShipName" : { "$toString" : "$_id" }, "_id" : 0 } }
 """);
     }
 
@@ -2963,11 +2963,11 @@ Employees.{ "$lookup" : { "from" : "Employees", "localField" : "_id", "foreignFi
 
         AssertMql(
             """
-            Orders.{ "$match" : { "$expr" : { "$in" : [{ "$dateTrunc" : { "date" : "$OrderDate", "unit" : "day" } }, [{ "$date" : "1996-07-04T00:00:00Z" }, { "$date" : "1996-07-16T00:00:00Z" }]] } } }
+            Orders.{ "$match" : { "$expr" : { "$in" : [{ "$dateTrunc" : { "date" : "$OrderDate", "unit" : "day" } }, { "$literal" : [{ "$date" : "1996-07-04T00:00:00Z" }, { "$date" : "1996-07-16T00:00:00Z" }] }] } } }
             """,
             //
             """
-            Orders.{ "$match" : { "$expr" : { "$in" : [{ "$dateTrunc" : { "date" : "$OrderDate", "unit" : "day" } }, [{ "$date" : "1996-07-04T00:00:00Z" }]] } } }
+            Orders.{ "$match" : { "$expr" : { "$in" : [{ "$dateTrunc" : { "date" : "$OrderDate", "unit" : "day" } }, { "$literal" : [{ "$date" : "1996-07-04T00:00:00Z" }] }] } } }
             """);
     }
 
@@ -3050,7 +3050,7 @@ Employees.{ "$lookup" : { "from" : "Employees", "localField" : "_id", "foreignFi
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "A" : { "$concat" : ["$_id", "$City"] } } } }, { "$project" : { "A" : "$_id.A", "_id" : 0 } }, { "$match" : { "$expr" : { "$eq" : ["$A", "ALFKIBerlin"] } } }
+            Customers.{ "$group" : { "_id" : { "A" : { "$concat" : ["$_id", "$City"] } } } }, { "$project" : { "A" : "$_id.A", "_id" : 0 } }, { "$match" : { "$expr" : { "$eq" : ["$A", { "$literal" : "ALFKIBerlin" }] } } }
             """);
     }
 
@@ -3129,7 +3129,7 @@ Customers.{ "$set" : { "__sort0" : { "$concat" : ["$_id", "$City"] } } }, { "$so
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : { "Property" : { "$concat" : ["$_id", "$City"] } } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$match" : { "$expr" : { "$eq" : ["$Property", "ALFKIBerlin"] } } }
+            Customers.{ "$group" : { "_id" : { "Property" : { "$concat" : ["$_id", "$City"] } } } }, { "$project" : { "Property" : "$_id.Property", "_id" : 0 } }, { "$match" : { "$expr" : { "$eq" : ["$Property", { "$literal" : "ALFKIBerlin" }] } } }
             """);
     }
 
@@ -3637,7 +3637,7 @@ Orders.
 
         AssertMql(
             """
-Customers.{ "$set" : { "__sort0" : { "$in" : ["$_id", []] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }
+Customers.{ "$set" : { "__sort0" : { "$in" : ["$_id", { "$literal" : [] }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }
 """);
     }
 
@@ -3647,7 +3647,7 @@ Customers.{ "$set" : { "__sort0" : { "$in" : ["$_id", []] } } }, { "$sort" : { "
 
         AssertMql(
             """
-Customers.{ "$set" : { "__sort0" : { "$not" : [{ "$in" : ["$_id", []] }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }
+Customers.{ "$set" : { "__sort0" : { "$not" : [{ "$in" : ["$_id", { "$literal" : [] }] }] } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }
 """);
     }
 
@@ -3988,8 +3988,8 @@ Customers.{ "$match" : { } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { "$ne" : "DRACD" } }] } }, { "$group" : { "_id" : { "City" : "$City" } } }, { "$project" : { "City" : "$_id.City", "_id" : 0 } }, { "$set" : { "__sort0" : { "$indexOfCP" : ["$City", "c"] } } }, { "$sort" : { "__sort0" : 1, "City" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 5 }
-            """);
+Customers.{ "$match" : { "$and" : [{ "_id" : { "$ne" : "VAFFE" } }, { "_id" : { "$ne" : "DRACD" } }] } }, { "$group" : { "_id" : { "City" : "$City" } } }, { "$project" : { "City" : "$_id.City", "_id" : 0 } }, { "$set" : { "__sort0" : { "$indexOfCP" : ["$City", { "$literal" : "c" }] } } }, { "$sort" : { "__sort0" : 1, "City" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 5 }
+""");
     }
 
     public override async Task DefaultIfEmpty_Sum_over_collection_navigation(bool async)
@@ -4151,17 +4151,10 @@ Customers.
         await Assert.ThrowsAsync<ThrowsException>(() =>
             base.Non_nullable_property_through_optional_navigation(async));
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-    """
-            Customers.{ "$project" : { "Length" : { "$strLenCP" : "$Region" }, "_id" : 0 } }
-            """);
-        }
+        AssertMql(
+            """
+Customers.{ "$project" : { "Length" : { "$strLenCP" : "$Region" }, "_id" : 0 } }
+""");
     }
 
     public override async Task OrderByDescending(bool async)
@@ -5247,7 +5240,7 @@ Customers.
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$in" : [{ "$concat" : ["$_id", "$CompanyName"] }, ["ALFKIAlfreds Futterkiste", "ANATRAna Trujillo Emparedados y helados"]] } } }
+            Customers.{ "$match" : { "$expr" : { "$in" : [{ "$concat" : ["$_id", "$CompanyName"] }, { "$literal" : ["ALFKIAlfreds Futterkiste", "ANATRAna Trujillo Emparedados y helados"] }] } } }
             """);
     }
 
@@ -5257,7 +5250,7 @@ Customers.
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$in" : [{ "$concat" : ["$_id", "SomeConstant"] }, ["ALFKISomeConstant", "ANATRSomeConstant", "ALFKIX"]] } } }
+            Customers.{ "$match" : { "$expr" : { "$in" : [{ "$concat" : ["$_id", { "$literal" : "SomeConstant" }] }, { "$literal" : ["ALFKISomeConstant", "ANATRSomeConstant", "ALFKIX"] }] } } }
             """);
     }
 
@@ -5267,7 +5260,7 @@ Customers.
 
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "$expr" : { "$in" : [{ "$concat" : ["$CustomerID", "$_lookup_Customer._id"] }, ["ALFKIALFKI", "ALFKI", "ANATRAna Trujillo Emparedados y helados", "ANATRANATR"]] } } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "$expr" : { "$in" : [{ "$concat" : ["$CustomerID", "$_lookup_Customer._id"] }, { "$literal" : ["ALFKIALFKI", "ALFKI", "ANATRAna Trujillo Emparedados y helados", "ANATRANATR"] }] } } }
 """);
     }
 
@@ -5277,7 +5270,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$in" : [{ "$concat" : ["$_id", "SomeVariable"] }, ["ALFKISomeVariable", "ANATRSomeVariable", "ALFKIX"]] } } }
+            Customers.{ "$match" : { "$expr" : { "$in" : [{ "$concat" : ["$_id", { "$literal" : "SomeVariable" }] }, { "$literal" : ["ALFKISomeVariable", "ANATRSomeVariable", "ALFKIX"] }] } } }
             """);
     }
 

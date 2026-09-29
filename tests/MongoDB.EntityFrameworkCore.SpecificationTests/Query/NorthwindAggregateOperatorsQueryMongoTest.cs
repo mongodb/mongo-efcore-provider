@@ -65,7 +65,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            OrderDetails.{ "$match" : { "$expr" : { "$in" : [["$_id.OrderID", "$_id.ProductID"], [[1, 2], [10248, 11]]] } } }
+            OrderDetails.{ "$match" : { "$expr" : { "$in" : [["$_id.OrderID", "$_id.ProductID"], { "$literal" : [[1, 2], [10248, 11]] }] } } }
             """);
     }
 
@@ -1681,7 +1681,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_id" : "$_id" } 
 
         AssertMql(
             """
-            OrderDetails.{ "$match" : { "$expr" : { "$in" : [{ "Id1" : "$_id.OrderID", "Id2" : "$_id.ProductID" }, [{ "Id1" : 1, "Id2" : 2 }, { "Id1" : 10248, "Id2" : 11 }]] } } }
+            OrderDetails.{ "$match" : { "$expr" : { "$in" : [{ "Id1" : "$_id.OrderID", "Id2" : "$_id.ProductID" }, { "$literal" : [{ "Id1" : 1, "Id2" : 2 }, { "Id1" : 10248, "Id2" : 11 }] }] } } }
             """);
     }
 
@@ -2224,7 +2224,7 @@ Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$strLenCP" 
 
         AssertMql(
             """
-Customers.{ "$group" : { "_id" : "$Country", "_v" : { "$sum" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+Customers.{ "$group" : { "_id" : "$Country", "_v" : { "$sum" : { "$cond" : { "if" : { "$in" : ["$City", { "$literal" : ["London", "Berlin"] }] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
 """);
     }
 
@@ -2234,7 +2234,7 @@ Customers.{ "$group" : { "_id" : "$Country", "_v" : { "$sum" : { "$cond" : { "if
 
         AssertMql(
             """
-Customers.{ "$group" : { "_id" : null, "v" : { "$avg" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : { "$literal" : 1.0 }, "else" : { "$literal" : 0.0 } } } } } }
+Customers.{ "$group" : { "_id" : null, "v" : { "$avg" : { "$cond" : { "if" : { "$in" : ["$City", { "$literal" : ["London", "Berlin"] }] }, "then" : { "$literal" : 1.0 }, "else" : { "$literal" : 0.0 } } } } } }
 """);
     }
 
@@ -2244,7 +2244,7 @@ Customers.{ "$group" : { "_id" : null, "v" : { "$avg" : { "$cond" : { "if" : { "
 
         AssertMql(
             """
-Customers.{ "$group" : { "_id" : null, "v" : { "$sum" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }
+Customers.{ "$group" : { "_id" : null, "v" : { "$sum" : { "$cond" : { "if" : { "$in" : ["$City", { "$literal" : ["London", "Berlin"] }] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }
 """);
     }
 
@@ -2274,7 +2274,7 @@ Customers.{ "$group" : { "_id" : null, "v" : { "$sum" : { "$cond" : { "if" : { "
 
         AssertMql(
             """
-Customers.{ "$group" : { "_id" : null, "v" : { "$max" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }
+Customers.{ "$group" : { "_id" : null, "v" : { "$max" : { "$cond" : { "if" : { "$in" : ["$City", { "$literal" : ["London", "Berlin"] }] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }
 """);
     }
 
@@ -2284,7 +2284,7 @@ Customers.{ "$group" : { "_id" : null, "v" : { "$max" : { "$cond" : { "if" : { "
 
         AssertMql(
             """
-Customers.{ "$group" : { "_id" : null, "v" : { "$min" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }
+Customers.{ "$group" : { "_id" : null, "v" : { "$min" : { "$cond" : { "if" : { "$in" : ["$City", { "$literal" : ["London", "Berlin"] }] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }
 """);
     }
 

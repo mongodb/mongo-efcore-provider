@@ -41,6 +41,9 @@ internal sealed class MongoBinaryExpression : MongoExpression
     /// <inheritdoc />
     public override Type Type
         => Operator is MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse
+            or MongoBinaryOperator.Equal or MongoBinaryOperator.NotEqual
+            or MongoBinaryOperator.LessThan or MongoBinaryOperator.LessThanOrEqual
+            or MongoBinaryOperator.GreaterThan or MongoBinaryOperator.GreaterThanOrEqual
             ? typeof(bool)
             : Left.Type;
 

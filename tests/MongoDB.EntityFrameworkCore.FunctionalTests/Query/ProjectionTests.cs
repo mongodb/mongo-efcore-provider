@@ -765,7 +765,7 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
                     Sub = new
                     {
                         Double = p.orderFromSun * 2,
-                        NameUpper = p.name.ToUpper()
+                        NameLength = p.name.Length
                     }
                 })
                 .ToList());
@@ -1118,7 +1118,7 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
         Assert.ThrowsAny<Exception>(() =>
             _db.Planets.Select(p => new
             {
-                Upper = p.name.ToUpper(),
+                Trimmed = p.name.Trim(),
                 Label = FormatLabel(p.name)
             }).ToList());
     }

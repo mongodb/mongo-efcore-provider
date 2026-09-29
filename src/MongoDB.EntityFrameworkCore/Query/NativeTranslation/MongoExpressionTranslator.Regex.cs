@@ -20,14 +20,23 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// <see cref="MongoExpressionTranslator"/> — the reversed <c>Regex.IsMatch(input, pattern)</c> shape: a constant
-/// <c>input</c> tested against a field-valued <c>pattern</c> (e.g. <c>Regex.IsMatch("Seattle", o.String)</c>).
-/// The forward shape is handled by the driver-LINQ fallback.
+/// <see cref="MongoExpressionTranslator"/> — <c>Regex.IsMatch</c>, both shapes: the forward
+/// <c>Regex.IsMatch(field, constantPattern[, options])</c> (<see cref="MongoRegexKind.Pattern"/>) and the reversed
+/// <c>Regex.IsMatch(constantInput, fieldPattern)</c> (<see cref="MongoRegexKind.IsMatch"/>, e.g.
+/// <c>Regex.IsMatch("Seattle", o.String)</c>).
 /// </summary>
 /// <remarks>
 /// <para>
-/// The query-dialect <c>$regularExpression</c> requires a literal pattern, so a field-valued pattern needs the
-/// aggregation <c>$regexMatch</c> operator; hence the dedicated, aggregation-only
+/// Forward shape: <c>field</c> resolves via <see cref="TryResolveMember"/> to a plain <see langword="string"/>
+/// field (not outer-scoped, not computed); <c>pattern</c> must be a compile-time constant — a parameterized
+/// pattern declines (no placeholder support for raw patterns). Options map via
+/// <see cref="MapRegexOptions"/>; an unsupported flag (<see cref="RegexOptions.RightToLeft"/>,
+/// <see cref="RegexOptions.ECMAScript"/>, <see cref="RegexOptions.NonBacktracking"/>) declines. The pattern is a
+/// live .NET pattern passed to PCRE unchanged — dialect differences are the caller's.
+/// </para>
+/// <para>
+/// Reversed shape: the query-dialect <c>$regularExpression</c> requires a literal pattern, so a field-valued
+/// pattern needs the aggregation <c>$regexMatch</c> operator; hence the dedicated, aggregation-only
 /// <see cref="MongoRegexKind.IsMatch"/> rather than swapping operands on an existing kind.
 /// </para>
 /// <list type="bullet">
@@ -55,6 +64,9 @@ internal sealed partial class MongoExpressionTranslator
             return false;
         }
 
+        if (TryTranslateForwardRegexIsMatch(call, out result))
+            return true;
+
         if (Unwrap(call.Arguments[0]) is not ConstantExpression { Value: string inputLiteral })
             return false; // input must be a compile-time constant — a field-valued input is a distinct, not-yet-supported shape
 
@@ -81,5 +93,55 @@ internal sealed partial class MongoExpressionTranslator
         var termNode = new MongoConstantExpression(inputLiteral, forSerialization: null);
         result = new MongoRegexExpression(fieldNode, MongoRegexKind.IsMatch, termNode, negated: false, caseInsensitive);
         return true;
+    }
+
+    // Forward shape: Regex.IsMatch(field, constantPattern[, options]) → MongoRegexKind.Pattern.
+    private bool TryTranslateForwardRegexIsMatch(MethodCallExpression call, out MongoExpression? result)
+    {
+        result = null;
+
+        if (!TryResolveMember(Unwrap(call.Arguments[0]), out var property, out var fieldPath, out var isOuter)
+            || isOuter
+            || property.ClrType != typeof(string))
+        {
+            return false;
+        }
+
+        if (Unwrap(call.Arguments[1]) is not ConstantExpression { Value: string pattern })
+            return false; // parameterized pattern declines — no placeholder support for raw patterns in this shape
+
+        var patternOptions = "";
+        if (call.Arguments.Count == 3)
+        {
+            if (Unwrap(call.Arguments[2]) is not ConstantExpression { Value: RegexOptions options })
+                return false;
+
+            if (MapRegexOptions(options) is not { } mapped)
+                return false;
+
+            patternOptions = mapped;
+        }
+
+        var fieldNode = new MongoFieldExpression(property, fieldPath);
+        var patternNode = new MongoConstantExpression(pattern, forSerialization: null);
+        result = new MongoRegexExpression(
+            fieldNode, MongoRegexKind.Pattern, patternNode, negated: false, patternOptions: patternOptions);
+        return true;
+    }
+
+    // Ignorable flags don't change matching semantics; mapped flags have a $regexMatch "options" equivalent.
+    // RightToLeft/ECMAScript/NonBacktracking change matching semantics with no faithful equivalent, so decline.
+    private static string? MapRegexOptions(RegexOptions options)
+    {
+        const RegexOptions ignorable = RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.ExplicitCapture;
+        const RegexOptions mapped = RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Singleline
+                                     | RegexOptions.IgnorePatternWhitespace;
+        if ((options & ~(ignorable | mapped)) != 0)
+            return null;
+
+        return (options.HasFlag(RegexOptions.IgnoreCase) ? "i" : "")
+               + (options.HasFlag(RegexOptions.Multiline) ? "m" : "")
+               + (options.HasFlag(RegexOptions.Singleline) ? "s" : "")
+               + (options.HasFlag(RegexOptions.IgnorePatternWhitespace) ? "x" : "");
     }
 }

@@ -61,7 +61,7 @@ public class WhereTests(ReadOnlySampleGuidesFixture database)
 
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains(
-            "{ \"$match\" : { \"$expr\" : { \"$ne\" : [{ \"$indexOfCP\" : [\"$name\", \"a\"] }, -1] } } }",
+            "{ \"$match\" : { \"$expr\" : { \"$ne\" : [{ \"$indexOfCP\" : [\"$name\", { \"$literal\" : \"a\" }] }, -1] } } }",
             message);
     }
 

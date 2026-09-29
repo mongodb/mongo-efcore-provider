@@ -189,6 +189,48 @@ In preference order:
 
 Queries with no numeric cast in their filter are unaffected, as are casts whose stored values all fit the target type and whose truncation does not change the comparison's outcome. A relational comparison (`<`, `<=`, `>`, `>=`) whose cast is applied to a **nullable** property is also unaffected: that shape still routes through the driver's LINQ provider, so it keeps the old behavior described above rather than either new consequence.
 
+### A document missing a string field now compares equal to `null` in a projection or ordering
+
+#### Old behavior
+
+A null comparison used as a projected value or an ordering key — `Select(x => x.Text == null)`, `Select(x => string.IsNullOrEmpty(x.Text))`, `OrderBy(x => x.Text == null)` — answered `false` (and sorted as non-null) for a document with no `Text` element at all, because the driver's aggregation `$eq` distinguishes a missing element from `null`.
+
+#### New behavior
+
+A missing element is treated as `null`: those expressions answer `true` and sort as null for such documents. This matches LINQ-to-objects over the materialized entities, and the same comparison in a `Where`, which already matched missing elements.
+
+#### Mitigations
+
+`UseQueryMode(MongoQueryMode.DriverLinq)` restores the old behavior.
+
+### `ToUpper`/`ToLower` in a projection are applied client-side
+
+#### Old behavior
+
+`Select(x => x.Text.ToUpper())` / `ToLower()` (including over a `Trim`, `Substring` or `Replace` receiver) ran on the server as `$toUpper`/`$toLower`: a `null` value yielded `""`, and only ASCII characters were mapped.
+
+#### New behavior
+
+The raw string is projected and the case mapping is applied client-side, in **every** query mode, including `DriverLinq`: `null` yields `null`, and non-ASCII characters map as in .NET (`"é"` → `"É"`). A value-reading operator after such a projection (for example `.Distinct()`) routes through the driver's LINQ provider and keeps the old server-side mapping (`null` → `""`, ASCII-only).
+
+#### Mitigations
+
+`UseQueryMode(MongoQueryMode.DriverLinq)` does **not** restore the old behavior. To keep the old `null` → `""` result, coalesce explicitly: `x.Text == null ? "" : x.Text.ToUpper()`.
+
+### Case-insensitive string equality in a `Where` is Unicode-aware
+
+#### Old behavior
+
+`Where(x => x.Text.Equals("seattle", StringComparison.OrdinalIgnoreCase))` and `Where(x => x.Text.ToLower() == "seattle")` / `ToUpper() == "SEATTLE"` ran as `$strcasecmp` / `$toLower` / `$toUpper`, which fold ASCII characters only, so `"ÉCOLE"` did not match `"école"`.
+
+#### New behavior
+
+A comparison against a constant is an anchored case-insensitive regex, which folds non-ASCII characters too, so `"ÉCOLE"` now matches `"école"`.
+
+#### Mitigations
+
+`UseQueryMode(MongoQueryMode.DriverLinq)` restores the old behavior.
+
 ## Breaking changes in 8.4.0 / 9.1.0 / 10.0.0
 
 ### The element name for discriminators may have changed
