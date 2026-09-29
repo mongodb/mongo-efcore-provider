@@ -189,11 +189,11 @@ In preference order:
 
 Queries with no numeric cast in their filter are unaffected, as are casts whose stored values all fit the target type and whose truncation does not change the comparison's outcome. A relational comparison (`<`, `<=`, `>`, `>=`) whose cast is applied to a **nullable** property is also unaffected: that shape still routes through the driver's LINQ provider, so it keeps the old behavior described above rather than either new consequence.
 
-### A document missing a string field now compares equal to `null` in a projection or ordering
+### A document missing a field now compares equal to `null` in a projection or ordering
 
 #### Old behavior
 
-A null comparison used as a projected value or an ordering key — `Select(x => x.Text == null)`, `Select(x => string.IsNullOrEmpty(x.Text))`, `OrderBy(x => x.Text == null)` — answered `false` (and sorted as non-null) for a document with no `Text` element at all, because the driver's aggregation `$eq` distinguishes a missing element from `null`.
+A null comparison used as a projected value or an ordering key — `Select(x => x.Text == null)`, `Select(x => x.NullableInt == null)`, `Select(x => string.IsNullOrEmpty(x.Text))`, `OrderBy(x => x.Text == null)` — answered `false` (and sorted as non-null) for a document with no element for that property at all, because the driver's aggregation `$eq` distinguishes a missing element from `null`.
 
 #### New behavior
 
@@ -217,15 +217,17 @@ The raw string is projected and the case mapping is applied client-side, in **ev
 
 `UseQueryMode(MongoQueryMode.DriverLinq)` does **not** restore the old behavior. To keep the old `null` → `""` result, coalesce explicitly: `x.Text == null ? "" : x.Text.ToUpper()`.
 
-### Case-insensitive string equality in a `Where` is Unicode-aware
+### `Equals(…, StringComparison.OrdinalIgnoreCase)` in a `Where` is Unicode-aware
 
 #### Old behavior
 
-`Where(x => x.Text.Equals("seattle", StringComparison.OrdinalIgnoreCase))` and `Where(x => x.Text.ToLower() == "seattle")` / `ToUpper() == "SEATTLE"` ran as `$strcasecmp` / `$toLower` / `$toUpper`, which fold ASCII characters only, so `"ÉCOLE"` did not match `"école"`.
+`Where(x => x.Text.Equals("seattle", StringComparison.OrdinalIgnoreCase))` (and the static `string.Equals` form) ran as `$strcasecmp`, which folds ASCII characters only, so `"ÉCOLE"` did not match `"école"`.
+
+`Where(x => x.Text.ToLower() == "seattle")` / `ToUpper() == "SEATTLE"` already ran as an anchored case-insensitive regex (`/^seattle$/is`), which also matched a value with a trailing newline (`"seattle\n"`).
 
 #### New behavior
 
-A comparison against a constant is an anchored case-insensitive regex, which folds non-ASCII characters too, so `"ÉCOLE"` now matches `"école"`.
+A case-insensitive comparison against a constant is an anchored case-insensitive regex that folds non-ASCII characters too, so `"ÉCOLE"` now matches `"école"`. The regex is anchored with `\z`, so neither form matches a trailing newline any more: `"seattle\n"` no longer matches `ToLower() == "seattle"`.
 
 #### Mitigations
 
