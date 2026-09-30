@@ -251,19 +251,26 @@ internal static class NativeJoinScopeProjectionBinder
                 return false; // one untranslatable leaf declines the whole projection — no partial commit
             }
 
-            // A non-nullable Length/IndexOf over a possibly-null (or unmatched) string would read its null as 0.
-            if (MongoAggregationExpressionRenderer.ReadsNullAsDefault(
-                    NativeSlotPopulator.UnwrapBoxingToObjectType(leafBody), computedLeaf))
+            // A non-nullable Length/IndexOf over a possibly-null (or unmatched left-outer) string is rendered null-safely,
+            // so the server answers null where EF relational throws "Nullable object must have a value.". Flag it
+            // (MongoProjection.ThrowsOnNull): the read side reads it as T? and throws that, rather than reading 0. An
+            // operator that may absorb the null ($max/$min, Sign) declines. This call is the flag's only source, as in
+            // NativeProjectionBinder.TryTranslateLeaf.
+            var nonNullableRead = MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+                NativeSlotPopulator.UnwrapBoxingToObjectType(leafBody), computedLeaf);
+            if (nonNullableRead == NonNullableValueRead.Decline)
             {
                 return false;
             }
+
+            var throwsOnNull = nonNullableRead == NonNullableValueRead.ThrowOnNull;
 
             if (!seenAliases.Add(alias))
             {
                 return false;
             }
 
-            staged.Add(new MongoProjection(alias, computedLeaf));
+            staged.Add(new MongoProjection(alias, computedLeaf, ThrowsOnNull: throwsOnNull));
         }
 
         // A whole-entity leaf forces both fallback legs to shape whole, un-projected documents, so every sibling

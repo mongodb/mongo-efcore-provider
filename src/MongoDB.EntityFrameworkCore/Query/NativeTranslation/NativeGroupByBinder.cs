@@ -1779,8 +1779,10 @@ internal static class NativeGroupByBinder
                 return false;
 
             keyParts.Add(new MongoGroupingKeyPart(projection.Alias, projection.Expression));
+            // ThrowsOnNull carries over: the deduped value is the same possibly-null value, read back from "_id.<alias>".
             flatten.Add(new MongoProjection(projection.Alias,
-                new MongoElementRefExpression("_id." + projection.Alias, projection.Expression.Type)));
+                new MongoElementRefExpression("_id." + projection.Alias, projection.Expression.Type),
+                ThrowsOnNull: projection.ThrowsOnNull));
         }
 
         select.ClearProjections();

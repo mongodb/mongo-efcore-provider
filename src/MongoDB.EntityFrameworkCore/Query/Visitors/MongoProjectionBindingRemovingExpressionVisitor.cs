@@ -16,6 +16,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -167,7 +168,9 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             case NativeComputedLeafExpression computedLeaf:
                 {
                     var computedProjection = GetProjection(computedLeaf.Binding);
-                    return BsonBinding.CreateGetElementValue(DocParameter, computedProjection.Alias!, computedLeaf.Type);
+                    return TryCreateThrowOnNullAliasRead(computedProjection.Alias!, computedLeaf.Type, out var throwingComputedRead)
+                        ? throwingComputedRead
+                        : BsonBinding.CreateGetElementValue(DocParameter, computedProjection.Alias!, computedLeaf.Type);
                 }
 
             case ProjectionBindingExpression projectionBindingExpression:
@@ -187,6 +190,15 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     if (projection.Expression is MongoDocumentConstructionExpression construction)
                     {
                         return BuildDocumentConstructionExpression(construction, projection.Alias);
+                    }
+
+                    // A null-propagated scalar behind a non-nullable type (`x.S.Length`, `(long)x.S.Length`,
+                    // `x.S.Length + 5`, possibly over an unmatched left-outer side): read as T? and throw EF's
+                    // "Nullable object must have a value." on null. Precedes every other arm, since a Convert or
+                    // arithmetic leaf would otherwise read the null as 0.
+                    if (TryCreateThrowOnNullAliasRead(projection.Alias, projectionBindingExpression.Type, out var throwingRead))
+                    {
+                        return throwingRead;
                     }
 
                     // FirstOrDefault over a non-nullable value-type member: with no related row the alias is missing
@@ -898,6 +910,34 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// When the native emit side flagged the output under <paramref name="alias"/>
+    /// <see cref="MongoProjection.ThrowsOnNull"/> (<see cref="MongoSelectDefinition.FindThrowOnNullProjection"/>), reads
+    /// it as a nullable and takes <see cref="Nullable{T}.Value"/>, so a null (or missing) value throws EF's
+    /// "Nullable object must have a value." instead of reading as <c>default(T)</c>.
+    /// </summary>
+    /// <remarks>
+    /// The value type is <paramref name="type"/> when that is a non-nullable value type (a widened
+    /// <c>(long)x.S.Length</c> reads the server's int as long); otherwise (a boxed <see cref="object"/> read) it is the
+    /// staged expression's own type, and the value is converted back to <paramref name="type"/>.
+    /// </remarks>
+    private bool TryCreateThrowOnNullAliasRead(string alias, Type type, [NotNullWhen(true)] out Expression? read)
+    {
+        if (_queryExpression.Select.FindThrowOnNullProjection(alias) is not { } flagged)
+        {
+            read = null;
+            return false;
+        }
+
+        var valueType = type.IsValueType && Nullable.GetUnderlyingType(type) is null
+            ? type
+            : flagged.Expression.Type.UnwrapNullableType();
+        Expression value = Expression.Property(
+            CreateAliasRead(alias, valueType.MakeNullable()), valueType.MakeNullable().GetProperty(nameof(Nullable<int>.Value))!);
+        read = value.Type == type ? value : Expression.Convert(value, type);
+        return true;
     }
 
     /// <summary>

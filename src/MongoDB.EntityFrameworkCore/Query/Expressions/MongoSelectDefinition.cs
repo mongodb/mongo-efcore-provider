@@ -444,6 +444,36 @@ internal sealed class MongoSelectDefinition
     }
 
     /// <summary>
+    /// The staged output under <paramref name="alias"/> whose <see cref="MongoProjection.ThrowsOnNull"/> is set, in
+    /// <see cref="Projection"/> or in a projected set-op operand's own projection: the combined rows are all read
+    /// through this select's shaper, so an operand's null-propagated leaf must throw on null there too.
+    /// </summary>
+    /// <remarks>
+    /// The read side's only source for the flag (<c>MongoProjectionBindingRemovingExpressionVisitor</c>); the emit side
+    /// set it from the same <c>ClassifyNonNullableValueRead</c> call that admitted the leaf.
+    /// </remarks>
+    internal MongoProjection? FindThrowOnNullProjection(string alias)
+    {
+        foreach (var projection in _projections)
+        {
+            if (projection.ThrowsOnNull && projection.Alias == alias)
+            {
+                return projection;
+            }
+        }
+
+        foreach (var link in _setOperations)
+        {
+            if (link.OperandsProjected && link.OperandSelect.FindThrowOnNullProjection(alias) is { } operandProjection)
+            {
+                return operandProjection;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// <see langword="true"/> when a bare selector body populated <see cref="Projection"/>.
     /// </summary>
     internal bool IsBareProjection

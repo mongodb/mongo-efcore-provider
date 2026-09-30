@@ -4147,13 +4147,14 @@ Customers.
 
     public override async Task Non_nullable_property_through_optional_navigation(bool async)
     {
-        // Fails: Not throwing expected translation failed exception from EF, but still throws EF-X002
-        await Assert.ThrowsAsync<ThrowsException>(() =>
-            base.Non_nullable_property_through_optional_navigation(async));
+        // Upstream asserts InvalidOperationException "Nullable object must have a value.", EF relational's answer for
+        // the customers with a null Region. The native pipeline renders a null-safe $strLenCP, reads it as int? and
+        // throws exactly that, in every query mode that runs natively.
+        await base.Non_nullable_property_through_optional_navigation(async);
 
         AssertMql(
             """
-Customers.{ "$project" : { "Length" : { "$strLenCP" : "$Region" }, "_id" : 0 } }
+Customers.{ "$project" : { "Length" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$Region", null] }, null] }, "then" : null, "else" : { "$strLenCP" : "$Region" } } }, "_id" : 0 } }
 """);
     }
 

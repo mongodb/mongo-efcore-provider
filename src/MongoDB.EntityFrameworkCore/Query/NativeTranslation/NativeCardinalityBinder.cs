@@ -316,8 +316,11 @@ internal static class NativeCardinalityBinder
 
             // A non-nullable Min/Max/Average of a Length/IndexOf over a possibly-null string reduces all-null rows to
             // null, read back as 0 where EF throws; as for the grouped accumulators. Sum skips a null, as EF's SUM does.
+            // A bare source flagged ThrowsOnNull is the same possibly-null value, already reduced to an alias, so the
+            // predicate can't see it through the element ref: honour the emit side's flag instead.
             if (op is not MongoAggregateOperator.Sum
-                && MongoAggregationExpressionRenderer.ReadsNullAsDefault(resultType, operand))
+                && (MongoAggregationExpressionRenderer.ReadsNullAsDefault(resultType, operand)
+                    || (selector is null && bareSourceProjection is { ThrowsOnNull: true })))
                 return false;
         }
 

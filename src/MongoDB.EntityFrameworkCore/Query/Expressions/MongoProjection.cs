@@ -26,5 +26,15 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// (see <see cref="MongoSelectDefinition.RebaseProjectionSources"/>), or <see langword="null"/> when not recorded.
 /// Lets the projection binding visitor recognize, structurally, the exact node the server computed.
 /// </param>
+/// <param name="ThrowsOnNull">
+/// The value is a null-propagated scalar read back as a non-nullable value type (<c>x.S.Length</c> over a nullable
+/// <c>S</c>, read as <see langword="int"/>; see <c>MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead</c>). The
+/// server may answer null, so the read side reads it as <c>T?</c> and throws EF's "Nullable object must have a value."
+/// on null rather than reading <c>default(T)</c>. Set by the emit side from the same predicate call that admitted the
+/// leaf, and read by <c>MongoSelectDefinition.FindThrowOnNullProjection</c>; never re-derived.
+/// </param>
 internal readonly record struct MongoProjection(
-    string Alias, MongoExpression Expression, System.Linq.Expressions.Expression? Source = null);
+    string Alias,
+    MongoExpression Expression,
+    System.Linq.Expressions.Expression? Source = null,
+    bool ThrowsOnNull = false);

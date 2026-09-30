@@ -999,19 +999,29 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal("<null>:3|A:1|B:1", string.Join("|", result));
     }
 
-    // A non-nullable Length over the unmatched side would read Dora's null as 0 (EF throws), so it declines; the
-    // nullable spelling stays native.
+    // A non-nullable Length over the unmatched side is read as int?: Dora's null throws EF's "Nullable object must
+    // have a value." (EF relational's answer), never a silent 0. With every owner matched it reads the exact values.
+    // The nullable spelling reads Dora's null.
     [Fact]
-    public void Non_nullable_Length_projection_over_an_unmatched_left_join_side_declines()
+    public void Non_nullable_Length_projection_over_an_unmatched_left_join_side_throws_on_the_unmatched_row()
     {
         var seed = CreateSeedWithOrderlessOwner();
-        using (var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Non_nullable_Length_projection_over_an_unmatched_left_join_side_declines)))
+        using (var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Non_nullable_Length_projection_over_an_unmatched_left_join_side_throws_on_the_unmatched_row)))
         {
-            Assert.Throws<NativeTranslationNotSupportedException>(() =>
+            var exception = Assert.Throws<InvalidOperationException>(() =>
                 (from w in db.Owners join o in db.Orders on w.Id equals o.OwnerId into gj from o in gj.DefaultIfEmpty() select new { w.Name, L = o.Region.Length }).ToList());
+            Assert.Equal("Nullable object must have a value.", exception.Message);
         }
 
-        using (var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Non_nullable_Length_projection_over_an_unmatched_left_join_side_declines) + "N"))
+        using (var db = CreateContext(CreateSeed(), MongoQueryMode.NativeOnly, nameof(Non_nullable_Length_projection_over_an_unmatched_left_join_side_throws_on_the_unmatched_row) + "M"))
+        {
+            Assert.Equal(
+                "Alice:5|Alice:5|Bob:5|Cara:5",
+                string.Join("|", (from w in db.Owners join o in db.Orders on w.Id equals o.OwnerId into gj from o in gj.DefaultIfEmpty() select new { w.Name, L = o.Region.Length })
+                    .AsEnumerable().Select(x => x.Name + ":" + x.L).OrderBy(x => x, StringComparer.Ordinal)));
+        }
+
+        using (var db = CreateContext(seed, MongoQueryMode.NativeOnly, nameof(Non_nullable_Length_projection_over_an_unmatched_left_join_side_throws_on_the_unmatched_row) + "N"))
         {
             Assert.Equal(
                 "Alice:5|Alice:5|Bob:5|Cara:5|Dora:<null>",

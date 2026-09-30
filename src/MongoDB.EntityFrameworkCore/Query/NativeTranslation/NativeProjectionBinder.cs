@@ -116,11 +116,11 @@ internal static class NativeProjectionBinder
                     var memberValue = PeelCaseMapping(member);
                     hasCaseMappingLeaf |= !ReferenceEquals(memberValue, member);
                     var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], memberValue, memberName);
-                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
+                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, out var throwsOnNull, allowWholeRootEntityLeaf: true))
                         return false;
                     if (!seenAliases.Add(alias))
                         return false;
-                    projections.Add(new MongoProjection(alias, leaf, memberValue));
+                    projections.Add(new MongoProjection(alias, leaf, memberValue, throwsOnNull));
                     // The nav-entity leaf always registers a DocumentPath override, even though its alias equals the
                     // member name: the late-fallback strip it triggers is what supplies the retained _id.
                     if (alias != memberName || isOwnedNavEntityLeaf)
@@ -180,11 +180,11 @@ internal static class NativeProjectionBinder
                     var memberValue = PeelCaseMapping(member);
                     hasCaseMappingLeaf |= !ReferenceEquals(memberValue, member);
                     var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], memberValue, memberName);
-                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, allowWholeRootEntityLeaf: true))
+                    if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, out var throwsOnNull, allowWholeRootEntityLeaf: true))
                         return false;
                     if (!seenAliases.Add(alias))
                         return false;
-                    projections.Add(new MongoProjection(alias, leaf, memberValue));
+                    projections.Add(new MongoProjection(alias, leaf, memberValue, throwsOnNull));
                     if (alias != memberName || isOwnedNavEntityLeaf)
                         namedAliasOverrides.Add((memberName, alias));
                     leafIsArray.Add(isArrayLeaf);
@@ -268,7 +268,7 @@ internal static class NativeProjectionBinder
             bareLikeExpr = peeled;
             if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], bareLikeExpr, provisionalAlias,
                     pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var bareLeaf, out var bareIsArrayLeaf, out _,
-                    allowWholeRootEntityLeafForThis))
+                    out var bareThrowsOnNull, allowWholeRootEntityLeafForThis))
             {
                 return false;
             }
@@ -291,7 +291,7 @@ internal static class NativeProjectionBinder
 
             bareProjectionAlias = derivedAlias;
             seenAliases.Add(derivedAlias);
-            projections.Add(new MongoProjection(derivedAlias, bareLeaf, bareLikeExpr));
+            projections.Add(new MongoProjection(derivedAlias, bareLeaf, bareLikeExpr, bareThrowsOnNull));
             leafIsArray.Add(bareIsArrayLeaf);
             hasArrayLeaf |= bareIsArrayLeaf;
             hasStringSequenceLeaf |= bareLikeExpr is MethodCallExpression bareStringSequenceCall
@@ -543,14 +543,36 @@ internal static class NativeProjectionBinder
         out MongoExpression result,
         out bool isArrayLeaf,
         out bool isOwnedNavEntityLeaf,
+        out bool throwsOnNull,
         bool allowWholeRootEntityLeaf = false)
-        // A non-nullable Length/IndexOf over a possibly-null string would read its null as 0; see
-        // MongoAggregationExpressionRenderer.MayBeNullBehindNonNullableType.
-        => TryTranslateLeafCore(
-               mongoQ, translator, outerParameter, leafExpression, alias, pendingLookups, pendingReducerLeaves,
-               pendingBareCountStamps, out result, out isArrayLeaf, out isOwnedNavEntityLeaf, allowWholeRootEntityLeaf)
-           && !MongoAggregationExpressionRenderer.ReadsNullAsDefault(
-               NativeSlotPopulator.UnwrapBoxingToObjectType(leafExpression), result);
+    {
+        if (!TryTranslateLeafCore(
+                mongoQ, translator, outerParameter, leafExpression, alias, pendingLookups, pendingReducerLeaves,
+                pendingBareCountStamps, out result, out isArrayLeaf, out isOwnedNavEntityLeaf, allowWholeRootEntityLeaf))
+        {
+            throwsOnNull = false;
+            return false;
+        }
+
+        // A non-nullable Length/IndexOf over a possibly-null string (MongoAggregationExpressionRenderer
+        // .MayBeNullBehindNonNullableType) is rendered null-safely, so the server answers null where EF throws. Flag the
+        // leaf (MongoProjection.ThrowsOnNull) so the read side reads it as T? and throws EF's "Nullable object must have
+        // a value." instead of reading the null as 0; decline where an operator ($max/$min, Sign) may absorb the null
+        // into a non-null answer. This call is the flag's only source.
+        switch (MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+                    NativeSlotPopulator.UnwrapBoxingToObjectType(leafExpression), result))
+        {
+            case NonNullableValueRead.Decline:
+                throwsOnNull = false;
+                return false;
+            case NonNullableValueRead.ThrowOnNull:
+                throwsOnNull = true;
+                return true;
+            default:
+                throwsOnNull = false;
+                return true;
+        }
+    }
 
     private static bool TryTranslateLeafCore(
         MongoQueryExpression mongoQ,

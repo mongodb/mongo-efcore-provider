@@ -988,10 +988,10 @@ internal static class MongoAggregationExpressionRenderer
     /// Whether <paramref name="node"/>, whose CLR type is a non-nullable value type, may nonetheless evaluate to null:
     /// <c>$strLenCP</c>/<c>$indexOfCP</c> over a possibly-null string (null-guarded, see <see cref="NullPropagating"/>),
     /// directly or through arithmetic, a cast, a math function or a conditional branch. Read back as that non-nullable type, the null would
-    /// silently become <c>default(T)</c> (a <c>0</c> length) where EF throws, so a value read of it (a projection
-    /// leaf, group key, <c>$min</c>/<c>$max</c>/<c>$avg</c> or <c>$push</c> operand) declines; a nullable cast
-    /// (<c>(int?)s.Length</c>) reads the null and stays native. Filters are unaffected: the relational null guard
-    /// covers them.
+    /// silently become <c>default(T)</c> (a <c>0</c> length) where EF throws, so a group key, <c>$min</c>/<c>$max</c>/
+    /// <c>$avg</c> or <c>$push</c> operand declines, and a projection leaf throws on null or declines (see
+    /// <see cref="ClassifyNonNullableValueRead"/>); a nullable cast (<c>(int?)s.Length</c>) reads the null and stays
+    /// native. Filters are unaffected: the relational null guard covers them.
     /// </summary>
     internal static bool MayBeNullBehindNonNullableType(MongoExpression node)
         => MayBeNullBehindNonNullableType(node, []);
@@ -1070,6 +1070,45 @@ internal static class MongoAggregationExpressionRenderer
     internal static bool ReadsNullAsDefault(Type readType, MongoExpression node)
         => readType.IsValueType && Nullable.GetUnderlyingType(readType) is null && MayBeNullBehindNonNullableType(node);
 
+    /// <summary>
+    /// How a projection leaf read back as <paramref name="readType"/> handles a null behind the non-nullable type
+    /// (<see cref="ReadsNullAsDefault"/>): <see cref="NonNullableValueRead.Plain"/> when there is none;
+    /// <see cref="NonNullableValueRead.ThrowOnNull"/> when every operator between that null and the leaf's value
+    /// propagates it, so reading the leaf as <c>T?</c> and throwing on null is exactly EF's
+    /// "Nullable object must have a value."; <see cref="NonNullableValueRead.Decline"/> when an operator may absorb it
+    /// into a non-null answer where EF throws (<c>Math.Max(s.Length, t.Length)</c>: <c>$max</c>/<c>$min</c> skip a null
+    /// operand, and <c>Math.Sign</c>'s <c>$switch</c> orders it below 0), which no read of the value can detect.
+    /// </summary>
+    /// <remarks>
+    /// The one call a projection binder makes for a value leaf; its answer is both the gate and the read side's
+    /// <c>MongoProjection.ThrowsOnNull</c>.
+    /// </remarks>
+    internal static NonNullableValueRead ClassifyNonNullableValueRead(Type readType, MongoExpression node)
+        => !ReadsNullAsDefault(readType, node) ? NonNullableValueRead.Plain
+            : MayAbsorbNullBehindNonNullableType(node, []) ? NonNullableValueRead.Decline
+            : NonNullableValueRead.ThrowOnNull;
+
+    // Walks the value positions MayBeNullBehindNonNullableType walks, under the same conditional proofs, looking for a
+    // non-null-propagating operator over a possibly-null-behind-non-nullable operand.
+    private static bool MayAbsorbNullBehindNonNullableType(MongoExpression node, IReadOnlyList<MongoExpression> nonNull)
+        => node switch
+        {
+            MongoMathExpression math when !MongoGroupElementTranslator.IsNullPropagatingMathFunction(math.Function)
+                => math.Operands.Any(o => MayBeNullBehindNonNullableType(o, nonNull) || MayAbsorbNullBehindNonNullableType(o, nonNull)),
+            MongoMathExpression math => math.Operands.Any(o => MayAbsorbNullBehindNonNullableType(o, nonNull)),
+            MongoBinaryExpression { Operator: not (MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse
+                or MongoBinaryOperator.Equal or MongoBinaryOperator.NotEqual or MongoBinaryOperator.LessThan
+                or MongoBinaryOperator.LessThanOrEqual or MongoBinaryOperator.GreaterThan
+                or MongoBinaryOperator.GreaterThanOrEqual) } arithmetic
+                => MayAbsorbNullBehindNonNullableType(arithmetic.Left, nonNull)
+                   || MayAbsorbNullBehindNonNullableType(arithmetic.Right, nonNull),
+            MongoConvertExpression convert => MayAbsorbNullBehindNonNullableType(convert.Operand, nonNull),
+            MongoConditionalExpression conditional
+                => MayAbsorbNullBehindNonNullableType(conditional.IfTrue, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, true)])
+                   || MayAbsorbNullBehindNonNullableType(conditional.IfFalse, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, false)]),
+            _ => false
+        };
+
     private static bool IsNullableClrType(Type type)
         => !type.IsValueType || Nullable.GetUnderlyingType(type) is not null;
 
@@ -1084,4 +1123,20 @@ internal static class MongoAggregationExpressionRenderer
                 + "answer the wrong boolean.");
         }
     }
+}
+
+/// <summary>
+/// How a projection value read back as a non-nullable value type treats a server null; see
+/// <see cref="MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead"/>.
+/// </summary>
+internal enum NonNullableValueRead
+{
+    /// <summary>The value is never null behind the non-nullable type: read it as usual.</summary>
+    Plain,
+
+    /// <summary>The value may be null and the null reaches it: read as <c>T?</c> and throw EF's exception on null.</summary>
+    ThrowOnNull,
+
+    /// <summary>An operator may absorb the null into a non-null answer where EF throws: decline.</summary>
+    Decline
 }

@@ -304,7 +304,7 @@ public class NativeProjectionBinderBareBodyTests
     public void Bare_string_Length_leaf_is_admitted_under_the_reserved_synthetic_alias()
     {
         var mongoQ = TestQuery();
-        // Nullable: a non-nullable Length would read a null string's length as 0 (see the next test).
+        // Nullable: reads a null string's length as null, so no throw-on-null flag (contrast the next test).
         Expression<Func<Order, int?>> selector = o => o.Country.Length;
 
         Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
@@ -312,19 +312,29 @@ public class NativeProjectionBinderBareBodyTests
         var projection = Assert.Single(mongoQ.Select.Projection);
         Assert.Equal("_v", projection.Alias);
         Assert.IsType<MongoStringLengthExpression>(projection.Expression);
+        Assert.False(projection.ThrowsOnNull);
         Assert.True(mongoQ.Select.TryGetProjectionAlias(null, out var alias));
         Assert.Equal("_v", alias);
         Assert.Equal(ProjectionAliasTier.Synthetic, mongoQ.Select.BareProjectionTier);
         Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
     }
 
+    // A non-nullable Length over a possibly-null string is admitted flagged ThrowsOnNull: the read side reads it as
+    // int? and throws EF's "Nullable object must have a value." on null, rather than reading 0 (pinned end-to-end by
+    // NativeMaterializerNullabilityTests).
     [Fact]
-    public void Bare_non_nullable_string_Length_leaf_over_a_possibly_null_string_declines()
+    public void Bare_non_nullable_string_Length_leaf_over_a_possibly_null_string_is_flagged_throws_on_null()
     {
         var mongoQ = TestQuery();
         Expression<Func<Order, int>> selector = o => o.Country.Length;
 
-        Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
+        Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, selector));
+
+        var projection = Assert.Single(mongoQ.Select.Projection);
+        Assert.Equal("_v", projection.Alias);
+        Assert.IsType<MongoStringLengthExpression>(projection.Expression);
+        Assert.True(projection.ThrowsOnNull);
+        Assert.Equal(projection, mongoQ.Select.FindThrowOnNullProjection("_v"));
     }
 
     [Fact]
