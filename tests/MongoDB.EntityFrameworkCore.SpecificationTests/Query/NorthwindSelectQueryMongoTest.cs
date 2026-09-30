@@ -499,8 +499,8 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$toLong" : { "$add" : ["$_id", "$_id"] } }, "_id" : 0 } }
-            """);
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$add" : ["$_id", "$_id"] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_non_matching_value_types_from_binary_expression_nested_introduces_top_level_explicit_cast(
@@ -529,8 +529,8 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$toLong" : { "$subtract" : [0, "$_id"] } }, "_id" : 0 } }
-            """);
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$subtract" : [0, "$_id"] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_non_matching_value_types_from_unary_expression_introduces_explicit_cast2(bool async)
@@ -539,8 +539,8 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$subtract" : [0, { "$toLong" : "$_id" }] }, "_id" : 0 } }
-            """);
+Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$subtract" : [0, "$_id"] }, "_id" : 0 } }
+""");
     }
 
     public override async Task Select_non_matching_value_types_from_length_introduces_explicit_cast(bool async)

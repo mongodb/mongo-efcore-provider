@@ -435,7 +435,7 @@ internal sealed partial class MongoExpressionTranslator
         (typeof(float), typeof(double))
     ];
 
-    private static bool IsWideningNumericConvert(Type from, Type to)
+    internal static bool IsWideningNumericConvert(Type from, Type to)
         => WideningNumericConversions.Contains((from, to));
 
     private static bool IsIntegerType(Type type)

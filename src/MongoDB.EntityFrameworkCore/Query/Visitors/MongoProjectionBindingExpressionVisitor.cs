@@ -270,8 +270,16 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             // every query mode, and wrap it so the native alias reader can instead read the computed value once
             // (see NativeComputedLeafExpression). Matched structurally against the leaf the emit side staged for
             // this member, so only the exact subtree the server computed is wrapped.
+            //
+            // Numeric Negate / widening-cast leaves (`-x.A`, `-(long)x.A`, `(long)-x.A`) join through the emit side's
+            // own predicate, NativeProjectionBinder.IsNumericComputedLeafShape: the default walk would bind the operand
+            // to the alias and re-apply Negate over the already-negated server value, answering +x.A. (With
+            // Route == Projection a top-level widening Convert is claimed by the numeric-cast case above, which also
+            // reads the alias whole.)
             case MethodCallExpression or UnaryExpression { NodeType: ExpressionType.Not } or BinaryExpression
                 when IsNativeComputedLeaf(expression):
+            case UnaryExpression
+                when NativeProjectionBinder.IsNumericComputedLeafShape(expression) && IsNativeComputedLeaf(expression):
                 var computedMember = GetCurrentProjectionMember();
                 Expression clientExpression;
                 if (IsClientComputedLeaf(expression))

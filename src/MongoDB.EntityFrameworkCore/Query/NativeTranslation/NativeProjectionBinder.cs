@@ -394,6 +394,35 @@ internal static class NativeProjectionBinder
     }
 
     /// <summary>
+    /// True for a numeric computed leaf the server evaluates whole: <c>-x</c> (<see cref="ExpressionType.Negate"/> or
+    /// <see cref="ExpressionType.NegateChecked"/> over a numeric operand), or a widening numeric cast over such a
+    /// negation or over an arithmetic (<c>+ - * / %</c>) <see cref="BinaryExpression"/>.
+    /// </summary>
+    /// <remarks>
+    /// Shared by the emit side (<c>TryTranslateLeafCore</c>) and the read side
+    /// (<c>MongoProjectionBindingExpressionVisitor</c>), so one can't admit a shape the other reads differently. A
+    /// narrowing cast is excluded: it translates to <c>$toX</c>, whose semantics differ from C# truncation.
+    /// </remarks>
+    internal static bool IsNumericComputedLeafShape(Expression leaf)
+        => leaf switch
+        {
+            UnaryExpression { NodeType: ExpressionType.Negate or ExpressionType.NegateChecked } negate
+                => MongoExpressionTranslator.IsNumericType(negate.Type)
+                   && MongoExpressionTranslator.IsNumericType(negate.Operand.Type),
+            UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert
+                => MongoExpressionTranslator.IsWideningNumericConvert(
+                       convert.Operand.Type.UnwrapNullableType(), convert.Type.UnwrapNullableType())
+                   && (convert.Operand is UnaryExpression { NodeType: ExpressionType.Negate or ExpressionType.NegateChecked }
+                           && IsNumericComputedLeafShape(convert.Operand)
+                       || convert.Operand is BinaryExpression
+                       {
+                           NodeType: ExpressionType.Add or ExpressionType.Subtract or ExpressionType.Multiply
+                           or ExpressionType.Divide or ExpressionType.Modulo
+                       } arithmetic && MongoExpressionTranslator.IsNumericType(arithmetic.Type)),
+            _ => false
+        };
+
+    /// <summary>
     /// True for <c>Enumerable.AsEnumerable</c>/<c>ToList</c>/<c>ToArray</c> over a <see langword="string"/>
     /// (<c>e.City.AsEnumerable()</c>). MongoDB has no char-sequence representation, so only the string field is pushed
     /// down and the shaper re-applies the call client-side.
@@ -697,6 +726,19 @@ internal static class NativeProjectionBinder
             && translator.TryTranslateValue(leafExpression, out var computed))
         {
             result = computed;
+            return true;
+        }
+
+        // Negate (`-x.A`) or a widening cast over Negate/arithmetic (`(long)-x.A`, `-(long)x.A`, `(long)(x.A + x.B)`).
+        // `-x` translates to {$subtract: [0, x]} and TryTranslateValue drops a widening Convert, so each arrives as an
+        // operator document (never a bare falsy value). The read side (MongoProjectionBindingExpressionVisitor) reads
+        // the server value whole for exactly these shapes via the same predicate; re-applying Negate client-side over
+        // the negated alias would answer +x.
+        if (IsNumericComputedLeafShape(leafExpression)
+            && translator.TryTranslateValue(leafExpression, out var numeric)
+            && numeric is MongoBinaryExpression or MongoUnaryExpression)
+        {
+            result = numeric;
             return true;
         }
 
