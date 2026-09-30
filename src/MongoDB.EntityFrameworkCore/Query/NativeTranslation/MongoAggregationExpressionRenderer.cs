@@ -17,6 +17,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Serializers;
@@ -1019,8 +1020,12 @@ internal static class MongoAggregationExpressionRenderer
             _ => false
         };
 
+    // A primary-key field is never null in a stored document, so its Length/IndexOf is not null behind the non-nullable
+    // type. Deliberately local to this predicate, not in MayBeNull: MayBeNull also drives the render-time $ifNull guards.
     private static bool MayBeNullUnlessProven(MongoExpression operand, IReadOnlyList<MongoExpression> nonNull)
-        => MayBeNull(operand) && !nonNull.Any(proven => IsSameStoredValue(proven, operand));
+        => MayBeNull(operand)
+           && !(operand is MongoFieldExpression { NullSafe: false } field && field.Property.IsPrimaryKey())
+           && !nonNull.Any(proven => IsSameStoredValue(proven, operand));
 
     // The operands that `test` answering `outcome` proves non-null. Structural: only a null comparison of a stored
     // value, combined through ||/&&/! the way that preserves the proof (a false `a || b` makes both false; a true

@@ -301,7 +301,7 @@ Customers.{ "$project" : { "City" : "$City", "_id" : 0 } }
 
         AssertMql(
             """
-Customers.{ "$project" : { "CustomerID" : "$_id", "Expression" : { "$add" : [{ "$strLenCP" : "$_id" }, 5] }, "_id" : 0 } }
+Customers.{ "$project" : { "CustomerID" : "$_id", "Expression" : { "$add" : [{ "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$_id", null] }, null] }, "then" : null, "else" : { "$strLenCP" : "$_id" } } }, 5] }, "_id" : 0 } }
 """);
     }
 

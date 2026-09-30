@@ -63,6 +63,12 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         public List<int> Tags { get; set; } = [];   // required non-nullable REFERENCE scalar (collection)
     }
 
+    private class StringKeyed
+    {
+        public string Id { get; set; } = "";       // string primary key: never null
+        public string? Label { get; set; }          // nullable, non-key string
+    }
+
     private static SingleEntityDbContext<T> CreateContext<T>(
         IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? model = null)
         where T : class
@@ -297,5 +303,35 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
             var nativeOnlyScore = nativeOnly.Entities.ToList().Single().Stats.Score;
             Assert.Equal(driverScore, nativeOnlyScore);
         }
+    }
+
+    // A primary-key string is never null, so its Length is not null behind the non-nullable int it is read as.
+    [Fact]
+    public void String_primary_key_length_expression_projection_goes_native()
+    {
+        var collection = database.CreateCollection<StringKeyed>();
+        collection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = null }]);
+
+        var result = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var context = CreateContext(collection, mode, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+            return context.Entities.OrderBy(e => e.Id).Select(e => new { e.Id, L = e.Id.Length + 5 }).ToList();
+        });
+
+        Assert.Equal([7, 10], result.Select(r => r.L));
+    }
+
+    // Control: a nullable non-key string may be null, so its Length + 5 must still decline (EF throws; 0 + 5 would be wrong).
+    [Fact]
+    public void Nullable_non_key_string_length_expression_projection_still_declines()
+    {
+        var collection = database.CreateCollection<StringKeyed>();
+        collection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = "yy" }]);
+
+        NativeModeAssert.DeclinesCleanly(mode =>
+        {
+            using var context = CreateContext(collection, mode, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+            return context.Entities.OrderBy(e => e.Id).Select(e => new { e.Id, L = e.Label!.Length + 5 }).ToList();
+        });
     }
 }
