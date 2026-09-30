@@ -1102,6 +1102,192 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal([expected], result);
     }
 
+    // A projected set operation whose first operand is a join scope (a reference-navigation filter or projection
+    // leaf nav-expands to a join) and whose second is a GroupBy aggregate. The operand's inner-side $match/$sort/
+    // $skip/$limit run after its $lookup/$unwind and before its $project, ahead of the combine. The inner filter
+    // really matches rows, so a dropped $match returns extra rows instead of passing on an empty side.
+    //
+    // Grouped operand, max Total by Region: North 20 (o1, o2, o4), South 30 (o3), East 1 (o5).
+    private List<decimal> RunJoinScopeSetOperation(
+        string name, Func<GroupByOverJoinDbContext, IEnumerable<decimal>> query, Seed? seed = null)
+    {
+        seed ??= CreateSeed();
+        return NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(seed, mode, name + mode);
+            return query(db).ToList().OrderBy(v => v).ToList();
+        });
+    }
+
+    [Fact]
+    public void Union_of_a_join_scope_operand_filtered_on_a_matching_inner_value_goes_native()
+        // Alice owns o1 (10) and o2 (20). Without the $match every joined row (o1-o4) comes back, adding 5.
+        => Assert.Equal(
+            [1m, 10m, 20m, 30m],
+            RunJoinScopeSetOperation(
+                nameof(Union_of_a_join_scope_operand_filtered_on_a_matching_inner_value_goes_native),
+                db => db.Orders.Where(o => o.Owner!.Name == "Alice").Select(o => new { o.Total })
+                    .Union(db.Orders.GroupBy(o => o.Region).Select(g => new { Total = g.Max(o => o.Total) }))
+                    .AsEnumerable().Select(x => x.Total)));
+
+    [Fact]
+    public void Concat_of_a_join_scope_operand_filtered_on_a_matching_inner_value_keeps_duplicates()
+        => Assert.Equal(
+            [1m, 10m, 20m, 20m, 30m],
+            RunJoinScopeSetOperation(
+                nameof(Concat_of_a_join_scope_operand_filtered_on_a_matching_inner_value_keeps_duplicates),
+                db => db.Orders.Where(o => o.Owner!.Name == "Alice").Select(o => new { o.Total })
+                    .Concat(db.Orders.GroupBy(o => o.Region).Select(g => new { Total = g.Max(o => o.Total) }))
+                    .AsEnumerable().Select(x => x.Total)));
+
+    [Fact]
+    public void Union_of_a_join_scope_operand_filtered_on_an_unmatched_inner_value_goes_native()
+        => Assert.Equal(
+            [1m, 20m, 30m],
+            RunJoinScopeSetOperation(
+                nameof(Union_of_a_join_scope_operand_filtered_on_an_unmatched_inner_value_goes_native),
+                db => db.Orders.Where(o => o.Owner!.Name == "Nobody").Select(o => new { o.Total })
+                    .Union(db.Orders.GroupBy(o => o.Region).Select(g => new { Total = g.Max(o => o.Total) }))
+                    .AsEnumerable().Select(x => x.Total)));
+
+    [Fact]
+    public void Concat_of_a_paged_join_scope_operand_pages_the_filtered_rows()
+        // Alice's orders by Total: o1 (10), o2 (20); Skip(1).Take(1) keeps o2. Unpaged, o1's 10 comes back too.
+        => Assert.Equal(
+            [1m, 20m, 20m, 30m],
+            RunJoinScopeSetOperation(
+                nameof(Concat_of_a_paged_join_scope_operand_pages_the_filtered_rows),
+                db => db.Orders.Where(o => o.Owner!.Name == "Alice").OrderBy(o => o.Total).Skip(1).Take(1)
+                    .Select(o => new { o.Total })
+                    .Concat(db.Orders.GroupBy(o => o.Region).Select(g => new { Total = g.Max(o => o.Total) }))
+                    .AsEnumerable().Select(x => x.Total)));
+
+    [Fact]
+    public void Concat_of_an_optional_navigation_join_scope_operand_filtered_on_a_matching_inner_value()
+        // Reviewer is optional, so this is a left join like the spec's Order.Customer. Alice reviews only o3 (30).
+        => Assert.Equal(
+            [1m, 20m, 30m, 30m],
+            RunJoinScopeSetOperation(
+                nameof(Concat_of_an_optional_navigation_join_scope_operand_filtered_on_a_matching_inner_value),
+                db => db.Orders.Where(o => o.Reviewer!.Name == "Alice").Select(o => new { o.Total })
+                    .Concat(db.Orders.GroupBy(o => o.Region).Select(g => new { Total = g.Max(o => o.Total) }))
+                    .AsEnumerable().Select(x => x.Total)));
+
+    [Fact]
+    public void Concat_of_a_join_scope_operand_with_paging_deferred_past_the_lookup()
+    {
+        // Paging hoisted ahead of an inner-side projection leaf over a required navigation is deferred past the
+        // $lookup/$unwind (PostLookupPagingOps). No dangling owner, so paging before or after the join agrees.
+        // By Total: o4 Cara (5), o1 Alice (10), o2 Alice (20), o3 Bob (30); Skip(1).Take(2) keeps Alice twice.
+        var seed = CreateSeed();
+        seed = seed with { Orders = seed.Orders.Where(o => seed.Owners.Any(w => w.Id == o.OwnerId)).ToArray() };
+        var result = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(seed, mode, nameof(Concat_of_a_join_scope_operand_with_paging_deferred_past_the_lookup) + mode);
+            return db.Orders.OrderBy(o => o.Total).Skip(1).Take(2).Select(o => new { V = o.Owner!.Name })
+                .Concat(db.Owners.Select(w => new { V = w.Region }))
+                .AsEnumerable().Select(x => x.V)
+                .OrderBy(v => v, StringComparer.Ordinal).ToList();
+        });
+
+        Assert.Equal(["Alice", "Alice", "North", "North", "South"], result);
+    }
+
+    // Intersect/Except have no driver-LINQ oracle (they hard-fail on the fallback), so these check NativeOnly against
+    // the hand oracle alone. Alice's orders: {10, 20}; grouped operand: {1, 20, 30}. A dropped $match would make source1
+    // every joined row, {5, 10, 20, 30}, giving [20, 30] and [5, 10].
+    private List<decimal> RunJoinScopeSetDifferenceNativeOnly(
+        string name, Func<GroupByOverJoinDbContext, IEnumerable<decimal>> query)
+    {
+        using var db = CreateContext(CreateSeed(), MongoQueryMode.NativeOnly, name);
+        return query(db).ToList().OrderBy(v => v).ToList();
+    }
+
+    [Fact]
+    public void Intersect_of_a_join_scope_operand_filtered_on_a_matching_inner_value_goes_native()
+        => Assert.Equal(
+            [20m],
+            RunJoinScopeSetDifferenceNativeOnly(
+                nameof(Intersect_of_a_join_scope_operand_filtered_on_a_matching_inner_value_goes_native),
+                db => db.Orders.Where(o => o.Owner!.Name == "Alice").Select(o => new { o.Total })
+                    .Intersect(db.Orders.GroupBy(o => o.Region).Select(g => new { Total = g.Max(o => o.Total) }))
+                    .AsEnumerable().Select(x => x.Total)));
+
+    [Fact]
+    public void Except_of_a_join_scope_operand_filtered_on_a_matching_inner_value_goes_native()
+        => Assert.Equal(
+            [10m],
+            RunJoinScopeSetDifferenceNativeOnly(
+                nameof(Except_of_a_join_scope_operand_filtered_on_a_matching_inner_value_goes_native),
+                db => db.Orders.Where(o => o.Owner!.Name == "Alice").Select(o => new { o.Total })
+                    .Except(db.Orders.GroupBy(o => o.Region).Select(g => new { Total = g.Max(o => o.Total) }))
+                    .AsEnumerable().Select(x => x.Total)));
+
+    // A constant leaf on a join-scope source1 (Alice's two orders each project 7; counts by Region are North 3 for
+    // o1, o2 and o4, South 1, East 1). The combined rows are read through source1's shaper, so a baked-in constant
+    // would read source2's counts back as 7. The operand never reaches the rebind: standalone, a constant Select over
+    // this join scope already declines under NativeOnly (the join-scope bare-value arm needs a scoped access,
+    // NativeJoinScopeTranslator's SawScopedAccess), so its Route is Fallback and the set-op gate declines it too. If
+    // that arm ever admits a constant, CanRebindConstantLeafToDocument's read-side alias conjunct keeps it declining.
+    [Fact]
+    public void Union_of_a_join_scope_constant_operand_and_a_grouped_count_declines()
+    {
+        var seed = CreateSeed();
+        var name = nameof(Union_of_a_join_scope_constant_operand_and_a_grouped_count_declines);
+        var union = NativeModeAssert.DeclinesCleanly(mode =>
+        {
+            using var db = CreateContext(seed, mode, name + mode);
+            return db.Orders.Where(o => o.Owner!.Name == "Alice").Select(o => 7)
+                .Union(db.Orders.GroupBy(o => o.Region).Select(g => g.Count()))
+                .ToList().OrderBy(v => v).ToList();
+        });
+        Assert.Equal([1, 3, 7], union);
+
+        var concat = NativeModeAssert.DeclinesCleanly(mode =>
+        {
+            using var db = CreateContext(seed, mode, name + "Concat" + mode);
+            return db.Orders.Where(o => o.Owner!.Name == "Alice").Select(o => 7)
+                .Concat(db.Orders.GroupBy(o => o.Region).Select(g => g.Count()))
+                .ToList().OrderBy(v => v).ToList();
+        });
+        Assert.Equal([1, 1, 3, 7, 7], concat);
+    }
+
+    [Fact]
+    public void Union_with_a_join_scope_second_operand_declines()
+    {
+        // Operand lowering has no lookup plumbing, so a join on the second operand stays out of scope. There is no
+        // driver-LINQ oracle (the fallback rejects the cross-DbSet operand, pre-existing), so pin the decline and that
+        // Native reaches the same fallback error rather than returning rows. The pinned cross-DbSet error is a known
+        // existing limitation of the driver-LINQ fallback, not intended behaviour; update this test if it is lifted.
+        List<decimal> Run(MongoQueryMode mode)
+        {
+            using var db = CreateContext(CreateSeed(), mode, nameof(Union_with_a_join_scope_second_operand_declines) + mode);
+            return db.Orders.GroupBy(o => o.Region).Select(g => new { Total = g.Max(o => o.Total) })
+                .Union(db.Orders.Where(o => o.Owner!.Name == "Alice").Select(o => new { o.Total }))
+                .AsEnumerable().Select(x => x.Total).ToList();
+        }
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(MongoQueryMode.NativeOnly));
+        Assert.Contains("cross-DbSet", Assert.Throws<InvalidOperationException>(() => Run(MongoQueryMode.Native)).Message);
+        Assert.Contains("cross-DbSet", Assert.Throws<InvalidOperationException>(() => Run(MongoQueryMode.DriverLinq)).Message);
+    }
+
+    [Fact]
+    public void Union_with_a_two_level_join_scope_first_operand_declines_cleanly()
+        // Two reference-navigation filters make a two-level join chain; only a single-level join is admitted.
+        => Assert.Equal(
+            [1m, 10m, 20m, 30m],
+            NativeModeAssert.DeclinesCleanly(mode =>
+            {
+                using var db = CreateContext(CreateSeed(), mode,
+                    nameof(Union_with_a_two_level_join_scope_first_operand_declines_cleanly) + mode);
+                return db.Orders.Where(o => o.Owner!.Name == "Alice" && o.Reviewer!.Name == "Bob").Select(o => new { o.Total })
+                    .Union(db.Orders.GroupBy(o => o.Region).Select(g => new { Total = g.Max(o => o.Total) }))
+                    .AsEnumerable().Select(x => x.Total)
+                    .OrderBy(v => v).ToList();
+            }));
+
     // EF8/EF9 nav-expand these left joins to a shape that explicit DriverLinq can't translate under a GroupBy (the
     // driver's Join translator throws ExpressionNotSupportedException). With no driver-LINQ oracle there, NativeOnly is checked against the hand-computed expectation alone.
     private static List<T> LeftJoinNativeAndParity<T>(Func<MongoQueryMode, List<T>> run)

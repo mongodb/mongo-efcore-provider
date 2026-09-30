@@ -55,7 +55,8 @@ internal sealed class MongoSelectDefinition
     public IReadOnlyList<MongoSelectOp> TrailingOps => _trailingOps;
 
     // Ops recorded once JoinInnerAccessConfirmed flips, incl. the confirming Where/OrderBy and any later reducer
-    // $limit: the Where decides "first", so it must run before the reducer's $limit. Exclusive with SetOperation.
+    // $limit: the Where decides "first", so it must run before the reducer's $limit. Recording stops once a set op
+    // attaches (ActiveOps then targets TrailingOps); a projected join-scope source1 keeps what it recorded before.
     private readonly List<MongoSelectOp> _postJoinOps = [];
 
     /// <summary>
@@ -294,6 +295,22 @@ internal sealed class MongoSelectDefinition
     /// the flattening projection that reads values back out of the degenerate-<c>$group</c> <c>_id</c>.
     /// </summary>
     internal void ClearProjections() => _projections.Clear();
+
+    /// <summary>
+    /// Renames this select's single projection to <paramref name="alias"/>, keeping its expression and source, so a
+    /// bare scalar set-op operand emits the first operand's alias (see <c>CanAlignBareScalarAliases</c> in the
+    /// queryable method translator, the only caller).
+    /// </summary>
+    internal void ReplaceSingleProjectionAlias(string alias)
+    {
+        if (_projections.Count != 1)
+        {
+            throw new InvalidOperationException(
+                $"Expected exactly one projection to re-alias, found {_projections.Count}.");
+        }
+
+        _projections[0] = _projections[0] with { Alias = alias };
+    }
 
     // Projection-alias overrides: the single source for every site that would otherwise derive a $project alias
     // (and the name the DOM shaper reads by) from ProjectionMember.Last?.Name. A map rather than one string so a

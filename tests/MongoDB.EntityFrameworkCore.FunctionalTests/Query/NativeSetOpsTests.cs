@@ -838,26 +838,26 @@ public class NativeSetOpsTests(TemporaryDatabaseFixture database) : IClassFixtur
     }
 
     [Fact]
-    public void Constant_projected_operand_as_source1_still_declines_to_protect_the_shared_shaper()
+    public void Constant_projected_operand_as_source1_goes_native_and_reads_each_row_from_the_document()
     {
         // Mirror of the projected-collection-Count test with a constant leaf (`Select(i => 8)`) on source1. The combined
-        // stream uses source1's shaper, which embeds a bare constant leaf as a literal (HasShaperUnsafeConstantLeaf), so
-        // every row would read back 8. Must keep falling back.
+        // stream uses source1's shaper, which on its own embeds a bare constant leaf as a literal, so every row would read
+        // back 8. CanRebindConstantLeafToDocument rebinds that leaf to read the `$literal`-projected value per document
+        // (see NativeSetOperationProjectionTests for the full matrix).
         var collection = SeedCollection(
-            nameof(Constant_projected_operand_as_source1_still_declines_to_protect_the_shared_shaper));
+            nameof(Constant_projected_operand_as_source1_goes_native_and_reads_each_row_from_the_document));
 
-        using (var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly))
+        List<int> Run(MongoQueryMode mode)
         {
-            Assert.Throws<NativeTranslationNotSupportedException>(() =>
-                nativeOnlyDb.Entities.Select(i => 8).Union(nativeOnlyDb.Entities.Select(i => i.Value + 1)).ToList());
+            using var db = Make(collection, mode);
+            return db.Entities.Select(i => 8).Union(db.Entities.Select(i => i.Value + 1)).ToList().Order().ToList();
         }
 
-        using var nativeDb = Make(collection, MongoQueryMode.Native);
-        var result = nativeDb.Entities.Select(i => 8).Union(nativeDb.Entities.Select(i => i.Value + 1))
-            .ToList().Order().ToList();
+        var native = Run(MongoQueryMode.NativeOnly);
 
         // {1..5} -> right operand {2,3,4,5,6}; left operand is 8 for every row, deduped to one; Union of the two.
-        Assert.Equal([2, 3, 4, 5, 6, 8], result);
+        Assert.Equal([2, 3, 4, 5, 6, 8], native);
+        Assert.Equal(Run(MongoQueryMode.DriverLinq), native);
     }
 
     // Composition seams: every operator after a Union/Concat must go native correctly or fall back. Every

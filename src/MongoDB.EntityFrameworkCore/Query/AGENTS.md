@@ -83,6 +83,10 @@ Scope, joins, grouping:
 - **Set ops form a tree; each `Union`'s dedup belongs to its own link**, never hoisted or flattened
   (`A.Concat(B.Union(C))` differs from a left chain). Ops recorded between links go to `TrailingOps`, then move to
   the new link's `PrecedingOps` (`AppendSetOperation`). `Intersect`/`Except` never nest.
+- **Projected set-op operands are read through source1's shaper.** Bare scalars with different aliases re-alias
+  source2 (`CanAlignBareScalarAliases`). A constant/parameter on source1, including inside a projected Distinct's
+  key parts, declines unless `CanRebindConstantLeafToDocument` rebinds it (bare, ungrouped, int/long/double/bool/
+  string). source1 may be a single-level confirmed join scope (`IsPreCombineJoinScope`); source2 has no lookups.
 - **A composite `$group` `_id` omits a missing sub-key**; `MongoPipelineFactory.RenderCompositeKeyPart`
   `$ifNull`-normalizes every possibly-null part once. Key-only accumulator conditions use `NullSafeKeyRead`.
 

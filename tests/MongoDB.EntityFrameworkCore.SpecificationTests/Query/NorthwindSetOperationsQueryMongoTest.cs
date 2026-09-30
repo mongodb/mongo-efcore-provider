@@ -278,7 +278,7 @@ Customers.{ "$unionWith" : { "coll" : "Customers", "pipeline" : [] } }, { "$grou
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : "NonNullableConstant", "_id" : 0 } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$project" : { "_v" : null, "_id" : 0 } }] } }
+            Customers.{ "$project" : { "_v" : { "$literal" : "NonNullableConstant" }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Customers", "pipeline" : [{ "$project" : { "_v" : { "$literal" : null }, "_id" : 0 } }] } }
             """);
     }
 
@@ -298,7 +298,7 @@ Customers.{ "$unionWith" : { "coll" : "Customers", "pipeline" : [] } }, { "$grou
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$_id", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "_v" : { "$size" : "$_elements" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Orders.{ "$project" : { "_id" : "$_id" } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$_id", "_v" : { "$sum" : 1 } } }, { "$project" : { "_id" : "$_v" } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -308,7 +308,7 @@ Customers.{ "$unionWith" : { "coll" : "Customers", "pipeline" : [] } }, { "$grou
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$literal" : 8 }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Orders.{ "$project" : { "_id" : "$_id" } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_id" : { "$literal" : 8 } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -318,7 +318,7 @@ Customers.{ "$unionWith" : { "coll" : "Customers", "pipeline" : [] } }, { "$grou
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$subtract" : [0, "$_id"] }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Orders.{ "$project" : { "_id" : "$_id" } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_id" : { "$subtract" : [0, "$_id"] } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -328,7 +328,7 @@ Customers.{ "$unionWith" : { "coll" : "Customers", "pipeline" : [] } }, { "$grou
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : { "$add" : ["$_id", 1] }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Orders.{ "$project" : { "_id" : "$_id" } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_id" : { "$add" : ["$_id", 1] } } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -343,7 +343,7 @@ Customers.{ "$unionWith" : { "coll" : "Customers", "pipeline" : [] } }, { "$grou
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : "$_id", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$__agg0", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : "$_id", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+Orders.{ "$group" : { "_id" : "$_id", "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$project" : { "_v" : "$_id", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
 """);
     }
 
@@ -412,7 +412,7 @@ Orders.{ "$group" : { "_id" : "$_id", "_v" : { "$sum" : 1 } } }, { "$project" : 
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : { "$literal" : 8 }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$_id", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "_v" : { "$size" : "$_elements" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Orders.{ "$project" : { "_v" : { "$literal" : 8 }, "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$_id", "_v" : { "$sum" : 1 } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
             """);
     }
 
@@ -683,7 +683,7 @@ Orders.{ "$project" : { "_v" : { "$subtract" : [0, "$_id"] }, "_id" : 0 } }, { "
         await base.Concat_with_one_side_being_GroupBy_aggregate(async);
         AssertMql(
             """
-Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$set" : { "_lookup_Customer" : { "$ifNull" : ["$_lookup_Customer", null] } } }, { "$match" : { "_lookup_Customer.City" : "Seatte" } }, { "$project" : { "OrderDate" : "$OrderDate", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$CustomerID", "_elements" : { "$push" : "$$ROOT" } } }, { "$project" : { "OrderDate" : { "$max" : "$_elements.OrderDate" }, "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$match" : { "_lookup_Customer.City" : "Seatte" } }, { "$project" : { "OrderDate" : "$OrderDate", "_id" : 0 } }, { "$unionWith" : { "coll" : "Orders", "pipeline" : [{ "$group" : { "_id" : "$CustomerID", "OrderDate" : { "$max" : "$OrderDate" } } }, { "$project" : { "OrderDate" : "$OrderDate", "_id" : 0 } }] } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
 """);
     }
 
