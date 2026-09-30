@@ -216,6 +216,81 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
         Assert.Equal([expected], actual);
     }
 
+    // ---------------------------------------------------------------------------------------------------
+    // Positional containers over the reference-navigation join scope (`new object[] { o, o.Customer }`, what
+    // nav-expansion lowers to `ti => new object[] { ti.Outer, ti.Inner }` over a LeftJoin). Each element is one
+    // `_ctorArg<N>` member: a whole-entity element is rebound to the join's entity shaper, so the unmatched row's
+    // Inner element is null (not a default entity) and the matched one is the real, tracked customer.
+    // ---------------------------------------------------------------------------------------------------
+
+    private (string Orders, string Customers) SeedMatchedAndDangling(string testName)
+    {
+        var (ordersName, customersName) = CreateCollectionNames(testName);
+        var customerId = ObjectId.GenerateNewId();
+        using var seed = new JoinScopeDbContext(database, ordersName, customersName, MongoQueryMode.DriverLinq);
+        seed.Set<Customer>().Add(new Customer { Id = customerId, Name = "Alfreds", Rank = 7 });
+        seed.Set<Order>().AddRange(
+            new Order { Id = ObjectId.GenerateNewId(), OrderNo = 1, CustomerId = customerId },
+            // A dangling FK: never inserted, so the $lookup runs and finds no match.
+            new Order { Id = ObjectId.GenerateNewId(), OrderNo = 2, CustomerId = ObjectId.GenerateNewId() },
+            new Order { Id = ObjectId.GenerateNewId(), OrderNo = 3, CustomerId = null });
+        seed.SaveChanges();
+        return (ordersName, customersName);
+    }
+
+    [Fact]
+    public void Entity_and_reference_navigation_into_object_array_goes_native_with_parity()
+    {
+        var (ordersName, customersName) = SeedMatchedAndDangling(
+            nameof(Entity_and_reference_navigation_into_object_array_goes_native_with_parity));
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = new JoinScopeDbContext(database, ordersName, customersName, mode);
+            return db.Set<Order>().OrderBy(o => o.OrderNo).Select(o => new object?[] { o, o.Customer }).ToList()
+                .Select(row => $"{row.Length}:{((Order)row[0]!).OrderNo}/{(row[1] is Customer c ? c.Name : row[1]?.GetType().Name ?? "<null>")}")
+                .ToList();
+        });
+
+        Assert.Equal(["2:1/Alfreds", "2:2/<null>", "2:3/<null>"], results);
+    }
+
+    [Fact]
+    public void Entity_and_reference_navigation_into_object_array_materializes_tracked_instances()
+    {
+        var (ordersName, customersName) = SeedMatchedAndDangling(
+            nameof(Entity_and_reference_navigation_into_object_array_materializes_tracked_instances));
+        using var db = new JoinScopeDbContext(database, ordersName, customersName, MongoQueryMode.NativeOnly);
+
+        var rows = db.Set<Order>().OrderBy(o => o.OrderNo).Select(o => new object?[] { o, o.Customer }).ToList();
+
+        Assert.Equal(3, rows.Count);
+        var customer = Assert.IsType<Customer>(rows[0][1]);
+        Assert.Same(customer, db.Set<Customer>().Local.Single());
+        Assert.Same(customer, ((Order)rows[0][0]!).Customer);
+        Assert.Null(rows[1][1]);
+        Assert.Null(rows[2][1]);
+        Assert.Equal(3, db.ChangeTracker.Entries<Order>().Count());
+    }
+
+    [Fact]
+    public void Scalars_over_reference_navigation_into_object_array_go_native_with_parity()
+    {
+        var (ordersName, customersName) = SeedMatchedAndDangling(
+            nameof(Scalars_over_reference_navigation_into_object_array_go_native_with_parity));
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = new JoinScopeDbContext(database, ordersName, customersName, mode);
+            return db.Set<Order>().OrderBy(o => o.OrderNo)
+                .Select(o => new object?[] { o.OrderNo, o.Customer!.Name }).ToList()
+                .Select(row => string.Join(",", row.Select(e => e is null ? "<null>" : $"{e.GetType().Name}:{e}")))
+                .ToList();
+        });
+
+        Assert.Equal(["Int32:1,String:Alfreds", "Int32:2,<null>", "Int32:3,<null>"], results);
+    }
+
     private static (string Orders, string Customers) CreateCollectionNames(string testName)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];

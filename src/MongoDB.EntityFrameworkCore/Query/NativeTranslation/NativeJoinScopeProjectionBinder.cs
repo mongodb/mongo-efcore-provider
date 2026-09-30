@@ -83,10 +83,16 @@ internal static class NativeJoinScopeProjectionBinder
 
         var rootParam = selector.Parameters[0];
 
-        if (!selector.Body.TryGetProjectionMembers(out var members))
+        // A positional container (`new object[] { o, o.Customer }`, lowered to `new object[] { ti.Outer, ti.Inner }`) is
+        // admitted too: each element is one `_ctorArg<N>` member, read back by index (BuildSelectManyResultShaper's
+        // container mode), with the boxing Convert the container adds peeled so a whole-entity element resolves to its
+        // scope and a scalar is read with its own type.
+        if (!selector.Body.TryGetProjectionMembers(out var members, allowContainerElements: true))
         {
             return false;
         }
+
+        var isContainer = selector.Body is NewArrayExpression;
 
         var staged = new List<MongoProjection>();
 
@@ -102,8 +108,10 @@ internal static class NativeJoinScopeProjectionBinder
             }
         }
 
-        foreach (var (alias, leafBody) in members)
+        foreach (var (alias, member) in members)
         {
+            var leafBody = isContainer ? NativeProjectionBinder.UnwrapContainerElementBoxing(member) : member;
+
             // A whole-entity leaf naming any scope in the chain: root (index 0) or a level's Inner side (1..N).
             // MongoTransparentScopeResolver.TryResolveScopeDepth resolves by parameter identity and member-name
             // chain, never by CLR type. Root stages $$ROOT under its own alias; Inner stages under the level's
@@ -225,12 +233,26 @@ internal static class NativeJoinScopeProjectionBinder
             if (leafBody is ConditionalExpression conditionalLeaf
                 && TryTranslateScopeNullCheckConditional(mongoQ, scope, rootParam, conditionalLeaf, out var conditionalValue))
             {
-                if (!seenAliases.Add(alias))
+                // Read back whole by alias: a branch construction its class map would misread must decline.
+                if (NativeProjectionBinder.IsMisreadWholeValueLeaf(conditionalValue) || !seenAliases.Add(alias))
                 {
                     return false;
                 }
 
                 staged.Add(new MongoProjection(alias, conditionalValue));
+                continue;
+            }
+
+            // A bare null-check member (`new { o.OrderID, NoCustomer = o.Customer == null }`): the ordinary arm has no
+            // entity-null comparison. Same gate as the bare-body arm (TryBindNullCheckProjection).
+            if (TryTranslateScopeNullCheck(mongoQ, scope, rootParam, leafBody, out var nullCheckValue))
+            {
+                if (!seenAliases.Add(alias))
+                {
+                    return false;
+                }
+
+                staged.Add(new MongoProjection(alias, nullCheckValue));
                 continue;
             }
 
@@ -265,7 +287,9 @@ internal static class NativeJoinScopeProjectionBinder
 
             var throwsOnNull = nonNullableRead == NonNullableValueRead.ThrowOnNull;
 
-            if (!seenAliases.Add(alias))
+            // A ternary/coalesce over constructions is read back whole by alias through the type's class map, which
+            // may name elements differently from the members the native sub-document carries (`Id` vs `_id`).
+            if (NativeProjectionBinder.IsMisreadWholeValueLeaf(computedLeaf) || !seenAliases.Add(alias))
             {
                 return false;
             }
@@ -365,12 +389,35 @@ internal static class NativeJoinScopeProjectionBinder
             return false;
         }
 
-        if (!TryTranslateScopeNullCheckConditional(mongoQ, scope, selector.Parameters[0], conditional, out var leaf))
+        if (!TryTranslateScopeNullCheckConditional(mongoQ, scope, selector.Parameters[0], conditional, out var leaf)
+            || NativeProjectionBinder.IsMisreadWholeValueLeaf(leaf))
         {
             return false;
         }
 
         mongoQ.Select.AddProjection(new MongoProjection(NativeProjectionBinder.SyntheticBareProjectionAlias, leaf));
+        ConfirmEntireChain(mongoQ, scope);
+        return true;
+    }
+
+    /// <summary>
+    /// Populates the native <c>$project</c> slot for a bare <c>Select</c> body that IS a join scope null check,
+    /// <c>ti =&gt; ti.Inner == null</c> (what nav-expansion leaves of <c>o =&gt; o.Customer == null</c>), at any chain
+    /// depth, as a <c>bool</c> leaf under the synthetic <c>_v</c> alias. Gated by <see cref="TryTranslateScopeNullCheck"/>.
+    /// </summary>
+    internal static bool TryBindNullCheckProjection(
+        MongoQueryExpression mongoQ, LambdaExpression selector, JoinInfo joinInfo)
+    {
+        if (mongoQ.Select.JoinScope is not { } scope
+            || joinInfo.Lookup is null
+            || mongoQ.Select.Projection.Count > 0
+            || selector.Parameters.Count != 1
+            || !TryTranslateScopeNullCheck(mongoQ, scope, selector.Parameters[0], selector.Body, out var nullCheck))
+        {
+            return false;
+        }
+
+        mongoQ.Select.AddProjection(new MongoProjection(NativeProjectionBinder.SyntheticBareProjectionAlias, nullCheck));
         ConfirmEntireChain(mongoQ, scope);
         return true;
     }
@@ -389,7 +436,31 @@ internal static class NativeJoinScopeProjectionBinder
     {
         leaf = null;
 
-        if (!NativeJoinScopeTranslator.TryMatchScopeNullCheck(scope, rootParam, conditional.Test, out var scopeIndex, out var isNotNull))
+        if (!TryTranslateScopeNullCheck(mongoQ, scope, rootParam, conditional.Test, out var nullCheck)
+            || !TryTranslateConditionalBranch(scope, rootParam, conditional.IfTrue, out var ifTrue)
+            || !TryTranslateConditionalBranch(scope, rootParam, conditional.IfFalse, out var ifFalse))
+        {
+            return false;
+        }
+
+        leaf = new MongoConditionalExpression(nullCheck, ifTrue, ifFalse);
+        return true;
+    }
+
+    /// <summary>
+    /// Translates <c>rootParam.«hop chain» == null</c> / <c>!= null</c> naming ONE join scope level's Inner side into a
+    /// <see cref="MongoLookupNullCheckExpression"/>, admitted only where the check is not degenerate. The single gate
+    /// for every join-scope null check read as a value: a ternary's test (<see cref="TryTranslateScopeNullCheckConditional"/>),
+    /// a bare Select body (<see cref="TryBindNullCheckProjection"/>), a wrapped projection member, and a
+    /// <c>Where</c> conjunct (<c>NativeSlotPopulator</c>). Pure: mutates nothing.
+    /// </summary>
+    internal static bool TryTranslateScopeNullCheck(
+        MongoQueryExpression mongoQ, MongoJoinScope scope, ParameterExpression rootParam, Expression test,
+        [NotNullWhen(true)] out MongoLookupNullCheckExpression? nullCheck)
+    {
+        nullCheck = null;
+
+        if (!NativeJoinScopeTranslator.TryMatchScopeNullCheck(scope, rootParam, test, out var scopeIndex, out var isNotNull))
         {
             return false;
         }
@@ -398,22 +469,20 @@ internal static class NativeJoinScopeProjectionBinder
         var checkedJoin = mongoQ.Joins[scopeIndex - 1];
         var level = scope.Levels[scopeIndex - 1];
 
-        // An inner Join drops unmatched rows, so the null check would be constant. Checked per level since a chain
-        // can mix Join/LeftJoin. Not restricted to reference navigations: every JoinInfo.Lookup is ForceUnwind, so a
-        // left-outer collection join yields one (Outer, Inner-or-missing) row per pair, and
-        // MongoLookupNullCheckExpression's $ifNull treats the missing field as null.
+        // The two halves differ in kind. The left-outer requirement is a conservative decline, not a correctness
+        // guard: on an inner Join the inner $unwind has already dropped unmatched rows, so the check is constant
+        // (`== null` false) and rendering it would still be right; it's just not a shape worth admitting. Checked per
+        // level since a chain can mix Join/LeftJoin. The ForceUnwind half is the real correctness guard:
+        // MongoLookupNullCheckExpression's $ifNull tests the inner prefix as a single (possibly missing) sub-document,
+        // which holds only after the lookup's array is unwound (an un-unwound empty array is not null). Not
+        // restricted to reference navigations: every JoinInfo.Lookup is ForceUnwind, so a left-outer collection join
+        // yields one (Outer, Inner-or-missing) row per pair, and the $ifNull treats the missing field as null.
         if (!level.IsLeftOuter || checkedJoin.Lookup is not { ForceUnwind: true })
         {
             return false;
         }
 
-        if (!TryTranslateConditionalBranch(scope, rootParam, conditional.IfTrue, out var ifTrue)
-            || !TryTranslateConditionalBranch(scope, rootParam, conditional.IfFalse, out var ifFalse))
-        {
-            return false;
-        }
-
-        leaf = new MongoConditionalExpression(new MongoLookupNullCheckExpression(level.InnerPrefix, isNotNull), ifTrue, ifFalse);
+        nullCheck = new MongoLookupNullCheckExpression(level.InnerPrefix, isNotNull);
         return true;
     }
 

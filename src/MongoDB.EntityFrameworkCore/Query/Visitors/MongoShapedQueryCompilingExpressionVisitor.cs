@@ -253,6 +253,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 stripBareProjectionOnFallback: ShouldStripBareProjectionOnFallback(mongoQueryExpression.Select),
                 createFallbackBindingRemover: HasJoinScopeInnerEntityProjectionLeaf(mongoQueryExpression)
                                               || HasDocumentConstructionProjectionLeaf(mongoQueryExpression)
+                                              // Its shaper reads the ternary's test and branch reads by aliases the
+                                              // driver's push-down of the same Select doesn't produce; the mixed
+                                              // reader evaluates both off whole documents.
+                                              || mongoQueryExpression.Select.HasClientConditionalProjectionLeaf
                     ? (bsonDoc, behavior) => new MongoMixedProjectionBindingRemovingExpressionVisitor(
                         rootEntityType, mongoQueryExpression, bsonDoc, behavior)
                     : null);
@@ -396,17 +400,16 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
     /// <summary>
     /// The read-side classifier for <see cref="NativeClientWholeEntityShape"/>: over the bound shaper the selector
-    /// parameter has become the entity shaper, and a scalar member read off it may already be a
-    /// <see cref="ProjectionBindingExpression"/>, resolved off the whole raw document (no $project narrowed it).
+    /// parameter has become the entity shaper. A <see cref="ProjectionBindingExpression"/> reads the row, so it
+    /// classifies as <see cref="ClientWholeEntityOperand.Walk"/> and the walk declines it: resolved by its projection
+    /// member off the whole raw document (no $project narrowed it), it would read null.
     /// </summary>
-    private static ClientWholeEntityOperand ClassifyClientWholeEntityShaperOperand(Expression node)
+    internal static ClientWholeEntityOperand ClassifyClientWholeEntityShaperOperand(Expression node)
         => IsEntityShaperOperand(node)
             ? ClientWholeEntityOperand.WholeEntity
-            : node is ProjectionBindingExpression
-                ? ClientWholeEntityOperand.EntityRead
-                : RowReadFinder.ReadsRow(node)
-                    ? ClientWholeEntityOperand.Walk
-                    : ClientWholeEntityOperand.EntityFree;
+            : RowReadFinder.ReadsRow(node)
+                ? ClientWholeEntityOperand.Walk
+                : ClientWholeEntityOperand.EntityFree;
 
     private static bool IsEntityShaperOperand(Expression operand)
     {

@@ -491,6 +491,32 @@ internal sealed class MongoSelectDefinition
     }
 
     /// <summary>
+    /// Whether the output under <paramref name="alias"/> is a native <c>DateTime.TimeOfDay</c> leaf
+    /// (<see cref="MongoDatePart.TimeOfDay"/>), here or in a projected set-op operand, so the read side must read its
+    /// milliseconds through <c>BsonSerializerFactory.TimeOfDayMillisecondsSerializer</c>.
+    /// </summary>
+    internal bool IsTimeOfDayProjection(string alias)
+    {
+        foreach (var projection in _projections)
+        {
+            if (projection.Alias == alias)
+            {
+                return MongoDatePartExpression.IsTimeOfDay(projection.Expression);
+            }
+        }
+
+        foreach (var link in _setOperations)
+        {
+            if (link.OperandsProjected && link.OperandSelect.IsTimeOfDayProjection(alias))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// <see langword="true"/> when a bare selector body populated <see cref="Projection"/>.
     /// </summary>
     internal bool IsBareProjection
@@ -840,6 +866,77 @@ internal sealed class MongoSelectDefinition
     /// <see cref="NativeRoute.Projection"/>.
     /// </remarks>
     internal bool HasClientEvaluatedProjectionLeaf { get; set; }
+
+    private HashSet<string>? _clientConditionalMembers;
+
+    /// <summary>
+    /// Records that the leaf of <paramref name="memberName"/> (<see cref="BareProjectionMemberKey"/> for a bare body) is
+    /// a ternary over client-only constructions (<c>c.City == "Seattle" ? new P { Id = "PAY" } : new P { ... }</c>):
+    /// only its test is projected, under that member's alias, and the shaper evaluates the conditional. Written only
+    /// by <c>NativeProjectionBinder</c>'s commit block, which also sets <see cref="HasClientEvaluatedProjectionLeaf"/>.
+    /// </summary>
+    internal void AddClientConditionalMember(string memberName)
+        => (_clientConditionalMembers ??= new HashSet<string>(StringComparer.Ordinal)).Add(memberName);
+
+    /// <summary>
+    /// <see langword="true"/> when some leaf is a client-evaluated ternary (see <see cref="AddClientConditionalMember"/>).
+    /// Unlike a row-independent leaf, its value differs between rows, so a <c>Distinct</c> over the projection (which
+    /// would dedup by the projected test and branch reads, not by the constructed values) declines too.
+    /// </summary>
+    internal bool HasClientConditionalProjectionLeaf
+        => _clientConditionalMembers is { Count: > 0 };
+
+    /// <summary>
+    /// Whether <paramref name="memberName"/> (<c>projectionMember.Last?.Name</c>; <see langword="null"/> for a bare
+    /// body) holds a client-evaluated ternary whose staged test is <paramref name="test"/> (structurally, after
+    /// <see cref="RebaseProjectionSources"/>). The read side's only admission test, so it binds exactly what the emit
+    /// side staged.
+    /// </summary>
+    internal bool IsClientConditionalLeaf(string? memberName, Expression test)
+        => IsRecordedClientConditionalLeaf(memberName, test);
+
+    private HashSet<string>? _clientConditionalReadAliases;
+
+    /// <summary>
+    /// Records that the projection under <paramref name="alias"/> is a row read inside a client-evaluated ternary's
+    /// branch (<c>Name = x.Name</c>). Written only by <c>NativeProjectionBinder</c>'s commit block.
+    /// </summary>
+    internal void AddClientConditionalRead(string alias)
+        => (_clientConditionalReadAliases ??= new HashSet<string>(StringComparer.Ordinal)).Add(alias);
+
+    /// <summary>
+    /// The alias the emit side staged a client-evaluated ternary's branch read <paramref name="read"/> under, matched
+    /// structurally against the staged read (after <see cref="RebaseProjectionSources"/>). The read side takes the
+    /// alias from here, never re-deriving it from the member path, and registers it explicitly
+    /// (<c>MongoQueryExpression.ApplyProjection</c>).
+    /// </summary>
+    internal bool TryGetClientConditionalReadAlias(Expression read, [NotNullWhen(true)] out string? alias)
+    {
+        alias = null;
+        if (_clientConditionalReadAliases is null)
+        {
+            return false;
+        }
+
+        foreach (var projection in _projections)
+        {
+            if (_clientConditionalReadAliases.Contains(projection.Alias)
+                && projection.Source is { } source
+                && Microsoft.EntityFrameworkCore.Query.ExpressionEqualityComparer.Instance.Equals(source, read))
+            {
+                alias = projection.Alias;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool IsRecordedClientConditionalLeaf(string? memberName, Expression test)
+        => _clientConditionalMembers?.Contains(memberName ?? BareProjectionMemberKey) == true
+           && TryGetProjectionLeaf(memberName, out var leaf)
+           && leaf.Value.Source is { } source
+           && Microsoft.EntityFrameworkCore.Query.ExpressionEqualityComparer.Instance.Equals(source, test);
 
     /// <summary>
     /// <see langword="true"/> when <see cref="Route"/> is <see cref="NativeRoute.WholeEntity"/> only because the

@@ -134,6 +134,13 @@ Rendering (null/missing/dialect semantics):
   backing `IProperty`; untraceable values, whole-document class-map reads with kind-sensitive members, and set ops
   whose operands differ in kind shape decline. Don't fold this into `HasDefaultKeySerialization`. Server-side
   date parts over Local-kind properties compute in UTC on both paths (EF-459).
+- **`DateTime.TimeOfDay` is a projection leaf only** (`TryTranslateTimeOfDayLeaf`, never `TranslateOperand`): it is
+  milliseconds, read by alias through `BsonSerializerFactory.TimeOfDayMillisecondsSerializer`
+  (`MongoSelectDefinition.IsTimeOfDayProjection`). `AllFieldsDefaultSerialized` answers false for it, a projected
+  `Distinct` declines it, and a set op declines unless both operands' alias is TimeOfDay (`OperandSerializationsMatch`),
+  so later operators never read it as a default `TimeSpan`; Local-kind receivers decline.
+  A date operator (part, `AddXxx`, DateTimeOffset local reconstruction) over a nullable date throws on null as a
+  projection leaf (`ClassifyNonNullableValueRead`), but group keys/accumulators still read `0` (EF-461).
 
 Shapers and projections:
 
@@ -145,10 +152,27 @@ Shapers and projections:
   admitted only after the `$literal` path declines; an all-client projection stages the constant sentinel `_c`).
   `HasClientEvaluatedProjectionLeaf` makes set ops (`IsPlainProjectedSelect`/`IsPlainDistinctSelect`) and every
   value-reading later operator except `Distinct` decline.
+- **A ternary over constructions is read whole only if its type's class map reads each member by name**
+  (`IsMisreadWholeValueLeaf`, called by every binder staging a ternary/coalesce leaf: projection, join-scope,
+  GroupBy; `Id` maps to `_id`, so `new P { Id = ... }` would throw FormatException). Otherwise
+  `NativeProjectionBinder` stages only the test, as the member's bool leaf, and the shaper evaluates the ternary
+  (`TryCollectClientConditionalBranches`; read side admits it only via `IsClientConditionalLeaf`). Branch row reads
+  are staged as `_cr<N>` and the read side takes each alias from the staged read (`TryGetClientConditionalReadAlias`,
+  registered as an explicit alias for `ApplyProjection`), never from the member path. `HasClientConditionalProjectionLeaf`
+  declines set ops, value-reading operators and `Distinct`.
 - **Client-only bodies over the whole entity** (a client method on it, a combinator around one, or a construction
   with a whole-entity operand: `new object[] { x }`, `new Wrapper(x) { City = x.City }`) fetch whole documents
   (`HasClientWrappedWholeEntityShaper`, so set ops decline). Binder and shaper gate both call
   `NativeClientWholeEntityShape`; at least one whole-entity operand is required (`new[] { x.Id }` must not match).
+- **Positional containers of scalars** (`new[] { x.A, x.B }`, `new object[] { ... }`) are `_ctorArg<N>` leaves read
+  by index (`HasPositionalCtorProjectionShaper`); both sides peel the boxing `Convert` with
+  `NativeProjectionBinder.UnwrapContainerElementBoxing` so each element keeps its runtime type. A whole-entity
+  argument/element never takes the scalar positional path (`IsScalarPositionalConstruction`: its `$$ROOT` read is a
+  class-map deserialization that throws). Containers are an opt-in of `TryGetProjectionMembers`
+  (`allowContainerElements`, passed only by the plain-`Select` callers: `NativeProjectionBinder` and
+  `NativeJoinScopeProjectionBinder`); never widen `allowPositionalConstructorArguments`, which the
+  `GroupBy`/`SelectMany` result selectors share. `new List<T> { ... }` is not a container: the driver can't push a list
+  initializer down, and the index-based shaper can't be read off whole documents.
 - **A `NativeComputedLeafExpression` is read whole only by the native alias reader**; every other shaper visitor
   must use its `ClientExpression`.
 - **Mixed-projection alias agreement.** An array/owned-nav projection leaf's alias must equal the navigation's

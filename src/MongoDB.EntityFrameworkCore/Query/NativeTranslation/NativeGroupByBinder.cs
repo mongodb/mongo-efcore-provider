@@ -317,7 +317,10 @@ internal static class NativeGroupByBinder
             }
 
             // A computed member (ternary, coalesce) combining g.Key leaves with constants.
-            if (!TryTranslateGroupProjectionExpression(valueExpr, groupingParameter, keyParts, isComposite, translator, out var computed))
+            // A ternary/coalesce over constructions is read back whole by alias; see
+            // NativeProjectionBinder.IsMisreadWholeValueLeaf.
+            if (!TryTranslateGroupProjectionExpression(valueExpr, groupingParameter, keyParts, isComposite, translator, out var computed)
+                || NativeProjectionBinder.IsMisreadWholeValueLeaf(computed))
                 return false;
 
             flatten.Add(new MongoProjection(memberName, computed));
@@ -578,7 +581,8 @@ internal static class NativeGroupByBinder
             }
 
             if (!TryTranslateGroupProjectionExpression(
-                    nestedValue, groupingParameter, keyParts, isComposite, translator, out var computed))
+                    nestedValue, groupingParameter, keyParts, isComposite, translator, out var computed)
+                || NativeProjectionBinder.IsMisreadWholeValueLeaf(computed))
                 return false;
 
             translatedMembers.Add((nestedMemberName, computed));
@@ -1779,6 +1783,11 @@ internal static class NativeGroupByBinder
             // reads back from "_id.<alias>" like any computed projection member.
             if (projection.Expression is MongoFieldExpression field && !HasDefaultKeySerialization(field.Property)
                 && !IsBareValueConvertedDistinctKey(select, field))
+                return false;
+
+            // A TimeOfDay leaf's milliseconds would be flattened back from "_id.<alias>" as a plain element reference,
+            // which the read side and every operator over the Distinct would take as a default-serialized TimeSpan.
+            if (MongoDatePartExpression.IsTimeOfDay(projection.Expression))
                 return false;
 
             // ThrowsOnNull carries over to both: the deduped value is the same possibly-null value, read back from

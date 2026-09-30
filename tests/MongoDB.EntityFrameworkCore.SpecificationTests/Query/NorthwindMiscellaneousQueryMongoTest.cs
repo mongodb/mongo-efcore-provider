@@ -2759,7 +2759,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Ship
 
         AssertMql(
             """
-            Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$group" : { "_id" : { "_v" : { "$ifNull" : [{ "$year" : "$OrderDate" }, null] } } } }, { "$project" : { "_v" : "$_id._v", "_id" : 0 } }, { "$match" : { "$expr" : { "$lt" : ["$_v", { "$literal" : 2017 }] } } }
+            Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$group" : { "_id" : { "_v" : { "$ifNull" : [{ "$year" : "$OrderDate" }, null] } } } }, { "$project" : { "_v" : "$_id._v", "_id" : 0 } }, { "$match" : { "$expr" : { "$and" : [{ "$gt" : ["$_v", null] }, { "$lt" : ["$_v", { "$literal" : 2017 }] }] } } }
             """);
     }
 

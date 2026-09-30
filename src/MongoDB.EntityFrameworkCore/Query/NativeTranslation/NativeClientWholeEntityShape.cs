@@ -32,13 +32,7 @@ internal enum ClientWholeEntityOperand
     EntityFree,
 
     /// <summary>The node is the whole entity, unchanged.</summary>
-    WholeEntity,
-
-    /// <summary>
-    /// The node is an already-bound read of the entity (a shaper-side projection binding); an accepted leaf, but not
-    /// entity-free, so it can't be an extra operand of an opaque call.
-    /// </summary>
-    EntityRead
+    WholeEntity
 }
 
 /// <summary>
@@ -129,9 +123,16 @@ internal static class NativeClientWholeEntityShape
     private static bool Walk(
         Expression node, Func<Expression, ClientWholeEntityOperand> classify, ref bool sawClientOnlyOperand)
     {
-        if (classify(node) != ClientWholeEntityOperand.Walk)
+        // Fails closed: only an entity-free node or the whole entity is an accepted leaf. Any other row read the walk
+        // can't see into (a shaper-side ProjectionBindingExpression, an unknown extension node) classifies as Walk and
+        // reaches the default arm: such a leaf would be resolved by its projection member off the raw whole document,
+        // not off a narrowed $project, and read as null.
+        switch (classify(node))
         {
-            return true;
+            case ClientWholeEntityOperand.EntityFree or ClientWholeEntityOperand.WholeEntity:
+                return true;
+            case not ClientWholeEntityOperand.Walk:
+                return false;
         }
 
         switch (node)

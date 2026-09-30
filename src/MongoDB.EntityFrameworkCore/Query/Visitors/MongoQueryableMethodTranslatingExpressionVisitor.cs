@@ -222,6 +222,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 ((MongoQueryExpression)shapedQueryExpression.QueryExpression).Select.HasClientCaseMappingProjectionLeaf;
             var sourceHasClientEvaluatedLeaf =
                 ((MongoQueryExpression)shapedQueryExpression.QueryExpression).Select.HasClientEvaluatedProjectionLeaf;
+            var sourceHasClientConditionalLeaf =
+                ((MongoQueryExpression)shapedQueryExpression.QueryExpression).Select.HasClientConditionalProjectionLeaf;
             switch (method.Name)
             {
                 // Operations that need tweaks
@@ -291,10 +293,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // projected values would read a missing field. Distinct is exempt: the leaf's value is the same for every
             // row of one execution, so deduplicating by the projected leaves alone is exact. Set ops are exempt here
             // only because their own gate declines the flag (IsPlainProjectedSelect/IsPlainDistinctSelect), which
-            // also covers a flagged source2.
+            // also covers a flagged source2. A client-evaluated ternary (HasClientConditionalProjectionLeaf) is not
+            // exempt from Distinct: its value differs between rows, and deduplicating by the projected test and
+            // branch reads is not proven equal to deduplicating the constructed values.
             if (sourceHasClientEvaluatedLeaf
                 && !IsProjectedValueFreeOperator(methodDefinition)
-                && methodDefinition != QueryableMethods.Distinct
+                && (methodDefinition != QueryableMethods.Distinct || sourceHasClientConditionalLeaf)
                 && !IsSetOperation(methodDefinition))
             {
                 ((MongoQueryExpression)shapedQueryExpression.QueryExpression).Select.MarkNotNativelyRepresentable();
@@ -532,7 +536,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 selector.Parameters.Single(), source.ShaperExpression, selector.Body);
 
             return source.UpdateShaperExpression(
-                BuildSelectManyResultShaper(mongoQueryExpression, selector.Body, _projectionBindingExpressionVisitor, foldedJoinBody));
+                BuildSelectManyResultShaper(
+                    mongoQueryExpression, selector.Body, _projectionBindingExpressionVisitor, foldedJoinBody,
+                    allowContainerElements: true));
         }
         // A bare ternary null-checking a join scope's Inner side, e.g.
         // `ti => ti.Inner != null ? ti.Inner.City : null`. Bound as a single leaf under the synthetic "_v" alias
@@ -543,6 +549,16 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             var boundBareLeaf = BindSelectManyMember(
                 mongoQueryExpression, NativeProjectionBinder.SyntheticBareProjectionAlias, selector.Body);
             return source.UpdateShaperExpression(boundBareLeaf);
+        }
+        // A bare join scope null check, e.g. `ti => ti.Inner == null` (what nav-expansion leaves of
+        // `o => o.Customer == null`), at any chain depth. A bool leaf under "_v", bound like the conditional arm above;
+        // an inner join's degenerate check declines inside TryBindNullCheckProjection.
+        else if (IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var nullCheckLeafJoin)
+                 && NativeJoinScopeProjectionBinder.TryBindNullCheckProjection(mongoQueryExpression, selector, nullCheckLeafJoin))
+        {
+            var boundNullCheckLeaf = BindSelectManyMember(
+                mongoQueryExpression, NativeProjectionBinder.SyntheticBareProjectionAlias, selector.Body);
+            return source.UpdateShaperExpression(boundNullCheckLeaf);
         }
         // A bare scalar/computed body over a single-level join scope, e.g. `ti => ti.Inner.City` (what EF's null-check
         // removal leaves of `nav != null ? nav.Member : null`). Tried after the whole-entity and conditional arms.
@@ -555,6 +571,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                  && !selector.Body.TryGetProjectionMembers(out _)
                  && NativeJoinScopeTranslator.TryTranslateValue(
                      mongoQueryExpression.Select.JoinScope, selector.Parameters[0], selector.Body, out var bareValueLeaf)
+                 // Read back whole by alias; see NativeProjectionBinder.IsMisreadWholeValueLeaf.
+                 && !NativeProjectionBinder.IsMisreadWholeValueLeaf(bareValueLeaf!)
                  // A non-nullable Length/IndexOf over an unmatched (or null) inner string: throw on null, or decline
                  // where an operator may absorb the null; the same single classification as the wrapped arm.
                  && MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
@@ -803,16 +821,23 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     {
         // TryPopulateNativeProjection already validated this shape with the same reader; throw rather than
         // silently mis-shape if that ever stops holding.
-        if (!projectionBody.TryGetProjectionMembers(out var members, allowPositionalConstructorArguments: true))
+        if (!projectionBody.TryGetProjectionMembers(
+                out var members, allowPositionalConstructorArguments: true, allowContainerElements: true))
         {
             throw new InvalidOperationException(
                 $"Unexpected positional-ctor projection shape '{projectionBody.GetType().Name}' after successful native binding.");
         }
 
+        // A container element was staged without its boxing Convert (NativeProjectionBinder's container arm), so bind
+        // the operand with its own type and re-box it. A constructor argument has no such layer to peel.
+        var isContainer = projectionBody is NewArrayExpression;
         var boundValues = new Expression[members.Count];
         for (var i = 0; i < boundValues.Length; i++)
         {
-            boundValues[i] = BindPositionalCtorProjectionMember(mongoQueryExpression, members[i].MemberName, members[i].Value);
+            var value = members[i].Value;
+            var operand = isContainer ? NativeProjectionBinder.UnwrapContainerElementBoxing(value) : value;
+            var bound = BindPositionalCtorProjectionMember(mongoQueryExpression, members[i].MemberName, operand);
+            boundValues[i] = ReferenceEquals(operand, value) ? bound : Expression.Convert(bound, value.Type);
         }
 
         return projectionBody.RebuildProjectionMembers(boundValues);
@@ -2875,12 +2900,16 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         return source.UpdateShaperExpression(wrappedShaper);
     }
 
+    // allowContainerElements: only the join-scope Select arm, whose binder (NativeJoinScopeProjectionBinder
+    // .TryBindProjection) admits a positional container; the SelectMany callers keep rejecting one.
     private static Expression BuildSelectManyResultShaper(
         MongoQueryExpression mongoQueryExpression, Expression projectionBody,
-        MongoProjectionBindingExpressionVisitor projectionBindingExpressionVisitor, Expression? foldedBody = null)
+        MongoProjectionBindingExpressionVisitor projectionBindingExpressionVisitor, Expression? foldedBody = null,
+        bool allowContainerElements = false)
     {
         // TryBind already validated this shape with the same reader; throw rather than silently mis-shape.
-        if (!projectionBody.TryGetProjectionMembers(out var members, allowPositionalConstructorArguments: true))
+        if (!projectionBody.TryGetProjectionMembers(
+                out var members, allowPositionalConstructorArguments: true, allowContainerElements: allowContainerElements))
         {
             throw new InvalidOperationException(
                 $"Unexpected SelectMany projection shape '{projectionBody.GetType().Name}' after successful native binding.");
@@ -2889,17 +2918,31 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // The folded body (the join's shaper substituted in, EF-444) goes through the same reader, so members
         // pair up by index.
         IReadOnlyList<(string MemberName, Expression Value)>? foldedMembers = null;
-        if (foldedBody is not null && foldedBody.TryGetProjectionMembers(out var readFolded, allowPositionalConstructorArguments: true))
+        if (foldedBody is not null
+            && foldedBody.TryGetProjectionMembers(
+                out var readFolded, allowPositionalConstructorArguments: true, allowContainerElements: allowContainerElements))
         {
             foldedMembers = readFolded;
         }
 
+        // A container element was staged without its boxing Convert (NativeJoinScopeProjectionBinder), so bind the
+        // operand (a whole-entity element then arrives as the join's entity shaper and is rebound by index) and re-box it.
+        var isContainer = projectionBody is NewArrayExpression;
         var boundValues = new Expression[members.Count];
         for (var i = 0; i < boundValues.Length; i++)
         {
-            boundValues[i] = BindResultMember(
-                mongoQueryExpression, members[i].MemberName, members[i].Value, projectionBindingExpressionVisitor,
-                foldedMembers is not null && i < foldedMembers.Count ? foldedMembers[i].Value : null);
+            var value = members[i].Value;
+            var folded = foldedMembers is not null && i < foldedMembers.Count ? foldedMembers[i].Value : null;
+            var operand = value;
+            if (isContainer)
+            {
+                operand = NativeProjectionBinder.UnwrapContainerElementBoxing(value);
+                folded = folded is null ? null : NativeProjectionBinder.UnwrapContainerElementBoxing(folded);
+            }
+
+            var bound = BindResultMember(
+                mongoQueryExpression, members[i].MemberName, operand, projectionBindingExpressionVisitor, folded);
+            boundValues[i] = ReferenceEquals(operand, value) ? bound : Expression.Convert(bound, value.Type);
         }
 
         return projectionBody.RebuildProjectionMembers(boundValues);
@@ -3410,10 +3453,21 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     {
         foreach (var projection1 in select1.Projection)
         {
+            // MongoProjection is a struct: an absent alias is default, with a null Expression.
+            var expression2 = select2.Projection.FirstOrDefault(p => p.Alias == projection1.Alias).Expression as MongoExpression;
+
+            // A DateTime.TimeOfDay leaf stores milliseconds (a long), unlike any other TimeSpan (a TimeSpan property's
+            // default string form): the combine would dedup/intersect a long against a string, and the alias would be
+            // read through only source1's reader (MongoSelectDefinition.IsTimeOfDayProjection). Both sides TimeOfDay
+            // store and read the same way.
+            if (MongoDatePartExpression.IsTimeOfDay(projection1.Expression)
+                != (expression2 is not null && MongoDatePartExpression.IsTimeOfDay(expression2)))
+            {
+                return false;
+            }
+
             var field1 = StoredField(select1, projection1.Expression);
-            var field2 = select2.Projection.FirstOrDefault(p => p.Alias == projection1.Alias) is { } projection2
-                ? StoredField(select2, projection2.Expression)
-                : null;
+            var field2 = expression2 is not null ? StoredField(select2, expression2) : null;
 
             if (!StoredSerializationsMatch(field1, field2))
             {

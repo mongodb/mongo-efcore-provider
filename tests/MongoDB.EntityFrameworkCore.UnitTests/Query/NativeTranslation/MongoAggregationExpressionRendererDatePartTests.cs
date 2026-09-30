@@ -139,6 +139,20 @@ public class MongoAggregationExpressionRendererDatePartTests
     }
 
     [Fact]
+    public void DatePart_TimeOfDay_renders_the_drivers_dateDiff_in_milliseconds_from_the_day_start()
+    {
+        var placeholders = new PlaceholderTable();
+        var node = new MongoDatePartExpression(Field("Occurred", "Occurred"), MongoDatePart.TimeOfDay);
+
+        var rendered = MongoAggregationExpressionRenderer.Render(node, placeholders);
+
+        Assert.Equal(
+            BsonDocument.Parse(
+                """{ "$dateDiff" : { "startDate" : { "$dateTrunc" : { "date" : "$Occurred", "unit" : "day" } }, "endDate" : "$Occurred", "unit" : "millisecond" } }"""),
+            rendered);
+    }
+
+    [Fact]
     public void CanRender_is_true_for_all_three_new_node_kinds()
     {
         var conditional = new MongoConditionalExpression(

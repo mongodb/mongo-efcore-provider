@@ -33,6 +33,7 @@ using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
+using MongoDB.EntityFrameworkCore.Serializers;
 using MongoDB.EntityFrameworkCore.Storage;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
@@ -949,14 +950,20 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     /// join-scope leaf), the value reads back with that kind, as the property's own serializer would; see
     /// <see cref="NativeDateTimeKindReadBack"/>.
     /// </summary>
+    /// <remarks>
+    /// A native <c>DateTime.TimeOfDay</c> leaf (<see cref="MongoSelectDefinition.IsTimeOfDayProjection"/>) holds
+    /// milliseconds since midnight, read through <see cref="BsonSerializerFactory.TimeOfDayMillisecondsSerializer"/>.
+    /// </remarks>
     private Expression CreateAliasRead(string alias, Type type)
-        => BsonBinding.CreateGetElementValue(
-            DocParameter,
-            alias,
-            type,
-            type.UnwrapNullableType() == typeof(DateTime)
-                ? NativeDateTimeKindReadBack.FindForProjectionAlias(_queryExpression.Select, alias)
-                : null);
+        => type.UnwrapNullableType() == typeof(TimeSpan) && _queryExpression.Select.IsTimeOfDayProjection(alias)
+            ? BsonBinding.CreateGetElementValue(DocParameter, alias, type, BsonSerializerFactory.CreateTimeOfDaySerializer(type))
+            : BsonBinding.CreateGetElementValue(
+                DocParameter,
+                alias,
+                type,
+                type.UnwrapNullableType() == typeof(DateTime)
+                    ? NativeDateTimeKindReadBack.FindForProjectionAlias(_queryExpression.Select, alias)
+                    : null);
 
     /// <summary>
     /// Reads one member of a <see cref="MongoDocumentConstructionExpression"/> leaf. The native implementation

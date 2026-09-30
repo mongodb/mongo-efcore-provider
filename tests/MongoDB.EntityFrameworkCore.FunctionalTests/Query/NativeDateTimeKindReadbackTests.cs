@@ -519,6 +519,25 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
     public void Date_component_projection_over_a_local_kind_property_declines()
         => AssertDeclines((q, _) => q.Select(o => new { D = o.LocalDate.Date }).AsEnumerable().Select(x => F(x.D)).ToList());
 
+    // The server computes TimeOfDay from the UTC instant, where C# reads the Local-kind value's local time of day
+    // (EF-459); unlike Year/Hour, this shape is new to the native path, so it declines rather than join that gap.
+    [Fact]
+    public void TimeOfDay_projection_over_a_local_kind_property_declines()
+        => AssertDeclines((q, _) => q.Select(o => new { T = o.LocalDate.TimeOfDay }).AsEnumerable().Select(x => x.T.Ticks.ToString()).ToList());
+
+    [Fact]
+    public void Bare_TimeOfDay_projection_over_a_local_kind_property_declines()
+        => AssertDeclines((q, _) => q.Select(o => o.LocalDate.TimeOfDay).AsEnumerable().Select(t => t.Ticks.ToString()).ToList());
+
+    [Fact]
+    public void TimeOfDay_projection_over_a_utc_kind_property_stays_native()
+    {
+        var seed = Seed();
+        var native = NativeModeAssert.NativeAndParity(mode => Execute(seed, mode, (q, _) =>
+            q.Select(o => o.UtcDate.TimeOfDay).AsEnumerable().Select(t => t.Ticks.ToString()).ToList()));
+        Assert.Equal(Sorted([D1.TimeOfDay.Ticks.ToString(), D2.TimeOfDay.Ticks.ToString(), D3.TimeOfDay.Ticks.ToString()]), native);
+    }
+
     [Fact]
     public void Computed_group_key_over_a_local_kind_property_declines()
         => AssertDeclines((q, _) =>

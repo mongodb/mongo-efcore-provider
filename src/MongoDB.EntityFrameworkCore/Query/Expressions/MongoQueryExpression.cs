@@ -142,12 +142,15 @@ internal sealed partial class MongoQueryExpression : Expression
             // $project re-emits the original aliases unchanged, so skipping the override would null a bare
             // body's alias and crash the shaper.
             var memberName = projectionMember.Last?.Name;
-            var alias = (Select.Route == NativeRoute.Projection || Select.IsDistinct)
-                        && Select.TryGetProjectionAlias(memberName, out var overriddenAlias)
-                ? overriddenAlias
-                : memberName ?? TryGetNaturalMemberAlias(expression);
+            var alias = _explicitProjectionAliases.TryGetValue(projectionMember, out var explicitAlias)
+                ? explicitAlias
+                : (Select.Route == NativeRoute.Projection || Select.IsDistinct)
+                  && Select.TryGetProjectionAlias(memberName, out var overriddenAlias)
+                    ? overriddenAlias
+                    : memberName ?? TryGetNaturalMemberAlias(expression);
 
-            result[projectionMember] = Constant(AddToProjection(expression, alias));
+            result[projectionMember] = Constant(
+                explicitAlias is not null ? AddExplicitlyAliasedProjection(expression, explicitAlias) : AddToProjection(expression, alias));
         }
 
         _projectionMapping = result;
@@ -187,6 +190,34 @@ internal sealed partial class MongoQueryExpression : Expression
 
     internal void ReplaceAliasedConstructionMembers(IReadOnlyDictionary<ProjectionMember, Type> aliasedConstructionMembers)
         => AliasedConstructionMembers = new Dictionary<ProjectionMember, Type>(aliasedConstructionMembers);
+
+    private Dictionary<ProjectionMember, string> _explicitProjectionAliases = new();
+
+    // An explicit alias names one staged read, which several members may share (`Id = x.Name, Name = x.Name`): reuse
+    // its projection rather than let AddToProjection's de-dup rename the second registration to an element the
+    // pipeline never emits. Any other outcome is an emit/read disagreement, so throw rather than read a missing field.
+    private int AddExplicitlyAliasedProjection(Expression expression, string explicitAlias)
+    {
+        var existingIndex = _projection.FindIndex(pe => pe.Alias == explicitAlias);
+        if (existingIndex != -1)
+        {
+            return existingIndex;
+        }
+
+        var index = AddToProjection(expression, explicitAlias);
+        return _projection[index].Alias == explicitAlias
+            ? index
+            : throw new InvalidOperationException(
+                $"Projection alias '{explicitAlias}' was renamed to '{_projection[index].Alias}'; the native pipeline emits only '{explicitAlias}'.");
+    }
+
+    /// <summary>
+    /// Aliases <see cref="ApplyProjection"/> uses for these projection members instead of deriving one from the member
+    /// name: a client-evaluated ternary's branch reads, whose alias the emit side chose
+    /// (<c>MongoSelectDefinition.TryGetClientConditionalReadAlias</c>). Replaced by every projection binding.
+    /// </summary>
+    internal void ReplaceExplicitProjectionAliases(IReadOnlyDictionary<ProjectionMember, string> explicitAliases)
+        => _explicitProjectionAliases = new Dictionary<ProjectionMember, string>(explicitAliases);
 
     public void ReplaceProjectionMapping(IDictionary<ProjectionMember, Expression> projectionMapping)
     {

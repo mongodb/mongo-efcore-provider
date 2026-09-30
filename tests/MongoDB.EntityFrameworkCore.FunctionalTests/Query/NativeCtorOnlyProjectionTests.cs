@@ -20,6 +20,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using MongoDB.EntityFrameworkCore.Infrastructure;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
@@ -247,7 +248,7 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
     //  Sub-case 4: client construction over a whole-entity operand — `new object[] { x }`,
     //  `new List<object> { x }`, `new Wrapper(x) { City = x.City }`. Whole documents are fetched
     //  (NativeRoute.WholeEntity, no $project) and the construction runs client-side over the
-    //  materialized, tracked entity (NativeProjectionBinder.IsClientOnlyWholeEntityTree).
+    //  materialized, tracked entity (NativeClientWholeEntityShape.IsClientOnlyTree).
     // ════════════════════════════════════════════════════════════════════════════════════════════
 
     private class Person
@@ -370,14 +371,14 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
             () => db.Entities.Select(b => new object[] { b, b.Address }).ToList());
     }
 
-    // Control: no whole-entity operand, so this must not switch to whole-document fetching (a scalar container is a
-    // separate shape).
+    // Control: no whole-entity operand, so this must not switch to whole-document fetching. It is the scalar container
+    // shape instead (NativeProjectionBinder's container arm), which projects each element under `_ctorArg<N>`.
     [Fact]
     public void Scalar_only_array_construction_is_not_fetched_as_whole_documents()
     {
         var collection = SeedPeople(nameof(Scalar_only_array_construction_is_not_fetched_as_whole_documents));
 
-        var results = NativeModeAssert.DeclinesCleanly(mode =>
+        var results = NativeModeAssert.NativeAndParity(mode =>
         {
             using var db = CreateContext(collection, mode);
             return db.Entities.OrderBy(p => p.Name).Select(p => new[] { p.Name }).ToList()
@@ -386,6 +387,19 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
         });
 
         Assert.Equal(["Ann", "Bob", "Cid"], results);
+
+        var (loggerFactory, spy) = SpyLoggerProvider.Create();
+        using var loggingDb = SingleEntityDbContext.Create(
+            collection,
+            loggerFactory,
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                b.EnableSensitiveDataLogging();
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+            });
+        _ = loggingDb.Entities.Select(p => new[] { p.Name }).ToList();
+        Assert.Contains("\"_ctorArg0\" : \"$Name\"", spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!);
     }
 
     // HasClientWrappedWholeEntityShaper keeps the wrapped operand out of a native set-op combine: the per-row result is
