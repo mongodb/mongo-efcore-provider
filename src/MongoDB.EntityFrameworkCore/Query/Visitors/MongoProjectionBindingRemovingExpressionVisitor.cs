@@ -925,7 +925,10 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     /// </remarks>
     private bool TryCreateThrowOnNullAliasRead(string alias, Type type, [NotNullWhen(true)] out Expression? read)
     {
-        if (_queryExpression.Select.FindThrowOnNullProjection(alias) is not { } flagged)
+        // A nullable read of the alias wants the null itself (never produced for a flagged leaf today: the flag is set
+        // only for a non-nullable read, and a Distinct or set op keeps the leaf's type).
+        if (Nullable.GetUnderlyingType(type) is not null
+            || _queryExpression.Select.FindThrowOnNullProjection(alias) is not { } flagged)
         {
             read = null;
             return false;

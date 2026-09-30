@@ -35,7 +35,15 @@ internal sealed class MongoGrouping(
 }
 
 /// <summary>One part of a grouping key. <paramref name="Name"/> is null for a scalar (single-part) key.</summary>
-internal sealed record MongoGroupingKeyPart(string? Name, MongoExpression FieldRef);
+/// <param name="Name">The key part's name, or null for a scalar key.</param>
+/// <param name="FieldRef">The keyed value.</param>
+/// <param name="ThrowsOnNull">
+/// A projected Distinct's key part carried from its projection's <see cref="MongoProjection.ThrowsOnNull"/>: the value
+/// is a null-propagated scalar behind a non-nullable type. Operators resolving the flattened alias (through
+/// <c>MongoExpressionTranslator.DistinctAliasScope</c>, which sees only this grouping) mark their element reference
+/// with it.
+/// </param>
+internal sealed record MongoGroupingKeyPart(string? Name, MongoExpression FieldRef, bool ThrowsOnNull = false);
 
 /// <summary>One <c>$group</c> accumulator. <paramref name="Operand"/> is null for count (<c>$sum: 1</c>).</summary>
 internal sealed record MongoGroupAccumulator(string OutputField, string Operator, MongoExpression? Operand);

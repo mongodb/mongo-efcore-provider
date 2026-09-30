@@ -962,6 +962,8 @@ internal static class MongoAggregationExpressionRenderer
             MongoConstantExpression constant => constant.Value is null,
             // Rendered as $ifNull: [field, null], so it is null (never missing) when absent.
             MongoFieldExpression { NullSafe: true } or MongoElementRefExpression { NullSafe: true } => true,
+            // A read of an upstream alias holding a null-propagated value behind a non-nullable type.
+            MongoElementRefExpression { ThrowsOnNull: true } => true,
             MongoParameterExpression => true,
             // Arithmetic ($add/$subtract/..., $trunc of $divide) propagates a null operand.
             MongoBinaryExpression { Operator: not (MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse
@@ -994,31 +996,56 @@ internal static class MongoAggregationExpressionRenderer
     /// native. Filters are unaffected: the relational null guard covers them.
     /// </summary>
     internal static bool MayBeNullBehindNonNullableType(MongoExpression node)
-        => MayBeNullBehindNonNullableType(node, []);
+        => WalkNullBehindNonNullableType(node, []).MayBeNull;
+
+    // What one walk of a value finds about a null behind its non-nullable type: whether it may be null at all
+    // (MayBeNullBehindNonNullableType), and whether an operator between that null and the value may absorb it into a
+    // non-null answer (ClassifyNonNullableValueRead's Decline). One walker answers both so they can't cover different
+    // nodes: a node one saw and the other didn't would classify a hidden Math.Max as ThrowOnNull (a silent wrong value).
+    private readonly record struct NullBehindNonNullable(bool MayBeNull, bool MayAbsorb)
+    {
+        public static NullBehindNonNullable operator |(NullBehindNonNullable a, NullBehindNonNullable b)
+            => new(a.MayBeNull || b.MayBeNull, a.MayAbsorb || b.MayAbsorb);
+    }
 
     // nonNull: operands a conditional's test has proven non-null on the branch being inspected
     // (`s == null ? 0 : s.Length` reads Length only where s isn't null).
-    private static bool MayBeNullBehindNonNullableType(MongoExpression node, IReadOnlyList<MongoExpression> nonNull)
+    private static NullBehindNonNullable WalkNullBehindNonNullableType(MongoExpression node, IReadOnlyList<MongoExpression> nonNull)
         => node switch
         {
-            MongoStringLengthExpression length => MayBeNullUnlessProven(length.Operand, nonNull),
+            MongoStringLengthExpression length => new(MayBeNullUnlessProven(length.Operand, nonNull), false),
             MongoStringIndexOfExpression indexOf
-                => MayBeNullUnlessProven(indexOf.Haystack, nonNull) || MayBeNullUnlessProven(indexOf.Needle, nonNull),
+                => new(MayBeNullUnlessProven(indexOf.Haystack, nonNull) || MayBeNullUnlessProven(indexOf.Needle, nonNull), false),
+            // An upstream alias (a Distinct's flattened key, a bare Select's `_v`, a set-op operand) the emit side
+            // flagged MongoProjection.ThrowsOnNull: the same possibly-null value, read by reference.
+            MongoElementRefExpression { ThrowsOnNull: true } => new(true, false),
             MongoBinaryExpression { Operator: not (MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse
                 or MongoBinaryOperator.Equal or MongoBinaryOperator.NotEqual or MongoBinaryOperator.LessThan
                 or MongoBinaryOperator.LessThanOrEqual or MongoBinaryOperator.GreaterThan
                 or MongoBinaryOperator.GreaterThanOrEqual) } arithmetic
-                => MayBeNullBehindNonNullableType(arithmetic.Left, nonNull)
-                   || MayBeNullBehindNonNullableType(arithmetic.Right, nonNull),
-            MongoConvertExpression convert => MayBeNullBehindNonNullableType(convert.Operand, nonNull),
-            MongoMathExpression math => math.Operands.Any(o => MayBeNullBehindNonNullableType(o, nonNull)),
+                => WalkNullBehindNonNullableType(arithmetic.Left, nonNull) | WalkNullBehindNonNullableType(arithmetic.Right, nonNull),
+            MongoConvertExpression convert => WalkNullBehindNonNullableType(convert.Operand, nonNull),
+            MongoMathExpression math => WalkMath(math, nonNull),
             // Either branch may be the value read, each under what the test proves on it: `s == null ? a : b` and
             // `string.IsNullOrEmpty(s) ? a : b` make s non-null in b; `s != null ? a : b` makes it non-null in a.
             MongoConditionalExpression conditional
-                => MayBeNullBehindNonNullableType(conditional.IfTrue, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, true)])
-                   || MayBeNullBehindNonNullableType(conditional.IfFalse, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, false)]),
-            _ => false
+                => WalkNullBehindNonNullableType(conditional.IfTrue, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, true)])
+                   | WalkNullBehindNonNullableType(conditional.IfFalse, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, false)]),
+            _ => default
         };
+
+    // $max/$min skip a null operand and Sign's $switch orders it below 0 (MongoGroupElementTranslator
+    // .IsNullPropagatingMathFunction), so over a possibly-null operand they may answer non-null where EF throws.
+    private static NullBehindNonNullable WalkMath(MongoMathExpression math, IReadOnlyList<MongoExpression> nonNull)
+    {
+        var operands = default(NullBehindNonNullable);
+        foreach (var operand in math.Operands)
+            operands |= WalkNullBehindNonNullableType(operand, nonNull);
+
+        return MongoGroupElementTranslator.IsNullPropagatingMathFunction(math.Function)
+            ? operands
+            : operands with { MayAbsorb = operands.MayAbsorb || operands.MayBeNull };
+    }
 
     // A primary-key field is never null in a stored document, so its Length/IndexOf is not null behind the non-nullable
     // type. Only the root document's own key (element "_id", unprefixed): a join's inner-scope field is a prefixed path
@@ -1084,30 +1111,15 @@ internal static class MongoAggregationExpressionRenderer
     /// <c>MongoProjection.ThrowsOnNull</c>.
     /// </remarks>
     internal static NonNullableValueRead ClassifyNonNullableValueRead(Type readType, MongoExpression node)
-        => !ReadsNullAsDefault(readType, node) ? NonNullableValueRead.Plain
-            : MayAbsorbNullBehindNonNullableType(node, []) ? NonNullableValueRead.Decline
-            : NonNullableValueRead.ThrowOnNull;
+    {
+        if (!readType.IsValueType || Nullable.GetUnderlyingType(readType) is not null)
+            return NonNullableValueRead.Plain;
 
-    // Walks the value positions MayBeNullBehindNonNullableType walks, under the same conditional proofs, looking for a
-    // non-null-propagating operator over a possibly-null-behind-non-nullable operand.
-    private static bool MayAbsorbNullBehindNonNullableType(MongoExpression node, IReadOnlyList<MongoExpression> nonNull)
-        => node switch
-        {
-            MongoMathExpression math when !MongoGroupElementTranslator.IsNullPropagatingMathFunction(math.Function)
-                => math.Operands.Any(o => MayBeNullBehindNonNullableType(o, nonNull) || MayAbsorbNullBehindNonNullableType(o, nonNull)),
-            MongoMathExpression math => math.Operands.Any(o => MayAbsorbNullBehindNonNullableType(o, nonNull)),
-            MongoBinaryExpression { Operator: not (MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse
-                or MongoBinaryOperator.Equal or MongoBinaryOperator.NotEqual or MongoBinaryOperator.LessThan
-                or MongoBinaryOperator.LessThanOrEqual or MongoBinaryOperator.GreaterThan
-                or MongoBinaryOperator.GreaterThanOrEqual) } arithmetic
-                => MayAbsorbNullBehindNonNullableType(arithmetic.Left, nonNull)
-                   || MayAbsorbNullBehindNonNullableType(arithmetic.Right, nonNull),
-            MongoConvertExpression convert => MayAbsorbNullBehindNonNullableType(convert.Operand, nonNull),
-            MongoConditionalExpression conditional
-                => MayAbsorbNullBehindNonNullableType(conditional.IfTrue, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, true)])
-                   || MayAbsorbNullBehindNonNullableType(conditional.IfFalse, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, false)]),
-            _ => false
-        };
+        var walk = WalkNullBehindNonNullableType(node, []);
+        return !walk.MayBeNull ? NonNullableValueRead.Plain
+            : walk.MayAbsorb ? NonNullableValueRead.Decline
+            : NonNullableValueRead.ThrowOnNull;
+    }
 
     private static bool IsNullableClrType(Type type)
         => !type.IsValueType || Nullable.GetUnderlyingType(type) is not null;

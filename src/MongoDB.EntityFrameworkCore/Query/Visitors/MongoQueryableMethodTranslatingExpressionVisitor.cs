@@ -533,10 +533,16 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                  && selector.Body is not ConditionalExpression
                  && !selector.Body.TryGetProjectionMembers(out _)
                  && NativeJoinScopeTranslator.TryTranslateValue(
-                     mongoQueryExpression.Select.JoinScope, selector.Parameters[0], selector.Body, out var bareValueLeaf))
+                     mongoQueryExpression.Select.JoinScope, selector.Parameters[0], selector.Body, out var bareValueLeaf)
+                 // A non-nullable Length/IndexOf over an unmatched (or null) inner string: throw on null, or decline
+                 // where an operator may absorb the null; the same single classification as the wrapped arm.
+                 && MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+                     NativeSlotPopulator.UnwrapBoxingToObjectType(selector.Body), bareValueLeaf!) is var bareValueRead
+                 && bareValueRead != NonNullableValueRead.Decline)
         {
             mongoQueryExpression.Select.AddProjection(
-                new MongoProjection(NativeProjectionBinder.SyntheticBareProjectionAlias, bareValueLeaf!));
+                new MongoProjection(NativeProjectionBinder.SyntheticBareProjectionAlias, bareValueLeaf!,
+                    ThrowsOnNull: bareValueRead == NonNullableValueRead.ThrowOnNull));
             NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, mongoQueryExpression.Select.JoinScope!);
 
             var boundBareValueLeaf = BindSelectManyMember(

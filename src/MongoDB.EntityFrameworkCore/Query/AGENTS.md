@@ -115,7 +115,9 @@ Rendering (null/missing/dialect semantics):
   coalesces to `""`). A non-nullable-typed projection leaf over a guarded `Length`/`IndexOf` is flagged
   `MongoProjection.ThrowsOnNull` and read as `T?`, throwing EF's "Nullable object must have a value." on null; one
   whose null an operator may absorb (`$max`/`$min`, `Sign`) declines (`ClassifyNonNullableValueRead`). Group keys,
-  accumulators and `Min`/`Max`/`Average` over such values decline rather than read null as `0`.
+  accumulators and `Min`/`Max`/`Average` over such values decline rather than read null as `0`, including over an
+  upstream alias: a reference to a flagged Distinct key / bare Select / set-op operand carries
+  `MongoElementRefExpression.ThrowsOnNull` (from `MongoGroupingKeyPart.ThrowsOnNull` or `FindThrowOnNullProjection`).
 - **`$toLower`/`$toUpper` are never emitted natively** (ASCII-only): `Where` becomes an anchored case-insensitive
   regex; `Select` projects the raw string and re-applies the mapping client-side. After such a leaf
   (`HasClientCaseMappingProjectionLeaf`) value-reading operators decline. Grouped results stage the receiver and

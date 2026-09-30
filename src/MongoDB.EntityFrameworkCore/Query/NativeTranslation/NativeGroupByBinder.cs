@@ -1778,8 +1778,9 @@ internal static class NativeGroupByBinder
             if (projection.Expression is MongoFieldExpression field && !HasDefaultKeySerialization(field.Property))
                 return false;
 
-            keyParts.Add(new MongoGroupingKeyPart(projection.Alias, projection.Expression));
-            // ThrowsOnNull carries over: the deduped value is the same possibly-null value, read back from "_id.<alias>".
+            // ThrowsOnNull carries over to both: the deduped value is the same possibly-null value, read back from
+            // "_id.<alias>" by the flatten, and by operators over the Distinct through the key part (DistinctAliasScope).
+            keyParts.Add(new MongoGroupingKeyPart(projection.Alias, projection.Expression, projection.ThrowsOnNull));
             flatten.Add(new MongoProjection(projection.Alias,
                 new MongoElementRefExpression("_id." + projection.Alias, projection.Expression.Type),
                 ThrowsOnNull: projection.ThrowsOnNull));
@@ -1867,7 +1868,12 @@ internal static class NativeGroupByBinder
         if (selector != null)
             return false;
 
-        var operand = new MongoElementRefExpression(keyPart.Name, keyPart.FieldRef.Type);
+        var operand = new MongoElementRefExpression(keyPart.Name, keyPart.FieldRef.Type, throwsOnNull: keyPart.ThrowsOnNull);
+
+        // A non-nullable Min/Max/Average over a null-propagated key reduces an all-null input to null, read back as 0
+        // where EF throws; as in NativeCardinalityBinder.TryBindAggregate. Sum skips a null, as EF's SUM does.
+        if (op is not MongoAggregateOperator.Sum && MongoAggregationExpressionRenderer.ReadsNullAsDefault(resultType, operand))
+            return false;
 
         NativeCardinalityBinder.BuildEmptyBehavior(op, resultType, out var emptyValue, out var emptyBehavior);
 

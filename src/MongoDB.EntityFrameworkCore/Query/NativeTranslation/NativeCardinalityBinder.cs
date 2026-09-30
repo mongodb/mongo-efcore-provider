@@ -307,7 +307,11 @@ internal static class NativeCardinalityBinder
 
                 // Selector-less Sum()/Min()/Max()/Average() over a bare scalar Select: reduce that Select's $project
                 // output field, which the lowerer emits before this aggregate's $group.
-                operand = new MongoElementRefExpression(bareSource.Alias, bareSource.Expression.Type);
+                // Marked from the same lookup the read side uses (including projected set-op operands), so the
+                // null-behind-non-nullable guard below sees the flagged value through the reference.
+                operand = new MongoElementRefExpression(
+                    bareSource.Alias, bareSource.Expression.Type,
+                    throwsOnNull: select.FindThrowOnNullProjection(bareSource.Alias) is not null);
             }
             // TryTranslateValue accepts member access, widening/nullable Converts and numeric arithmetic, and
             // rejects anything not exactly value-preserving — required by Sum/Average and sufficient for Min/Max.
@@ -316,11 +320,10 @@ internal static class NativeCardinalityBinder
 
             // A non-nullable Min/Max/Average of a Length/IndexOf over a possibly-null string reduces all-null rows to
             // null, read back as 0 where EF throws; as for the grouped accumulators. Sum skips a null, as EF's SUM does.
-            // A bare source flagged ThrowsOnNull is the same possibly-null value, already reduced to an alias, so the
-            // predicate can't see it through the element ref: honour the emit side's flag instead.
+            // An operand reading a flagged upstream alias (a bare Select's `_v`, a Distinct's key) carries the flag on
+            // its element reference (MongoElementRefExpression.ThrowsOnNull), so this one check covers it.
             if (op is not MongoAggregateOperator.Sum
-                && (MongoAggregationExpressionRenderer.ReadsNullAsDefault(resultType, operand)
-                    || (selector is null && bareSourceProjection is { ThrowsOnNull: true })))
+                && MongoAggregationExpressionRenderer.ReadsNullAsDefault(resultType, operand))
                 return false;
         }
 

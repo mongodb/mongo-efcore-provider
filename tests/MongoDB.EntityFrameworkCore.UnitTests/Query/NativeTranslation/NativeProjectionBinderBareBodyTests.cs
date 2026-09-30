@@ -337,6 +337,24 @@ public class NativeProjectionBinderBareBodyTests
         Assert.Equal(projection, mongoQ.Select.FindThrowOnNullProjection("_v"));
     }
 
+    // One walker classifies both "may be null" and "may absorb the null": a Math.Max nested under arithmetic still
+    // declines (its $max answers the other operand for a null Length, where EF throws), while the same arithmetic over
+    // a bare Length is flagged ThrowsOnNull.
+    [Fact]
+    public void Null_absorbing_math_nested_under_arithmetic_declines_while_plain_arithmetic_is_flagged()
+    {
+        Expression<Func<Order, int>> absorbing = o => Math.Max(o.Country.Length, 1) + 1;
+        Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(TestQuery(), absorbing));
+
+        Expression<Func<Order, int>> absorbingInBranch = o => o.Country == "x" ? 0 : Math.Min(o.Country.Length, 3);
+        Assert.False(NativeProjectionBinder.TryPopulateNativeProjection(TestQuery(), absorbingInBranch));
+
+        var mongoQ = TestQuery();
+        Expression<Func<Order, int>> propagating = o => Math.Abs(o.Country.Length) + 1;
+        Assert.True(NativeProjectionBinder.TryPopulateNativeProjection(mongoQ, propagating));
+        Assert.True(Assert.Single(mongoQ.Select.Projection).ThrowsOnNull);
+    }
+
     [Fact]
     public void Bare_collection_count_leaf_is_admitted_under_the_reserved_alias_and_the_synthetic_tier()
     {

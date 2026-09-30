@@ -175,7 +175,7 @@ internal sealed partial class MongoExpressionTranslator
         {
             if (part.Name == me.Member.Name && part.FieldRef is not MongoFieldExpression)
             {
-                fieldRef = new MongoElementRefExpression(part.Name!, part.FieldRef.Type);
+                fieldRef = new MongoElementRefExpression(part.Name!, part.FieldRef.Type, throwsOnNull: part.ThrowsOnNull);
                 return true;
             }
         }
