@@ -334,4 +334,67 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
             return context.Entities.OrderBy(e => e.Id).Select(e => new { e.Id, L = e.Label!.Length + 5 }).ToList();
         });
     }
+
+    private class JoinOwner
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+    }
+
+    private class JoinPet
+    {
+        public string Id { get; set; } = "";       // string primary key on the INNER side of a left join
+        public string OwnerId { get; set; } = "";
+    }
+
+    private class JoinDbContext(
+        TemporaryDatabaseFixture database, string owners, string pets, MongoQueryMode mode)
+        : DbContext(new DbContextOptionsBuilder<JoinDbContext>()
+            .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName, b => b.UseQueryMode(mode))
+            .ReplaceService<IModelCacheKeyFactory, UncachedModelKeyFactory>()
+            .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+            .Options)
+    {
+        public DbSet<JoinOwner> Owners { get; set; } = null!;
+        public DbSet<JoinPet> Pets { get; set; } = null!;
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            modelBuilder.Entity<JoinOwner>().ToCollection(owners);
+            modelBuilder.Entity<JoinPet>().ToCollection(pets);
+        }
+
+        private sealed class UncachedModelKeyFactory : IModelCacheKeyFactory
+        {
+            private static int _count;
+            public object Create(DbContext context, bool designTime) => System.Threading.Interlocked.Increment(ref _count);
+        }
+    }
+
+    // Control: the primary-key exemption is for the root document's own key only. The inner side of a left-outer join
+    // (GroupJoin + DefaultIfEmpty) is missing for an unmatched row even though the property is a key, so its Length
+    // behind a non-nullable int must still decline. Every owner matches here so the driver-LINQ oracle is well defined.
+    [Fact]
+    public void Left_join_inner_string_primary_key_length_expression_still_declines()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var owners = "jo" + suffix;
+        var pets = "jp" + suffix;
+        database.MongoDatabase.GetCollection<JoinOwner>(owners).InsertMany(
+            [new JoinOwner { Id = "o1", Name = "A" }, new JoinOwner { Id = "o2", Name = "B" }]);
+        database.MongoDatabase.GetCollection<JoinPet>(pets).InsertMany(
+            [new JoinPet { Id = "pet1", OwnerId = "o1" }, new JoinPet { Id = "pet22", OwnerId = "o2" }]);
+
+        var result = NativeModeAssert.DeclinesCleanly(mode =>
+        {
+            using var context = new JoinDbContext(database, owners, pets, mode);
+            return context.Owners
+                .GroupJoin(context.Pets, o => o.Id, p => p.OwnerId, (o, ps) => new { o, ps })
+                .SelectMany(x => x.ps.DefaultIfEmpty(), (x, p) => new { x.o.Name, L = p!.Id.Length + 5 })
+                .OrderBy(r => r.Name)
+                .ToList();
+        });
+
+        Assert.Equal([9, 10], result.Select(r => r.L));
+    }
 }

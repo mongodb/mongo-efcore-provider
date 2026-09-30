@@ -1021,10 +1021,13 @@ internal static class MongoAggregationExpressionRenderer
         };
 
     // A primary-key field is never null in a stored document, so its Length/IndexOf is not null behind the non-nullable
-    // type. Deliberately local to this predicate, not in MayBeNull: MayBeNull also drives the render-time $ifNull guards.
+    // type. Only the root document's own key (element "_id", unprefixed): a join's inner-scope field is a prefixed path
+    // ("inner._id"), and under a left-outer join that sub-document is missing for an unmatched row, so it may be null.
+    // Deliberately local to this predicate, not in MayBeNull: MayBeNull also drives the render-time $ifNull guards.
     private static bool MayBeNullUnlessProven(MongoExpression operand, IReadOnlyList<MongoExpression> nonNull)
         => MayBeNull(operand)
-           && !(operand is MongoFieldExpression { NullSafe: false } field && field.Property.IsPrimaryKey())
+           && !(operand is MongoFieldExpression { NullSafe: false, ElementName: "_id" } field
+                 && field.Property.IsPrimaryKey())
            && !nonNull.Any(proven => IsSameStoredValue(proven, operand));
 
     // The operands that `test` answering `outcome` proves non-null. Structural: only a null comparison of a stored
