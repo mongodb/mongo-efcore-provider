@@ -117,9 +117,17 @@ internal static class ExpressionExtensionMethods
     /// <c>NativeProjectionBinder</c>/<c>NativeJoinScopeProjectionBinder</c> must not, since they resolve aliases
     /// by real <c>MemberInfo</c> and would never find a synthetic name.
     /// </param>
+    /// <param name="rowIndependentConstructorArgumentsOver">
+    /// When non-null, also admit a <see cref="MemberInitExpression"/> whose constructor arguments are all
+    /// row-independent over this selector parameter (<c>NativeProjectionBinder.IsRowIndependentLeaf</c>):
+    /// <c>new Dto(param) { A = x.A }</c>. Only the bindings are returned; the constructor arguments stay on the
+    /// shaper, which evaluates them client-side. Only for <c>NativeProjectionBinder</c>, whose read side evaluates
+    /// row-independent subtrees in place.
+    /// </param>
     internal static bool TryGetProjectionMembers(
         this Expression body, out IReadOnlyList<(string MemberName, Expression Value)> members,
-        bool allowPositionalConstructorArguments = false)
+        bool allowPositionalConstructorArguments = false,
+        ParameterExpression? rowIndependentConstructorArgumentsOver = null)
     {
         switch (body)
         {
@@ -154,8 +162,14 @@ internal static class ExpressionExtensionMethods
                 return true;
             }
 
-            case MemberInitExpression { NewExpression.Arguments.Count: 0, Bindings.Count: > 0 } memberInit:
+            case MemberInitExpression { NewExpression.Arguments.Count: 0, Bindings.Count: > 0 }:
+            case MemberInitExpression { NewExpression.Arguments.Count: > 0, Bindings.Count: > 0 } memberInitWithArguments
+                when rowIndependentConstructorArgumentsOver is not null
+                     && memberInitWithArguments.NewExpression.Arguments.All(
+                         a => Query.NativeTranslation.NativeProjectionBinder.IsRowIndependentLeaf(
+                             a, rowIndependentConstructorArgumentsOver)):
             {
+                var memberInit = (MemberInitExpression)body;
                 var pairs = new List<(string, Expression)>(memberInit.Bindings.Count);
                 foreach (var binding in memberInit.Bindings)
                 {

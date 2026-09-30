@@ -93,6 +93,9 @@ internal static class NativeProjectionBinder
         var hasStringSequenceLeaf = false;
         // Any leaf had a client-reapplied case mapping peeled off; committed to HasClientCaseMappingProjectionLeaf.
         var hasCaseMappingLeaf = false;
+        // Any leaf is row-independent and evaluated client-side instead of projected (IsRowIndependentLeaf); committed
+        // to HasClientEvaluatedProjectionLeaf.
+        var hasClientEvaluatedLeaf = false;
         // Alias a bare selector body was admitted under (null otherwise); registered in the commit block with
         // AddProjection.
         string? bareProjectionAlias = null;
@@ -109,15 +112,32 @@ internal static class NativeProjectionBinder
         {
             // Wrapped body: anonymous type/DTO via NewExpression-with-Members or MemberInit. A construction that fails
             // TryGetProjectionMembers falls through to the bare-body case.
+            //
+            // A MemberInit whose constructor arguments are all row-independent (`new Dto(param) { A = x.A }`) is
+            // admitted too: only its bindings are members, and the arguments stay on the shaper, which evaluates them.
             case NewExpression or MemberInitExpression
-                when selector.Body.TryGetProjectionMembers(out var wrappedMembers):
+                when selector.Body.TryGetProjectionMembers(
+                    out var wrappedMembers, rowIndependentConstructorArgumentsOver: selector.Parameters[0]):
+                hasClientEvaluatedLeaf |= selector.Body is MemberInitExpression { NewExpression.Arguments.Count: > 0 };
                 foreach (var (memberName, member) in wrappedMembers)
                 {
                     var memberValue = PeelCaseMapping(member);
                     hasCaseMappingLeaf |= !ReferenceEquals(memberValue, member);
                     var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], memberValue, memberName);
                     if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, out var throwsOnNull, allowWholeRootEntityLeaf: true))
+                    {
+                        // Last resort, only after the leaf arms (including the $literal path, which keeps a renderable
+                        // constant's MQL) declined: a row-independent leaf is evaluated by the shaper and never
+                        // projected.
+                        if (IsRowIndependentLeaf(member, selector.Parameters[0]))
+                        {
+                            hasClientEvaluatedLeaf = true;
+                            continue;
+                        }
+
                         return false;
+                    }
+
                     if (!seenAliases.Add(alias))
                         return false;
                     projections.Add(new MongoProjection(alias, leaf, memberValue, throwsOnNull));
@@ -244,6 +264,15 @@ internal static class NativeProjectionBinder
                 // false keeps a true bare `b => b.Address` declining; the ctor-wrap arm passes true.
                 if (!TryBindAsBareProjection(selector.Body, provisionalAlias, allowWholeRootEntityLeafForThis: false))
                 {
+                    // A row-independent body the $literal path can't render (`x => new { }`, or a captured value EF
+                    // folded the whole body into, as in `x => new { f = closure }`): the shaper evaluates it and
+                    // nothing is projected for it but the sentinel below. Tried only after the bare arms declined.
+                    if (IsRowIndependentLeaf(selector.Body, selector.Parameters[0]))
+                    {
+                        hasClientEvaluatedLeaf = true;
+                        break;
+                    }
+
                     // Untranslatable (e.g. embeds a client method). If every entity reference is the whole entity,
                     // fetch whole documents and evaluate the body client-side, as in the client-method arm above.
                     if (!IsClientOnlyWholeEntityExpression(mongoQ, selector.Body, selector.Parameters[0]))
@@ -330,6 +359,14 @@ internal static class NativeProjectionBinder
             projections.Add(new MongoProjection("_id", new MongoElementRefExpression("_id", keyProperty.ClrType)));
         }
 
+        // Every leaf is client-evaluated: stage a constant so Route stays Projection (one row per document) instead of
+        // collapsing to WholeEntity. A constant rather than _id, so a Distinct over it dedups to the one row the
+        // (execution-wide) client value calls for. See ClientEvaluatedSentinelAlias.
+        if (hasClientEvaluatedLeaf && projections.Count == 0)
+        {
+            projections.Add(new MongoProjection(ClientEvaluatedSentinelAlias, new MongoConstantExpression(true, null)));
+        }
+
         foreach (var lookup in pendingLookups)
             mongoQ.AddLookup(lookup);
         foreach (var reducerLeaf in pendingReducerLeaves)
@@ -362,6 +399,8 @@ internal static class NativeProjectionBinder
             mongoQ.Select.HasClientCaseMappingProjectionLeaf = true;
         if (hasPositionalCtorProjection)
             mongoQ.Select.HasPositionalCtorProjectionShaper = true;
+        if (hasClientEvaluatedLeaf)
+            mongoQ.Select.HasClientEvaluatedProjectionLeaf = true;
         return true;
     }
 
@@ -419,6 +458,58 @@ internal static class NativeProjectionBinder
                            NodeType: ExpressionType.Add or ExpressionType.Subtract or ExpressionType.Multiply
                            or ExpressionType.Divide or ExpressionType.Modulo
                        } arithmetic && MongoExpressionTranslator.IsNumericType(arithmetic.Type)),
+            _ => false
+        };
+
+    /// <summary>
+    /// True for a projection leaf whose value is the same for every row of one execution, so the shaper can evaluate it
+    /// client-side and nothing is projected for it: a tree of <see cref="ConstantExpression"/>, query parameters,
+    /// <see cref="NewExpression"/>, <see cref="MemberInitExpression"/> (assignment bindings only),
+    /// <see cref="ExpressionType.NewArrayInit"/>, <see cref="ListInitExpression"/>, <c>Convert</c>, and instance
+    /// member access on a constant (<c>new { A = new DateTime() }</c>, <c>new { }</c>, a captured anonymous-type or
+    /// <c>List&lt;T&gt;</c> value, <c>new Dto(param)</c>).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Any other node (the selector parameter or any other lambda parameter, a method call, a query root, a subquery,
+    /// any other extension node such as a structural-type shaper) is row-dependent or unknown, so the answer is
+    /// <see langword="false"/>. A whole-entity operand is therefore never row-independent, which keeps this disjoint
+    /// from the whole-entity client constructions (<c>IsClientOnlyWholeEntityExpression</c>).
+    /// </para>
+    /// <para>
+    /// The emit side admits such a leaf only after <c>TryTranslateLeaf</c> declined it (the <c>$literal</c> path
+    /// keeps the MQL of a renderable constant or parameter). The read side
+    /// (<c>MongoProjectionBindingExpressionVisitor.Visit</c>) calls this same predicate, over the rebased selector,
+    /// where <paramref name="selectorParameter"/> is <see langword="null"/>; the parameter has been replaced by an
+    /// extension node there, which this rejects anyway.
+    /// </para>
+    /// </remarks>
+    internal static bool IsRowIndependentLeaf(Expression leaf, ParameterExpression? selectorParameter)
+        => leaf switch
+        {
+            ConstantExpression => true,
+#if EF8 || EF9
+            // EF8/EF9 funcletize a captured value into a ParameterExpression named with the query-parameter prefix.
+            ParameterExpression parameter
+                => !ReferenceEquals(parameter, selectorParameter)
+                   && parameter.Name?.StartsWith(QueryCompilationContext.QueryParameterPrefix, StringComparison.Ordinal)
+                   == true,
+#else
+            QueryParameterExpression => true,
+#endif
+            NewExpression newExpression => newExpression.Arguments.All(a => IsRowIndependentLeaf(a, selectorParameter)),
+            MemberInitExpression memberInit
+                => IsRowIndependentLeaf(memberInit.NewExpression, selectorParameter)
+                   && memberInit.Bindings.All(
+                       b => b is MemberAssignment assignment && IsRowIndependentLeaf(assignment.Expression, selectorParameter)),
+            NewArrayExpression { NodeType: ExpressionType.NewArrayInit } newArray
+                => newArray.Expressions.All(e => IsRowIndependentLeaf(e, selectorParameter)),
+            ListInitExpression listInit
+                => IsRowIndependentLeaf(listInit.NewExpression, selectorParameter)
+                   && listInit.Initializers.All(i => i.Arguments.All(a => IsRowIndependentLeaf(a, selectorParameter))),
+            UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert
+                => IsRowIndependentLeaf(convert.Operand, selectorParameter),
+            MemberExpression { Expression: ConstantExpression } => true,
             _ => false
         };
 
@@ -1455,6 +1546,14 @@ internal static class NativeProjectionBinder
     /// the driver-LINQ fallback ever goes away, this tier needs a different answer.
     /// </remarks>
     internal const string SyntheticBareProjectionAlias = "_v";
+
+    /// <summary>
+    /// <c>$project</c> element name of the constant sentinel staged when every leaf of a projection is client-evaluated
+    /// (<see cref="IsRowIndependentLeaf"/>), so <c>Route</c> stays <c>Projection</c> (one row per document) instead of
+    /// collapsing to a whole-entity fetch. Nothing reads it back. A constant, not <c>_id</c>, so a <c>Distinct</c> over
+    /// the projection dedups to one row (the client value is the same for every row of one execution).
+    /// </summary>
+    internal const string ClientEvaluatedSentinelAlias = "_c";
 
     /// <summary>
     /// Derives a computed bare body's alias (<see cref="SyntheticBareProjectionAlias"/>), admitting only node kinds

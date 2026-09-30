@@ -220,6 +220,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             var methodDefinition = method.IsGenericMethod ? method.GetGenericMethodDefinition() : method;
             var sourceHasCaseMappingLeaf =
                 ((MongoQueryExpression)shapedQueryExpression.QueryExpression).Select.HasClientCaseMappingProjectionLeaf;
+            var sourceHasClientEvaluatedLeaf =
+                ((MongoQueryExpression)shapedQueryExpression.QueryExpression).Select.HasClientEvaluatedProjectionLeaf;
             switch (method.Name)
             {
                 // Operations that need tweaks
@@ -285,6 +287,19 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 ((MongoQueryExpression)shapedQueryExpression.QueryExpression).Select.MarkNotNativelyRepresentable();
             }
 
+            // A client-evaluated leaf (HasClientEvaluatedProjectionLeaf) is never projected, so an operator that reads
+            // projected values would read a missing field. Distinct is exempt: the leaf's value is the same for every
+            // row of one execution, so deduplicating by the projected leaves alone is exact. Set ops are exempt here
+            // only because their own gate declines the flag (IsPlainProjectedSelect/IsPlainDistinctSelect), which
+            // also covers a flagged source2.
+            if (sourceHasClientEvaluatedLeaf
+                && !IsProjectedValueFreeOperator(methodDefinition)
+                && methodDefinition != QueryableMethods.Distinct
+                && !IsSetOperation(methodDefinition))
+            {
+                ((MongoQueryExpression)shapedQueryExpression.QueryExpression).Select.MarkNotNativelyRepresentable();
+            }
+
             // Operates on the already-visited source; never re-traverse.
             NativeSlotPopulator.PopulateNativeSlots(shapedQueryExpression, methodDefinition, methodCallExpression);
 
@@ -320,6 +335,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            || methodDefinition == QueryableMethods.CountWithoutPredicate
            || methodDefinition == QueryableMethods.LongCountWithoutPredicate
            || methodDefinition == QueryableMethods.AnyWithoutPredicate;
+
+    private static bool IsSetOperation(MethodInfo methodDefinition)
+        => methodDefinition == QueryableMethods.Union
+           || methodDefinition == QueryableMethods.Concat
+           || methodDefinition == QueryableMethods.Intersect
+           || methodDefinition == QueryableMethods.Except;
 
     protected override ShapedQueryExpression TranslateSelect(ShapedQueryExpression source, LambdaExpression selector)
     {
@@ -3122,6 +3143,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            && !mongo.Select.HasArrayProjectionLeaf
            // The raw case-mapping receiver would be what the combine dedups/compares.
            && !mongo.Select.HasClientCaseMappingProjectionLeaf
+           // A client-evaluated leaf is never projected: the combine would dedup without it, and source1's shaper
+           // would show source1's value on source2's rows.
+           && !mongo.Select.HasClientEvaluatedProjectionLeaf
            && mongo.Select.SetOperation == null
            && !mongo.Select.IsSetOp
            && mongo.Select.Grouping == null
@@ -3139,6 +3163,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         => mongo.Select.Route == NativeRoute.GroupBy
            && mongo.Select.IsDistinct
            && !mongo.Select.IsGroupBy
+           // Same reason as IsPlainProjectedSelect: the Distinct keeps the flag of the Select it deduplicates.
+           && !mongo.Select.HasClientEvaluatedProjectionLeaf
            && mongo.Select.Grouping != null
            && mongo.Select.PriorGrouping == null
            && mongo.Select.Cardinality == null

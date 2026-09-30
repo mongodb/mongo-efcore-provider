@@ -1959,7 +1959,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$project" : { "_v" : { "$literal" : { "_id" : null, "Count" : 0 } }, "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$group" : { "_id" : { "_c" : { "$literal" : true } } } }, { "$project" : { "_c" : "$_id._c", "_id" : 0 } }
             """);
     }
 
@@ -3906,7 +3906,7 @@ OrderDetails.{ "$group" : { "_id" : null, "v" : { "$max" : "$Quantity" } } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "Value" : "random", "CustomerID" : "$_id", "NestedDto" : { "$literal" : { "CustomerID" : null, "NestedDto" : null } }, "_id" : 0 } }
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "CustomerID" : "$_id", "_id" : 0 } }
             """);
     }
 

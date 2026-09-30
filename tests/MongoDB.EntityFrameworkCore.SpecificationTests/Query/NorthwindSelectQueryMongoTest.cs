@@ -449,7 +449,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "_v" : { "$literal" : { "A" : { "$date" : { "$numberLong" : "-62135596800000" } } } }, "_id" : 0 } }
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "_c" : { "$literal" : true }, "_id" : 0 } }
             """);
     }
 
@@ -1881,7 +1881,7 @@ Employees.{ "$project" : { "_id" : "$_id" } }
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : { "$literal" : { } }, "_id" : 0 } }
+            Customers.{ "$project" : { "_c" : { "$literal" : true }, "_id" : 0 } }
             """);
     }
 
@@ -1911,11 +1911,11 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_id" : "$_id" } 
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : { "$literal" : { "f" : false } }, "_id" : 0 } }
+            Customers.{ "$project" : { "_c" : { "$literal" : true }, "_id" : 0 } }
             """,
             //
             """
-            Customers.{ "$project" : { "_v" : { "$literal" : { "f" : true } }, "_id" : 0 } }
+            Customers.{ "$project" : { "_c" : { "$literal" : true }, "_id" : 0 } }
             """);
     }
 
@@ -2015,7 +2015,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_id" : "$_id" } 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "CustomerID" : "$_id", "Orders" : [], "_id" : 0 } }
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "CustomerID" : "$_id", "_id" : 0 } }
             """);
     }
 

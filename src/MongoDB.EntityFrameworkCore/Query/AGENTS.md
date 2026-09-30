@@ -135,6 +135,10 @@ Shapers and projections:
   admitted nodes in `ClientLeafChecker`); operand-by-operand binding makes every operand read as the last one
   bound. Ambiguous member-less construction arguments are recorded in `AliasedConstructionMembers` and the mixed
   reader declines them loudly.
+- **Row-independent leaves are evaluated by the shaper, never projected** (`NativeProjectionBinder.IsRowIndependentLeaf`,
+  admitted only after the `$literal` path declines; an all-client projection stages the constant sentinel `_c`).
+  `HasClientEvaluatedProjectionLeaf` makes set ops (`IsPlainProjectedSelect`/`IsPlainDistinctSelect`) and every
+  value-reading later operator except `Distinct` decline.
 - **A `NativeComputedLeafExpression` is read whole only by the native alias reader**; every other shaper visitor
   must use its `ClientExpression`.
 - **Mixed-projection alias agreement.** An array/owned-nav projection leaf's alias must equal the navigation's

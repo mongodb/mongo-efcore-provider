@@ -806,6 +806,25 @@ internal sealed class MongoSelectDefinition
     internal bool HasClientCaseMappingProjectionLeaf { get; set; }
 
     /// <summary>
+    /// <see langword="true"/> when the committed projection has a row-independent leaf the shaper evaluates
+    /// client-side and that is never projected (<c>NativeProjectionBinder.IsRowIndependentLeaf</c>: a closed
+    /// <c>new</c>, <c>new { }</c>, a captured value the <c>$literal</c> path can't render, a constructor argument of a
+    /// <c>MemberInit</c>). Set only in <c>NativeProjectionBinder</c>'s commit block. A <c>$literal</c>-rendered
+    /// constant or parameter is server-side and never sets it.
+    /// </summary>
+    /// <remarks>
+    /// The server never sees the value, so no server operator may read it: a set op (the shaper reused for every
+    /// combined row would show source1's value on source2's rows, and dedup would ignore the leaf) declines in
+    /// <c>IsPlainProjectedSelect</c>/<c>IsPlainDistinctSelect</c>, and every other operator that reads projected
+    /// values declines in <c>MongoQueryableMethodTranslatingExpressionVisitor.VisitMethodCall</c>. <c>Distinct</c>
+    /// stays native: the value is the same for every row of one execution, so deduplicating by the projected leaves
+    /// alone is exact. When every leaf is client-evaluated the binder projects a constant sentinel
+    /// (<c>NativeProjectionBinder.ClientEvaluatedSentinelAlias</c>) so <see cref="Route"/> stays
+    /// <see cref="NativeRoute.Projection"/>.
+    /// </remarks>
+    internal bool HasClientEvaluatedProjectionLeaf { get; set; }
+
+    /// <summary>
     /// <see langword="true"/> when <see cref="Route"/> is <see cref="NativeRoute.WholeEntity"/> only because the
     /// selector wraps the entity client-side (<c>x =&gt; new Dto(x)</c> or <c>x =&gt; context.ClientMethod(x)</c>):
     /// nothing is projected, but the shaper's result is not the entity itself.

@@ -125,6 +125,16 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             case null:
                 return null;
 
+            // A row-independent Convert or member-of-constant leaf that NativeProjectionBinder left on the shaper
+            // (HasClientEvaluatedProjectionLeaf; same predicate, IsRowIndependentLeaf). Nothing is projected for it, so
+            // the Convert/member arms below would bind it to an alias the $project never emits: evaluate it in place.
+            // Constants, parameters and constructions need no arm; the cases below already evaluate them in place.
+            case UnaryExpression or MemberExpression
+                when _queryExpression.Select.Route == NativeRoute.Projection
+                     && _queryExpression.Select.HasClientEvaluatedProjectionLeaf
+                     && NativeProjectionBinder.IsRowIndependentLeaf(expression, selectorParameter: null):
+                return base.Visit(expression);
+
             // A constructed sub-entity leaf (`new { Book = new Book { Id = e.Id, ... } }`) already translated to a
             // MongoDocumentConstructionExpression. Register the whole node as one member: recursing would map
             // "Book.Id"/"Book.Title" to root-level reads, but natively they live under the "Book" alias.
