@@ -87,10 +87,6 @@ internal sealed class MongoPipelineFactory
         internal BsonDocument Build(in MongoNativeBuildContext context) => _builder!(context);
     }
 
-    // ------------------------------------------------------------------
-    // Stage-walk: compile-time template construction
-    // ------------------------------------------------------------------
-
     /// <summary>
     /// Renders <paramref name="stages"/> into a template sharing one <see cref="PlaceholderTable"/>.
     /// </summary>
@@ -200,10 +196,6 @@ internal sealed class MongoPipelineFactory
             _ => throw new NativeTranslationNotSupportedException(
                 $"MongoPipelineFactory does not support stage type '{stage.GetType().Name}'.")
         };
-
-    // ------------------------------------------------------------------
-    // $vectorSearch — the one DEFERRED slot
-    // ------------------------------------------------------------------
 
     /// <summary>
     /// Builds the deferred slot for <c>$vectorSearch</c>: the pre-filter is rendered now into the shared
@@ -539,10 +531,6 @@ internal sealed class MongoPipelineFactory
         yield return new BsonDocument("$replaceRoot", new BsonDocument("newRoot", "$_id"));
     }
 
-    // ------------------------------------------------------------------
-    // Per-execution binding
-    // ------------------------------------------------------------------
-
     /// <summary>
     /// Clones the template and substitutes every placeholder sentinel with its serialized runtime value.
     /// </summary>
@@ -636,10 +624,6 @@ internal sealed class MongoPipelineFactory
         }
     }
 
-    // ------------------------------------------------------------------
-    // Deep-walk substitution
-    // ------------------------------------------------------------------
-
     private BsonDocument SubstituteDocument(
         BsonDocument doc,
         IReadOnlyDictionary<string, object?> parameterValues)
@@ -689,10 +673,6 @@ internal sealed class MongoPipelineFactory
 
         return array;
     }
-
-    // ------------------------------------------------------------------
-    // Parameter value serialization
-    // ------------------------------------------------------------------
 
     private BsonValue SerializeParameter(
         int index,

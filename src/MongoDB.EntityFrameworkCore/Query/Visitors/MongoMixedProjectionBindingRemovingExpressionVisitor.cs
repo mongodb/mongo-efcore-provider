@@ -154,11 +154,9 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                     sourceExpression = mappedExpression;
                 }
 
-                // A scalar member access on a singleton (reference) navigation, e.g. select o.Customer.City.
-                // The source expression is a MemberExpression whose source is the navigation's
-                // StructuralTypeShaperExpression. The property belongs to the navigation target entity, not the
-                // query root, so it must be read from the joined sub-document (the driver's native LeftJoin
-                // places the lone joined reference under "_inner") rather than the root document.
+                // A scalar member on a singleton (reference) navigation, e.g. select o.Customer.City. The property belongs to the
+                // navigation target, not the query root, so read it from the joined sub-document (the driver's LeftJoin places the
+                // lone joined reference under "_inner").
                 if (TryBindNavigationMemberAccess(sourceExpression, projectionBindingExpression.Type, out var navMemberRead))
                 {
                     return navMemberRead;
@@ -183,11 +181,10 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                     return clientLeafRead;
                 }
 
-                // A computed-arithmetic leaf (e.g. select new { c, Total = c.Age * c.Score }) mixed alongside
-                // a whole entity reference. MongoProjectionBindingExpressionVisitor registers the raw binary
-                // expression as a single projection-mapping leaf (see its arithmetic BinaryExpression case);
-                // evaluate it here by resolving each operand against the materialized document and rebuilding
-                // the arithmetic client-side, since the driver-LINQ Select was stripped in this mixed path.
+                // A computed-arithmetic leaf (e.g. select new { c, Total = c.Age * c.Score }) beside a whole entity. It is registered
+                // as one raw binary-expression leaf (see MongoProjectionBindingExpressionVisitor's arithmetic case); resolve each
+                // operand against the materialized document and rebuild the arithmetic client-side, since the driver Select was
+                // stripped in this mixed path.
                 if (TryBindArithmeticLeaf(sourceExpression, projectionBindingExpression.Type, out var arithmeticRead))
                 {
                     return arithmeticRead;

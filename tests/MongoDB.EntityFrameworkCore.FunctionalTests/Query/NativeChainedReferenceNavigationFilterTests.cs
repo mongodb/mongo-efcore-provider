@@ -68,17 +68,17 @@ public class NativeChainedReferenceNavigationFilterTests(TemporaryDatabaseFixtur
         public Employee? Manager { get; set; }
     }
 
-    // Review Focus 1: a comparison on the second hop excludes rows whose first or second hop is missing.
+    // a comparison on the second hop excludes rows whose first or second hop is missing.
     [Fact]
     public void Equality_on_second_hop_matches_only_fully_joined_rows()
         => Assert.Equal([1], RunOrders(q => q.Where(o => o.Customer!.Region!.Name == "North")));
 
-    // Review Focus 1: EF null semantics — a missing hop makes Name null, and null != "North".
+    // EF null semantics — a missing hop makes Name null, and null != "North".
     [Fact]
     public void Inequality_on_second_hop_includes_rows_with_a_missing_hop()
         => Assert.Equal([2, 3, 4, 5], RunOrders(q => q.Where(o => o.Customer!.Region!.Name != "North")));
 
-    // Review Focus 2: null FK, dangling FK, dangling first hop and null first hop all read as a null second hop.
+    // null FK, dangling FK, dangling first hop and null first hop all read as a null second hop.
     [Fact]
     public void Null_check_on_second_hop_treats_null_and_dangling_alike()
         => Assert.Equal([2, 3, 4, 5], RunOrders(q => q.Where(o => o.Customer!.Region == null)));
@@ -112,7 +112,7 @@ public class NativeChainedReferenceNavigationFilterTests(TemporaryDatabaseFixtur
             RunOrders(q => q.Where(o => o.Customer!.Name != null).OrderBy(o => o.OrderNo).Take(2)
                 .Where(o => o.Customer!.Region == null)));
 
-    // Review Focus 3: a comparison spanning two hops has no single-scope translation; must decline, not misroute.
+    // a comparison spanning two hops has no single-scope translation; must decline, not misroute.
     [Fact]
     public void Comparison_spanning_two_hops_declines_cleanly()
     {
@@ -130,7 +130,7 @@ public class NativeChainedReferenceNavigationFilterTests(TemporaryDatabaseFixtur
         Assert.Equal([1, 4, 5], result);
     }
 
-    // Review Focus 4: paging written BEFORE the second-hop filter must page first. Asserts results only (native or
+    // paging written BEFORE the second-hop filter must page first. Asserts results only (native or
     // fallback both acceptable); first three orders are 1,2,3, of which 2 and 3 have no region.
     [Fact]
     public void Paging_before_a_second_hop_filter_pages_first()
@@ -150,7 +150,7 @@ public class NativeChainedReferenceNavigationFilterTests(TemporaryDatabaseFixtur
         Assert.Equal([2, 3], Run(MongoQueryMode.DriverLinq));
     }
 
-    // Review Focus 5: a self-referencing chain must test the SECOND level's own $lookup alias.
+    // a self-referencing chain must test the SECOND level's own $lookup alias.
     [Fact]
     public void Self_referencing_second_hop_null_check()
         => Assert.Equal(

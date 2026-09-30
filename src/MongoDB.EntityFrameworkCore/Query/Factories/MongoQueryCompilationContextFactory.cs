@@ -60,9 +60,7 @@ public class MongoQueryCompilationContextFactory : IQueryCompilationContextFacto
     /// </summary>
     protected virtual QueryCompilationContextDependencies Dependencies { get; }
 
-    /// <summary>
-    /// Create a new <see cref="MongoQueryCompilationContext"/> with the necessary dependencies.
-    /// </summary>
+    /// <summary>Creates a <see cref="MongoQueryCompilationContext"/>.</summary>
     /// <param name="async"><see langword="true"/> if the query to process is asynchronous, <see langword="false"/> if it is synchronous.</param>
     /// <returns>The newly created <see cref="MongoQueryCompilationContext"/>.</returns>
     public virtual QueryCompilationContext Create(bool async)

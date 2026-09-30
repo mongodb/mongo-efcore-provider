@@ -79,7 +79,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 1: simple GreaterThan comparison → { Age: { $gt: 21 } }
+    // simple GreaterThan comparison → { Age: { $gt: 21 } }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -98,7 +98,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 2: AndAlso of two ranges on the same field merges operator docs
+    // AndAlso of two ranges on the same field merges operator docs
     //         Age > 21 && Age < 65 → { Age: { $gt: 21, $lt: 65 } }
     // ------------------------------------------------------------------
 
@@ -124,7 +124,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 3: Equal comparison → bare { Age: value } (no $eq wrapper)
+    // Equal comparison → bare { Age: value } (no $eq wrapper)
     // ------------------------------------------------------------------
 
     [Fact]
@@ -143,7 +143,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 4: NotEqual → { Age: { $ne: value } }
+    // NotEqual → { Age: { $ne: value } }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -162,7 +162,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 5: LessThanOrEqual → { Age: { $lte: value } }
+    // LessThanOrEqual → { Age: { $lte: value } }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -181,7 +181,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 6: GreaterThanOrEqual → { Age: { $gte: value } }
+    // GreaterThanOrEqual → { Age: { $gte: value } }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -200,7 +200,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 7: OrElse → { $or: [ { Age: { $lt: 18 } }, { Age: { $gt: 65 } } ] }
+    // OrElse → { $or: [ { Age: { $lt: 18 } }, { Age: { $gt: 65 } } ] }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -227,7 +227,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 8: bare bool field → { Active: true }
+    // bare bool field → { Active: true }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -242,7 +242,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 9: Not(bool field) → { Active: { $ne: true } }
+    // Not(bool field) → { Active: { $ne: true } }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -258,7 +258,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 10: B2 parameter placeholder — renders sentinel, records in PlaceholderTable
+    // Parameter placeholder — renders sentinel, records in PlaceholderTable
     // ------------------------------------------------------------------
 
     [Fact]
@@ -288,7 +288,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 11: AndAlso with two different fields — no merge, remain flat { f1: ..., f2: ... }
+    // AndAlso with two different fields — no merge, remain flat { f1: ..., f2: ... }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -311,7 +311,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 12: MongoConstantExpression with null ForSerialization (Skip/Take count)
+    // MongoConstantExpression with null ForSerialization (Skip/Take count)
     //          → BsonValue.Create(value), no throw
     // ------------------------------------------------------------------
 
@@ -327,7 +327,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 13: MongoParameterExpression with null ForSerialization (Skip/Take count)
+    // MongoParameterExpression with null ForSerialization (Skip/Take count)
     //          → placeholder with null serializer, no throw
     // ------------------------------------------------------------------
 
@@ -348,7 +348,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 14: field-to-field comparison → { $expr: { $eq: ['$Age', '$Score'] } }
+    // field-to-field comparison → { $expr: { $eq: ['$Age', '$Score'] } }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -365,7 +365,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 15: mixed AND keeps the indexable branch in query dialect
+    // mixed AND keeps the indexable branch in query dialect
     // ------------------------------------------------------------------
 
     [Fact]
@@ -388,7 +388,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 16: `== null` renders as a bare null value → { Name: null } (matches null or missing)
+    // `== null` renders as a bare null value → { Name: null } (matches null or missing)
     // ------------------------------------------------------------------
 
     [Fact]
@@ -404,7 +404,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 17: MongoInExpression over an inline constant collection → { field: { $in: [...] } }
+    // MongoInExpression over an inline constant collection → { field: { $in: [...] } }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -420,7 +420,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 18: negated MongoInExpression over an inline constant collection → { field: { $nin: [...] } }
+    // negated MongoInExpression over an inline constant collection → { field: { $nin: [...] } }
     // ------------------------------------------------------------------
 
     [Fact]
@@ -436,7 +436,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 18b: MongoInExpression over a MongoValueListExpression of separate parameters
+    // MongoInExpression over a MongoValueListExpression of separate parameters
     // (`new[] { prm1, prm2 }.Contains(c.Age)`) → { Age: { $in: [<sentinel0>, <sentinel1>] } }, one placeholder
     // per element (not a single array placeholder).
     // ------------------------------------------------------------------
@@ -472,7 +472,7 @@ public class MongoQueryLanguageRendererTests
     }
 
     // ------------------------------------------------------------------
-    // Test 19-23: MongoRegexExpression → { field: { $regularExpression: { pattern, options: "s" } } }, the same
+    // MongoRegexExpression → { field: { $regularExpression: { pattern, options: "s" } } }, the same
     // shape the driver-LINQ path emits.
     // ------------------------------------------------------------------
 

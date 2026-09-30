@@ -2457,8 +2457,8 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
                 .AsEnumerable().OrderBy(x => x.Name).ToList());
     }
 
-    // `r.Tag.ToUpper()` is a MethodCallExpression, so IsArithmeticComputedLeaf declines it. (String `+` now goes
-    // native via $concat; see Reference_form_string_concat_computed_leaf_goes_native.)
+    // `r.Tag.ToUpper()` is a MethodCallExpression, so IsArithmeticComputedLeaf declines it. (String `+` goes native
+    // via $concat; see Reference_form_string_concat_computed_leaf_goes_native.)
     [Fact]
     public void Reference_form_computed_leaf_hard_fails_in_every_mode()
     {
@@ -3171,7 +3171,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         public string Name { get; set; } = "";
 
         // A real element named "__ord" (MongoReplaceRootStage.OrdinalField). Sentinels are nested under
-        // MongoReplaceRootStage.ShadowField, so it no longer collides with the $mergeObjects output.
+        // MongoReplaceRootStage.ShadowField, so it can't collide with the $mergeObjects output.
         [MongoDB.Bson.Serialization.Attributes.BsonElement("__ord")]
         public int RealOrd { get; set; }
     }
@@ -3686,7 +3686,7 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     {
         // Owned sibling of Reference_form_followed_by_Distinct_hard_fails_in_every_mode. Without
         // TryBindDistinctFromProjection declining on UnwindSource, Native and NativeOnly silently returned
-        // null names. Now it falls back and the driver-LINQ chain returns the correct distinct rows under
+        // null names. It falls back and the driver-LINQ chain returns the correct distinct rows under
         // Native/DriverLinq (asserted, not just "no exception"); only NativeOnly throws.
         var seed = SeedOwners();
         var expected = seed
@@ -4008,9 +4008,9 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
 
     // A whole-element owned SelectMany has Route == WholeEntity, but as a set-op operand the lowerer emits no
     // $unwind for source2 and runs source1's $unwind (and inner-element filter) after the $unionWith, over both
-    // sides. Without IsPlainWholeEntitySelect's UnwindSource check, left-filtered Concat returned 4 rows (the
-    // filter leaked onto the right side) and right-filtered Concat 10 (the right filter was dropped); the correct
-    // answers are 7. Driver-LINQ can't run these shapes either, so the fix turns silent wrong rows into a throw.
+    // sides. Without IsPlainWholeEntitySelect's UnwindSource check, left-filtered Concat returned 4 rows (filter
+    // leaked onto the right side) and right-filtered Concat 10 (right filter dropped); the correct answer is 7.
+    // Driver-LINQ can't run these shapes either, so the guard turns silent wrong rows into a throw.
     [Fact]
     public void Whole_owned_element_SelectMany_as_set_op_operand_does_not_go_native()
     {

@@ -31,12 +31,10 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
-// Cross-collection $lookup Include machinery. EF Core lowers cross-collection collection navigations
-// (Include / projected collections / nested ThenInclude / filtered Include) onto manual $lookup +
-// $unwind pipeline stages because the C# driver's LINQ provider has no native LeftJoin and cannot
-// express collection or multi-hop joins. The only entry points from the rest of the visitor are the
-// TryBindProjectedCollectionNavigation / TryBindProjectedCollectionNavigationCount dispatch calls in
-// VisitMethodCall.
+// Cross-collection $lookup Include machinery. The driver's LINQ provider has no native LeftJoin and cannot express
+// collection or multi-hop joins, so collection navigations (Include / projected collections / ThenInclude / filtered
+// Include) become manual $lookup + $unwind stages. Entry points: TryBindProjectedCollectionNavigation and
+// TryBindProjectedCollectionNavigationCount, called from VisitMethodCall.
 internal sealed partial class MongoProjectionBindingExpressionVisitor : ExpressionVisitor
 {
     /// <summary>
@@ -127,13 +125,10 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         ExtractThenIncludesFromSubquery(selectCall, lookup);
         _queryExpression.AddLookup(lookup);
 
-        // Bind the outer entity so we can reach its EntityProjectionExpression / ParentAccessExpression.
-        //
-        // On the native projection route, Visit(outerShaper) would hit VisitExtension's whole-root-entity leaf arm,
-        // which registers any root-typed shaper under the current ProjectionMember. We're inside VisitNew's
-        // per-argument loop, so that would silently replace this member's array-leaf mapping with the whole
-        // entity. Resolve the EntityProjectionExpression directly instead. Other routes never reach that arm, so
-        // they keep the plain Visit.
+        // On the native projection route, Visit(outerShaper) would hit VisitExtension's whole-root-entity leaf arm, which
+        // registers any root-typed shaper under the current ProjectionMember; inside VisitNew's per-argument loop that would
+        // replace this member's array-leaf mapping with the whole entity. Resolve the EntityProjectionExpression directly.
+        // Other routes never reach that arm and keep the plain Visit.
         _includedNavigations.Push(navigation);
         EntityProjectionExpression outerEntityProjection;
         if (_queryExpression.Select.Route == NativeRoute.Projection)
@@ -533,11 +528,9 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         _includedNavigations.Push(navigation);
         var visitedEntity = Visit(includeExpression.EntityExpression);
 
-        // The entity may already be wrapped in one or more IncludeExpressions when a reference
-        // Include precedes this collection Include off the same root (e.g.
-        // Include(o => o.Customer).Include(o => o.OrderDetails)). Unwrap the IncludeExpression
-        // chain to reach the underlying StructuralTypeShaperExpression that carries the projection
-        // index; the wrapping is preserved by passing visitedEntity through to Update below.
+        // A reference Include off the same root may already wrap the entity in IncludeExpressions (e.g.
+        // Include(o => o.Customer).Include(o => o.OrderDetails)). Unwrap to the StructuralTypeShaperExpression that carries the
+        // projection index; visitedEntity is passed through to Update below to preserve the wrapping.
         var shaperCandidate = visitedEntity;
         while (shaperCandidate is IncludeExpression wrappingInclude)
         {
@@ -760,13 +753,10 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 case "Where":
                     FlushSortKeys(sortKeys, stages);
 
-                    // A collection-Include subquery contains a Where for the synthetic FK-correlation
-                    // predicate (the join condition), which the $lookup localField/foreignField already
-                    // handles, so that one is dropped. But a user filtered-Include predicate
-                    // (.Include(c => c.Orders.Where(...))) and a HasQueryFilter on the dependent entity
-                    // ALSO lower to a Where here. Those are NOT yet translated into the $lookup
-                    // sub-pipeline $match, so silently dropping them would return wrong data (e.g. bypass a
-                    // soft-delete / multi-tenant filter). Fail loudly for those instead of dropping them.
+                    // The collection-Include subquery's synthetic FK-correlation Where is dropped (the $lookup localField/foreignField
+                    // handles it). A user filtered-Include predicate or a HasQueryFilter on the dependent also lowers to a Where but is
+                    // NOT translated into the $lookup sub-pipeline $match; dropping it would return wrong data (e.g. bypass a
+                    // soft-delete or tenant filter), so fail loudly.
                     if (IsFkCorrelationPredicate(methodCall.Arguments[1].UnwrapLambdaFromQuote()))
                     {
                         current = methodCall.Arguments[0];
@@ -962,12 +952,10 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                         typeof(ValueBuffer)),
                     nullable: true);
 
-                // Recurse so this nested collection's own deeper ThenIncludes (e.g. a reference Include
-                // such as OrderDetail.Product on a Customer.Orders.OrderDetails.Product path) are wrapped
-                // onto its element shaper. Without this the deepest navigation is never materialized and
-                // comes back null. The recursion reads the deeper "_lookup_<Nav>" sub-documents relative
-                // to THIS collection's element (nestedArrayProjection), matching the nested $lookup pipeline
-                // emitted by ExtractThenIncludesFromSubquery / AddReferenceLookupStages.
+                // Recurse so this collection's deeper ThenIncludes are wrapped onto its element shaper; otherwise the deepest
+                // navigation is never materialized and comes back null. Reads the "_lookup_<Nav>" sub-documents relative to THIS
+                // collection's element (nestedArrayProjection), matching the pipeline from ExtractThenIncludesFromSubquery /
+                // AddReferenceLookupStages.
                 var wrappedNestedInnerShaper = WrapWithNestedCollectionIncludes(
                     include.NavigationExpression, nestedInnerShaper, nestedArrayProjection);
 
@@ -981,11 +969,9 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             }
             else if (include.Navigation is INavigation refNav && !refNav.IsEmbedded())
             {
-                // Reference ThenInclude on a collection item (e.g. od.Order). The referenced document is
-                // unwound under "_lookup_<RefNav>" in each parent element by the nested $lookup + $unwind
-                // registered in the parent lookup pipeline (see AddReferenceLookupStages). Build an entity
-                // shaper that reads that sub-document by name relative to the parent element, rather than
-                // visiting the raw EF Join field (which produces a non-materializable scalar binding).
+                // Reference ThenInclude on a collection item (e.g. od.Order): the referenced document is unwound under
+                // "_lookup_<RefNav>" in each parent element (see AddReferenceLookupStages). Build a shaper reading that sub-document
+                // relative to the parent element; visiting the raw EF Join field gives a non-materializable scalar binding.
                 var refAccess = new NavigationObjectAccessExpression(
                     refNav,
                     parentArrayProjection.InnerProjection.ParentAccessExpression,

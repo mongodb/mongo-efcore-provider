@@ -121,10 +121,9 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
     [Fact]
     public void Correlated_Any_with_Equals_OrdinalIgnoreCase_constant_term_non_ASCII_folding_goes_native()
     {
-        // Correlated via "&& b.Title.Length > 0" (references the enclosing Blog), which forces this through the
-        // two-scope MongoQuantifierExpression path (rendered by MongoAggregationExpressionRenderer), unlike a
-        // plain (non-correlated) Any which renders as $elemMatch instead. Only Unicode-correct OrdinalIgnoreCase
-        // folding (the regex "i" option), not $toLower's ASCII-only folding, matches "École" against "éCOLE".
+        // "&& b.Title.Length > 0" references the enclosing Blog, forcing the two-scope MongoQuantifierExpression path
+        // (aggregation renderer) rather than $elemMatch. Only Unicode-correct OrdinalIgnoreCase folding (regex "i"), not
+        // $toLower's ASCII-only folding, matches "École" against "éCOLE".
         var collection = Seed(
             nameof(Correlated_Any_with_Equals_OrdinalIgnoreCase_constant_term_non_ASCII_folding_goes_native),
             ("match", [("École", 1)]),
@@ -141,9 +140,8 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
     [Fact]
     public void Correlated_Any_with_StartsWith_OrdinalIgnoreCase_parameterized_term_non_ASCII_folding_goes_native()
     {
-        // Parameterized variant of the above: the term is a closure variable (an EF query parameter), so the
-        // aggregation renderer must build a regex placeholder (PlaceholderTable.CreateRegexPlaceholder), and
-        // MongoPipelineFactory must substitute it correctly nested inside $expr, not just at the top level.
+        // Parameterized variant: the term is a closure variable, so the renderer builds a regex placeholder
+        // (PlaceholderTable.CreateRegexPlaceholder) that MongoPipelineFactory must substitute inside $expr.
         var term = "éCO";
         var collection = Seed(
             nameof(Correlated_Any_with_StartsWith_OrdinalIgnoreCase_parameterized_term_non_ASCII_folding_goes_native),
@@ -176,10 +174,8 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
     [Fact]
     public void Correlated_Any_with_negated_Regex_IsMatch_constant_pattern_goes_native()
     {
-        // Correlated via "&& b.Title.Length > 0" forces the two-scope MongoQuantifierExpression path (rendered
-        // by MongoAggregationExpressionRenderer), unlike a plain (non-correlated) Any which renders as
-        // $elemMatch instead. Exercises MongoRegexKind.Pattern's aggregation-dialect $regexMatch rendering
-        // (RenderRegexAsExpr's Pattern branch), not the query-dialect $regularExpression path.
+        // "&& b.Title.Length > 0" forces the two-scope quantifier path. Exercises MongoRegexKind.Pattern's aggregation-dialect
+        // $regexMatch rendering (RenderRegexAsExpr), not the query-dialect $regularExpression path.
         var collection = Seed(
             nameof(Correlated_Any_with_negated_Regex_IsMatch_constant_pattern_goes_native),
             ("match", [("apple", 1)]),
@@ -211,8 +207,7 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
     [Fact]
     public void Correlated_Any_and_All_are_correct_against_an_in_memory_oracle()
     {
-        // Differential check: the same expression evaluated in memory must agree with the NativeOnly result across
-        // the empty / no-match / all-match / one-mismatch states.
+        // Differential check against in-memory evaluation across the empty / no-match / all-match / one-mismatch states.
         var collection = Seed(nameof(Correlated_Any_and_All_are_correct_against_an_in_memory_oracle),
             ("same", [("same", 1), ("same", 2)]),
             ("mixed", [("mixed", 1), ("other", 2)]),
@@ -321,10 +316,8 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
     [Fact]
     public void Correlated_Count_predicate_inside_a_projection_leaf_goes_native()
     {
-        // Neither a bare Any(pred) nor a comparison (`Count(pred) > 0`) is admitted as a projection value by
-        // NativeProjectionBinder.TryTranslateLeaf, so project the raw Count(pred) (an admitted
-        // MongoFilteredSizeExpression leaf) and derive ">0" client-side. This still proves SelfParam reaches
-        // NativeProjectionBinder.
+        // Neither a bare Any(pred) nor `Count(pred) > 0` is admitted as a projection value by
+        // NativeProjectionBinder.TryTranslateLeaf, so project the raw Count(pred) and derive ">0" client-side.
         var collection = Seed(nameof(Correlated_Count_predicate_inside_a_projection_leaf_goes_native),
             ("match", [("match", 1)]),
             ("nomatch", [("x", 1)]));
@@ -344,8 +337,8 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
     [Fact]
     public void Correlated_All_inside_a_scalar_aggregate_predicate_goes_native()
     {
-        // "same" and "mixed" both have a post whose title equals the owner's title (so Any(...) is true for
-        // both); "neither" does not, giving All(...) a genuine false case to detect a mis-scoped resolution.
+        // "same" and "mixed" have a post whose title equals the owner's; "neither" does not, giving All(...) a genuine
+        // false case to detect mis-scoped resolution.
         var collection = Seed(nameof(Correlated_All_inside_a_scalar_aggregate_predicate_goes_native),
             ("same", [("same", 1), ("same", 2)]),
             ("mixed", [("mixed", 1), ("other", 2)]),
@@ -405,9 +398,8 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
         public int Rank { get; set; }
     }
 
-    // HasConversion<string>() stores a bool as "True"/"False", both truthy in MongoDB regardless of the CLR value.
-    // A correlated bare Flag access (MongoOuterFieldExpression) must therefore be caught by the truthiness guards
-    // in MongoAggregationExpressionRenderer.
+    // HasConversion<string>() stores a bool as "True"/"False", both truthy in MongoDB. A correlated bare Flag access
+    // (MongoOuterFieldExpression) must be caught by the truthiness guards in MongoAggregationExpressionRenderer.
     private static readonly Action<ModelBuilder> ConvertedBoolBlogModel = mb =>
     {
         mb.Entity<ConvertedBoolBlog>().Property(b => b.Flag).HasConversion<string>();
@@ -421,7 +413,6 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
         {
             { "_id", ObjectId.GenerateNewId() },
             { "Title", "blog" },
-            // What HasConversion<string>() stores: non-empty, hence truthy, strings.
             { "Flag", flag.ToString() },
             { "Posts", new BsonArray(posts.Select(p => new BsonDocument { { "Title", p.Title }, { "Rank", p.Rank } })) }
         });
@@ -488,8 +479,8 @@ public class NativeOwnedCollectionCorrelatedTests(TemporaryDatabaseFixture datab
     [Fact]
     public void Correlated_Any_and_All_over_a_missing_or_null_Posts_array_do_not_throw_and_match_the_oracle()
     {
-        // Seeds a document with no "Posts" field and one with "Posts": null, exercising the $ifNull wrapper in
-        // MongoAggregationExpressionRenderer.RenderQuantifier ($map over a missing/null array is a server error).
+        // A document with no "Posts" field and one with "Posts": null exercise the $ifNull wrapper in
+        // RenderQuantifier ($map over a missing/null array is a server error).
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(
             UniqueCollectionName(nameof(Correlated_Any_and_All_over_a_missing_or_null_Posts_array_do_not_throw_and_match_the_oracle)));
         coll.InsertMany(

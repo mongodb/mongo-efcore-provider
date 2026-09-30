@@ -91,7 +91,7 @@ public class NativeChainedJoinPagingTests(TemporaryDatabaseFixture database)
         Assert.Equal(["Ann", "Ann"], result);
     }
 
-    // The wrapped-projection arm had the same hole before the chained Where arm existed.
+    // The wrapped-projection arm must decline too.
     [Fact]
     public void Paging_between_joins_after_a_first_level_filter_with_a_wrapped_projection()
     {

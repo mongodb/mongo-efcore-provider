@@ -339,11 +339,10 @@ internal static class ExpressionExtensionMethods
         };
 
     /// <summary>
-    /// Whether <paramref name="member"/> is an access to the <c>Outer</c>/<c>Inner</c> field of an EF-
-    /// generated <c>TransparentIdentifier&lt;TOuter,TInner&gt;</c> — the wrapper nav-expansion introduces
-    /// for each join in a chain. Checked by declaring type (not just member name) so a joined entity that
-    /// happens to declare its own real <c>Outer</c>/<c>Inner</c> property isn't mistaken for join-chain
-    /// plumbing.
+    /// Whether <paramref name="member"/> is the <c>Outer</c>/<c>Inner</c> field of an EF-generated
+    /// <c>TransparentIdentifier&lt;TOuter,TInner&gt;</c> (the wrapper nav-expansion adds per join). Checked by
+    /// declaring type, not name, so a joined entity with its own <c>Outer</c>/<c>Inner</c> property isn't mistaken
+    /// for join plumbing.
     /// </summary>
     internal static bool IsTransparentIdentifierOuterOrInnerAccess(this MemberExpression member)
         => member.Member.Name is "Outer" or "Inner"

@@ -27,7 +27,6 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 /// </summary>
 public class MongoExpressionNegatorTests
 {
-    // --- Entity model used across tests ---
 
     private class Blog
     {
@@ -196,7 +195,6 @@ public class MongoExpressionNegatorTests
         Assert.True(flipped.Negated);
         Assert.Equal(BsonDocument.Parse("{ Tags: { $ne: \"keep\" } }"), RenderOf(negated));
 
-        // Double negation round-trips to the original.
         Assert.True(MongoExpressionNegator.TryNegate(flipped, out var doubleNegated));
         Assert.False(Assert.IsType<MongoArrayContainsExpression>(doubleNegated).Negated);
         Assert.Equal(BsonDocument.Parse("{ Tags: \"keep\" }"), RenderOf(doubleNegated));
@@ -518,7 +516,6 @@ public class MongoExpressionNegatorTests
             new MongoInExpression(new MongoFieldExpression(rank, "Rank"), new MongoConstantExpression(new[] { 1 }, rank), negated: false),
             new MongoRegexExpression(new MongoFieldExpression(heading, "Heading"), MongoRegexKind.Contains, new MongoConstantExpression("a", heading), negated: false),
             new MongoElemMatchExpression("Comments", Comparison(MongoBinaryOperator.Equal, 1), negated: false),
-            // Bare Any() as "Count >= 1" (see MongoElemMatchExpression).
             new MongoBinaryExpression(
                 MongoBinaryOperator.GreaterThanOrEqual,
                 new MongoSizeExpression("Comments", typeof(int), nullSafe: true),
@@ -547,17 +544,14 @@ public class MongoExpressionNegatorTests
             new MongoSizeExpression("Posts", typeof(int), nullSafe: true),
             new MongoConstantExpression(threshold, null));
 
-    // Count-comparison tests use [Fact]s + a private helper rather than [Theory], for the CS0051 reason above.
-    //
-    // The exception to the relational rule: a count comparison renders as { "path.k": { $exists: … } }, and
-    // $exists partitions the document set, so inverting the operator is the exact complement — unlike
-    // { $gt: 5 } / { $lte: 5 } on a scalar, which both miss a missing field.
+    // Count-comparison tests use [Fact]s + a private helper rather than [Theory] (CS0051, as above). A count comparison
+    // renders as { "path.k": { $exists: … } } and $exists partitions the document set, so inverting the operator is the
+    // exact complement, unlike { $gt: 5 } / { $lte: 5 } on a scalar, which both miss a missing field.
     private static void AssertCountComparisonIsInvertedNotWrapped(
         MongoBinaryOperator op, MongoBinaryOperator expected)
     {
         Assert.True(MongoExpressionNegator.TryNegate(Count(op, 2), out var negated));
 
-        // An inverted-operator MongoBinaryExpression, not a $not wrap.
         var comparison = Assert.IsType<MongoBinaryExpression>(negated);
         Assert.Equal(expected, comparison.Operator);
         Assert.IsType<MongoSizeExpression>(comparison.Left);

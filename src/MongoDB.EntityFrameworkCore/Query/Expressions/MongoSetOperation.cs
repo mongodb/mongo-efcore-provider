@@ -59,8 +59,7 @@ internal sealed class MongoSetOperation
     /// <summary>
     /// The operand's own entity type, which may differ from the outer root for a projected-operand set op. The
     /// lowerer's synthetic <c>$set</c> sort-field allocator must reserve this type's top-level element names too, or a
-    /// computed sort on the operand silently clobbers one of its mapped elements (see
-    /// NativeComputedSortTests.Synthetic_sort_field_does_not_clobber_a_set_op_operands_own_element).
+    /// computed sort on the operand silently clobbers one of its mapped elements.
     /// </summary>
     public IEntityType OperandEntityType { get; }
 

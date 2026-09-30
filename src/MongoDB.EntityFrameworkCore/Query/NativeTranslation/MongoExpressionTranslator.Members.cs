@@ -49,11 +49,9 @@ internal sealed partial class MongoExpressionTranslator
         fieldPath = null;
         isOuter = false;
 
-        // Peel Nullable<T>.Value so `x.A.Value` takes the fast path below; safe because `.Value` changes the CLR
-        // type, not the stored element. The GetUnderlyingType check matters: a user type's own `Value` member
-        // (e.g. a value-converted strongly-typed id) must not be peeled, or `x.Code.Value` would silently resolve
-        // as `x.Code` and bypass the converter. Pinned by
-        // MongoExpressionTranslatorTests.A_user_type_member_named_Value_is_NOT_peeled.
+        // Peel Nullable<T>.Value so `x.A.Value` takes the fast path (`.Value` changes the CLR type, not the stored
+        // element). Only for a real Nullable<T>: a user type's own `Value` member (e.g. a converted strongly-typed
+        // id) must not be peeled, or the converter is bypassed.
         while (node is MemberExpression { Member.Name: nameof(Nullable<int>.Value), Expression: { } nullableReceiver }
                && Nullable.GetUnderlyingType(nullableReceiver.Type) is not null)
         {
@@ -66,10 +64,8 @@ internal sealed partial class MongoExpressionTranslator
             return false;
 
         // A bare-scalar Distinct's parameter (`Select(o => o.Country).Distinct().OrderBy(x => x.IndexOf(term))`)
-        // resolves by identity to the sole field-backed key part. A computed sole key has no IProperty and
-        // declines. Accumulators.Count == 0 keeps a grouping with accumulator outputs (a prior
-        // GroupBy(key).Select(aggregate) under a nested GroupBy) from binding a bare parameter to the key's
-        // serializer.
+        // resolves by identity to the sole field-backed key part; a computed sole key declines. Accumulators.Count == 0
+        // keeps a prior GroupBy(key).Select(aggregate) grouping from binding a bare parameter to the key's serializer.
         if (SelfParam is not null && ReferenceEquals(node, SelfParam)
             && DistinctAliasScope is { Accumulators.Count: 0, Key: [{ FieldRef: MongoFieldExpression soleField } soleKeyPart] })
         {
@@ -184,9 +180,9 @@ internal sealed partial class MongoExpressionTranslator
             }
         }
 
-        // An accumulator alias from a prior GroupBy(...).Select(aggregate) stage under a further GroupBy: the
-        // prior flatten $project wrote it as a top-level field. Accumulators never have an IProperty, so there's
-        // no overlap with TryResolveMember. Empty for a plain Distinct.
+        // An accumulator alias from a prior GroupBy(...).Select(aggregate) under a further GroupBy was written as a
+        // top-level field by the flatten $project. Accumulators have no IProperty, so no overlap with
+        // TryResolveMember. Empty for a plain Distinct.
         foreach (var acc in scope.Accumulators)
         {
             if (acc.OutputField == me.Member.Name)
@@ -200,11 +196,9 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     // The ProjectedAliasScope half of TryResolveFlattenedAlias. The root must be the scope's own parameter (by
-    // reference). An alias is looked up by the Select's member name only; an unmatched name declines.
-    //
-    // The result has no IProperty, so every comparison over it renders in the aggregation dialect ($expr). That is
-    // deliberate: a post-group $match runs over $group output, where no index applies, so the query dialect would
-    // buy nothing.
+    // reference); an alias is looked up by the Select's member name only. The result has no IProperty, so every
+    // comparison renders in the aggregation dialect ($expr): a post-group $match runs over $group output, where no
+    // index applies.
     private static bool TryResolveProjectedAlias(
         MongoProjectedAliasScope scope, Expression node, [NotNullWhen(true)] out MongoElementRefExpression? fieldRef)
     {
@@ -262,13 +256,11 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     // Scalar CLR types BsonValue.Create maps to the same BSON form the default serializer stores. Enums are admitted
-    // because a C# enum comparison arrives as a Convert to the underlying integer on both sides (a key needs default
-    // serialization, i.e. stored as that integer).
+    // because a C# enum comparison arrives as a Convert to the underlying integer on both sides.
     //
     // Narrower than NativeGroupByBinder.IsPushableScalarElementType on purpose: a pushed list is read back through a
-    // typed CLR serializer, whereas the value compared with an alias is serialized by BsonValue.Create with no type
-    // to go on. byte/short/float are left out because nothing here has verified how their constants and parameters
-    // map (C# widens byte/short comparisons to int, so those declines cost little).
+    // typed serializer, whereas a value compared with an alias is serialized by BsonValue.Create with no type to go
+    // on. byte/short/float are left out (unverified constant/parameter mapping; C# widens byte/short to int anyway).
     private static bool IsRawComparableAliasType(Type type)
         => type == typeof(string) || type == typeof(bool) || type == typeof(int) || type == typeof(long)
            || type == typeof(double) || type == typeof(decimal) || type == typeof(DateTime)
@@ -292,7 +284,7 @@ internal sealed partial class MongoExpressionTranslator
     /// <remarks>
     /// <para>
     /// The <c>isOuter</c> line enforces "scope resolves by parameter identity, never member name"; getting it wrong
-    /// silently resolves against the wrong scope. Two types sharing a property name is the regression test.
+    /// silently resolves against the wrong scope.
     /// </para>
     /// <para>
     /// <b>Scope-relative.</b> Callers join each hop's <see cref="MongoEntityTypeExtensions.GetContainingElementName"/>

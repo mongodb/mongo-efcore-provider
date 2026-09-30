@@ -71,7 +71,7 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
 
         var result = db.Entities.OrderBy(e => e.Value).Reverse().Select(e => e.Value).ToList();
 
-        Assert.Equal([3, 2, 1], result); // succeeds under NativeOnly => went native
+        Assert.Equal([3, 2, 1], result);
     }
 
     [Fact]
@@ -140,7 +140,7 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
 
         var last = db.Entities.OrderBy(e => e.Value).Last();
 
-        Assert.Equal(3, last.Value); // succeeds under NativeOnly => went native
+        Assert.Equal(3, last.Value);
     }
 
     [Fact]

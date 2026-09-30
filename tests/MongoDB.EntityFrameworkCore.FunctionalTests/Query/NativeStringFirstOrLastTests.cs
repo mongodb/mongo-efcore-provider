@@ -68,7 +68,6 @@ public class NativeStringFirstOrLastTests(TemporaryDatabaseFixture database) : I
     [Fact]
     public void FirstOrDefault_equals_ordinary_char_still_matches_oracle()
     {
-        // An ordinary (non-NUL) literal comparison.
         var collection = Seed(
             nameof(FirstOrDefault_equals_ordinary_char_still_matches_oracle),
             ("empty", ""),

@@ -23,11 +23,10 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-377: a chained Join with a bare key-equality hop (no model navigation) previously left a
-/// dependent hop's <c>$lookup</c> localField unscoped, or dropped the hop's own <c>$lookup</c>
-/// entirely, once a later join forced flat mode — silently dropping every row. Covers the bare hop
-/// in first, second, and both positions, plus the shared <c>GroupJoin</c> translator path.
-/// The <c>_go_native_under_NativeOnly</c> facts pin that these shapes also translate natively under
+/// EF-377: a chained Join with a bare key-equality hop (no model navigation) left a dependent hop's <c>$lookup</c>
+/// localField unscoped, or dropped the hop's own <c>$lookup</c>, once a later join forced flat mode, silently
+/// dropping every row. Covers the bare hop in first, second and both positions, plus the shared <c>GroupJoin</c>
+/// translator path. The <c>_go_native_under_NativeOnly</c> facts pin native translation under
 /// <see cref="MongoQueryMode.NativeOnly"/>.
 /// </summary>
 [XUnitCollection("QueryTests")]

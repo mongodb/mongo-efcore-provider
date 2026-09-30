@@ -1019,9 +1019,8 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
         Assert.DoesNotContain("aggregate([])", mql);
     }
 
-    // A captured-local predicate goes native in every mode. On the client-side rebuild path this shape used to
-    // hard-fail everywhere (the captured local arrived as an unevaluable query-parameter node); as a tier-2
-    // leaf (arm 1a of TryDeriveSyntheticAlias) the local is an ordinary pipeline parameter.
+    // A captured-local predicate goes native in every mode: as a tier-2 leaf (arm 1a of TryDeriveSyntheticAlias) the
+    // local is an ordinary pipeline parameter, whereas the client-side rebuild path fails on the unevaluable query-parameter node.
     //
     // Oracle: in-memory LINQ over the same Expression object (`selector` server-side vs `selector.Compile()`
     // over materialized entities). Valid here because the predicate is `p.Rank > threshold` over ranks of 5 and
@@ -1276,7 +1275,6 @@ public class NativeOwnedCollectionFilteredCountTests(TemporaryDatabaseFixture da
 
     // A relational element predicate over a nullable leaf follows C# lifted semantics (null < c is false): the
     // renderer null-guards the lower operand inside $filter's cond, as everywhere else in the aggregation dialect.
-    // The owner reversed the earlier "accepted divergence" ruling on 2026-09-28 in favor of C# semantics.
     // DriverLinq still diverges: its unguarded $filter counts null and missing, which BSON orders below every number.
     //
     // On multi_mixed (5, -5, null, missing):

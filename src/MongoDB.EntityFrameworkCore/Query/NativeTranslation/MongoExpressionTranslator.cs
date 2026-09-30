@@ -80,9 +80,8 @@ internal sealed partial class MongoExpressionTranslator
 
     /// <summary>
     /// The root lambda parameter of a single-scope translator (see the constructor). Settable because
-    /// <see cref="NativeSlotPopulator.PopulateNativeSlots"/> constructs the translator before dispatching on the
-    /// operator, so the lambda parameter isn't known yet. Always <see langword="null"/> on a two-scope translator,
-    /// so correlation nested two or more scopes deep keeps declining.
+    /// <see cref="NativeSlotPopulator.PopulateNativeSlots"/> builds the translator before the lambda is known.
+    /// Always <see langword="null"/> on a two-scope translator, so correlation two or more scopes deep keeps declining.
     /// </summary>
     internal ParameterExpression? SelfParam { get; set; }
 
@@ -120,9 +119,9 @@ internal sealed partial class MongoExpressionTranslator
     /// After a projected Distinct or a keyed GroupBy.Select, a lambda's parameter is a projected row or scalar alias,
     /// not the entity; folding <c>x.GetType() == typeof(Order)</c> over it would answer true for every grouped row.
     /// Structural (the parameter's CLR type must be the entity type or a subtype), plus the scope flag as a second
-    /// line. Admitting a subtype doesn't make the folds TPH-safe on its own: that comes from each site's own
-    /// hierarchy decline (the <c>GetType()</c>/<c>is</c> folds decline any entity with a base or derived type; key
-    /// equality and <c>Contains</c> require the other side's type to be exactly the entity's).
+    /// line. A subtype isn't TPH-safe on its own: that comes from each site's own hierarchy decline (the
+    /// <c>GetType()</c>/<c>is</c> folds decline any entity with a base or derived type; key equality and
+    /// <c>Contains</c> require the other side's type to be exactly the entity's).
     /// </remarks>
     private bool IsSelfParamTheEntity(Expression node)
         => SelfParam is not null
@@ -1410,8 +1409,7 @@ internal sealed partial class MongoExpressionTranslator
     /// coincidentally correct for <c>&gt;</c>/<c>&gt;=</c>. Non-nullable properties get it too: a missing element
     /// there violates the model, but the query dialect (and so driver-LINQ) still excludes that row, and a
     /// projection or <c>Count</c> over it never materializes the entity to reject it. The bracket only removes
-    /// non-numeric rows, so it can't change the CLR answer over well-formed documents (case 27 of
-    /// <c>NativeCastTests</c>). Equality never needs it.
+    /// non-numeric rows, so it can't change the CLR answer over well-formed documents. Equality never needs it.
     /// </remarks>
     private static bool NeedsNumericTypeBracket(ExpressionType comparisonNodeType)
         => IsRelationalComparison(comparisonNodeType);
@@ -1706,12 +1704,11 @@ internal sealed partial class MongoExpressionTranslator
             if (!countElementTranslator.TryTranslate(countPredicate.Body, out var elementPredicate))
                 return null;
 
-            // Deliberately no renderability or AllFieldsDefaultSerialized gate here. A translate-time decline sends
-            // a projection leaf (Select(b => new { N = b.Posts.Count(pred) })) to the generic fall-through, which
-            // throws InvalidOperationException in every mode including DriverLinq. Admitting it lets an
-            // unrenderable predicate throw NativeTranslationNotSupportedException at render time (e.g.
-            // RenderUnary over a converted bool), which TryBuildPipeline turns into a driver-LINQ fallback. No alias
-            // hazard: a computed count leaf registers no alias override. See NativeOwnedCollectionFilteredCountTests.
+            // Deliberately no renderability or AllFieldsDefaultSerialized gate: a translate-time decline sends a
+            // projection leaf (Select(b => new { N = b.Posts.Count(pred) })) to the generic fall-through, which throws
+            // InvalidOperationException in every mode including DriverLinq. Admitting it lets an unrenderable
+            // predicate throw NativeTranslationNotSupportedException at render time, which TryBuildPipeline turns into
+            // a driver-LINQ fallback. No alias hazard: a computed count leaf registers no alias override.
             return new MongoFilteredSizeExpression(arrayPath, elementPredicate, node.Type);
         }
 
@@ -1813,8 +1810,7 @@ internal sealed partial class MongoExpressionTranslator
     /// </summary>
     /// <remarks>
     /// <c>$toString</c> diverges from .NET for <c>bool</c> (<c>"true"</c> vs <c>"True"</c>) and dates (ISO-8601), but
-    /// driver-LINQ renders identically, so native introduces no new divergence. See
-    /// <c>NativeStringConcatTests.Concat_bool_operand_and_DateTime_operand_match_driver_linq_but_not_the_in_memory_oracle</c>.
+    /// driver-LINQ renders identically, so native introduces no new divergence.
     /// </remarks>
     private MongoExpression? TranslateConcatOperand(Expression operand, bool allowNumericWidening)
     {

@@ -20,9 +20,8 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// <summary>
 /// <c>string.Replace(oldValue, newValue)</c> / <c>Replace(oldChar, newChar)</c> as <c>$replaceAll</c> (ordinal,
 /// all occurrences). A null <see cref="Replacement"/> means "" (.NET), rendered via <c>$ifNull</c>. An empty
-/// <see cref="Find"/> throws in .NET; the server instead replaces at every position, inserting the replacement
-/// between (and around) every character rather than erroring (observed: <c>"abc".Replace("", "X")</c> →
-/// <c>"XaXbXcX"</c>).
+/// <see cref="Find"/> throws in .NET, but the server inserts the replacement around every character
+/// (<c>"abc".Replace("", "X")</c> gives <c>"XaXbXcX"</c>).
 /// </summary>
 internal sealed class MongoReplaceExpression(MongoExpression input, MongoExpression find, MongoExpression replacement)
     : MongoExpression

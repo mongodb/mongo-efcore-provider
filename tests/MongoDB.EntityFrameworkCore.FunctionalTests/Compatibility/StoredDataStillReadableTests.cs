@@ -126,8 +126,7 @@ public class StoredDataStillReadableTests(TemporaryDatabaseFixture database)
         using var db = SingleEntityDbContext.Create(collection);
         db.Entities.Add(_nullableSet);
         db.Entities.Add(_nullableDefault);
-        // Write-only row with OwnedMany null, so writing a null collection stays covered now that _nullableDefault
-        // (also nullDefaultDoc's read expectation) uses [].
+        // Write-only row with OwnedMany null, so writing a null collection stays covered.
         db.Entities.Add(_nullableNullCollection);
         db.SaveChanges();
 
@@ -335,9 +334,7 @@ public class StoredDataStillReadableTests(TemporaryDatabaseFixture database)
         ]
     };
 
-    // Read expectation for nullDefaultDoc, which stores "OwnedMany": null (written by provider 8.1). A missing or
-    // null stored collection now materializes as empty regardless of the CLR initializer; the stored bytes and
-    // the old-data-is-readable guarantee are unchanged.
+    // Read expectation for nullDefaultDoc (stores "OwnedMany": null, written by provider 8.1): null or missing materializes as empty.
     private readonly Nullables _nullableDefault = new()
     {
         id = ObjectId.Parse("670d7d952112a60d7fa17d99"),

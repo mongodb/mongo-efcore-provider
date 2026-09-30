@@ -74,10 +74,9 @@ internal static class NativeSlotPopulator
         // OrderBy/ThenBy directly on the ungrouped GroupBy(key) result: an aggregate key (g.Count()) needs a $group
         // accumulator that doesn't exist until the terminal Select, so defer the raw selector onto
         // PendingGroupOrderings; NativeGroupByBinder.TryBindGroupProjection resolves it (or declines) then.
-        // Grouping == null deliberately excludes OrderBy composed after the Select (must hit the guard below; see
-        // GroupBy_post_group_OrderBy_by_aggregate_matches_driver_linq). A GroupBy nested on a prior grouping is
-        // admitted: SnapshotPriorGroupingForNestedGroupBy clears Grouping, and the ordering lowers around the nested
-        // $group (see Nested_group_by_with_having_ordering_and_paging_on_the_nested_group).
+        // Grouping == null deliberately excludes OrderBy composed after the Select (must hit the guard below). A
+        // GroupBy nested on a prior grouping is admitted: SnapshotPriorGroupingForNestedGroupBy clears Grouping, and
+        // the ordering lowers around the nested $group.
         if (mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping == null && mongoQ.Select.PendingGroupKey != null
             && (methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.OrderByDescending
                 || methodDefinition == QueryableMethods.ThenBy || methodDefinition == QueryableMethods.ThenByDescending))
@@ -153,7 +152,7 @@ internal static class NativeSlotPopulator
         // Defence in depth: EF's nav-expansion normally visits slot operators before the confirming Select, an ordering
         // closed by IsSingleEligibleNativeJoinScope's HasPaging/Cardinality conjuncts. Kept in case that ordering
         // changes. Reverse needs no arm: a sort recorded before a confirmed join translates against the root scope
-        // only, so it commutes with the join (see JoinScopeWhereSlotPopulationTests). Reducers are gated in
+        // only, so it commutes with the join. Reducers are gated in
         // NativeCardinalityBinder.TryBindReducer; scalar aggregates need no gate (their stage follows the lookup
         // block).
         //
@@ -586,7 +585,7 @@ internal static class NativeSlotPopulator
                  && NativeJoinScopeTranslator.TryTranslateRootScopeOnly(
                      chainedScope, keySelector.Parameters[0], keySelector.Body, valueMode: true, out var chainedSortKey))
             record(new MongoOrdering(chainedSortKey, ascending));
-        // Sort key through a positional-ctor DTO Select (Member_binding_after_ctor_arguments_fails_with_client_eval).
+        // Sort key through a positional-ctor DTO Select.
         // Nav-expansion composes `x => new CustomerListItem(x.CustomerID, x.City).City` and visits it before the Select
         // (no projection aliases yet); EF folds `new T(...).Prop` only when NewExpression.Members is set. Translate the
         // matching ctor argument directly (same root parameter), matched by parameter name = property name, ignoring
@@ -608,7 +607,7 @@ internal static class NativeSlotPopulator
     /// (<c>o =&gt; o.Customer != null ? o.Customer.City : ""</c>), mirroring
     /// <see cref="NativeJoinScopeProjectionBinder.TryBindConditionalProjection"/>. Not shared with it because the two
     /// confirm the join differently, so the caller owns the commit step. Declines an inner join's degenerate check and
-    /// a collection navigation (see <c>JoinScopeOrderBySlotPopulationTests</c>).
+    /// a collection navigation.
     /// </summary>
     private static bool TryTranslateConditionalSortKey(
         MongoQueryExpression mongoQ, MongoJoinScope scope, ParameterExpression rootParam, Expression body,

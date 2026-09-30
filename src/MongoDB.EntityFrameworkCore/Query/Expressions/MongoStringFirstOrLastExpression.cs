@@ -17,9 +17,7 @@ using System;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
-/// <summary>
-/// Which end of <see cref="MongoStringFirstOrLastExpression.Source"/> is extracted.
-/// </summary>
+/// <summary>Which end of <see cref="MongoStringFirstOrLastExpression.Source"/> is extracted.</summary>
 internal enum MongoStringFirstOrLastKind
 {
     /// <summary><c>string.FirstOrDefault()</c> — the first character, or <c>'\0'</c> when empty.</summary>

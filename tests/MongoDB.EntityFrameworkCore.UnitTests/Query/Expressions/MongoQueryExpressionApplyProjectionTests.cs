@@ -237,7 +237,6 @@ public class MongoQueryExpressionApplyProjectionTests
 
         queryExpression.ApplyProjection();
 
-        // Only the pre-existing array-leaf placeholder entry; nothing new was flattened in.
         Assert.Single(queryExpression.Projection);
         var mappedMember = new ProjectionMember().Append(typeof(Product).GetProperty(nameof(Product.Name))!);
         var mapped = queryExpression.GetMappedProjection(mappedMember);

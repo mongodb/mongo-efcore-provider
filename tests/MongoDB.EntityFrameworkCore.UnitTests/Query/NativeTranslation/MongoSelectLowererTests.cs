@@ -128,8 +128,8 @@ public class MongoSelectLowererTests
     }
 
     // ── Reference-collection fixture ───────────────────
-    // A cross-collection reference nav (FK-based HasMany/WithOne), distinct from the owned Items fixture Test 15
-    // uses — needed to build a ForceUnwind-collection LookupExpression.
+    // A cross-collection reference nav (FK-based HasMany/WithOne), distinct from the owned Items fixture; needed to
+    // build a ForceUnwind-collection LookupExpression.
 
     private class ReferenceChild
     {
@@ -157,7 +157,7 @@ public class MongoSelectLowererTests
         return (new MongoQueryExpression(entityType), navigation);
     }
 
-    // ── Test 1: Empty slots → no stages ─────────────────────────────────────────
+    // ── Empty slots → no stages ─────────────────────────────────────────
 
     [Fact]
     public void Empty_slots_lower_to_no_stages()
@@ -167,7 +167,7 @@ public class MongoSelectLowererTests
         Assert.Empty(stages);
     }
 
-    // ── Test 2: All slots populated → canonical order ────────────────────────────
+    // ── All slots populated → canonical order ────────────────────────────
 
     [Fact]
     public void Predicate_ordering_offset_limit_lower_in_canonical_order()
@@ -187,7 +187,7 @@ public class MongoSelectLowererTests
         Assert.IsType<MongoLimitStage>(stages[3]);
     }
 
-    // ── Test 3: Only a predicate → exactly one MongoMatchStage ──────────────────
+    // ── Only a predicate → exactly one MongoMatchStage ──────────────────
 
     [Fact]
     public void Only_predicate_lowers_to_single_match_stage()
@@ -201,7 +201,7 @@ public class MongoSelectLowererTests
         Assert.IsType<MongoMatchStage>(stages[0]);
     }
 
-    // ── Test 4: Match stage carries the predicate expression ────────────────────
+    // ── Match stage carries the predicate expression ────────────────────
 
     [Fact]
     public void Match_stage_carries_the_predicate_expression()
@@ -216,7 +216,7 @@ public class MongoSelectLowererTests
         Assert.Same(predicate, matchStage.Predicate);
     }
 
-    // ── Test 5: Only orderings → exactly one MongoSortStage ─────────────────────
+    // ── Only orderings → exactly one MongoSortStage ─────────────────────
 
     [Fact]
     public void Only_orderings_lower_to_single_sort_stage()
@@ -232,7 +232,7 @@ public class MongoSelectLowererTests
         Assert.Equal(2, sortStage.Orderings.Count);
     }
 
-    // ── Test 6: Only Offset → exactly one MongoSkipStage ────────────────────────
+    // ── Only Offset → exactly one MongoSkipStage ────────────────────────
 
     [Fact]
     public void Only_offset_lowers_to_single_skip_stage()
@@ -248,7 +248,7 @@ public class MongoSelectLowererTests
         Assert.Same(offset, skipStage.Offset);
     }
 
-    // ── Test 7: Only Limit → exactly one MongoLimitStage ────────────────────────
+    // ── Only Limit → exactly one MongoLimitStage ────────────────────────
 
     [Fact]
     public void Only_limit_lowers_to_single_limit_stage()
@@ -264,7 +264,7 @@ public class MongoSelectLowererTests
         Assert.Same(limit, limitStage.Limit);
     }
 
-    // ── Test 8: Sort stage carries orderings from the slot ───────────────────────
+    // ── Sort stage carries orderings from the slot ───────────────────────
 
     [Fact]
     public void Sort_stage_carries_orderings_from_the_slot()
@@ -281,7 +281,7 @@ public class MongoSelectLowererTests
         Assert.True(ordering.Ascending);
     }
 
-    // ── Test 9: Projection lowers to a project stage last ──────────────────────────
+    // ── Projection lowers to a project stage last ──────────────────────────
 
     [Fact]
     public void Projection_lowers_to_a_project_stage_last()
@@ -309,7 +309,7 @@ public class MongoSelectLowererTests
         Assert.DoesNotContain(stages, s => s is MongoProjectStage);
     }
 
-    // ── Test 11: Grouping lowers to a $match then $group ────────────────────────
+    // ── Grouping lowers to a $match then $group ────────────────────────
 
     [Fact]
     public void Lowers_grouping_to_group_stage_after_match()
@@ -365,7 +365,7 @@ public class MongoSelectLowererTests
             s => Assert.IsType<MongoProjectStage>(s));
     }
 
-    // ── Test 12: Set-op select lowers to a single MongoUnionWithStage ───────────
+    // ── Set-op select lowers to a single MongoUnionWithStage ───────────
 
     [Fact]
     public void SetOperation_appends_union_stage_after_canonical_stages()
@@ -383,7 +383,7 @@ public class MongoSelectLowererTests
         Assert.Empty(union.OperandStages);
     }
 
-    // ── Test 13: Union sets Dedup and lowers the operand predicate to a $match ──
+    // ── Union sets Dedup and lowers the operand predicate to a $match ──
 
     [Fact]
     public void Union_sets_dedup_and_lowers_operand_predicate()
@@ -405,7 +405,7 @@ public class MongoSelectLowererTests
         Assert.IsType<MongoMatchStage>(Assert.Single(union.OperandStages));
     }
 
-    // ── Test 14: Outer $match precedes the union stage ───────────────────────────
+    // ── Outer $match precedes the union stage ───────────────────────────
 
     [Fact]
     public void Outer_where_precedes_the_union_stage()
@@ -489,7 +489,7 @@ public class MongoSelectLowererTests
             s => Assert.IsType<MongoProjectStage>(s));
     }
 
-    // ── Test 15: Owned-collection SelectMany unwind lowers to $unwind then $project ──
+    // ── Owned-collection SelectMany unwind lowers to $unwind then $project ──
 
     [Fact]
     public void UnwindSource_lowers_to_unwind_then_project_stage_in_order()
@@ -536,7 +536,7 @@ public class MongoSelectLowererTests
             s => Assert.Equal("Items", Assert.IsType<MongoReplaceRootStage>(s).NewRoot));
     }
 
-    // ── Test 16: Reference-collection SelectMany unwind lowers to $lookup → $unwind → $project
+    // ── Reference-collection SelectMany unwind lowers to $lookup → $unwind → $project
     // AppendLookupStages already appends $lookup+$unwind for a Reference UnwindSource, so no
     // MongoUnwindFieldStage should appear for this Kind.
 
@@ -573,7 +573,7 @@ public class MongoSelectLowererTests
         Assert.DoesNotContain(stages, s => s is MongoUnwindFieldStage);
     }
 
-    // Test 17: bare whole reference-entity SelectMany. AppendLookupStages emits $lookup + $unwind(preserve:false);
+    // bare whole reference-entity SelectMany. AppendLookupStages emits $lookup + $unwind(preserve:false);
     // then a plain $replaceRoot (no $mergeObjects — a reference entity has a stored key) and no trailing $project.
     [Fact]
     public void WholeElement_Reference_UnwindSource_lowers_to_lookup_then_unwind_then_plain_replaceRoot()

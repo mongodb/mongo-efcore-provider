@@ -203,13 +203,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         // When the outer source was rewritten, its element type changed (TransparentIdentifier → LeftJoinResult).
         var outerType = newSourceItemType ?? oldOuterType;
 
-        // A reference Include is a LEFT-OUTER join: the principal (outer) row must survive even when the
-        // related (inner) entity is absent (optional/nullable FK). The driver has no LeftJoin pipeline
-        // translator, and its Join translator emits a plain `$unwind` (INNER join — it silently drops
-        // null-FK principals). So for a bare single-reference LeftJoin (the outer is the root entity, not a
-        // nested LeftJoinResult from a prior join) we emit the equivalent `$lookup` + `$unwind` pipeline
-        // ourselves, but with `preserveNullAndEmptyArrays: true` — producing the same root-level
-        // _outer/_inner document shape the shaper already reads, only left-outer instead of inner.
+        // A reference Include is a LEFT-OUTER join: the principal row must survive when the related entity is absent.
+        // The driver has no LeftJoin translator and its Join emits an INNER `$unwind`, dropping null-FK principals, so for a
+        // bare single-reference LeftJoin (outer is the root entity) emit `$lookup` + `$unwind` with
+        // `preserveNullAndEmptyArrays: true`, in the same root-level _outer/_inner shape the shaper reads.
         if (isLeftJoin && shapedPath && outerType == oldOuterType)
         {
             var leftOuter = TryBuildDriverNativeLeftJoinPipeline(call, newSource);
@@ -219,16 +216,12 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             }
         }
 
-        // The PROJECTED (push-down, non-shaped) path turns an Include/optional-navigation LeftJoin into a
-        // driver query whose element type is LeftJoinResult<TOuter,TInner>. Emitting Queryable.Join here would
-        // give the driver an INNER join ($unwind without preserve), silently dropping principals whose related
-        // entity is absent. Instead emit the canonical driver-translatable left-outer shape
+        // The projected (push-down) path yields LeftJoinResult<TOuter,TInner>. Queryable.Join would be an INNER join and
+        // drop principals with no related entity, so emit the driver-translatable left-outer shape
         // outer.GroupJoin(inner, ok, ik, (o, g) => carrier).SelectMany(c => c._inner.DefaultIfEmpty(),
         //   (c, i) => new LeftJoinResult<TOuter,TInner>(c._outer, i))
-        // which the driver renders as $lookup (array) + $map/$cond + $unwind, preserving unmatched principals
-        // while producing the SAME root-level _outer/_inner document shape the inner-Join path produced (so the
-        // downstream result selector / shaper is unchanged). The shaped (entity-materializing) path keeps using
-        // its own manual $lookup + preserve-$unwind pipeline (TryBuildDriverNativeLeftJoinPipeline) above.
+        // which keeps the same _outer/_inner document shape as the inner-Join path. The shaped path uses its own
+        // manual pipeline (TryBuildDriverNativeLeftJoinPipeline).
         if (convertToJoin && isLeftJoin && !shapedPath)
         {
             return BuildProjectedLeftOuterJoin(
@@ -337,13 +330,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         var projectResult = new BsonDocument("$project",
             new BsonDocument { { "_outer", "$_outer" }, { "_inner", "$_inner" }, { "_id", 0 } });
 
-        // Type the manual pipeline's final stage as LeftJoinResult<TOuter,TInner> — the SAME element type the
-        // driver's own Queryable.Join produces — so that any downstream operators (OrderBy/Where/etc.) that
-        // read LeftJoinResult.Outer/.Inner (rewritten to _outer/_inner member access) translate against a
-        // source that actually has those members, and the terminal shaper reads the same root-level
-        // _outer/_inner document shape as the driver Join path. The intermediate $project/$lookup/$unwind
-        // stages stay BsonDocument-typed; only the result-shaping $project carries the LeftJoinResult
-        // serializer (built from the outer/inner entity serializers, mirroring the driver's Join translator).
+        // Type the final stage as LeftJoinResult<TOuter,TInner>, the element type the driver's Queryable.Join produces, so
+        // downstream operators reading Outer/Inner (rewritten to _outer/_inner) translate against a source that has those
+        // members. Intermediate stages stay BsonDocument-typed; only the result-shaping $project carries the serializer.
         var resultType = typeof(LeftJoinResult<,>).MakeGenericType(outerClrType, innerClrType);
         var resultSerializer = BuildLeftJoinResultSerializer(outerClrType, innerClrType, outerEntityType, innerEntityType);
 
@@ -1468,17 +1457,11 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                         Expression.Constant(null, serializerType)),
                     Expression.Constant(null, serializerType));
 
-                // A left-outer join's unmatched row comes out of `$unwind { preserveNullAndEmptyArrays: true }`
-                // with the joined field MISSING, not null, and the driver renders a TransparentIdentifier null
-                // check over this flattened `_lookup_<Nav>` shape (`ti.Inner != null ? ti.Inner.X : fallback`) as
-                // `$ne: ["$_lookup_<Nav>", null]` — TRUE for a missing field in aggregation expressions, so the
-                // ternary took the dereferencing branch and read a default (0/null) instead of the fallback.
-                // MEASURED: NativeJoinScopeConditionalProjectionTests' two-level-chain DriverLinq test returned
-                // null where "<none>" was expected, and a single left join over a collection/reference navigation
-                // did the same once a native Select arm registered its lookup at translation time (flipping the
-                // fallback onto this flattened shape). Normalizing missing -> explicit null right after the
-                // $unwind makes the null check answer correctly; a matched row's sub-document is unchanged. Scoped
-                // to forced-unwind (join) lookups — Include's reference lookups are untouched.
+                // A left-outer join's unmatched row leaves the joined field MISSING (not null) after
+                // `$unwind { preserveNullAndEmptyArrays: true }`, and the driver's TransparentIdentifier null check
+                // (`$ne: ["$_lookup_<Nav>", null]`) is TRUE for a missing field, so the ternary would take the dereferencing branch and
+                // read a default instead of the fallback. Normalize missing to explicit null right after the $unwind. Scoped to
+                // forced-unwind (join) lookups; Include's reference lookups are untouched.
                 if (lookup.ForceUnwind && lookup.PreserveNullAndEmptyArrays)
                 {
                     var setDoc = new BsonDocument("$set", new BsonDocument(lookup.As,

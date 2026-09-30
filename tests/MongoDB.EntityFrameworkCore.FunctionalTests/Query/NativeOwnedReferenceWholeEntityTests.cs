@@ -872,7 +872,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
     // Distinct source (pinned at unit level by
     // SlotPopulationTests.Owned_reference_entity_leaf_projection_sets_HasArrayProjectionLeaf_for_the_set_op_gate).
     //
-    // These used to throw in every mode: nav-expansion appends an identity re-projection (e => new { e.Title,
+    // Nav-expansion appends an identity re-projection (e => new { e.Title,
     // e.Address }) after the Distinct/set op to re-apply the owned auto-include, and re-binding the already-bound
     // shaper threw InvalidCastException / "ProjectionBindingExpression could not be translated". On the driver-LINQ
     // path the projecting Select can't be stripped, so the driver returns projected documents without the owner _id

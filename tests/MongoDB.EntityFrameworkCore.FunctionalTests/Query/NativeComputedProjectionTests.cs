@@ -27,16 +27,11 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// Numeric arithmetic computed projection leaves bound into <c>$project</c> via
-/// <see cref="MongoExpressionTranslator.TryTranslateValue"/>/<c>NativeProjectionBinder</c> (comparison operands are
-/// in <see cref="NativeExprComparisonTests"/>). Each shape is proven native under <see cref="MongoQueryMode.NativeOnly"/>,
-/// checked for Native/driver-LINQ parity, and checked for the expected MQL operator. Unrepresentable leaves must fall
-/// back correctly and throw under <c>NativeOnly</c>.
-///
-/// Also covers a whole-root-entity leaf mixed with computed/scalar/count siblings
-/// (<c>Select(c => new { c, Total = c.Age * c.Score })</c>), which goes native via <c>NativeRoute.Projection</c>
-/// (distinct from bare <c>Select(c => c)</c>'s <c>NativeRoute.WholeEntity</c>), plus its late-fallback and
-/// driver-LINQ legs.
+/// Numeric arithmetic computed projection leaves bound into <c>$project</c> (comparison operands are in
+/// <see cref="NativeExprComparisonTests"/>). Each shape is proven native under <see cref="MongoQueryMode.NativeOnly"/>,
+/// checked for Native/driver-LINQ parity and the expected MQL operator; unrepresentable leaves fall back and throw
+/// under <c>NativeOnly</c>. Also covers a whole-root-entity leaf mixed with computed/scalar/count siblings
+/// (<c>NativeRoute.Projection</c>, distinct from bare <c>Select(c => c)</c>'s <c>NativeRoute.WholeEntity</c>).
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
@@ -93,8 +88,6 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── Entity type + fixture for the owned-collection-count sibling variation ───────────────────────
-
     private class CustomerWithPosts
     {
         public ObjectId Id { get; set; }
@@ -144,8 +137,6 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
 
     private static string Mql(List<string> logs)
         => Assert.Single(logs, l => l.Contains("Executed MQL query"));
-
-    // ── In-scope: each proven NativeOnly + Native==DriverLinq parity + expected MQL operator ─────────
 
     [Fact]
     public void Multiply_projection_goes_native_and_matches_driver()
@@ -327,8 +318,6 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
         Assert.Equal(-14, nativeResults.Single(r => r.Name == "Carol").X);
     }
 
-    // ── Whole-root-entity leaf mixed with a sibling ──────────────────────────────────────────────────
-
     // Entity leaf + plain scalar member sibling: the Route == Projection branch mustn't depend on the sibling being
     // a BinaryExpression. All three modes: under DriverLinq, Select.Projection is populated too, so the
     // IsWholeRootEntityAlias null-out in MongoProjectionBindingRemovingExpressionVisitor is load-bearing.
@@ -342,7 +331,6 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
             nameof(Mixed_whole_entity_and_scalar_member_leaf_works_in_every_mode) + mode);
         using var db = CreateContext(collection, logs, mode);
 
-        // Must not throw NativeTranslationNotSupportedException under NativeOnly.
         var results = db.Entities.Select(c => new { Entity = c, Name = c.Name })
             .OrderBy(r => r.Entity.Name).ToList();
 
@@ -362,7 +350,6 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
             nameof(Mixed_whole_entity_and_owned_collection_count_leaf_works_in_both_native_modes) + mode);
         using var db = CreateContext(collection, logs, mode, CustomerWithPostsModel);
 
-        // Must not throw NativeTranslationNotSupportedException under NativeOnly.
         var results = db.Entities.Select(c => new { c, PostCount = c.Posts.Count })
             .OrderBy(r => r.c.Name).ToList();
 
@@ -426,7 +413,6 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
             nameof(Mixed_whole_entity_and_computed_leaf_ordered_by_the_computed_sibling_goes_native));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        // Must not throw NativeTranslationNotSupportedException under NativeOnly.
         var results = db.Entities.Select(c => new { c, Total = c.Age * c.Score })
             .OrderBy(r => r.Total).ToList();
 
@@ -434,7 +420,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
         Assert.Equal(["Carol", "Alice", "Bob"], results.Select(r => r.c.Name).ToArray());
     }
 
-    // ── Guard fallbacks: graceful — there IS a driver-LINQ oracle, and results must agree ────────────
+    // Guard fallbacks: there is a driver-LINQ oracle, and results must agree.
 
     // Integral division translates to MongoBinaryOperator.IntegerDivide ($trunc of $divide). The seed is
     // deliberately not evenly divisible (a non-integral $divide result can't deserialize into an int); each
@@ -471,8 +457,7 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
                 .ToList().OrderBy(r => r.Name).Select(r => r.X).ToArray());
     }
 
-    // ── String-method leaf (Split) has no native translation: graceful fallback except under NativeOnly.
-    // (Concatenation is native; see NativeStringConcatTests.)
+    // String-method leaf (Split) has no native translation: graceful fallback except under NativeOnly.
 
     [Fact]
     public void String_method_call_projection_falls_back_gracefully_except_under_NativeOnly()
@@ -497,11 +482,8 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
         Assert.Equal(["Alice", "B", "Car"], nativeResults.Select(r => r.X).ToArray());
     }
 
-    // ── Mixed whole-entity + computed-arithmetic ───────────────────────────────────────────────────────
-    //
-    // On the mixed-shaper path, both operands of `c.Age * c.Score` once bound to the same projection member, so
-    // Total came out as Score*Score (EF-356). Pins correct values under default Native mode against regressions in
-    // either the mixed shaper or the native route (see Mixed_whole_entity_and_computed_leaf_goes_native).
+    // Mixed shaper: both operands of `c.Age * c.Score` once bound to the same projection member, so Total came out
+    // as Score*Score (EF-356). Pins correct values under default Native mode.
     [Fact]
     public void Mixed_whole_entity_and_computed_leaf_returns_the_correct_computed_value()
     {
@@ -527,7 +509,6 @@ public class NativeComputedProjectionTests(TemporaryDatabaseFixture database)
         var (collection, _) = SeedCustomers(nameof(Mixed_whole_entity_and_computed_leaf_goes_native));
         using var db = CreateContext(collection, [], MongoQueryMode.NativeOnly);
 
-        // Must not throw NativeTranslationNotSupportedException under NativeOnly.
         var results = db.Entities.Select(c => new { c, Total = c.Age * c.Score }).OrderBy(r => r.c.Name).ToList();
 
         Assert.Equal(["Alice", "Bob", "Carol"], results.Select(r => r.c.Name).ToArray());

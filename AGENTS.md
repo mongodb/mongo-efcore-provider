@@ -1,35 +1,29 @@
 # AGENTS.md — MongoDB EF Core Provider
 
-The MongoDB database provider for [Entity Framework Core](https://github.com/dotnet/efcore). Bridges EF Core's
-change tracker, LINQ pipeline, and model-building API onto MongoDB documents via the official
+The MongoDB database provider for [Entity Framework Core](https://github.com/dotnet/efcore), built on the official
 [MongoDB C# driver](https://github.com/mongodb/mongo-csharp-driver).
 
 ## Tech stack & layout
 
-- One project, `src/MongoDB.EntityFrameworkCore/`, packaged as `MongoDB.EntityFrameworkCore`.
-- **Multi-EF-version targeting via build *configurations*, not target frameworks:** `Debug|Release EF8`,
-  `EF9`, `EF10`. EF8/EF9 build `net8.0`; EF10 builds `net10.0`. The active version is selected by the
-  `EF8`/`EF9`/`EF10` define constant — see the version-conditional `<PropertyGroup>`s in the `.csproj`.
-- EF and driver versions are pinned in `Versions.props`. `DRIVER_VERSION` overrides the driver (CI
-  forward-compat testing).
-- `<Nullable>enable</Nullable>` on `src/`. `<NoWarn>EF1001</NoWarn>` — the provider intentionally consumes EF
-  Core's internal APIs.
-- xUnit; **plain `Assert.*`** (FluentAssertions is not referenced). Tests run **serially** —
-  `[assembly: CollectionBehavior(DisableTestParallelization = true)]`.
+- **Multi-EF-version targeting via build *configurations*, not target frameworks:** `Debug|Release EF8`, `EF9`,
+  `EF10` (EF8/EF9 build `net8.0`, EF10 `net10.0`), selected by the `EF8`/`EF9`/`EF10` define constant (see the
+  `.csproj`). EF and driver versions are pinned in `Versions.props`; `DRIVER_VERSION` overrides the driver.
+- `src/` is `<Nullable>enable</Nullable>`. `EF1001` is suppressed: the provider intentionally uses EF internals.
+- xUnit with **plain `Assert.*`** (no FluentAssertions). Tests run **serially**
+  (`DisableTestParallelization = true`).
 
 | Project | Purpose |
 |---|---|
 | `src/MongoDB.EntityFrameworkCore/` | The provider. |
 | `tests/…UnitTests/` | Fast, no database. |
-| `tests/…FunctionalTests/` | Integration against a real MongoDB — includes encryption, transactions, vector search, design-time, compatibility. |
+| `tests/…FunctionalTests/` | Integration against a real MongoDB (encryption, transactions, vector search, design-time, compatibility). |
 | `tests/…SpecificationTests/` | EF Core's provider-conformance suite. |
 
 ## Editing
 
-- **Preserve file BOMs.**
-- `src/` is nullable-enabled — annotate new types accordingly.
-- Conditional code uses the `EF8`/`EF9`/`EF10` symbols. Common guards: `#if EF8 || EF9` (legacy behavior),
-  `#if !EF8` (EF9+). See `Storage/MongoTypeMappingSource.cs` and `Query/QueryingEnumerable.cs`.
+- **Preserve file BOMs.** Annotate new `src/` types for nullability.
+- Version-conditional code uses `#if EF8 || EF9` (legacy) and `#if !EF8` (EF9+); see
+  `Storage/MongoTypeMappingSource.cs`, `Query/QueryingEnumerable.cs`.
 
 ## Commands
 
@@ -45,17 +39,14 @@ For all three versions in parallel, invoke the `/test-all` skill.
 ## Testing
 
 **Recommended: run with both `MONGODB_URI` and `ATLAS_URI` unset.** `TestServer` then has TestContainers boot a
-`mongodb/mongodb-atlas-local` container, running Atlas-gated tests (vector search) for real and giving each
-`dotnet test` process its own container and uniquely-named databases (so parallel runs/agents don't collide).
-Cost: Docker required, plus a one-time ~2 GB image pull.
+`mongodb/mongodb-atlas-local` container per `dotnet test` process, so Atlas-gated tests (vector search) really run
+and parallel runs/agents don't collide. Needs Docker and a one-time ~2 GB image pull.
 
 Connection resolution (`FunctionalTests/Utilities/TestServer.cs`): default server from `MONGODB_URI` (else a
-container); Atlas (`IsAtlas`) server from `ATLAS_URI` (else a container — so Atlas tests run whenever
-`ATLAS_URI` isn't `"Disabled"`). Point either var at an external server to use it instead; a plain
-`mongod`/replica set can't run Atlas Search.
+container); Atlas server (`IsAtlas`) from `ATLAS_URI` (else a container; Atlas tests run unless `ATLAS_URI` is
+`"Disabled"`). A plain `mongod`/replica set can't run Atlas Search.
 
-Each test gets a unique database via `TestDatabaseNamer.GetUniqueDatabaseName()`. `[ModuleInitializer]` in
-`FunctionalTests/ModuleInitialization.cs` registers BSON serializers at load.
+Each test gets a unique database (`TestDatabaseNamer.GetUniqueDatabaseName()`).
 
 | Feature area | Required env vars |
 |---|---|
@@ -63,21 +54,20 @@ Each test gets a unique database via `TestDatabaseNamer.GetUniqueDatabaseName()`
 | MongoDB connection | `MONGODB_URI` or `ATLAS_URI` (otherwise Docker auto-spins) |
 | Driver-version override | `DRIVER_VERSION` |
 
-See `tests/MongoDB.EntityFrameworkCore.SpecificationTests/AGENTS.md` for the rest (baseline regeneration,
-`MONGODB_EF_NATIVE_ONLY`, fixture patterns).
+See `tests/MongoDB.EntityFrameworkCore.SpecificationTests/AGENTS.md` for baseline regeneration,
+`MONGODB_EF_NATIVE_ONLY` and fixture patterns.
 
 ## Versioning & breaking changes
 
-The major version tracks the EF Core major it supports, so **this project does not follow strict semver** —
-breaking changes can land in minor releases. `BREAKING-CHANGES.md` is the running log.
+The major version tracks the EF Core major, so **this project does not follow strict semver**: breaking changes
+can land in minor releases. `BREAKING-CHANGES.md` is the running log.
 
-Breaks are measured **against the latest released version of the assembly** (the most recent published NuGet
-package), **not** against `main`. A public API added and then changed within the current unreleased cycle never
-shipped, so it isn't a break.
+Breaks are measured **against the latest released version of the assembly** (latest published NuGet package),
+**not** `main`; an API added and changed within the unreleased cycle is not a break. Judge released behavior from
+the tag, never inferred from the branch.
 
-Releases are tagged `v<major>.<minor>.<patch>` (optionally `-preview.N`); `v8.*`/`v9.*`/`v10.*` ship in
-parallel. Find the baseline with the GitHub release list, **not** local `git tag` (clone tags are frequently
-stale):
+Releases are tagged `v<major>.<minor>.<patch>` (optionally `-preview.N`); `v8.*`/`v9.*`/`v10.*` ship in parallel.
+Find the baseline via the GitHub release list, **not** local `git tag` (frequently stale):
 
 ```bash
 gh release list --limit 1 --json tagName,isLatest        # absolute latest
@@ -105,10 +95,9 @@ surface, even though users are warned not to implement these); default-value cha
 
 ## Async conventions
 
-Follows EF Core's pattern, not the driver's: there is **no enforced sync/async pairing**. Async surfaces exist
-where EF Core defines them (`*Async`) and where the underlying driver call is async. Library code uses
-`ConfigureAwait(false)` consistently. `CancellationToken` flows through to driver calls without substitution;
-new async methods must take one and pass it on.
+Follows EF Core's pattern, not the driver's: **no enforced sync/async pairing**. Async surfaces exist where EF Core
+defines them (`*Async`) and where the underlying driver call is async. Library code uses `ConfigureAwait(false)`.
+New async methods must take a `CancellationToken` and pass it to driver calls unsubstituted.
 
 ## Commit & PR conventions
 
@@ -117,8 +106,8 @@ new async methods must take one and pass it on.
 
 ## Functional areas
 
-Each area has its own `AGENTS.md` (auto-loaded when working in that subtree) and a read-only reviewer
-sub-agent. See `docs/agents-architecture.md` for the layout and how to add one.
+Each area has its own `AGENTS.md` (auto-loaded in that subtree) and a read-only reviewer sub-agent; see
+`docs/agents-architecture.md`.
 
 | Area | Location | Reviewer |
 |---|---|---|

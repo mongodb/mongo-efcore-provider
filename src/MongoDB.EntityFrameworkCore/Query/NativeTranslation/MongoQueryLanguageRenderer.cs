@@ -40,10 +40,6 @@ internal sealed class MongoQueryLanguageRenderer
     public BsonValue Render(MongoExpression predicate, PlaceholderTable placeholders)
         => RenderNode(predicate, placeholders);
 
-    // ------------------------------------------------------------------
-    // Core dispatch
-    // ------------------------------------------------------------------
-
     private BsonValue RenderNode(MongoExpression node, PlaceholderTable placeholders)
         => node switch
         {
@@ -74,10 +70,8 @@ internal sealed class MongoQueryLanguageRenderer
             _ => RenderAsExpr(node, placeholders)
         };
 
-    // ------------------------------------------------------------------
     // Query-native classification: bare field on the left, constant/parameter on the right. Field-to-field
     // and arithmetic operands have no query-dialect form and go to $expr.
-    // ------------------------------------------------------------------
 
     // Shared with MongoExpressionNegator, which must decline any comparison this rejects (no query-dialect
     // complement exists).
@@ -130,10 +124,6 @@ internal sealed class MongoQueryLanguageRenderer
     private static BsonDocument RenderNumericTypeBracket(MongoNumericTypeBracketExpression bracket)
         => new BsonDocument(bracket.Field.ElementName, new BsonDocument("$type", "number"));
 
-    // ------------------------------------------------------------------
-    // Unary nodes (Not)
-    // ------------------------------------------------------------------
-
     private BsonDocument RenderUnary(MongoUnaryExpression unary, PlaceholderTable placeholders)
     {
         if (unary.Operator != MongoUnaryOperator.Not)
@@ -183,20 +173,12 @@ internal sealed class MongoQueryLanguageRenderer
         return new BsonDocument(field.ElementName, new BsonDocument("$ne", trueValue));
     }
 
-    // ------------------------------------------------------------------
-    // Bare boolean field (used as a top-level predicate)
-    // ------------------------------------------------------------------
-
     private BsonDocument RenderBareField(MongoFieldExpression field, PlaceholderTable placeholders)
     {
         var trueValue = MongoValueRenderer.RenderValue(
             new MongoConstantExpression(true, field.Property), placeholders);
         return new BsonDocument(field.ElementName, trueValue);
     }
-
-    // ------------------------------------------------------------------
-    // Collection-membership ($in / $nin)
-    // ------------------------------------------------------------------
 
     private BsonDocument RenderIn(MongoInExpression inExpr, PlaceholderTable placeholders)
     {
@@ -236,10 +218,6 @@ internal sealed class MongoQueryLanguageRenderer
         }
     }
 
-    // ------------------------------------------------------------------
-    // Array-field-contains-value ({ field: value } — the implicit array-element match)
-    // ------------------------------------------------------------------
-
     /// <summary>
     /// Renders <c>arrayField.Contains(value)</c> as the implicit element match <c>{ field: value }</c>; negation
     /// uses <c>$ne</c>, the exact complement including missing/null.
@@ -251,10 +229,6 @@ internal sealed class MongoQueryLanguageRenderer
             ? new BsonDocument(contains.Field.ElementName, new BsonDocument("$ne", value))
             : new BsonDocument(contains.Field.ElementName, value);
     }
-
-    // ------------------------------------------------------------------
-    // String StartsWith/EndsWith/Contains ($regularExpression)
-    // ------------------------------------------------------------------
 
     /// <summary>
     /// Renders a <see cref="MongoRegexExpression"/> to <c>{ field: /pattern/s }</c> (negated via <c>$not</c>),
@@ -308,10 +282,6 @@ internal sealed class MongoQueryLanguageRenderer
                 $"Unsupported regex field expression: {field.GetType().Name}.")
         };
 
-    // ------------------------------------------------------------------
-    // Existential quantifier over an embedded array ($elemMatch)
-    // ------------------------------------------------------------------
-
     /// <summary>
     /// Renders <c>{ path: { $elemMatch: child } }</c> (negated via <c>$not</c>). Child field names stay
     /// element-relative, and all conditions merge into one document so they hold for the same element. The
@@ -326,10 +296,6 @@ internal sealed class MongoQueryLanguageRenderer
             ? new BsonDocument(elemMatch.ArrayPath, new BsonDocument("$not", body))
             : new BsonDocument(elemMatch.ArrayPath, body);
     }
-
-    // ------------------------------------------------------------------
-    // Array cardinality — the query-dialect array-index existence form
-    // ------------------------------------------------------------------
 
     /// <summary>
     /// Renders an array-count comparison against an integer constant as an array-index existence test, or
@@ -393,9 +359,7 @@ internal sealed class MongoQueryLanguageRenderer
         }
     }
 
-    // ------------------------------------------------------------------
     // Query-dialect renderability — must stay in sync with RenderNode
-    // ------------------------------------------------------------------
 
     /// <summary>
     /// Whether <see cref="RenderNode"/> renders <paramref name="node"/> without falling to <c>$expr</c> or
@@ -460,10 +424,6 @@ internal sealed class MongoQueryLanguageRenderer
             MongoConstantExpression { Value: bool } => true,
             _ => false
         };
-
-    // ------------------------------------------------------------------
-    // AND / OR combining helpers
-    // ------------------------------------------------------------------
 
     /// <summary>
     /// ANDs two filter documents, merging into one document when keys are distinct non-operators (or same-field

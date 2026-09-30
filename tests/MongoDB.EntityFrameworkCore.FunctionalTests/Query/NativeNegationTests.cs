@@ -76,7 +76,6 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
         var (collection, logs) = Seed(nameof(NativeOnly_not_over_field_to_field_comparison_succeeds_with_expected_mql));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        // !(A == B): excludes Row1 (A==B==1), includes Row2 (1,2) and Row3 (3,2).
         var result = db.Entities.AsNoTracking().Where(x => !(x.A == x.B)).ToList();
 
         Assert.Equal(2, result.Count);
@@ -109,7 +108,6 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
         var (collection, logs) = Seed(nameof(NativeOnly_not_over_field_to_field_comparison_composed_with_and_succeeds));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        // A > 0 (true for all three rows) && !(A == B) (excludes Row1) -> Row2, Row3.
         var result = db.Entities.AsNoTracking().Where(x => x.A > 0 && !(x.A == x.B)).ToList();
 
         Assert.Equal(2, result.Count);
@@ -123,7 +121,6 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
         var (collection, logs) = Seed(nameof(NativeOnly_not_over_boolean_ternary_succeeds_with_expected_mql));
         using var db = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
-        // !(A >= 2 ? false : true) == (A >= 2): only Row3 (A=3) satisfies A >= 2.
         var result = db.Entities.AsNoTracking().Where(x => !(x.A >= 2 ? false : true)).ToList();
 
         Assert.Single(result);
@@ -148,11 +145,9 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
         Assert.Equal(driverIds, nativeIds);
     }
 
-    // Not over $and/$or of bare fields: rendering the whole conjunction/disjunction as one $expr truthiness
-    // test would be unsafe for a value-converted bool stored as "Y"/"N" (both truthy). MongoExpressionNegator's
-    // exact De Morgan complement avoids the hazard instead of hitting it: it pushes the negation down to each
-    // field individually (!Flag, !Other), and a per-field Not renders as a converter-aware $ne comparison in
-    // the query dialect — safe regardless of the stored representation. So these shapes go native correctly.
+    // Not over $and/$or of bare fields: one $expr truthiness test would be unsafe for a value-converted bool stored as
+    // "Y"/"N" (both truthy). MongoExpressionNegator's De Morgan complement pushes the negation to each field, and a
+    // per-field Not renders as a converter-aware $ne in the query dialect, safe for any stored representation.
 
     public class LogicalFlagItem
     {
@@ -201,8 +196,7 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
         var (collection, logs) = SeedLogicalFlag(
             nameof(Not_over_and_of_a_value_converted_bare_bool_field_negates_exactly_via_per_field_ne));
 
-        // NativeOnly: succeeds (De Morgan's to !Flag || !Other, each a converter-aware $ne) and matches the
-        // CLR-correct rows, never the truthiness-hazard answer a raw $and would give (only ["p3"]).
+        // De Morgan's to !Flag || !Other (each a converter-aware $ne); never the truthiness-hazard answer a raw $and gives (only ["p3"]).
         using (var nativeOnly = CreateLogicalFlagContext(collection, logs, MongoQueryMode.NativeOnly))
         {
             var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking().Where(x => !(x.Flag && x.Other))
@@ -210,7 +204,6 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
             Assert.Equal(["p2", "p3"], nativeOnlyLabels);
         }
 
-        // Native (default) agrees with DriverLinq, and both equal the CLR-correct rows.
         using (var native = CreateLogicalFlagContext(collection, [], MongoQueryMode.Native))
         using (var driver = CreateLogicalFlagContext(collection, [], MongoQueryMode.DriverLinq))
         {
@@ -228,8 +221,7 @@ public class NativeNegationTests(TemporaryDatabaseFixture database) : IClassFixt
     // p1 Flag=true,Other=true  -> Flag||Other CLR-true  -> !(...) = false
     // p2 Flag=false,Other=true -> Flag||Other CLR-true  -> !(...) = false
     // p3 Flag=false,Other=false -> Flag||Other CLR-false -> !(...) = true
-    // De Morgan's to !Flag && !Other, each a converter-aware $ne — never the truthiness-hazard answer a raw
-    // $or would give (true for every row, since "N" is truthy too, wrongly returning no rows instead of ["p3"]).
+    // De Morgan's to !Flag && !Other; a raw $or would return no rows ("N" is truthy too) instead of ["p3"].
     [Fact]
     public void Not_over_or_of_a_value_converted_bare_bool_field_negates_exactly_via_per_field_ne()
     {

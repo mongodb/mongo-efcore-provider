@@ -415,7 +415,7 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
 
     public override async Task GroupJoin_DefaultIfEmpty_multiple(bool async)
     {
-        // EF-375: two joins onto the same target type now flatten to one $lookup per join instead of
+        // EF-375: two joins onto the same target type flatten to one $lookup per join instead of
         // leaving the driver to nest the document twice (which threw at shaper time). On EF8/EF9 nav-expansion
         // produces EF Core's internal LeftJoin shim (Microsoft.EntityFrameworkCore.Internal.QueryableExtensions
         // .LeftJoin) rather than the BCL Queryable.LeftJoin; both are recognized, so this is native everywhere.

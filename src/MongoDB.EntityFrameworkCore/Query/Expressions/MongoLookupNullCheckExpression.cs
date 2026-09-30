@@ -22,17 +22,14 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// (<c>e.Manager != null</c>) or absent (<c>e.Manager == null</c>), post-<c>$unwind</c>.
 /// </summary>
 /// <remarks>
-/// A sibling of <see cref="MongoFieldExpression"/> rather than one with a placeholder
-/// <see cref="Microsoft.EntityFrameworkCore.Metadata.IProperty"/>: <see cref="LookupAlias"/> names a synthetic
-/// top-level field (<c>_lookup_&lt;Navigation&gt;</c>) that <c>$lookup</c>+<c>$unwind</c>
-/// (<c>preserveNullAndEmptyArrays: true</c>) fills with the joined sub-document or <see langword="null"/>, not a
-/// stored property with its own serializer. Renders in the query dialect (<c>RenderLookupNullCheck</c>, Where
-/// position) and the aggregation dialect (Select-side conditional Test).
+/// Not a <see cref="MongoFieldExpression"/>: <see cref="LookupAlias"/> names a synthetic top-level field
+/// (<c>_lookup_&lt;Navigation&gt;</c>) that <c>$lookup</c>+<c>$unwind</c> (<c>preserveNullAndEmptyArrays: true</c>)
+/// fills with the joined sub-document or <see langword="null"/>; it is not a stored property. Renders in the query
+/// dialect (Where) and the aggregation dialect (Select-side conditional test).
 /// <para>
-/// Produced by <c>NativeJoinScopeTranslator.TryMatchInnerNullCheck</c> (depth-1, Where only) and
-/// <c>TryMatchScopeNullCheck</c> (any depth, Select side) for exactly <c>ti.Inner == null</c>/<c>!= null</c>.
-/// Never nested under <c>Not</c>, a quantifier, or <c>$elemMatch</c>, so <c>MongoExpressionNegator</c> and
-/// <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c> fail closed on it via their catch-alls.
+/// Produced by <c>NativeJoinScopeTranslator.TryMatchInnerNullCheck</c> / <c>TryMatchScopeNullCheck</c> for exactly
+/// <c>ti.Inner == null</c>/<c>!= null</c>. Never nested under <c>Not</c>, a quantifier, or <c>$elemMatch</c>, so
+/// <c>MongoExpressionNegator</c> and <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c> fail closed on it.
 /// </para>
 /// </remarks>
 internal sealed class MongoLookupNullCheckExpression(string lookupAlias, bool isNotNull) : MongoExpression
@@ -40,10 +37,7 @@ internal sealed class MongoLookupNullCheckExpression(string lookupAlias, bool is
     /// <summary>The <c>$lookup</c>'s own <c>as</c> alias (e.g. <c>_lookup_Manager</c>).</summary>
     public string LookupAlias { get; } = lookupAlias;
 
-    /// <summary>
-    /// <see langword="true"/> for <c>!= null</c> (the joined document is present), <see langword="false"/>
-    /// for <c>== null</c> (no match).
-    /// </summary>
+    /// <summary><see langword="true"/> for <c>!= null</c>, <see langword="false"/> for <c>== null</c>.</summary>
     public bool IsNotNull { get; } = isNotNull;
 
     /// <inheritdoc />

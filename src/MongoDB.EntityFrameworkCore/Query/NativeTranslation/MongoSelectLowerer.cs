@@ -121,7 +121,6 @@ internal sealed class MongoSelectLowerer
             {
                 AppendLookupStages(query, stages);
             }
-            // No early return: control continues to the blocks below.
         }
 
         // Terminal native SelectMany, then $project the result selector. Owned: $unwind the embedded array
@@ -234,7 +233,6 @@ internal sealed class MongoSelectLowerer
             stages.Add(new MongoProjectStage(select.Projection));
         }
 
-        // Scalar aggregate terminal stage ($count / $group / $limit for Any/All).
         var cardinality = select.Cardinality;
         if (cardinality?.Aggregate is { } aggregate)
         {
@@ -268,8 +266,6 @@ internal sealed class MongoSelectLowerer
         return stages;
     }
 
-    // The snapshotted prior grouping's $group, its own HAVING (after the $group, before the flattening
-    // $project), the flattening $project, then the ops composed on its output (PostGroupOps).
     private static void AppendPriorGroupingStages(
         MongoSelectDefinition select,
         MongoGrouping priorGrouping,
@@ -332,21 +328,18 @@ internal sealed class MongoSelectLowerer
                 operandStages.Add(new MongoGroupStage(operandGrouping));
             operandStages.Add(new MongoProjectStage(link.OperandSelect.Projection));
 
-            // The operand's ops composed on its projected Distinct/GroupBy output.
             AppendSelectOpStages(link.OperandSelect.PostGroupOps, operandStages, sortFields);
         }
         else
         {
             AppendSetOpChainStages(link.OperandSelect, operandStages, sortFields);
 
-            // The operand's own post-combine ops (B.Union(C).Take(1)) close its sub-pipeline.
             AppendSelectOpStages(link.OperandSelect.TrailingOps, operandStages, sortFields);
         }
 
         return operandStages;
     }
 
-    // Emits $match/$sort/$skip/$limit (and Distinct) ops in recorded order.
     private static void AppendSelectOpStages(
         IReadOnlyList<MongoSelectOp> ops,
         List<MongoPipelineStage> stages,
@@ -432,16 +425,11 @@ internal sealed class MongoSelectLowerer
         stages.Add(new MongoUnsetStage(computed.Select(f => f.Alias).ToList()));
     }
 
-    /// <summary>
-    /// Appends <see cref="MongoLookupStage"/> + <see cref="MongoUnwindStage"/> pairs for each lookup,
-    /// after validating that the native pipeline can handle the lookup shape.
-    /// </summary>
     private static void AppendLookupStages(MongoQueryExpression query, List<MongoPipelineStage> stages)
     {
         var lookups = query.Lookups;
 
-        // Join-coverage guard: if this is a join query and there are fewer lookups than inner
-        // collections, emitting a partial pipeline would silently drop a join and return wrong results.
+        // Fewer lookups than inner collections would silently drop a join and return wrong rows.
         if (query.IsJoinQuery && lookups.Count < query.InnerCollections.Count)
         {
             throw new NativeTranslationNotSupportedException(

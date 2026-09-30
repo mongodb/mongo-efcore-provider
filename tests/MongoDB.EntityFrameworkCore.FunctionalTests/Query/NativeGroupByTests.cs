@@ -1561,8 +1561,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_empty_key_Key_null_check_inside_accumulator_goes_native()
     {
-        // A zero-part key's g.Key inside an accumulator condition used to index keyParts[0] on an empty list
-        // (ArgumentOutOfRangeException). The key is always the non-null empty document {}, so "== null" counts no
+        // A zero-part key's g.Key inside an accumulator condition must not index an empty key-part list. The key is always the non-null empty document {}, so "== null" counts no
         // rows and "!= null" counts every row. Checked against driver-LINQ.
         var seed = SeedOrders();
 
@@ -3837,8 +3836,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     }
 
     // Without the Where: nested groups N = 1 (A, B, C) and N = 2 (D). With Where(Land != "A"): N = 1 (B, C) and N = 2
-    // (D). With the stale Grouping (fix removed) Count/LongCount answered 1 in both forms, and the predicate forms
-    // declined.
+    // (D). A stale Grouping would make Count/LongCount answer 1 in both forms and the predicate forms decline.
     [Theory]
     [InlineData("Count", false, 2L)]
     [InlineData("LongCount", false, 2L)]
@@ -3888,7 +3886,7 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void Nested_group_by_with_having_ordering_and_paging_on_the_nested_group()
     {
-        // Now that the nested GroupBy is pending (Grouping cleared at the snapshot), its HAVING, ordering and paging use
+        // The nested GroupBy is pending (Grouping cleared at the snapshot), so its HAVING, ordering and paging use
         // the ungrouped-GroupBy arms and are emitted around the nested $group. Nested groups: N = 1 (3 members) and
         // N = 2 (1 member).
         var name = nameof(Nested_group_by_with_having_ordering_and_paging_on_the_nested_group);

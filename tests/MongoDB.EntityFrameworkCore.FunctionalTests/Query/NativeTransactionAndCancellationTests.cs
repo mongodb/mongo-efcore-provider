@@ -65,8 +65,6 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── (a) Native query executes correctly inside an explicit transaction ────────────────────────
-
     [Fact]
     public void Native_query_inside_transaction_returns_correct_rows_and_parity()
     {
@@ -106,8 +104,6 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
         using var tx = db.Database.BeginTransaction();
 
-        // Under NativeOnly a fallback would throw; success proves the native Aggregate ran against the
-        // ambient session inside the transaction.
         var result = db.Entities
             .Where(x => x.Value >= 2)
             .OrderBy(x => x.Value)
@@ -118,8 +114,6 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
 
         Assert.Equal(expected, result);
     }
-
-    // ── (a1) Native query sees its own transaction's uncommitted writes ────────────────────────────
 
     [Fact]
     public void NativeOnly_query_inside_transaction_sees_own_uncommitted_write()
@@ -134,7 +128,6 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
         db.Entities.Add(new Item { Label = "L99999", Value = 99 });
         db.SaveChanges();
 
-        // Under NativeOnly a driver-LINQ fallback would throw; success proves this went native.
         var result = db.Entities
             .Where(x => x.Value >= 2)
             .OrderBy(x => x.Value)
@@ -146,8 +139,6 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
 
         Assert.Equal(["L00002", "L99999"], result);
     }
-
-    // ── (a2) Native query over a non-streaming-eligible entity, inside a transaction ──────────────
 
     private class DiscriminatedItem
     {
@@ -201,7 +192,6 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
 
         using var tx = db.Database.BeginTransaction();
 
-        // Under NativeOnly a fallback would throw; success proves the non-streaming native branch ran in the session.
         var result = db.Entities
             .Where(x => x.Value >= 2)
             .OrderBy(x => x.Value)
@@ -212,8 +202,6 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
 
         Assert.Equal(expected, result);
     }
-
-    // ── (b) Async cancellation mid-stream stops the native enumerator ─────────────────────────────
 
     [Fact]
     public async Task Native_async_enumeration_observes_cancellation_mid_stream()
@@ -236,8 +224,7 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
                                .WithCancellation(cts.Token))
             {
                 seen++;
-                // Cancel partway through the stream. The native enumerator checks the token per MoveNext,
-                // so subsequent iterations must observe the cancellation and stop the stream.
+                // The enumerator checks the token per MoveNext, so subsequent iterations must observe the cancellation.
                 if (seen == 10)
                 {
                     cts.Cancel();
@@ -247,7 +234,6 @@ public class NativeTransactionAndCancellationTests(TemporaryDatabaseFixture data
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(Enumerate);
 
-        // We cancelled at row 10; the stream must not have run to completion.
         Assert.True(seen < rowCount, $"Stream ran to completion ({seen} rows) despite cancellation.");
     }
 

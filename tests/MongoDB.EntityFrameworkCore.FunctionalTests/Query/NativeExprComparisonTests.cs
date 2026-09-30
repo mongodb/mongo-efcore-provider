@@ -389,7 +389,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         using var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
         // Whole-entity Where + ToList(): a bare-scalar Select falls back for unrelated reasons and would mask
         // this.
-        var nativeNames = nativeOnly.Entities.Where(predicate).ToList().Select(c => c.Name).OrderBy(n => n).ToList(); // succeeds => went native
+        var nativeNames = nativeOnly.Entities.Where(predicate).ToList().Select(c => c.Name).OrderBy(n => n).ToList();
 
         using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
         var driverNames = driver.Entities.Where(predicate).ToList().Select(c => c.Name).OrderBy(n => n).ToList();
@@ -408,7 +408,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
 
         using var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
         var nativeNames = nativeOnly.Entities.Where(c => !(c.Age == threshold)).ToList()
-            .Select(c => c.Name).OrderBy(n => n).ToList(); // succeeds => went native, sentinel substituted correctly
+            .Select(c => c.Name).OrderBy(n => n).ToList();
 
         using var driver = CreateContext(collection, [], MongoQueryMode.DriverLinq);
         var driverNames = driver.Entities.Where(c => !(c.Age == threshold)).ToList()
@@ -432,7 +432,7 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         using var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
         var nativeNames = nativeOnly.Entities.Where(c => !(c.Age > 5 && c.Name == "Alice"))
-            .ToList().Select(c => c.Name).OrderBy(n => n).ToList(); // succeeds => went native
+            .ToList().Select(c => c.Name).OrderBy(n => n).ToList();
 
         var mql = Mql(logs);
         Assert.Contains("\"$or\"", mql);

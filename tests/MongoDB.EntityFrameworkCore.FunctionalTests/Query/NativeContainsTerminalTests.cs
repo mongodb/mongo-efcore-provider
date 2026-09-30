@@ -148,7 +148,7 @@ public class NativeContainsTerminalTests(TemporaryDatabaseFixture database) : IC
         public Node? Parent { get; set; }
     }
 
-    // Final review C1: an entity Contains over a projection THROUGH a (self-referencing) navigation must not be
+    // an entity Contains over a projection THROUGH a (self-referencing) navigation must not be
     // translated against the root entity — `Select(n => n.Parent).Contains(leaf)` asks "is leaf anyone's parent?".
     [Fact]
     public void Entity_contains_over_navigation_projection_is_not_matched_against_the_root()
@@ -169,7 +169,6 @@ public class NativeContainsTerminalTests(TemporaryDatabaseFixture database) : IC
 
         bool? answer = null;
         var ex = Record.Exception(() => answer = db.Entities.Select(n => n.Parent).Contains(leafEntity));
-        // Either decline cleanly, or answer as LINQ does (leaf is nobody's parent).
         if (ex is null)
             Assert.False(answer);
         else

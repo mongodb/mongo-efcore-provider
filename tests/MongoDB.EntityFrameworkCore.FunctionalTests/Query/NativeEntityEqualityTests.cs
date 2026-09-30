@@ -85,7 +85,6 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
         var collection = SeedCustomers(nameof(Entity_equality_self_goes_native));
         using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out var spyLogger);
 
-        // NativeOnly success proves `c == c` took the native path.
 #pragma warning disable CS1718 // Comparison made to same variable — deliberate: this is the shape under test.
         var results = db.Entities.AsNoTracking().Where(c => c == c).ToList();
 #pragma warning restore CS1718
@@ -187,7 +186,6 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
         using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out var spyLogger);
         var other = new Customer { Id = existingId, Name = "Ignored — only the key is compared" };
 
-        // NativeOnly success proves `c == other` took the native key-based path.
         var results = db.Entities.AsNoTracking().Where(c => c == other).ToList();
 
         var found = Assert.Single(results);
@@ -224,7 +222,6 @@ public class NativeEntityEqualityTests(TemporaryDatabaseFixture database) : ICla
         using var db = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out var spyLogger);
         var customers = new List<Customer?> { null, new Customer { Id = existingId, Name = "Ignored — only the key is compared" } };
 
-        // NativeOnly success proves `customers.Contains(c)` took the native key-based $in path.
         var results = db.Entities.AsNoTracking().Where(c => customers.Contains(c)).ToList();
 
         var found = Assert.Single(results);

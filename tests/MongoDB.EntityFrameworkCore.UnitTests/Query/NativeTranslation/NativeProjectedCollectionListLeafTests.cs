@@ -172,8 +172,7 @@ public class NativeProjectedCollectionListLeafTests
         Assert.Contains(mongoQ.Select.Projection, p => p.Alias == "_id");
     }
 
-    // ── A navigation declared as a concrete List<T> ─────────────────────────────────────────────────────────
-    // On a List<T>-declared navigation, .ToArray()/.ToHashSet() nav-expand to an earlier-collapsed
+    // A navigation declared as a concrete List<T>: .ToArray()/.ToHashSet() nav-expand to an earlier-collapsed
     // MaterializeCollectionNavigationExpression shape, not the Where-wrapped one; the recognizer must decline, not
     // throw or mis-translate.
 
@@ -224,7 +223,6 @@ public class NativeProjectedCollectionListLeafTests
         Assert.Empty(mongoQ.GetPendingLookups());
     }
 
-    // ── Test infrastructure ─────────────────────────────────────────────────────────────────────────────────
     // Per-file copy of NativeCorrelatedReducerLeafTests' harness classes.
 
     /// <summary>

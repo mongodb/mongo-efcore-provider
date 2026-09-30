@@ -105,10 +105,6 @@ public class NativeVectorSearchStageTests
             new MongoFieldExpression(entityType.FindProperty(nameof(Book.Title))!, "Title"),
             new MongoConstantExpression(title, entityType.FindProperty(nameof(Book.Title))!));
 
-    // ------------------------------------------------------------------
-    // Emission order — $vectorSearch, $addFields, then the composed ops
-    // ------------------------------------------------------------------
-
     [Fact]
     public void Vector_search_lowers_first_then_its_score_companion_then_the_where()
     {
@@ -144,10 +140,6 @@ public class NativeVectorSearchStageTests
         Assert.Single(query.Select.PipelineOps);
         Assert.Empty(query.Select.TrailingOps);
     }
-
-    // ------------------------------------------------------------------
-    // Rendering — byte-equal to the committed driver-LINQ baselines
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Rendered_body_is_byte_equal_to_the_committed_VectorSearch_floats_baseline()
@@ -204,10 +196,6 @@ public class NativeVectorSearchStageTests
 
         Assert.Equal(BoolPreFilterBaseline, pipeline[0].ToString());
     }
-
-    // ------------------------------------------------------------------
-    // Per-execution binding
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Parameterized_pre_filter_substitutes_per_execution_without_consuming_the_template()

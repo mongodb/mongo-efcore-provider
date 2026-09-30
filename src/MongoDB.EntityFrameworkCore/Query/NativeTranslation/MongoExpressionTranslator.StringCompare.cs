@@ -26,8 +26,7 @@ internal sealed partial class MongoExpressionTranslator
 {
     /// <summary>
     /// <c>a.CompareTo(b) OP k</c> / <c>string.Compare(a, b) OP k</c> with a constant int <c>k</c>. Folds to a plain
-    /// comparison or a constant where exact (see the table in the String Translations Phase 2 plan); otherwise
-    /// compares <c>$cmp</c> to <c>k</c>.
+    /// comparison or a constant where exact; otherwise compares <c>$cmp</c> to <c>k</c>.
     /// </summary>
     private bool TryTranslateStringCompare(BinaryExpression comparison, out MongoExpression? result)
     {

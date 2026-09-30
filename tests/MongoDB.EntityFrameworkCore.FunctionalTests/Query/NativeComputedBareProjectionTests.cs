@@ -530,7 +530,6 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
                     .Select(b => b.Posts.Count * 2).ToList());
         }
 
-        // Still declined, so the values above come from the fallback.
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
         {
             Assert.Throws<NativeTranslationNotSupportedException>(
@@ -559,14 +558,12 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
             Assert.DoesNotContain("\"_v\" : 0", mql);
         }
 
-        // (2) DriverLinq.
         using (var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq))
         {
             Assert.Equal([0, 0, 0, 0, 0],
                 driverLinq.Entities.AsNoTracking().OrderBy(b => b.Title).Select(b => 0).ToList());
         }
 
-        // (3) NativeOnly succeeds.
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
         {
             Assert.Equal([0, 0, 0, 0, 0],
@@ -878,7 +875,6 @@ public class NativeComputedBareProjectionTests(TemporaryDatabaseFixture database
         var (collection, _) = Seed(nameof(Bare_count_leaf_under_a_REDUCING_operator_no_longer_aborts_on_a_ragged_array));
         var prefix = "p";
 
-        // Counts by title: p1_two=2, p2_empty=0, p3_missing=0, p4_null=0, p5_one=1.
         foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContext(collection, mode);

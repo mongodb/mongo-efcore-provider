@@ -24,13 +24,10 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// The <c>$unwind</c> is always left-outer, so both reducers emit the same pipeline; <see cref="ThrowOnEmpty"/>
 /// makes <c>First</c> throw on the read side. An inner <c>$unwind</c> would wrongly drop the principal row.
 /// </remarks>
-/// <param name="Alias">The <c>$project</c> alias this leaf's value is emitted under.</param>
-/// <param name="Lookup">The <c>$lookup</c> (with its <c>$match</c>/<c>$sort</c>/<c>$limit:1</c> sub-pipeline)
-/// this leaf reads its value out of.</param>
-/// <param name="Member">The reduced element's own document element name, relative to the unwound
-/// <see cref="LookupExpression.As"/> field.</param>
-/// <param name="ThrowOnEmpty">Whether the source reducer was <c>First</c> (rather than
-/// <c>FirstOrDefault</c>).</param>
+/// <param name="Alias">The <c>$project</c> alias for this leaf.</param>
+/// <param name="Lookup">The <c>$lookup</c> (with <c>$limit:1</c> sub-pipeline) the value is read from.</param>
+/// <param name="Member">Element name of the reduced member, relative to the unwound <see cref="LookupExpression.As"/>.</param>
+/// <param name="ThrowOnEmpty">Whether the source reducer was <c>First</c> rather than <c>FirstOrDefault</c>.</param>
 internal sealed record MongoCorrelatedReducerLeaf(
     string Alias,
     LookupExpression Lookup,

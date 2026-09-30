@@ -700,24 +700,21 @@ internal static class NativeProjectionBinder
             return true;
         }
 
-        // Computed leaves admitted by resulting node kind, not by "TryTranslateValue succeeded": a bare value in
-        // $project is read as an inclusion/exclusion flag (0/false aborts with "Cannot do exclusion on field ... in
-        // inclusion projection"), while these kinds all render as documents. Covers owned-collection counts
-        // (`b.Posts.Count`, and the predicated MongoFilteredSizeExpression), numeric casts (MongoConvertExpression),
-        // and the other computed kinds listed.
+        // Computed leaves are admitted by resulting node kind, not by "TryTranslateValue succeeded": a bare value in $project
+        // is read as an inclusion/exclusion flag (0/false aborts with "Cannot do exclusion on field ... in inclusion
+        // projection"), while these kinds all render as documents.
         //
         // Casts over value-converted/non-default-represented fields never get here: TryTranslateValue's
         // AllFieldsDefaultSerialized guard rejects them. The read side's raw-alias Convert bypass
         // (MongoProjectionBindingRemovingExpressionVisitor) depends on that; relaxing the guard breaks it silently
-        // (pinned by
-        // NativeCastTests.Cast_over_a_value_converted_property_declines_instead_of_reading_the_raw_stored_value).
+        // (pinned by NativeCastTests.Cast_over_a_value_converted_property_declines_instead_of_reading_the_raw_stored_value).
         //
         // A widening cast (`(long)x.I`) translates to a bare MongoFieldExpression, so it is detected from the original
         // leafExpression; MongoDB operates on the raw numeric value regardless of CLR width, so that is exact.
         //
         // Bare constants/parameters (`Select(x => 8)`) are safe because RenderProject $literal-wraps them, but
         // BsonValue.Create throws for a non-BSON-mappable value (captured anonymous type/POCO), so
-        // TryProbeBareValueRenders trial-renders them first (see NorthwindSelectQueryMongoTest.Select_bool_closure).
+        // TryProbeBareValueRenders trial-renders them first.
         if (translator.TryTranslateValue(leafExpression, out var value)
             && (value is MongoSizeExpression or MongoFilteredSizeExpression or MongoConvertExpression
                     or MongoConditionalExpression or MongoDatePartExpression or MongoDateTimeOffsetLocalExpression

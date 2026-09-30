@@ -124,7 +124,7 @@ public class MongoComplianceTest : ComplianceTestBase
         typeof(Microsoft.EntityFrameworkCore.BulkUpdates.FiltersInheritanceBulkUpdatesTestBase<>),
         typeof(Microsoft.EntityFrameworkCore.BulkUpdates.InheritanceBulkUpdatesTestBase<>),
         typeof(Microsoft.EntityFrameworkCore.BulkUpdates.NonSharedModelBulkUpdatesTestBase),
-        // NorthwindBulkUpdatesTestBase is now implemented by NorthwindBulkUpdatesMongoTest: the supported
+        // NorthwindBulkUpdatesTestBase is implemented by NorthwindBulkUpdatesMongoTest: the supported
         // single-collection Where-scoped scalar cases, as well as OrderBy/Skip/Take/Distinct-scoped cases
         // (executed via the two-phase _id-projection path), call base and pass; everything outside that
         // subset (joins, set ops, GroupBy, SelectMany, navigations, non-entity projections,

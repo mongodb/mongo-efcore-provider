@@ -297,17 +297,10 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
                 return new ProjectionBindingExpression(_queryExpression, projMember, expression.Type);
 
-            // A computed-arithmetic leaf (e.g. c.Age * c.Score) mixed into a projection alongside a whole
-            // entity reference (which forces the client-side "mixed projection" shaper — see
-            // MongoMixedProjectionBindingRemovingExpressionVisitor). Register the whole binary expression as
-            // a single projection-mapping leaf here, without visiting into its operands: the default walk
-            // (via base.Visit below) would visit Left and Right independently, each writing the SAME
-            // ProjectionMember dictionary slot (the current one hasn't changed), so the second operand would
-            // silently clobber the first (e.g. Age * Score would materialise as Score * Score).
-            // Scoped to operands that are themselves simple scalar reads / nested arithmetic over those
-            // (IsSimpleArithmeticLeaf) — NOT method calls such as a collection-navigation Sum()/Count(),
-            // which must still decompose through the normal walk so their own (more specific) translation
-            // failures / cross-collection guards continue to fire as before.
+            // A computed-arithmetic leaf (`c.Age * c.Score`) mixed with a whole entity reference (which forces the mixed
+            // shaper). Register the binary node whole: the default walk writes both operands to the same ProjectionMember
+            // slot, so Age * Score would materialise as Score * Score. Scoped to simple scalar reads / nested arithmetic
+            // (IsSimpleArithmeticLeaf); collection-navigation Sum()/Count() must still decompose so their own guards fire.
             case BinaryExpression binaryExpression
                 when IsArithmeticNodeType(binaryExpression.NodeType) && IsSimpleArithmeticLeaf(binaryExpression):
                 var arithmeticMember = GetCurrentProjectionMember();
@@ -663,11 +656,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                         // field.
                         var plainLookupAlias = lookup.As;
 
-                        // For multi-level Include where the declaring entity is a cross-collection
-                        // reference (handled by LeftJoin producing _outer/_inner), the $lookup
-                        // localField must be prefixed to reference the inner sub-document.
-                        // When a LeftJoin restructures the document (_outer/_inner),
-                        // $lookup fields must be prefixed with the correct sub-document path.
+                        // When a LeftJoin restructures the document (_outer/_inner) for a cross-collection reference declaring
+                        // entity, the $lookup localField must be prefixed with the inner sub-document path.
                         if (_queryExpression.UsesDriverJoinFields)
                         {
                             var declaringType = includableNavigation.DeclaringEntityType;
@@ -685,16 +675,11 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                         }
                         else
                         {
-                            // Flat multi-lookup mode: when two or more cross-collection reference
-                            // navigations were chained (e.g. OrderDetail.Order.Customer.Orders), the
-                            // reference chain is emitted as a series of root-level $lookup+$unwind
-                            // stages aliased "_lookup_<Nav>" rather than the driver's _outer/_inner
-                            // shape. A trailing collection Include whose declaring entity is one of
-                            // those unwound intermediates must match against that intermediate's
-                            // sub-document, so its $lookup localField needs the "_lookup_<Nav>." prefix.
-                            // The output "as" is nested under the same intermediate sub-document because
-                            // the shaper reads the collection array relative to the intermediate's
-                            // ParentAccessExpression (i.e. "_lookup_<Nav>._lookup_<Collection>").
+                            // Flat multi-lookup mode: chained cross-collection reference navigations
+                            // (OrderDetail.Order.Customer.Orders) are root-level $lookup+$unwind stages aliased "_lookup_<Nav>", not the
+                            // driver's _outer/_inner. A trailing collection Include declared on one of those intermediates matches
+                            // against its sub-document, so localField needs the "_lookup_<Nav>." prefix and "as" nests under the same
+                            // intermediate (the shaper reads it relative to ParentAccessExpression).
                             // A collection Include on the inner side of a Join/LeftJoin over a collection navigation
                             // (e.g. Owners.LeftJoin(Orders.Include(r => r.OrderLines), ...)) isn't found by the
                             // reference-only match below; emitted at root it would match the outer _id and every
@@ -732,13 +717,9 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                                      && l.ForceUnwind
                                      && l.TargetEntityType == declaringType).ToList();
 
-                            // The intermediate is matched by its target entity type, not by its alias. When
-                            // more than one reference lookup targets the same entity type — e.g. two reference
-                            // navigations to the same type, or a self-referential chain — the match is
-                            // ambiguous: there is no basis here to tell which intermediate sub-document this
-                            // collection Include is nested under, and choosing arbitrarily would prefix the
-                            // $lookup with the wrong "_lookup_<Nav>." path and silently return wrong results.
-                            // Fail translation cleanly instead.
+                            // The intermediate is matched by target entity type, not alias. Several reference lookups targeting one type
+                            // (two navigations to it, or a self-referential chain) are ambiguous: guessing would prefix the $lookup with
+                            // the wrong "_lookup_<Nav>." path and silently return wrong results, so fail translation instead.
                             if (intermediateMatches.Count > 1)
                             {
                                 throw new InvalidOperationException(CoreStrings.TranslationFailed(extensionExpression.Print()));
@@ -966,19 +947,11 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                         shaper,
                         lambda);
 
-                // Count/LongCount over a materialized collection shaper. The source is a List<T>-typed
-                // CollectionShaperExpression that MatchTypes leaves as-is for an IQueryable<T> parameter, so the
-                // fall-through's Update(...) throws ArgumentException in every mode. Rebuild against the Enumerable
-                // equivalent instead. Other reducers (Sum/Min/...) share the gap; the bare First/Any/... family is
-                // handled below.
-                //
-                // The decline branch uses `break`, not `return null`: null would fold through MatchTypes to
-                // Expression.Default(int) and silently return 0. `break` re-Visits Arguments[0] in the fall-through,
-                // which is not side-effect-free in general (e.g. an interposed Distinct double-adds to
-                // _collectionShaperMapping; see the structural guard at the end of this block), but no known shape
-                // reaches this decline branch — EF fuses Select(f).Count() into Count().
-                //
-                // Never reached for a native count projection (claimed earlier in VisitMethodCall).
+                // Count/LongCount over a materialized List<T> CollectionShaperExpression: MatchTypes leaves it as-is for an
+                // IQueryable<T> parameter, so the fall-through's Update(...) throws in every mode. Rebuild against the
+                // Enumerable equivalent (bare First/Any/... below). The decline branch uses `break`, not `return null`, which
+                // would fold to Expression.Default(int) and silently return 0; `break` re-Visits Arguments[0] (not
+                // side-effect-free, see the structural guard at the end of this block), but no known shape reaches it.
                 case nameof(Queryable.Count)
                     when genericMethod == QueryableMethods.CountWithoutPredicate:
                 case nameof(Queryable.LongCount)
@@ -1056,14 +1029,10 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                         EnumerableMethods.AnyWithoutPredicate.MakeGenericMethod(method.GetGenericArguments()),
                         anySource);
 
-                // The same rebuild for predicated Count/LongCount, delivering the bare filtered-count projection
-                // `Select(b => b.Posts.Count(p => ...))` (optionally behind an arithmetic/cast spine, e.g. `... * 2`).
-                // A native filtered count is claimed earlier (IsCanonicalCount covers both arities), so only non-native
-                // shapes get here.
-                //
-                // The Enumerable overload takes a Func<,>, so the predicate is unquoted (UnwrapLambdaFromQuote) and
-                // deliberately not re-Visited: it runs client-side over materialized Post instances, not a
-                // BsonDocument. Decline is `break`, not `return null` (see the Count arm above).
+                // The same rebuild for predicated Count/LongCount (bare `Select(b => b.Posts.Count(p => ...))`, optionally behind
+                // an arithmetic/cast spine). A native filtered count is claimed earlier, so only non-native shapes get here.
+                // The predicate is unquoted (UnwrapLambdaFromQuote) and deliberately not re-Visited: it runs client-side over
+                // materialized instances. Decline is `break`, not `return null` (see the Count arm above).
                 //
                 // Guards, all needed:
                 // - ContainsQueryParameter: a captured local stays an unresolved EF query-parameter node (the lambda
@@ -1101,17 +1070,12 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                         filteredCountLambda);
             }
 
-            // No case above claimed this Queryable operator. The generic fall-through would crash in every mode once
-            // the source has been visited into a materialized collection:
-            //   * Update(...) needs an IQueryable<T> argument, which neither a List<T> CollectionShaperExpression nor a
-            //     rebuilt Enumerable.Select is, and MatchTypes can't convert it (e.g. `b.Posts.Take(2).Select(...)`,
-            //     Reverse).
-            //   * Re-Visiting Arguments[0] re-runs the Select case's non-idempotent _collectionShaperMapping.Add ("same
-            // key has already been added"; e.g. `b.Posts.Select(p => p.Heading).Distinct()`, DefaultIfEmpty). Decline
-            // before anything mutates, with the same InvalidOperationException other unsupported shapes produce. Throw
-            // rather than `return null`, which would fold to Expression.Default (silent null/empty collection).
-            // Structural (keyed on assignability) rather than per-operator, so Skip/ElementAt/Where/... are covered;
-            // any input that survives Update today already satisfies the condition and is untouched.
+            // No case above claimed this Queryable operator. The generic fall-through would crash in every mode once the
+            // source is a materialized collection: Update(...) needs an IQueryable<T> (a List<T> shaper or rebuilt
+            // Enumerable.Select isn't one, e.g. `b.Posts.Take(2).Select(...)`), and re-Visiting Arguments[0] re-runs the
+            // non-idempotent _collectionShaperMapping.Add. Decline before anything mutates with the usual
+            // InvalidOperationException; `return null` would fold to Expression.Default (silent null/empty collection).
+            // Keyed on assignability, not per operator, so Skip/ElementAt/Where/... are covered.
             if (visitedSource != null
                 && !ReferenceEquals(visitedSource, methodCallExpression.Arguments[0])
                 && !method.GetParameters()[0].ParameterType.IsAssignableFrom(visitedSource.Type))
@@ -1637,7 +1601,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         return detector.Found;
     }
 
-    /// <summary>Stops at the first query-parameter node found.</summary>
     private sealed class QueryParameterDetector : ExpressionVisitor
     {
         public bool Found { get; private set; }
@@ -1673,7 +1636,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         return detector.Found;
     }
 
-    /// <summary>Stops at the first shaper node found.</summary>
     private sealed class ShaperReferenceDetector : ExpressionVisitor
     {
         public bool Found { get; private set; }

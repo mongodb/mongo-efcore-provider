@@ -30,20 +30,12 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <summary>
 /// EF-425: an operator (<c>Distinct</c>, <c>Take</c>, <c>Reverse</c>, <c>DefaultIfEmpty</c>, <c>Concat</c>)
 /// between an owned-collection <c>Select</c> and a materializing terminal must fail with an
-/// <see cref="InvalidOperationException"/> naming the operator and navigation, in every mode, rather than an
-/// unnamed <see cref="ArgumentException"/>.
+/// <see cref="InvalidOperationException"/> naming the operator and navigation, in every mode.
 /// </summary>
 /// <remarks>
-/// <c>Distinct</c>/<c>DefaultIfEmpty</c> hit a duplicate-key <c>_collectionShaperMapping.Add</c>; <c>Take</c>/
-/// <c>Reverse</c> (projection pushed inside them) failed <c>methodCallExpression.Update</c>'s assignability check;
-/// <c>Concat</c> already failed cleanly and is the control. Both crash routes come from the generic fall-through in
-/// <c>MongoProjectionBindingExpressionVisitor.VisitMethodCall</c> rebuilding a <c>Queryable</c> call whose source is
-/// no longer <c>IQueryable&lt;T&gt;</c>, so one assignability guard fixes them.
-/// <para>
-/// This fires during projection binding, before the gate reads <see cref="MongoQueryMode"/>, so <c>NativeOnly</c>
-/// gets the same <see cref="InvalidOperationException"/>, not <see cref="NativeTranslationNotSupportedException"/>
-/// (cf. <c>NativeOwnedCollectionFilteredCountTests</c>).
-/// </para>
+/// The failure fires during projection binding, before the gate reads <see cref="MongoQueryMode"/>, so
+/// <c>NativeOnly</c> gets the same <see cref="InvalidOperationException"/>, not
+/// <see cref="NativeTranslationNotSupportedException"/>. <c>Concat</c> already failed cleanly and is the control.
 /// </remarks>
 [XUnitCollection("QueryTests")]
 public class Ef425InterposedCollectionOperatorTests(TemporaryDatabaseFixture database)
@@ -109,8 +101,7 @@ public class Ef425InterposedCollectionOperatorTests(TemporaryDatabaseFixture dat
     /// Asserts a clean decline in every mode with a message naming the interposed operator.
     /// </summary>
     /// <remarks>
-    /// The operator-name check is what discriminates: the old <see cref="ArgumentException"/> messages didn't name
-    /// it, and <c>Concat</c> already threw <see cref="InvalidOperationException"/>.
+    /// The operator-name check discriminates: the old <see cref="ArgumentException"/> messages did not name it.
     /// </remarks>
     private void AssertDeclinesCleanlyInEveryMode(
         IMongoCollection<Blog> collection,
@@ -131,7 +122,6 @@ public class Ef425InterposedCollectionOperatorTests(TemporaryDatabaseFixture dat
     [Fact]
     public void Interposed_Distinct_declines_cleanly_in_every_mode()
     {
-        // Formerly: duplicate-key ArgumentException ("Key: p") in every mode.
         var collection = Seed(nameof(Interposed_Distinct_declines_cleanly_in_every_mode));
 
         AssertDeclinesCleanlyInEveryMode(
@@ -143,8 +133,7 @@ public class Ef425InterposedCollectionOperatorTests(TemporaryDatabaseFixture dat
     [Fact]
     public void Interposed_Take_declines_cleanly_in_every_mode()
     {
-        // Formerly: Update-assignability ArgumentException ('List<Post>' vs 'IQueryable<Post>'); EF pushes the
-        // projection inside Take.
+        // EF pushes the projection inside Take.
         var collection = Seed(nameof(Interposed_Take_declines_cleanly_in_every_mode));
 
         AssertDeclinesCleanlyInEveryMode(
@@ -156,7 +145,6 @@ public class Ef425InterposedCollectionOperatorTests(TemporaryDatabaseFixture dat
     [Fact]
     public void Interposed_Reverse_declines_cleanly_in_every_mode()
     {
-        // Formerly: the same assignability ArgumentException as Take.
         var collection = Seed(nameof(Interposed_Reverse_declines_cleanly_in_every_mode));
 
         AssertDeclinesCleanlyInEveryMode(
@@ -168,7 +156,6 @@ public class Ef425InterposedCollectionOperatorTests(TemporaryDatabaseFixture dat
     [Fact]
     public void Interposed_DefaultIfEmpty_declines_cleanly_in_every_mode()
     {
-        // Formerly: the same duplicate-key ArgumentException as Distinct.
         var collection = Seed(nameof(Interposed_DefaultIfEmpty_declines_cleanly_in_every_mode));
 
         AssertDeclinesCleanlyInEveryMode(
@@ -192,9 +179,8 @@ public class Ef425InterposedCollectionOperatorTests(TemporaryDatabaseFixture dat
     [Fact]
     public void Owned_collection_Select_with_no_interposed_operator_still_works()
     {
-        // Regression control asserting data: the same Select/ToList without an interposed operator. Its first visit
-        // registers the _collectionShaperMapping entry; an "idempotent Add" fix would pass this while the shapes
-        // above silently returned wrong data.
+        // Regression control asserting data: the same Select/ToList without an interposed operator. An "idempotent Add"
+        // fix would pass this while the shapes above silently returned wrong data.
         var collection = Seed(nameof(Owned_collection_Select_with_no_interposed_operator_still_works));
 
         foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
@@ -215,8 +201,7 @@ public class Ef425InterposedCollectionOperatorTests(TemporaryDatabaseFixture dat
     [Fact]
     public void Owned_collection_Select_with_no_interposed_operator_is_a_driver_linq_fallback()
     {
-        // Not in the native slice (a bare projected collection body never populates Select.Projection), so
-        // NativeOnly throws the gate exception here — unlike the shapes above, which fail before the gate.
+        // A bare projected collection body never populates Select.Projection, so NativeOnly throws the gate exception here.
         var collection = Seed(nameof(Owned_collection_Select_with_no_interposed_operator_is_a_driver_linq_fallback));
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);

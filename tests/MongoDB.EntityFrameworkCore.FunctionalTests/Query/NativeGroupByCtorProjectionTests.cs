@@ -139,7 +139,6 @@ public class NativeGroupByCtorProjectionTests(TemporaryDatabaseFixture database)
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
             });
 
-        // Success under NativeOnly proves native.
         var results = db.Entities
             .GroupBy(o => new CustomerEmployeeKey { CustomerId = o.CustomerId, EmployeeId = 0 })
             .Select(g => new { Sum = g.Sum(o => o.Total), g.Key })
@@ -226,7 +225,6 @@ public class NativeGroupByCtorProjectionTests(TemporaryDatabaseFixture database)
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
             });
 
-        // Success under NativeOnly proves native.
         var results = db.Entities
             .GroupBy(o => o.CustomerId)
             .Select(g => new CustomerIdOnly(g.Key))

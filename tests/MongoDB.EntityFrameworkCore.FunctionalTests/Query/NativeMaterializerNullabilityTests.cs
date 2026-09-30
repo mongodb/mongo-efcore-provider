@@ -75,24 +75,19 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── Missing required non-nullable scalar → InvalidOperationException ──────────────────────────
-
     [Fact]
     public void Missing_required_scalar_throws_under_native_matching_driver()
     {
         var collection = database.CreateCollection<Scored>();
         var raw = database.GetCollection<BsonDocument>(collection.CollectionNamespace);
-        // Document is MISSING the required "Score" element entirely.
         raw.InsertOne(new BsonDocument { { "_id", ObjectId.GenerateNewId() } });
 
-        // Driver-LINQ (the oracle) throws InvalidOperationException with a specific message.
         InvalidOperationException driverEx;
         using (var driver = CreateContext(collection, MongoQueryMode.DriverLinq))
         {
             driverEx = Assert.Throws<InvalidOperationException>(() => driver.Entities.ToList());
         }
 
-        // Native must throw the same type and message (some spec tests assert the message).
         InvalidOperationException nativeEx;
         using (var native = CreateContext(collection, MongoQueryMode.Native))
         {
@@ -101,21 +96,17 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
 
         Assert.Equal(driverEx.Message, nativeEx.Message);
 
-        // And it must go native, not fall back.
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
         {
             Assert.Throws<InvalidOperationException>(() => nativeOnly.Entities.ToList());
         }
     }
 
-    // ── Explicit BSON null on a non-nullable scalar → default(T) ──────────────────────────────────
-
     [Fact]
     public void Explicit_null_on_non_nullable_scalar_materializes_default_matching_driver()
     {
         var collection = database.CreateCollection<Scored>();
         var raw = database.GetCollection<BsonDocument>(collection.CollectionNamespace);
-        // "Score" is present but explicitly BSON null.
         raw.InsertOne(new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Score", BsonNull.Value } });
 
         int driverScore;
@@ -134,7 +125,6 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         Assert.Equal(driverScore, nativeScore);
     }
 
-    // Success under NativeOnly proves the explicit-null case runs on the streaming materializer, not the DOM path.
     [Fact]
     public void Explicit_null_on_non_nullable_scalar_goes_native()
     {
@@ -146,8 +136,6 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         var score = native.Entities.ToList().Single().Score;
         Assert.Equal(default, score);
     }
-
-    // ── Nullable scalar present-but-null ────────────────────────────────────────────────────────────
 
     [Fact]
     public void Explicit_null_on_nullable_scalar_materializes_null_matching_driver()
@@ -172,8 +160,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         Assert.Equal(driverBonus, nativeBonus);
     }
 
-    // ── Explicit BSON null on a non-nullable reference-typed scalar must throw, not leave a required
-    // member null ────────────────────────────────────────────────────────────────────────────────────
+    // Explicit BSON null on a non-nullable reference-typed scalar must throw, not leave a required member null.
 
     [Theory]
     [InlineData("Name")]
@@ -207,15 +194,12 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
 
         Assert.Equal(driverEx.Message, nativeEx.Message);
 
-        // Throwing under NativeOnly proves the streaming materializer itself enforces this.
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
         {
             var nativeOnlyEx = Assert.Throws<InvalidOperationException>(() => nativeOnly.Entities.ToList());
             Assert.Equal(driverEx.Message, nativeOnlyEx.Message);
         }
     }
-
-    // ── Happy path: complete document materializes correctly under both modes ─────────────────────
 
     [Fact]
     public void Complete_document_materializes_correctly_matching_driver()
@@ -240,18 +224,14 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         Assert.Equal(driverEntity.Bonus, nativeEntity.Bonus);
     }
 
-    // ── Owned sub-property: missing required scalar on owned reference ────────────────────────────
-    //
-    // Owned single-reference whole-entity queries go native, and the streaming materializer enforces
-    // RequiredPresence for owned children too (BuildFillLoop(child)). Tests assert driver-LINQ parity so they hold
-    // whichever internal path each side takes.
+    // Owned single-reference whole-entity queries go native, and the streaming materializer enforces RequiredPresence
+    // for owned children too (BuildFillLoop(child)). Parity with driver-LINQ holds whichever path each side takes.
 
     [Fact]
     public void Missing_required_scalar_on_owned_subdocument_matches_driver()
     {
         var collection = database.CreateCollection<WithOwned>();
         var raw = database.GetCollection<BsonDocument>(collection.CollectionNamespace);
-        // Owned "Stats" sub-document is present but MISSING its required "Score".
         raw.InsertOne(new BsonDocument
         {
             { "_id", ObjectId.GenerateNewId() },
@@ -272,11 +252,9 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
             _ = native.Entities.ToList();
         });
 
-        // Parity: native must match driver-LINQ — same throw-or-not, same type if thrown.
         Assert.Equal(driverEx?.GetType(), nativeEx?.GetType());
 
-        // Routing proof: under NativeOnly this must throw InvalidOperationException from the streaming
-        // materializer's required-presence check, not NativeTranslationNotSupportedException (a fallback).
+        // Under NativeOnly this must throw InvalidOperationException from the streaming materializer, not NativeTranslationNotSupportedException.
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, model))
         {
             Assert.Throws<InvalidOperationException>(() => nativeOnly.Entities.ToList());
@@ -288,7 +266,6 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
     {
         var collection = database.CreateCollection<WithOwned>();
         var raw = database.GetCollection<BsonDocument>(collection.CollectionNamespace);
-        // Owned "Stats.Score" present but explicit BSON null.
         raw.InsertOne(new BsonDocument
         {
             { "_id", ObjectId.GenerateNewId() },
@@ -314,8 +291,7 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         Assert.Equal(driverEx?.GetType(), nativeEx?.GetType());
         Assert.Equal(driverScore, nativeScore);
 
-        // Routing proof: a present-but-null required owned scalar materializes to default(T) under NativeOnly (not
-        // NativeTranslationNotSupportedException), matching the driver-LINQ oracle.
+        // Under NativeOnly a present-but-null required owned scalar materializes to default(T), matching the driver-LINQ oracle.
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, model))
         {
             var nativeOnlyScore = nativeOnly.Entities.ToList().Single().Stats.Score;

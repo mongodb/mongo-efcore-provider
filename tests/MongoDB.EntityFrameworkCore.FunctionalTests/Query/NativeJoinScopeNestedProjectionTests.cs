@@ -103,7 +103,6 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
             .Select(Selector)
             .ToList();
 
-        // Left-outer join in LINQ-to-Objects (see class remarks), applying the same nested shape.
         var orderSeeds = new[]
         {
             new { Id = matchedOrderId, OrderNo = 1, CustomerId = (ObjectId?)matchedCustomerId },
@@ -119,10 +118,8 @@ public class NativeJoinScopeNestedProjectionTests(TemporaryDatabaseFixture datab
             .ToList();
 
         Assert.Equal(2, actual.Count);
-        // Structural equality of the compiler-unified anonymous type: values on both rows, not just count.
         Assert.Equal(oracle, actual);
 
-        // Named-value checks too, in case anonymous-type Equals hides a bug.
         dynamic matchedRow = actual[0];
         dynamic unmatchedRow = actual[1];
         Assert.Equal(1, (int)matchedRow.OrderNo);

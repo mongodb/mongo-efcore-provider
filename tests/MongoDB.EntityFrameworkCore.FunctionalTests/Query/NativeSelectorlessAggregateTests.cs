@@ -141,8 +141,8 @@ public class NativeSelectorlessAggregateTests(TemporaryDatabaseFixture database)
         Assert.Throws<NativeTranslationNotSupportedException>(() => db.Entities.Select(e => TimesTen(e)).Sum());
     }
 
-    // Final review C2: a value-converted (string-stored) int must not be reduced on its STORED form — $sum over strings
-    // is 0 and $max over strings is lexicographic ("9" > "10").
+    // A value-converted (string-stored) int must not be reduced on its stored form: $sum over strings is 0 and
+    // $max over strings is lexicographic ("9" > "10").
     [Fact]
     public void Aggregate_over_value_converted_projection_is_not_computed_on_stored_values()
     {

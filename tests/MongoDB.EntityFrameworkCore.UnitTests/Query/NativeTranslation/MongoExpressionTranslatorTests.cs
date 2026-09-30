@@ -198,24 +198,15 @@ public class MongoExpressionTranslatorTests
     private static Expression FieldBody<T>(Expression<Func<T, object?>> selector)
         => selector.Body is UnaryExpression { NodeType: ExpressionType.Convert } u ? u.Operand : selector.Body;
 
-    /// <summary>
-    /// Returns the entity type for <typeparamref name="T"/> from a minimal in-memory model.
-    /// </summary>
     private static IEntityType GetEntityType<T>() where T : class
     {
         using var db = SingleEntityDbContext.Create<T>();
         return db.Model.FindEntityType(typeof(T))!;
     }
 
-    /// <summary>
-    /// Creates a <see cref="MongoExpressionTranslator"/> for the given entity type.
-    /// </summary>
     private static MongoExpressionTranslator NewTranslator(IEntityType entityType)
         => new(entityType);
 
-    /// <summary>
-    /// Extracts the body of a predicate lambda as a raw <see cref="Expression"/>.
-    /// </summary>
     private static Expression PredicateBody<T>(Expression<Func<T, bool>> predicate)
         => predicate.Body;
 

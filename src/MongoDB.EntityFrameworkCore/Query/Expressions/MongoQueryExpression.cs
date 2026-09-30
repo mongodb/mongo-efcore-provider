@@ -24,18 +24,14 @@ using Microsoft.EntityFrameworkCore.Query;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
-/// <summary>
-/// Represents a top-level MongoDB-specific collection for querying server-side.
-/// </summary>
+/// <summary>A top-level MongoDB collection query.</summary>
 internal sealed partial class MongoQueryExpression : Expression
 {
     private Dictionary<ProjectionMember, Expression> _projectionMapping = new();
     private readonly List<ProjectionExpression> _projection = [];
 
-    /// <summary>
-    /// Create a <see cref="MongoQueryExpression"/> for the given entity type.
-    /// </summary>
-    /// <param name="entityType">The <see cref="IEntityType"/> this collection relates to.</param>
+    /// <summary>Creates a <see cref="MongoQueryExpression"/> for the given entity type.</summary>
+    /// <param name="entityType">The entity type this collection relates to.</param>
     public MongoQueryExpression(IEntityType entityType)
     {
         CollectionExpression = new MongoCollectionExpression(entityType);
@@ -43,9 +39,7 @@ internal sealed partial class MongoQueryExpression : Expression
             new EntityProjectionExpression(entityType, new RootReferenceExpression(entityType));
     }
 
-    /// <summary>
-    /// Represents the Mongo collection this query is bound to.
-    /// </summary>
+    /// <summary>The collection this query is bound to.</summary>
     public MongoCollectionExpression CollectionExpression { get; private set; }
 
     /// <summary>
@@ -55,9 +49,7 @@ internal sealed partial class MongoQueryExpression : Expression
     /// </summary>
     public MongoSelectDefinition Select { get; } = new();
 
-    /// <summary>
-    /// The <see cref="Expression"/> captured from the original EF-bound LINQ query.
-    /// </summary>
+    /// <summary>The expression captured from the original EF-bound LINQ query.</summary>
     public Expression? CapturedExpression { get; set; }
 
     /// <inheritdoc />
@@ -109,11 +101,10 @@ internal sealed partial class MongoQueryExpression : Expression
     /// but for a different entity type.
     /// </summary>
     /// <remarks>
-    /// Used by the bare whole-inner-element <c>SelectMany</c> (<c>MongoUnwindSource.WholeElement</c>): after
+    /// For the bare whole-inner-element <c>SelectMany</c> (<c>MongoUnwindSource.WholeElement</c>): after
     /// <c>$unwind</c> + <c>$replaceRoot</c> the element is the root document. Left mapped to the outer entity,
-    /// member bindings (e.g. an auto-included owned navigation) resolve against the wrong type and
-    /// <c>BindNavigation</c> throws. Must be called before <c>MongoProjectionBindingExpressionVisitor.Translate</c>
-    /// runs for the trailing selector.
+    /// member bindings resolve against the wrong type and <c>BindNavigation</c> throws. Must be called before
+    /// <c>MongoProjectionBindingExpressionVisitor.Translate</c> runs for the trailing selector.
     /// </remarks>
     public void ReRootProjectionAt(IEntityType entityType)
         => _projectionMapping[new ProjectionMember()] =

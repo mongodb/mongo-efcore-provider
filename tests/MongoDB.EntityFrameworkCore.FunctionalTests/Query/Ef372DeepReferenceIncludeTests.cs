@@ -43,7 +43,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    // ---- T1: the ThenInclude doorway, both query modes ----
+    // Three-hop ThenInclude, both query modes.
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -84,7 +84,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Contains("\"localField\" : \"_lookup_Mid.LeafId\"", mql);
     }
 
-    // ---- T2: the MQL pin. Hop 3's localField must be scoped under hop 2's lookup alias. ----
+    // MQL pin: hop 3's localField must be scoped under hop 2's lookup alias.
 
     [Fact]
     public void Three_hop_reference_ThenInclude_prefixes_the_third_localField()
@@ -103,7 +103,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         spyLogger.AssertExecutedMqlContains("\"localField\" : \"_lookup_Leaf.TipId\"");
     }
 
-    // ---- T3: the second doorway — a user-authored chained Join of 3 levels ----
+    // User-authored chained Join of 3 levels.
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -125,7 +125,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         spyLogger.AssertExecutedMqlContains("\"localField\" : \"_lookup_Leaf.TipId\"");
     }
 
-    // ---- T4: no over-prefixing at depth 1 and 2 ----
+    // No over-prefixing at depth 1 and 2.
 
     [Fact]
     public void One_hop_reference_Include_localField_is_unprefixed()
@@ -157,7 +157,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Contains("\"localField\" : \"_lookup_Mid.LeafId\"", mql);
     }
 
-    // ---- T5: depth 4. A fix that walks one level up instead of following the chain fails here. ----
+    // Depth 4: a fix that walks one level up instead of following the chain fails here.
 
     [Fact]
     public void Four_hop_reference_ThenInclude_prefixes_the_fourth_localField()
@@ -181,9 +181,8 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Contains("\"localField\" : \"_lookup_Tip.NubId\"", mql);
     }
 
-    // ---- T7: the left-outer twin of T1. An optional navigation lowers to LeftJoin, reaching TranslateJoinCore
-    // via TranslateLeftJoin. Row count can't discriminate (a left-outer $unwind keeps the row), so this asserts
-    // the navigations and the MQL, pinning preserveNullAndEmptyArrays. ----
+    // Left-outer twin: an optional navigation lowers to LeftJoin via TranslateLeftJoin. Row count can't
+    // discriminate (left-outer $unwind keeps the row), so assert navigations and MQL (preserveNullAndEmptyArrays).
 
     [Fact]
     public void Three_hop_OPTIONAL_reference_ThenInclude_prefixes_the_third_localField()
@@ -210,9 +209,8 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Contains("\"preserveNullAndEmptyArrays\" : true", mql);
     }
 
-    // ---- T6: two same-typed navigations (Order.Buyer / Order.Approver) is an ordinary model. Prefix resolution
-    // reads the navigation a prior join actually recorded, so each branch alone and both together work. The two
-    // mids point at different leaves ("A" and "B") so a wrong prefix shows up as wrong data. ----
+    // Two same-typed navigations (Order.Buyer / Order.Approver): prefix resolution reads the navigation a prior
+    // join recorded. The mids point at different leaves ("A" and "B") so a wrong prefix shows as wrong data.
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -301,8 +299,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.DoesNotContain("_lookup_PrimaryMid", mql);
     }
 
-    // ---- T8: the localField alias must come from the navigation name, not the target type name; Mid.Next is an
-    // AltLeaf, so the two differ. ----
+    // localField alias must come from the navigation name, not the target type name (Mid.Next is an AltLeaf).
 
     [Fact]
     public void Three_hop_chain_localField_alias_comes_from_the_navigation_name()
@@ -324,9 +321,8 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.DoesNotContain("_lookup_AltLeaf", mql);
     }
 
-    // ---- T9: a transitive hop through a navigation-less first hop (a bare key-equality Join). LookupExpression's
-    // TargetEntityType and raw join-key info let later hops resolve it; the second hop must be scoped under the
-    // first hop's alias (unscoped, it silently returned 0 rows). ----
+    // Transitive hop through a navigation-less first hop (bare key-equality Join): the second hop must be scoped
+    // under the first hop's alias (unscoped, it silently returned 0 rows).
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -353,11 +349,9 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     }
 
 #if !EF8 && !EF9
-    // ---- T10: the left-outer route through the same-typed sibling shape (T6 over optional navigations, lowered
-    // to LeftJoin), proving positional "through"-join resolution and alias suffixing reach TranslateLeftJoin.
-    //
-    // EF10-only: before EF10 Queryable.LeftJoin has no dispatch case, so an optional reference Include never
-    // reaches TranslateJoinCore on EF8/EF9 (a blanket, depth-independent gap). ----
+    // Left-outer route through the same-typed sibling shape (optional navigations, lowered to LeftJoin).
+    // EF10-only: before EF10 Queryable.LeftJoin has no dispatch case, so optional reference Include never
+    // reaches TranslateJoinCore on EF8/EF9.
 
     [Theory]
     [InlineData(MongoQueryMode.Native)]
@@ -413,8 +407,6 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.Equal("OA", results[0].PrimaryMid!.Leaf!.Label);
     }
 #endif
-
-    // ---- fixture ----
 
     private DeepChainDbContext CreateContext(MongoQueryMode mode, string name, ILoggerFactory? loggerFactory = null)
     {
@@ -622,7 +614,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     }
 
 #if !EF8 && !EF9
-    // T10's model: T6's shape with optional (nullable-FK) navigations, lowered to Queryable.LeftJoin.
+    // Optional (nullable-FK) navigations, lowered to Queryable.LeftJoin.
     private OptionalAmbiguousChainDbContext CreateOptionalAmbiguousContext(
         string name, MongoQueryMode mode, out SpyLoggerProvider spyLogger)
     {
@@ -1007,7 +999,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
     }
 #endif
 
-    // ---- T8's model: Mid.Next is an AltLeaf, so a nav-name alias differs from a type-name alias. ----
+    // Mid.Next is an AltLeaf, so a nav-name alias differs from a type-name alias.
 
     private class AltTip
     {
@@ -1087,7 +1079,7 @@ public class Ef372DeepReferenceIncludeTests(TemporaryDatabaseFixture database)
         }
     }
 
-    // ---- T9's model: the root has an FK property but no navigation to the mid. ----
+    // The root has an FK property but no navigation to the mid.
 
     private class NoNavLeaf
     {

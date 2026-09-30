@@ -222,11 +222,10 @@ public class ProjectedCollectionNormalizationTests(TemporaryDatabaseFixture data
     [Fact]
     public void Nested_owned_collection_normalizes_a_ragged_inner_array()
     {
-        // A nested owned collection (Post.Comments inside Blog.Posts) normalizes its ragged inner array — present,
-        // absent, explicit-null — like the outer one. Measured: both arrays resolve via the bound
-        // _projectionBindings branch, not BsonBinding.CreateGetBsonArray, so this does not cover that branch.
-        // CreateGetBsonArray is reached by cross-collection $lookup-of-$lookup ThenInclude chains, whose arrays
-        // are never missing or null, so the Coalesce there is defensive.
+        // A nested owned collection (Post.Comments inside Blog.Posts) normalizes its ragged inner array (present, absent,
+        // explicit-null) like the outer one. Both arrays resolve via the bound _projectionBindings branch, not
+        // BsonBinding.CreateGetBsonArray (reached only by $lookup-of-$lookup ThenInclude chains, whose arrays are never
+        // missing or null, so the Coalesce there is defensive).
         var name = nameof(Nested_owned_collection_normalizes_a_ragged_inner_array);
         var raw = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
 
@@ -253,14 +252,11 @@ public class ProjectedCollectionNormalizationTests(TemporaryDatabaseFixture data
     [Fact]
     public void Projected_collection_equals_the_whole_entity_oracle_for_every_array_state()
     {
-        // Cross-path agreement: the expected leg materializes whole entities and evaluates the selector
-        // client-side; the actual legs run the projection in Native and DriverLinq. Not an independent oracle
-        // (this fixture's POCOs initialize collections to `[]`), so don't "simplify" the expected leg into a
-        // projection query — that would assert the fix against itself.
-        //
-        // The bare Select(b => b.Posts) is used because on this fixture Select(b => new { b.Title, b.Posts })
-        // throws ArgumentException: Post has its own Comments navigation, whose auto-include fails MatchTypes at
-        // shaper build (EF-360). Without an element navigation the anonymous shape goes native.
+        // Cross-path agreement: the expected leg materializes whole entities and evaluates the selector client-side; the
+        // actual legs run the projection in Native and DriverLinq. Not an independent oracle (this fixture's POCOs
+        // initialize collections to `[]`), so don't turn the expected leg into a projection query. The bare
+        // Select(b => b.Posts) is used because Select(b => new { b.Title, b.Posts }) throws ArgumentException here: Post's
+        // Comments navigation auto-include fails MatchTypes at shaper build (EF-360).
         var collection = Seed(nameof(Projected_collection_equals_the_whole_entity_oracle_for_every_array_state));
 
         // Both legs order by Title, so comparing Count lists positionally is equivalent to comparing pairs.

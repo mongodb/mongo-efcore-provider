@@ -165,11 +165,9 @@ public class NativeProjectionBinderBareBodyTests
         Assert.False(mongoQ.Select.TryGetProjectionAlias(null, out _));
     }
 
-    // ── Tier 2: a computed bare leaf under the reserved `_v` alias ───────────────────────────────────────
-    //
-    // The tier is asserted, not just the alias: the late-fallback strip is tier-conditional (it must not fire for
-    // Synthetic, whose `_v` is what the driver's bare push-down writes), so a DocumentPath regression would
-    // silently read a missing element.
+    // Tier 2: a computed bare leaf under the reserved `_v` alias. The tier is asserted, not just the alias: the
+    // late-fallback strip is tier-conditional (it must not fire for Synthetic, whose `_v` is what the driver's bare
+    // push-down writes), so a DocumentPath regression would silently read a missing element.
 
     [Fact]
     public void Bare_arithmetic_leaf_is_admitted_under_the_reserved_alias_and_the_synthetic_tier()
@@ -488,10 +486,8 @@ public class NativeProjectionBinderBareBodyTests
         Assert.False(mongoQ.Select.IsBareProjection);
     }
 
-    // ── Wrapped whole-entity leaf recognition ───────────────────────────────────────────────────────────
-    //
-    // A whole-entity leaf inside a wrapped projection (NewExpression/MemberInitExpression) is emitted as
-    // `$$ROOT`. A bare-body parameter must not be admitted by this arm.
+    // Wrapped whole-entity leaf recognition: a whole-entity leaf inside a wrapped projection is emitted as `$$ROOT`.
+    // A bare-body parameter must not be admitted by this arm.
 
     [Fact]
     public void Wrapped_whole_entity_leaf_is_admitted_as_ROOT()
@@ -550,15 +546,11 @@ public class NativeProjectionBinderBareBodyTests
         Assert.Equal("Country", alias);
     }
 
-    // ── NullCoalesceSyntheticBareCountBody: the CapturedExpression null-coalescing rewrite ───────────────
-    //
-    // Tested directly rather than through TryPopulateNativeProjection: the rewrite can't live in the binder's
-    // commit block, because MongoQueryableMethodTranslatingExpressionVisitor.VisitMethodCall reassigns
-    // CapturedExpression = _finalExpression after every translated Queryable call. It is applied at that
-    // assignment, keyed on the Synthetic-tier override, which these tests register by hand.
-    //
-    // EF's nav-expansion captures Select(b => b.Posts.Count) as
-    // Select(b => Queryable.Count(Queryable.AsQueryable(EF.Property<List<Post>>(b, "Posts")))).
+    // NullCoalesceSyntheticBareCountBody: the CapturedExpression null-coalescing rewrite. Tested directly, since it
+    // can't live in the binder's commit block (MongoQueryableMethodTranslatingExpressionVisitor.VisitMethodCall
+    // reassigns CapturedExpression after every translated Queryable call); it is applied at that assignment, keyed on
+    // the Synthetic-tier override, which these tests register by hand. EF's nav-expansion captures
+    // Select(b => b.Posts.Count) as Select(b => Queryable.Count(Queryable.AsQueryable(EF.Property<List<Post>>(b, "Posts")))).
 
     private static MongoQueryExpression SyntheticBareQuery(Expression captured)
     {

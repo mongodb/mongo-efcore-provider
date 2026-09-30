@@ -290,8 +290,7 @@ public class JoinScopeWhereSlotPopulationTests
     /// fixture's <c>owners.Join(orders, ...)</c> resolves to <c>Owner.Orders</c>) translates and defers into
     /// <see cref="MongoSelectDefinition.PostJoinOps"/> — never <c>PipelineOps</c>, which lower BEFORE the
     /// <c>$lookup</c>/<c>$unwind</c> that materializes Inner. Same shape as EF Core's own
-    /// <c>GroupJoin_Where</c> / <c>GroupJoin_Where_OrderBy</c> spec tests, which previously fell back to
-    /// driver-LINQ because this arm required a reference navigation.
+    /// <c>GroupJoin_Where</c> / <c>GroupJoin_Where_OrderBy</c> spec tests.
     /// </summary>
     [Fact]
     public void Where_reading_inner_scope_after_collection_navigation_join_populates_predicate_in_post_join_ops()

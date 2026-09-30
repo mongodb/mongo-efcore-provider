@@ -74,10 +74,8 @@ public class NativePipelineExecutionTests(TemporaryDatabaseFixture database)
             Streaming = false,
         };
 
-        // Act
         var results = clientWrapper.Execute<BsonDocument>(executableQuery, out _).ToList();
 
-        // Assert: only Bob (20) and Carol (30) have Score > 15
         Assert.Equal(2, results.Count);
         Assert.All(results, doc => Assert.True(doc["Score"].AsInt32 > 15));
         Assert.Contains(results, doc => doc["Name"].AsString == "Bob");

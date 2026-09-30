@@ -186,7 +186,6 @@ public class NativeOwnedCollectionWholeEntityTests(TemporaryDatabaseFixture data
         });
         var collection = database.MongoDatabase.GetCollection<Shop>(coll.CollectionNamespace.CollectionName);
 
-        // Routing proof: the mixed chain is admitted as a whole.
         using (var native = CreateContext(collection, MongoQueryMode.NativeOnly, ShopModel))
         {
             var shop = Assert.Single(native.Entities.AsNoTracking().ToList());
@@ -194,7 +193,6 @@ public class NativeOwnedCollectionWholeEntityTests(TemporaryDatabaseFixture data
             Assert.Equal(["A1", "B2"], shop.Items.Select(i => i.Sku));
         }
 
-        // Parity with driver-LINQ.
         using var driver = CreateContext(collection, MongoQueryMode.DriverLinq, ShopModel);
         var shopD = Assert.Single(driver.Entities.AsNoTracking().ToList());
         Assert.Equal("NYC", shopD.Address.City);

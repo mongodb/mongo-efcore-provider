@@ -1034,7 +1034,6 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         originalDb.Entities.Add(originalEntity);
         await SaveChanges(originalDb, async);
 
-        // Use a second context to modify only the name field independently
         {
             await using var modificationDb = SingleEntityDbContext.Create(collection);
             var found = modificationDb.Entities.Single();
@@ -1042,11 +1041,9 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             await SaveChanges(modificationDb, async);
         }
 
-        // Trigger the owned entity update pipeline
         originalEntity.locations.RemoveAt(0);
         await SaveChanges(originalDb, async);
 
-        // Validate that the root entity was not written to
         {
             await using var validationDb = SingleEntityDbContext.Create(collection);
             var found = validationDb.Entities.Single();
@@ -1098,7 +1095,6 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             await SaveChanges(db, async);
             AssertAllEntriesAreUnchanged(db);
 
-            // Add a second SecondLevel with its own children
             original.children.Add(new SecondLevel
             {
                 day = DayOfWeek.Saturday,
@@ -1124,19 +1120,16 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
             Assert.Equal(2, found.children[0].children.Count);
             Assert.Single(found.children[1].children);
 
-            // Remove first child from nested collection
             found.children[0].children.RemoveAt(0);
             await SaveChanges(db, async);
             AssertAllEntriesAreUnchanged(db);
             Assert.Single(found.children[0].children, c => c.name == "B");
 
-            // Remove first SecondLevel entirely
             found.children.RemoveAt(0);
             await SaveChanges(db, async);
             AssertAllEntriesAreUnchanged(db);
             Assert.Single(found.children, c => c.day == DayOfWeek.Saturday);
 
-            // Verify no spurious changes on subsequent save
             await SaveChanges(db, async);
             AssertAllEntriesAreUnchanged(db);
         }

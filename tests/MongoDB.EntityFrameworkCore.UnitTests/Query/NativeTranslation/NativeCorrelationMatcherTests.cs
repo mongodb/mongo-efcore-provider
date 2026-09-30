@@ -90,8 +90,6 @@ public class NativeCorrelationMatcherTests
         return Expression.AndAlso(nullGuard, BareEquality(outer, dependent));
     }
 
-    // ── Success cases ────────────────────────────────────────────────────────────
-
     [Fact]
     public void Bare_equality_matches_reference_navigation()
     {
@@ -136,8 +134,6 @@ public class NativeCorrelationMatcherTests
         Assert.True(result);
         Assert.Same(ordersNav, navigation);
     }
-
-    // ── requireEmbedded filtering ────────────────────────────────────────────────
 
     [Fact]
     public void RequireEmbedded_true_over_reference_navigation_returns_false()
@@ -185,8 +181,6 @@ public class NativeCorrelationMatcherTests
         Assert.Same(notesNav, navigation);
     }
 
-    // ── Rejection cases ──────────────────────────────────────────────────────────
-
     [Fact]
     public void Extra_conjunct_returns_false()
     {
@@ -216,10 +210,9 @@ public class NativeCorrelationMatcherTests
         Assert.False(result);
     }
 
-    // ── Ambiguous candidates ─────────────────────────────────────────────────────
-    // EF's model invariants prevent two genuine navigations on one outer type whose FKs resolve to the same-named
-    // property on the same target. So a second model supplies a real navigation and a DispatchProxy facade overrides
-    // only its TargetEntityType to collide with Order; every other member comes from the real navigation.
+    // Ambiguous candidates. EF's model invariants prevent two genuine navigations on one outer type whose FKs resolve to
+    // the same-named property on the same target, so a second model supplies a real navigation and a DispatchProxy
+    // facade overrides only its TargetEntityType to collide with Order.
 
     private class OverrideProxy : DispatchProxy
     {

@@ -395,7 +395,7 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
     public void Set_operation_mixing_local_and_default_kind_properties_declines()
         // Every combined row is read through the first operand's leaf, so the second operand's Local rows can't keep
         // their kind. The driver-LINQ fallback is wrong too (it reads every row with a single kind), so the parity leg
-        // here only pins that Native now falls back rather than answering.
+        // here only pins that Native falls back rather than answering.
         => AssertDeclines((q, _) =>
             q.Select(o => new { D = o.PlainDate }).Concat(q.Select(o => new { D = o.LocalDate })).AsEnumerable()
                 .Select(x => F(x.D)).ToList());
@@ -506,7 +506,7 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
     public void Ternary_mixing_local_and_default_kind_properties_declines()
     {
         // The driver-LINQ fallback rejects this shape itself ("IfTrue and IfFalse expressions have different
-        // serializers"), so there is no parity leg: the point is only that native no longer returns wrong Kinds.
+        // serializers"), so there is no parity leg: the point is only that native must not return wrong Kinds.
         var seed = Seed();
         Assert.Throws<NativeTranslationNotSupportedException>(() => Execute(seed, MongoQueryMode.NativeOnly, (q, _) =>
             q.Select(o => new { D = o.Country == "UK" ? o.LocalDate : o.PlainDate }).AsEnumerable().Select(x => F(x.D)).ToList()));

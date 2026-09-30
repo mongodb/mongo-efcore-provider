@@ -66,12 +66,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     private readonly bool _threadSafetyChecksEnabled;
     private readonly BsonSerializerFactory _bsonSerializerFactory;
 
-    /// <summary>
-    /// Create a <see cref="MongoShapedQueryCompilingExpressionVisitor"/> with the required dependencies and compilation context.
-    /// </summary>
-    /// <param name="dependencies">The <see cref="ShapedQueryCompilingExpressionVisitorDependencies"/> used by this visitor.</param>
-    /// <param name="mongoDependencies">MongoDB-specific dependencies used by this visitor.</param>
-    /// <param name="queryCompilationContext">The <see cref="QueryCompilationContext"/> for this specific query.</param>
+    /// <summary>Creates a <see cref="MongoShapedQueryCompilingExpressionVisitor"/>.</summary>
+    /// <param name="dependencies">The EF shaped-query dependencies.</param>
+    /// <param name="mongoDependencies">MongoDB-specific dependencies.</param>
+    /// <param name="queryCompilationContext">The query compilation context.</param>
     public MongoShapedQueryCompilingExpressionVisitor(
         ShapedQueryCompilingExpressionVisitorDependencies dependencies,
         MongoShapedQueryCompilingExpressionVisitorDependencies mongoDependencies,
@@ -380,11 +378,9 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         {
             NewExpression { Members: null, Arguments: [var ctorArgument] } => IsEntityShaperOperand(ctorArgument),
             MethodCallExpression methodCall => HasExactlyOneEntityShaperOperand(methodCall),
-            // A client-only body (conditional, concat, cast, member chain) wrapping an opaque call on the whole
-            // entity; mirrors NativeProjectionBinder.IsClientOnlyWholeEntityExpression on the shaper-replaced tree.
-            // Gated on HasClientWrappedWholeEntityShaper so a plain translatable tree with no opaque call keeps
-            // falling through to driver-LINQ push-down (otherwise Ternary_Null_Equals_Non_Numeric_First_Part
-            // regresses).
+            // A client-only body (conditional, concat, cast, member chain) wrapping an opaque call on the whole entity;
+            // mirrors NativeProjectionBinder.IsClientOnlyWholeEntityExpression. Gated on HasClientWrappedWholeEntityShaper so a
+            // plain translatable tree keeps falling through to driver-LINQ push-down (Ternary_Null_Equals_Non_Numeric_First_Part).
             ConditionalExpression or BinaryExpression or UnaryExpression or MemberExpression
                 when hasClientWrappedWholeEntityShaper =>
                 IsClientOnlyWholeEntityShaperExpression(shaperExpression),
@@ -467,11 +463,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     }
 
     /// <summary>
-    /// Remove the projection <c>Select</c> from the captured query chain so the shaper runs client-side
-    /// over full <see cref="BsonDocument"/>s. The Select may be the outermost node, or wrapped by a single
-    /// no-arg cardinality terminator (e.g. <c>First</c>, <c>Single</c>) emitted by EF Core for cardinality
-    /// reducers such as <c>AssertFirst</c>. The terminal operator is preserved with its generic argument
-    /// retargeted to the Select's source element type.
+    /// Removes the projection <c>Select</c> from the captured chain so the shaper runs client-side over full
+    /// <see cref="BsonDocument"/>s. The Select may be outermost or under a single no-arg cardinality terminator
+    /// (<c>First</c>, <c>Single</c>, from <c>AssertFirst</c> etc.), which is kept with its generic argument retargeted to
+    /// the Select's source element type.
     /// </summary>
     private static Expression? StripPushedDownSelect(Expression? captured)
     {
@@ -513,11 +508,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
     /// <summary>
     /// Throws when the captured chain, about to run on driver-LINQ, is a grouped query holding a case mapping
-    /// (<c>ToUpper</c>/<c>ToLower</c> and the Invariant forms) anywhere in the <c>GroupBy</c>'s key, element or result
-    /// selector, in an operator composed after it (a <c>Select</c> over the groups, its accumulator lambdas, a
-    /// <c>Where</c>), or in any lambda anywhere in an ungrouped source it groups or combines with (including either side
-    /// of a set op or join: a <c>Select</c>, <c>Where</c> or <c>OrderBy</c> before the <c>GroupBy</c>). The driver would compute it with <c>$toUpper</c>/<c>$toLower</c>,
-    /// which are ASCII-only and map null to <c>""</c>, so the answer would be silently wrong.
+    /// (<c>ToUpper</c>/<c>ToLower</c>, incl. Invariant) in the <c>GroupBy</c>'s key/element/result selector, in an
+    /// operator composed after it, or in any lambda of an ungrouped source it groups or combines with (either side of a
+    /// set op or join). The driver would compute it with <c>$toUpper</c>/<c>$toLower</c>, which are ASCII-only and map
+    /// null to <c>""</c>, so the answer would be silently wrong.
     /// </summary>
     /// <remarks>
     /// The native <c>$group</c> answers a projected case-mapped member by projecting the receiver and re-applying the
@@ -1192,12 +1186,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     }
 
 #if !EF8
-    // The bulk filter/update is translated from user expressions at execution time. When a predicate or
-    // setter shape that slipped past compile-time validation can't be translated (e.g. a GroupBy subquery
-    // in the Where), the driver/LINQ layer throws a raw ExpressionNotSupportedException / ArgumentException.
-    // Convert those into EF Core's canonical non-query translation failure so callers see a consistent
-    // "could not be translated" error. InvalidOperationException is left as-is — it already carries either
-    // that canonical message or the provider's cross-DbSet rejection.
+    // The bulk filter/update is translated from user expressions at execution time. When a shape that slipped past
+    // compile-time validation can't be translated (e.g. a GroupBy subquery in the Where), the driver throws a raw
+    // ExpressionNotSupportedException / ArgumentException; convert those into EF's canonical non-query translation
+    // failure. InvalidOperationException is left as-is: it already carries that message or the cross-DbSet rejection.
     private static T TranslateBulkOrThrow<T>(MongoNonQueryExpression nonQuery, Func<T> translate)
     {
         try
@@ -1227,13 +1219,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         }
     }
 
-    // Builds a driver query that yields the raw stored BsonDocuments for the bulk source, by reusing the
-    // read path's TranslateQuery (which applies Where/OrderBy/Skip/Take/Distinct via the driver and reads the
-    // ambient transaction session) and asking the driver provider for BsonDocument results.
-    //
-    // This coupling keeps the driver-LINQ bridge alive even once no read query falls back.
-    // Note: this fetches whole documents and keeps only _id; a future optimization could push a
-    // { _id: 1 } projection server-side to reduce transfer for large target sets.
+    // Builds a driver query yielding the raw stored BsonDocuments for the bulk source, by reusing the read path's
+    // TranslateQuery (Where/OrderBy/Skip/Take/Distinct via the driver, ambient transaction session) with BsonDocument
+    // results. This keeps the driver-LINQ bridge alive even once no read query falls back. Fetches whole documents and
+    // keeps only _id; a { _id: 1 } server-side projection could reduce transfer for large target sets.
     private static IQueryable<BsonDocument> BuildIdDocumentQuery<TSource>(
         QueryContext queryContext,
         IReadOnlyEntityType entityType,
@@ -1373,8 +1362,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
     /// <summary>
     /// Renders a self-referencing setter value (e.g. <c>o =&gt; o.Quantity + 1</c>) to an aggregation-expression
-    /// <see cref="BsonValue"/>. The value body is lowered through the EF→driver-LINQ visitor, rebound to a single shared
-    /// parameter, and rendered with the EF entity serializer so element names honor the EF model.
+    /// <see cref="BsonValue"/>: lowered through the EF→driver-LINQ visitor, rebound to one shared parameter, and
+    /// rendered with the EF entity serializer so element names honor the EF model.
     /// </summary>
     private static BsonValue RenderSelfReferencingValue<TSource>(
         QueryContext queryContext,
@@ -1455,10 +1444,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     private static object? CompileAndEvaluate(Expression expression)
         => Expression.Lambda<Func<object?>>(Expression.Convert(expression, typeof(object))).Compile()();
 
-    /// <summary>
-    /// Rebinds every <see cref="ParameterExpression"/> in a translated self-referencing setter body to a single shared
-    /// parameter, so the assembled value lambda has exactly one parameter as required by the renderer.
-    /// </summary>
+    /// <summary>Rebinds every parameter in a translated self-referencing setter body to one shared parameter, as the renderer requires.</summary>
     private sealed class ParameterRebindingExpressionVisitor(ParameterExpression target)
         : System.Linq.Expressions.ExpressionVisitor
     {

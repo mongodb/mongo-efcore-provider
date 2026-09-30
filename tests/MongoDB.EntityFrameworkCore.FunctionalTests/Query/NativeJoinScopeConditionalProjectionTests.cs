@@ -121,9 +121,8 @@ public class NativeJoinScopeConditionalProjectionTests(TemporaryDatabaseFixture 
         Assert.Contains(NoneSentinel, actual);
     }
 
-    // DriverLinq included: that mode used to return a bare null instead of NoneSentinel for the dangling-region
-    // row (the flattened left-outer $unwind left the joined field MISSING, which the driver's `$ne: [field, null]`
-    // treats as non-null) — fixed by the bridge's missing -> null normalization after a preserved forced $unwind.
+    // DriverLinq included: the flattened left-outer $unwind leaves the joined field MISSING, which the driver's
+    // `$ne: [field, null]` treats as non-null; the bridge normalizes missing -> null after a preserved forced $unwind.
     [Theory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.DriverLinq)]

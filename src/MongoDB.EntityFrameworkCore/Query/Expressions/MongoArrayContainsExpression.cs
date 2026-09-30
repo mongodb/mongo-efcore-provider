@@ -29,12 +29,10 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </remarks>
 internal sealed class MongoArrayContainsExpression : MongoExpression
 {
-    /// <summary>
-    /// Creates a <see cref="MongoArrayContainsExpression"/>.
-    /// </summary>
-    /// <param name="field">The stored array field being tested.</param>
-    /// <param name="value">The single candidate value to test for array membership.</param>
-    /// <param name="negated"><see langword="true"/> for negated membership (the value is not an element).</param>
+    /// <summary>Creates a <see cref="MongoArrayContainsExpression"/>.</summary>
+    /// <param name="field">The stored array field.</param>
+    /// <param name="value">The candidate element.</param>
+    /// <param name="negated"><see langword="true"/> for "not an element".</param>
     public MongoArrayContainsExpression(MongoFieldExpression field, MongoExpression value, bool negated)
     {
         Field = field;
@@ -43,13 +41,12 @@ internal sealed class MongoArrayContainsExpression : MongoExpression
     }
 
     /// <summary>The stored array field being tested.</summary>
-    // 'new' hides the inherited Expression.Field(...) method; used for semantic clarity.
     public new MongoFieldExpression Field { get; }
 
     /// <summary>The single candidate value to test for array membership.</summary>
     public MongoExpression Value { get; }
 
-    /// <summary><see langword="true"/> for negated membership (the value is not an element of the array).</summary>
+    /// <summary><see langword="true"/> for "not an element".</summary>
     public bool Negated { get; }
 
     /// <inheritdoc />

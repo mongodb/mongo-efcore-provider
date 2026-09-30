@@ -224,7 +224,7 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
     // Required-leaf half of the case above; Native and DriverLinq diverge. Cid has no Home, yet Home is required and
     // Location.City non-nullable. Native throws; the driver deserializer yields the CLR default (the mitigation noted
     // in BREAKING-CHANGES.md). A whole-entity read already throws in both modes ("Field 'Home' required but not
-    // present"), so native projection now agrees with the whole-entity path. Both legs are asserted.
+    // present"), so native projection agrees with the whole-entity path. Both legs are asserted.
     [Fact]
     public void Owned_required_subproperty_projection_over_absent_owned_throws_natively_and_falls_back_leniently()
     {

@@ -182,8 +182,7 @@ internal static class NativeJoinScopeTranslator
         return true;
     }
 
-    /// <summary>True if <paramref name="rootParam"/> still appears in <paramref name="rewritten"/>, i.e. some
-    /// reference to it wasn't part of the Outer*/Inner? hop chain.</summary>
+    /// <summary>True if <paramref name="rootParam"/> survives in <paramref name="rewritten"/> outside the hop chain.</summary>
     private static bool ReferencesParameterOutsideHopChain(Expression rewritten, ParameterExpression rootParam)
     {
         var found = false;
@@ -282,8 +281,6 @@ internal static class NativeJoinScopeTranslator
         MongoJoinScope scope, ParameterExpression rootParam, Expression node, out int scopeIndex)
         => TryRerootToBareScope(scope, rootParam, node, out scopeIndex);
 
-    // Resolves bare scope leaves (`x.Inner`, `x.Outer.Inner`, no trailing member) via
-    // MongoTransparentScopeResolver.TryResolveScopeDepth, by member-name chain rather than CLR type.
     private static bool TryRerootToBareScope(
         MongoJoinScope scope, ParameterExpression rootParam, Expression node, out int scopeIndex)
     {
@@ -447,7 +444,6 @@ internal static class NativeJoinScopeTranslator
         }
     }
 
-    /// <summary>Backs <see cref="ReferencesInnerScope"/>.</summary>
     private sealed class InnerAccessDetector(ParameterExpression rootParam) : ExpressionVisitor
     {
         public bool Found { get; private set; }

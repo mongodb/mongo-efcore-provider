@@ -72,7 +72,6 @@ public class MongoAggregationExpressionRendererTests
     {
         var age = GetProperty<Customer>("Age");
         var score = GetProperty<Customer>("Score");
-        // Age + Score > 5
         var expr = new MongoBinaryExpression(
             MongoBinaryOperator.GreaterThan,
             new MongoBinaryExpression(MongoBinaryOperator.Add,

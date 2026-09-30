@@ -176,10 +176,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     private readonly ParameterExpression _name = Expression.Variable(typeof(string), "__name");
 
     /// <summary>
-    /// Rewrite the post-injection materializer into a forward-streaming materializer that reads from
-    /// <paramref name="readerParameter"/>. The caller is responsible for opening, positioning, and disposing the reader
-    /// — this method only reads the root document's fields (<c>ReadStartDocument</c> / fill loop / <c>ReadEndDocument</c>)
-    /// and rewrites the materializer body to consume the streamed locals.
+    /// Rewrites the post-injection materializer into a forward-streaming one reading from
+    /// <paramref name="readerParameter"/>. The caller opens, positions and disposes the reader.
     /// </summary>
     public BlockExpression Rewrite(
         Expression injectedBody, ParameterExpression readerParameter, ParameterExpression contextParameter)
@@ -188,16 +186,12 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         _context = contextParameter;
         var resultType = injectedBody.Type;
 
-        // Build the per-entity plans, recursively. The root entity and its owned subtree share one
-        // property->local scope; each lookup-reference target gets its own.
         var rootPlan = BuildPlan(_rootEntityType, present: null, new Dictionary<IProperty, ParameterExpression>());
 
         var rewrittenBody = RewriteMaterializer(injectedBody, rootPlan);
 
-        // Forward-fill loop over the root document, descending into owned sub-documents.
         var fillLoop = BuildFillLoop(rootPlan);
 
-        // Collect all locals (reader scratch + every entity's property/present locals).
         var allLocals = new List<ParameterExpression> { _name };
         var initializers = new List<Expression>();
         CollectLocals(rootPlan, allLocals, initializers);
@@ -212,12 +206,9 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     }
 
     /// <summary>
-    /// Build a plan for <paramref name="entityType"/>: one typed local per scalar property, a "present" flag
-    /// (for owned sub-documents), a recursive plan for each single owned reference navigation, and a
-    /// <see cref="CollectionPlan"/> for each owned collection navigation, materialized via the fill loop
-    /// (<see cref="BuildFillLoop"/>). Rejects a non-owned collection navigation with
-    /// <see cref="NativeTranslationNotSupportedException"/> (an owned collection whose element itself carries a
-    /// further navigation is rejected one level up, by <see cref="StreamingEligibility"/>).
+    /// Builds a plan for <paramref name="entityType"/> (recursively for owned navigations). Rejects a non-owned
+    /// collection navigation with <see cref="NativeTranslationNotSupportedException"/>; an owned collection whose
+    /// element carries a further navigation is rejected earlier, by <see cref="StreamingEligibility"/>.
     /// </summary>
     private EntityPlan BuildPlan(
         IEntityType entityType,
@@ -378,9 +369,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     }
 
     /// <summary>
-    /// Build the forward name-dispatch fill loop for a single document level (the reader is already
-    /// positioned after <c>ReadStartDocument</c>). Scalar elements fill their typed locals; an owned
-    /// navigation element descends into the sub-document (recursively) under a present flag + null guard.
+    /// Builds the forward name-dispatch fill loop for one document level (reader already after
+    /// <c>ReadStartDocument</c>).
     /// </summary>
     private Expression BuildFillLoop(EntityPlan plan)
     {
@@ -690,7 +680,6 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                 Expression.Constant(fixup),
                 Expression.Constant(setLoaded)));
 
-        // Insert the include call just before the block's trailing instance expression.
         var expressions = new List<Expression>(entityBlock.Expressions);
         var trailing = expressions[^1];
         expressions[^1] = includeCall;
@@ -983,8 +972,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     }
 
     /// <summary>
-    /// Build a typed read for <paramref name="property"/>: deserialize the value at the reader's current
-    /// position via the property's serializer and assign it to <paramref name="local"/>.
+    /// Reads the value at the reader's current position via the property's serializer into <paramref name="local"/>.
     /// </summary>
     /// <remarks>
     /// An explicit BSON <c>null</c> is consumed. A non-nullable value-typed property is left at
@@ -1054,11 +1042,9 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         = typeof(InvalidOperationException).GetConstructor([typeof(string)])!;
 
     /// <summary>
-    /// Rewrites an EF construction/tracking block to consume the streaming locals instead of a ValueBuffer:
-    /// <c>ValueBufferTryReadValue&lt;TClr&gt;(mc.ValueBuffer, i, property)</c> becomes the property's local
-    /// (wrapped in <c>Convert</c> when the requested type differs), and
-    /// <c>new MaterializationContext(&lt;source&gt;, ctx)</c> becomes
-    /// <c>new MaterializationContext(ValueBuffer.Empty, ctx)</c>.
+    /// Rewrites an EF construction block so <c>ValueBufferTryReadValue</c> reads become the property's streaming
+    /// local (<c>Convert</c>-wrapped if the type differs) and the <c>MaterializationContext</c> source becomes
+    /// <c>ValueBuffer.Empty</c>.
     /// </summary>
     private sealed class ConstructionRewriter : System.Linq.Expressions.ExpressionVisitor
     {

@@ -326,7 +326,7 @@ public class SlotPopulationTests
     }
 
     [Fact]
-    public void Constant_leaf_now_populates_projection_via_the_literal_wrap() // MongoPipelineFactory.RenderProject $literal-wraps a bare constant/parameter value, so $project can no longer misread {X:5} as a flag
+    public void Constant_leaf_now_populates_projection_via_the_literal_wrap() // RenderProject $literal-wraps a bare constant/parameter so $project cannot misread {X:5} as a flag
     {
         var mongoQuery = TranslateToMongoQuery<Customer>(q => q.Select(c => new { X = 5 }));
 

@@ -134,11 +134,10 @@ public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) 
         }
         catch
         {
-            // Hard-fail is the accepted outcome.
             return;
         }
 
-        Assert.Equal(3, rows.Count); // one per item (Alice, Alice, Carol) — MUST NOT be the pre-fix 2
+        Assert.Equal(3, rows.Count);
     }
 
     [Fact]
@@ -163,7 +162,6 @@ public class NativeCompositionSeamAuditTests(TemporaryDatabaseFixture database) 
         Assert.Equal(expected, result);
     }
 
-    // ── Include (cross-collection) then owned SelectMany ─────────────────────────────────────────
     // HasTerminalOperator doesn't track Include's $lookup state (that lives on MongoQueryExpression), so
     // Include(collection).SelectMany(owned) bypasses the guard. Pins that the result is still correct.
 

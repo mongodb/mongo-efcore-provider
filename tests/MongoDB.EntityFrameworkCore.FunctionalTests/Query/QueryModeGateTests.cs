@@ -109,7 +109,6 @@ public class QueryModeGateTests(TemporaryDatabaseFixture database)
             Assert.Equal(["Bob", "Carol", "Dave"], names.ToArray());
         }
 
-        // Same query shape, different parameter value.
         using (var db = CreateContext(collection, logs, MongoQueryMode.Native))
         {
             var threshold = 25;

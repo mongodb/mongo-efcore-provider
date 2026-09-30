@@ -81,8 +81,6 @@ public class NativeSelectManyBinderTests
     // Queryable.Select(Queryable.AsQueryable(o.Nav), innerLambda).
     private static LambdaExpression Build<TResult>(Expression<Func<Owner, IQueryable<TResult>>> expr) => expr;
 
-    // ── Success cases ────────────────────────────────────────────────────────────
-
     [Fact]
     public void Nested_select_binds_unwind_and_two_scope_projection()
     {
@@ -123,8 +121,6 @@ public class NativeSelectManyBinderTests
         var inner = mongoQ.Select.Projection.Single(p => p.Alias == "InnerName");
         Assert.Equal("Items.Name", Assert.IsType<MongoFieldExpression>(inner.Expression).ElementName);
     }
-
-    // ── Rejection cases ──────────────────────────────────────────────────────────
 
     [Fact]
     public void Reference_collection_navigation_returns_false()
@@ -298,10 +294,9 @@ public class NativeSelectManyBinderTests
         Assert.Equal("Name", Assert.IsType<MongoOuterFieldExpression>(bin.Right).ElementName);
     }
 
-    // ── TryBindTransparentIdentifierProjection: explicit-result-selector / query-syntax form ───────
-    // Nav-expansion produces a separate trailing Select over a TransparentIdentifier(Outer, Inner): leaves are
-    // ti.Outer.<m> / ti.Inner.<m> on a single ti parameter. Synthesized here, since the real nav-expansion output
-    // isn't reachable from a unit test.
+    // TryBindTransparentIdentifierProjection (explicit-result-selector / query-syntax form): nav-expansion produces a
+    // trailing Select over a TransparentIdentifier(Outer, Inner) with leaves ti.Outer.<m> / ti.Inner.<m>. Synthesized
+    // here, since real nav-expansion output isn't reachable from a unit test.
 
     private class TransparentIdentifier
     {
@@ -788,9 +783,8 @@ public class NativeSelectManyBinderTests
         Assert.Empty(mongoQ.Select.Projection);
     }
 
-    // ── TryBindReferenceNavUnwind: cross-collection reference SelectMany ────
-    // The reference collectionSelector is a correlated subquery — Queryable.Where(EntityQueryRootExpression
-    // <Target>, o => c.pk == o.fk) — not a bare nav. Owner.Tags (FK Tag.OwnerId) is the fixture.
+    // TryBindReferenceNavUnwind: the reference collectionSelector is a correlated subquery,
+    // Queryable.Where(EntityQueryRootExpression<Target>, o => c.pk == o.fk), not a bare nav. Fixture: Owner.Tags (FK Tag.OwnerId).
 
     private static readonly System.Reflection.MethodInfo EfPropertyOfInt =
         typeof(EF).GetMethod(nameof(EF.Property))!.MakeGenericMethod(typeof(int));
@@ -1193,10 +1187,9 @@ public class NativeSelectManyBinderTests
         Assert.Equal("_lookup_Tags.Label", Assert.IsType<MongoFieldExpression>(labelP.Expression).ElementName);
     }
 
-    // ── TryBindNestedReferenceNavUnwind: 2-level chained reference SelectMany ──
-    // The second SelectMany's collectionSelector is Queryable.Where(EntityQueryRootExpression<Leaf>,
-    // l => ti.Inner.Id == l.MidId) — the same correlated-subquery shape TryBindReferenceNavUnwind parses, except
-    // the outer-key side is a transparent-identifier member chain (ti.Inner.<pk>), not a bare parameter.
+    // TryBindNestedReferenceNavUnwind (2-level chained reference SelectMany): the second collectionSelector is
+    // Queryable.Where(EntityQueryRootExpression<Leaf>, l => ti.Inner.Id == l.MidId), as TryBindReferenceNavUnwind
+    // parses, except the outer-key side is a transparent-identifier member chain (ti.Inner.<pk>).
 
     private class NestedOwner
     {
@@ -1287,7 +1280,7 @@ public class NativeSelectManyBinderTests
         Assert.NotNull(level2.Lookup);
         Assert.True(level2.Lookup!.ForceUnwind);
         Assert.Equal("_lookup_Mids._id", level2.Lookup.LocalField);
-        Assert.Null(level2.Filter); // unfiltered — this slice's scope
+        Assert.Null(level2.Filter);
 
         // MongoQueryExpression.GetPendingLookups must order the level-1 lookup before level-2's.
         var lookups = mongoQ.Lookups;

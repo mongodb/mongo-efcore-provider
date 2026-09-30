@@ -48,11 +48,9 @@ internal enum LookupPipelineKind
 /// </summary>
 internal sealed class LookupExpression
 {
-    /// <summary>
-    /// Create a <see cref="LookupExpression"/> for the given navigation.
-    /// </summary>
-    /// <param name="navigation">The <see cref="INavigation"/> that requires a <c>$lookup</c>.</param>
-    /// <param name="forceUnwind">Force $unwind even for collection navigations (used for explicit Join).</param>
+    /// <summary>Creates a <see cref="LookupExpression"/> for the given navigation.</summary>
+    /// <param name="navigation">The navigation that requires a <c>$lookup</c>.</param>
+    /// <param name="forceUnwind">Force <c>$unwind</c> even for collection navigations (explicit Join).</param>
     public LookupExpression(INavigation navigation, bool forceUnwind = false)
     {
         Navigation = navigation;
@@ -64,13 +62,11 @@ internal sealed class LookupExpression
 
         if (navigation.IsOnDependent)
         {
-            // e.g., Order.Customer where FK (CustomerId) is on Order
             LocalField = GetFieldPath(foreignKey.Properties[0]);
             ForeignField = GetFieldPath(foreignKey.PrincipalKey.Properties[0]);
         }
         else
         {
-            // e.g., Customer.Orders where FK (CustomerId) is on Order
             LocalField = GetFieldPath(foreignKey.PrincipalKey.Properties[0]);
             ForeignField = GetFieldPath(foreignKey.Properties[0]);
         }
@@ -93,10 +89,7 @@ internal sealed class LookupExpression
         }
     }
 
-    /// <summary>
-    /// Create a <see cref="LookupExpression"/> for a Join hop with no corresponding model navigation,
-    /// built directly from resolved join-key field paths instead of an <see cref="INavigation"/>.
-    /// </summary>
+    /// <summary>Creates a <see cref="LookupExpression"/> for a Join hop with no model navigation, from resolved key field paths.</summary>
     public LookupExpression(
         IEntityType targetEntityType, string collectionName, string localField, string foreignField, string alias,
         bool forceUnwind)
@@ -111,11 +104,11 @@ internal sealed class LookupExpression
     }
 
     /// <summary>
-    /// The field a <c>$lookup</c> writes its results to and the shaper reads back from. Centralized so
-    /// write and read sites can't drift on the <c>_lookup_</c> format.
+    /// The <c>_lookup_&lt;NavigationName&gt;</c> field a <c>$lookup</c> writes to and the shaper reads back from;
+    /// centralized so write and read sites can't drift.
     /// </summary>
     /// <param name="navigation">The navigation the lookup supports.</param>
-    /// <returns>The <c>_lookup_&lt;NavigationName&gt;</c> field name.</returns>
+    /// <returns>The alias field name.</returns>
     public static string GetLookupAlias(IReadOnlyNavigationBase navigation)
         => $"{LookupAliasPrefix}{navigation.Name}";
 
@@ -126,9 +119,7 @@ internal sealed class LookupExpression
     /// Join hop with no corresponding model navigation (see EF-377).</summary>
     public INavigation? Navigation { get; }
 
-    /// <summary>The entity type this lookup's <c>$lookup</c> stage produces documents for. Always
-    /// available, unlike <see cref="Navigation"/>, so consumers can match a lookup back to an entity
-    /// type without assuming a navigation exists.</summary>
+    /// <summary>The entity type this lookup produces documents for. Unlike <see cref="Navigation"/>, always available.</summary>
     public IEntityType TargetEntityType { get; }
 
     /// <summary>The target collection name to look up from.</summary>
@@ -143,10 +134,7 @@ internal sealed class LookupExpression
     /// <summary>The output array field name in the resulting document.</summary>
     public string As { get; set; }
 
-    /// <summary>
-    /// Get the full MongoDB field path for a property, accounting for composite keys
-    /// stored under the _id document.
-    /// </summary>
+    /// <summary>The full field path for a property, accounting for composite keys stored under <c>_id</c>.</summary>
     /// <remarks>
     /// <c>internal</c> so <c>JoinLookupImplementsKeySelectors</c> compares against the same composite-key-aware
     /// path <see cref="ForeignField"/>/<see cref="LocalField"/> were built from; a plain <c>GetElementName()</c>
@@ -156,9 +144,7 @@ internal sealed class LookupExpression
     {
         var elementName = property.GetElementName();
 
-        // For properties that are part of a composite primary key, they are stored nested
-        // under _id (e.g., { _id: { OrderID: 10248, ProductID: 11 } }).
-        // The element name alone won't match — we need the full path _id.OrderID.
+        // Composite-key components are stored nested under _id (e.g. _id.OrderID).
         if (property.IsPrimaryKey()
             && property.DeclaringType is IEntityType entityType
             && entityType.FindPrimaryKey()?.Properties.Count > 1)
@@ -170,22 +156,20 @@ internal sealed class LookupExpression
     }
 
     /// <summary>
-    /// Pipeline stages to apply inside the <c>$lookup</c> for filtered Includes
-    /// (e.g., OrderBy, Skip, Take on the included collection).
-    /// When non-empty, the pipeline form of <c>$lookup</c> is used instead of localField/foreignField.
+    /// Stages applied inside the <c>$lookup</c> for filtered Includes (OrderBy, Skip, Take). When non-empty the
+    /// pipeline form of <c>$lookup</c> is used instead of localField/foreignField.
     /// </summary>
     public List<BsonDocument> PipelineStages { get; } = [];
 
     /// <summary>See <see cref="LookupPipelineKind"/>.</summary>
     /// <remarks>
-    /// Write exactly once, at registration (it can't be <see langword="init"/> because the fallback visitor stamps
-    /// it after construction). In particular, an object-initializer assignment would silently overwrite the
-    /// <see cref="LookupPipelineKind.FallbackOnly"/> the constructor's TPH branch sets, leaving its discriminator
-    /// <c>$match</c> unaccounted for.
+    /// Write exactly once, at registration (not <see langword="init"/> because the fallback visitor stamps it after
+    /// construction). An object-initializer assignment would overwrite the <see cref="LookupPipelineKind.FallbackOnly"/>
+    /// the constructor's TPH branch sets, leaving its discriminator <c>$match</c> unaccounted for.
     /// </remarks>
     public LookupPipelineKind PipelineKind { get; internal set; } = LookupPipelineKind.None;
 
-    /// <summary>Whether this lookup uses a pipeline (filtered Include).</summary>
+    /// <summary>Whether this lookup uses the pipeline form (filtered Include).</summary>
     public bool HasPipeline => PipelineStages.Count > 0;
 
     /// <summary>Whether this lookup is for a single reference (not a collection). A navigation-less
@@ -202,14 +186,13 @@ internal sealed class LookupExpression
     /// <summary>Whether <c>$unwind</c> should be applied after <c>$lookup</c>.</summary>
     public bool ShouldUnwind => IsReference || ForceUnwind;
 
-    /// <summary>Whether $unwind is forced regardless of navigation type.</summary>
+    /// <summary>Whether <c>$unwind</c> is forced regardless of navigation type.</summary>
     public bool ForceUnwind { get; }
 
     /// <summary>
     /// Set when this collection Include's alias was renamed from <see cref="GetLookupAlias(IReadOnlyNavigationBase)"/>
-    /// to avoid colliding with an incompatible ($unwind-ed or <see cref="IsBareCountSizeSource"/>) lookup — see
-    /// <c>MongoProjectionBindingExpressionVisitor.VisitExtension</c>'s <c>IncludeExpression</c> case. Lets
-    /// <see cref="NativeTranslation.MongoSelectLowerer.AppendLookupStages"/> treat it as a plain collection Include
+    /// to avoid colliding with an incompatible ($unwind-ed or <see cref="IsBareCountSizeSource"/>) lookup, so
+    /// <see cref="NativeTranslation.MongoSelectLowerer.AppendLookupStages"/> treats it as a plain collection Include
     /// under a different field name.
     /// </summary>
     public bool RenamedToAvoidJoinCollision { get; set; }
@@ -220,11 +203,10 @@ internal sealed class LookupExpression
     /// so it must remain the navigation's unfiltered array.
     /// </summary>
     /// <remarks>
-    /// This lookup is registered at <c>Where</c>/projection time, before a later filtered/paged <c>Include</c> of the
-    /// same navigation may register at the same alias. Without this flag, <see cref="MongoQueryExpression.AddLookup"/>'s
-    /// bare-then-pipelined merge would silently fold the Include's paged array into it, corrupting the count in
-    /// every <see cref="Infrastructure.MongoQueryMode"/> (the merge precedes the native/fallback decision). Instead
-    /// the Include's collision detection (see <see cref="RenamedToAvoidJoinCollision"/>) renames the incoming Include.
+    /// Registered at <c>Where</c>/projection time, before a later filtered/paged <c>Include</c> of the same navigation
+    /// may register at the same alias. Without this flag, <see cref="MongoQueryExpression.AddLookup"/>'s
+    /// bare-then-pipelined merge would fold the Include's paged array into it, corrupting the count in every
+    /// <see cref="Infrastructure.MongoQueryMode"/>. Instead the Include is renamed (see <see cref="RenamedToAvoidJoinCollision"/>).
     /// </remarks>
     public bool IsBareCountSizeSource { get; set; }
 
@@ -274,10 +256,8 @@ internal sealed class LookupExpression
     }
 
     /// <summary>
-    /// Whether the <c>$unwind</c> following this <c>$lookup</c> uses <c>preserveNullAndEmptyArrays: true</c>
-    /// (left-outer) or not (inner). Defaults to <see langword="true"/> for Include; the join path sets it from the
-    /// LINQ operator (<c>LeftJoin</c>/<c>GroupJoin</c> outer, <c>Join</c> inner, including EF's lowering of a
-    /// required reference navigation).
+    /// Whether the following <c>$unwind</c> uses <c>preserveNullAndEmptyArrays: true</c> (left-outer). Defaults to
+    /// <see langword="true"/> for Include; the join path sets it from the LINQ operator.
     /// </summary>
     /// <remarks>
     /// <see langword="init"/>-only: compile-time state on an object reused across executions.
@@ -285,10 +265,8 @@ internal sealed class LookupExpression
     public bool PreserveNullAndEmptyArrays { get; init; } = true;
 
     /// <summary>
-    /// Whether this $lookup must be injected right after the root collection source (before the user's
-    /// downstream pipeline stages) rather than tail-appended. Used for projected collection-navigation
-    /// counts (<c>select new { ..., c.Orders.Count }</c>) where a later <c>$match</c>/<c>$project</c>
-    /// reads the <c>_lookup_&lt;Nav&gt;</c> array via <c>{ $size: ... }</c> and so must see it already present.
+    /// Whether this <c>$lookup</c> must be injected right after the root source rather than tail-appended, e.g.
+    /// projected collection counts where a later stage reads the array via <c>$size</c>.
     /// </summary>
     public bool InjectAfterRoot { get; set; }
 
@@ -334,9 +312,7 @@ internal sealed class LookupExpression
         });
     }
 
-    /// <summary>
-    /// Builds the <c>$unwind</c> stage document that flattens this lookup's output array.
-    /// </summary>
+    /// <summary>Builds the <c>$unwind</c> stage document that flattens this lookup's output array.</summary>
     /// <remarks>
     /// <paramref name="preserveNullAndEmptyArrays"/> is a parameter, not read from
     /// <see cref="PreserveNullAndEmptyArrays"/>, because callers legitimately differ: the flat-lookup path follows

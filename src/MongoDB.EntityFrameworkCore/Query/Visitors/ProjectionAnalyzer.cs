@@ -69,12 +69,9 @@ internal static class ProjectionAnalyzer
 
         protected override Expression VisitMethodCall(MethodCallExpression node)
         {
-            // A LINQ (Enumerable.*) operator applied to a string treats the string as
-            // IEnumerable<char>, which the driver cannot translate — StringSerializer is not
-            // an IBsonArraySerializer. This covers ToArray / ToList / AsEnumerable /
-            // FirstOrDefault / LastOrDefault / etc. over a string. Don't push the projection
-            // down; route it to the client shaper so the operator runs on the materialized
-            // value. (EF-250, EF-231)
+            // A LINQ (Enumerable.*) operator over a string (ToArray/ToList/AsEnumerable/FirstOrDefault/...) treats it
+            // as IEnumerable<char>, which the driver cannot translate (StringSerializer is not an
+            // IBsonArraySerializer). Don't push down; route to the client shaper. (EF-250, EF-231)
             if (node.Method.DeclaringType == typeof(Enumerable)
                 && node.Arguments.Count >= 1
                 && node.Arguments[0].Type == typeof(string))
@@ -118,8 +115,8 @@ internal static class ProjectionAnalyzer
                 return ContainsEntityReference(unaryExpression.Operand);
 
             case ConditionalExpression conditionalExpression:
-                // The Test always evaluates to bool — it never produces an entity in the result,
-                // so entity references in the test (e.g., entity != null) don't prevent push-down.
+                // The Test is always bool and never produces an entity, so entity references in it
+                // (e.g. entity != null) don't prevent push-down.
                 return ContainsEntityReference(conditionalExpression.IfTrue)
                     || ContainsEntityReference(conditionalExpression.IfFalse);
 
@@ -166,8 +163,7 @@ internal static class ProjectionAnalyzer
                 return false;
 
             default:
-                // Unknown expression types conservatively prevent push-down to avoid
-                // silently mishandling future expression types that may wrap entities.
+                // Unknown expression types conservatively prevent push-down: a future type may wrap entities.
                 Debug.Assert(true, $"Unknown expression type {expression.GetType().Name}");
                 return true;
         }

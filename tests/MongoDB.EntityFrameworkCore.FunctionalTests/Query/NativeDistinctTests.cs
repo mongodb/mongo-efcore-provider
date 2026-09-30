@@ -110,7 +110,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Bare_scalar_projection_Distinct_goes_native()
     {
-        // US/US/US, UK/UK, FR -> 3 distinct countries.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Bare_scalar_projection_Distinct_goes_native));
 
@@ -391,7 +390,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
             seedDb.SaveChanges();
         }
 
-        // Native: falls back to driver-LINQ and returns correct results.
         using (var nativeDb = Make(collection, MongoQueryMode.Native, configure))
         {
             var result = nativeDb.Entities.Select(o => new { o.Status }).Distinct()
@@ -402,7 +400,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
                 result.Select(r => r.Status).ToArray());
         }
 
-        // NativeOnly: fallback is disallowed, so it throws.
         using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly, configure);
         Assert.Throws<NativeTranslationNotSupportedException>(() =>
             nativeOnlyDb.Entities.Select(o => new { o.Status }).Distinct().ToList());

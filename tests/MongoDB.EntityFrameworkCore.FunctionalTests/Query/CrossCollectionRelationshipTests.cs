@@ -58,13 +58,11 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
             orderId = order._id;
         }
 
-        // FK is stored on the dependent under its configured element name "cust_id".
         var rawOrder = database.MongoDatabase.GetCollection<BsonDocument>(ordersName)
             .Find(Builders<BsonDocument>.Filter.Eq("_id", orderId)).Single();
         Assert.Equal(customerId, rawOrder["cust_id"].AsObjectId);
         Assert.Equal("Order 1", rawOrder["desc"].AsString);
 
-        // Round-trips through a fresh context (no Include needed to read the FK back).
         using (var db = new OrderCustomerDbContext(database, ordersName, customersName))
         {
             var order = db.Orders.Single(o => o._id == orderId);
@@ -124,7 +122,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
 
         using (var db = new RequiredOrderCustomerDbContext(database, ordersName, customersName))
         {
-            // Load the principal and its dependents, then delete the principal -> cascade.
             var customer = db.Customers.Single(c => c._id == customerId);
             db.Orders.Where(o => o.CustomerId == customerId).Load();
             db.Customers.Remove(customer);
@@ -189,9 +186,7 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
             Assert.ThrowsAny<Exception>(() => db.SaveChanges());
         }
 
-        // The principal customer write must have rolled back: no customer persisted.
         Assert.Equal(0, database.MongoDatabase.GetCollection<BsonDocument>(customersName).CountDocuments(FilterDefinition<BsonDocument>.Empty));
-        // Only the original pre-existing order remains.
         Assert.Equal(1, database.MongoDatabase.GetCollection<BsonDocument>(ordersName).CountDocuments(FilterDefinition<BsonDocument>.Empty));
     }
 
@@ -357,12 +352,10 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
     {
         using var db = new TypedKeyDbContext<TKey>(database, ordersName, customersName);
 
-        // Reference direction: order -> customer.
         var order = db.Orders.Include(o => o.Customer).First();
         Assert.NotNull(order.Customer);
         Assert.Equal("Alice", order.Customer.FullName);
 
-        // Collection direction: customer -> orders.
         var customer = db.Customers.Include(c => c.Orders).First();
         Assert.Equal(2, customer.Orders.Count);
     }
@@ -381,9 +374,7 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
             .Where(o => o.Customer.FullName == "Alice").ToList();
 
         Assert.Equal(2, aliceOrders.Count);
-        // Both of Alice's orders share the SAME Customer instance.
         Assert.Same(aliceOrders[0].Customer, aliceOrders[1].Customer);
-        // Inverse navigation is fixed up to contain both orders.
         Assert.Equal(2, aliceOrders[0].Customer.Orders.Count);
     }
 
@@ -426,7 +417,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(2, page.Count);
         Assert.Equal(["Customer 1", "Customer 2"], page.Select(c => c.FullName).ToArray());
-        // Each customer has exactly its own two orders (no cross-contamination).
         Assert.All(page, c => Assert.Equal(2, c.Orders.Count));
     }
 
@@ -463,7 +453,6 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
             .ToList();
 
         var alice = Assert.Single(customers);
-        // Alice has exactly 2 orders (no cartesian blow-up from the deeper ThenInclude).
         Assert.Equal(2, alice.Orders.Count);
         var order1 = alice.Orders.Single(o => o.OrderDescription == "Order 1");
         var order2 = alice.Orders.Single(o => o.OrderDescription == "Order 2");
@@ -568,7 +557,7 @@ public class CrossCollectionRelationshipTests(TemporaryDatabaseFixture database)
         Assert.All(lines, l => Assert.Equal("Widget", l.Product.ProductName));
     }
 
-    // EF-373 (review follow-up): InnerCollections is keyed by IEntityType, so two navigations that join
+    // EF-373: InnerCollections is keyed by IEntityType, so two navigations that join
     // to the same target entity type (e.g. a self-join) collapse to one entry there - the split must not
     // rely on that count. Both navigations here target Order.
     [Fact]

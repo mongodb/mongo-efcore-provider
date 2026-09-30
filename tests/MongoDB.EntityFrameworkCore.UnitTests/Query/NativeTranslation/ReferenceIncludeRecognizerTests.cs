@@ -170,8 +170,7 @@ public class ReferenceIncludeRecognizerTests
     [Fact]
     public void Accepts_an_embedded_hop_with_nothing_real_nested_past_it()
     {
-        // Buyer.Address (owned, auto-included) with nothing nested past it must keep working now that the
-        // walker follows NavigationExpression.
+        // Buyer.Address (owned, auto-included) with nothing nested past it must keep working (walker follows NavigationExpression).
         var selector = ReferenceIncludeTestTrees.BuildThenIncludeChain(
             embeddedHopInBetween: true, stopAtEmbeddedHop: true);
 

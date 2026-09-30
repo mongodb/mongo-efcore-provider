@@ -98,7 +98,7 @@ public class Ef362ArrayLeafPathTests
     [Fact]
     public void A_root_declared_array_is_admitted_under_its_own_element_name_exactly_as_before()
     {
-        // Root-declared navigation: the derived path is the containing element name, as before.
+        // Root-declared navigation: the derived path is the containing element name.
         var (root, _) = BuildModel();
         var rootNotes = Navigation(root, nameof(Blog.RootNotes));
 

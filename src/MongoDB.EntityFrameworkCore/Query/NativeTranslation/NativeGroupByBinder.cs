@@ -324,7 +324,7 @@ internal static class NativeGroupByBinder
         }
 
         // A zero-accumulator wrapped key-only projection is a valid "distinct keys" $group. Decline a bare g.Key (a
-        // plain Distinct) and a combination with an ordering aggregate accumulator (untested); a key-resolved
+        // plain Distinct) and a combination with an ordering aggregate accumulator; a key-resolved
         // ordering is fine.
         if (accumulators.Count == 0 && (isBareBodyKeyMember || orderAccumulators.Count > 0))
             return false;
@@ -762,7 +762,7 @@ internal static class NativeGroupByBinder
         var definition = call.Method.IsGenericMethod ? call.Method.GetGenericMethodDefinition() : null;
 
         // g.Count()/g.LongCount() → $sum: 1. EF lowers to the Queryable form over g.AsQueryable(); the Enumerable
-        // form is accepted too (unit tests).
+        // form is accepted too.
         if ((definition == EnumerableMethods.CountWithoutPredicate
              || definition == EnumerableMethods.LongCountWithoutPredicate
              || definition == QueryableMethods.CountWithoutPredicate
@@ -1216,7 +1216,7 @@ internal static class NativeGroupByBinder
 
         // Average/Sum's selector-less overloads aren't generic, so match by name + declaring type (Arguments.Count
         // == 1 already excludes the with-selector overloads). Queryable is EF's normalized form; Enumerable comes
-        // from hand-written unit-test lambdas.
+        // from hand-written lambdas.
         var declaringOk = call.Method.DeclaringType == typeof(Queryable) || call.Method.DeclaringType == typeof(Enumerable);
         var isSize = declaringOk && call.Method.Name is nameof(Queryable.Count) or nameof(Queryable.LongCount);
         var reduceOp = !declaringOk || isSize ? null
@@ -1408,8 +1408,7 @@ internal static class NativeGroupByBinder
 
         // If every element fails `pred`, $$REMOVE leaves $min/$max/$avg null, read back as default(T) for a
         // non-nullable result, while LINQ throws for an empty sequence; decline. $sum's 0 is correct. A key-only
-        // condition is uniform across the group, so it's exempt (GroupBy_constant_with_where_on_grouping_with_
-        // aggregate_operators relies on this).
+        // condition is uniform across the group, so it's exempt.
         if (!isKeyOnlyCondition && op is "$min" or "$max" or "$avg" && IsNonNullableValueType(call.Method.ReturnType))
             return false;
 
@@ -1472,10 +1471,9 @@ internal static class NativeGroupByBinder
             return false;
 
         // select.PriorGrouping can be non-null here (a nested GroupBy(key1).Select(...).GroupBy(key2).Count() ends
-        // its outer GroupBy as a bare terminal aggregate, never a Select), but this site never set
-        // DistinctAliasScope before MongoGroupElementTranslator existed; pass priorGrouping: null (not
-        // CreateElementTranslator) to keep that behavior identical. GroupByJoinScope is only ever set when there is
-        // no prior grouping, so passing it here can't combine the two.
+        // its outer GroupBy as a bare terminal aggregate, never a Select), but this site deliberately doesn't set
+        // DistinctAliasScope: pass priorGrouping: null (not CreateElementTranslator). GroupByJoinScope is only set
+        // when there is no prior grouping, so passing it here can't combine the two.
         var translator = new MongoGroupElementTranslator(
             mongoQ.CollectionExpression.EntityType, mongoQ.Select.GroupByJoinScope, priorGrouping: null);
         var accumulators = new List<MongoGroupAccumulator>();
@@ -1559,8 +1557,8 @@ internal static class NativeGroupByBinder
             return false;
 
         // select.PriorGrouping can be non-null here for the same nested-GroupBy reason as
-        // TryBindGroupTerminalAggregate; pass priorGrouping: null to keep behavior identical. Only stages the
-        // predicate: the join is confirmed by the TryBindGroupTerminalAggregate/TryBindGroupProjection that consumes it.
+        // TryBindGroupTerminalAggregate; pass priorGrouping: null. Only stages the predicate: the join is confirmed
+        // by the TryBindGroupTerminalAggregate/TryBindGroupProjection that consumes it.
         var translator = new MongoGroupElementTranslator(
             mongoQ.CollectionExpression.EntityType, mongoQ.Select.GroupByJoinScope, priorGrouping: null);
         var isComposite = keyParts.Count == 0 ? false : keyParts.Count > 1 || keyParts[0].Name != null;
@@ -1765,7 +1763,7 @@ internal static class NativeGroupByBinder
         //   stage, so converting it would corrupt that operand. Keep this narrow: a whole-entity set op's trailing
         //   projection (e.g. Union(A,B).Select(p).Distinct()) converts safely.
         // A bare projection is admitted: ApplyProjection's alias override also fires when IsDistinct is set, so the
-        // alias survives the Route flip (NativeBareProjectionTests). Source-side paging/ordering in PipelineOps is
+        // alias survives the Route flip. Source-side paging/ordering in PipelineOps is
         // emitted before the $group, so it restricts the right input rows.
         if (select.Projection.Count == 0 || select.Grouping != null || select.Cardinality != null
             || select.UnwindSource != null || select.SetOperation is { OperandsProjected: true })
@@ -1846,8 +1844,7 @@ internal static class NativeGroupByBinder
     /// </summary>
     /// <remarks>
     /// <c>Count()</c>/<c>LongCount()</c> are excluded: they're also reachable over multi-member projected Distincts,
-    /// which are pinned as fallback (<c>NativeDistinctTests.Distinct_then_Count_throws_under_native_only</c>,
-    /// <c>NorthwindAggregateOperatorsQueryMongoTest.Select_Select_Distinct_Count</c>).
+    /// which stay on the fallback path.
     /// </remarks>
     internal static bool TryBindDistinctTerminalAggregate(
         MongoQueryExpression mongoQ, MongoAggregateOperator op, LambdaExpression? selector, Type resultType)

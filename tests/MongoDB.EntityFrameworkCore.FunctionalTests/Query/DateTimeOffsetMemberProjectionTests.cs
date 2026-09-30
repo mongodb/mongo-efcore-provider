@@ -54,8 +54,7 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
         Assert.Equal(TestValue.DateTime, result);
     }
 
-    // UtcDateTime alone, in a wrapped projection and under NativeOnly: the sibling members in
-    // Select_DateTimeOffset_remaining_components (TimeOfDay) make that query fall back, which hid a native decline here.
+    // UtcDateTime alone under NativeOnly: sibling members (TimeOfDay) in Select_DateTimeOffset_remaining_components make that query fall back.
     [Fact]
     public void Select_DateTimeOffset_UtcDateTime_goes_native()
     {
@@ -161,9 +160,7 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
     {
         using var db = SingleEntityDbContext.Create(CreateSeededCollection());
 
-        // DateTimeOffset.UtcNow.Year reaches TryResolveDateTimeOffsetElementAccess as a static MemberExpression
-        // with a null Expression, which must decline rather than throw NullReferenceException. Only the NRE is
-        // asserted against.
+        // DateTimeOffset.UtcNow.Year is a static MemberExpression with a null Expression; it must decline, not throw NullReferenceException.
         var exception = Record.Exception(() => db.Entities.Select(e => DateTimeOffset.UtcNow.Year).Single());
 
         Assert.False(exception is NullReferenceException,
@@ -212,7 +209,6 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
             e.DateTimeOffset.UtcDateTime
         }).Single();
 
-        // Scalar member components work correctly
         Assert.Equal(TestValue.Month, result.Month);
         Assert.Equal(TestValue.Day, result.Day);
         Assert.Equal(TestValue.Hour, result.Hour);

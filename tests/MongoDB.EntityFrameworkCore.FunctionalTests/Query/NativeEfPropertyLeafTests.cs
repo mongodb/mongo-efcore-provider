@@ -42,7 +42,7 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
         public int? Score { get; set; }
     }
 
-    // Composite PK: KeyA/KeyB are stored under "_id", not addressable by their own names (test 7).
+    // Composite PK: KeyA/KeyB are stored under "_id", not addressable by their own names.
     public class CompositeItem
     {
         public int KeyA { get; set; }
@@ -55,8 +55,6 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
         public ObjectId Id { get; set; }
         public string Title { get; set; } = "";
     }
-
-    // ── 1. Predicate position ──────────────────────────────────────────────────────
 
     [Fact]
     public void Predicate_goes_native()
@@ -74,8 +72,6 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
         Assert.Equal(["b_two", "c_three"], titles);
     }
 
-    // ── 2. Sort key position ───────────────────────────────────────────────────────
-
     [Fact]
     public void Sort_key_goes_native()
     {
@@ -91,8 +87,6 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
         // Order proves the sort key was honored; a fallback would return the same rows.
         Assert.Equal(["a_one", "b_two", "c_three"], titles);
     }
-
-    // ── 3. Projection leaf position ────────────────────────────────────────────────
 
     [Fact]
     public void Projection_leaf_goes_native()
@@ -110,10 +104,8 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
         Assert.Equal([1, 2, 3], results.Select(r => r.R));
     }
 
-    // ── 3b. Bare projection leaf position ──────────────────────────────────────────
-    //
-    // The bare branch derives its $project alias from the leaf's document path, not a member name. An alias miss is
-    // silent (nullable leaves read back null), so this needs its own parameterized-Where leg.
+    // Bare projection leaf: the $project alias derives from the leaf's document path, not a member name. An alias
+    // miss is silent (nullable leaves read back null), so this needs its own parameterized-Where leg.
 
     [Fact]
     public void Bare_projection_leaf_goes_native()
@@ -149,8 +141,6 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
         Assert.Equal(["a_one"], titles);
     }
 
-    // ── 4. Parameterized-Where leg ─────────────────────────────────────────────────
-
     [Fact]
     public void Parameterized_where_leg()
     {
@@ -182,8 +172,6 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
         Assert.Equal(2, results[0].Rank);
     }
 
-    // ── 5. Parity with driver-LINQ ─────────────────────────────────────────────────
-
     [Fact]
     public void Parity_with_driver_linq()
     {
@@ -203,8 +191,6 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
 
         Assert.Equal(Run(driverLinq), Run(native));
     }
-
-    // ── 6. Shadow property ─────────────────────────────────────────────────────────
 
     [Fact]
     public void Shadow_property_goes_native()
@@ -236,7 +222,7 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
         Assert.Equal([10, 20], results.Select(r => r.Shadow));
     }
 
-    // ── 7. Composite-key component: the tripwire ───────────────────────────────────
+    // Composite-key component: the tripwire.
 
     [Fact]
     public void Composite_key_component_resolves_natively()
@@ -255,8 +241,6 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
             Assert.Equal(["one"], labels);
         }
     }
-
-    // ── Seeds and helpers ───────────────────────────────────────────────────────────
 
     private IMongoCollection<Item> Seed(string name)
     {

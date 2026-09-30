@@ -44,8 +44,7 @@ internal static class EnumerableMethods
             nameof(Enumerable.LongCount), 1,
             types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
 
-        // Predicated overloads, mirroring QueryableMethods.CountWithPredicate/LongCountWithPredicate, so a
-        // hand-built or Enumerable-spelled Count/LongCount(source, predicate) tree matches a canonical MethodInfo.
+        // Enumerable-spelled Count/LongCount(source, predicate) must match a canonical MethodInfo.
         CountWithPredicate = GetMethod(
             nameof(Enumerable.Count), 1,
             types => [typeof(IEnumerable<>).MakeGenericType(types[0]), typeof(Func<,>).MakeGenericType(types[0], typeof(bool))]);
@@ -54,8 +53,7 @@ internal static class EnumerableMethods
             nameof(Enumerable.LongCount), 1,
             types => [typeof(IEnumerable<>).MakeGenericType(types[0]), typeof(Func<,>).MakeGenericType(types[0], typeof(bool))]);
 
-        // No-predicate reducers, mirroring QueryableMethods.FirstWithoutPredicate etc., so
-        // MongoProjectionBindingExpressionVisitor can rebuild a stranded Queryable.First/Single/Any call as its
+        // Lets MongoProjectionBindingExpressionVisitor rebuild a stranded Queryable.First/Single/Any as its
         // Enumerable equivalent over a materialized CollectionShaperExpression.
         FirstWithoutPredicate = GetMethod(
             nameof(Enumerable.First), 1,
@@ -73,8 +71,8 @@ internal static class EnumerableMethods
             nameof(Enumerable.Any), 1,
             types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
 
-        // Materialization overloads, used by NativeProjectionBinder.IsStringSequenceMaterializationCall to match by
-        // canonical MethodInfo rather than by name (a name match would also claim unrelated "ToList" extensions).
+        // Matched by MethodInfo, not name, in NativeProjectionBinder.IsStringSequenceMaterializationCall (a name
+        // match would also claim unrelated "ToList" extensions).
         AsEnumerable = GetMethod(
             nameof(Enumerable.AsEnumerable), 1,
             types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
@@ -85,8 +83,7 @@ internal static class EnumerableMethods
             nameof(Enumerable.ToArray), 1,
             types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
 
-        // The fully-generic (TSource, TResult) selector overloads of Min/Max — used when the selected
-        // type is not one of the fixed numeric overloads below.
+        // Fully-generic (TSource, TResult) selector overloads, used when the selected type is not a fixed numeric one.
         MaxWithSelector = GetMethod(
             nameof(Enumerable.Max), 2,
             types => [typeof(IEnumerable<>).MakeGenericType(types[0]), typeof(Func<,>).MakeGenericType(types[0], types[1])]);
@@ -94,9 +91,8 @@ internal static class EnumerableMethods
             nameof(Enumerable.Min), 2,
             types => [typeof(IEnumerable<>).MakeGenericType(types[0]), typeof(Func<,>).MakeGenericType(types[0], types[1])]);
 
-        // The Sum/Average/Min/Max selector overloads that are generic only in TSource (their result type is
-        // one of the fixed numeric types); overload resolution binds a numeric member selector to these
-        // rather than the fully-generic forms above, so we must match against them too.
+        // Selector overloads generic only in TSource (fixed numeric result); a numeric member selector binds to
+        // these rather than the fully-generic forms above.
         var numericTypes = new[]
         {
             typeof(int), typeof(int?), typeof(long), typeof(long?), typeof(float), typeof(float?),

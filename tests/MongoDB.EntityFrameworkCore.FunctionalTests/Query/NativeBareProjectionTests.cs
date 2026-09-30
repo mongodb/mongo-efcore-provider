@@ -456,8 +456,7 @@ public class NativeBareProjectionTests(TemporaryDatabaseFixture database) : ICla
             nameof(Bare_projected_intersect_and_except_operands_go_native_and_return_correct_values) + mode);
         using var db = CreateContext(collection, mode);
 
-        // These have no driver-LINQ baseline, so this goes from failing in every mode to correct in every mode.
-        // op1 = {p2, q0, r_mid}, op2 = {p2, r_mid, s_hi}; Intersect = {p2, r_mid}, Except = {q0}.
+        // No driver-LINQ baseline. op1 = {p2, q0, r_mid}, op2 = {p2, r_mid, s_hi}; Intersect = {p2, r_mid}, Except = {q0}.
         Assert.Equal(
             ["p2", "r_mid"],
             Sorted(db.Entities.AsNoTracking().Where(b => b.Rank <= 3).Select(b => b.Title)

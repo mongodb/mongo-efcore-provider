@@ -82,7 +82,7 @@ public class StreamingReferenceLookupsTests
         return (db.Model.FindEntityType(typeof(Order))!, db.Model.FindEntityType(typeof(Customer))!);
     }
 
-    // ── Test 1: Flat query — no inner collections → GetStreamingReferenceLookups is empty ──
+    // ── Flat query — no inner collections → GetStreamingReferenceLookups is empty ──
 
     [Fact]
     public void No_inner_collections_returns_empty_lookups()
@@ -96,7 +96,7 @@ public class StreamingReferenceLookupsTests
         Assert.Empty(result);
     }
 
-    // ── Test 2: Single reference Include in driver-join state → synthesizes one LookupExpression ──
+    // ── Single reference Include in driver-join state → synthesizes one LookupExpression ──
 
     [Fact]
     public void Single_reference_include_in_driver_join_state_returns_one_lookup()
@@ -116,12 +116,9 @@ public class StreamingReferenceLookupsTests
         Assert.Single(result);
 
         var lookup = result[0];
-        // The navigation on Order → Customer is a single reference (not a collection).
         Assert.False(lookup.Navigation.IsCollection);
         Assert.Equal("Customer", lookup.Navigation.Name);
-        // As = "_lookup_Customer"
         Assert.Equal("_lookup_Customer", lookup.As);
-        // From = the Customer collection name
         var expectedFrom = customerEntityType.GetCollectionName();
         Assert.Equal(expectedFrom, lookup.From);
         // LocalField = FK property element name on Order (CustomerId → customerId by convention)
@@ -130,7 +127,7 @@ public class StreamingReferenceLookupsTests
         Assert.False(string.IsNullOrEmpty(lookup.ForeignField));
     }
 
-    // ── Test 3: Query with pending lookups (forced-unwind) → returns pending lookups directly ──
+    // ── Query with pending lookups (forced-unwind) → returns pending lookups directly ──
 
     [Fact]
     public void Pending_lookups_registered_returns_them_directly()
@@ -153,7 +150,7 @@ public class StreamingReferenceLookupsTests
         Assert.Same(explicitLookup, result[0]);
     }
 
-    // ── Test 4: Lookups slot on MongoQueryExpression delegates to GetStreamingReferenceLookups ──
+    // ── Lookups slot on MongoQueryExpression delegates to GetStreamingReferenceLookups ──
 
     [Fact]
     public void Lookups_property_delegates_to_GetStreamingReferenceLookups()

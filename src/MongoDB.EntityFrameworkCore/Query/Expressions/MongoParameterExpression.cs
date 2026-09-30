@@ -24,9 +24,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 internal sealed class MongoParameterExpression : MongoExpression
 {
-    /// <summary>
-    /// Creates a <see cref="MongoParameterExpression"/> with the given name.
-    /// </summary>
+    /// <summary>Creates a <see cref="MongoParameterExpression"/>.</summary>
     /// <param name="name">The parameter name.</param>
     /// <param name="forSerialization">Serializer context for the renderer; <see langword="null"/> if untyped.</param>
     /// <param name="extractFromEntityValue">
@@ -56,14 +54,10 @@ internal sealed class MongoParameterExpression : MongoExpression
     /// <summary>The parameter name.</summary>
     public string Name { get; }
 
-    /// <summary>
-    /// Optional property metadata used by the renderer to select the correct serializer.
-    /// </summary>
+    /// <summary>Property metadata the renderer uses to select the serializer.</summary>
     public IProperty? ForSerialization { get; }
 
-    /// <summary>
-    /// See the constructor parameter of the same name.
-    /// </summary>
+    /// <summary>See the constructor parameter of the same name.</summary>
     public bool ExtractFromEntityValue { get; }
 
     /// <summary>
@@ -82,9 +76,7 @@ internal sealed class MongoParameterExpression : MongoExpression
     /// </summary>
     public Type? RawElementType { get; }
 
-    /// <summary>
-    /// See the constructor parameter of the same name.
-    /// </summary>
+    /// <summary>See the constructor parameter of the same name.</summary>
     public bool ExtractEntityKeyFromArrayElements { get; }
 
     /// <inheritdoc />

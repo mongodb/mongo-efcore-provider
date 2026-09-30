@@ -57,10 +57,6 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     // this order.
     private static readonly string[] InsertionOrder = ["D", "C", "A", "B", "E"];
 
-    // ---------------------------------------------------------------------------------------------------
-    // Capability: ordered labels; NativeOnly succeeding is the routing proof.
-    // ---------------------------------------------------------------------------------------------------
-
     [AtlasTheory]
     [InlineData(MongoQueryMode.Native)]
     [InlineData(MongoQueryMode.NativeOnly)]
@@ -147,10 +143,8 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
         Assert.Equal(["A", "B", "D"], labels);
     }
 
-    // ---------------------------------------------------------------------------------------------------
     // The __score projection leaf, both spellings. The $project alias `Score: "$__score"` has no backing IProperty
     // and is read raw via BsonBinding.CreateGetElementValue.
-    // ---------------------------------------------------------------------------------------------------
 
     [AtlasTheory]
     [InlineData(MongoQueryMode.Native)]
@@ -182,10 +176,8 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
         AssertScoreOrdered(rows.Select(r => (r.Label, r.Score)));
     }
 
-    // ---------------------------------------------------------------------------------------------------
     // Entity-and-score projection: `new { Doc = e, Score = ... }` renders {"Doc": "$$ROOT", "Score": "$__score"}.
-    // Uses a parameterized StartsWith to prove both leaves read correctly with a non-baked query parameter.
-    // ---------------------------------------------------------------------------------------------------
+    // A parameterized StartsWith proves both leaves read correctly with a non-baked query parameter.
 
     [AtlasFact]
     public void Entity_and_score_projection_behind_a_parameterized_filter_reads_correct_values()
@@ -210,15 +202,14 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
             .Select(e => new { Doc = e, Score = EF.Property<double>(e, "__score") })
             .ToList();
 
-        // Assert values on both leaves; each fails silently. A lost entity leaf gives a null/default Doc, a lost
-        // $addFields{__score} companion gives Score == 0.
+        // Assert both leaves' values, since each fails silently: a lost entity leaf gives a null Doc, a lost $addFields
+        // companion gives Score == 0.
         var row = Assert.Single(rows);
         Assert.Equal("A", row.Doc.Label);
         Assert.Equal(1.0, row.Doc.Weight);
         Assert.Equal("note-A", row.Doc.Meta.Note); // the owned hop inside the entity leaf survives too
         Assert.Equal(1.0, row.Score, 3);           // "A" IS the query vector, so its cosine score is exactly 1
 
-        // Pins the native $project/$addFields shape, since both halves fail independently and silently.
         var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("{ \"$addFields\" : { \"__score\" : { \"$meta\" : \"vectorSearchScore\" } } }", mql);
         Assert.Contains("\"Doc\" : \"$$ROOT\"", mql);
@@ -248,9 +239,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
         }
     }
 
-    // ---------------------------------------------------------------------------------------------------
     // Streaming materializer skipping the unmapped __score element.
-    // ---------------------------------------------------------------------------------------------------
 
     [AtlasTheory]
     [InlineData(MongoQueryMode.Native)]
@@ -263,8 +252,6 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
         // VectorDoc owns a Meta (OwnsOne) to mirror the spec suite's Book/Preface shape.
         using var db = CreateContext(mode);
 
-        // Premise: if the entity weren't streaming-eligible, it would use the DOM shaper and this test would silently
-        // stop measuring the skip.
         var entityType = db.Model.FindEntityType(typeof(VectorDoc))!;
         Assert.True(StreamingEligibility.IsEligible(entityType),
             "VectorDoc must be streaming-eligible or this test does not exercise the streaming materializer.");
@@ -287,9 +274,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
         Assert.All(docs, d => Assert.NotEqual(ObjectId.Empty, d.Id));
     }
 
-    // ---------------------------------------------------------------------------------------------------
-    // Recognizer guards. Each case's only reason to decline is one guard, so mutating that guard flips the test.
-    // ---------------------------------------------------------------------------------------------------
+    // Recognizer guards: each case's only reason to decline is one guard, so mutating that guard flips the test.
 
     [AtlasFact]
     public void Mql_Field_for_a_non_score_element_declines()
@@ -374,9 +359,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
         }
     }
 
-    // ---------------------------------------------------------------------------------------------------
     // Diagnostics raised from the native path.
-    // ---------------------------------------------------------------------------------------------------
 
     [AtlasFact]
     public void Zero_results_logs_the_diagnostic_natively()
@@ -411,9 +394,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
         Assert.Contains("VectorSearchNeedsIndex", message);
     }
 
-    // ---------------------------------------------------------------------------------------------------
-    // Exception parity across all three modes. Pins why VectorSearchStageBuilder keeps its reflection boundary.
-    // ---------------------------------------------------------------------------------------------------
+    // Exception parity across all three modes; pins why VectorSearchStageBuilder keeps its reflection boundary.
 
     [AtlasTheory]
     [InlineData(MongoQueryMode.Native)]
@@ -455,9 +436,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
         Assert.Equal("limit", inner.ParamName);
     }
 
-    // ---------------------------------------------------------------------------------------------------
-    // Stage order: a server constraint, not a routing proof.
-    // ---------------------------------------------------------------------------------------------------
+    // Stage order is a server constraint, not a routing proof.
 
     [AtlasFact]
     public void Vector_search_emits_the_stage_first()
@@ -485,9 +464,7 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
         Assert.True(match > addFields, $"The composed $match must follow the score companion in: {pipeline}");
     }
 
-    // ---------------------------------------------------------------------------------------------------
     // Array-field-contains-value pre-filter.
-    // ---------------------------------------------------------------------------------------------------
 
     [AtlasFact]
     public void Array_contains_pre_filter_now_goes_native_with_correct_rows()
@@ -516,11 +493,8 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
         }
     }
 
-    // ---------------------------------------------------------------------------------------------------
-    // Fallback-correctness tripwire: a parameterized Contains item still declines (the array-contains arm requires
-    // a ConstantExpression item), and driver-LINQ renders the same $expr-free `{ Tags: <value> }` form the
-    // vectorSearch filter accepts, so "decline -> fallback -> correct rows" stays exercised.
-    // ---------------------------------------------------------------------------------------------------
+    // Fallback tripwire: a parameterized Contains item still declines (the array-contains arm requires a
+    // ConstantExpression item), and driver-LINQ renders the same $expr-free `{ Tags: <value> }` form the filter accepts.
 
     [AtlasFact]
     public void Parameterized_array_contains_pre_filter_still_falls_back_with_correct_rows()
@@ -548,11 +522,8 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
         }
     }
 
-    // ---------------------------------------------------------------------------------------------------
-    // An unsupported computed pre-filter (string transform). Any computed pre-filter needs $expr, which the
-    // vectorSearch `filter` rejects server-side, so this throws in every mode: native declines at translate time;
-    // the driver-LINQ fallback builds the rejected $expr and the server throws.
-    // ---------------------------------------------------------------------------------------------------
+    // An unsupported computed pre-filter (string transform) needs $expr, which the vectorSearch `filter` rejects
+    // server-side, so this throws in every mode: native declines at translate time; the fallback builds the rejected $expr.
 
     [AtlasTheory]
     [InlineData(MongoQueryMode.Native)]
@@ -574,17 +545,11 @@ public class NativeVectorSearchTests(AtlasTemporaryDatabaseFixture database)
     {
         using var db = CreateContext(MongoQueryMode.NativeOnly);
 
-        // NativeOnly forbids the fallback, so this throws at query compilation, not as a server-side
-        // MongoCommandException.
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => db.Docs
                 .VectorSearch(e => e.Embedding, e => e.Label.ToUpper() == e.Label.ToUpper(), QueryVector, limit: 4)
                 .ToList());
     }
-
-    // ---------------------------------------------------------------------------------------------------
-    // Fixture
-    // ---------------------------------------------------------------------------------------------------
 
     private static readonly object SeedLock = new();
     private static string? SeededCollection;

@@ -54,9 +54,8 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     public IReadOnlyList<MongoSelectOp> TrailingOps => _trailingOps;
 
-    // Every op recorded once JoinInnerAccessConfirmed flips, including the confirming Where/OrderBy itself and any
-    // later reducer $limit. Required for correctness: the Where predicate decides "first", so it must run before
-    // the reducer's $limit. Mutually exclusive with SetOperation.
+    // Ops recorded once JoinInnerAccessConfirmed flips, incl. the confirming Where/OrderBy and any later reducer
+    // $limit: the Where decides "first", so it must run before the reducer's $limit. Exclusive with SetOperation.
     private readonly List<MongoSelectOp> _postJoinOps = [];
 
     /// <summary>
@@ -79,8 +78,6 @@ internal sealed class MongoSelectDefinition
 
     /// <summary>
     /// Moves the whole current <see cref="PipelineOps"/> snapshot, in order, into <see cref="PostLookupPagingOps"/>.
-    /// Called once by <c>IsSingleEligibleNativeJoinScope</c> when a join is eligible only because its
-    /// pre-confirmation paging is relocated.
     /// </summary>
     internal void DeferPipelineOpsPastConfirmedJoin()
     {
@@ -108,7 +105,6 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     internal bool JoinInnerAccessConfirmed => _joinInnerAccessConfirmed;
 
-    /// <summary>Sets <see cref="JoinInnerAccessConfirmed"/>.</summary>
     internal void MarkJoinInnerAccessConfirmed() => _joinInnerAccessConfirmed = true;
 
     private bool _referenceCollectionCountPredicateConfirmed;
@@ -128,7 +124,6 @@ internal sealed class MongoSelectDefinition
     /// </remarks>
     internal bool ReferenceCollectionCountPredicateConfirmed => _referenceCollectionCountPredicateConfirmed;
 
-    /// <summary>Sets <see cref="ReferenceCollectionCountPredicateConfirmed"/>.</summary>
     internal void MarkReferenceCollectionCountPredicateConfirmed() => _referenceCollectionCountPredicateConfirmed = true;
 
     /// <summary>
@@ -227,16 +222,12 @@ internal sealed class MongoSelectDefinition
         }
     }
 
-    /// <summary>Skip: appends a <see cref="MongoSkipOp"/> to <see cref="ActiveOps"/>.</summary>
     public void AppendSkip(MongoExpression count) => ActiveOps.Add(new MongoSkipOp(count));
 
-    /// <summary>Take (and the synthesized reducer limit): appends a <see cref="MongoLimitOp"/> to
-    /// <see cref="ActiveOps"/>.</summary>
     public void AppendLimit(MongoExpression count) => ActiveOps.Add(new MongoLimitOp(count));
 
     /// <summary>
-    /// Whole-entity <c>Distinct()</c> (no preceding <c>Select</c>): appends a <see cref="MongoDistinctOp"/> like
-    /// any other filter/sort/page op. A projected Distinct uses <see cref="Grouping"/> instead.
+    /// Whole-entity <c>Distinct()</c> (no preceding <c>Select</c>). A projected Distinct uses <see cref="Grouping"/>.
     /// </summary>
     public void AppendDistinct() => ActiveOps.Add(new MongoDistinctOp());
 
@@ -295,9 +286,6 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     public IReadOnlyList<MongoProjection> Projection => _projections;
 
-    /// <summary>
-    /// Appends <paramref name="projection"/> to the projection list.
-    /// </summary>
     public void AddProjection(MongoProjection projection)
         => _projections.Add(projection);
 
@@ -516,7 +504,6 @@ internal sealed class MongoSelectDefinition
         {
             // Mutually exclusive with Grouping: otherwise Route becomes ScalarAggregate while the lowerer still
             // emits the grouping pipeline, and the scalar shaper reads a nonexistent element.
-            // NativeCardinalityBinder gates on IsGroupBy; this catches any path that forgets.
             Debug.Assert(value == null || _grouping == null,
                 "Cardinality and Grouping are mutually exclusive (see the NativeCardinalityBinder post-group guard).");
             _cardinality = value;
@@ -582,9 +569,7 @@ internal sealed class MongoSelectDefinition
     {
         PriorGrouping = _grouping;
 
-        // Cleared so nothing reads the prior stage's grouping as this stage's: until the nested GroupBy finalizes,
-        // Grouping == null keeps it on the pending-key paths (a bare nested Count() binds via
-        // TryBindGroupTerminalAggregate) and Route on Fallback if it never does. A stale Grouping instead matched the
+        // Cleared so nothing reads the prior stage's grouping as this stage's: a stale Grouping matched the
         // post-GroupBy.Select aggregate path, which re-emitted the prior $group and dropped the nested key.
         _grouping = null;
         PriorGroupingProjection = [.. _projections];
@@ -835,29 +820,17 @@ internal sealed class MongoSelectDefinition
     /// selector-less aggregate). Never unset.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// A post-confirmation gate: once confirmed, <see cref="Route"/> is native, so without it an operator composed
-    /// after the confirming Select would also go native, with two wrong-data hazards:
-    /// </para>
-    /// <para>
-    /// (1) Paging/reducing before the join: <see cref="PipelineOps"/> is emitted before the <c>$lookup</c> +
-    /// 1:N <c>$unwind</c>, so <c>Join(...).Take(5)</c> would page un-joined outer rows.
-    /// </para>
-    /// <para>
-    /// (2) Stale root entity type: after <c>Select(x =&gt; x.Inner)</c> the slot populator still resolves members
-    /// against the outer type, so a trailing <c>Where(r =&gt; r.Id == …)</c> would filter outer rows by an inner key.
-    /// </para>
-    /// <para>
-    /// Only the reducer case (<c>Join(…).Select(x =&gt; x.Inner).First()</c>, pinned by <c>NativeJoinTests</c>) is
-    /// currently reachable, because nav-expansion hoists later slot operators ahead of the pending selector (caught
-    /// by <c>IsSingleEligibleNativeJoinScope</c> instead). The slot-operator check is defence-in-depth. Not part of
-    /// <see cref="HasTerminalOperator"/>, which is evaluated at join-recording time and would break native
-    /// reference-<c>Include</c> confirmation.
-    /// </para>
+    /// A post-confirmation gate: once confirmed, <see cref="Route"/> is native, so an operator composed after the
+    /// confirming Select must be checked or it goes native with wrong data: (1) paging/reducing before the join
+    /// (<see cref="PipelineOps"/> is emitted before the <c>$lookup</c> + <c>$unwind</c>, so <c>Join(...).Take(5)</c>
+    /// would page un-joined outer rows); (2) a stale root entity type (after <c>Select(x =&gt; x.Inner)</c> a trailing
+    /// <c>Where</c> would filter outer rows by an inner key). Only the reducer case is reachable today, since
+    /// nav-expansion hoists later slot operators ahead of the pending selector; the slot-operator check is
+    /// defence-in-depth. Not part of <see cref="HasTerminalOperator"/>, which is evaluated at join-recording time and
+    /// would break native reference-<c>Include</c> confirmation.
     /// </remarks>
     internal bool HasConfirmedJoinLookup => _hasConfirmedJoinLookup;
 
-    /// <summary>Sets <see cref="HasConfirmedJoinLookup"/>.</summary>
     internal void MarkJoinLookupConfirmed()
         => _hasConfirmedJoinLookup = true;
 
@@ -873,28 +846,23 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     internal bool HasPagingRecordedBeforeAnyJoin => _hasPagingRecordedBeforeAnyJoin;
 
-    /// <summary>Sets <see cref="HasPagingRecordedBeforeAnyJoin"/>.</summary>
     internal void MarkPagingRecordedBeforeAnyJoin() => _hasPagingRecordedBeforeAnyJoin = true;
 
     private bool _hasBareJoinInnerEntityLeaf;
 
     /// <summary>
     /// <see langword="true"/> once <c>TranslateSelect</c>'s bare whole-entity-leaf arm confirmed a join through
-    /// its INNER side (<c>Select(ti =&gt; ti.Inner)</c>), so the result entity is read from the join's
-    /// <c>_lookup_&lt;Nav&gt;</c> field of a WHOLE document. The native pipeline emits no <c>$project</c> for that
-    /// arm, but the driver-LINQ fallback renders the captured bare <c>Select</c> as <c>{ _v: "$_lookup_&lt;Nav&gt;" }</c>,
-    /// which the entity shaper cannot read (it came back as a silent null entity). The entity path strips that
-    /// pushed-down <c>Select</c> on fallback when this is set. Deliberately NOT set for the Outer unwrap
-    /// (<c>Select(ti =&gt; ti.Outer)</c>, e.g. a reference Include's mandatory unwrap), whose root-document read the
-    /// driver's push-down already satisfies. The strip covers an OUTERMOST captured Select (or one under a
-    /// reducer); EF Core hoists Where/OrderBy/Skip/Take ahead of the pending selector, so those shapes qualify. A
-    /// trailing <c>Distinct()</c> is not hoisted, so the Select stays under it; the driver-LINQ bridge then keeps it
-    /// and moves the deduplicated <c>_v</c> value back under <c>_lookup_&lt;Nav&gt;</c> instead
-    /// (<c>MongoEFToLinqTranslatingExpressionVisitor.RepresentBareInnerJoinLeaf</c>).
+    /// its INNER side (<c>Select(ti =&gt; ti.Inner)</c>), so the entity is read from the join's
+    /// <c>_lookup_&lt;Nav&gt;</c> field of a WHOLE document. Native emits no <c>$project</c> for that arm, but the
+    /// driver-LINQ fallback renders the captured <c>Select</c> as <c>{ _v: "$_lookup_&lt;Nav&gt;" }</c>, which the entity
+    /// shaper reads as a silent null entity; the entity path strips that pushed-down <c>Select</c> when this is set.
+    /// Deliberately NOT set for the Outer unwrap (<c>ti.Outer</c>), whose root-document read push-down already
+    /// satisfies. The strip covers an OUTERMOST captured Select (or one under a reducer). A trailing <c>Distinct()</c>
+    /// is not hoisted, so the Select stays under it; the bridge then moves the deduplicated <c>_v</c> back under
+    /// <c>_lookup_&lt;Nav&gt;</c> instead (<c>MongoEFToLinqTranslatingExpressionVisitor.RepresentBareInnerJoinLeaf</c>).
     /// </summary>
     internal bool HasBareJoinInnerEntityLeaf => _hasBareJoinInnerEntityLeaf;
 
-    /// <summary>See <see cref="HasBareJoinInnerEntityLeaf"/>.</summary>
     internal void MarkBareJoinInnerEntityLeaf() => _hasBareJoinInnerEntityLeaf = true;
 
     /// <summary>
@@ -905,7 +873,6 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     internal (LookupExpression Lookup, bool IsInner)? BareJoinEntityLeaf { get; private set; }
 
-    /// <summary>Sets <see cref="BareJoinEntityLeaf"/>.</summary>
     internal void MarkBareJoinEntityLeaf(LookupExpression lookup, bool isInner) => BareJoinEntityLeaf = (lookup, isInner);
 
     private bool _hasPagingRecordedAfterAJoin;
@@ -920,9 +887,7 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     internal bool HasPagingRecordedAfterAJoin => _hasPagingRecordedAfterAJoin;
 
-    /// <summary>Records that a <c>Skip</c>/<c>Take</c> was recorded while <paramref name="joinCount"/> (at least one)
-    /// joins already existed on this select. See <see cref="HasPagingRecordedAfterAJoin"/> and
-    /// <see cref="HasPagingRecordedBetweenJoins"/>.</summary>
+    /// <summary>Records a <c>Skip</c>/<c>Take</c> seen while <paramref name="joinCount"/> (at least one) joins existed.</summary>
     internal void MarkPagingRecordedAfterAJoin(int joinCount)
     {
         _hasPagingRecordedAfterAJoin = true;
@@ -956,7 +921,6 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     public IReadOnlyList<MongoUnwindSource> UnwindSources => _unwindSources;
 
-    /// <summary>Appends a new terminal SelectMany unwind source to the chain.</summary>
     internal void AddUnwindSource(MongoUnwindSource source) => _unwindSources.Add(source);
 
     /// <summary>
@@ -982,9 +946,7 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     internal bool IsGroupByFallbackUnsafe => _isGroupByFallbackUnsafe;
 
-    /// <summary>
-    /// Sets <see cref="IsGroupByFallbackUnsafe"/> and marks the query non-native.
-    /// </summary>
+    /// <summary>Sets <see cref="IsGroupByFallbackUnsafe"/> and marks the query non-native.</summary>
     internal void MarkGroupByFallbackUnsafe()
     {
         _isGroupByFallbackUnsafe = true;
@@ -1075,7 +1037,6 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     internal void MarkSawNonBareJoinInner() => _sawNonBareJoinInner = true;
 
-    /// <summary>See <see cref="MarkSawNonBareJoinInner"/>.</summary>
     internal bool SawNonBareJoinInner => _sawNonBareJoinInner;
 
     /// <summary>

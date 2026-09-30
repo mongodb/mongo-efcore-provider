@@ -62,8 +62,8 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     private class Post
     {
         public string Heading { get; set; } = "";
-        // Deliberately collides with Blog.Title, so an owner-rooted `b.Title` in an Any lambda would mis-resolve
-        // (not just fail) under by-name resolution. See Correlated_element_predicate_now_goes_native_since_EF421.
+        // Deliberately collides with Blog.Title, so an owner-rooted `b.Title` in an Any lambda would mis-resolve under
+        // by-name resolution.
         public string Title { get; set; } = "";
         public int Rank { get; set; }
         public int Other { get; set; }
@@ -101,13 +101,10 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         mb.Entity<Blog>().OwnsOne(b => b.Home, h => h.OwnsMany(x => x.Notes));
     };
 
-    // Shared row builders, so SeedBlogs and SeedWellFormedBlogs stay identical for the rows they share (several
-    // expectations are derived from one another). Each call returns a fresh document.
-    //
-    // Post.Title is required; its values make owner-scoped and element-scoped readings of `b.Title` differ.
+    // Shared row builders so SeedBlogs and SeedWellFormedBlogs stay identical for shared rows. Each call returns a
+    // fresh document. Post.Title values make owner-scoped and element-scoped readings of `b.Title` differ.
 
-    // Posts with a matching element (plus a non-matching one). Neither post's own Title is "match" (the
-    // owner's is), which makes the correlation test discriminating.
+    // Neither post's own Title is "match" (the owner's is), which keeps the correlation test discriminating.
     private static BsonDocument MatchRow()
         => new()
         {
@@ -190,16 +187,13 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         return database.MongoDatabase.GetCollection<Blog>(coll.CollectionNamespace.CollectionName);
     }
 
-    // Seeds five blogs covering every array state that changes $elemMatch / $exists semantics.
     private IMongoCollection<Blog> SeedBlogs(string name)
         => Seed(name, MatchRow(), NoMatchRow(), EmptyPostsRow(), MissingPostsRow(), NullPostsRow());
 
-    // SeedBlogs without the "missing"/"null" rows, on which the DriverLinq oracle crashes (see
-    // AssertNativeOnlyMatches). Lets accept tests also assert NativeOnly == DriverLinq parity.
+    // SeedBlogs without the "missing"/"null" rows, on which the DriverLinq oracle crashes (see AssertNativeOnlyMatches).
     private IMongoCollection<Blog> SeedWellFormedBlogs(string name)
         => Seed(name, MatchRow(), NoMatchRow(), EmptyPostsRow());
 
-    // Runs `query` in one mode and returns the sorted titles; mode orchestration lives in NativeModeAssert.
     private List<string> RunTitles(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query, MongoQueryMode mode)
     {
@@ -215,10 +209,9 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
         => NativeModeAssert.DeclinesCleanly(mode => RunTitles(collection, query, mode));
 
-    // The driver's Any()/Count() translation ($expr $anyElementTrue/$size) throws MongoCommandException for the
-    // whole aggregate when a document's array is missing or null, so there's no DriverLinq oracle over the full
-    // SeedBlogs matrix. Native $elemMatch/$exists has no such limitation. These shapes are proven by NativeOnly
-    // succeeding plus hand-verified expected titles.
+    // The driver's Any()/Count() translation ($expr $anyElementTrue/$size) fails the whole aggregate when a document's
+    // array is missing or null, so there's no DriverLinq oracle over the full SeedBlogs matrix. Those shapes are proven
+    // by NativeOnly succeeding plus hand-verified titles.
     private List<string> AssertNativeOnlyMatches(
         IMongoCollection<Blog> collection, Func<IQueryable<Blog>, IQueryable<Blog>> query)
         => RunTitles(collection, query, MongoQueryMode.NativeOnly);
@@ -250,7 +243,6 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
 
         Assert.Equal(["match"], titles);
 
-        // Independent-oracle leg on the well-formed seed.
         var wellFormed = SeedWellFormedBlogs(nameof(Owned_collection_Any_with_predicate_goes_native) + "_WellFormed");
         var wfTitles = AssertNativeAndParity(wellFormed, q => q.Where(b => b.Posts.Any(p => p.Heading == "x")));
         Assert.Equal(["match"], wfTitles);
@@ -271,7 +263,6 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
             collection, q => q.Where(b => b.Posts.Any(p => p.Heading == "z" && p.Rank == 5)));
         Assert.Empty(split);
 
-        // Independent-oracle leg: proves the "one element must satisfy all conjuncts" $elemMatch semantics.
         var wellFormed = SeedWellFormedBlogs(
             nameof(Owned_collection_Any_multi_condition_requires_one_element_to_satisfy_all) + "_WellFormed");
 
@@ -294,7 +285,6 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
 
         Assert.Equal(["match", "nomatch"], titles);
 
-        // Independent-oracle leg on the well-formed seed; same expected set.
         var wellFormed = SeedWellFormedBlogs(nameof(Owned_collection_bare_Any_goes_native) + "_WellFormed");
         var wfTitles = AssertNativeAndParity(wellFormed, q => q.Where(b => b.Posts.Any()));
         Assert.Equal(["match", "nomatch"], wfTitles);
@@ -312,7 +302,6 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         var negatedBare = AssertNativeOnlyMatches(collection, q => q.Where(b => !b.Posts.Any()));
         Assert.Equal(["empty", "missing", "null"], negatedBare);
 
-        // Independent-oracle leg: the negated sets lose the missing/null rows.
         var wellFormed = SeedWellFormedBlogs(nameof(Negated_owned_collection_Any_goes_native) + "_WellFormed");
 
         var wfNegatedPredicate = AssertNativeAndParity(
@@ -333,7 +322,6 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
 
         Assert.Equal(["match"], titles);
 
-        // Independent-oracle leg.
         var wellFormed = SeedWellFormedBlogs(nameof(Nested_owned_collection_Any_goes_native) + "_WellFormed");
         var wfTitles = AssertNativeAndParity(
             wellFormed, q => q.Where(b => b.Posts.Any(p => p.Comments.Any(c => c.Text == "t"))));
@@ -349,7 +337,6 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
 
         Assert.Equal(["match"], titles);
 
-        // Independent-oracle leg.
         var wellFormed = SeedWellFormedBlogs(
             nameof(Owned_collection_Any_through_owned_reference_goes_native) + "_WellFormed");
         var wfTitles = AssertNativeAndParity(wellFormed, q => q.Where(b => b.Home.Notes.Any(n => n.Body == "b")));
@@ -367,7 +354,6 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
             collection, q => q.Where(b => b.Title == "match" && b.Posts.Any(p => p.Rank > 3)));
         Assert.Equal(["match"], titles);
 
-        // Independent-oracle leg on the well-formed seed.
         var wellFormed = SeedWellFormedBlogs(
             nameof(Owned_collection_Any_composes_with_other_conjuncts_natively) + "_WellFormed");
         var wfTitles = AssertNativeAndParity(
@@ -378,9 +364,8 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     [Fact]
     public void Owned_collection_Any_with_captured_parameter_element_predicate_goes_native()
     {
-        // On EF8/EF9 a captured value becomes a "__"-prefixed ParameterExpression (not EF10's
-        // QueryParameterExpression), so the correlated-predicate handling must exempt query parameters or this
-        // would decline on EF8/EF9 only.
+        // On EF8/EF9 a captured value becomes a "__"-prefixed ParameterExpression (not EF10's QueryParameterExpression),
+        // so correlated-predicate handling must exempt query parameters or this would decline there only.
         var collection = SeedBlogs(nameof(Owned_collection_Any_with_captured_parameter_element_predicate_goes_native));
         var heading = "x";
 
@@ -396,13 +381,8 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     [Fact]
     public void Correlated_element_predicate_now_goes_native_since_EF421()
     {
-        // An element predicate reaching the owner (`b.Title`) must resolve by parameter identity to the outer
-        // scope ($anyElementTrue over $map), not by name against Post.Title. The seed makes the readings differ:
-        //
-        //   owner-scoped (correct): blogs whose own Title == "match" and that have at least one post -> ["match"]
-        //   element-scoped (wrong): blogs having a post whose Title == "match"                        -> ["nomatch"]
-        //
-        // Well-formed seed so the DriverLinq leg can run.
+        // An element predicate reaching the owner (`b.Title`) must resolve by parameter identity to the outer scope, not
+        // by name against Post.Title. Owner-scoped (correct) gives ["match"]; element-scoped (wrong) gives ["nomatch"].
         var wellFormed = SeedWellFormedBlogs(nameof(Correlated_element_predicate_now_goes_native_since_EF421));
 
         var titles = AssertNativeAndParity(wellFormed, q => q.Where(b => b.Posts.Any(p => b.Title == "match")));
@@ -454,7 +434,6 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         var titles = AssertNativeOnlyMatches(collection, q => q.Where(b => b.Posts.Any(p => p.Geo.Country == "US")));
         Assert.Equal(["match"], titles);
 
-        // Independent-oracle leg on the well-formed seed.
         var wellFormed = SeedWellFormedBlogs(
             nameof(Nested_owned_scalar_leaf_in_element_now_goes_native_via_EF424) + "_WellFormed");
         var wfTitles = AssertNativeAndParity(wellFormed, q => q.Where(b => b.Posts.Any(p => p.Geo.Country == "US")));
@@ -485,7 +464,6 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         Assert.Equal(driver, native);
         Assert.Equal(["match"], native);
 
-        // Routing proof: NativeOnly succeeds.
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
             var nativeOnly = db.Entities.AsNoTracking().Where(b => b.Tags.Any(t => t == "x"))
@@ -497,12 +475,9 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
     [Fact]
     public void Owned_SelectMany_with_an_inner_Any_filter_now_works()
     {
-        // An Any filter inside an owned SelectMany: TryBuildOwnedInnerFilter resolves "Comments" relative to Post
-        // and MongoFieldPrefixRewriter composes "Posts.Comments" for the unwound element. No driver-LINQ oracle
-        // (it fails in every mode there). Uses an anonymous projection because TryReadProjection rejects a bare
-        // scalar SelectMany leaf for unrelated reasons.
-        //
-        // Expected value is hand-computed: only "match" has a Post with Comment Text "t", Heading "x".
+        // Any filter inside an owned SelectMany: TryBuildOwnedInnerFilter resolves "Comments" relative to Post and
+        // MongoFieldPrefixRewriter composes "Posts.Comments". No driver-LINQ oracle (fails in every mode); anonymous
+        // projection because TryReadProjection rejects a bare scalar SelectMany leaf. Expected value is hand-computed.
         var collection = SeedBlogs(nameof(Owned_SelectMany_with_an_inner_Any_filter_now_works));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
 
@@ -523,18 +498,11 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         // missing or null array, so All is vacuously true there, as in LINQ.
         var collection = SeedBlogs(nameof(All_over_owned_collection_goes_native));
 
-        // Full-matrix leg, hand-derived:
-        //   "match"  — Posts = [Heading:"x", Heading:"z"]. The "z" element satisfies ¬pred (Heading != "x"),
-        //              so the $elemMatch DOES find a violator ⇒ the enclosing $not is false ⇒ All is false.
-        //   "nomatch" — Posts = [Heading:"y"]. "y" != "x" satisfies ¬pred ⇒ same as above ⇒ All is false.
-        //   "empty"  — Posts = []. No element can satisfy ¬pred ⇒ $elemMatch is false ⇒ $not is true ⇒ All true.
-        //   "missing" — no Posts field at all. $elemMatch cannot match a missing field ⇒ same as empty ⇒ true.
-        //   "null"   — Posts is explicit BSON null. $elemMatch cannot match a non-array field ⇒ same ⇒ true.
-        // So the surviving (All == true) titles are exactly ["empty", "missing", "null"].
+        // Full matrix, hand-derived: "match" and "nomatch" each have a post violating pred, so All is false; "empty",
+        // "missing" and "null" have no element that can satisfy the complement, so All is vacuously true.
         var titles = AssertNativeOnlyMatches(collection, q => q.Where(b => b.Posts.All(p => p.Heading == "x")));
         Assert.Equal(["empty", "missing", "null"], titles);
 
-        // Independent-oracle leg on the well-formed seed: only "empty" satisfies All vacuously.
         var wellFormed = SeedWellFormedBlogs(nameof(All_over_owned_collection_goes_native) + "_WellFormed");
         var wfTitles = AssertNativeAndParity(wellFormed, q => q.Where(b => b.Posts.All(p => p.Heading == "x")));
         Assert.Equal(["empty"], wfTitles);
@@ -554,7 +522,6 @@ public class NativeOwnedCollectionPredicateTests(TemporaryDatabaseFixture databa
         // materialized-as-empty-list reading of a missing/null owned collection).
         Assert.Equal(["match"], titles);
 
-        // Independent-oracle leg on the well-formed seed.
         var wellFormed = SeedWellFormedBlogs(nameof(Owned_collection_Count_predicate_goes_native) + "_WellFormed");
         var wfTitles = AssertNativeAndParity(wellFormed, q => q.Where(b => b.Posts.Count > 1));
         Assert.Equal(["match"], wfTitles);

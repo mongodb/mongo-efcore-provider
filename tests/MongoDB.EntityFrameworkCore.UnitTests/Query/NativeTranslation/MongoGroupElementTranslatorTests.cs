@@ -108,8 +108,8 @@ public class MongoGroupElementTranslatorTests
     [Fact]
     public void Join_mode_declines_an_entity_typed_parameter()
     {
-        // Review Focus #4: a join whose result selector projected one side hands the binder an entity-typed
-        // parameter. Name-based resolution against the root entity would silently read the wrong field.
+        // A join whose result selector projected one side hands the binder an entity-typed parameter; name-based
+        // resolution against the root entity would silently read the wrong field.
         var translator = NewJoinScoped();
         var inner = Expression.Parameter(typeof(InnerEntity), "x");
 

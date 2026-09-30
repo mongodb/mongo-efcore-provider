@@ -144,7 +144,6 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         using var db = new OrderCustomerDbContext(database, ordersCollection, customersCollection);
         var orders = db.Orders.Include(o => o.Customer).ToList();
 
-        // All four orders (three with a customer + the orphan) must be returned (left-outer, not inner).
         Assert.Equal(4, orders.Count);
         var orphan = Assert.Single(orders, o => o.OrderDescription == "Orphan order");
         Assert.Null(orphan.Customer);
@@ -225,14 +224,12 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
 
         using var db = new OrderCustomerDbContext(database, ordersCollection, customersCollection);
 
-        // Include both reference (Customer) and then get customer's Orders (collection)
         var order = db.Orders
             .Include(o => o.Customer)
             .First();
 
         Assert.NotNull(order.Customer);
 
-        // Now test customer with collection include
         var customer = db.Customers
             .Include(c => c.Orders)
             .First(c => c.FullName == "Alice");
@@ -346,9 +343,8 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Include_two_sibling_reference_navigations_to_same_target_type()
     {
-        // EF-378: Root.A and Root.B both target Mid via distinct navigations. The provider used to track
-        // prior joins keyed by target entity type, so the second join's type collapsed onto the first's
-        // entry and was never detected as "second or later," breaking materialization.
+        // EF-378: Root.A and Root.B both target Mid via distinct navigations. Joins were once tracked by target
+        // entity type, so the second join collapsed onto the first and broke materialization.
         var midCollection = TemporaryDatabaseFixtureBase.CreateCollectionName("SibMid") + Guid.NewGuid().ToString("N")[..8];
         var rootCollection = TemporaryDatabaseFixtureBase.CreateCollectionName("SibRoot") + Guid.NewGuid().ToString("N")[..8];
 

@@ -286,7 +286,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
     [Fact]
     public void Projected_distinct_count_after_an_inner_side_where()
     {
-        // The projected-Distinct branch of MongoSelectDefinition.ActiveOps now also outranks a confirmed join's Inner
+        // The projected-Distinct branch of MongoSelectDefinition.ActiveOps also outranks a confirmed join's Inner
         // access. Filtered rows: o1, o2 (Alice, North), o3 (Bob, South); distinct regions {North, South}.
         var seed = CreateSeed();
         var result = NativeModeAssert.NativeAndParity(mode =>
@@ -578,7 +578,7 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
     {
         // JoinInnerAccessConfirmed is set by the Where; MongoSelectDefinition.ActiveOps must route a post-group op to
         // PostGroupOps (after $group), not PostJoinOps (see All_over_a_navigation_group_after_an_inner_side_where).
-        // A post-group OrderBy declines today; if a later slice makes it native, flip this to NativeAndParity.
+        // A post-group OrderBy declines; flip to NativeAndParity if it ever goes native.
         var seed = CreateSeed();
         var result = NativeModeAssert.DeclinesCleanly(mode =>
         {
@@ -1092,10 +1092,8 @@ public class NativeGroupByOverJoinTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal([expected], result);
     }
 
-    // EF8/EF9 nav-expand these left joins to a shape that explicit DriverLinq can't translate under a GroupBy (it
-    // threw before native GroupBy-over-join existed too: ArgumentException "Property 'Key' is not defined for type
-    // IGrouping", now ExpressionNotSupportedException from the driver's Join translator). With no driver-LINQ
-    // oracle there, NativeOnly is checked against the hand-computed expectation alone.
+    // EF8/EF9 nav-expand these left joins to a shape that explicit DriverLinq can't translate under a GroupBy (the
+    // driver's Join translator throws ExpressionNotSupportedException). With no driver-LINQ oracle there, NativeOnly is checked against the hand-computed expectation alone.
     private static List<T> LeftJoinNativeAndParity<T>(Func<MongoQueryMode, List<T>> run)
 #if EF8 || EF9
     {

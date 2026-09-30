@@ -71,9 +71,8 @@ public class NativeSelectCtorProjectionTests(TemporaryDatabaseFixture database) 
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
             });
 
-        // Success under NativeOnly proves native (EF's Member_binding_after_ctor_arguments_fails_with_client_eval
-        // shape). OrderBy/Take are client-side to isolate the projection binder from the server-side sort,
-        // which the next test covers.
+        // EF's Member_binding_after_ctor_arguments_fails_with_client_eval shape. OrderBy/Take are client-side to isolate
+        // the projection binder from the server-side sort covered by the next test.
         var results = db.Entities
             .Select(c => new CustomerListItem(c.CustomerID, c.City))
             .AsEnumerable()

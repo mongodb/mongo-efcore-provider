@@ -2125,9 +2125,8 @@ Customers.{ "$group" : { "_id" : "$City", "_orderAgg0" : { "$sum" : 1 }, "Count"
 
     public override async Task GroupBy_Min_Where_optional_relationship(bool async)
     {
-        // Post-group Where over a keyed GroupBy's projected Count alias is now native (see
-        // docs/superpowers/plans/2026-09-29-native-groupby-post-group-where-and-push-list.md); the confirmed-join
-        // GroupBy runs the same way in every mode and on every EF version, so this asserts data and MQL directly.
+        // Post-group Where over a keyed GroupBy's projected Count alias: the confirmed-join GroupBy runs the same way
+        // in every mode and EF version, so this asserts data and MQL directly.
         await base.GroupBy_Min_Where_optional_relationship(async);
 
         AssertMql(
@@ -2138,9 +2137,8 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
     public override async Task GroupBy_Min_Where_optional_relationship_2(bool async)
     {
-        // Post-group Where over a keyed GroupBy's projected Count alias is now native (see
-        // docs/superpowers/plans/2026-09-29-native-groupby-post-group-where-and-push-list.md); the confirmed-join
-        // GroupBy runs the same way in every mode and on every EF version, so this asserts data and MQL directly.
+        // Post-group Where over a keyed GroupBy's projected Count alias: the confirmed-join GroupBy runs the same way
+        // in every mode and EF version, so this asserts data and MQL directly.
         await base.GroupBy_Min_Where_optional_relationship_2(async);
 
         AssertMql(

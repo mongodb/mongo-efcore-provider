@@ -51,7 +51,6 @@ public class LookupExpressionTests
 
         Assert.Equal(LookupPipelineKind.FallbackOnly, lookup.PipelineKind);
         Assert.True(lookup.HasPipeline);
-        // The pipeline filters by discriminator via $match.
         Assert.Single(lookup.PipelineStages);
         Assert.NotNull(lookup.PipelineStages[0]);
         Assert.True(lookup.PipelineStages[0].Contains("$match"));
@@ -86,7 +85,6 @@ public class LookupExpressionTests
         public string Product { get; set; } = "";
     }
 
-    // Owner with a collection navigation to a TPH-derived animal type (Dog)
     private class Owner
     {
         public ObjectId Id { get; set; }
@@ -94,7 +92,6 @@ public class LookupExpressionTests
         public List<Dog> Dogs { get; set; } = [];
     }
 
-    // TPH hierarchy types for testing discriminator-narrowed navigation
     private abstract class AnimalBase
     {
         public ObjectId Id { get; set; }
@@ -148,20 +145,17 @@ public class LookupExpressionTests
         {
             base.OnModelCreating(modelBuilder);
 
-            // Configure Owner with a collection navigation to Dog (a TPH-derived type)
             modelBuilder.Entity<Owner>(b =>
             {
                 b.HasMany(o => o.Dogs).WithOne().HasForeignKey(d => d.OwnerId);
             });
 
-            // Register the TPH hierarchy with AnimalBase as root
             modelBuilder.Entity<AnimalBase>(b =>
             {
                 b.HasDiscriminator<string>("AnimalType")
                     .HasValue<Dog>("Dog")
                     .HasValue<Cat>("Cat");
             });
-        // Touch the derived types to ensure they're registered.
             modelBuilder.Entity<Dog>();
             modelBuilder.Entity<Cat>();
         }

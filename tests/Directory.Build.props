@@ -24,4 +24,12 @@
     </PackageReference>
     <PackageReference Include="Testcontainers" Version="4.9.0" />
   </ItemGroup>
+
+  <!-- SSH.NET 2025.1.0 arrives transitively via Testcontainers (test-only, never shipped, and the SSH client is not used by
+       the tests). Suppress just these advisories so any other audit finding still surfaces; remove once Testcontainers
+       moves to a fixed SSH.NET. -->
+  <ItemGroup>
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-mggc-4xg6-vcxf" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-q939-rpr3-3284" />
+  </ItemGroup>
 </Project>

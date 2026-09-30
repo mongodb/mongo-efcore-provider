@@ -26,20 +26,15 @@ using Xunit.Abstractions;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
-// Conformance coverage for EF Core's bulk-update spec suite, scoped to the subset the MongoDB
-// provider supports: a single collection, scoped by Where, with constant / parameter /
-// self-referencing scalar setters (see README "What is supported" and EF-107).
+// Conformance coverage for EF Core's bulk-update spec suite, scoped to what the provider supports: a single
+// collection, scoped by Where, with constant / parameter / self-referencing scalar setters (EF-107).
 //
-// Supported cases call base, which asserts the affected-document count and the before/after
-// document state. Bulk operations emit Executing/ExecutedBulkUpdate|Delete diagnostics events
-// rather than ExecutedMqlQuery, so there is no MQL baseline to pin via AssertMql here (unlike the
-// Northwind *query* suites). Ordering/paging/Distinct-scoped bulk operations are supported via the
-// two-phase (_id-projection) execution path and call base. Per the suite convention (see
-// docs/failing-spec-tests.md) the remaining out-of-subset cases (joins, set operations, GroupBy,
-// SelectMany, navigations, non-entity projections, multiple-collection updates) are not skipped:
-// they run and assert the current failure mode (translation failure, cross-DbSet rejection, or a
-// non-translation exception), tagged with a // Fails: <reason> <ticket> comment. Behavioral
-// coverage for the supported subset also lives in FunctionalTests/Query/ExecuteUpdateTests.cs and
+// Supported cases call base, which asserts the affected-document count and before/after state. Bulk operations
+// emit Executing/ExecutedBulkUpdate|Delete events rather than ExecutedMqlQuery, so there is no AssertMql baseline.
+// Ordering/paging/Distinct-scoped operations use the two-phase (_id-projection) path and also call base.
+// Out-of-subset cases (joins, set operations, GroupBy, SelectMany, navigations, non-entity projections,
+// multiple-collection updates) are not skipped (docs/failing-spec-tests.md): they run and assert the current
+// failure mode, tagged with a // Fails: comment. More coverage: FunctionalTests/Query/ExecuteUpdateTests.cs and
 // ExecuteDeleteTests.cs.
 public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<NorthwindBulkUpdatesMongoFixture<NoopModelCustomizer>>
 {

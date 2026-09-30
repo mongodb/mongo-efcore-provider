@@ -201,7 +201,6 @@ public class NativeJoinScopeProjectionBinderTests
         var outerLeaf = Assert.IsType<MongoOuterFieldExpression>(mongoQ.Select.Projection[0].Expression);
         Assert.DoesNotContain(".", outerLeaf.ElementName);
 
-        // The deferred $lookup was registered and the candidate join confirmed, so the query routes natively.
         Assert.Single(mongoQ.Lookups);
         Assert.False(mongoQ.Select.HasUnconfirmedCandidateJoin);
         Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
@@ -218,7 +217,6 @@ public class NativeJoinScopeProjectionBinderTests
         Assert.NotNull(mongoQ.Select.JoinScope);
         var innerPrefix = mongoQ.Select.JoinScope!.Levels[0].InnerPrefix;
 
-        // The emitted alias is the join's $lookup prefix, not the member name "r".
         Assert.Equal(["Name", innerPrefix], mongoQ.Select.Projection.Select(p => p.Alias).ToArray());
 
         // MongoOuterFieldExpression — see NativeJoinScopeTranslatorTests.Translates_outer_side_member_access_unprefixed.
@@ -251,7 +249,6 @@ public class NativeJoinScopeProjectionBinderTests
         var outerLeaf = Assert.IsType<MongoElementRefExpression>(mongoQ.Select.Projection[0].Expression);
         Assert.Equal(MongoElementRefExpression.WholeRootDocumentPath, outerLeaf.Path);
 
-        // The scalar Inner sibling leaf is unaffected by the Include on the Outer leaf.
         var innerLeaf = Assert.IsType<MongoFieldExpression>(mongoQ.Select.Projection[1].Expression);
         Assert.StartsWith(mongoQ.Select.JoinScope!.Levels[0].InnerPrefix + ".", innerLeaf.ElementName);
 
@@ -307,7 +304,6 @@ public class NativeJoinScopeProjectionBinderTests
 
         var innerLeaf = Assert.IsType<MongoElementRefExpression>(mongoQ.Select.Projection[1].Expression);
         Assert.Equal(innerPrefix, innerLeaf.Path);
-        // Not the member's own alias "r".
         Assert.NotEqual("r", innerLeaf.Path);
 
         Assert.Single(mongoQ.Lookups);
@@ -327,7 +323,6 @@ public class NativeJoinScopeProjectionBinderTests
         Assert.NotNull(mongoQ.Select.JoinScope);
         var innerPrefix = mongoQ.Select.JoinScope!.Levels[0].InnerPrefix;
 
-        // Exactly one staged entry for the fixed alias.
         var projection = Assert.Single(mongoQ.Select.Projection);
         Assert.Equal(innerPrefix, projection.Alias);
         var innerLeaf = Assert.IsType<MongoElementRefExpression>(projection.Expression);
@@ -548,7 +543,6 @@ public class NativeJoinScopeProjectionBinderTests
         Assert.NotEqual("od", level2Leaf.Path);
         Assert.NotEqual(level1Leaf.Path, level2Leaf.Path);
 
-        // Every level's $lookup is registered and every candidate join confirmed once, so the chain is native.
         Assert.Equal(2, mongoQ.Lookups.Count);
         Assert.False(mongoQ.Select.HasUnconfirmedCandidateJoin);
         Assert.Equal(NativeRoute.Projection, mongoQ.Select.Route);
