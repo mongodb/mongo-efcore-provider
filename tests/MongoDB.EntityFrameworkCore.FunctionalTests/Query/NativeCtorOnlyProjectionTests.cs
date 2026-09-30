@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -240,5 +241,164 @@ public class NativeCtorOnlyProjectionTests(TemporaryDatabaseFixture database) : 
 
         Assert.Equal(2, results.Count);
         Assert.All(results, r => Assert.Equal(r.A, r.B));
+    }
+
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+    //  Sub-case 4: client construction over a whole-entity operand — `new object[] { x }`,
+    //  `new List<object> { x }`, `new Wrapper(x) { City = x.City }`. Whole documents are fetched
+    //  (NativeRoute.WholeEntity, no $project) and the construction runs client-side over the
+    //  materialized, tracked entity (NativeProjectionBinder.IsClientOnlyWholeEntityTree).
+    // ════════════════════════════════════════════════════════════════════════════════════════════
+
+    private class Person
+    {
+        public ObjectId Id { get; set; }
+        public string Name { get; set; } = "";
+        public string? City { get; set; }
+    }
+
+    private class PersonWrapper
+    {
+        public PersonWrapper(Person person) => Person = person;
+        public Person Person { get; }
+
+        // Deliberately not named after the element it is assigned from (`City`): a read by the member name off the raw
+        // document would answer null.
+        public string? Town { get; set; }
+    }
+
+    private IMongoCollection<Person> SeedPeople(string name)
+    {
+        var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));
+        coll.InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Ann" }, { "City", "Oslo" } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Bob" }, { "City", BsonNull.Value } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "Name", "Cid" } },
+        ]);
+        return database.MongoDatabase.GetCollection<Person>(coll.CollectionNamespace.CollectionName);
+    }
+
+    private static string Describe(Person person)
+        => $"{person.Name}|{person.City ?? "<null>"}";
+
+    [Fact]
+    public void Whole_entity_into_object_array_goes_native_with_parity()
+    {
+        var collection = SeedPeople(nameof(Whole_entity_into_object_array_goes_native_with_parity));
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode);
+            return db.Entities.OrderBy(p => p.Name).Select(p => new object[] { p }).ToList()
+                .Select(row => $"{row.Length}:{Describe((Person)row[0])}")
+                .ToList();
+        });
+
+        Assert.Equal(["1:Ann|Oslo", "1:Bob|<null>", "1:Cid|<null>"], results);
+    }
+
+    [Fact]
+    public void Whole_entity_into_object_list_goes_native_with_parity()
+    {
+        var collection = SeedPeople(nameof(Whole_entity_into_object_list_goes_native_with_parity));
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode);
+            return db.Entities.OrderBy(p => p.Name).Select(p => new List<object> { p }).ToList()
+                .Select(row => $"{row.Count}:{Describe((Person)row[0])}")
+                .ToList();
+        });
+
+        Assert.Equal(["1:Ann|Oslo", "1:Bob|<null>", "1:Cid|<null>"], results);
+    }
+
+    [Fact]
+    public void Whole_entity_ctor_argument_with_member_assignment_goes_native_with_parity()
+    {
+        var collection = SeedPeople(nameof(Whole_entity_ctor_argument_with_member_assignment_goes_native_with_parity));
+
+        var results = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode);
+            return db.Entities.OrderBy(p => p.Name).Select(p => new PersonWrapper(p) { Town = p.City }).ToList()
+                .Select(w => $"{Describe(w.Person)}/{w.Town ?? "<null>"}")
+                .ToList();
+        });
+
+        Assert.Equal(["Ann|Oslo/Oslo", "Bob|<null>/<null>", "Cid|<null>/<null>"], results);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void Whole_entity_in_client_construction_is_the_tracked_instance(int shape)
+    {
+        var collection = SeedPeople(nameof(Whole_entity_in_client_construction_is_the_tracked_instance) + shape);
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+
+        // Loaded first, so identity resolution must hand back this very instance from the construction query.
+        var ann = db.Entities.Single(p => p.Name == "Ann");
+
+        var query = db.Entities.OrderBy(p => p.Name);
+        var people = shape switch
+        {
+            0 => query.Select(p => new object[] { p }).ToList().Select(r => (Person)r[0]).ToList(),
+            1 => query.Select(p => new List<object> { p }).ToList().Select(r => (Person)r[0]).ToList(),
+            _ => query.Select(p => new PersonWrapper(p) { Town = p.City }).ToList().Select(w => w.Person).ToList()
+        };
+
+        Assert.Equal(3, people.Count);
+        Assert.Same(ann, people[0]);
+        Assert.Equal(3, db.ChangeTracker.Entries<Person>().Count());
+        Assert.All(people, p => Assert.Same(p, db.Entities.Local.Single(l => l.Id == p.Id)));
+    }
+
+    // An owned-reference operand beside the whole entity is not a whole-entity operand (after nav-expansion it is not a
+    // member chain off the selector parameter), so the binder declines. Only the NativeOnly decline is asserted: the
+    // Native/DriverLinq fallback for this shape throws NullReferenceException in BsonBinding.GetBsonDocument, as it
+    // did before this shape rule existed.
+    [Fact]
+    public void Whole_entity_and_its_owned_reference_into_object_array_declines_under_native_only()
+    {
+        var collection = SeedBlogWithAddress(
+            nameof(Whole_entity_and_its_owned_reference_into_object_array_declines_under_native_only));
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
+
+        Assert.Throws<NativeTranslationNotSupportedException>(
+            () => db.Entities.Select(b => new object[] { b, b.Address }).ToList());
+    }
+
+    // Control: no whole-entity operand, so this must not switch to whole-document fetching (a scalar container is a
+    // separate shape).
+    [Fact]
+    public void Scalar_only_array_construction_is_not_fetched_as_whole_documents()
+    {
+        var collection = SeedPeople(nameof(Scalar_only_array_construction_is_not_fetched_as_whole_documents));
+
+        var results = NativeModeAssert.DeclinesCleanly(mode =>
+        {
+            using var db = CreateContext(collection, mode);
+            return db.Entities.OrderBy(p => p.Name).Select(p => new[] { p.Name }).ToList()
+                .Select(row => string.Join(",", row))
+                .ToList();
+        });
+
+        Assert.Equal(["Ann", "Bob", "Cid"], results);
+    }
+
+    // HasClientWrappedWholeEntityShaper keeps the wrapped operand out of a native set-op combine: the per-row result is
+    // the array, not the entity document a $unionWith would dedupe.
+    [Fact]
+    public void Whole_entity_object_array_union_declines()
+    {
+        var collection = SeedPeople(nameof(Whole_entity_object_array_union_declines));
+        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+
+        Assert.Throws<NativeTranslationNotSupportedException>(
+            () => db.Entities.Where(p => p.Name == "Ann").Select(p => new object[] { p })
+                .Union(db.Entities.Where(p => p.Name == "Bob").Select(p => new object[] { p }))
+                .ToList());
     }
 }

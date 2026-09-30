@@ -369,62 +369,44 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
     /// <summary>
     /// True when <paramref name="shaperExpression"/> is a whole-entity wrap: a ctor-only DTO
-    /// <see cref="NewExpression"/> (<c>Members == null</c>) or an opaque client <see cref="MethodCallExpression"/>
-    /// with exactly one operand being the entity shaper (possibly wrapped in <see cref="IncludeExpression"/>s).
-    /// Narrows the <see cref="NativeRoute.WholeEntity"/> fallthrough route in <see cref="VisitProjectedQuery"/>.
+    /// <see cref="NewExpression"/> (<c>Members == null</c>) over the entity shaper, an opaque client
+    /// <see cref="MethodCallExpression"/> with exactly one operand being the entity shaper (possibly wrapped in
+    /// <see cref="IncludeExpression"/>s), or a client-only body/construction around those. Narrows the
+    /// <see cref="NativeRoute.WholeEntity"/> fallthrough route in <see cref="VisitProjectedQuery"/>.
     /// </summary>
+    /// <remarks>
+    /// The method-call and general arms call the same shape rule as the emit side
+    /// (<see cref="NativeClientWholeEntityShape"/>); only the classifier differs (<see
+    /// cref="ClassifyClientWholeEntityShaperOperand"/>). The general arm is gated on HasClientWrappedWholeEntityShaper,
+    /// which only the binder arms that call that rule set, so a plain translatable tree keeps falling through to
+    /// driver-LINQ push-down (Ternary_Null_Equals_Non_Numeric_First_Part).
+    /// </remarks>
     private static bool IsCtorWrappedEntityShaper(Expression shaperExpression, bool hasClientWrappedWholeEntityShaper)
         => shaperExpression switch
         {
             NewExpression { Members: null, Arguments: [var ctorArgument] } => IsEntityShaperOperand(ctorArgument),
-            MethodCallExpression methodCall => HasExactlyOneEntityShaperOperand(methodCall),
-            // A client-only body (conditional, concat, cast, member chain) wrapping an opaque call on the whole entity;
-            // mirrors NativeProjectionBinder.IsClientOnlyWholeEntityExpression. Gated on HasClientWrappedWholeEntityShaper so a
-            // plain translatable tree keeps falling through to driver-LINQ push-down (Ternary_Null_Equals_Non_Numeric_First_Part).
+            MethodCallExpression methodCall => NativeClientWholeEntityShape.HasSoleWholeEntityOperand(
+                methodCall, ClassifyClientWholeEntityShaperOperand),
             ConditionalExpression or BinaryExpression or UnaryExpression or MemberExpression
+                or NewArrayExpression or ListInitExpression or MemberInitExpression or NewExpression
                 when hasClientWrappedWholeEntityShaper =>
-                IsClientOnlyWholeEntityShaperExpression(shaperExpression),
+                NativeClientWholeEntityShape.IsClientOnlyTree(shaperExpression, ClassifyClientWholeEntityShaperOperand),
             _ => false
         };
 
     /// <summary>
-    /// Backs <see cref="IsCtorWrappedEntityShaper"/>'s general-expression arm: true when every appearance of the
-    /// entity shaper sits behind a client-only combinator, never as a separately server-computed operand.
+    /// The read-side classifier for <see cref="NativeClientWholeEntityShape"/>: over the bound shaper the selector
+    /// parameter has become the entity shaper, and a scalar member read off it may already be a
+    /// <see cref="ProjectionBindingExpression"/>, resolved off the whole raw document (no $project narrowed it).
     /// </summary>
-    private static bool IsClientOnlyWholeEntityShaperExpression(Expression node)
-    {
-        if (IsEntityShaperOperand(node))
-        {
-            return true;
-        }
-
-        return node switch
-        {
-            ConstantExpression => true,
-
-            // A scalar member read already folded into a projection binding; resolved off the whole raw document
-            // (no $project narrowed it).
-            ProjectionBindingExpression => true,
-
-            ConditionalExpression conditional =>
-                IsClientOnlyWholeEntityShaperExpression(conditional.Test)
-                && IsClientOnlyWholeEntityShaperExpression(conditional.IfTrue)
-                && IsClientOnlyWholeEntityShaperExpression(conditional.IfFalse),
-
-            BinaryExpression binary =>
-                IsClientOnlyWholeEntityShaperExpression(binary.Left)
-                && IsClientOnlyWholeEntityShaperExpression(binary.Right),
-
-            UnaryExpression unary => IsClientOnlyWholeEntityShaperExpression(unary.Operand),
-
-            MemberExpression { Expression: not null } member =>
-                IsClientOnlyWholeEntityShaperExpression(member.Expression),
-
-            MethodCallExpression methodCall => HasExactlyOneEntityShaperOperand(methodCall),
-
-            _ => false
-        };
-    }
+    private static ClientWholeEntityOperand ClassifyClientWholeEntityShaperOperand(Expression node)
+        => IsEntityShaperOperand(node)
+            ? ClientWholeEntityOperand.WholeEntity
+            : node is ProjectionBindingExpression
+                ? ClientWholeEntityOperand.EntityRead
+                : RowReadFinder.ReadsRow(node)
+                    ? ClientWholeEntityOperand.Walk
+                    : ClientWholeEntityOperand.EntityFree;
 
     private static bool IsEntityShaperOperand(Expression operand)
     {
@@ -437,29 +419,34 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         return inner is StructuralTypeShaperExpression;
     }
 
-    private static bool HasExactlyOneEntityShaperOperand(MethodCallExpression methodCall)
+    // Finds anything in a shaper subtree that reads the row: an entity shaper, a projection binding, or any other
+    // extension node (conservatively, since it can't be proven row-free).
+    private sealed class RowReadFinder : System.Linq.Expressions.ExpressionVisitor
     {
-        var sawEntityShaper = false;
+        private bool _found;
 
-        if (methodCall.Object != null && IsEntityShaperOperand(methodCall.Object))
+        internal static bool ReadsRow(Expression node)
         {
-            sawEntityShaper = true;
+            var finder = new RowReadFinder();
+            finder.Visit(node);
+            return finder._found;
         }
 
-        foreach (var argument in methodCall.Arguments)
+        public override Expression? Visit(Expression? node)
         {
-            if (IsEntityShaperOperand(argument))
+            if (_found || node == null)
             {
-                if (sawEntityShaper)
-                {
-                    return false;
-                }
-
-                sawEntityShaper = true;
+                return node;
             }
-        }
 
-        return sawEntityShaper;
+            if (node.NodeType == ExpressionType.Extension)
+            {
+                _found = true;
+                return node;
+            }
+
+            return base.Visit(node);
+        }
     }
 
     /// <summary>

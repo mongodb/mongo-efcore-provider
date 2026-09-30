@@ -143,6 +143,10 @@ Shapers and projections:
   admitted only after the `$literal` path declines; an all-client projection stages the constant sentinel `_c`).
   `HasClientEvaluatedProjectionLeaf` makes set ops (`IsPlainProjectedSelect`/`IsPlainDistinctSelect`) and every
   value-reading later operator except `Distinct` decline.
+- **Client-only bodies over the whole entity** (a client method on it, a combinator around one, or a construction
+  with a whole-entity operand: `new object[] { x }`, `new Wrapper(x) { City = x.City }`) fetch whole documents
+  (`HasClientWrappedWholeEntityShaper`, so set ops decline). Binder and shaper gate both call
+  `NativeClientWholeEntityShape`; at least one whole-entity operand is required (`new[] { x.Id }` must not match).
 - **A `NativeComputedLeafExpression` is read whole only by the native alias reader**; every other shaper visitor
   must use its `ClientExpression`.
 - **Mixed-projection alias agreement.** An array/owned-nav projection leaf's alias must equal the navigation's

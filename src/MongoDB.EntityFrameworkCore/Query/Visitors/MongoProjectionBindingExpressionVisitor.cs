@@ -197,6 +197,16 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                      && _queryExpression.Select.Route == NativeRoute.Projection:
                 return projectionBindingExpression;
 
+            // A member read inside a client-only body over the whole entity (`new Wrapper(x) { Name = x.name }`,
+            // NativeClientWholeEntityShape): nothing is projected, so a projection binding would be read by its
+            // ProjectionMember name off the raw document, which is not the element name (`Name` vs `name`) and reads
+            // null. Read it off the materialized entity instead (VisitMember's non-navigation arm), so it is the
+            // tracked instance's value. VisitMember null-guards the read as `T?` (a reference-typed receiver counts as
+            // nullable), so restore the member's own type for consumers that don't (a ConditionalExpression test).
+            case MemberExpression when _queryExpression.Select.Route == NativeRoute.WholeEntity
+                                       && _queryExpression.Select.HasClientWrappedWholeEntityShaper:
+                return MatchTypes(base.Visit(expression), expression.Type);
+
             case MemberExpression memberExpression:
                 var currentProjectionMember = GetCurrentProjectionMember();
                 _projectionMapping[currentProjectionMember] = memberExpression;
