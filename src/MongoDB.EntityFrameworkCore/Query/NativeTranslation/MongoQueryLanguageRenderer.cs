@@ -57,9 +57,8 @@ internal sealed class MongoQueryLanguageRenderer
             MongoNumericTypeBracketExpression bracket => RenderNumericTypeBracket(bracket),
             MongoInExpression inExpr => RenderIn(inExpr, placeholders),
             MongoArrayContainsExpression arrayContains => RenderArrayContains(arrayContains, placeholders),
-            // IsMatch is excluded: its Field is the pattern, not the tested value, so RenderRegex would be
-            // backwards. It falls to the $expr/$regexMatch catch-all (see MongoRegexKind.IsMatch).
-            MongoRegexExpression { Kind: not MongoRegexKind.IsMatch, Term: MongoConstantExpression { Value: string } or MongoParameterExpression } regex
+            // Shares IsQueryDialectRegex with IsQueryDialectRenderable; anything else falls to $expr/$regexMatch.
+            MongoRegexExpression regex when IsQueryDialectRegex(regex)
                 => RenderRegex(regex, placeholders),
             MongoElemMatchExpression elemMatch => RenderElemMatch(elemMatch, placeholders),
             // Literal bool root: `true` is an empty (match-all) body; `false` uses the impossible-$type idiom
@@ -68,6 +67,28 @@ internal sealed class MongoQueryLanguageRenderer
                 ? new BsonDocument()
                 : new BsonDocument("_id", new BsonDocument("$type", -1)),
             _ => RenderAsExpr(node, placeholders)
+        };
+
+    /// <summary>
+    /// Whether a <see cref="MongoRegexExpression"/> has the query-dialect <c>{ path: /re/ }</c> form. The single
+    /// predicate behind both <see cref="RenderNode"/>'s regex arm and <see cref="IsQueryDialectRenderable"/>, so
+    /// the two cannot drift. Requires:
+    /// <list type="bullet">
+    /// <item>a literal term (constant string or parameter): <c>$regularExpression</c> needs a literal pattern, so a
+    /// field-to-field term goes to <c>$expr</c>;</item>
+    /// <item>a <see cref="MongoFieldExpression"/> or <see cref="MongoElementRefExpression"/> receiver: a computed
+    /// receiver (<c>(c.A + "").Contains("1")</c>) has no document path, and <c>{ path: /re/ }</c> over a bogus path
+    /// silently matches nothing;</item>
+    /// <item>not <see cref="MongoRegexKind.IsMatch"/>: its Field is the pattern, not the tested value, so
+    /// <see cref="RenderRegex"/> would be backwards.</item>
+    /// </list>
+    /// </summary>
+    internal static bool IsQueryDialectRegex(MongoRegexExpression regex)
+        => regex is
+        {
+            Kind: not MongoRegexKind.IsMatch,
+            Field: MongoFieldExpression or MongoElementRefExpression,
+            Term: MongoConstantExpression { Value: string } or MongoParameterExpression
         };
 
     // Query-native classification: bare field on the left, constant/parameter on the right. Field-to-field
@@ -415,10 +436,7 @@ internal sealed class MongoQueryLanguageRenderer
                     or MongoValueListExpression,
             // The translator only builds this with an already-renderable Value.
             MongoArrayContainsExpression => true,
-            // IsMatch goes to $expr (see RenderNode); must precede the generic regex arm, which would admit it.
-            MongoRegexExpression { Kind: MongoRegexKind.IsMatch } => false,
-            MongoRegexExpression { Term: MongoConstantExpression { Value: string } or MongoParameterExpression }
-                => true,
+            MongoRegexExpression regex => IsQueryDialectRegex(regex),
             MongoElemMatchExpression elemMatch => IsQueryDialectRenderable(elemMatch.ElementPredicate),
             // Literal bool root has a query-dialect form (see RenderNode).
             MongoConstantExpression { Value: bool } => true,

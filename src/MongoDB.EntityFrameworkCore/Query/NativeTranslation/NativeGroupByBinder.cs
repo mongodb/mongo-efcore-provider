@@ -1740,7 +1740,8 @@ internal static class NativeGroupByBinder
     /// <summary>
     /// <c>Distinct(projection)</c>: converts the terminal <c>Select</c>'s projection into a key-only grouping and a
     /// flatten reading each value back from <c>_id</c>. Returns <see langword="false"/> if there's no native
-    /// projection or a field key isn't default-serialized (generic <c>_id</c> readback would diverge).
+    /// projection or a field key isn't default-serialized (generic <c>_id</c> readback would diverge), unless it is a
+    /// bare value-converted key (<see cref="IsBareValueConvertedDistinctKey"/>).
     /// </summary>
     internal static bool TryBindDistinctFromProjection(MongoQueryExpression mongoQ)
     {
@@ -1773,9 +1774,11 @@ internal static class NativeGroupByBinder
         var flatten = new List<MongoProjection>();
         foreach (var projection in select.Projection)
         {
-            // A bare field needs the default-serialization guard; a computed key part has no IProperty, so no converter
-            // can apply and it reads back from "_id.<alias>" like any computed projection member.
-            if (projection.Expression is MongoFieldExpression field && !HasDefaultKeySerialization(field.Property))
+            // A bare field needs the default-serialization guard (or is a bare converted key, see
+            // IsBareValueConvertedDistinctKey); a computed key part has no IProperty, so no converter can apply and it
+            // reads back from "_id.<alias>" like any computed projection member.
+            if (projection.Expression is MongoFieldExpression field && !HasDefaultKeySerialization(field.Property)
+                && !IsBareValueConvertedDistinctKey(select, field))
                 return false;
 
             // ThrowsOnNull carries over to both: the deduped value is the same possibly-null value, read back from
@@ -1796,6 +1799,33 @@ internal static class NativeGroupByBinder
             select.AddProjection(f);
         return true;
     }
+
+    /// <summary>
+    /// Whether <paramref name="field"/>, a non-default-serialized key part of a projected <c>Distinct()</c>, can still
+    /// go native: the projection is a bare field (<c>Select(o =&gt; o.Status).Distinct()</c>, not a wrapper such as
+    /// <c>new { o.Status }</c>) and the property has a value converter but no <c>BsonRepresentation</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The <c>$group</c> dedups the stored (provider) values, exactly as driver-LINQ's Distinct does. The distinct value
+    /// is flattened back under the bare projection's alias, and the shaper reads it through the property's own
+    /// serializer (its <c>ProjectionMapping</c> leaf is still the <c>o.Status</c> member, resolved by
+    /// <c>TryResolveFieldAccess</c>), so the converter applies. Downstream the sole key part stays a
+    /// <see cref="MongoFieldExpression"/> over the property (see <c>MongoExpressionTranslator.TryResolveMember</c>'s
+    /// bare-parameter arm), so comparisons serialize their constant/parameter through the converter, and ordering and
+    /// relational comparisons act on the stored value, as they do for the same property in an ordinary native
+    /// <c>Where</c>/<c>OrderBy</c> and on driver-LINQ. Operators that can't honour a converter decline through their
+    /// existing guards (<c>MongoExpressionTranslator.AllFieldsDefaultSerialized</c>; the selector-less aggregates in
+    /// <see cref="TryBindDistinctTerminalAggregate"/>).
+    /// </para>
+    /// <para>
+    /// Both remaining conjuncts limit scope rather than fix a known wrong result: a wrapper projection
+    /// (<c>new { o.Status }</c>, whose member-level post-Distinct consumers haven't been audited for converters) and a
+    /// <c>BsonRepresentation</c> key stay on the fallback.
+    /// </para>
+    /// </remarks>
+    private static bool IsBareValueConvertedDistinctKey(MongoSelectDefinition select, MongoFieldExpression field)
+        => select.IsBareProjection && field.Property.GetBsonRepresentation() == null;
 
     /// <summary>
     /// Resolves an <c>OrderBy</c>/<c>ThenBy</c> key after a projected <c>Distinct()</c> against the Distinct's key
@@ -1866,6 +1896,12 @@ internal static class NativeGroupByBinder
 
         // A selector would reduce some other value than the one Distinct flattened; decline.
         if (selector != null)
+            return false;
+
+        // A value-converted key (admitted by IsBareValueConvertedDistinctKey) would reduce the stored values and read
+        // the result back through a generic CLR serializer: Max over an enum stored as a string throws, Average over an
+        // int stored as a string answers 0. The ungrouped Select(o => o.X).Max() declines the same operand.
+        if (keyPart.FieldRef is MongoFieldExpression keyField && !HasDefaultKeySerialization(keyField.Property))
             return false;
 
         var operand = new MongoElementRefExpression(keyPart.Name, keyPart.FieldRef.Type, throwsOnNull: keyPart.ThrowsOnNull);

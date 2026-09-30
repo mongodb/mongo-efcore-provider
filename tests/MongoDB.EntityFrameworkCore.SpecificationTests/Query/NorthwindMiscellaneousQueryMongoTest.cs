@@ -261,8 +261,8 @@ Customers.{ "$sort" : { "_id" : -1 } }, { "$project" : { "_id" : "$_id" } }
 
         AssertMql(
             """
-            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : [{ "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : [{ "$toString" : "$_id" }, ""] }, "else" : null } }, "1"] }, 0] } } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : [{ "$toString" : "$_id" }, ""] }, "else" : null } }, "_id" : 0 } }, { "$limit" : 1 }
-            """);
+Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$regexMatch" : { "input" : { "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : [{ "$ifNull" : [{ "$toString" : "$_id" }, ""] }, { "$literal" : "" }] }, "else" : { "$literal" : null } } }, "regex" : { "$regularExpression" : { "pattern" : "1", "options" : "s" } } } } } }, { "$limit" : 1 }, { "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : [{ "$ifNull" : [{ "$toString" : "$_id" }, ""] }, { "$literal" : "" }] }, "else" : { "$literal" : null } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Ternary_Not_Null_endsWith_Non_Numeric_First_Part(bool async)
@@ -271,8 +271,8 @@ Customers.{ "$sort" : { "_id" : -1 } }, { "$project" : { "_id" : "$_id" } }
 
         AssertMql(
             """
-            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$let" : { "vars" : { "string" : { "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : ["", { "$toString" : "$_id" }, ""] }, "else" : null } } }, "in" : { "$let" : { "vars" : { "start" : { "$subtract" : [{ "$strLenCP" : "$$string" }, 1] } }, "in" : { "$and" : [{ "$gte" : ["$$start", 0] }, { "$eq" : [{ "$indexOfCP" : ["$$string", "1", "$$start"] }, "$$start"] }] } } } } } } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : ["", { "$toString" : "$_id" }, ""] }, "else" : null } }, "_id" : 0 } }, { "$limit" : 1 }
-            """);
+Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$regexMatch" : { "input" : { "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : [{ "$literal" : "" }, { "$ifNull" : [{ "$toString" : "$_id" }, ""] }, { "$literal" : "" }] }, "else" : { "$literal" : null } } }, "regex" : { "$regularExpression" : { "pattern" : "1$", "options" : "s" } } } } } }, { "$limit" : 1 }, { "$project" : { "_v" : { "$cond" : { "if" : { "$ne" : ["$$ROOT", null] }, "then" : { "$concat" : [{ "$literal" : "" }, { "$ifNull" : [{ "$toString" : "$_id" }, ""] }, { "$literal" : "" }] }, "else" : { "$literal" : null } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Ternary_Null_Equals_Non_Numeric_First_Part(bool async)
@@ -291,8 +291,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$eq" : [{ "$cond
 
         AssertMql(
             """
-            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : [{ "$cond" : { "if" : { "$eq" : ["$$ROOT", null] }, "then" : null, "else" : { "$concat" : [{ "$toString" : "$_id" }, ""] } } }, "1"] }, 0] } } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$$ROOT", null] }, "then" : null, "else" : { "$concat" : [{ "$toString" : "$_id" }, ""] } } }, "_id" : 0 } }, { "$limit" : 1 }
-            """);
+Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "$expr" : { "$regexMatch" : { "input" : { "$cond" : { "if" : { "$eq" : ["$$ROOT", null] }, "then" : { "$literal" : null }, "else" : { "$concat" : [{ "$ifNull" : [{ "$toString" : "$_id" }, ""] }, { "$literal" : "" }] } } }, "regex" : { "$regularExpression" : { "pattern" : "^1", "options" : "s" } } } } } }, { "$limit" : 1 }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : ["$$ROOT", null] }, "then" : { "$literal" : null }, "else" : { "$concat" : [{ "$ifNull" : [{ "$toString" : "$_id" }, ""] }, { "$literal" : "" }] } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Column_access_inside_subquery_predicate(bool async)
@@ -1106,7 +1106,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
         await base.Join_Customers_Orders_Skip_Take_followed_by_constant_projection(async);
         AssertMql(
             """
-Customers.{ "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Orders", "localField" : "_outer._id", "foreignField" : "CustomerID", "as" : "_inner" } }, { "$unwind" : "$_inner" }, { "$project" : { "Outer" : "$_outer", "Inner" : "$_inner", "_id" : 0 } }, { "$sort" : { "Inner._id" : 1 } }, { "$skip" : 10 }, { "$limit" : 5 }, { "$project" : { "_v" : "Foo", "_id" : 0 } }
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$sort" : { "_lookup_Orders._id" : 1 } }, { "$skip" : 10 }, { "$limit" : 5 }, { "$project" : { "_v" : { "$literal" : "Foo" }, "_id" : 0 } }
 """);
     }
 
@@ -2391,7 +2391,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$or" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }] }, "_id" : 0 } }
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$or" : [{ "$eq" : ["$_id", { "$literal" : "ALFKI" }] }, { "$eq" : ["$_id", { "$literal" : "ANATR" }] }] }, "_id" : 0 } }
             """);
     }
 
@@ -2401,7 +2401,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$or" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }, { "$eq" : ["$_id", "ANTON"] }] }, "_id" : 0 } }
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$or" : [{ "$or" : [{ "$eq" : ["$_id", { "$literal" : "ALFKI" }] }, { "$eq" : ["$_id", { "$literal" : "ANATR" }] }] }, { "$eq" : ["$_id", { "$literal" : "ANTON" }] }] }, "_id" : 0 } }
             """);
     }
 
@@ -2411,7 +2411,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$and" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }] }, "_id" : 0 } }
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$and" : [{ "$eq" : ["$_id", { "$literal" : "ALFKI" }] }, { "$eq" : ["$_id", { "$literal" : "ANATR" }] }] }, "_id" : 0 } }
             """);
     }
 
@@ -2421,7 +2421,7 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$or" : [{ "$and" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }] }, { "$eq" : ["$_id", "ANTON"] }] }, "_id" : 0 } }
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$or" : [{ "$and" : [{ "$eq" : ["$_id", { "$literal" : "ALFKI" }] }, { "$eq" : ["$_id", { "$literal" : "ANATR" }] }] }, { "$eq" : ["$_id", { "$literal" : "ANTON" }] }] }, "_id" : 0 } }
             """);
     }
 
@@ -2529,7 +2529,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$or" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }, { "$eq" : ["$_id", "ANTON"] }] }, "_id" : 0 } }
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$or" : [{ "$or" : [{ "$eq" : ["$_id", { "$literal" : "ALFKI" }] }, { "$eq" : ["$_id", { "$literal" : "ANATR" }] }] }, { "$eq" : ["$_id", { "$literal" : "ANTON" }] }] }, "_id" : 0 } }
             """);
     }
 
@@ -2539,7 +2539,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitXor" : ["$_id", 1] }, 10249] }
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$and" : [{ "$eq" : ["$_id", "ALFKI"] }, { "$eq" : ["$_id", "ANATR"] }, { "$eq" : ["$_id", "ANTON"] }] }, "_id" : 0 } }
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerID" : "$_id", "Value" : { "$and" : [{ "$and" : [{ "$eq" : ["$_id", { "$literal" : "ALFKI" }] }, { "$eq" : ["$_id", { "$literal" : "ANATR" }] }] }, { "$eq" : ["$_id", { "$literal" : "ANTON" }] }] }, "_id" : 0 } }
             """);
     }
 
@@ -2632,8 +2632,8 @@ Orders.{ "$match" : { } }
 
         AssertMql(
             """
-            Orders.{ "$match" : { "$and" : [{ "OrderDate" : { "$ne" : null } }, { "$expr" : { "$gte" : [{ "$indexOfCP" : [{ "$toString" : "$EmployeeID" }, "7"] }, 0] } }] } }, { "$project" : { "CustomerID" : "$CustomerID", "_id" : 0 } }
-            """);
+Orders.{ "$match" : { "$and" : [{ "OrderDate" : { "$ne" : null } }, { "$expr" : { "$regexMatch" : { "input" : { "$toString" : "$EmployeeID" }, "regex" : { "$regularExpression" : { "pattern" : "7", "options" : "s" } } } } }] } }, { "$project" : { "CustomerID" : "$CustomerID", "_id" : 0 } }
+""");
     }
 
     public override async Task Select_expression_long_to_string(bool async)
@@ -2759,7 +2759,7 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Ship
 
         AssertMql(
             """
-            Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "_v" : { "$year" : "$OrderDate" }, "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$match" : { "_v" : { "$lt" : 2017 } } }
+            Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$group" : { "_id" : { "_v" : { "$ifNull" : [{ "$year" : "$OrderDate" }, null] } } } }, { "$project" : { "_v" : "$_id._v", "_id" : 0 } }, { "$match" : { "$expr" : { "$lt" : ["$_v", { "$literal" : 2017 }] } } }
             """);
     }
 
@@ -4642,6 +4642,14 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
 #if EF8 || EF9
     public override async Task Random_next_is_not_funcletized_1(bool async)
     {
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            // Native declines Random.Next, which is EF-conformant (relational/Cosmos AssertTranslationFailed);
+            // driver-LINQ passes only by funcletizing Random once at translation time. EF-322
+            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Random_next_is_not_funcletized_1(async));
+            return;
+        }
+
         try
         {
             await base.Random_next_is_not_funcletized_1(async);
@@ -4657,6 +4665,14 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
 
     public override async Task Random_next_is_not_funcletized_2(bool async)
     {
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            // Native declines Random.Next, which is EF-conformant (relational/Cosmos AssertTranslationFailed);
+            // driver-LINQ passes only by funcletizing Random once at translation time. EF-322
+            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Random_next_is_not_funcletized_2(async));
+            return;
+        }
+
         try
         {
             await base.Random_next_is_not_funcletized_2(async);
@@ -4672,6 +4688,14 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
 
     public override async Task Random_next_is_not_funcletized_3(bool async)
     {
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            // Native declines Random.Next, which is EF-conformant (relational/Cosmos AssertTranslationFailed);
+            // driver-LINQ passes only by funcletizing Random once at translation time. EF-322
+            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Random_next_is_not_funcletized_3(async));
+            return;
+        }
+
         try
         {
             await base.Random_next_is_not_funcletized_3(async);
@@ -4687,6 +4711,14 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
 
     public override async Task Random_next_is_not_funcletized_4(bool async)
     {
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            // Native declines Random.Next, which is EF-conformant (relational/Cosmos AssertTranslationFailed);
+            // driver-LINQ passes only by funcletizing Random once at translation time. EF-322
+            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Random_next_is_not_funcletized_4(async));
+            return;
+        }
+
         try
         {
             await base.Random_next_is_not_funcletized_4(async);
@@ -4702,6 +4734,14 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
 
     public override async Task Random_next_is_not_funcletized_5(bool async)
     {
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            // Native declines Random.Next, which is EF-conformant (relational/Cosmos AssertTranslationFailed);
+            // driver-LINQ passes only by funcletizing Random once at translation time. EF-322
+            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Random_next_is_not_funcletized_5(async));
+            return;
+        }
+
         await base.Random_next_is_not_funcletized_5(async);
 
         AssertMql(
@@ -4712,6 +4752,14 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
 
     public override async Task Random_next_is_not_funcletized_6(bool async)
     {
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            // Native declines Random.Next, which is EF-conformant (relational/Cosmos AssertTranslationFailed);
+            // driver-LINQ passes only by funcletizing Random once at translation time. EF-322
+            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Random_next_is_not_funcletized_6(async));
+            return;
+        }
+
         await base.Random_next_is_not_funcletized_6(async);
 
         AssertMql(

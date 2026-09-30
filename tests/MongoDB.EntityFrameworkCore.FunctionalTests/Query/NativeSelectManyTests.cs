@@ -568,6 +568,28 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
     }
 
     [Fact]
+    public void Inner_filter_with_computed_string_receiver_goes_native()
+    {
+        // The inner filter's regex receiver is computed ((i.Name + "").StartsWith), so MongoFieldPrefixRewriter must
+        // recurse into MongoRegexExpression.Field (not cast it to a field) to prefix it with the "Items" scope.
+        // NativeAndParity runs NativeOnly (proves native) and DriverLinq (oracle); the CLR result pins both.
+        var seed = SeedOwners();
+        var result = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(seed, mode, nameof(Inner_filter_with_computed_string_receiver_goes_native) + mode);
+            return db.Entities
+                .SelectMany(o => o.Items.Where(i => (i.Name + "").StartsWith("W")), (o, i) => new { o.Name, i.Price })
+                .AsEnumerable().OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+        });
+
+        var expected = seed
+            .SelectMany(o => o.Items.Where(i => (i.Name + "").StartsWith("W")), (o, i) => new { o.Name, i.Price })
+            .OrderBy(x => x.Name).ThenBy(x => x.Price).ToList();
+        Assert.Equal(expected, result);
+        Assert.Single(result); // Alice's Widget only
+    }
+
+    [Fact]
     public void Explicit_result_selector_form_filtered_goes_native()
     {
         var seed = SeedOwners();

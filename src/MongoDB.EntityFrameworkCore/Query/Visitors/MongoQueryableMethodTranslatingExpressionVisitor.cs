@@ -570,6 +570,25 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 mongoQueryExpression, NativeProjectionBinder.SyntheticBareProjectionAlias, selector.Body);
             return source.UpdateShaperExpression(boundBareValueLeaf);
         }
+        // A parameter-free body over a single-level join scope, e.g. `Select(ti => "Foo")` after `Skip`/`Take`. The
+        // bare-value arm above can't take it: NativeJoinScopeTranslator requires an Outer/Inner access. Staged as a
+        // `$literal` `_v` projection; confirming the chain keeps the $lookup/$unwind, so inner-join-dropped rows stay
+        // dropped and paging deferred by IsSingleEligibleNativeJoinScope lowers after the $unwind. Pure checks run
+        // before that predicate (which may defer ops) so nothing is mutated on a decline.
+        else if (mongoQueryExpression.Select.JoinScope is { Levels.Count: 1 } parameterFreeScope
+                 && mongoQueryExpression.Select.Projection.Count == 0
+                 && !selector.Body.ReferencesParameter(selector.Parameters[0])
+                 && TryTranslateParameterFreeJoinProjection(parameterFreeScope, selector.Body, out var parameterFreeLeaf)
+                 && IsSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
+        {
+            mongoQueryExpression.Select.AddProjection(
+                new MongoProjection(NativeProjectionBinder.SyntheticBareProjectionAlias, parameterFreeLeaf));
+            NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, parameterFreeScope);
+
+            var boundParameterFreeLeaf = BindSelectManyMember(
+                mongoQueryExpression, NativeProjectionBinder.SyntheticBareProjectionAlias, selector.Body);
+            return source.UpdateShaperExpression(boundParameterFreeLeaf);
+        }
         else if (!IsTransparentIdentifierSelector(selector) && !IsSingleLevelCollectionIncludeSelector(selector)
                  && !IsTransparentIdentifierMemberAccessSelector(selector)
                  && !IsOwnedEmbeddedIncludeSelector(selector))
@@ -993,6 +1012,27 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         }
 
         joinInfo = candidate;
+        return true;
+    }
+
+    /// <summary>
+    /// Translates a <c>Select</c> body that doesn't reference its parameter to a bare constant or query parameter,
+    /// which <c>RenderProject</c> <c>$literal</c>-wraps. Anything else declines, as does a value that would throw at
+    /// pipeline-build time (<see cref="NativeSlotPopulator.TryProbeBareValueRenders"/>). Pure.
+    /// </summary>
+    private static bool TryTranslateParameterFreeJoinProjection(
+        MongoJoinScope scope, Expression body, [NotNullWhen(true)] out MongoExpression? leaf)
+    {
+        leaf = null;
+
+        if (!new MongoExpressionTranslator(scope.OuterEntityType).TryTranslateValue(body, out var translated)
+            || translated is not (MongoConstantExpression or MongoParameterExpression)
+            || !NativeSlotPopulator.TryProbeBareValueRenders(translated, NativeSlotPopulator.UnwrapBoxingToObjectType(body)))
+        {
+            return false;
+        }
+
+        leaf = translated;
         return true;
     }
 
@@ -3039,7 +3079,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // Projected operands: each side may be a plain projected Select, a projected Distinct, or a
         // GroupBy(key).Select(aggregate); the combine compares flattened values by alias regardless. Different
         // collections are fine; ProjectionShapesMatch is a correctness guard, since dedup/source-tagging compare
-        // whole projected documents.
+        // whole projected documents, and OperandSerializationsMatch requires each alias to be stored the same way
+        // on both sides (a value converter on one side only would compare/read mismatched BSON).
         //
         // source1's own pending lookups (e.g. a projected Orders.Select(o => o.OrderDetails.Count())) are
         // admitted because the lowerer emits them ahead of source1's $project. source2's operand select carries
@@ -3061,7 +3102,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             && (!HasShaperUnsafeConstantLeaf(mongo1)
                 || (rebindConstantLeaf = CanRebindConstantLeafToDocument(source1, mongo1)))
             && (IsPlainProjectedSelect(mongo2) || IsPlainDistinctSelect(mongo2) || IsPlainGroupBySelect(mongo2))
-            && (ProjectionShapesMatch(mongo1.Select.Projection, mongo2.Select.Projection)
+            && ((ProjectionShapesMatch(mongo1.Select.Projection, mongo2.Select.Projection)
+                 && OperandSerializationsMatch(mongo1.Select, mongo2.Select))
+                // Aligned bare scalars already require default serialization on both sides (ReadsOnlyDefaultSerializedFields).
                 || (alignBareScalarAliases = CanAlignBareScalarAliases(source1, mongo1, source2, mongo2))))
         {
             if (rebindConstantLeaf)
@@ -3355,6 +3398,81 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         return true;
     }
+
+    // Each alias's values must be stored the same way on both operands: dedup and Intersect/Except compare stored
+    // BSON, and source1's shaper reads every combined row through source1's property serializer. Without this,
+    // Converted.Select(o => o.Status) (stored "Shipped") against Other.Select(o => o.Status) (stored 1) dedups
+    // nothing, intersects to empty, or throws reading 1 as a string. Covers bare and wrapped projected operands and
+    // projected Distinct operands (whose key part is read back from "_id.<alias>"); a real GroupBy key is already
+    // default-serialized (HasDefaultKeySerialization gates it). DateTimeKind is checked separately
+    // (NativeDateTimeKindReadBack).
+    private static bool OperandSerializationsMatch(MongoSelectDefinition select1, MongoSelectDefinition select2)
+    {
+        foreach (var projection1 in select1.Projection)
+        {
+            var field1 = StoredField(select1, projection1.Expression);
+            var field2 = select2.Projection.FirstOrDefault(p => p.Alias == projection1.Alias) is { } projection2
+                ? StoredField(select2, projection2.Expression)
+                : null;
+
+            if (!StoredSerializationsMatch(field1, field2))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // Both sides default-serialized (a computed value, null here, has no property and so no converter); or the same
+    // property; or two properties with no BsonRepresentation whose type-mapping converters (the ones
+    // BsonSerializerFactory wraps) are the same converter type with the same provider type and structurally equal
+    // conversion expressions, e.g. two HasConversion<string>() enums. Anything else (a converter against none, two
+    // different converters, a BsonRepresentation) declines; EF value converters have no equality of their own.
+    private static bool StoredSerializationsMatch(MongoFieldExpression? field1, MongoFieldExpression? field2)
+    {
+        var default1 = field1 == null || NativeGroupByBinder.HasDefaultKeySerialization(field1.Property);
+        var default2 = field2 == null || NativeGroupByBinder.HasDefaultKeySerialization(field2.Property);
+        if (default1 && default2)
+        {
+            return true;
+        }
+
+        if (field1 == null || field2 == null)
+        {
+            return false;
+        }
+
+        if (field1.Property == field2.Property)
+        {
+            return true;
+        }
+
+        return field1.Property.GetBsonRepresentation() == null
+               && field2.Property.GetBsonRepresentation() == null
+               && field1.Property.GetTypeMapping().Converter is { } converter1
+               && field2.Property.GetTypeMapping().Converter is { } converter2
+               && converter1.GetType() == converter2.GetType()
+               && converter1.ProviderClrType == converter2.ProviderClrType
+               && ExpressionEqualityComparer.Instance.Equals(
+                   converter1.ConvertToProviderExpression, converter2.ConvertToProviderExpression)
+               && ExpressionEqualityComparer.Instance.Equals(
+                   converter1.ConvertFromProviderExpression, converter2.ConvertFromProviderExpression);
+    }
+
+    // The entity field whose stored value a projected operand's alias carries: the projected field itself, or, for a
+    // projected Distinct/GroupBy operand, the key part its flattened "_id.<alias>" (or single-key "_id") reads.
+    private static MongoFieldExpression? StoredField(MongoSelectDefinition select, MongoExpression value)
+        => value switch
+        {
+            MongoFieldExpression field => field,
+            MongoElementRefExpression { Path: var path } when select.Grouping is { } grouping
+                => (path == "_id" && grouping.Key.Count == 1
+                        ? grouping.Key[0]
+                        : grouping.Key.FirstOrDefault(k => k.Name != null && path == "_id." + k.Name))
+                    ?.FieldRef as MongoFieldExpression,
+            _ => null
+        };
 
     protected override ShapedQueryExpression? TranslateWhere(ShapedQueryExpression source, LambdaExpression predicate)
         => null;

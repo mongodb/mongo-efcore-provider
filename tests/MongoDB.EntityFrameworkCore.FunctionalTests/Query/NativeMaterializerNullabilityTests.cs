@@ -638,6 +638,20 @@ public class NativeMaterializerNullabilityTests(TemporaryDatabaseFixture databas
         Assert.Equal([1], result.Select(r => r.L));
     }
 
+    // The bare-parameter spelling over a bare computed Distinct key (TryResolveFlattenedAlias's SelfParam arm) must
+    // carry the same flag: without it the null row passes `$lt` and the flagged read then throws. Hand oracle: [1].
+    [Fact]
+    public void Where_on_bare_parameter_over_distinct_nullable_string_length_excludes_the_null_row()
+    {
+        var collection = database.CreateCollection<StringKeyed>();
+        collection.InsertMany([new StringKeyed { Id = "ab", Label = "x" }, new StringKeyed { Id = "abcde", Label = null }]);
+        using var context = CreateContext(collection, MongoQueryMode.NativeOnly, mb => mb.Entity<StringKeyed>().HasKey(e => e.Id));
+
+        var result = context.Entities.Select(e => e.Label!.Length).Distinct().Where(l => l < 3).ToList();
+
+        Assert.Equal([1], result);
+    }
+
     // The same through a projected set-op operand: source1 is empty, so every reduced row is source2's flagged value.
     [Fact]
     public void Aggregate_over_set_op_operand_nullable_string_length_never_reads_null_as_zero()

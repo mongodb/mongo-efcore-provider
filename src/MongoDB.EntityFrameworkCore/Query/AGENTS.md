@@ -87,6 +87,8 @@ Scope, joins, grouping:
   source2 (`CanAlignBareScalarAliases`). A constant/parameter on source1, including inside a projected Distinct's
   key parts, declines unless `CanRebindConstantLeafToDocument` rebinds it (bare, ungrouped, int/long/double/bool/
   string). source1 may be a single-level confirmed join scope (`IsPreCombineJoinScope`); source2 has no lookups.
+  Projected operands must store each alias the same way (`OperandSerializationsMatch`: same property, both default,
+  or equivalent converters).
 - **A composite `$group` `_id` omits a missing sub-key**; `MongoPipelineFactory.RenderCompositeKeyPart`
   `$ifNull`-normalizes every possibly-null part once. Key-only accumulator conditions use `NullSafeKeyRead`.
 

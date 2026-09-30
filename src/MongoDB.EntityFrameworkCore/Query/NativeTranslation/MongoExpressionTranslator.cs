@@ -178,6 +178,19 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
+    /// Translates a computed string receiver for <c>StartsWith</c>/<c>EndsWith</c>/<c>Contains</c>, or returns
+    /// <see langword="null"/>. The result is never a bare field or element ref (those resolve earlier), so the
+    /// regex it feeds always renders via <c>$expr</c>/<c>$regexMatch</c> (see
+    /// <see cref="MongoQueryLanguageRenderer.IsQueryDialectRegex"/>). Pure: nothing is recorded on a decline.
+    /// </summary>
+    private MongoExpression? TryTranslateComputedRegexReceiver(Expression receiver)
+        => TryTranslateValue(receiver, out var computed)
+           && computed.Type == typeof(string)
+           && MongoAggregationExpressionRenderer.CanRender(computed)
+            ? computed
+            : null;
+
+    /// <summary>
     /// Resolves a <c>DateTime</c>/<c>DateTimeOffset</c> member-access chain (<c>.Year</c>, <c>.Date</c>,
     /// <c>.DateTime</c>, <c>.UtcDateTime</c>, ...) to a native date expression, recursing into the receiver so
     /// multi-hop chains such as <c>x.Dto.Value.DateTime.Date</c> compose.
@@ -574,6 +587,20 @@ internal sealed partial class MongoExpressionTranslator
         return e;
     }
 
+    // `&` / `|` over two non-nullable bools is the logical and/or with both sides evaluated; server-side evaluation has
+    // no side effects, so it is exact. bool? operands (three-valued `&`/`|`) are excluded and decline.
+    private static bool IsNonNullableBoolLogical(BinaryExpression node)
+        => node is { NodeType: ExpressionType.And or ExpressionType.Or }
+           && node.Type == typeof(bool) && node.Left.Type == typeof(bool) && node.Right.Type == typeof(bool);
+
+    private static bool IsLogicalAnd(BinaryExpression node)
+        => node.NodeType == ExpressionType.AndAlso
+           || (node.NodeType == ExpressionType.And && IsNonNullableBoolLogical(node));
+
+    private static bool IsLogicalOr(BinaryExpression node)
+        => node.NodeType == ExpressionType.OrElse
+           || (node.NodeType == ExpressionType.Or && IsNonNullableBoolLogical(node));
+
     // Returns null for any unsupported node (the caller propagates null → false return).
     private MongoExpression? TranslateNode(Expression node)
     {
@@ -581,7 +608,7 @@ internal sealed partial class MongoExpressionTranslator
         {
             // --- Logical binary operators ---
 
-            case BinaryExpression { NodeType: ExpressionType.AndAlso } andAlso:
+            case BinaryExpression andAlso when IsLogicalAnd(andAlso):
             {
                 var left = TranslateNode(Unwrap(andAlso.Left));
                 if (left is null) return null;
@@ -590,7 +617,7 @@ internal sealed partial class MongoExpressionTranslator
                 return new MongoBinaryExpression(MongoBinaryOperator.AndAlso, left, right);
             }
 
-            case BinaryExpression { NodeType: ExpressionType.OrElse } orElse:
+            case BinaryExpression orElse when IsLogicalOr(orElse):
             {
                 var left = TranslateNode(Unwrap(orElse.Left));
                 if (left is null) return null;
@@ -907,9 +934,17 @@ internal sealed partial class MongoExpressionTranslator
                     // TryResolveFlattenedAlias.
                     fieldNode = aliasFieldRef;
                 }
+                else if (TryTranslateComputedRegexReceiver(Unwrap(receiver)) is { } computedReceiver)
+                {
+                    // A computed string receiver (`(c.A + "").Contains("1")`, `(c.S ?? "z").StartsWith("a")`,
+                    // `c.U.ToString().Contains("7")`). Aggregation dialect only: MongoQueryLanguageRenderer's
+                    // IsQueryDialectRegex keeps it out of the { path: /re/ } form, so it renders via
+                    // $expr/$regexMatch. The field-to-field term arm below requires `property`, so it declines here.
+                    fieldNode = computedReceiver;
+                }
                 else
                 {
-                    return null; // receiver must resolve to a bare string field or a computed Distinct alias
+                    return null; // receiver must be a bare string field, a computed Distinct alias, or a computed string
                 }
 
                 var termNode = termExpr.Type == typeof(char)
@@ -1755,6 +1790,9 @@ internal sealed partial class MongoExpressionTranslator
 
         if (node is UnaryExpression { NodeType: ExpressionType.Not }
             or BinaryExpression { NodeType: ExpressionType.AndAlso or ExpressionType.OrElse })
+            return TranslateNode(node);
+
+        if (node is BinaryExpression bitwiseLogical && IsNonNullableBoolLogical(bitwiseLogical))
             return TranslateNode(node);
 
         // A comparison used as a value (`p.Discontinued == ((p.ProductID > 50) != prm)`); same hand-off.

@@ -64,10 +64,12 @@ internal sealed partial class MongoExpressionTranslator
             return false;
 
         // A bare-scalar Distinct's parameter (`Select(o => o.Country).Distinct().OrderBy(x => x.IndexOf(term))`)
-        // resolves by identity to the sole field-backed key part; a computed sole key declines. Accumulators.Count == 0
-        // keeps a prior GroupBy(key).Select(aggregate) grouping from binding a bare parameter to the key's serializer.
+        // resolves by identity to the sole field-backed key part; a computed sole key declines. The Accumulators.Count == 0
+        // clause is defensive parity with TryResolveMember's guard: this path requires IsDistinct && !IsGroupBy, so
+        // accumulators are always empty here.
         if (SelfParam is not null && ReferenceEquals(node, SelfParam)
-            && DistinctAliasScope is { Accumulators.Count: 0, Key: [{ FieldRef: MongoFieldExpression soleField } soleKeyPart] })
+            && DistinctAliasScope is { Accumulators.Count: 0, Key: [{ FieldRef: MongoFieldExpression soleField } soleKeyPart] }
+            && IsBareScalarKeyParameter(soleField, node))
         {
             property = soleField.Property;
             fieldPath = soleKeyPart.Name!;
@@ -143,6 +145,17 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
+    /// Whether <paramref name="parameter"/> (the bare lambda parameter after a projected <c>Distinct()</c>) is the sole
+    /// key part's own scalar value rather than a one-member anonymous/DTO/tuple wrapper around it
+    /// (<c>Select(o =&gt; new { o.Country }).Distinct()</c> has the same single key part as
+    /// <c>Select(o =&gt; o.Country).Distinct()</c>, but its parameter is the wrapper). A bare scalar key's type is the
+    /// parameter's type; a wrapper never is. Shared by the field-backed arm of <see cref="TryResolveMember"/> and the
+    /// computed arm of <see cref="TryResolveFlattenedAlias"/>.
+    /// </summary>
+    private static bool IsBareScalarKeyParameter(MongoExpression soleKeyRef, Expression parameter)
+        => soleKeyRef.Type == parameter.Type;
+
+    /// <summary>
     /// Resolves a reference to a flattened output alias that has no <see cref="IProperty"/>, and so can't be
     /// expressed by <see cref="TryResolveMember"/>, to a top-level <see cref="MongoElementRefExpression"/>:
     /// <list type="bullet">
@@ -167,6 +180,24 @@ internal sealed partial class MongoExpressionTranslator
 
         if (ProjectedAliasScope is { } projectedScope)
             return TryResolveProjectedAlias(projectedScope, node, out fieldRef);
+
+        // The bare parameter over a computed sole Distinct key (`Select(x => x.A + x.B).Distinct().Where(v => v > 3)`)
+        // is that key's alias; a field-backed sole key is TryResolveMember's (same shape, same guards). With
+        // accumulators in scope (a prior GroupBy(key).Select(aggregate)) a bare parameter would be ambiguous between
+        // key and aggregate, so it falls through and declines.
+        // The type check keeps a one-member anonymous/DTO projection (`Select(o => new { S = o.Year * 2 }).Distinct()`,
+        // same single computed key part) from binding its non-scalar parameter to the scalar alias: only a parameter
+        // whose type is the key's own (scalar) type is the bare key.
+        if (SelfParam is not null && ReferenceEquals(node, SelfParam)
+            && DistinctAliasScope is { Accumulators.Count: 0, Key: [{ FieldRef: not MongoFieldExpression } computedKeyPart] }
+            && IsBareScalarKeyParameter(computedKeyPart.FieldRef, node))
+        {
+            // Carry the key part's ThrowsOnNull mark, as the member arm below does: a null-propagated non-nullable key
+            // (`Select(e => e.Label.Length).Distinct()`) must keep the comparison null guard and the GroupBy-key /
+            // accumulator declines.
+            fieldRef = new MongoElementRefExpression(computedKeyPart.Name!, node.Type, throwsOnNull: computedKeyPart.ThrowsOnNull);
+            return true;
+        }
 
         if (DistinctAliasScope is not { } scope || node is not MemberExpression { Expression: ParameterExpression } me)
             return false;
