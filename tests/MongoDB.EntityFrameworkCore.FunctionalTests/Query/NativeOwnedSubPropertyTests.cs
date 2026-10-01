@@ -221,15 +221,15 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
         Assert.Equal(new[] { "Big Apple" , null, null }, nativeRows.Select(r => r.Nickname).ToArray());
     }
 
-    // Required-leaf half of the case above; Native and DriverLinq diverge. Cid has no Home, yet Home is required and
-    // Location.City non-nullable. Native throws; the driver deserializer yields the CLR default (the mitigation noted
-    // in BREAKING-CHANGES.md). A whole-entity read already throws in both modes ("Field 'Home' required but not
-    // present"), so native projection agrees with the whole-entity path. Both legs are asserted.
+    // Required-leaf half of the case above. Cid has no Home, yet Home is required and Location.City non-nullable.
+    // A bare projection of a MISSING required scalar reads the CLR default in every mode (decision D-F10: native
+    // mirrors the driver's lenient deserializer on the Projection route), while a whole-entity read still throws
+    // ("Field 'Home' required but not present"). Both legs are asserted.
     [Fact]
-    public void Owned_required_subproperty_projection_over_absent_owned_throws_natively_and_falls_back_leniently()
+    public void Owned_required_subproperty_projection_over_absent_owned_reads_default_but_whole_entity_throws()
     {
         var collection = SeedPeople(
-            nameof(Owned_required_subproperty_projection_over_absent_owned_throws_natively_and_falls_back_leniently));
+            nameof(Owned_required_subproperty_projection_over_absent_owned_reads_default_but_whole_entity_throws));
 
         // Premises: the navigation is required and the leaf is non-nullable.
         using (var probe = CreateContext(collection, MongoQueryMode.Native, PersonModel))
@@ -239,25 +239,16 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
             Assert.False(homeNav.TargetEntityType.FindProperty(nameof(Location.City))!.IsNullable);
         }
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.NativeOnly})
+        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.NativeOnly, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContext(collection, mode, PersonModel);
-
-            var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.AsNoTracking()
-                .OrderBy(p => p.Name).Select(p => new { p.Name, p.Home.City }).ToList());
-            Assert.Contains("'City' is missing for required non-nullable property", ex.Message);
-        }
-
-        // Mitigation: the driver's deserializer is lenient and yields the CLR default.
-        using (var driver = CreateContext(collection, MongoQueryMode.DriverLinq, PersonModel))
-        {
-            var rows = driver.Entities.AsNoTracking()
+            var rows = db.Entities.AsNoTracking()
                 .OrderBy(p => p.Name).Select(p => new { p.Name, p.Home.City }).ToList();
 
             Assert.Equal(new[] { "NYC", "LA", null }, rows.Select(r => r.City).ToArray());
         }
 
-        // ...and the whole-entity read rejects this data in every mode, so the native throw is consistent.
+        // ...and the whole-entity read rejects this data in every mode, and stays strict.
         foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContext(collection, mode, PersonModel);

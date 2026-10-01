@@ -260,11 +260,20 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     {
                         ThrowIfAliasedTypeMismatch(fieldAccess.Property, projectionBindingExpression.Type);
 
-                        var valueExpression = BsonBinding.CreateGetValueExpression(
-                            DocParameter,
-                            projection.Alias,
-                            fieldAccess.Property,
-                            projectionBindingExpression.Type);
+                        // Projection route: a bare stored scalar whose element is missing reads default(T), as the driver's
+                        // $project push-down did (decision D-F10). Whole-entity routes stay strict. Computed leaves
+                        // never reach here (they are aliased reads above).
+                        var valueExpression = _queryExpression.Select.Route == NativeRoute.Projection
+                            && !ReadsUnprojectedDocuments
+                            && fieldAccess.Property.ClrType.UnwrapNullableType() != typeof(BsonDocument)
+                            && fieldAccess.Property.ClrType.UnwrapNullableType() != typeof(BsonArray)
+                            ? BsonBinding.CreateGetScalarProjectionValueExpression(
+                                DocParameter, projection.Alias, fieldAccess.Property, projectionBindingExpression.Type)
+                            : BsonBinding.CreateGetValueExpression(
+                                DocParameter,
+                                projection.Alias,
+                                fieldAccess.Property,
+                                projectionBindingExpression.Type);
 
                         // The read expression's type is the property's CLR type widened to nullable when
                         // the property is nullable; the assert above permits the binding type to be the
