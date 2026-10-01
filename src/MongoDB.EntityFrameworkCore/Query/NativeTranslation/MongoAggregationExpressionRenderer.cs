@@ -957,6 +957,14 @@ internal static class MongoAggregationExpressionRenderer
         };
 
     /// <summary>
+    /// <see cref="MayBeNull"/>, except that a query parameter is judged by its CLR type (like
+    /// <see cref="DateAddAmountMayBeNull"/>): a captured non-nullable <c>int</c> is never null, although
+    /// <see cref="MayBeNull"/> counts every parameter as possibly null.
+    /// </summary>
+    internal static bool MayBeNullOperand(MongoExpression operand)
+        => operand is MongoParameterExpression { ValueType: { } valueType } ? IsNullableClrType(valueType) : MayBeNull(operand);
+
+    /// <summary>
     /// Whether <paramref name="node"/>, whose CLR type is a non-nullable value type, may nonetheless evaluate to null:
     /// <c>$strLenCP</c>/<c>$indexOfCP</c> over a possibly-null string (null-guarded, see <see cref="NullPropagating"/>),
     /// directly or through arithmetic, a cast, a math function or a conditional branch. Read back as that non-nullable type, the null would
