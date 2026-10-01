@@ -229,6 +229,17 @@ internal sealed class LookupExpression
     public bool IsReference => Navigation is not { IsCollection: true };
 
     /// <summary>
+    /// Whether the collection-Include binding (<c>MongoProjectionBindingExpressionVisitor</c>, flat multi-lookup mode)
+    /// treats this lookup as the intermediate document a collection Include declared on
+    /// <paramref name="declaringType"/> hangs off: an unwound reference (or navigation-less) hop targeting that type,
+    /// matched by type, not alias. Shared with the native collection-Include-over-join gate, which declines when a join
+    /// level would match for the root's own Include (the binding would nest the Include under the join's alias while
+    /// the reader reads it at root).
+    /// </summary>
+    internal bool IsCollectionIncludeIntermediateFor(IReadOnlyEntityType declaringType)
+        => IsReference && ForceUnwind && TargetEntityType == declaringType;
+
+    /// <summary>
     /// A single-level reference Include the native pipeline can emit and the streaming reader can read back:
     /// a reference nav, no filtered-Include pipeline stages, not a transitive <c>_lookup_</c> local field.
     /// </summary>

@@ -467,7 +467,18 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                      || mongoQueryExpression.Select.JoinScope is { Levels.Count: > 1 }))
         {
             var select = mongoQueryExpression.Select;
-            if (select.JoinScope is { Levels.Count: > 1 } includeChainScope)
+            var includeNavigation = (INavigation)collectionInclude.Navigation!;
+
+            // A join level the Include binding would mistake for the Include's intermediate document (an unwound
+            // reference/navigation-less hop targeting the root's type, matched by type) nests the root Include's $lookup
+            // under that join's alias while the reader reads it at root: empty Includes or a read failure. Decline.
+            // Same predicate as the binding; the binding itself is a known gap.
+            if (mongoQueryExpression.Joins.Any(
+                    j => j.Lookup?.IsCollectionIncludeIntermediateFor(includeNavigation.DeclaringEntityType) == true))
+            {
+                select.MarkNotNativelyRepresentable();
+            }
+            else if (select.JoinScope is { Levels.Count: > 1 } includeChainScope)
             {
                 if (NativeJoinScopeTranslator.TryResolveBareScopeLeaf(
                         includeChainScope, selector.Parameters[0], collectionInclude.EntityExpression, out var includeScopeIndex)
@@ -484,7 +495,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             }
             else
             {
-                var includeAlias = LookupExpression.GetLookupAlias((INavigation)collectionInclude.Navigation!);
+                var includeAlias = LookupExpression.GetLookupAlias(includeNavigation);
                 var joinCollides = mongoQueryExpression.Joins is [{ Lookup: { } singleJoinLookup }]
                                    && singleJoinLookup.As == includeAlias;
                 if (!(joinCollides && select.JoinInnerAccessConfirmed)

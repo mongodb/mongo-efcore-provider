@@ -2181,9 +2181,10 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Equal(expected, result);
     }
 
-    // Must decline (and the fallback must be right): paging recorded BETWEEN two joins of the chain (the lowerer would
-    // defer it past every $lookup). "PagingAfterTheChain" pins the conservative mirror of the chained bare-leaf arm:
-    // any paging recorded after a join declines over a chain, including paging after the last join.
+    // Must decline (and the fallback must be right). "PagingBetweenJoins": paging recorded BETWEEN two joins of the chain
+    // would be deferred past every $lookup; IsSingleEligibleNativeJoinScope's HasPagingRecordedBetweenJoins already
+    // declines it (the arm's own paging guard is defence in depth there). "PagingAfterTheChain" is what pins that guard,
+    // the conservative mirror of the chained bare-leaf arm: paging recorded after the last join declines over a chain too.
     [Theory]
     [InlineData("PagingBetweenJoins")]
     [InlineData("PagingAfterTheChain")]
@@ -2214,8 +2215,27 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Throws<NativeTranslationNotSupportedException>(() => RunMultiLevelCollectionInclude(seed, "InnerRootedInclude", db));
     }
 
+    // A join level whose $lookup is a reference/navigation-less hop TARGETING the Include's declaring (root) type: the
+    // Include binding picks its "intermediate" lookup by target type, nests the root Include's $lookup under that join's
+    // alias, and reads the plain alias at root (empty Includes, or a Document-vs-BsonArray read failure). Must decline
+    // natively. Only NativeOnly is asserted: the driver-LINQ fallback is wrong for these shapes too (same binding).
+    [Theory]
+    [InlineData("NavlessLevelTargetsRootType")]
+    [InlineData("ReferenceLevelTargetsRootType")]
+    [InlineData("NavlessLevel0TargetsRootTypeOwners")]
+    [InlineData("SingleLevelNavlessTargetsRootType")]
+    public void Collection_Include_over_a_join_level_targeting_the_root_type_declines_under_NativeOnly(string shape)
+    {
+        var seed = SeedRaggedOwnersOrdersAndLines();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Collection_Include_over_a_join_level_targeting_the_root_type_declines_under_NativeOnly) + shape);
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() => RunMultiLevelCollectionInclude(seed, shape, db));
+    }
+
     // A single-level collection Include whose join collides with the Include's alias, with a Where over the join's
-    // Inner side: the filter reads the join's alias, so it must still see the unwound join document.
+    // Inner side: the filter reads the join's original alias, which the single-level `_join` rename would point at the
+    // Include's array, so it declines, and the fallback must still see the unwound join document.
     [Fact]
     public void Collection_Include_over_a_colliding_single_level_join_with_an_inner_side_filter_reads_correctly()
     {
@@ -2223,12 +2243,14 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         var expected = RunMultiLevelCollectionInclude(seed, "SingleLevelInnerFilter", db: null);
         Assert.NotEmpty(expected);
 
-        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        var result = NativeModeAssert.DeclinesCleanly(mode =>
         {
             using var db = CreateContext(seed, mode,
                 nameof(Collection_Include_over_a_colliding_single_level_join_with_an_inner_side_filter_reads_correctly) + mode);
-            Assert.Equal(expected, RunMultiLevelCollectionInclude(seed, "SingleLevelInnerFilter", db));
-        }
+            return RunMultiLevelCollectionInclude(seed, "SingleLevelInnerFilter", db);
+        });
+
+        Assert.Equal(expected, result);
     }
 
     // Rows reduced to (root key, Include count, sorted Include members), sorted. With db == null, the in-memory oracle
@@ -2292,6 +2314,17 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
                 .Join(orders, e => e.o.Id, r2 => r2.OwnerId, (e, r2) => new { e.r, r2 })
                 .OrderBy(x => x.r.Total).Skip(1).Take(2)
                 .Select(x => x.r)),
+            "NavlessLevelTargetsRootType" => ReduceOrders(ordersWithLines
+                .Join(owners, r => r.OwnerId, o => o.Id, (r, o) => new { r, o })
+                .Join(orders, e => e.o.Region, r2 => r2.Region, (e, r2) => e.r)),
+            "ReferenceLevelTargetsRootType" => ReduceOrders(ordersWithLines
+                .Join(lines, r => r.Id, l => l.OrderId, (r, l) => new { r, l })
+                .Join(orders, e => e.l.OrderId, r2 => r2.Id, (e, r2) => e.r)),
+            "NavlessLevel0TargetsRootTypeOwners" => ReduceOwners(ownersWithOrders
+                .Join(owners, o => o.Region, o2 => o2.Region, (o, o2) => new { o, o2 })
+                .Join(orders, e => e.o.Id, r => r.OwnerId, (e, r) => e.o)),
+            "SingleLevelNavlessTargetsRootType" => ReduceOrders(ordersWithLines
+                .Join(orders, r => r.Region, r2 => r2.Region, (r, r2) => r)),
             "InnerRootedInclude" => ReduceOwners(orders
                 .Join(ownersWithOrders, r => r.OwnerId, o => o.Id, (r, o) => new { r, o })
                 .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => e.o)),

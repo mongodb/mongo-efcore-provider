@@ -818,9 +818,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
                             var declaringType = includableNavigation.DeclaringEntityType;
                             var intermediateMatches = _queryExpression.GetPendingLookups().Where(
-                                l => l.IsReference
-                                     && l.ForceUnwind
-                                     && l.TargetEntityType == declaringType).ToList();
+                                l => l.IsCollectionIncludeIntermediateFor(declaringType)).ToList();
 
                             // The intermediate is matched by target entity type, not alias. Several reference lookups targeting one type
                             // (two navigations to it, or a self-referential chain) are ambiguous: guessing would prefix the $lookup with
