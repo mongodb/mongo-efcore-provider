@@ -660,7 +660,7 @@ internal sealed class MongoPipelineFactory
         // Coerces to the serializer's ValueType (which differs from the property ClrType the compile-time path
         // uses when a value converter is present) and serializes via the shared path used for constants.
         BsonValue Serialize(object? value)
-            => BsonValueSerializer.SerializeThroughWriter(serializer!, BsonValueSerializer.Coerce(serializer!.ValueType, value));
+            => BsonValueSerializer.SerializeNullAware(serializer!, BsonValueSerializer.Coerce(serializer!.ValueType, value));
 
         if (!parameterValues.TryGetValue(name, out var rawValue))
             throw new InvalidOperationException(

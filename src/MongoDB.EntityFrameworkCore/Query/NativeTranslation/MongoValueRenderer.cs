@@ -135,7 +135,7 @@ internal static class MongoValueRenderer
         try
         {
             value = BsonValueSerializer.Coerce(property.ClrType, value);
-            return BsonValueSerializer.SerializeThroughWriter(info.Serializer, value);
+            return BsonValueSerializer.SerializeNullAware(info.Serializer, value);
         }
         catch (Exception ex) when (ex is InvalidCastException or FormatException or OverflowException
                                        or InvalidOperationException)
