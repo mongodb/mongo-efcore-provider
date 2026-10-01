@@ -332,7 +332,7 @@ internal static class NativeJoinScopeTranslator
             return false;
 
         result = new MongoInExpression(
-            new MongoFieldExpression(fkProperty, MongoExpressionTranslator.GetKeyFieldPath(fkProperty)),
+            new MongoFieldExpression(fkProperty, MongoExpressionTranslator.GetPropertyFieldPath(fkProperty)),
             valuesNode, negated: false);
         return true;
     }

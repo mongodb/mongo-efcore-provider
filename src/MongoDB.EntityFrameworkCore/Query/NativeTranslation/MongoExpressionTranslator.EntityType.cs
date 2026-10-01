@@ -17,6 +17,7 @@ using System;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using MongoDB.EntityFrameworkCore.Extensions; // IsInHierarchy()
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
@@ -67,7 +68,7 @@ internal sealed partial class MongoExpressionTranslator
         }
 
         // Hierarchy types need a discriminator predicate, not a constant; decline.
-        if (_entityType.BaseType is not null || _entityType.GetDirectlyDerivedTypes().Any())
+        if (_entityType.IsInHierarchy())
             return false;
 
         var matches = _entityType.ClrType == comparisonType;

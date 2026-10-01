@@ -132,9 +132,7 @@ internal sealed partial class MongoExpressionTranslator
             return false;
 
         property = resolved;
-        fieldPath = IsCompositeKeyComponent(resolved)
-            ? "_id." + resolved.GetElementName()
-            : resolved.GetElementName();
+        fieldPath = GetPropertyFieldPath(resolved);
 
         // Inner-scope fields are prefixed with the unwind scope in two-scope mode; outer-scope fields (and every
         // field in single-scope mode, where _innerPrefix is null) stay at their resolved element name.
@@ -142,6 +140,31 @@ internal sealed partial class MongoExpressionTranslator
             fieldPath = _innerPrefix + "." + fieldPath;
 
         return true;
+    }
+
+    /// Resolves <paramref name="node"/> via <see cref="TryResolveMember"/> to a field reference, declining an
+    /// outer-scoped member (two-scope mode).
+    private bool TryResolveInnerField(Expression node, [NotNullWhen(true)] out MongoFieldExpression? field)
+    {
+        if (!TryResolveMember(node, out var property, out var fieldPath, out var isOuter) || isOuter)
+        {
+            field = null;
+            return false;
+        }
+
+        field = new MongoFieldExpression(property, fieldPath);
+        return true;
+    }
+
+    /// <see cref="TryResolveInnerField"/> restricted to a <see cref="string"/>-typed property (the receiver/term
+    /// shape of the regex-backed string operators).
+    private bool TryResolveInnerStringField(Expression node, [NotNullWhen(true)] out MongoFieldExpression? field)
+    {
+        if (TryResolveInnerField(node, out field) && field.Property.ClrType == typeof(string))
+            return true;
+
+        field = null;
+        return false;
     }
 
     /// <summary>
@@ -427,8 +450,7 @@ internal sealed partial class MongoExpressionTranslator
         property = leaf;
         // A composite-PK leaf nests under an "_id" local to its declaring type, so append "_id.<name>" after the
         // hop prefix (e.g. "Author._id.City").
-        var leafElementName = IsCompositeKeyComponent(leaf) ? "_id." + leaf.GetElementName() : leaf.GetElementName();
-        segments.Add(leafElementName);
+        segments.Add(GetPropertyFieldPath(leaf));
         fieldPath = string.Join(".", segments);
         return true;
     }
@@ -438,6 +460,11 @@ internal sealed partial class MongoExpressionTranslator
     /// <c>{ Author: { _id: { City, Country } } }</c> for an owned type with its own <c>HasKey</c> — at any depth.
     private static bool IsCompositeKeyComponent(IProperty property)
         => property.IsPrimaryKey() && property.FindContainingPrimaryKey()!.Properties.Count > 1;
+
+    /// The path of <paramref name="property"/> relative to its declaring type's document: its element name, or
+    /// <c>_id.&lt;element&gt;</c> for a composite-PK component (see <see cref="IsCompositeKeyComponent"/>).
+    internal static string GetPropertyFieldPath(IProperty property)
+        => IsCompositeKeyComponent(property) ? "_id." + property.GetElementName() : property.GetElementName();
 
     /// Resolves an entity-typed comparison operand — the root entity (<c>c == null</c>) or an owned single-reference
     /// navigation chain (<c>b.Address == null</c>) — to a <see cref="MongoElementRefExpression"/>. Only for
@@ -452,7 +479,7 @@ internal sealed partial class MongoExpressionTranslator
             return true;
         }
 
-        if (TryResolveOwnedReferenceNavigationPath(node, out var navPath, out var navigation, out var navIsOuter))
+        if (TryResolveOwnedReferenceNavigationPath(node, out var navPath, out var targetType, out var navIsOuter))
         {
             // An outer-scoped path must decline: MongoElementRefExpression renders element-relative ("$$this.")
             // inside an element scope, so `b.Posts.Any(p => b.Address == null)` would read a missing field on the
@@ -466,7 +493,7 @@ internal sealed partial class MongoExpressionTranslator
 
             // nullSafe: an unset owned nav is missing, and $expr's $eq doesn't treat missing as null. See
             // MongoElementRefExpression.NullSafe.
-            elementRef = new MongoElementRefExpression(navPath, navigation.TargetEntityType.ClrType, nullSafe: true);
+            elementRef = new MongoElementRefExpression(navPath, targetType.ClrType, nullSafe: true);
             return true;
         }
 
@@ -476,37 +503,24 @@ internal sealed partial class MongoExpressionTranslator
 
     /// Resolves a chain whose leaf is itself an owned single-reference navigation (<c>b.Address</c>,
     /// <c>b.Address.Recipient</c>) to its dotted document path. Every hop, including the leaf, must be an embedded
-    /// single reference.
+    /// single reference; <paramref name="targetType"/> is the leaf navigation's target entity type.
     private bool TryResolveOwnedReferenceNavigationPath(
-        Expression node, [NotNullWhen(true)] out string? path, [NotNullWhen(true)] out INavigation? navigation,
+        Expression node, [NotNullWhen(true)] out string? path, [NotNullWhen(true)] out IEntityType? targetType,
         out bool isOuter)
     {
         path = null;
-        navigation = null;
+        targetType = null;
 
         if (!TryBeginOwnedHopWalk(node, minimumHops: 1, out var names, out var scopeType, out isOuter))
             return false;
 
-        // Every hop, including the last, must be an embedded single reference; report the last one.
+        // Every hop, including the last, must be an embedded single reference. minimumHops: 1 above guarantees at
+        // least one hop was walked, so scopeType is then the leaf navigation's target.
         var segments = new List<string>(names.Count);
-        INavigation? leafNavigation = null;
-        foreach (var name in names)
-        {
-            var hop = scopeType.FindNavigation(name);
-            if (hop is null || !hop.IsEmbedded() || hop.IsCollection)
-                return false;
+        if (!TryWalkEmbeddedReferenceHops(names, names.Count, ref scopeType, segments))
+            return false;
 
-            var elementName = hop.TargetEntityType.GetContainingElementName();
-            if (string.IsNullOrEmpty(elementName))
-                return false;
-
-            segments.Add(elementName);
-            scopeType = hop.TargetEntityType;
-            leafNavigation = hop;
-        }
-
-        // minimumHops: 1 above guarantees the loop ran at least once, so leafNavigation is set.
-        navigation = leafNavigation!;
+        targetType = scopeType;
         path = string.Join(".", segments);
         return true;
     }

@@ -117,7 +117,7 @@ internal sealed partial class MongoExpressionTranslator
 
                 return new MongoBinaryExpression(
                     isNotEqual ? MongoBinaryOperator.NotEqual : MongoBinaryOperator.Equal,
-                    new MongoFieldExpression(keyProperty, GetKeyFieldPath(keyProperty)),
+                    new MongoFieldExpression(keyProperty, GetPropertyFieldPath(keyProperty)),
                     valueExpr);
             },
             // Equal: all key components match (AND). NotEqual: any differs (OR).
@@ -145,9 +145,6 @@ internal sealed partial class MongoExpressionTranslator
 
         return combined;
     }
-
-    internal static string GetKeyFieldPath(IProperty property)
-        => IsCompositeKeyComponent(property) ? "_id." + property.GetElementName() : property.GetElementName();
 
     /// <summary>
     /// Extracts <paramref name="property"/>'s value from the entity-typed comparand: a whole-entity constant or query
@@ -241,7 +238,7 @@ internal sealed partial class MongoExpressionTranslator
             return false;
 
         result = new MongoInExpression(
-            new MongoFieldExpression(keyProperty, GetKeyFieldPath(keyProperty)), valuesNode, negated: false);
+            new MongoFieldExpression(keyProperty, GetPropertyFieldPath(keyProperty)), valuesNode, negated: false);
         return true;
     }
 

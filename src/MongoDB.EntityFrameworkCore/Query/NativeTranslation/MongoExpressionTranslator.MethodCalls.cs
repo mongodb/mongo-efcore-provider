@@ -170,6 +170,39 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
+    /// Builds the translator for an owned-collection element predicate (<c>Any</c>/<c>All</c>/<c>Count(pred)</c>)
+    /// over <paramref name="elementType"/>: single-scope when the predicate is uncorrelated, two-scope
+    /// (<paramref name="isCorrelated"/>) when its sole free parameter is this translator's own
+    /// <see cref="SelfParam"/> (by reference). Any other correlation, including two or more distinct free
+    /// parameters, declines.
+    /// </summary>
+    /// <remarks>
+    /// The identity guard is load-bearing: single-scope <see cref="TryResolveMember"/> resolves by name, so without
+    /// it an enclosing member sharing a name with an element member would silently retarget to the element.
+    /// </remarks>
+    private bool TryCreateElementPredicateTranslator(
+        LambdaExpression predicate, IEntityType elementType,
+        [NotNullWhen(true)] out MongoExpressionTranslator? translator, out bool isCorrelated)
+    {
+        translator = null;
+        isCorrelated = ReferencesEnclosingScope(predicate.Body, predicate.Parameters[0], out var freeParam);
+        if (!isCorrelated)
+        {
+            translator = new MongoExpressionTranslator(elementType);
+            return true;
+        }
+
+        if (SelfParam is null || freeParam is null || !ReferenceEquals(freeParam, SelfParam))
+            return false;
+
+        // innerPrefix null, not "": the renderer prepends the element scope's variable itself (e.g. "$$e." via
+        // $filter's "as"; see the two-scope constructor).
+        translator = new MongoExpressionTranslator(
+            elementType, outerParam: SelfParam, outerEntityType: _entityType, innerPrefix: null);
+        return true;
+    }
+
+    /// <summary>
     /// True when <paramref name="body"/> (an element-predicate lambda body) references a free parameter other
     /// than <paramref name="elementParameter"/>, i.e. is correlated with an enclosing scope. Also reports the
     /// sole free parameter via <paramref name="found"/> (<see langword="null"/> if none or more than one), so
@@ -637,20 +670,7 @@ internal sealed partial class MongoExpressionTranslator
         // all-constant case here; anything else falls through to the per-element loop.
         if (unwrapped is NewArrayExpression { NodeType: ExpressionType.NewArrayInit } newArray)
         {
-            var values = Array.CreateInstance(elementType, newArray.Expressions.Count);
-            var allConstant = true;
-            for (var i = 0; i < newArray.Expressions.Count; i++)
-            {
-                if (Unwrap(newArray.Expressions[i]) is not ConstantExpression elementConstant)
-                {
-                    allConstant = false;
-                    break;
-                }
-
-                values.SetValue(elementConstant.Value, i);
-            }
-
-            if (allConstant)
+            if (TryBuildConstantArray(newArray, elementType, out var values))
                 return new MongoConstantExpression(values, property);
 
             // `new[] { prm1, prm2 }` with separately captured locals: EF hoists each element as its own query
@@ -699,16 +719,9 @@ internal sealed partial class MongoExpressionTranslator
         // EF8's inline-array-literal shape (see TranslateInValues).
         if (unwrapped is NewArrayExpression { NodeType: ExpressionType.NewArrayInit } newArray)
         {
-            var values = Array.CreateInstance(elementType, newArray.Expressions.Count);
-            for (var i = 0; i < newArray.Expressions.Count; i++)
-            {
-                if (Unwrap(newArray.Expressions[i]) is not ConstantExpression elementConstant)
-                    return null; // non-constant element — not supported
-
-                values.SetValue(elementConstant.Value, i);
-            }
-
-            return new MongoConstantExpression(values, forSerialization: null);
+            return TryBuildConstantArray(newArray, elementClrType, out var values)
+                ? new MongoConstantExpression(values, forSerialization: null)
+                : null; // non-constant element — not supported
         }
 
         // A captured local arrives as an EF query parameter. ForSerialization stays null; RenderInValues'
@@ -717,6 +730,28 @@ internal sealed partial class MongoExpressionTranslator
             return new MongoParameterExpression(parameterName, forSerialization: null, rawElementType: elementClrType);
 
         return null; // any other shape is not supported for a computed needle
+    }
+
+    /// <summary>
+    /// Folds an inline array literal whose every element is a constant into an <see cref="Array"/> of
+    /// <paramref name="elementType"/>; declines on the first non-constant element.
+    /// </summary>
+    private static bool TryBuildConstantArray(
+        NewArrayExpression newArray, Type elementType, [NotNullWhen(true)] out Array? values)
+    {
+        values = Array.CreateInstance(elementType, newArray.Expressions.Count);
+        for (var i = 0; i < newArray.Expressions.Count; i++)
+        {
+            if (Unwrap(newArray.Expressions[i]) is not ConstantExpression elementConstant)
+            {
+                values = null;
+                return false;
+            }
+
+            values.SetValue(elementConstant.Value, i);
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -788,9 +823,9 @@ internal sealed partial class MongoExpressionTranslator
         // (overflow) rather than wrapped, so $toString never sees a wrapped negative (pinned by
         // NativeComputedReceiverRegexTests). A non-default serialization declines at the call site
         // (AllFieldsDefaultSerialized).
+        // IsIntegerType unwraps Nullable<T>, but a nullable receiver (Nullable<T>.ToString()) declines here.
         var type = obj.Type;
-        if (type != typeof(int) && type != typeof(long) && type != typeof(short) && type != typeof(byte)
-            && type != typeof(uint) && type != typeof(ulong) && type != typeof(ushort) && type != typeof(sbyte))
+        if (type.IsNullableValueType() || !IsIntegerType(type))
             return false;
 
         receiver = obj;
@@ -810,16 +845,6 @@ internal sealed partial class MongoExpressionTranslator
             || call.Method.GetParameters().Any(p => p.ParameterType != typeof(string)))
             return null;
 
-        var operands = new List<MongoExpression>();
-        foreach (var argument in call.Arguments)
-        {
-            var operand = TranslateConcatOperand(argument, allowNumericWidening);
-            if (operand is null)
-                return null;
-
-            operands.AddRange(operand is MongoConcatExpression nested ? nested.Operands : [operand]);
-        }
-
-        return new MongoConcatExpression(operands);
+        return TranslateConcatParts(call.Arguments, allowNumericWidening);
     }
 }

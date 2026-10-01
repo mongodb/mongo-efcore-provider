@@ -83,14 +83,9 @@ internal sealed partial class MongoExpressionTranslator
             caseInsensitive = options == RegexOptions.IgnoreCase;
         }
 
-        if (!TryResolveMember(Unwrap(call.Arguments[1]), out var patternProperty, out var patternFieldPath, out var isOuter)
-            || isOuter
-            || patternProperty.ClrType != typeof(string))
-        {
+        if (!TryResolveInnerStringField(Unwrap(call.Arguments[1]), out var fieldNode))
             return false;
-        }
 
-        var fieldNode = new MongoFieldExpression(patternProperty, patternFieldPath);
         var termNode = new MongoConstantExpression(inputLiteral, forSerialization: null);
         result = new MongoRegexExpression(fieldNode, MongoRegexKind.IsMatch, termNode, negated: false, caseInsensitive);
         return true;
@@ -101,12 +96,8 @@ internal sealed partial class MongoExpressionTranslator
     {
         result = null;
 
-        if (!TryResolveMember(Unwrap(call.Arguments[0]), out var property, out var fieldPath, out var isOuter)
-            || isOuter
-            || property.ClrType != typeof(string))
-        {
+        if (!TryResolveInnerStringField(Unwrap(call.Arguments[0]), out var fieldNode))
             return false;
-        }
 
         // The pattern is a constant, a query parameter, or a plain string field (EF-247). Only a constant can use the
         // query dialect ($regularExpression needs a literal); a parameter or field term routes to $expr/$regexMatch
@@ -123,11 +114,9 @@ internal sealed partial class MongoExpressionTranslator
         {
             patternNode = new MongoParameterExpression(patternParameterName, forSerialization: null);
         }
-        else if (TryResolveMember(patternArg, out var patternProperty, out var patternFieldPath, out var patternIsOuter)
-                 && !patternIsOuter
-                 && patternProperty.ClrType == typeof(string))
+        else if (TryResolveInnerStringField(patternArg, out var patternField))
         {
-            patternNode = new MongoFieldExpression(patternProperty, patternFieldPath);
+            patternNode = patternField;
         }
         else
         {
@@ -146,7 +135,6 @@ internal sealed partial class MongoExpressionTranslator
             patternOptions = mapped;
         }
 
-        var fieldNode = new MongoFieldExpression(property, fieldPath);
         result = new MongoRegexExpression(
             fieldNode, MongoRegexKind.Pattern, patternNode, negated: false, patternOptions: patternOptions);
         return true;

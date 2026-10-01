@@ -145,13 +145,8 @@ internal sealed partial class MongoExpressionTranslator
     /// </summary>
     public bool TryTranslateField(Expression keySelectorBody, [NotNullWhen(true)] out MongoFieldExpression? result)
     {
-        result = null;
-        if (!TryResolveMember(UnwrapOrderPreserving(keySelectorBody), out var property, out var path, out var isOuter)
-            || isOuter) // Sort keys are never inside a $filter/$map scope; guards against a future two-scope caller.
-            return false;
-
-        result = new MongoFieldExpression(property, path);
-        return true;
+        // Inner-only: sort keys are never inside a $filter/$map scope; guards against a future two-scope caller.
+        return TryResolveInnerField(UnwrapOrderPreserving(keySelectorBody), out result);
     }
 
     /// <summary>
@@ -290,14 +285,12 @@ internal sealed partial class MongoExpressionTranslator
         result = null;
         if (leaf is not MemberExpression { Member.Name: nameof(DateTime.TimeOfDay), Expression: { } receiver }
             || receiver.Type != typeof(DateTime)
-            || !TryResolveMember(receiver, out var property, out var fieldPath, out var isOuter)
-            || isOuter
-            || property.GetDateTimeKind() == DateTimeKind.Local)
+            || !TryResolveInnerField(receiver, out var field)
+            || field.Property.GetDateTimeKind() == DateTimeKind.Local)
         {
             return false;
         }
 
-        var field = new MongoFieldExpression(property, fieldPath);
         if (!AllFieldsDefaultSerialized(field))
             return false;
 
@@ -1033,14 +1026,12 @@ internal sealed partial class MongoExpressionTranslator
                     // produces): a $regularExpression pattern must be a literal, so this renders only in the
                     // aggregation dialect ($indexOfCP/$strLenCP). Cross-scope pairs aren't supported.
                     if (property is null || receiverIsOuter
-                        || !TryResolveMember(Unwrap(termExpr), out var termProperty, out var termFieldPath, out var termIsOuter)
-                        || termIsOuter
-                        || termProperty.ClrType != typeof(string))
+                        || !TryResolveInnerStringField(Unwrap(termExpr), out var termField))
                     {
                         return null;
                     }
 
-                    termNode = new MongoFieldExpression(termProperty, termFieldPath);
+                    termNode = termField;
 
                     // Case-insensitive field-to-field declines: RenderRegexAsExpr would fold via $toLower, which is
                     // ASCII-only (leaves É, Б, Ω unchanged), and no $expr operator does Unicode case folding, so
@@ -1086,18 +1077,19 @@ internal sealed partial class MongoExpressionTranslator
                         new MongoConstantExpression(1, forSerialization: null));
                 }
 
-                // A correlated element predicate (references the enclosing entity). $elemMatch can't reference the
-                // enclosing document, so when the free parameter is this translator's own SelfParam (by reference),
-                // build a two-scope child and emit a MongoQuantifierExpression ($anyElementTrue/$allElementsTrue
-                // over $map). Correlation reaching further out declines.
-                if (ReferencesEnclosingScope(elementLambda.Body, elementLambda.Parameters[0], out var quantifierFreeParam))
+                if (!TryCreateElementPredicateTranslator(
+                        elementLambda, elementType, out var elementTranslator, out var isCorrelated))
                 {
-                    if (SelfParam is null || !ReferenceEquals(quantifierFreeParam, SelfParam))
-                        return null;
+                    return null;
+                }
 
-                    var correlatedElementTranslator = new MongoExpressionTranslator(
-                        elementType, outerParam: SelfParam, outerEntityType: _entityType, innerPrefix: null);
-                    if (!correlatedElementTranslator.TryTranslate(elementLambda.Body, out var correlatedPredicate))
+                // A correlated element predicate (references the enclosing entity). $elemMatch can't reference the
+                // enclosing document, so a correlation on SelfParam gets a two-scope child and emits a
+                // MongoQuantifierExpression ($anyElementTrue/$allElementsTrue over $map). Correlation reaching further
+                // out has already declined.
+                if (isCorrelated)
+                {
+                    if (!elementTranslator.TryTranslate(elementLambda.Body, out var correlatedPredicate))
                         return null;
 
                     // No negation for All here: $allElementsTrue is itself "for all".
@@ -1117,7 +1109,6 @@ internal sealed partial class MongoExpressionTranslator
 
                 // An element-scoped translator yields element-relative paths, as $elemMatch requires (mirror of
                 // NativeSelectManyBinder.TryBuildOwnedInnerFilter, which then prefixes them).
-                var elementTranslator = new MongoExpressionTranslator(elementType);
                 if (!elementTranslator.TryTranslate(elementLambda.Body, out var translated))
                     return null;
 
@@ -1737,7 +1728,7 @@ internal sealed partial class MongoExpressionTranslator
         }
 
         // Math/MathF function calls.
-        if (TryTranslateMath(node, allowNumericWidening, out var math))
+        if (TryTranslateMath(node, out var math))
             return math;
 
         // string.Trim()/TrimStart()/TrimEnd() and their char/char[] overloads.
@@ -1803,28 +1794,12 @@ internal sealed partial class MongoExpressionTranslator
                 return new MongoSizeExpression(arrayPath, node.Type, nullSafe: true);
 
             // A filtered count: the element predicate translates like a quantifier's, with the same correlated
-            // guard. Single-scope TryResolveMember resolves by name, so without it an enclosing member sharing a
-            // name with an element member would silently retarget to the element. A correlation on SelfParam (by
-            // reference) uses a two-scope child; anything else declines. countFreeParam is null when there are two
-            // or more distinct free parameters, which the identity check then declines.
-            MongoExpressionTranslator countElementTranslator;
-            if (ReferencesEnclosingScope(countPredicate.Body, countPredicate.Parameters[0], out var countFreeParam))
+            // guard (see TryCreateElementPredicateTranslator).
+            if (!TryCreateElementPredicateTranslator(countPredicate, countElementType, out var countElementTranslator, out _)
+                || !countElementTranslator.TryTranslate(countPredicate.Body, out var elementPredicate))
             {
-                if (SelfParam is null || countFreeParam is null || !ReferenceEquals(countFreeParam, SelfParam))
-                    return null;
-
-                // innerPrefix null, not "": the renderer prepends "$$e." via $filter's "as" variable (see the
-                // two-scope constructor).
-                countElementTranslator = new MongoExpressionTranslator(
-                    countElementType, outerParam: SelfParam, outerEntityType: _entityType, innerPrefix: null);
-            }
-            else
-            {
-                countElementTranslator = new MongoExpressionTranslator(countElementType);
-            }
-
-            if (!countElementTranslator.TryTranslate(countPredicate.Body, out var elementPredicate))
                 return null;
+            }
 
             // Deliberately no renderability or AllFieldsDefaultSerialized gate: a translate-time decline sends a
             // projection leaf (Select(b => new { N = b.Posts.Count(pred) })) to the generic fall-through, which throws
@@ -1913,18 +1888,24 @@ internal sealed partial class MongoExpressionTranslator
     /// <c>$concat</c> (for brevity only; nesting would also work).
     /// </summary>
     private MongoExpression? TranslateStringConcat(BinaryExpression node, bool allowNumericWidening)
+        => TranslateConcatParts([node.Left, node.Right], allowNumericWidening);
+
+    /// <summary>
+    /// Translates each of <paramref name="parts"/> via <see cref="TranslateConcatOperand"/>, in order, into one
+    /// <see cref="MongoConcatExpression"/>, splicing a nested concat's operands in place; declines if any part does.
+    /// </summary>
+    private MongoExpression? TranslateConcatParts(IEnumerable<Expression> parts, bool allowNumericWidening)
     {
-        var left = TranslateConcatOperand(node.Left, allowNumericWidening);
-        if (left is null)
-            return null;
-
-        var right = TranslateConcatOperand(node.Right, allowNumericWidening);
-        if (right is null)
-            return null;
-
         var operands = new List<MongoExpression>();
-        operands.AddRange(left is MongoConcatExpression leftConcat ? leftConcat.Operands : [left]);
-        operands.AddRange(right is MongoConcatExpression rightConcat ? rightConcat.Operands : [right]);
+        foreach (var part in parts)
+        {
+            var operand = TranslateConcatOperand(part, allowNumericWidening);
+            if (operand is null)
+                return null;
+
+            operands.AddRange(operand is MongoConcatExpression nested ? nested.Operands : [operand]);
+        }
+
         return new MongoConcatExpression(operands);
     }
 
@@ -1975,11 +1956,11 @@ internal sealed partial class MongoExpressionTranslator
     // Numeric CLR types accepted by $add/$subtract/$multiply/$divide/$mod.
     internal static bool IsNumericType(Type type)
     {
+        if (IsIntegerType(type))
+            return true;
+
         var underlying = type.UnwrapNullableType();
-        return underlying == typeof(int) || underlying == typeof(long) || underlying == typeof(short)
-            || underlying == typeof(byte) || underlying == typeof(sbyte) || underlying == typeof(uint)
-            || underlying == typeof(ulong) || underlying == typeof(ushort)
-            || underlying == typeof(float) || underlying == typeof(double) || underlying == typeof(decimal);
+        return underlying == typeof(float) || underlying == typeof(double) || underlying == typeof(decimal);
     }
 
     /// <summary>
