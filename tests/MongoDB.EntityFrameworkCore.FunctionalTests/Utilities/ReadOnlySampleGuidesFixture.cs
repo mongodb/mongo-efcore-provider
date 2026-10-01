@@ -30,7 +30,7 @@ public class ReadOnlySampleGuidesFixture : IAsyncLifetime
     public IMongoDatabase MongoDatabase { get; private set; }
     public IMongoClient Client { get; private set; }
 
-    public async Task InitializeAsync()
+    public async ValueTask InitializeAsync()
     {
         var server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.None);
         Client = server.Client;
@@ -38,6 +38,6 @@ public class ReadOnlySampleGuidesFixture : IAsyncLifetime
         SampleGuides.Populate(MongoDatabase);
     }
 
-    public Task DisposeAsync()
-        => Task.CompletedTask;
+    public ValueTask DisposeAsync()
+        => ValueTask.CompletedTask;
 }
