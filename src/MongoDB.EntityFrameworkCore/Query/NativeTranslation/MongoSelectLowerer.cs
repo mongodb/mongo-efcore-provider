@@ -62,17 +62,12 @@ internal sealed class MongoSelectLowerer
         //
         // A set-op query defers lookups until after the combine (see below): the operand's nested pipeline
         // carries no lookups, so joining here would leave every operand row with an empty joined array.
+        //
+        // With a set op, only a projected source1 over a confirmed join scope can carry PostJoinOps or
+        // PostLookupPagingOps; the OperandsProjected branch below emits them.
         if (select.SetOperation == null)
         {
-            AppendLookupStages(query, stages);
-
-            // A reference-Include null check confirmed from a bare Where must run after the $lookup/$unwind;
-            // see MongoSelectDefinition.PostJoinOps.
-            AppendSelectOpStages(select.PostJoinOps, stages, sortFields);
-            // Paging deferred past a join whose $unwind may change row count; see
-            // MongoSelectDefinition.PostLookupPagingOps. With a set op, only a projected source1 over a confirmed
-            // join scope can carry either list; the OperandsProjected branch below emits them.
-            AppendSelectOpStages(select.PostLookupPagingOps, stages, sortFields);
+            AppendLookupAndPostJoinStages(query, stages, sortFields);
         }
 
         // Set-op terminal: $unionWith (+ dedup) or a set-difference shape for Intersect/Except.
@@ -85,13 +80,11 @@ internal sealed class MongoSelectLowerer
             {
                 // source1's own pre-combine lookup (projected collection-nav Count) must precede its $project
                 // and must not apply to the other operand's rows, so it's emitted here rather than deferred.
-                AppendLookupStages(query, stages);
-
+                //
                 // A join-scope source1 (MQTEV.IsPreCombineJoinScope): its inner-side filter/sort/paging and its paging
                 // deferred past the $lookup run here, as on the non-set-op path above, ahead of its $project.
                 // Dropping these would silently return source1's unfiltered joined rows.
-                AppendSelectOpStages(select.PostJoinOps, stages, sortFields);
-                AppendSelectOpStages(select.PostLookupPagingOps, stages, sortFields);
+                AppendLookupAndPostJoinStages(query, stages, sortFields);
 
                 // A GroupBy composed after this set op over a Grouping-bearing source1 (projected Distinct or
                 // GroupBy.Select(aggregate)) had SnapshotPriorGroupingForNestedGroupBy move source1's own
@@ -103,13 +96,9 @@ internal sealed class MongoSelectLowerer
                 }
                 else
                 {
-                    if (select.Grouping is { } source1Grouping)
-                        stages.Add(new MongoGroupStage(source1Grouping));
-                    stages.Add(new MongoProjectStage(select.Projection));
-
-                    // Ops composed on source1's projected Distinct/GroupBy output before the set op
-                    // (Distinct().Where(..).Union(..)) belong to source1, ahead of the combine.
-                    AppendSelectOpStages(select.PostGroupOps, stages, sortFields);
+                    // source1's own $group/$project. Ops composed on source1's projected Distinct/GroupBy output
+                    // before the set op (Distinct().Where(..).Union(..)) belong to source1, ahead of the combine.
+                    AppendProjectedOperandStages(select, stages, sortFields);
                 }
             }
 
@@ -290,6 +279,32 @@ internal sealed class MongoSelectLowerer
         AppendSelectOpStages(select.PostGroupOps, stages, sortFields);
     }
 
+    // The lookups, then the ops that must run after them: a reference-Include null check confirmed from a bare Where
+    // (MongoSelectDefinition.PostJoinOps), then paging deferred past a join whose $unwind may change row count
+    // (MongoSelectDefinition.PostLookupPagingOps).
+    private static void AppendLookupAndPostJoinStages(
+        MongoQueryExpression query,
+        List<MongoPipelineStage> stages,
+        SyntheticSortFieldAllocator sortFields)
+    {
+        AppendLookupStages(query, stages);
+        AppendSelectOpStages(query.Select.PostJoinOps, stages, sortFields);
+        AppendSelectOpStages(query.Select.PostLookupPagingOps, stages, sortFields);
+    }
+
+    // A projected set-op operand's pre-combine stages (source1 or a link's operand): its own $group (projected
+    // Distinct only), its $project, then the ops composed on that output.
+    private static void AppendProjectedOperandStages(
+        MongoSelectDefinition operand,
+        List<MongoPipelineStage> stages,
+        SyntheticSortFieldAllocator sortFields)
+    {
+        if (operand.Grouping is { } grouping)
+            stages.Add(new MongoGroupStage(grouping));
+        stages.Add(new MongoProjectStage(operand.Projection));
+        AppendSelectOpStages(operand.PostGroupOps, stages, sortFields);
+    }
+
     // One stage per set-op link, in LINQ source order (a left-nested chain has several). Each Union dedups
     // right after its own $unionWith: Concat(Union(A,B),C) must dedup A,B before C joins, and hoisting the
     // dedup to the end would silently drop rows. Mutually recursive with AppendSetOpOperandStages, which
@@ -330,11 +345,7 @@ internal sealed class MongoSelectLowerer
 
         if (link.OperandsProjected)
         {
-            if (link.OperandSelect.Grouping is { } operandGrouping)
-                operandStages.Add(new MongoGroupStage(operandGrouping));
-            operandStages.Add(new MongoProjectStage(link.OperandSelect.Projection));
-
-            AppendSelectOpStages(link.OperandSelect.PostGroupOps, operandStages, sortFields);
+            AppendProjectedOperandStages(link.OperandSelect, operandStages, sortFields);
         }
         else
         {

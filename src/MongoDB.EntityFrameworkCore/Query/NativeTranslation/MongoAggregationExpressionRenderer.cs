@@ -16,13 +16,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
-using MongoDB.Bson.Serialization;
-using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
-using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
@@ -55,11 +51,11 @@ internal static class MongoAggregationExpressionRenderer
         {
             // See MongoFieldExpression.NullSafe.
             MongoFieldExpression { NullSafe: true } nullSafeField
-                => new BsonDocument("$ifNull", new BsonArray { FieldRef(nullSafeField.ElementName, elementVariable), BsonNull.Value }),
+                => IfNull(FieldRef(nullSafeField.ElementName, elementVariable), BsonNull.Value),
             MongoFieldExpression field => FieldRef(field.ElementName, elementVariable),
             // Treats a missing element like null (needed for owned-nav null checks: $expr's $eq doesn't).
             MongoElementRefExpression { NullSafe: true } nullSafeElementRef
-                => new BsonDocument("$ifNull", new BsonArray { FieldRef(nullSafeElementRef.Path, elementVariable), BsonNull.Value }),
+                => IfNull(FieldRef(nullSafeElementRef.Path, elementVariable), BsonNull.Value),
             MongoElementRefExpression elementRef => FieldRef(elementRef.Path, elementVariable),
             // Always at document root, regardless of elementVariable.
             MongoOuterFieldExpression outer => FieldRef(outer.ElementName, elementVariable: null),
@@ -74,7 +70,7 @@ internal static class MongoAggregationExpressionRenderer
                 => new BsonDocument(lookupNullCheck.IsNotNull ? "$ne" : "$eq",
                     new BsonArray
                     {
-                        new BsonDocument("$ifNull", new BsonArray { FieldRef(lookupNullCheck.LookupAlias, elementVariable: null), BsonNull.Value }),
+                        IfNull(FieldRef(lookupNullCheck.LookupAlias, elementVariable: null), BsonNull.Value),
                         BsonNull.Value
                     }),
             MongoConstantExpression or MongoParameterExpression => MongoValueRenderer.RenderValue(node, placeholders),
@@ -106,11 +102,9 @@ internal static class MongoAggregationExpressionRenderer
                     { "else", RenderBranch(conditional.IfFalse, placeholders, elementVariable) }
                 }),
             MongoCoalesceExpression coalesce
-                => new BsonDocument("$ifNull", new BsonArray
-                {
+                => IfNull(
                     RenderBranch(coalesce.Left, placeholders, elementVariable),
-                    RenderBranch(coalesce.Right, placeholders, elementVariable)
-                }),
+                    RenderBranch(coalesce.Right, placeholders, elementVariable)),
             MongoDateTimeOffsetLocalExpression local
                 => new BsonDocument("$dateAdd", new BsonDocument
                 {
@@ -144,8 +138,7 @@ internal static class MongoAggregationExpressionRenderer
                 {
                     { "input", RenderBranch(replace.Input, placeholders, elementVariable) },
                     { "find", RenderBranch(replace.Find, placeholders, elementVariable) },
-                    { "replacement", new BsonDocument("$ifNull", new BsonArray
-                        { RenderBranch(replace.Replacement, placeholders, elementVariable), "" }) }
+                    { "replacement", IfNull(RenderBranch(replace.Replacement, placeholders, elementVariable), "") }
                 }),
             MongoStringFirstOrLastExpression firstOrLast
                 => RenderStringFirstOrLast(firstOrLast, placeholders, elementVariable, nullForNullSource: false),
@@ -160,7 +153,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoConcatExpression concat
                 => new BsonDocument("$concat",
                     new BsonArray(concat.Operands.Select(o => ConcatOperandMayBeNull(o)
-                        ? new BsonDocument("$ifNull", new BsonArray { RenderOperand(o, placeholders, elementVariable), "" })
+                        ? IfNull(RenderOperand(o, placeholders, elementVariable), "")
                         : RenderOperand(o, placeholders, elementVariable)))),
             // Any Term shape: callers are all in aggregation scopes with no $regularExpression alternative
             // (top-level $match regexes are rendered by MongoQueryLanguageRenderer instead).
@@ -203,8 +196,9 @@ internal static class MongoAggregationExpressionRenderer
                 => IsRenderableOperator(binary.Operator) && CanRender(binary.Left) && CanRender(binary.Right),
             MongoSizeExpression => true,
             MongoFilteredSizeExpression filtered => CanRender(filtered.ElementPredicate),
-            MongoInExpression inExpr => CanRenderInValues(inExpr.Values),
-            MongoComputedInExpression computedIn => CanRender(computedIn.Needle) && CanRenderInValues(computedIn.Values),
+            MongoInExpression inExpr => MongoValueRenderer.IsRenderableInValues(inExpr.Values),
+            MongoComputedInExpression computedIn
+                => CanRender(computedIn.Needle) && MongoValueRenderer.IsRenderableInValues(computedIn.Values),
             // A bare-field operand (MongoFieldExpression or MongoOuterFieldExpression) must be default-serialized,
             // matching RenderUnary's render-time guard, so CanRender=true means Render answers correctly.
             MongoUnaryExpression { Operator: MongoUnaryOperator.Not } unary
@@ -267,10 +261,6 @@ internal static class MongoAggregationExpressionRenderer
             _ => CanRender(node)
         };
 
-    private static bool CanRenderInValues(MongoExpression values)
-        => values is MongoConstantExpression { Value: System.Collections.IEnumerable } or MongoParameterExpression
-            or MongoValueListExpression;
-
     // Must match RenderBinary's switch (currently every MongoBinaryOperator); re-check when either changes.
     private static bool IsRenderableOperator(MongoBinaryOperator op)
         => op is MongoBinaryOperator.Equal
@@ -292,10 +282,30 @@ internal static class MongoAggregationExpressionRenderer
     private static BsonValue FieldRef(string path, string? elementVariable)
         => elementVariable is null ? "$" + path : "$$" + elementVariable + "." + path;
 
-    // A $cond/$ifNull branch gets the same $literal wrap as a top-level projected constant/parameter: an
-    // unwrapped "$"-prefixed string is read as a field path, so `g.Key ?? "$Year"` would return null (or a
-    // "$"-prefixed parameter value could throw).
-    private static BsonValue RenderBranch(MongoExpression node, PlaceholderTable placeholders, string? elementVariable)
+    // The `as` variable for a $filter/$map nested inside elementVariable's scope. Per-level names ("e", "ee",
+    // "eee") stay distinct without a counter and lowercase-initial, as the server requires of an `as` name.
+    private static string NestedElementVariable(string? elementVariable)
+        => elementVariable is null ? "e" : elementVariable + "e";
+
+    /// <summary>
+    /// <c>{ $ifNull: [ <paramref name="value"/>, <paramref name="replacement"/> ] }</c>.
+    /// </summary>
+    internal static BsonDocument IfNull(BsonValue value, BsonValue replacement)
+        => new("$ifNull", new BsonArray { value, replacement });
+
+    /// <summary>
+    /// <see cref="Render"/>, with a constant/parameter <paramref name="node"/> <c>$literal</c>-wrapped. For every value
+    /// position where a bare value would be misread: a <c>$cond</c>/<c>$ifNull</c> branch, a <c>$project</c>/<c>$set</c>
+    /// field, a <c>$group</c> <c>_id</c> part or accumulator operand.
+    /// </summary>
+    /// <remarks>
+    /// An unwrapped "$"-prefixed string is read as a field path, so <c>g.Key ?? "$Year"</c> would return null,
+    /// <c>OrderBy(x => "$Label")</c> would silently sort by that field and a "$"-prefixed constant key part would
+    /// group by it (and a "$"-prefixed parameter value could throw). <c>$project</c> also reads a bare number/bool as
+    /// an inclusion/exclusion flag, so <c>Select(x => 0)</c> would abort the aggregate.
+    /// <c>MongoPipelineFactory.SubstituteValue</c> still finds a sentinel inside <c>{ "$literal": &lt;sentinel&gt; }</c>.
+    /// </remarks>
+    internal static BsonValue RenderBranch(MongoExpression node, PlaceholderTable placeholders, string? elementVariable = null)
     {
         var rendered = Render(node, placeholders, elementVariable);
         return node is MongoConstantExpression or MongoParameterExpression
@@ -428,7 +438,7 @@ internal static class MongoAggregationExpressionRenderer
             ? Render(node.Length, placeholders, elementVariable)
             : new BsonDocument("$subtract", new BsonArray
             {
-                new BsonDocument("$strLenCP", new BsonDocument("$ifNull", new BsonArray { source, "" })), start
+                new BsonDocument("$strLenCP", IfNull(source, "")), start
             });
         return NullPropagating(
             new BsonDocument("$substrCP", new BsonArray { source, start, length }), (node.Source, source));
@@ -480,7 +490,7 @@ internal static class MongoAggregationExpressionRenderer
             if (MayBeNull(node))
                 tests.Add(new BsonDocument("$eq", new BsonArray
                 {
-                    new BsonDocument("$ifNull", new BsonArray { operand.DeepClone(), BsonNull.Value }), BsonNull.Value
+                    IfNull(operand.DeepClone(), BsonNull.Value), BsonNull.Value
                 }));
         }
 
@@ -520,7 +530,7 @@ internal static class MongoAggregationExpressionRenderer
         // $strLenCP errors on a null/missing source, so coalesce to "" first; null then behaves like empty
         // (a comparison operand is null-guarded on top; see nullForNullSource).
         var rawSource = RenderOperand(node.Source, placeholders, elementVariable);
-        var source = new BsonDocument("$ifNull", new BsonArray { rawSource, "" });
+        var source = IfNull(rawSource, "");
         var length = new BsonDocument("$strLenCP", source);
         var isEmpty = new BsonDocument("$eq", new BsonArray { length, 0 });
 
@@ -570,15 +580,13 @@ internal static class MongoAggregationExpressionRenderer
     private static BsonValue RenderSize(MongoSizeExpression size, string? elementVariable)
         => size.NullSafe
             ? new BsonDocument("$size",
-                new BsonDocument("$ifNull", new BsonArray { FieldRef(size.FieldName, elementVariable), new BsonArray() }))
+                IfNull(FieldRef(size.FieldName, elementVariable), new BsonArray()))
             : new BsonDocument("$size", FieldRef(size.FieldName, elementVariable));
 
     private static BsonValue RenderFilteredSize(
         MongoFilteredSizeExpression node, PlaceholderTable placeholders, string? elementVariable)
     {
-        // Per-level variable names ("e", "ee", "eee") stay distinct without a counter and lowercase-initial, as
-        // the server requires of an `as` name.
-        var variable = elementVariable is null ? "e" : elementVariable + "e";
+        var variable = NestedElementVariable(elementVariable);
 
         // $filter's cond is truthiness-tested, and a bare-field predicate (Count(p => b.Flag)) bypasses the
         // AndAlso/OrElse/Not guards. Checked at render time: a translate-time decline would hard-fail in every
@@ -589,7 +597,7 @@ internal static class MongoAggregationExpressionRenderer
             new BsonDocument("$filter", new BsonDocument
             {
                 // $filter over a missing or null array is a server error; [] yields 0, as LINQ answers.
-                { "input", new BsonDocument("$ifNull", new BsonArray { FieldRef(node.ArrayPath, elementVariable), new BsonArray() }) },
+                { "input", IfNull(FieldRef(node.ArrayPath, elementVariable), new BsonArray()) },
                 { "as", variable },
                 { "cond", Render(node.ElementPredicate, placeholders, variable) }
             }));
@@ -598,8 +606,7 @@ internal static class MongoAggregationExpressionRenderer
     private static BsonValue RenderQuantifier(
         MongoQuantifierExpression node, PlaceholderTable placeholders, string? elementVariable)
     {
-        // Per-level `as` names, as in RenderFilteredSize.
-        var variable = elementVariable is null ? "e" : elementVariable + "e";
+        var variable = NestedElementVariable(elementVariable);
 
         // $anyElementTrue/$allElementsTrue truthiness-test each "in" result, and a bare-field predicate
         // (`b.Posts.Any(p => b.Flag)`) passes CanRender unchecked, so a value-converted bool (stored as "False",
@@ -610,7 +617,7 @@ internal static class MongoAggregationExpressionRenderer
         {
             // $map over a missing or null array is a server error; over [] $anyElementTrue/$allElementsTrue
             // answer false/true, matching LINQ Any/All on an empty sequence.
-            { "input", new BsonDocument("$ifNull", new BsonArray { Render(node.ArrayPath, placeholders, elementVariable), new BsonArray() }) },
+            { "input", IfNull(Render(node.ArrayPath, placeholders, elementVariable), new BsonArray()) },
             { "as", variable },
             { "in", Render(node.ElementPredicate, placeholders, variable) }
         });
@@ -643,7 +650,7 @@ internal static class MongoAggregationExpressionRenderer
             var patternTerm = RenderOperand(regex.Term, placeholders, elementVariable);
             var patternMatch = new BsonDocument("$regexMatch",
                 new BsonDocument { { "input", field }, { "regex", patternTerm }, { "options", regex.PatternOptions } });
-            return regex.Negated ? new BsonDocument("$not", new BsonArray { patternMatch }) : patternMatch;
+            return NotIf(regex.Negated, patternMatch);
         }
 
         var term = RenderOperand(regex.Term, placeholders, elementVariable);
@@ -676,7 +683,7 @@ internal static class MongoAggregationExpressionRenderer
             _ => throw new NativeTranslationNotSupportedException($"Unsupported {nameof(MongoRegexKind)} '{regex.Kind}'.")
         };
 
-        return regex.Negated ? new BsonDocument("$not", new BsonArray { test }) : test;
+        return NotIf(regex.Negated, test);
     }
 
     // $regexMatch with a literal BSON regex: a constant term bakes the pattern now; a parameter becomes a regex
@@ -699,7 +706,7 @@ internal static class MongoAggregationExpressionRenderer
         };
 
         var regexMatch = new BsonDocument("$regexMatch", new BsonDocument { { "input", field }, { "regex", regexValue } });
-        return regex.Negated ? new BsonDocument("$not", new BsonArray { regexMatch }) : regexMatch;
+        return NotIf(regex.Negated, regexMatch);
     }
 
     // start = strLenCP(field) - strLenCP(term); true iff start >= 0 and indexOfCP(field, term, start) == start.
@@ -729,28 +736,32 @@ internal static class MongoAggregationExpressionRenderer
         });
     }
 
-    // Guard for positions that truthiness-test a whole sub-expression ($filter cond, quantifier $map "in"). A
-    // bare-field root reaches neither RenderBinary nor RenderUnary, so these callers must invoke it explicitly;
-    // nested AndAlso/OrElse/Not re-check their own operands.
-    private static void CheckBooleanRootSerialization(MongoExpression node)
+    // Throws if node is a bare non-default-serialized bool (e.g. stored as "True"/"False", both truthy) in a position
+    // that tests it by truthiness, which would answer the wrong boolean. The message reads
+    // "Cannot render '<property>' as <position>: ..., and <reason>, which would answer the wrong boolean.".
+    private static void ThrowIfUnsafeTruthinessRoot(MongoExpression node, string position, string reason)
     {
         if (MongoExpressionTranslator.IsUnsafeTruthinessRoot(node, out var property))
         {
             throw new NativeTranslationNotSupportedException(
-                $"Cannot render '{property.Name}' as a bare boolean predicate root: it does not use default "
-                + "BSON serialization, and this position is evaluated by truthiness, which would answer the "
-                + "wrong boolean.");
+                $"Cannot render '{property.Name}' as {position}: it does not use default BSON serialization, and "
+                + $"{reason}, which would answer the wrong boolean.");
         }
     }
+
+    // Guard for positions that truthiness-test a whole sub-expression ($filter cond, quantifier $map "in"). A
+    // bare-field root reaches neither RenderBinary nor RenderUnary, so these callers must invoke it explicitly;
+    // nested AndAlso/OrElse/Not re-check their own operands.
+    private static void CheckBooleanRootSerialization(MongoExpression node)
+        => ThrowIfUnsafeTruthinessRoot(node, "a bare boolean predicate root", "this position is evaluated by truthiness");
 
     // Aggregation-dialect $in: { $in: [needle, haystack] }. Negated form wraps in $not (an array-form operator,
     // unlike the query dialect's { field: { $nin: ... } }).
     private static BsonValue RenderIn(MongoInExpression inExpr, PlaceholderTable placeholders, string? elementVariable)
     {
         var needle = FieldRef(inExpr.Field.ElementName, elementVariable);
-        var haystack = new BsonDocument("$literal", RenderInValues(inExpr.Values, placeholders));
-        var inDoc = new BsonDocument("$in", new BsonArray { needle, haystack });
-        return inExpr.Negated ? new BsonDocument("$not", new BsonArray { inDoc }) : inDoc;
+        var haystack = new BsonDocument("$literal", MongoValueRenderer.RenderInValues(inExpr.Values, placeholders));
+        return NotIf(inExpr.Negated, new BsonDocument("$in", new BsonArray { needle, haystack }));
     }
 
     // Computed-needle variant of RenderIn: the needle renders through Render (no single field path).
@@ -758,53 +769,13 @@ internal static class MongoAggregationExpressionRenderer
         MongoComputedInExpression computedIn, PlaceholderTable placeholders, string? elementVariable)
     {
         var needle = Render(computedIn.Needle, placeholders, elementVariable);
-        var haystack = new BsonDocument("$literal", RenderInValues(computedIn.Values, placeholders));
-        var inDoc = new BsonDocument("$in", new BsonArray { needle, haystack });
-        return computedIn.Negated ? new BsonDocument("$not", new BsonArray { inDoc }) : inDoc;
+        var haystack = new BsonDocument("$literal", MongoValueRenderer.RenderInValues(computedIn.Values, placeholders));
+        return NotIf(computedIn.Negated, new BsonDocument("$in", new BsonArray { needle, haystack }));
     }
 
-    private static BsonValue RenderInValues(MongoExpression values, PlaceholderTable placeholders)
-    {
-        switch (values)
-        {
-            case MongoConstantExpression { Value: System.Collections.IEnumerable items } constant:
-            {
-                var array = new BsonArray();
-                foreach (var item in items)
-                    array.Add(MongoValueRenderer.RenderValue(
-                        new MongoConstantExpression(item, constant.ForSerialization!), placeholders));
-                return array;
-            }
-            case MongoParameterExpression parameter:
-            {
-                // No backing property: only for a computed needle (TranslateInValuesRaw), so use a default
-                // serializer for RawElementType.
-                var elementSerializer = parameter.ForSerialization is not null
-                    ? BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization).Serializer
-                    : parameter.RawElementType is { } rawElementType
-                        ? typeof(ITuple).IsAssignableFrom(rawElementType)
-                            // The driver's own Tuple/ValueTuple serializers write one BSON array per tuple, matching how
-                            // a MongoTupleExpression needle renders; BsonSerializerFactory.CreateTypeSerializer would fall
-                            // through to a class-map (document) serializer for a tuple type.
-                            ? BsonSerializer.LookupSerializer(rawElementType)
-                            : BsonSerializerFactory.CreateTypeSerializer(rawElementType)
-                        : StringSerializer.Instance;
-                return parameter.ExtractEntityKeyFromArrayElements
-                    ? placeholders.CreateEntityKeyArrayPlaceholder(parameter.Name, parameter.ForSerialization!, elementSerializer)
-                    : placeholders.CreateArrayPlaceholder(parameter.Name, elementSerializer);
-            }
-            case MongoValueListExpression list:
-            {
-                var array = new BsonArray();
-                foreach (var element in list.Elements)
-                    array.Add(MongoValueRenderer.RenderValue(element, placeholders));
-                return array;
-            }
-            default:
-                throw new NativeTranslationNotSupportedException(
-                    $"MongoAggregationExpressionRenderer cannot render 'in' values of type '{values.GetType().Name}'.");
-        }
-    }
+    // Aggregation-dialect negation of a test: { $not: [ test ] } when negated, else test unchanged.
+    private static BsonValue NotIf(bool negated, BsonValue test)
+        => negated ? new BsonDocument("$not", new BsonArray { test }) : test;
 
     // Aggregation-dialect Not: { $not: [ <expr> ] }, for any operand CanRender admits (always inside $expr).
     private static BsonValue RenderUnary(MongoUnaryExpression unary, PlaceholderTable placeholders, string? elementVariable)
@@ -820,12 +791,7 @@ internal static class MongoAggregationExpressionRenderer
         // where a translate-time decline hard-fails in every mode, while this throw is caught by TryBuildPipeline
         // (driver-LINQ fallback) and surfaces as-is under NativeOnly. Computed sort keys are already declined
         // earlier by NativeSlotPopulator.TryTranslateComputedSortKey.
-        if (MongoExpressionTranslator.IsUnsafeTruthinessRoot(unary.Operand, out var notProperty))
-        {
-            throw new NativeTranslationNotSupportedException(
-                $"Cannot render 'Not' over '{notProperty.Name}': it does not use default BSON "
-                + "serialization, and a raw-field $not would answer the wrong boolean.");
-        }
+        ThrowIfUnsafeTruthinessRoot(unary.Operand, "a 'Not' operand", "a raw-field $not evaluates it by truthiness");
 
         return new BsonDocument("$not", new BsonArray { Render(unary.Operand, placeholders, elementVariable) });
     }
@@ -873,13 +839,10 @@ internal static class MongoAggregationExpressionRenderer
         };
 
         // A comparison operand can be a string; arithmetic and logical operands never are.
-        var isComparison = binary.Operator is MongoBinaryOperator.Equal or MongoBinaryOperator.NotEqual
-            or MongoBinaryOperator.LessThan or MongoBinaryOperator.LessThanOrEqual
-            or MongoBinaryOperator.GreaterThan or MongoBinaryOperator.GreaterThanOrEqual;
-        var left = isComparison
+        var left = binary.IsComparison
             ? RenderComparisonOperand(binary.Left, placeholders, elementVariable)
             : Render(binary.Left, placeholders, elementVariable);
-        var right = isComparison
+        var right = binary.IsComparison
             ? RenderComparisonOperand(binary.Right, placeholders, elementVariable)
             : Render(binary.Right, placeholders, elementVariable);
 
@@ -938,7 +901,7 @@ internal static class MongoAggregationExpressionRenderer
     private static BsonValue MissingAsNull(MongoExpression operand, BsonValue rendered)
         => operand is MongoFieldExpression { NullSafe: false } or MongoOuterFieldExpression
                or MongoElementRefExpression { NullSafe: false, Path: not MongoElementRefExpression.WholeRootDocumentPath }
-            ? new BsonDocument("$ifNull", new BsonArray { rendered, BsonNull.Value })
+            ? IfNull(rendered, BsonNull.Value)
             : rendered;
 
     // The operand on the "less" side of a relational comparison: the Left of </<=, the Right of >/>=. Null for any
@@ -976,10 +939,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoElementRefExpression { ThrowsOnNull: true } => true,
             MongoParameterExpression => true,
             // Arithmetic ($add/$subtract/..., $trunc of $divide) propagates a null operand.
-            MongoBinaryExpression { Operator: not (MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse
-                or MongoBinaryOperator.Equal or MongoBinaryOperator.NotEqual or MongoBinaryOperator.LessThan
-                or MongoBinaryOperator.LessThanOrEqual or MongoBinaryOperator.GreaterThan
-                or MongoBinaryOperator.GreaterThanOrEqual) } arithmetic
+            MongoBinaryExpression { IsArithmetic: true } arithmetic
                 => IsNullableClrType(arithmetic.Type) || MayBeNull(arithmetic.Left) || MayBeNull(arithmetic.Right),
             // $toX, $year/$month/..., and the math operators all return null for a null input.
             MongoConvertExpression convert => IsNullableClrType(convert.Type) || MayBeNull(convert.Operand),
@@ -1038,10 +998,7 @@ internal static class MongoAggregationExpressionRenderer
             // An upstream alias (a Distinct's flattened key, a bare Select's `_v`, a set-op operand) the emit side
             // flagged MongoProjection.ThrowsOnNull: the same possibly-null value, read by reference.
             MongoElementRefExpression { ThrowsOnNull: true } => new(true, false),
-            MongoBinaryExpression { Operator: not (MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse
-                or MongoBinaryOperator.Equal or MongoBinaryOperator.NotEqual or MongoBinaryOperator.LessThan
-                or MongoBinaryOperator.LessThanOrEqual or MongoBinaryOperator.GreaterThan
-                or MongoBinaryOperator.GreaterThanOrEqual) } arithmetic
+            MongoBinaryExpression { IsArithmetic: true } arithmetic
                 => WalkNullBehindNonNullableType(arithmetic.Left, nonNull, dateParts)
                    | WalkNullBehindNonNullableType(arithmetic.Right, nonNull, dateParts),
             MongoConvertExpression convert => WalkNullBehindNonNullableType(convert.Operand, nonNull, dateParts),
@@ -1168,17 +1125,10 @@ internal static class MongoAggregationExpressionRenderer
     private static bool IsNullableClrType(Type type)
         => !type.IsValueType || Nullable.GetUnderlyingType(type) is not null;
 
+    // Matches MongoOuterFieldExpression too; see RenderUnary.
     private static void CheckLogicalOperandSerialization(MongoExpression operand)
-    {
-        // Matches MongoOuterFieldExpression too; see RenderUnary.
-        if (MongoExpressionTranslator.IsUnsafeTruthinessRoot(operand, out var logicalProperty))
-        {
-            throw new NativeTranslationNotSupportedException(
-                $"Cannot render '{logicalProperty.Name}' as a bare logical (&&/||) operand: it does not use "
-                + "default BSON serialization, and $and/$or evaluate operands by truthiness, which would "
-                + "answer the wrong boolean.");
-        }
-    }
+        => ThrowIfUnsafeTruthinessRoot(
+            operand, "a bare logical (&&/||) operand", "$and/$or evaluate operands by truthiness");
 }
 
 /// <summary>

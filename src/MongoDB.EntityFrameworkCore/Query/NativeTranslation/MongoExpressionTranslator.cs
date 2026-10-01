@@ -930,7 +930,7 @@ internal sealed partial class MongoExpressionTranslator
                 // A constructed Tuple/ValueTuple needle over entity fields (`ids.Contains(new Tuple<int, int>(o.OrderID,
                 // o.ProductID))`) renders as an MQL array, like the tuple-equality operand. Only a query-PARAMETER haystack
                 // is admitted: its elements serialize through the driver's tuple serializer (one BSON array per tuple, see
-                // MongoAggregationExpressionRenderer.RenderInValues); a constant haystack would go through BsonValue.Create,
+                // MongoValueRenderer.RenderInValues); a constant haystack would go through BsonValue.Create,
                 // which cannot serialize a tuple.
                 if (IsTupleType(itemExpr.Type)
                     && TryDecomposeTupleOperand(Unwrap(itemExpr), out var tupleElements)

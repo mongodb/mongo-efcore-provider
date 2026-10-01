@@ -18,7 +18,6 @@ using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
-using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
@@ -65,9 +64,16 @@ internal sealed class MongoQueryLanguageRenderer
             // (as MongoPipelineFactory's $limit:0 rewrite does), which unlike $expr: false is legal in $elemMatch.
             MongoConstantExpression { Value: bool boolValue } => boolValue
                 ? new BsonDocument()
-                : new BsonDocument("_id", new BsonDocument("$type", -1)),
+                : AlwaysFalseFilter(),
             _ => RenderAsExpr(node, placeholders)
         };
+
+    /// <summary>
+    /// The always-false filter body <c>{ _id: { $type: -1 } }</c> (an impossible <c>$type</c>). Legal anywhere a
+    /// query-dialect filter is, including inside <c>$elemMatch</c> where <c>$expr: false</c> is not.
+    /// </summary>
+    internal static BsonDocument AlwaysFalseFilter()
+        => new("_id", new BsonDocument("$type", -1));
 
     /// <summary>
     /// Whether a <see cref="MongoRegexExpression"/> has the query-dialect <c>{ path: /re/ }</c> form. The single
@@ -206,39 +212,8 @@ internal sealed class MongoQueryLanguageRenderer
     private BsonDocument RenderIn(MongoInExpression inExpr, PlaceholderTable placeholders)
     {
         var op = inExpr.Negated ? "$nin" : "$in";
-        var array = RenderInValues(inExpr.Values, placeholders);
+        var array = MongoValueRenderer.RenderInValues(inExpr.Values, placeholders);
         return new BsonDocument(inExpr.Field.ElementName, new BsonDocument(op, array));
-    }
-
-    private BsonValue RenderInValues(MongoExpression values, PlaceholderTable placeholders)
-    {
-        switch (values)
-        {
-            case MongoConstantExpression { Value: System.Collections.IEnumerable items } constant:
-            {
-                var array = new BsonArray();
-                foreach (var item in items)
-                    array.Add(MongoValueRenderer.RenderValue(
-                        new MongoConstantExpression(item, constant.ForSerialization!), placeholders));
-                return array;
-            }
-            case MongoParameterExpression parameter:
-            {
-                var info = BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization!);
-                return parameter.ExtractEntityKeyFromArrayElements
-                    ? placeholders.CreateEntityKeyArrayPlaceholder(parameter.Name, parameter.ForSerialization!, info.Serializer)
-                    : placeholders.CreateArrayPlaceholder(parameter.Name, info.Serializer);
-            }
-            case MongoValueListExpression list:
-            {
-                var array = new BsonArray();
-                foreach (var element in list.Elements)
-                    array.Add(MongoValueRenderer.RenderValue(element, placeholders));
-                return array;
-            }
-            default:
-                throw new NativeTranslationNotSupportedException("Unsupported $in values node.");
-        }
     }
 
     /// <summary>
@@ -431,11 +406,8 @@ internal sealed class MongoQueryLanguageRenderer
             MongoDateTimeOffsetLocalExpression => false,
             MongoOuterFieldExpression => false,
             MongoQuantifierExpression => false,
-            // Mirrors the value shapes RenderInValues accepts; it throws on any other.
-            MongoInExpression inExpr
-                => inExpr.Values is MongoConstantExpression { Value: System.Collections.IEnumerable }
-                    or MongoParameterExpression
-                    or MongoValueListExpression,
+            // The value shapes RenderInValues accepts; it throws on any other.
+            MongoInExpression inExpr => MongoValueRenderer.IsRenderableInValues(inExpr.Values),
             // The translator only builds this with an already-renderable Value.
             MongoArrayContainsExpression => true,
             MongoRegexExpression regex => IsQueryDialectRegex(regex),

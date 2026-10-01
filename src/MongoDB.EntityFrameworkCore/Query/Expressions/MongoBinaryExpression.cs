@@ -38,14 +38,25 @@ internal sealed class MongoBinaryExpression : MongoExpression
 
     public MongoExpression Right { get; }
 
+    /// <summary>
+    /// Whether <see cref="Operator"/> is one of the six comparisons (<c>==</c>, <c>!=</c>, <c>&lt;</c>, <c>&lt;=</c>,
+    /// <c>&gt;</c>, <c>&gt;=</c>).
+    /// </summary>
+    internal bool IsComparison
+        => Operator is MongoBinaryOperator.Equal or MongoBinaryOperator.NotEqual
+            or MongoBinaryOperator.LessThan or MongoBinaryOperator.LessThanOrEqual
+            or MongoBinaryOperator.GreaterThan or MongoBinaryOperator.GreaterThanOrEqual;
+
+    /// <summary>
+    /// Whether <see cref="Operator"/> is arithmetic: neither a comparison nor <see cref="MongoBinaryOperator.AndAlso"/>/
+    /// <see cref="MongoBinaryOperator.OrElse"/>.
+    /// </summary>
+    internal bool IsArithmetic
+        => !IsComparison && Operator is not (MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse);
+
     /// <inheritdoc />
     public override Type Type
-        => Operator is MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse
-            or MongoBinaryOperator.Equal or MongoBinaryOperator.NotEqual
-            or MongoBinaryOperator.LessThan or MongoBinaryOperator.LessThanOrEqual
-            or MongoBinaryOperator.GreaterThan or MongoBinaryOperator.GreaterThanOrEqual
-            ? typeof(bool)
-            : Left.Type;
+        => IsArithmetic ? Left.Type : typeof(bool);
 
     public MongoBinaryExpression Update(MongoExpression left, MongoExpression right)
         => ReferenceEquals(left, Left) && ReferenceEquals(right, Right)
