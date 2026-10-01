@@ -115,6 +115,138 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
         }
     }
 
+    public static TheoryData<string> ThrowingShapes => ["add", "mul", "abs", "anon"];
+
+    public static TheoryData<string> ComputedShapes => ["add", "mul", "abs", "cond", "condelse", "anon"];
+
+    /// <summary>
+    /// A non-nullable computed leaf over a MISSING non-nullable operand: the server's <c>$add</c>/<c>$multiply</c>/
+    /// <c>$abs</c> answer null for row "c". Driver-LINQ's deserializer can't read that null as Int32 and throws; native
+    /// reads the leaf strictly and throws too, instead of reading <c>0</c>. (A bare <c>x.Rank</c> leaf reads
+    /// <c>default</c>, as driver-LINQ does; see above.)
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ThrowingShapes))]
+    public void Computed_projection_over_a_missing_required_element_throws(string shape)
+    {
+        var collection = Seed(nameof(Computed_projection_over_a_missing_required_element_throws) + shape, nullRow: false);
+
+        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        {
+            using var db = CreateContext(collection, mode);
+            var ex = Assert.Throws<InvalidOperationException>(() => RunComputed(db, shape, wellFormedOnly: false));
+            Assert.Contains("Nullable object must have a value", ex.Message);
+        }
+
+        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
+        {
+            var ex = Assert.Throws<FormatException>(() => RunComputed(db, shape, wellFormedOnly: false));
+            Assert.Contains("Cannot deserialize a 'Int32' from BsonType 'Null'", ex.ToString());
+        }
+    }
+
+    // `$gt: [missing, 1]` is false in the aggregation dialect, so the conditional answers -1 (non-null) for the
+    // missing row on both paths: nothing to throw for.
+    [Fact]
+    public void Conditional_over_a_missing_required_element_takes_the_false_branch_on_both_paths()
+    {
+        var collection = Seed(nameof(Conditional_over_a_missing_required_element_takes_the_false_branch_on_both_paths), nullRow: false);
+
+        Assert.Equal(
+            [-1, 2, -1],
+            NativeModeAssert.NativeAndParity(mode =>
+            {
+                using var db = CreateContext(collection, mode);
+                return RunComputed(db, "cond", wellFormedOnly: false);
+            }));
+    }
+
+    // `x.Rank > 1 ? -1 : x.Rank`: for row "c" the conditional selects the missing field itself, so the server answers
+    // MISSING (not null) and $project omits the element. Driver-LINQ's deserializer reads an omitted member as default
+    // (0, as for a bare `x.Rank`); native has always thrown for a missing computed alias, and still does (now through
+    // the strict read). A loud, pre-existing divergence, pinned so a change is noticed.
+    [Fact]
+    public void Conditional_selecting_a_missing_required_element_throws_natively_and_reads_default_on_driver_linq()
+    {
+        var collection = Seed(
+            nameof(Conditional_selecting_a_missing_required_element_throws_natively_and_reads_default_on_driver_linq), nullRow: false);
+
+        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        {
+            using var db = CreateContext(collection, mode);
+            var ex = Assert.Throws<InvalidOperationException>(() => RunComputed(db, "condelse", wellFormedOnly: false));
+            Assert.Contains("Nullable object must have a value", ex.Message);
+        }
+
+        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
+        {
+            Assert.Equal([1, -1, 0], RunComputed(db, "condelse", wellFormedOnly: false));
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(ComputedShapes))]
+    public void Computed_projection_over_well_formed_rows_is_unchanged(string shape)
+    {
+        var collection = Seed(nameof(Computed_projection_over_well_formed_rows_is_unchanged) + shape, nullRow: false);
+
+        var expected = shape switch
+        {
+            "add" or "anon" => new List<int> { 2, 3 },
+            "mul" => [2, 4],
+            "abs" => [1, 2],
+            "cond" => [-1, 2],
+            _ => [1, -1],
+        };
+
+        Assert.Equal(
+            expected,
+            NativeModeAssert.NativeAndParity(mode =>
+            {
+                using var db = CreateContext(collection, mode);
+                return RunComputed(db, shape, wellFormedOnly: true);
+            }));
+    }
+
+    // The strict read is read-side only: Distinct and Sum over a computed leaf don't decline.
+    [Fact]
+    public void Distinct_and_Sum_over_a_computed_leaf_stay_native()
+    {
+        var collection = Seed(nameof(Distinct_and_Sum_over_a_computed_leaf_stay_native), nullRow: false);
+
+        Assert.Equal(
+            [2, 3],
+            NativeModeAssert.NativeAndParity(mode =>
+            {
+                using var db = CreateContext(collection, mode);
+                return db.Entities.AsNoTracking().Where(x => x.Title != "c")
+                    .Select(x => x.Rank + 1).Distinct().AsEnumerable().Order().ToList();
+            }));
+
+        Assert.Equal(
+            [5],
+            NativeModeAssert.NativeAndParity(mode =>
+            {
+                using var db = CreateContext(collection, mode);
+                return new List<int> { db.Entities.AsNoTracking().Where(x => x.Title != "c").Select(x => x.Rank + 1).Sum() };
+            }));
+    }
+
+    private static List<int> RunComputed(SingleEntityDbContext<Item> db, string shape, bool wellFormedOnly)
+    {
+        var source = db.Entities.AsNoTracking();
+        var q = (wellFormedOnly ? source.Where(x => x.Title != "c") : source).OrderBy(x => x.Title);
+        return shape switch
+        {
+            "add" => q.Select(x => x.Rank + 1).ToList(),
+            "mul" => q.Select(x => x.Rank * 2).ToList(),
+            "abs" => q.Select(x => Math.Abs(x.Rank)).ToList(),
+            "cond" => q.Select(x => x.Rank > 1 ? x.Rank : -1).ToList(),
+            "condelse" => q.Select(x => x.Rank > 1 ? -1 : x.Rank).ToList(),
+            _ => q.Select(x => new { V = x.Rank + 1 }).ToList().Select(a => a.V).ToList(),
+        };
+    }
+
     private IMongoCollection<Item> Seed(string name, bool nullRow)
     {
         var raw = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(name));

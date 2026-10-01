@@ -171,7 +171,9 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     var computedProjection = GetProjection(computedLeaf.Binding);
                     return TryCreateThrowOnNullAliasRead(computedProjection.Alias!, computedLeaf.Type, out var throwingComputedRead)
                         ? throwingComputedRead
-                        : BsonBinding.CreateGetElementValue(DocParameter, computedProjection.Alias!, computedLeaf.Type);
+                        : TryCreateThrowOnMalformedNullAliasRead(computedProjection.Alias!, computedLeaf.Type, out var strictComputedRead)
+                            ? strictComputedRead
+                            : BsonBinding.CreateGetElementValue(DocParameter, computedProjection.Alias!, computedLeaf.Type);
                 }
 
             case ProjectionBindingExpression projectionBindingExpression:
@@ -200,6 +202,13 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     if (TryCreateThrowOnNullAliasRead(projection.Alias, projectionBindingExpression.Type, out var throwingRead))
                     {
                         return throwingRead;
+                    }
+
+                    // A computed leaf over a non-nullable property's field (`x.Rank + 1`) is null only when a malformed
+                    // document omits that field; read it strictly too, so it throws as driver-LINQ did instead of 0.
+                    if (TryCreateThrowOnMalformedNullAliasRead(projection.Alias, projectionBindingExpression.Type, out var strictRead))
+                    {
+                        return strictRead;
                     }
 
                     // FirstOrDefault over a non-nullable value-type member: with no related row the alias is missing
@@ -936,6 +945,51 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             CreateAliasRead(alias, valueType.MakeNullable()), valueType.MakeNullable().GetProperty(nameof(Nullable<int>.Value))!);
         read = value.ConvertIfRequired(type);
         return true;
+    }
+
+    /// <summary>
+    /// On the native <see cref="NativeRoute.Projection"/> route, when this select's own output under
+    /// <paramref name="alias"/> classifies <see cref="NonNullableValueRead.ThrowOnMalformedNull"/> (a computation over a
+    /// non-nullable property's field, <c>x.Rank + 1</c>), reads it as a nullable and takes
+    /// <see cref="Nullable{T}.Value"/>, so the null the server answers when a document omits that field throws EF's
+    /// "Nullable object must have a value." (driver-LINQ's deserializer threw <see cref="FormatException"/>) instead of
+    /// reading as <c>default(T)</c>.
+    /// </summary>
+    /// <remarks>
+    /// Read side only: the emit side treats the classification as <see cref="NonNullableValueRead.Plain"/>, so no later
+    /// operator declines over it; a Distinct's flattened key or a set-op operand is not this select's own computed
+    /// leaf and reads as before. Whole-document reads (<see cref="ReadsUnprojectedDocuments"/>) are unaffected.
+    /// </remarks>
+    private bool TryCreateThrowOnMalformedNullAliasRead(string alias, Type type, [NotNullWhen(true)] out Expression? read)
+    {
+        read = null;
+        if (_queryExpression.Select.Route != NativeRoute.Projection
+            || ReadsUnprojectedDocuments
+            || !type.IsValueType
+            || Nullable.GetUnderlyingType(type) is not null)
+        {
+            return false;
+        }
+
+        foreach (var projection in _queryExpression.Select.Projection)
+        {
+            if (projection.Alias != alias)
+            {
+                continue;
+            }
+
+            if (MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(type, projection.Expression)
+                != NonNullableValueRead.ThrowOnMalformedNull)
+            {
+                return false;
+            }
+
+            read = Expression.Property(
+                CreateAliasRead(alias, type.MakeNullable()), type.MakeNullable().GetProperty(nameof(Nullable<int>.Value))!);
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>

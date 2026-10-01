@@ -503,6 +503,29 @@ Apply the same principal-key identity to the null-guard arm of `TryGetCorrelatio
 - [ ] **Step 5:** Full suite EF8/EF9/EF10 (shared correlation recognizer feeding several dispatch paths) plus `MONGODB_EF_QUERY_MODE=NativeOnly` functional run: no previously-native key-correlated test may start declining. Behaviour change vs released versions: none (main throws for every newly-declining shape) → no `BREAKING-CHANGES.md` entry.
 - [ ] **Step 6: Commit** — `EF-322: correlated-collection matcher requires the outer principal key`
 
+### Task 1.12: F3(c) — non-nullable computed projection over a MISSING non-nullable field reads 0 (driver threw)
+
+(Controller-authored task; added to the plan during Phase 1 execution.)
+
+**Problem.** `Select(x => x.Rank + 1)` (also `new { V = x.Rank + 1 }`, `x.Rank * 2`, `Math.Abs(x.Rank)`, conditional over `x.Rank`) where `int Rank` is non-nullable and the element is MISSING from a document: canonical main (driver LINQ) throws `FormatException` (server `$add` of missing → null; the driver can't deserialize null into int). Native returns `0` for that row (observed: `[2, 3, 0]` for Rank 1/2/missing) — loud-on-main became silent wrong data, which the owner's goal forbids. Task 1.3 fixed the NULLABLE-operand case (`x.Score!.Value + 1`) via the ThrowsOnNull classification and deliberately did not flag non-nullable fields (doing so naively cascades declines over every `Select(x => x.A + x.B).Distinct()`/`.Sum()`).
+
+**Design (g4-projection.md §T7 option (c)).** On the **Projection route only**, read every NON-NULLABLE COMPUTED projection leaf strictly: read the alias as `T?` and apply `.Value` (or an equivalent null check that throws `InvalidOperationException("Nullable object must have a value.")`), so a server null — from a missing non-nullable operand — throws instead of reading `default(T)`. This is a READ-side strictness change; it must NOT change emit-side classification (no new declines for Distinct/Sum/GroupBy over computed leaves — those operators don't read the computed leaf through the projection shaper, or if they do, measure it).
+- Bare field leaves are excluded (Task 1.10 made a missing bare required scalar read `default(T)` on the Projection route, matching main — keep that; explicit BSON null on a bare leaf throws, also from 1.10).
+- Computed leaves over NULLABLE operands are already ThrowsOnNull (Task 1.3) — keep them.
+- Find where computed non-nullable leaves are read on the Projection route (MongoProjectionBindingRemovingExpressionVisitor alias reads → `BsonBinding.TryReadElementValue`), and add the strict read only for leaves classified Plain + computed (not bare field) + non-nullable CLR type. Prefer reusing the existing ThrowsOnNull read machinery with a new classification value or flag set at bind time by the same classifier (gate calls the fix's predicate).
+
+**Measure first.** The plan says (c) "needs a full-suite measurement first": implement behind the narrowest condition, run the full suite ×3 AND an EF10 functional+spec run under `MONGODB_EF_QUERY_MODE=NativeOnly`, and report every test whose outcome changes (expected: none, other than the new tests). Any test that previously expected `0` for a computed leaf over a missing/null non-nullable operand must be checked against main (driver) — if main threw, the new throw is correct; if main returned a value, stop and report.
+
+**Tests** (raw BsonDocument seeds: `{Title:"a",Rank:1}`, `{Title:"b",Rank:2}`, `{Title:"c"}`; 3 modes):
+- Theory over shapes `x.Rank + 1`, `x.Rank * 2`, `Math.Abs(x.Rank)`, `x.Rank > 1 ? x.Rank : -1`, `new { V = x.Rank + 1 }`: NativeOnly and Native throw `InvalidOperationException` ("Nullable object must have a value" or the read's message — assert a stable fragment), DriverLinq throws `FormatException` (main parity — confirm the driver exception per shape; if the driver doesn't throw for some shape, assert its actual result and make native match).
+- Well-formed rows only (`Where(x => x.Title != "c")`): all shapes return correct values in all modes (no regression).
+- Bare `Select(x => x.Rank)` still reads `[1,2,0]` (Task 1.10 behavior unchanged).
+- `Select(x => x.Rank + 1).Distinct()` and `.Sum()` over well-formed rows still go native (no new declines) — `NativeModeAssert.NativeAndParity`.
+- Mutation check: disable the strict read → the theory fails.
+- Full suite ×3.
+
+**Commit:** `EF-322: throw for computed projections over missing non-nullable fields, matching driver LINQ`
+
 ---
 
 ## Phase 2 — Implicit-mode NativeOnly gaps (the 129 tests in `nativeonly-gaps.tsv`)
