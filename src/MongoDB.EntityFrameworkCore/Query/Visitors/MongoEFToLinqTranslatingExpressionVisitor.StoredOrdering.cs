@@ -354,7 +354,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
     /// <summary>
     /// The value member <paramref name="name"/> of <paramref name="definition"/> is constructed from: an anonymous
     /// type's constructor argument, a member-init assignment, or a <c>GroupBy</c>'s key selector for <c>Key</c>.
-    /// <paramref name="definition"/> is matched as given (callers strip converts first).
+    /// <paramref name="definition"/> is matched as given (it does not strip converts).
     /// </summary>
     private static bool TryResolveConstructedMember(
         Expression definition, string name, [NotNullWhen(true)] out Expression? memberValue)

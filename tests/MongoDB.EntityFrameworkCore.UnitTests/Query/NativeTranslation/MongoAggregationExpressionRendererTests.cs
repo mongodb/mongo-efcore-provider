@@ -272,7 +272,7 @@ public class MongoAggregationExpressionRendererTests
     [Fact]
     public void CanRender_reports_false_for_MongoInExpression_over_unrenderable_values()
     {
-        // Neither constant enumerable nor parameter: CanRenderInValues must decline what RenderInValues throws on.
+        // Neither constant enumerable nor parameter: MongoValueRenderer.IsRenderableInValues must decline what RenderInValues throws on.
         var status = GetProperty<Customer>("Status");
         var field = new MongoFieldExpression(status, "Status");
         var node = new MongoInExpression(field, new MongoFieldExpression(status, "Other"), negated: false);

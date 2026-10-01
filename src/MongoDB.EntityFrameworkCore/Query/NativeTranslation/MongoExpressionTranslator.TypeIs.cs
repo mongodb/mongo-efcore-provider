@@ -13,7 +13,6 @@
  * limitations under the License.
  */
 
-using System.Linq;
 using System.Linq.Expressions;
 using MongoDB.EntityFrameworkCore.Extensions; // IsInHierarchy()
 using MongoDB.EntityFrameworkCore.Query.Expressions;

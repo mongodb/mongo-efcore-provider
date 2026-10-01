@@ -3047,7 +3047,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         while (current != null && !ReferenceEquals(current, parameter))
         {
             var step = current.RemoveConvert();
-            if (step is MemberExpression member && member.IsTransparentIdentifierOuterOrInnerAccess()
+            if ((step is MemberExpression member && member.IsTransparentIdentifierOuterOrInnerAccess())
                 || !step.TryGetMemberOrEFProperty(out var next, out var name))
             {
                 // Reached the Outer/Inner plumbing or an unrecognized shape; AnalyzeKeySelectorTarget takes it.

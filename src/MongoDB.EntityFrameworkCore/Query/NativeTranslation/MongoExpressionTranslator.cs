@@ -2100,7 +2100,7 @@ internal sealed partial class MongoExpressionTranslator
             _ => nodeType
         };
 
-    internal static bool IsComparison(ExpressionType t)
+    private static bool IsComparison(ExpressionType t)
         => t is ExpressionType.Equal or ExpressionType.NotEqual
             or ExpressionType.LessThan or ExpressionType.LessThanOrEqual
             or ExpressionType.GreaterThan or ExpressionType.GreaterThanOrEqual;
