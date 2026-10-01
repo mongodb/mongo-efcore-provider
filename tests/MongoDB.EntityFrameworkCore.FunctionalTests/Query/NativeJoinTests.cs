@@ -2148,6 +2148,179 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Equal(expected, Run(driverLinq));
     }
 
+    // A collection Include on the root of a multi-level join chain whose result selector returns the root entity, so
+    // the trailing Select is `ti => Include(ti.Outer.Outer..., nav)`. Ragged data: an order-less owner and a line-less
+    // order are dropped by the inner joins, and the Include array of a line-less order is empty.
+    //
+    // "LastLevelCollides": the last join (Order.OrderLines) has the Include's `_lookup_OrderLines` alias.
+    // "EarlierLevelCollides": the FIRST join has it and nothing later reads that level.
+    // "EarlierLevelCollidesAndIsRead": Owner.Orders join has the Include's `_lookup_Orders` alias and the next join
+    // keys off its Inner side (localField `_lookup_Orders._id`).
+    // "CollidingLevelReadByFilter": as above, plus a Where over that level's Inner side (PostJoinOps reading
+    // `_lookup_Orders.Total`).
+    [Theory]
+    [InlineData("TwoLevel")]
+    [InlineData("ThreeLevel")]
+    [InlineData("LastLevelCollides")]
+    [InlineData("EarlierLevelCollides")]
+    [InlineData("EarlierLevelCollidesAndIsRead")]
+    [InlineData("CollidingLevelReadByFilter")]
+    public void Collection_Include_on_the_root_of_a_multi_level_join_chain_goes_native(string shape)
+    {
+        var seed = SeedRaggedOwnersOrdersAndLines();
+        var expected = RunMultiLevelCollectionInclude(seed, shape, db: null);
+        Assert.NotEmpty(expected);
+
+        var result = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(seed, mode,
+                nameof(Collection_Include_on_the_root_of_a_multi_level_join_chain_goes_native) + mode + shape);
+            return RunMultiLevelCollectionInclude(seed, shape, db);
+        });
+
+        Assert.Equal(expected, result);
+    }
+
+    // Must decline (and the fallback must be right): paging recorded BETWEEN two joins of the chain (the lowerer would
+    // defer it past every $lookup). "PagingAfterTheChain" pins the conservative mirror of the chained bare-leaf arm:
+    // any paging recorded after a join declines over a chain, including paging after the last join.
+    [Theory]
+    [InlineData("PagingBetweenJoins")]
+    [InlineData("PagingAfterTheChain")]
+    public void Collection_Include_over_a_multi_level_join_chain_declines_when_unsupported(string shape)
+    {
+        var seed = SeedRaggedOwnersOrdersAndLines();
+        var expected = RunMultiLevelCollectionInclude(seed, shape, db: null);
+        Assert.NotEmpty(expected);
+
+        var result = NativeModeAssert.DeclinesCleanly(mode =>
+        {
+            using var db = CreateContext(seed, mode,
+                nameof(Collection_Include_over_a_multi_level_join_chain_declines_when_unsupported) + mode + shape);
+            return RunMultiLevelCollectionInclude(seed, shape, db);
+        });
+
+        Assert.Equal(expected, result);
+    }
+
+    // An Include rooted on a non-root chain level (`ti => Include(ti.Outer.Inner, Orders)`) must decline natively.
+    [Fact]
+    public void Collection_Include_on_a_non_root_level_of_a_join_chain_declines_under_NativeOnly()
+    {
+        var seed = SeedRaggedOwnersOrdersAndLines();
+        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
+            nameof(Collection_Include_on_a_non_root_level_of_a_join_chain_declines_under_NativeOnly));
+
+        Assert.Throws<NativeTranslationNotSupportedException>(() => RunMultiLevelCollectionInclude(seed, "InnerRootedInclude", db));
+    }
+
+    // A single-level collection Include whose join collides with the Include's alias, with a Where over the join's
+    // Inner side: the filter reads the join's alias, so it must still see the unwound join document.
+    [Fact]
+    public void Collection_Include_over_a_colliding_single_level_join_with_an_inner_side_filter_reads_correctly()
+    {
+        var seed = SeedRaggedOwnersOrdersAndLines();
+        var expected = RunMultiLevelCollectionInclude(seed, "SingleLevelInnerFilter", db: null);
+        Assert.NotEmpty(expected);
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = CreateContext(seed, mode,
+                nameof(Collection_Include_over_a_colliding_single_level_join_with_an_inner_side_filter_reads_correctly) + mode);
+            Assert.Equal(expected, RunMultiLevelCollectionInclude(seed, "SingleLevelInnerFilter", db));
+        }
+    }
+
+    // Rows reduced to (root key, Include count, sorted Include members), sorted. With db == null, the in-memory oracle
+    // over the seed (the Include populated from the seed's FK).
+    private static List<string> RunMultiLevelCollectionInclude(Seed seed, string shape, JoinTestDbContext? db)
+    {
+        IQueryable<Owner> owners = db?.Owners ?? seed.Owners.AsQueryable();
+        IQueryable<Order> orders = db?.Orders ?? seed.Orders.AsQueryable();
+        IQueryable<OrderLine> lines = db?.OrderLines ?? seed.OrderLines.AsQueryable();
+        IQueryable<Order> ordersWithLines = db != null ? db.Orders.Include(r => r.OrderLines) : orders;
+        IQueryable<Owner> ownersWithOrders = db != null ? db.Owners.Include(o => o.Orders) : owners;
+
+        string OrderRow(Order r)
+        {
+            var included = db != null ? r.OrderLines : seed.OrderLines.Where(l => l.OrderId == r.Id).ToList();
+            return $"{r.Total}:{included.Count}:{string.Join(",", included.Select(l => l.Sku).OrderBy(s => s))}";
+        }
+
+        string OwnerRow(Owner o)
+        {
+            var included = db != null ? o.Orders : seed.Orders.Where(r => r.OwnerId == o.Id).ToList();
+            return $"{o.Name}:{included.Count}:{string.Join(",", included.Select(r => r.Total).OrderBy(t => t))}";
+        }
+
+        List<string> ReduceOrders(IQueryable<Order> query) => query.AsEnumerable().Select(OrderRow).OrderBy(x => x).ToList();
+        List<string> ReduceOwners(IQueryable<Owner> query) => query.AsEnumerable().Select(OwnerRow).OrderBy(x => x).ToList();
+
+        return shape switch
+        {
+            "TwoLevel" => ReduceOrders(ordersWithLines
+                .Join(owners, r => r.OwnerId, o => o.Id, (r, o) => new { r, o })
+                .Join(orders, e => e.o.Id, r2 => r2.OwnerId, (e, r2) => e.r)),
+            "ThreeLevel" => ReduceOrders(ordersWithLines
+                .Join(owners, r => r.OwnerId, o => o.Id, (r, o) => new { r, o })
+                .Join(orders, e => e.o.Id, r2 => r2.OwnerId, (e, r2) => new { e.r, r2 })
+                .Join(lines, x => x.r2.Id, l => l.OrderId, (x, l) => x.r)),
+            "LastLevelCollides" => ReduceOrders(ordersWithLines
+                .Join(owners, r => r.OwnerId, o => o.Id, (r, o) => r)
+                .Join(lines, r => r.Id, l => l.OrderId, (r, l) => r)),
+            "EarlierLevelCollides" => ReduceOrders(ordersWithLines
+                .Join(lines, r => r.Id, l => l.OrderId, (r, l) => r)
+                .Join(owners, r => r.OwnerId, o => o.Id, (r, o) => r)),
+            "EarlierLevelCollidesAndIsRead" => ReduceOwners(ownersWithOrders
+                .Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => e.o)),
+            "CollidingLevelReadByFilter" => ReduceOwners(ownersWithOrders
+                .Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r })
+                .Where(x => x.r.Total > 15m)
+                .Select(x => x.o)),
+            "SingleLevelInnerFilter" => ReduceOwners(ownersWithOrders
+                .Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
+                .Where(e => e.r.Total > 15m)
+                .Select(e => e.o)),
+            "PagingBetweenJoins" => ReduceOrders(ordersWithLines
+                .Join(owners, r => r.OwnerId, o => o.Id, (r, o) => new { r, o })
+                .OrderBy(e => e.r.Total).Skip(1).Take(2)
+                .Join(orders, e => e.o.Id, r2 => r2.OwnerId, (e, r2) => e.r)),
+            "PagingAfterTheChain" => ReduceOrders(ordersWithLines
+                .Join(owners, r => r.OwnerId, o => o.Id, (r, o) => new { r, o })
+                .Join(orders, e => e.o.Id, r2 => r2.OwnerId, (e, r2) => new { e.r, r2 })
+                .OrderBy(x => x.r.Total).Skip(1).Take(2)
+                .Select(x => x.r)),
+            "InnerRootedInclude" => ReduceOwners(orders
+                .Join(ownersWithOrders, r => r.OwnerId, o => o.Id, (r, o) => new { r, o })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => e.o)),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape))
+        };
+    }
+
+    // Alice: two orders (10 with two lines, 20 with none), Bob: one order (30, one line), Carol: none. Totals are
+    // unique so a row's Total identifies its order.
+    private static Seed SeedRaggedOwnersOrdersAndLines()
+    {
+        var alice = new Owner { Id = ObjectId.GenerateNewId(), Name = "Alice", Region = "North" };
+        var bob = new Owner { Id = ObjectId.GenerateNewId(), Name = "Bob", Region = "South" };
+        var carol = new Owner { Id = ObjectId.GenerateNewId(), Name = "Carol", Region = "West" };
+
+        var order1 = new Order { Id = ObjectId.GenerateNewId(), OwnerId = alice.Id, Total = 10m, Region = "North" };
+        var order2 = new Order { Id = ObjectId.GenerateNewId(), OwnerId = alice.Id, Total = 20m, Region = "North" };
+        var order3 = new Order { Id = ObjectId.GenerateNewId(), OwnerId = bob.Id, Total = 30m, Region = "South" };
+
+        var lines = new[]
+        {
+            new OrderLine { Id = ObjectId.GenerateNewId(), OrderId = order1.Id, Sku = "SKU-1", Quantity = 1 },
+            new OrderLine { Id = ObjectId.GenerateNewId(), OrderId = order1.Id, Sku = "SKU-2", Quantity = 2 },
+            new OrderLine { Id = ObjectId.GenerateNewId(), OrderId = order3.Id, Sku = "SKU-3", Quantity = 3 },
+        };
+
+        return new Seed([alice, bob, carol], [order1, order2, order3], lines);
+    }
+
     [Fact]
     public void Chain_scalar_leaf_beside_a_whole_entity_leaf_at_a_non_adjacent_chain_level_reads_correctly()
     {

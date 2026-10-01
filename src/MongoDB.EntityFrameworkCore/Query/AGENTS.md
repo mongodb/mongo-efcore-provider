@@ -63,6 +63,11 @@ Scope, joins, grouping:
   types is the regression). Primitive: `MongoExpressionTranslator.TryBeginOwnedHopWalk`.
 - **Multi-scope join projections**: a trailing `Select` over `Joins.Count >= 2` is native only for a whole-entity
   leaf or a leaf resolving to exactly one chain scope.
+- **Collection Include over a join scope** (`ti => Include(ti.Outer…, nav)`) is native only on the root scope. A join
+  holding the Include's `_lookup_<Nav>` alias would be collapsed into it by `AddLookup`: at depth 1 the join is
+  renamed (so an Inner-side op, `JoinInnerAccessConfirmed`, declines); over a chain no join is renamed and the Include
+  renames itself (`existingIncompatibleLookup`), keeping later joins' `localField`s and Inner filters valid. Renames use
+  `MongoQueryExpression.GetUnusedLookupAlias`.
 - **Navigation-less joins** are native iff `RebindInnerShaperToOuterQuery`'s raw-key branch resolved both keys
   (`JoinInfo.Lookup != null`); a navigation resolved to the wrong target is rebuilt by it, a non-simple key
   declines (`JoinLookupImplementsKeySelectors`). Composite-PK components live at `_id.<Name>`

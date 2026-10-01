@@ -857,9 +857,15 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                         var readAlias = plainLookupAlias;
                         if (existingIncompatibleLookup != null)
                         {
-                            lookup.As = $"{lookup.As}_include";
+                            // Normally "_include"; suffixed further if another lookup already has that alias. An
+                            // earlier registration of this same renamed Include keeps sharing it (AddLookup merges).
+                            var renamedAs = _queryExpression.GetUnusedLookupAlias(
+                                $"{lookup.As}_include",
+                                l => l.RenamedToAvoidJoinCollision && l.Navigation == lookup.Navigation);
+                            var renameSuffix = renamedAs[lookup.As.Length..];
+                            lookup.As = renamedAs;
                             lookup.RenamedToAvoidJoinCollision = true;
-                            readAlias = $"{plainLookupAlias}_include";
+                            readAlias = plainLookupAlias + renameSuffix;
                         }
 
                         _queryExpression.AddLookup(lookup);

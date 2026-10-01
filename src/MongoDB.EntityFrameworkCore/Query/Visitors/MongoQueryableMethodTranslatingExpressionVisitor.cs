@@ -447,32 +447,64 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             mongoQueryExpression.Select.MarkNotNativelyRepresentable();
         }
         // A collection Include directly over a join scope, e.g. Customers.Include(c => c.Orders).Join(Orders, ...).
-        // Gated by IsSingleEligibleNativeJoinScope; confirms and registers the join's $lookup. The Include's own $lookup
-        // registers later during shaper compilation, so don't mark non-representable on success.
+        // Gated by IsSingleEligibleNativeJoinScope; confirms and registers the join's $lookup(s). The Include's own
+        // $lookup registers later during shaper compilation, so don't mark non-representable on success.
         //
-        // Outer-rooted only. When the join resolves to the Include's navigation, both would claim one alias and AddLookup
-        // would collapse them, but the join needs $unwind and the Include the bare array; renaming the join's alias is safe
-        // only because nothing reads the join's Inner side here. An Inner-rooted Include is declined:
-        // RebindInnerShaperToOuterQuery already baked the original alias into Inner's shaper.
-        else if (TryGetCollectionIncludeOverJoinScope(selector) is { EntityExpression: MemberExpression { Member.Name: "Outer" } } collectionInclude)
+        // Root-rooted only (`ti.Outer`, or `ti.Outer.Outer...` resolving to scope 0 over a chain). An Inner-rooted Include
+        // is declined: RebindInnerShaperToOuterQuery already baked the original alias into Inner's shaper.
+        //
+        // Alias collision: a join resolving to the Include's navigation claims the Include's `_lookup_<Nav>` alias, and
+        // AddLookup would collapse them, but the join needs $unwind and the Include the bare array.
+        // - Single level: the join is renamed `<alias>_join`, safe only while nothing reads its Inner side, so an Inner
+        //   Where/OrderBy (JoinInnerAccessConfirmed: its field refs carry the original alias) declines.
+        // - Chain: no join is renamed. TranslateJoinCore registered every level's $lookup, so the Include binding sees
+        //   the colliding $unwind-ed lookup and renames the Include instead (MongoProjectionBindingExpressionVisitor's
+        //   existingIncompatibleLookup), leaving every reader of a join alias (a later join's localField via
+        //   LookupExpression.ReadsOutputOf, an Inner-side filter) intact. Paging recorded after a join may sit between
+        //   two joins and would be deferred past every $lookup, so it declines (as the chained bare-leaf arm below).
+        else if (TryGetCollectionIncludeOverJoinScope(selector) is { } collectionInclude
+                 && (collectionInclude.EntityExpression is MemberExpression { Member.Name: "Outer", Expression: ParameterExpression }
+                     || mongoQueryExpression.Select.JoinScope is { Levels.Count: > 1 }))
         {
-            if (IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var collectionJoin))
+            var select = mongoQueryExpression.Select;
+            if (select.JoinScope is { Levels.Count: > 1 } includeChainScope)
             {
-                var includeNavigation = (INavigation)collectionInclude.Navigation!;
-                if (collectionJoin.Lookup!.As == LookupExpression.GetLookupAlias(includeNavigation))
+                if (NativeJoinScopeTranslator.TryResolveBareScopeLeaf(
+                        includeChainScope, selector.Parameters[0], collectionInclude.EntityExpression, out var includeScopeIndex)
+                    && includeScopeIndex == 0
+                    && !(select.HasPaging && select.HasPagingRecordedAfterAJoin)
+                    && IsSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
                 {
-                    var renamedAlias = $"{collectionJoin.Lookup.As}_join";
-                    collectionJoin.Alias = renamedAlias;
-                    collectionJoin.Lookup.As = renamedAlias;
+                    NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, includeChainScope);
                 }
-
-                mongoQueryExpression.AddLookup(collectionJoin.Lookup);
-                mongoQueryExpression.Select.MarkReferenceIncludeConfirmed();
-                mongoQueryExpression.Select.MarkJoinLookupConfirmed();
+                else
+                {
+                    select.MarkNotNativelyRepresentable();
+                }
             }
             else
             {
-                mongoQueryExpression.Select.MarkNotNativelyRepresentable();
+                var includeAlias = LookupExpression.GetLookupAlias((INavigation)collectionInclude.Navigation!);
+                var joinCollides = mongoQueryExpression.Joins is [{ Lookup: { } singleJoinLookup }]
+                                   && singleJoinLookup.As == includeAlias;
+                if (!(joinCollides && select.JoinInnerAccessConfirmed)
+                    && IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var collectionJoin))
+                {
+                    if (collectionJoin.Lookup!.As == includeAlias)
+                    {
+                        var renamedAlias = mongoQueryExpression.GetUnusedLookupAlias($"{collectionJoin.Lookup.As}_join");
+                        collectionJoin.Alias = renamedAlias;
+                        collectionJoin.Lookup.As = renamedAlias;
+                    }
+
+                    mongoQueryExpression.AddLookup(collectionJoin.Lookup);
+                    select.MarkReferenceIncludeConfirmed();
+                    select.MarkJoinLookupConfirmed();
+                }
+                else
+                {
+                    select.MarkNotNativelyRepresentable();
+                }
             }
         }
         // A bare `x.Outer`/`x.Inner` selector over an eligible single-level join, recorded as an unconfirmed candidate;
@@ -1243,31 +1275,40 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
            && !navigation.IsEmbedded();
 
     /// <summary>
-    /// Recognizes <c>Select(ti =&gt; IncludeExpression(ti.Outer, nav, ...))</c> (or the <c>ti.Inner</c> mirror):
-    /// a single-level non-embedded collection <c>Include</c> over one side of a user
-    /// <c>Join</c>/<c>GroupJoin</c>/<c>LeftJoin</c>, e.g. <c>Customers.Include(c =&gt; c.Orders).Join(Orders, ...)
-    /// .Select(c =&gt; c)</c>. None of the other Include recognizers admit this shape.
+    /// Recognizes <c>Select(ti =&gt; IncludeExpression(ti.Outer, nav, ...))</c> (or the <c>ti.Inner</c> mirror, or a
+    /// longer <c>Outer</c>/<c>Inner</c> hop chain such as <c>ti.Outer.Outer</c> over a join chain): a single-level
+    /// non-embedded collection <c>Include</c> over one side of a user <c>Join</c>/<c>GroupJoin</c>/<c>LeftJoin</c>, e.g.
+    /// <c>Customers.Include(c =&gt; c.Orders).Join(Orders, ...).Select(c =&gt; c)</c>. None of the other Include
+    /// recognizers admit this shape.
     /// <para>
-    /// The collection's <c>$lookup</c> registers later during projection binding; the caller must still gate
-    /// the join itself through <see cref="IsSingleEligibleNativeJoinScope"/> before confirming it.
+    /// Structural only: the caller resolves which scope the hop chain names, and must still gate the join itself
+    /// through <see cref="IsSingleEligibleNativeJoinScope"/> before confirming it. The collection's <c>$lookup</c>
+    /// registers later during projection binding.
     /// </para>
     /// </summary>
     internal static IncludeExpression? TryGetCollectionIncludeOverJoinScope(LambdaExpression selector)
     {
         if (selector.Parameters.Count != 1
-            || !selector.Parameters[0].Type.IsTransparentIdentifierType())
+            || !selector.Parameters[0].Type.IsTransparentIdentifierType()
+            || selector.Body is not IncludeExpression { Navigation: INavigation navigation } includeExpression
+            || !navigation.IsCollection
+            || navigation.IsEmbedded())
         {
             return null;
         }
 
-        return selector.Body is IncludeExpression { Navigation: INavigation navigation } includeExpression
-               && navigation.IsCollection
-               && !navigation.IsEmbedded()
-               && includeExpression.EntityExpression is MemberExpression member
-               && member.IsTransparentIdentifierOuterOrInnerAccess()
-               && member.Expression == selector.Parameters[0]
-            ? includeExpression
-            : null;
+        var hop = includeExpression.EntityExpression;
+        if (hop is not MemberExpression)
+        {
+            return null;
+        }
+
+        while (hop is MemberExpression member && member.IsTransparentIdentifierOuterOrInnerAccess())
+        {
+            hop = member.Expression;
+        }
+
+        return hop == selector.Parameters[0] ? includeExpression : null;
     }
 
     /// <summary>

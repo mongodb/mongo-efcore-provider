@@ -173,6 +173,26 @@ internal sealed partial class MongoQueryExpression
     }
 
     /// <summary>
+    /// <paramref name="candidate"/>, suffixed <c>_1</c>, <c>_2</c>, ... until no registered <c>$lookup</c> or join uses it,
+    /// so a lookup renamed to dodge a collision can't land on another lookup's alias (where <see cref="AddLookup"/> would
+    /// collapse the two). A registered lookup satisfying <paramref name="isSameLookup"/> doesn't count: it is an earlier
+    /// registration of the same lookup (e.g. one Include visited once per projection member), which must keep sharing
+    /// the alias.
+    /// </summary>
+    internal string GetUnusedLookupAlias(string candidate, Func<LookupExpression, bool>? isSameLookup = null)
+    {
+        var alias = candidate;
+        for (var suffix = 1;
+             _pendingLookups.Any(l => l.As == alias && isSameLookup?.Invoke(l) != true) || _joins.Any(j => j.Alias == alias);
+             suffix++)
+        {
+            alias = $"{candidate}_{suffix}";
+        }
+
+        return alias;
+    }
+
+    /// <summary>
     /// The reference-collection-nav <c>First</c>/<c>FirstOrDefault</c> projection leaves registered on this query,
     /// in projection order. See <see cref="MongoCorrelatedReducerLeaf"/>.
     /// </summary>
