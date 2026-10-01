@@ -1664,21 +1664,32 @@ internal static class NativeGroupByBinder
             if (MongoDatePartExpression.IsTimeOfDay(projection.Expression))
                 return false;
 
+            // A computed key over a non-nullable field (`x.Rank + 1`) is null when a document omits the field; the flatten
+            // is read strictly like the leaf itself (read side only: ThrowsOnMalformedNull flags nothing downstream).
+            // One that selects the field itself (`x.Rank > 1 ? -1 : x.Rank`, DefaultOnMalformedMissing) is MISSING
+            // there instead: the key part carries a missing marker (MarksMissing; a lone `$group` `_id` sub-key would
+            // answer null for MISSING) and the flatten restores MISSING from it, so a missing and a null value are two
+            // groups and read 0 and throw, as driver-LINQ (grouping on the projected document) did.
+            var malformedRead = projection.ThrowsOnMalformedNull
+                ? NonNullableValueRead.ThrowOnMalformedNull
+                : MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(projection.Expression.Type, projection.Expression);
+            var marksMissing = malformedRead == NonNullableValueRead.DefaultOnMalformedMissing || projection.DefaultsOnMalformedMissing;
+
             // ThrowsOnNull carries over to both: the deduped value is the same possibly-null value, read back from
             // "_id.<alias>" by the flatten, and by operators over the Distinct through the key part (DistinctAliasScope).
-            keyParts.Add(new MongoGroupingKeyPart(projection.Alias, projection.Expression, projection.ThrowsOnNull));
-            // A computed key over a non-nullable field (`x.Rank + 1`) is null when a document omits the field; the flatten
-            // is read strictly like the leaf itself (read side only: ThrowsOnMalformedNull flags nothing downstream). So
-            // is one that selects the field itself (`x.Rank > 1 ? -1 : x.Rank`, DefaultOnMalformedMissing): unlike its
-            // $project output, a lone `$group` `_id` sub-key answers null for MISSING, so the read can't tell the omitted
-            // field (driver-LINQ, grouping on the projected document, read 0) from an explicit null (driver-LINQ threw).
+            keyParts.Add(new MongoGroupingKeyPart(projection.Alias, projection.Expression, projection.ThrowsOnNull, marksMissing));
+            var keyRef = new MongoElementRefExpression("_id." + projection.Alias, projection.Expression.Type);
             flatten.Add(new MongoProjection(projection.Alias,
-                new MongoElementRefExpression("_id." + projection.Alias, projection.Expression.Type),
+                marksMissing
+                    ? new MongoConditionalExpression(
+                        new MongoElementRefExpression(
+                            "_id." + projection.Alias + MongoGroupingKeyPart.MissingMarkerSuffix, typeof(bool)),
+                        new MongoElementRefExpression(MongoElementRefExpression.RemoveSentinelPath, projection.Expression.Type),
+                        keyRef)
+                    : keyRef,
                 ThrowsOnNull: projection.ThrowsOnNull,
-                ThrowsOnMalformedNull: projection.ThrowsOnMalformedNull
-                    || MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
-                        projection.Expression.Type, projection.Expression)
-                        is NonNullableValueRead.ThrowOnMalformedNull or NonNullableValueRead.DefaultOnMalformedMissing));
+                ThrowsOnMalformedNull: !marksMissing && malformedRead == NonNullableValueRead.ThrowOnMalformedNull,
+                DefaultsOnMalformedMissing: marksMissing));
         }
 
         select.ClearProjections();

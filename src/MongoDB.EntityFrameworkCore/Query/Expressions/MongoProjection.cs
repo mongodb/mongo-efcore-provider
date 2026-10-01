@@ -36,14 +36,18 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// <param name="ThrowsOnMalformedNull">
 /// Read-side only: the value is a reference to an upstream computed leaf that classified
 /// <c>NonNullableValueRead.ThrowOnMalformedNull</c> (a projected Distinct's flattened key over <c>x.Rank + 1</c>), so
-/// the read side reads it strictly, as it would the leaf itself. Also set for an upstream
-/// <c>NonNullableValueRead.DefaultOnMalformedMissing</c> leaf (<c>x.Rank > 1 ? -1 : x.Rank</c>): a lone <c>$group</c>
-/// key answers null for MISSING, so the flattened value can't tell an omitted field from an explicit null. Unlike
-/// <paramref name="ThrowsOnNull"/>, no emit-side consumer looks at it, so no later operator declines over it.
+/// the read side reads it strictly, as it would the leaf itself. Unlike <paramref name="ThrowsOnNull"/>, no emit-side consumer looks at it, so no later operator declines over it.
+/// </param>
+/// <param name="DefaultsOnMalformedMissing">
+/// Read-side only: a projected Distinct's flattened key over an upstream leaf that classified
+/// <c>NonNullableValueRead.DefaultOnMalformedMissing</c> (<c>x.Rank > 1 ? -1 : x.Rank</c>), whose key part
+/// <c>MongoGroupingKeyPart.MarksMissing</c> and whose flatten restores MISSING from the marker. The read side reads a
+/// missing value as <c>default(T)</c> and a null as a throw, as it would the leaf itself.
 /// </param>
 internal readonly record struct MongoProjection(
     string Alias,
     MongoExpression Expression,
     System.Linq.Expressions.Expression? Source = null,
     bool ThrowsOnNull = false,
-    bool ThrowsOnMalformedNull = false);
+    bool ThrowsOnMalformedNull = false,
+    bool DefaultsOnMalformedMissing = false);

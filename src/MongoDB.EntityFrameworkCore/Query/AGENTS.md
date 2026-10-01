@@ -173,9 +173,11 @@ Rendering (null/missing/dialect semantics):
   `$cond` branch or `$ifNull` fallback: `x.Rank > 1 ? -1 : x.Rank`, `x.Score ?? x.Rank`) the server answers MISSING,
   not null, as on driver-LINQ, which read `default`: `DefaultOnMalformedMissing` reads a missing alias as `default`
   and a null as a throw. Only where native's rendering answers MISSING exactly where the driver's does: a field under
-  a widening cast the translator dropped (the driver's `$toLong` answers null) makes the leaf strict, and a Distinct
-  key stays strict (a lone `$group` key turns MISSING into null). A bare cast leaf staged as the field reads like
-  `x.Rank` for an identity cast and strictly for a `$toX` cast (`TryCreateRequiredScalarCastRead`).
+  a widening cast the translator dropped (the driver's `$toLong` answers null) makes the leaf strict. A projected
+  Distinct key over such a leaf carries a `$type` missing marker (`MongoGroupingKeyPart.MarksMissing`; a lone `$group`
+  key turns MISSING into null) and its flatten restores MISSING (`MongoProjection.DefaultsOnMalformedMissing`). A bare
+  cast leaf staged as the field reads like `x.Rank` for an identity cast (also over a nullable source: missing →
+  `default`, null → throws) and strictly for a `$toX` cast (`TryCreateRequiredScalarCastRead`).
 
 Shapers and projections:
 

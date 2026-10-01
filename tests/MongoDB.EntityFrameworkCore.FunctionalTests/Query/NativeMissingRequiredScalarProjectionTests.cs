@@ -299,9 +299,14 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
         ["skiptake_condelse"] = (q => Text(q.Select(x => x.Rank > 1 ? -1 : x.Rank).Skip(0).Take(5)), ["1", "-1", "0", "throws"]),
         ["concat_condelse"] = (q => Text(q.Select(x => x.Rank > 1 ? -1 : x.Rank).Concat(q.Select(x => x.Rank > 1 ? -1 : x.Rank))), ["1,1", "-1,-1", "0,0", "throws"]),
         ["union_condelse"] = (q => Text(q.Select(x => x.Rank > 1 ? -1 : x.Rank).Union(q.Select(x => x.Rank > 1 ? -1 : x.Rank))), ["1", "-1", "0", "throws"]),
-        // A projected Distinct groups natively on the value itself, and a lone `$group` key answers null for MISSING: the
-        // explicit-null row still throws as on main (the missing row's divergence is pinned below).
-        ["distinct_condelse_null"] = (q => Text(q.Where(x => x.Title != "c").Select(x => x.Rank > 1 ? -1 : x.Rank).Distinct()), ["1", "-1", "", "throws"]),
+        // A projected Distinct's key part carries a missing marker, so a missing and a null value stay apart.
+        ["distinct_condelse"] = (q => Text(q.Select(x => x.Rank > 1 ? -1 : x.Rank).Distinct()), ["1", "-1", "0", "throws"]),
+        ["distinct_anon_condelse"] = (q => Text(q.Select(x => new { V = x.Rank > 1 ? -1 : x.Rank }).Distinct().AsEnumerable().Select(a => a.V)), ["1", "-1", "0", "throws"]),
+        ["distinct_anon2_condelse"] = (q => Text(q.Select(x => new { x.Title, V = x.Rank > 1 ? -1 : x.Rank }).Distinct().AsEnumerable().Select(a => a.V)), ["1", "-1", "0", "throws"]),
+        ["distinct_coalesce"] = (q => Text(q.Select(x => x.Score ?? x.Rank).Distinct()), ["5", "2", "0", "throws"]),
+        // An identity cast over a nullable source: the driver renders the bare field.
+        ["castint_nullable"] = (q => Text(q.Select(x => (int)x.Score!)), ["5", "0", "0", "throws"]),
+        ["anon_castint_nullable"] = (q => Text(q.Select(x => new { V = (int)x.Score! }).AsEnumerable().Select(a => a.V)), ["5", "0", "0", "throws"]),
         // Strict: the server answers null for the missing row as well.
         ["condcomputed"] = (q => Text(q.Select(x => x.Rank > 1 ? -1 : x.Rank + 1)), ["2", "-1", "throws", "throws"]),
         ["condcastlong"] = (q => Text(q.Select(x => x.Rank > 1 ? -1L : (long)x.Rank)), ["1", "-1", "throws", "throws"]),
@@ -353,9 +358,7 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
     /// `"$Rank"` (MISSING, so 0), also for a captured `0` parameter, which a compiled-once native template can't follow;
     /// native renders `$add` (null) and throws. A long conditional mixing a long field with a widened int field: native
     /// drops the widening the driver renders as `$toLong`, so both branches are bare and the read can't tell which one
-    /// the server took; it reads strictly, where main read the long field's MISSING as 0. A projected Distinct over a
-    /// leaf selecting the field: driver-LINQ groups the projected document (MISSING kept, read 0); native groups the
-    /// value, and a lone `$group` key answers null for MISSING, indistinguishable from an explicit null, so it throws.
+    /// the server took; it reads strictly, where main read the long field's MISSING as 0.
     /// </summary>
     [Fact]
     public void Missing_required_element_divergences_from_main_are_loud()
@@ -370,8 +373,6 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
                 Assert.Throws<InvalidOperationException>(() => row.Select(x => x.Rank + 0).ToList()).Message);
             Assert.Contains("Nullable object must have a value",
                 Assert.Throws<InvalidOperationException>(() => row.Select(x => x.Title == "c" ? x.Big : x.Rank).ToList()).Message);
-            Assert.Contains("Nullable object must have a value",
-                Assert.Throws<InvalidOperationException>(() => row.Select(x => x.Rank > 1 ? -1 : x.Rank).Distinct().ToList()).Message);
         }
 
         using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
@@ -379,8 +380,32 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
             var row = db.Entities.AsNoTracking().Where(x => x.Title == "c");
             Assert.Equal([0], row.Select(x => x.Rank + 0).ToList());
             Assert.Equal([0L], row.Select(x => x.Title == "c" ? x.Big : x.Rank).ToList());
-            Assert.Equal([0], row.Select(x => x.Rank > 1 ? -1 : x.Rank).Distinct().ToList());
         }
+    }
+
+    /// <summary>
+    /// A missing and an explicit-null value are two distinct values on main (driver-LINQ groups the projected document,
+    /// `{}` vs `{_v: null}`); natively the key part's missing marker keeps them apart, where a lone `$group` key merged
+    /// them into one null group.
+    /// </summary>
+    [Fact]
+    public void Distinct_count_keeps_a_missing_and_a_null_value_apart()
+    {
+        var collection = Seed(nameof(Distinct_count_keeps_a_missing_and_a_null_value_apart), nullRow: true);
+
+        Assert.Equal(
+            [2],
+            NativeModeAssert.NativeAndExpected(
+                mode =>
+                {
+                    using var db = CreateContext(collection, mode);
+                    return new List<int>
+                    {
+                        db.Entities.AsNoTracking().Where(x => x.Title == "c" || x.Title == "d")
+                            .Select(x => x.Rank > 1 ? -1 : x.Rank).Distinct().Count()
+                    };
+                },
+                [2]));
     }
 
     private static List<string> Text<T>(IEnumerable<T> values)

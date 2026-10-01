@@ -1170,6 +1170,19 @@ internal static class MongoAggregationExpressionRenderer
             : NonNullableValueRead.ThrowOnMalformedNull;
     }
 
+    /// <summary>
+    /// <paramref name="classified"/>, a <see cref="ClassifyNonNullableValueRead"/> answer for a value of type
+    /// <paramref name="classifiedType"/> (a projected Distinct's key), for that value read back as
+    /// <paramref name="readType"/>. Read as a wider type (<c>(long)(c ? -1 : x.Rank)</c>, whose widening the translator
+    /// unwrapped where driver-LINQ renders <c>$toLong</c>), a <see cref="NonNullableValueRead.DefaultOnMalformedMissing"/>
+    /// value's MISSING is driver-LINQ's null, so it reads strictly, as <see cref="MayAnswerMissing"/> decides for a leaf.
+    /// </summary>
+    internal static NonNullableValueRead ReclassifyMalformedReadAs(NonNullableValueRead classified, Type classifiedType, Type readType)
+        => classified == NonNullableValueRead.DefaultOnMalformedMissing
+           && classifiedType.UnwrapNullableType() != readType.UnwrapNullableType()
+            ? NonNullableValueRead.ThrowOnMalformedNull
+            : classified;
+
     private enum MissingAnswer
     {
         // Never MISSING: an operator or $toX over the field answers null instead.

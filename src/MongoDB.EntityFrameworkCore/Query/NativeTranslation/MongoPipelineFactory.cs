@@ -355,7 +355,17 @@ internal sealed class MongoPipelineFactory
         {
             var idDoc = new BsonDocument();
             foreach (var part in grouping.Key)
+            {
                 idDoc.Add(part.Name, RenderCompositeKeyPart(part.FieldRef, placeholders));
+                if (part.MarksMissing)
+                {
+                    // `$type` answers "missing" only for MISSING (an explicit null is "null"); see MarksMissing.
+                    idDoc.Add(part.Name + MongoGroupingKeyPart.MissingMarkerSuffix, new BsonDocument("$eq", new BsonArray
+                    {
+                        new BsonDocument("$type", MongoAggregationExpressionRenderer.RenderBranch(part.FieldRef, placeholders)), "missing"
+                    }));
+                }
+            }
             id = idDoc;
         }
         else
