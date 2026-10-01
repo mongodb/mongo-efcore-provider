@@ -1616,10 +1616,8 @@ internal static class NativeGroupByBinder
             if (keyPath == null)
                 return false; // bare g.Key over a composite key — no single field to compare
 
-            // A zero-part key also has no single backing property.
-            keySerializationProperty = isComposite || keyParts.Count == 0
-                ? null
-                : (keyParts[0].FieldRef as MongoFieldExpression)?.Property;
+            // The scalar key's, or a composite key's matched part's, property (a zero-part key has none).
+            keySerializationProperty = ResolveKeyMemberSerializationProperty(keyPath, keyParts, isComposite);
 
             matchedKeyPath = keyPath;
             reference = new MongoElementRefExpression(keyPath, Unwrap(side).Type);
