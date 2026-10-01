@@ -45,7 +45,7 @@ internal static class MongoValueRenderer
         {
             case MongoConstantExpression constant:
                 return constant.ForSerialization is null
-                    ? BsonValue.Create(constant.Value)
+                    ? CreateBsonValue(constant.Value)
                     : ToBsonValue(constant.ForSerialization, constant.Value);
 
             case MongoParameterExpression parameter:
@@ -128,6 +128,21 @@ internal static class MongoValueRenderer
             default:
                 throw new NativeTranslationNotSupportedException(
                     $"Cannot render 'in' values of type '{values.GetType().Name}'.");
+        }
+    }
+
+    // A property-less constant has only its CLR type to go on; BsonValue.Create throws ArgumentException for one it
+    // cannot map (a Guid, ...). Scoped to this one call so it cannot mask other ArgumentExceptions.
+    private static BsonValue CreateBsonValue(object? value)
+    {
+        try
+        {
+            return BsonValue.Create(value);
+        }
+        catch (ArgumentException)
+        {
+            throw new NativeTranslationNotSupportedException(
+                $"Native translation cannot serialize a property-less constant of type '{value?.GetType().Name}'.");
         }
     }
 
