@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Differential native-vs-driver parity runner. Requires a prior build of "Debug <ver>".
-# Usage: tests/tools/native-parity-diff.sh EF10 /path/to/outdir
+# Usage: tests/tools/native-parity-diff.sh <EF8|EF9|EF10> <outdir>
 set -euo pipefail
-v="$1"; out="$2"; mkdir -p "$out/trx"
+if [ $# -ne 2 ]; then echo "Usage: $0 <EF8|EF9|EF10> <outdir>" >&2; exit 2; fi
+v="$1"
+out="$(mkdir -p "$2" && cd "$2" && pwd)"
+mkdir -p "$out/trx"
+# Remove stale results so a crashed run cannot be masked by older files.
+rm -f "$out/trx/$v-"*.trx "$out/$v-"*-regress.txt "$out/$v-"*-improve.txt "$out/$v-"*-missing.txt
 cd "$(dirname "$0")/../.."
 unset MONGODB_URI ATLAS_URI
 export MONGODB_EF_SKIP_MQL_ASSERTIONS=1
@@ -14,4 +19,4 @@ for m in DriverLinq NativeOnly; do
   done
 done
 wait || true
-python3 "$(dirname "$0")/native-parity-diff.py" "$out" "$v"
+python3 "tests/tools/native-parity-diff.py" "$out" "$v"
