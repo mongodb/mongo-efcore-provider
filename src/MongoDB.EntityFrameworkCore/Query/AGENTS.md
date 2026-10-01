@@ -165,10 +165,11 @@ Rendering (null/missing/dialect semantics):
   projection leaf (`ClassifyNonNullableValueRead`), but group keys/accumulators still read `0` (EF-461). So does any
   non-nullable operator over a nullable-typed field (`x.Score.Value + 1`, `Math.Abs(...)`, `c ? x.Score.Value : 0`);
   a bare field leaf is never flagged (read property-aware), and non-nullable fields are never flagged (that would
-  decline `Min`/`Max`/`Average`/group keys over every `x.A + x.B`). Instead, on the `Projection` route only, the read
-  side reads a computed leaf over a non-nullable field (`x.Rank + 1`) strictly
-  (`NonNullableValueRead.ThrowOnMalformedNull`, treated as `Plain` by every emit-side caller), so a document that omits
-  the field throws, as driver-LINQ did, instead of reading `0`.
+  decline `Min`/`Max`/`Average`/group keys over every `x.A + x.B`). Instead, the read side alone reads a computed
+  leaf over a non-nullable field (`x.Rank + 1`) strictly on the `Projection` route
+  (`NonNullableValueRead.ThrowOnMalformedNull`, treated as `Plain` by every emit-side caller), and a projected
+  Distinct's flattened key over one via the read-only `MongoProjection.ThrowsOnMalformedNull`, so a document that
+  omits the field throws, as driver-LINQ did, instead of reading `0`.
 
 Shapers and projections:
 

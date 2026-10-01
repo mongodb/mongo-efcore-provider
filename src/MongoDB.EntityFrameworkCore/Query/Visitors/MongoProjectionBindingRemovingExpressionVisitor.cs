@@ -957,13 +957,16 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     /// </summary>
     /// <remarks>
     /// Read side only: the emit side treats the classification as <see cref="NonNullableValueRead.Plain"/>, so no later
-    /// operator declines over it; a Distinct's flattened key or a set-op operand is not this select's own computed
-    /// leaf and reads as before. Whole-document reads (<see cref="ReadsUnprojectedDocuments"/>) are unaffected.
+    /// operator declines over it. A projected Distinct's flattened key (on the <see cref="NativeRoute.GroupBy"/> route)
+    /// reads strictly through <see cref="MongoProjection.ThrowsOnMalformedNull"/>, which NativeGroupByBinder sets from
+    /// the same classification of the upstream leaf. Whole-document reads (<see cref="ReadsUnprojectedDocuments"/>) are
+    /// unaffected.
     /// </remarks>
     private bool TryCreateThrowOnMalformedNullAliasRead(string alias, Type type, [NotNullWhen(true)] out Expression? read)
     {
         read = null;
-        if (_queryExpression.Select.Route != NativeRoute.Projection
+        var route = _queryExpression.Select.Route;
+        if (route is not (NativeRoute.Projection or NativeRoute.GroupBy)
             || ReadsUnprojectedDocuments
             || !type.IsValueType
             || Nullable.GetUnderlyingType(type) is not null)
@@ -978,8 +981,12 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                 continue;
             }
 
-            if (MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(type, projection.Expression)
-                != NonNullableValueRead.ThrowOnMalformedNull)
+            // A projected Distinct's flattened key carries its upstream leaf's classification (ThrowsOnMalformedNull);
+            // otherwise only this select's own computed leaf on the Projection route qualifies.
+            if (!projection.ThrowsOnMalformedNull
+                && (route != NativeRoute.Projection
+                    || MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(type, projection.Expression)
+                    != NonNullableValueRead.ThrowOnMalformedNull))
             {
                 return false;
             }

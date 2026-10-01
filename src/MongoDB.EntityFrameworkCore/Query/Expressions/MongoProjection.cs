@@ -33,8 +33,15 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// on null rather than reading <c>default(T)</c>. Set by the emit side from the same predicate call that admitted the
 /// leaf, and read by <c>MongoSelectDefinition.FindThrowOnNullProjection</c>; never re-derived.
 /// </param>
+/// <param name="ThrowsOnMalformedNull">
+/// Read-side only: the value is a reference to an upstream computed leaf that classified
+/// <c>NonNullableValueRead.ThrowOnMalformedNull</c> (a projected Distinct's flattened key over <c>x.Rank + 1</c>), so
+/// the read side reads it strictly, as it would the leaf itself. Unlike <paramref name="ThrowsOnNull"/>, no emit-side
+/// consumer looks at it, so no later operator declines over it.
+/// </param>
 internal readonly record struct MongoProjection(
     string Alias,
     MongoExpression Expression,
     System.Linq.Expressions.Expression? Source = null,
-    bool ThrowsOnNull = false);
+    bool ThrowsOnNull = false,
+    bool ThrowsOnMalformedNull = false);

@@ -1667,9 +1667,14 @@ internal static class NativeGroupByBinder
             // ThrowsOnNull carries over to both: the deduped value is the same possibly-null value, read back from
             // "_id.<alias>" by the flatten, and by operators over the Distinct through the key part (DistinctAliasScope).
             keyParts.Add(new MongoGroupingKeyPart(projection.Alias, projection.Expression, projection.ThrowsOnNull));
+            // A computed key over a non-nullable field (`x.Rank + 1`) is null when a document omits the field; the flatten
+            // is read strictly like the leaf itself (read side only: ThrowsOnMalformedNull flags nothing downstream).
             flatten.Add(new MongoProjection(projection.Alias,
                 new MongoElementRefExpression("_id." + projection.Alias, projection.Expression.Type),
-                ThrowsOnNull: projection.ThrowsOnNull));
+                ThrowsOnNull: projection.ThrowsOnNull,
+                ThrowsOnMalformedNull: projection.ThrowsOnMalformedNull
+                    || MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+                        projection.Expression.Type, projection.Expression) == NonNullableValueRead.ThrowOnMalformedNull));
         }
 
         select.ClearProjections();

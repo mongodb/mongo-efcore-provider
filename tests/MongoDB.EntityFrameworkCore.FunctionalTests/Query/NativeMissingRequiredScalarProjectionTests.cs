@@ -232,6 +232,56 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
             }));
     }
 
+    public static TheoryData<string> DistinctShapes => ["bare", "anon"];
+
+    /// <summary>
+    /// Distinct over a computed leaf groups on it, so a missing operand makes the <c>$group</c> key null. Driver-LINQ's
+    /// deserializer rejects that null; native reads the flattened key strictly and throws too, instead of yielding 0.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(DistinctShapes))]
+    public void Distinct_over_a_computed_leaf_over_a_missing_required_element_throws(string shape)
+    {
+        var collection = Seed(nameof(Distinct_over_a_computed_leaf_over_a_missing_required_element_throws) + shape, nullRow: false);
+
+        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        {
+            using var db = CreateContext(collection, mode);
+            var ex = Assert.Throws<InvalidOperationException>(() => RunDistinct(db, shape, wellFormedOnly: false));
+            Assert.Contains("Nullable object must have a value", ex.Message);
+        }
+
+        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
+        {
+            var ex = Assert.Throws<FormatException>(() => RunDistinct(db, shape, wellFormedOnly: false));
+            Assert.Contains("Cannot deserialize a 'Int32' from BsonType 'Null'", ex.ToString());
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(DistinctShapes))]
+    public void Distinct_over_a_computed_leaf_over_well_formed_rows_stays_native(string shape)
+    {
+        var collection = Seed(nameof(Distinct_over_a_computed_leaf_over_well_formed_rows_stays_native) + shape, nullRow: false);
+
+        Assert.Equal(
+            [2, 3],
+            NativeModeAssert.NativeAndParity(mode =>
+            {
+                using var db = CreateContext(collection, mode);
+                return RunDistinct(db, shape, wellFormedOnly: true);
+            }));
+    }
+
+    private static List<int> RunDistinct(SingleEntityDbContext<Item> db, string shape, bool wellFormedOnly)
+    {
+        var source = db.Entities.AsNoTracking();
+        var q = wellFormedOnly ? source.Where(x => x.Title != "c") : source;
+        return shape == "bare"
+            ? q.Select(x => x.Rank + 1).Distinct().AsEnumerable().Order().ToList()
+            : q.Select(x => new { V = x.Rank + 1, W = x.Rank * 2 }).Distinct().AsEnumerable().Select(a => a.V).Order().ToList();
+    }
+
     private static List<int> RunComputed(SingleEntityDbContext<Item> db, string shape, bool wellFormedOnly)
     {
         var source = db.Entities.AsNoTracking();
