@@ -233,4 +233,6 @@ Shapers and projections:
 - **Which helper** (`NativeModeAssert`): `NativeAndParity` when driver-LINQ is trustworthy;
   `NativeAndExpected(..., driverKnownWrong: true)` with a hand-written expected list when driver-LINQ is wrong
   (name the bug ID; the test breaks when the driver is fixed); `TwiceWithDifferentValues` for parameterized
-  queries, using one lambda shape so the second run hits the compiled-query cache.
+  queries, using one lambda shape so the second run hits the compiled-query cache. Both runs must share one `DbContext` instance:
+  `SingleEntityDbContext`/`IgnoreCacheKeyFactory` gives each instance its own model, so separate instances never
+  share compiled queries.

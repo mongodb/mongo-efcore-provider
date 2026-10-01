@@ -87,16 +87,17 @@ internal static class NativeModeAssert
         var native = run(MongoQueryMode.Native);
         var driver = run(MongoQueryMode.DriverLinq);
 
-        Assert.Equal(expected, nativeOnly);
-        Assert.Equal(expected, native);
+        AssertLabeled("NativeOnly", () => Assert.Equal(expected, nativeOnly));
+        AssertLabeled("Native", () => Assert.Equal(expected, native));
 
         if (driverKnownWrong)
         {
-            Assert.NotEqual(expected, driver);
+            AssertLabeled("DriverLinq (driverKnownWrong: the driver now returns the expected result; drop the flag)",
+                () => Assert.NotEqual(expected, driver));
         }
         else
         {
-            Assert.Equal(expected, driver);
+            AssertLabeled("DriverLinq", () => Assert.Equal(expected, driver));
         }
 
         return nativeOnly;
@@ -113,6 +114,10 @@ internal static class NativeModeAssert
     /// <paramref name="runWithParam"/> must use ONE query shape: a single lambda capturing the parameter, not a
     /// different lambda or an inlined constant per call. Only then does the second run hit EF's compiled-query
     /// cache, which is the point: a plan that captured the first value would return the first run's rows again.
+    /// Both runs must also use the same <see cref="Microsoft.EntityFrameworkCore.DbContext"/> instance (or contexts
+    /// sharing one model): the cache key includes the model, and with <c>SingleEntityDbContext</c> /
+    /// <c>IgnoreCacheKeyFactory</c> every instance gets its own model, so separate instances never share compiled
+    /// queries.
     /// </remarks>
     internal static void TwiceWithDifferentValues<T>(
         Func<object?, List<T>> runWithParam,
@@ -121,7 +126,22 @@ internal static class NativeModeAssert
         object? second,
         List<T> expectedSecond)
     {
-        Assert.Equal(expectedFirst, runWithParam(first));
-        Assert.Equal(expectedSecond, runWithParam(second));
+        var firstResult = runWithParam(first);
+        AssertLabeled("first run", () => Assert.Equal(expectedFirst, firstResult));
+
+        var secondResult = runWithParam(second);
+        AssertLabeled("second run", () => Assert.Equal(expectedSecond, secondResult));
+    }
+
+    private static void AssertLabeled(string label, Action assert)
+    {
+        try
+        {
+            assert();
+        }
+        catch (Xunit.Sdk.XunitException e)
+        {
+            throw new Xunit.Sdk.XunitException($"{label}: {e.Message}", e);
+        }
     }
 }

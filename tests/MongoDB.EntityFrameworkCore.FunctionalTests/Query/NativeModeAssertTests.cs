@@ -62,16 +62,30 @@ public class NativeModeAssertTests(TemporaryDatabaseFixture database) : IClassFi
     {
         var collection = Seed(nameof(TwiceWithDifferentValues_hits_the_cached_plan_with_new_values));
 
+        // One context for both runs: SingleEntityDbContext's IgnoreCacheKeyFactory gives every instance its own
+        // model, and the compiled-query cache key includes the model, so separate instances never share a plan.
+        var compilations = 0;
+        using var db = SingleEntityDbContext.Create(
+            collection,
+            optionsBuilderAction: b =>
+            {
+                b.ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+                new MongoDbContextOptionsBuilder(b).UseQueryMode(MongoQueryMode.NativeOnly);
+                b.LogTo(_ => compilations++, [CoreEventId.QueryCompilationStarting]);
+            });
+
         NativeModeAssert.TwiceWithDifferentValues(
             p =>
             {
-                using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
                 var value = (int?)p;
                 return db.Entities.AsNoTracking().Where(x => x.Score == value).OrderBy(x => x.Title)
                     .Select(x => x.Title).ToList();
             },
             null, ["missing", "null"],
             1, ["one"]);
+
+        // Exactly one compilation proves the second run reused the cached plan.
+        Assert.Equal(1, compilations);
     }
 
     private IMongoCollection<Item> Seed(string name)
