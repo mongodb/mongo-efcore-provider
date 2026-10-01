@@ -56,8 +56,9 @@ internal static class NativeJoinScopeTranslator
     /// <summary>
     /// Resolves member access over a chained join's nested <c>TransparentIdentifier</c> shape, restricted to the root
     /// scope (index 0); used when <paramref name="scope"/>.Levels.Count > 1. Delegates to
-    /// <see cref="MongoTransparentScopeResolver"/> with hops <c>["Outer", "Inner"]</c> and
-    /// <c>sourceCount = scope.Levels.Count</c>: index 0 is the root, index <c>k</c> is <c>scope.Levels[k-1]</c>'s Inner.
+    /// <see cref="MongoTransparentScopeResolver"/> with <see cref="MongoTransparentScopeResolver.TransparentIdentifierHops"/>
+    /// and <c>sourceCount = scope.Levels.Count</c>: index 0 is the root, index <c>k</c> is <c>scope.Levels[k-1]</c>'s
+    /// Inner.
     /// </summary>
     public static bool TryTranslateRootScopeOnly(
         MongoJoinScope scope, ParameterExpression rootParam, Expression body, bool valueMode,
@@ -70,10 +71,7 @@ internal static class NativeJoinScopeTranslator
             return false;
         }
 
-        var translator = new MongoExpressionTranslator(scope.OuterEntityType);
-        return valueMode
-            ? translator.TryTranslateValue(rewritten, out result)
-            : translator.TryTranslate(rewritten, out result);
+        return TryTranslate(new MongoExpressionTranslator(scope.OuterEntityType), rewritten, valueMode, out result);
     }
 
     /// <summary>
@@ -122,9 +120,7 @@ internal static class NativeJoinScopeTranslator
                 level.InnerEntityType, unusedOuterParam, scope.OuterEntityType, level.InnerPrefix);
         }
 
-        return valueMode
-            ? translator.TryTranslateValue(rewritten, out result)
-            : translator.TryTranslate(rewritten, out result);
+        return TryTranslate(translator, rewritten, valueMode, out result);
     }
 
     /// <summary>
@@ -165,7 +161,7 @@ internal static class NativeJoinScopeTranslator
         }
 
         var visitor = new MongoTransparentScopeResolver.ScopeRerootingVisitor(
-            rootParam, hopNames: ["Outer", "Inner"], sourceCount, scopeParams);
+            rootParam, MongoTransparentScopeResolver.TransparentIdentifierHops, sourceCount, scopeParams);
         var candidate = visitor.Visit(body);
 
         // ScopeRerootingVisitor only rewrites pure Outer*/Inner? hop chains; any other reference to rootParam survives
@@ -273,8 +269,17 @@ internal static class NativeJoinScopeTranslator
         }
 
         return MongoTransparentScopeResolver.TryResolveScopeDepth(
-            node, rootParam, hopNames: ["Outer", "Inner"], sourceCount: scope.Levels.Count, out scopeIndex);
+            node, rootParam, MongoTransparentScopeResolver.TransparentIdentifierHops, sourceCount: scope.Levels.Count,
+            out scopeIndex);
     }
+
+    /// <summary>Translates as a value (<c>TryTranslateValue</c>) or as a predicate/operand (<c>TryTranslate</c>).</summary>
+    private static bool TryTranslate(
+        MongoExpressionTranslator translator, Expression body, bool valueMode,
+        [NotNullWhen(true)] out MongoExpression? result)
+        => valueMode
+            ? translator.TryTranslateValue(body, out result)
+            : translator.TryTranslate(body, out result);
 
     private static bool IsBareInnerAccess(ParameterExpression rootParam, Expression node)
         => node is MemberExpression { Member.Name: "Inner" } member
@@ -376,9 +381,7 @@ internal static class NativeJoinScopeTranslator
         var translator = new MongoExpressionTranslator(
             scope.Levels[0].InnerEntityType, outerParam, scope.OuterEntityType, scope.Levels[0].InnerPrefix);
 
-        return valueMode
-            ? translator.TryTranslateValue(rewritten, out result)
-            : translator.TryTranslate(rewritten, out result);
+        return TryTranslate(translator, rewritten, valueMode, out result);
     }
 
     /// <summary>
@@ -431,9 +434,7 @@ internal static class NativeJoinScopeTranslator
 
         protected override Expression VisitMember(MemberExpression node)
         {
-            if (ReferenceEquals(node.Expression, rootParam)
-                && node.Member.Name == "Inner"
-                && node.IsTransparentIdentifierOuterOrInnerAccess())
+            if (IsBareInnerAccess(rootParam, node))
             {
                 Found = true;
             }

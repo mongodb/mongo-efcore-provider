@@ -20,6 +20,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Query;
 
 namespace MongoDB.EntityFrameworkCore;
 
@@ -101,6 +102,20 @@ internal static class ExpressionExtensionMethods
         => expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unaryExpression
             ? RemoveConvert(unaryExpression.Operand)
             : expression;
+
+    /// <summary>
+    /// Peels every <see cref="IncludeExpression"/> wrapper off <paramref name="expression"/>, down to the outermost
+    /// non-Include <see cref="IncludeExpression.EntityExpression"/>. Strips nothing else (no <c>Convert</c>).
+    /// </summary>
+    internal static Expression UnwrapIncludes(this Expression expression)
+    {
+        while (expression is IncludeExpression include)
+        {
+            expression = include.EntityExpression;
+        }
+
+        return expression;
+    }
 
     /// <summary>
     /// Reads a wrapped projection body (anonymous type / DTO construction) into (member name, value) pairs:

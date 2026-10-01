@@ -64,7 +64,7 @@ internal static class NativeReferenceCollectionCountPredicateBinder
             return false;
         }
 
-        if (!NativeCorrelationMatcher.TryMatchReferenceCollectionCountNavigation(
+        if (!NativeCorrelationMatcher.TryMatchCorrelatedRootWhere(
                 mongoQ, outerParameter, whereArg, out var navigation))
         {
             return false;

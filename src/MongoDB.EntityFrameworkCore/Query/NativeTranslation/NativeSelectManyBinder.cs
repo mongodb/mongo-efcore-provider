@@ -57,19 +57,9 @@ internal static class NativeSelectManyBinder
             || selDecl != typeof(System.Linq.Queryable))
             return false;
 
-        // EF's nav-expansion rewrites nav access to EF.Property(o, "Nav"), so accept both forms. Every peeled Where is
-        // an inner-element user filter (owned collections have no FK correlation).
-        var userPredicates = new List<LambdaExpression>();
-        var navExpr = PeelOwnedInnerWhere(selectSource, userPredicates);
-        if (!navExpr.TryGetMemberOrEFProperty(out var navRoot, out var navName) || !ReferenceEquals(navRoot, outerParam))
+        if (!TryResolveOwnedUnwind(mongoQ, outerParam, selectSource, out var unwind))
             return false;
-
-        var outerEntityType = mongoQ.CollectionExpression.EntityType;
-        var navigation = outerEntityType.FindNavigation(navName);
-        if (navigation is not { IsCollection: true } || !navigation.TargetEntityType.IsOwned())
-            return false;
-        if (navigation.TargetEntityType.GetContainingElementName() is not { } unwindPath)
-            return false;
+        var unwindPath = unwind.InnerScopePath;
 
         var innerLambda = innerLambdaArg.UnwrapLambdaFromQuote();
         if (innerLambda.Parameters.Count != 1)
@@ -79,8 +69,8 @@ internal static class NativeSelectManyBinder
         if (!innerLambda.Body.TryGetProjectionMembers(out var members, allowPositionalConstructorArguments: true))
             return false;
 
-        var outerTranslator = new MongoExpressionTranslator(outerEntityType);
-        var innerTranslator = new MongoExpressionTranslator(navigation.TargetEntityType);
+        var outerTranslator = new MongoExpressionTranslator(mongoQ.CollectionExpression.EntityType);
+        var innerTranslator = new MongoExpressionTranslator(unwind.InnerEntityType);
         var projections = new List<MongoProjection>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -101,11 +91,6 @@ internal static class NativeSelectManyBinder
             projections.Add(new MongoProjection(alias, field));
         }
 
-        if (!TryBuildOwnedInnerFilter(userPredicates, navigation.TargetEntityType, unwindPath, outerParam, outerEntityType, out var filter))
-            return false;
-
-        var unwind = MongoUnwindSource.Owned(unwindPath, navigation.TargetEntityType);
-        unwind.Filter = filter;
         mongoQ.Select.AddUnwindSource(unwind);
         foreach (var p in projections)
             mongoQ.Select.AddProjection(p);
@@ -123,10 +108,29 @@ internal static class NativeSelectManyBinder
     /// </remarks>
     internal static bool TryBindBareNavUnwind(MongoQueryExpression mongoQ, LambdaExpression collectionSelector)
     {
-        var outerParam = collectionSelector.Parameters[0];
+        if (!TryResolveOwnedUnwind(mongoQ, collectionSelector.Parameters[0], collectionSelector.Body, out var unwind))
+            return false;
 
+        mongoQ.Select.AddUnwindSource(unwind);
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves an owned-collection <c>SelectMany</c> source (<c>o.Items</c>, optionally <c>AsQueryable()</c>-wrapped and
+    /// <c>Where</c>-filtered) off <paramref name="outerParam"/> to an unattached owned <see cref="MongoUnwindSource"/>
+    /// carrying the translated filter. Shared by <see cref="TryBind"/> and <see cref="TryBindBareNavUnwind"/>; mutates
+    /// nothing.
+    /// </summary>
+    private static bool TryResolveOwnedUnwind(
+        MongoQueryExpression mongoQ, ParameterExpression outerParam, Expression navSource,
+        [NotNullWhen(true)] out MongoUnwindSource? unwind)
+    {
+        unwind = null;
+
+        // EF's nav-expansion rewrites nav access to EF.Property(o, "Nav"), so accept both forms. Every peeled Where is
+        // an inner-element user filter (owned collections have no FK correlation).
         var userPredicates = new List<LambdaExpression>();
-        var navExpr = PeelOwnedInnerWhere(collectionSelector.Body, userPredicates);
+        var navExpr = PeelOwnedInnerWhere(navSource, userPredicates);
         if (!navExpr.TryGetMemberOrEFProperty(out var navRoot, out var navName) || !ReferenceEquals(navRoot, outerParam))
             return false;
 
@@ -140,9 +144,8 @@ internal static class NativeSelectManyBinder
         if (!TryBuildOwnedInnerFilter(userPredicates, navigation.TargetEntityType, unwindPath, outerParam, outerEntityType, out var filter))
             return false;
 
-        var unwind = MongoUnwindSource.Owned(unwindPath, navigation.TargetEntityType);
+        unwind = MongoUnwindSource.Owned(unwindPath, navigation.TargetEntityType);
         unwind.Filter = filter;
-        mongoQ.Select.AddUnwindSource(unwind);
         return true;
     }
 
@@ -178,16 +181,7 @@ internal static class NativeSelectManyBinder
             body = UnwrapAsQueryable(outerSource);
         }
 
-        if (body is not MethodCallExpression
-            {
-                Method: { Name: nameof(System.Linq.Queryable.Where), DeclaringType: var whereDecl },
-                Arguments: [EntityQueryRootExpression root, var predicateArg]
-            }
-            || whereDecl != typeof(System.Linq.Queryable))
-            return false;
-
-        var predicate = predicateArg.UnwrapLambdaFromQuote();
-        if (predicate.Parameters.Count != 1)
+        if (!NativeCorrelationMatcher.TryMatchRootWhere(body, out var root, out var predicate))
             return false;
 
         var outerEntityType = mongoQ.CollectionExpression.EntityType;
@@ -205,7 +199,7 @@ internal static class NativeSelectManyBinder
 
         if (foldedUserBody != null)
         {
-            if (!TryTranslateReferenceFilterLayer(
+            if (!TryTranslateScopedFilterLayer(
                     foldedUserBody, innerTranslator, navigation.TargetEntityType, scope, outerParam, outerEntityType, out var foldedExpr))
                 return false;
             filter = foldedExpr;
@@ -214,7 +208,7 @@ internal static class NativeSelectManyBinder
         foreach (var userPredicate in userPredicates)
         {
             if (userPredicate.Parameters.Count != 1
-                || !TryTranslateReferenceFilterLayer(
+                || !TryTranslateScopedFilterLayer(
                     userPredicate.Body, innerTranslator, navigation.TargetEntityType, scope, outerParam, outerEntityType, out var userExpr))
                 return false;
             filter = filter == null
@@ -261,18 +255,8 @@ internal static class NativeSelectManyBinder
         var level1Source = sources[0];
 
         var ti = collectionSelector.Parameters[0];
-        var body = UnwrapAsQueryable(collectionSelector.Body);
-
-        if (body is not MethodCallExpression
-            {
-                Method: { Name: nameof(System.Linq.Queryable.Where), DeclaringType: var whereDecl },
-                Arguments: [EntityQueryRootExpression root, var predicateArg]
-            }
-            || whereDecl != typeof(System.Linq.Queryable))
-            return false;
-
-        var predicate = predicateArg.UnwrapLambdaFromQuote();
-        if (predicate.Parameters.Count != 1)
+        if (!NativeCorrelationMatcher.TryMatchRootWhere(
+                UnwrapAsQueryable(collectionSelector.Body), out var root, out var predicate))
             return false;
 
         // Rewrite `ti.Inner` onto a level-1-entity parameter so the single-level matcher recognizes the correlation.
@@ -392,11 +376,13 @@ internal static class NativeSelectManyBinder
            && ReferenceEquals(rootA.RemoveConvert(), rootB.RemoveConvert());
 
     /// <summary>
-    /// Translates one peeled reference-<c>SelectMany</c> filter layer. A layer referencing the outer parameter
-    /// uses the two-scope translator (inner refs prefixed with <paramref name="scope"/>, outer refs at root,
-    /// rendered as <c>$expr</c>); an inner-only layer is translated then prefixed. No mutation on failure.
+    /// Translates one peeled <c>SelectMany</c> filter layer over an element scoped at <paramref name="scope"/> (a
+    /// reference navigation's <c>$lookup</c> alias or an owned collection's unwind path). A layer referencing the
+    /// outer parameter uses the two-scope translator (inner refs prefixed with <paramref name="scope"/>, outer refs at
+    /// root, rendered as <c>$expr</c>), routed by parameter identity so a shared member name can't mis-scope; an
+    /// inner-only layer is translated then prefixed. No mutation on failure.
     /// </summary>
-    private static bool TryTranslateReferenceFilterLayer(
+    private static bool TryTranslateScopedFilterLayer(
         Expression body, MongoExpressionTranslator innerTranslator, IEntityType innerEntityType, string scope,
         ParameterExpression outerParam, IEntityType outerEntityType, [NotNullWhen(true)] out MongoExpression? conjunct)
     {
@@ -475,7 +461,8 @@ internal static class NativeSelectManyBinder
 
             if (argExpr is MemberExpression member
                 && MongoTransparentScopeResolver.TryResolveScopeDepth(
-                    member.Expression, ti, hopNames: ["Outer", "Inner"], sources.Count, out var scopeIndex))
+                    member.Expression, ti, MongoTransparentScopeResolver.TransparentIdentifierHops, sources.Count,
+                    out var scopeIndex))
             {
                 var rerooted = Expression.MakeMemberAccess(scopeParams[scopeIndex], member.Member);
                 if (!translators[scopeIndex].TryTranslateField(rerooted, out var field))
@@ -576,7 +563,7 @@ internal static class NativeSelectManyBinder
         // Admit only leaves the single-scope path declined for the cross-scope reason. Otherwise a leaf with no
         // scope-rooted operand (`2m * 3m`), or one rejected for another reason, would get a second, weaker chance here.
         var scopes = new MongoTransparentScopeResolver.ScopeRerootingVisitor(
-            ti, hopNames: ["Outer", "Inner"], sources.Count, scopeParams);
+            ti, MongoTransparentScopeResolver.TransparentIdentifierHops, sources.Count, scopeParams);
         scopes.Visit(leaf);
         if (!scopes.CrossScope)
             return false;
@@ -624,7 +611,7 @@ internal static class NativeSelectManyBinder
         result = null;
 
         var visitor = new MongoTransparentScopeResolver.ScopeRerootingVisitor(
-            ti, hopNames: ["Outer", "Inner"], sources.Count, scopeParams);
+            ti, MongoTransparentScopeResolver.TransparentIdentifierHops, sources.Count, scopeParams);
         var rerooted = visitor.Visit(subtree);
         if (visitor.CrossScope)
             return false;
@@ -718,26 +705,10 @@ internal static class NativeSelectManyBinder
         var innerTranslator = new MongoExpressionTranslator(innerEntityType);
         foreach (var userPredicate in userPredicates)
         {
-            if (userPredicate.Parameters.Count != 1)
+            if (userPredicate.Parameters.Count != 1
+                || !TryTranslateScopedFilterLayer(
+                    userPredicate.Body, innerTranslator, innerEntityType, unwindPath, outerParam, outerEntityType, out var conjunct))
                 return false;
-
-            MongoExpression conjunct;
-            if (userPredicate.Body.ReferencesParameter(outerParam))
-            {
-                // Two-scope translation is already scoped; don't blanket-prefix.
-                var twoScope = new MongoExpressionTranslator(innerEntityType, outerParam, outerEntityType, unwindPath);
-                if (!twoScope.TryTranslate(userPredicate.Body, out var correlated))
-                    return false;
-                conjunct = correlated;
-            }
-            else
-            {
-                if (!innerTranslator.TryTranslate(userPredicate.Body, out var expr)
-                    || !MongoFieldPrefixRewriter.TryRewrite(expr, unwindPath, out var prefixed))
-                    return false;
-
-                conjunct = prefixed;
-            }
 
             filter = filter == null
                 ? conjunct

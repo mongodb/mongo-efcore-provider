@@ -160,11 +160,8 @@ internal static class NativeProjectionBinder
                             && TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], wrappedClientConditional.Test,
                                 alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var testLeaf,
                                 out _, out _, out var testThrowsOnNull)
-                            && seenAliases.Add(alias))
+                            && TryStageLeaf(alias, testLeaf, wrappedClientConditional.Test, testThrowsOnNull))
                         {
-                            projections.Add(new MongoProjection(alias, testLeaf, wrappedClientConditional.Test, testThrowsOnNull));
-                            leafIsArray.Add(false);
-                            leafIsOwnedNavEntity.Add(false);
                             clientConditionalMembers.Add(memberName);
                             hasClientEvaluatedLeaf = true;
                             continue;
@@ -173,19 +170,12 @@ internal static class NativeProjectionBinder
                         return false;
                     }
 
-                    if (!seenAliases.Add(alias))
+                    if (!TryStageLeaf(alias, leaf, memberValue, throwsOnNull, isArrayLeaf, isOwnedNavEntityLeaf))
                         return false;
-                    projections.Add(new MongoProjection(alias, leaf, memberValue, throwsOnNull));
                     // The nav-entity leaf always registers a DocumentPath override, even though its alias equals the
                     // member name: the late-fallback strip it triggers is what supplies the retained _id.
                     if (alias != memberName || isOwnedNavEntityLeaf)
                         namedAliasOverrides.Add((memberName, alias));
-                    leafIsArray.Add(isArrayLeaf);
-                    hasArrayLeaf |= isArrayLeaf;
-                    leafIsOwnedNavEntity.Add(isOwnedNavEntityLeaf);
-                    hasOwnedNavEntityLeaf |= isOwnedNavEntityLeaf;
-                    hasStringSequenceLeaf |= memberValue is MethodCallExpression wrappedStringSequenceCall
-                                             && IsStringSequenceMaterializationCall(wrappedStringSequenceCall);
                 }
 
                 break;
@@ -243,17 +233,10 @@ internal static class NativeProjectionBinder
                     var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], memberValue, memberName);
                     if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, out var throwsOnNull, allowWholeRootEntityLeaf: true))
                         return false;
-                    if (!seenAliases.Add(alias))
+                    if (!TryStageLeaf(alias, leaf, memberValue, throwsOnNull, isArrayLeaf, isOwnedNavEntityLeaf))
                         return false;
-                    projections.Add(new MongoProjection(alias, leaf, memberValue, throwsOnNull));
                     if (alias != memberName || isOwnedNavEntityLeaf)
                         namedAliasOverrides.Add((memberName, alias));
-                    leafIsArray.Add(isArrayLeaf);
-                    hasArrayLeaf |= isArrayLeaf;
-                    leafIsOwnedNavEntity.Add(isOwnedNavEntityLeaf);
-                    hasOwnedNavEntityLeaf |= isOwnedNavEntityLeaf;
-                    hasStringSequenceLeaf |= memberValue is MethodCallExpression positionalStringSequenceCall
-                                             && IsStringSequenceMaterializationCall(positionalStringSequenceCall);
                 }
 
                 hasPositionalCtorProjection = true;
@@ -282,14 +265,8 @@ internal static class NativeProjectionBinder
                     hasCaseMappingLeaf |= !ReferenceEquals(elementValue, elementOperand);
                     if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], elementValue, elementName, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var leaf, out var isArrayLeaf, out _, out var throwsOnNull))
                         return false;
-                    if (!seenAliases.Add(elementName))
+                    if (!TryStageLeaf(elementName, leaf, elementValue, throwsOnNull, isArrayLeaf))
                         return false;
-                    projections.Add(new MongoProjection(elementName, leaf, elementValue, throwsOnNull));
-                    leafIsArray.Add(isArrayLeaf);
-                    hasArrayLeaf |= isArrayLeaf;
-                    leafIsOwnedNavEntity.Add(false);
-                    hasStringSequenceLeaf |= elementValue is MethodCallExpression containerStringSequenceCall
-                                             && IsStringSequenceMaterializationCall(containerStringSequenceCall);
                 }
 
                 hasPositionalCtorProjection = true;
@@ -412,16 +389,36 @@ internal static class NativeProjectionBinder
                 return false;
             }
 
-            bareProjectionAlias = derivedAlias;
-            seenAliases.Add(derivedAlias);
-            projections.Add(new MongoProjection(derivedAlias, bareLeaf, bareLikeExpr, bareThrowsOnNull));
-            leafIsArray.Add(bareIsArrayLeaf);
-            hasArrayLeaf |= bareIsArrayLeaf;
-            hasStringSequenceLeaf |= bareLikeExpr is MethodCallExpression bareStringSequenceCall
-                                     && IsStringSequenceMaterializationCall(bareStringSequenceCall);
+            // Nothing is staged before the single bare leaf, so the alias is always fresh.
             // isOwnedNavEntityLeaf is discarded above: TryTranslateLeaf only produces it on the wrapped arm's
             // alias-equals-member-name path, never for a bare or ctor-wrap leaf.
-            leafIsOwnedNavEntity.Add(false);
+            if (!TryStageLeaf(derivedAlias, bareLeaf, bareLikeExpr, bareThrowsOnNull, bareIsArrayLeaf))
+            {
+                return false;
+            }
+
+            bareProjectionAlias = derivedAlias;
+            return true;
+        }
+
+        // Claims the alias (false on a case-insensitive collision) and stages one leaf, keeping leafIsArray and
+        // leafIsOwnedNavEntity index-aligned with projections and folding the leaf into the has*Leaf flags.
+        bool TryStageLeaf(
+            string alias, MongoExpression leaf, Expression value, bool throwsOnNull,
+            bool isArrayLeaf = false, bool isOwnedNavEntityLeaf = false)
+        {
+            if (!seenAliases.Add(alias))
+            {
+                return false;
+            }
+
+            projections.Add(new MongoProjection(alias, leaf, value, throwsOnNull));
+            leafIsArray.Add(isArrayLeaf);
+            hasArrayLeaf |= isArrayLeaf;
+            leafIsOwnedNavEntity.Add(isOwnedNavEntityLeaf);
+            hasOwnedNavEntityLeaf |= isOwnedNavEntityLeaf;
+            hasStringSequenceLeaf |= value is MethodCallExpression stringSequenceCall
+                                     && IsStringSequenceMaterializationCall(stringSequenceCall);
             return true;
         }
 
@@ -454,13 +451,10 @@ internal static class NativeProjectionBinder
 
                 stagedReads.Add(read.Value);
                 var readAlias = ClientConditionalReadAliasPrefix + clientConditionalReadAliases.Count;
-                if (!seenAliases.Add(readAlias))
+                if (!TryStageLeaf(readAlias, read.Field, read.Value, throwsOnNull: false))
                     return false;
 
                 clientConditionalReadAliases.Add(readAlias);
-                projections.Add(new MongoProjection(readAlias, read.Field, read.Value));
-                leafIsArray.Add(false);
-                leafIsOwnedNavEntity.Add(false);
             }
         }
 
@@ -696,12 +690,23 @@ internal static class NativeProjectionBinder
     private static bool IsPlainTopLevelFieldRead(
         MongoExpressionTranslator translator, Expression value, [NotNullWhen(true)] out MongoFieldExpression? field)
     {
-        field = null;
-        return (value is MemberExpression
-                || (value is MethodCallExpression efPropertyCall && efPropertyCall.Method.IsEFPropertyMethod()))
-               && translator.TryTranslateField(value, out field)
+        return TryTranslatePlainField(translator, value, out field)
                && !field.ElementName.Contains('.')
                && NativeGroupByBinder.HasDefaultKeySerialization(field.Property);
+    }
+
+    /// <summary>
+    /// Translates a plain member read (<c>x.Name</c> or <c>EF.Property(x, "Name")</c>) to its field;
+    /// <see cref="MongoExpressionTranslator.TryTranslateField"/> decides whether it is a real field. Any other node
+    /// kind declines without being offered to the translator.
+    /// </summary>
+    private static bool TryTranslatePlainField(
+        MongoExpressionTranslator translator, Expression expression, [NotNullWhen(true)] out MongoFieldExpression? field)
+    {
+        field = null;
+        return (expression is MemberExpression
+                || (expression is MethodCallExpression efPropertyCall && efPropertyCall.Method.IsEFPropertyMethod()))
+               && translator.TryTranslateField(expression, out field);
     }
 
     /// <summary>
@@ -1012,11 +1017,15 @@ internal static class NativeProjectionBinder
         // Set only by the owned-reference nav-entity branch.
         isOwnedNavEntityLeaf = false;
 
-        // Plain top-level scalar leaf (c.Foo or EF.Property). TryTranslateField decides whether it is a real field; the
-        // leaf kinds handled further down decline there, so trying this first is safe.
-        if ((leafExpression is MemberExpression
-                || (leafExpression is MethodCallExpression efPropertyCall && efPropertyCall.Method.IsEFPropertyMethod()))
-            && translator.TryTranslateField(leafExpression, out var field))
+        // Plain top-level scalar leaf (c.Foo or EF.Property), or a string-to-char-sequence leaf over one
+        // (`e.City.AsEnumerable()`/ToList/ToArray), which pushes down just the string field; the read side re-applies
+        // the call (see MongoProjectionBindingExpressionVisitor.Visit). TryTranslateField decides whether it is a real
+        // field; the leaf kinds handled further down decline there, so trying this first is safe.
+        var plainFieldCandidate = leafExpression is MethodCallExpression stringSequenceCall
+                                  && IsStringSequenceMaterializationCall(stringSequenceCall)
+            ? stringSequenceCall.Arguments[0]
+            : leafExpression;
+        if (TryTranslatePlainField(translator, plainFieldCandidate, out var field))
         {
             // A non-default-serialized dotted (owned single-ref) leaf must decline: the DOM shaper's field-access
             // resolver is single-hop, can't find the property's serializer, and would silently return the raw stored
@@ -1026,27 +1035,8 @@ internal static class NativeProjectionBinder
                 result = null!;
                 return false;
             }
+
             result = field;
-            return true;
-        }
-
-        // String-to-char-sequence leaf (`e.City.AsEnumerable()`/ToList/ToArray): push down just the string field; the
-        // read side re-applies the call (see MongoProjectionBindingExpressionVisitor.Visit).
-        if (leafExpression is MethodCallExpression stringSequenceCall
-            && IsStringSequenceMaterializationCall(stringSequenceCall)
-            && (stringSequenceCall.Arguments[0] is MemberExpression
-                || (stringSequenceCall.Arguments[0] is MethodCallExpression stringSeqEfPropertyCall
-                    && stringSeqEfPropertyCall.Method.IsEFPropertyMethod()))
-            && translator.TryTranslateField(stringSequenceCall.Arguments[0], out var stringSeqField))
-        {
-            // Same dotted non-default-serialized decline as the plain-field branch.
-            if (!NativeGroupByBinder.HasDefaultKeySerialization(stringSeqField.Property) && stringSeqField.ElementName.Contains('.'))
-            {
-                result = null!;
-                return false;
-            }
-
-            result = stringSeqField;
             return true;
         }
 
@@ -1057,9 +1047,7 @@ internal static class NativeProjectionBinder
         if (leafExpression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } castUnary
             && IsEnumType(castUnary.Operand.Type)
             && IsEnumType(castUnary.Type)
-            && (castUnary.Operand is MemberExpression
-                || (castUnary.Operand is MethodCallExpression castEfPropertyCall && castEfPropertyCall.Method.IsEFPropertyMethod()))
-            && translator.TryTranslateField(castUnary.Operand, out var castField)
+            && TryTranslatePlainField(translator, castUnary.Operand, out var castField)
             && NativeGroupByBinder.HasDefaultKeySerialization(castField.Property))
         {
             result = castField;
@@ -1302,15 +1290,22 @@ internal static class NativeProjectionBinder
     /// materialized, never which document is read, so peeling is safe.
     /// </remarks>
     private static bool IsSelectorParameter(Expression receiver, ParameterExpression outerParameter)
+        => ReferenceEquals(PeelIncludes(receiver), outerParameter);
+
+    /// <summary>
+    /// Peels nav-expansion's <see cref="IncludeExpression"/> layers off <paramref name="expression"/>, removing a
+    /// <c>Convert</c> around each level (unlike <see cref="ExpressionExtensionMethods.UnwrapIncludes"/>).
+    /// </summary>
+    private static Expression PeelIncludes(Expression expression)
     {
-        var current = receiver.RemoveConvert();
+        var current = expression.RemoveConvert();
 
         while (current is IncludeExpression include)
         {
             current = include.EntityExpression.RemoveConvert();
         }
 
-        return ReferenceEquals(current, outerParameter);
+        return current;
     }
 
     /// <summary>
@@ -1337,11 +1332,7 @@ internal static class NativeProjectionBinder
             return true;
         }
 
-        var current = leafExpression.RemoveConvert();
-        while (current is IncludeExpression include)
-        {
-            current = include.EntityExpression.RemoveConvert();
-        }
+        var current = PeelIncludes(leafExpression);
 
         return outerParameter.Type.IsTransparentIdentifierType()
                && current is MemberExpression { Member.Name: "Outer" or "Inner" } member
@@ -2084,7 +2075,7 @@ internal static class NativeProjectionBinder
             return false;
         }
 
-        if (!NativeCorrelationMatcher.TryMatchReferenceCollectionCountNavigation(
+        if (!NativeCorrelationMatcher.TryMatchCorrelatedRootWhere(
                 mongoQ, outerParameter, whereArg, out var navigation))
         {
             return false;
@@ -2150,49 +2141,15 @@ internal static class NativeProjectionBinder
         }
 
         // The source must be exactly the navigation-join Where; anything layered on top (filtered Include) declines.
-        if (whereArg is not MethodCallExpression
-            {
-                Method: { Name: nameof(Queryable.Where), DeclaringType: var whereDeclaring },
-                Arguments: [EntityQueryRootExpression rootExpression, var predicateArg]
-            }
-            || whereDeclaring != typeof(Queryable))
+        if (!NativeCorrelationMatcher.TryMatchCorrelatedRootWhere(mongoQ, outerParameter, whereArg, out var matchedNavigation))
         {
             return false;
         }
 
-        var predicate = predicateArg.UnwrapLambdaFromQuote();
-        if (predicate.Parameters.Count != 1)
-        {
-            return false;
-        }
-
-        var outerEntityType = mongoQ.CollectionExpression.EntityType;
-        var targetEntityType = rootExpression.EntityType;
-
-        if (!NativeCorrelationMatcher.TryMatchCorrelatedCollection(
-                predicate.Body, outerEntityType, outerParameter, targetEntityType, requireEmbedded: false,
-                out var matchedNavigation))
-        {
-            return false;
-        }
-
-        var lookup = new LookupExpression(matchedNavigation);
-        if (!lookup.IsNativeCollectionLookup)
-        {
-            // TPH-derived target (discriminator $match staged, FallbackOnly), as for the Count leaf.
-            return false;
-        }
-
-        // Alias collision, as in TryTranslateProjectedCollectionCount: a bare Include lookup for the same nav is
-        // reused, but one with a different PipelineKind (filtered Include) declines rather than silently reading the
-        // wrong shape.
-        var collidingLookup = pendingLookups.FirstOrDefault(l => l.As == lookup.As)
-            ?? mongoQ.GetPendingLookups().FirstOrDefault(l => l.As == lookup.As);
-        if (collidingLookup is null)
-        {
-            pendingLookups.Add(lookup);
-        }
-        else if (collidingLookup.PipelineKind != lookup.PipelineKind)
+        // As for the Count leaf: a TPH-derived target declines, a bare Include lookup for the same nav is reused, and
+        // one with a different PipelineKind (filtered Include) declines rather than silently reading the wrong shape.
+        if (!NativeCorrelationMatcher.TryStageNativeCollectionLookup(
+                mongoQ, new LookupExpression(matchedNavigation), pendingLookups, out _))
         {
             return false;
         }
@@ -2383,24 +2340,13 @@ internal static class NativeProjectionBinder
         }
 
         // ── What remains must be the FK-correlation Where over the target DbSet. ─────────────────────────────
-        if (source is not MethodCallExpression
-            {
-                Method: { Name: nameof(Queryable.Where), DeclaringType: var fkWhereDeclaring },
-                Arguments: [EntityQueryRootExpression rootExpression, var fkPredicateArg]
-            }
-            || fkWhereDeclaring != typeof(Queryable)
-            || fkPredicateArg.UnwrapLambdaFromQuote() is not { Parameters.Count: 1 } fkPredicate)
+        if (!NativeCorrelationMatcher.TryMatchCorrelatedRootWhere(mongoQ, outerParameter, source, out var navigation))
         {
             return false;
         }
 
-        var targetEntityType = rootExpression.EntityType;
-        if (!NativeCorrelationMatcher.TryMatchCorrelatedCollection(
-                fkPredicate.Body, mongoQ.CollectionExpression.EntityType, outerParameter, targetEntityType,
-                requireEmbedded: false, out var navigation))
-        {
-            return false;
-        }
+        // The matcher resolves only a navigation targeting the Where's root entity type.
+        var targetEntityType = navigation.TargetEntityType;
 
         // TPH-derived target: the LookupExpression constructor would add a discriminator $match (FallbackOnly).
         if (targetEntityType.FindDiscriminatorProperty() is not null
@@ -2448,8 +2394,7 @@ internal static class NativeProjectionBinder
 
         // AddLookup dedupes by As (first wins), which would silently drop this leaf's sub-pipeline. The mirror case is
         // guarded in TryTranslateProjectedCollectionCount.
-        if (pendingLookups.Exists(l => l.As == lookup.As)
-            || mongoQ.GetPendingLookups().Any(l => l.As == lookup.As))
+        if (NativeCorrelationMatcher.FindStagedOrPendingLookup(mongoQ, pendingLookups, lookup.As) is not null)
         {
             return false;
         }
