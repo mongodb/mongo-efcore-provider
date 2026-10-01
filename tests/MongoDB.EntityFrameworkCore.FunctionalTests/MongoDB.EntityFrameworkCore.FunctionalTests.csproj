@@ -25,6 +25,10 @@
   <Import Project="..\..\Versions.props" />
 
   <ItemGroup>
+    <PackageReference Include="xunit" Version="2.9.3" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\MongoDB.EntityFrameworkCore\MongoDB.EntityFrameworkCore.csproj" />
     <PackageReference Include="MongoDB.Driver.Encryption" Version="$(CSharpDriverVersion)" />
     <Compile Remove="Design\Generated\**" />
