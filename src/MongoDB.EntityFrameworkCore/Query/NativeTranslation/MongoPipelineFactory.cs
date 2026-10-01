@@ -526,6 +526,9 @@ internal sealed class MongoPipelineFactory
                 + "Call Build(in MongoNativeBuildContext) instead. "
                 + "This is a bug in the query compilation pipeline.");
 
+        // Runtime-computed values (a closed clock subtree) are evaluated per Build, never baked into the template.
+        parameterValues = RuntimeParameterValues.Wrap(parameterValues, _placeholders.RuntimeEvaluators);
+
         var result = new BsonDocument[_template.Count];
         for (var i = 0; i < _template.Count; i++)
             result[i] = SubstituteDocument(_template[i].CloneDocument(), parameterValues);
@@ -541,14 +544,17 @@ internal sealed class MongoPipelineFactory
     /// </summary>
     public BsonDocument[] Build(in MongoNativeBuildContext context)
     {
-        var parameterValues = context.ParameterValues;
+        // Runtime-computed values (a closed clock subtree) are evaluated per Build, never baked into the template.
+        // Deferred slots see the same wrapped values.
+        var parameterValues = RuntimeParameterValues.Wrap(context.ParameterValues, _placeholders.RuntimeEvaluators);
+        var buildContext = context with { ParameterValues = parameterValues };
         var result = new BsonDocument[_template.Count];
 
         for (var i = 0; i < _template.Count; i++)
         {
             var slot = _template[i];
 
-            var document = slot.IsDeferred ? slot.Build(context) : slot.CloneDocument();
+            var document = slot.IsDeferred ? slot.Build(buildContext) : slot.CloneDocument();
 
             result[i] = SubstituteDocument(document, parameterValues);
         }

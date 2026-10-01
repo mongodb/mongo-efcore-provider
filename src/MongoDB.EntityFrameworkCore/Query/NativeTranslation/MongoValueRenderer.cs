@@ -49,6 +49,11 @@ internal static class MongoValueRenderer
                     : ToBsonValue(constant.ForSerialization, constant.Value);
 
             case MongoParameterExpression parameter:
+                // A runtime-evaluated value (a closed clock subtree) is computed per Build, then serialized like any
+                // other parameter below.
+                if (parameter.RuntimeEvaluator is { } evaluator)
+                    placeholders.RegisterRuntimeEvaluator(parameter.Name, evaluator);
+
                 if (parameter.ArrayElementIndex is int elementIndex)
                     return placeholders.CreateArrayElementPlaceholder(
                         parameter.Name,

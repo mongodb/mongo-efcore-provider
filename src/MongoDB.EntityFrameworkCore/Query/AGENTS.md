@@ -151,6 +151,11 @@ Rendering (null/missing/dialect semantics):
   backing `IProperty`; untraceable values, whole-document class-map reads with kind-sensitive members, and set ops
   whose operands differ in kind shape decline. Don't fold this into `HasDefaultKeySerialization`. Server-side
   date parts over Local-kind properties compute in UTC on both paths (EF-459).
+- **Clock members (`DateTime.Now/UtcNow/Today`, `DateTimeOffset.Now/UtcNow`) are never baked into the template.**
+  A maximal closed subtree holding one (bool/DateTime typed) becomes a `MongoParameterExpression` with a
+  `RuntimeEvaluator`, evaluated once per `Build` and serialized like a parameter (Local → UTC instant, as the
+  driver does); one predicate (`RuntimeClock.IsRuntimeEvaluable`) gates `IsSimpleValue` and the factory.
+  `TryEvaluateClosedSubtree` declines any clock; its `SpecifyKind` relabel is for literals only.
 - **`DateTime.TimeOfDay` is a projection leaf only** (`TryTranslateTimeOfDayLeaf`, never `TranslateOperand`): it is
   milliseconds, read by alias through `BsonSerializerFactory.TimeOfDayMillisecondsSerializer`
   (`MongoSelectDefinition.IsTimeOfDayProjection`). `AllFieldsDefaultSerialized` answers false for it, a projected
