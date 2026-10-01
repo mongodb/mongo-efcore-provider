@@ -156,11 +156,11 @@ internal sealed partial class MongoExpressionTranslator
         return true;
     }
 
-    /// <see cref="TryResolveInnerField"/> restricted to a <see cref="string"/>-typed property (the receiver/term
-    /// shape of the regex-backed string operators).
+    /// <see cref="TryResolveInnerField"/> restricted to a regex-searchable string property (<see cref="IsRegexSearchableString"/>: string-typed and stored
+    /// as a BSON string; the receiver/term shape of the regex-backed string operators).
     private bool TryResolveInnerStringField(Expression node, [NotNullWhen(true)] out MongoFieldExpression? field)
     {
-        if (TryResolveInnerField(node, out field) && field.Property.ClrType == typeof(string))
+        if (TryResolveInnerField(node, out field) && IsRegexSearchableString(field.Property))
             return true;
 
         field = null;

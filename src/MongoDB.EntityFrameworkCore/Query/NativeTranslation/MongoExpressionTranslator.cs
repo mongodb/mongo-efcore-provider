@@ -997,7 +997,7 @@ internal sealed partial class MongoExpressionTranslator
                     if (receiverIsOuter && _innerPrefix is null)
                         return null;
 
-                    if (receiverProperty.ClrType != typeof(string))
+                    if (!IsRegexSearchableString(receiverProperty))
                         return null;
 
                     property = receiverProperty;
