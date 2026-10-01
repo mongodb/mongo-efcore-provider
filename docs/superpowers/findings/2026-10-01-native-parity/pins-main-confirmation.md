@@ -126,8 +126,12 @@ obligations.
 | M22 | `Customers.Where(Name starts "A")` join `Orders.Where(o => o.Id < 10500).Include(o => o.Customer)` (orders 10400, 10450, 10600 for that customer) | `[10400, 10450, 10600]`, so the inner `Where` is lost (tracking and AsNoTracking). Without the `Include` the join throws | **Confirmed** |
 | M25 | long `Value` with `HasConversion<int>()`, stored ints `-1294967296` and `5`; `Where(e => e.Value == 3_000_000_000L)` | `[1]` for both the constant and the parameter (correct: `[]`) | **Confirmed** |
 | M11 | `Include(c => c.Orders.OrderBy(o => o.Total).Take(n))`, n=1 | customer 1 gets all 3 orders (unordered); `Skip(s)` also dropped; constant `Take(1)` correct | **Confirmed** |
-| M12 | `Customers.Select(c => new { c.Id, N = db.Orders.Count(o => o.CustomerId == c.Code) })` | Throws `The LINQ expression 'DbSet<Order>()' could not be translated`; the key-correlated control throws too | **Refuted** for main (no wrong data; main can't run it) |
+| M12 | `Customers.Select(c => new { c.Id, N = db.Orders.Count(o => o.CustomerId == c.Code) })` | Throws `The LINQ expression 'DbSet<Order>()' could not be translated`; the key-correlated control throws too | **Refuted** for main (no wrong data; main can't run it). The branch's native matcher returns wrong data for sibling shapes → plan Task 1.11 (F11) |
 | D-F10 | `Rank` missing on one row: `Select(x => new { x.Rank })` and `new { x.Title, x.Rank }` | `[1, 2, 0]`, the same as bare `Select(x => x.Rank)`; entity read throws | Recorded as a probe note |
+
+**Not probed: D-DEC-TOSTRING** (`decimal.ToString()` inside a join inner `Where`, NJT:827[ToString]). Only the
+`[Split]` case of NJT:827 was run (WORKED, "join misc" above). With no main evidence, the plan's default applies: keep
+declining natively (Task 3.J), and the owner rules only if a later probe shows main worked for typical values.
 
 ## Method
 
@@ -148,9 +152,12 @@ FilteredCount:405/420, OwnedAll:512, NJT:388, NSOP:282, NDCP:750–816, NRI:54, 
 were edited in the export only to make results readable: Ef362 null-guards the array, and NRI:54 projects to strings.
 Step 5 used hand-written probes in the `ReviewProbeTests` pattern.
 
-Scratch (not committed), under
-`/private/tmp/claude-502/-Users-arthur-vickers-code-provider3/d776b2a4-0860-4e01-8e78-46b0c77f6ba6/scratchpad/sdd-task-0.4/`:
-- Shim: `main-oracle/tests/MongoDB.EntityFrameworkCore.FunctionalTests/Utilities/ParityShim.cs`
-- Step 5 probes: `main-oracle/tests/MongoDB.EntityFrameworkCore.FunctionalTests/Query/ZzParityOracleTests.cs`
-- Raw outcomes: `oracle-run1.txt` (per-pin recorded driver results), `run1-results.tsv` / `run1.trx` (per-test
-  pass/fail on main), `view1.txt` (per-family join of the two), `zz.txt` (Step 5), `oracle-run3.txt` (NRI:54 recheck)
+Evidence (committed, small text files only; build outputs, TRX and logs were not kept) under
+[`main-oracle-evidence/`](main-oracle-evidence/):
+- Shim: `ParityShim.cs.txt` (was `main-oracle/tests/MongoDB.EntityFrameworkCore.FunctionalTests/Utilities/ParityShim.cs`
+  in the export)
+- Step 5 probes: `ZzParityOracleTests.cs.txt` (was `…/FunctionalTests/Query/ZzParityOracleTests.cs` in the export)
+- Raw outcomes: `oracle-run1.txt` (per-pin recorded driver results), `run1-results.tsv` (per-test pass/fail on main),
+  `view1.txt` (per-family join of the two), `zz.txt` (Step 5), `oracle-run3.txt` (NRI:54 recheck), `unsure.txt`
+  (UNSURE-pin outcomes)
+- Helper scripts that produced the views: `trx.py`, `view.py`, `fam.py` (paths inside are the original scratch paths)

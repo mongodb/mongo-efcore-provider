@@ -4,7 +4,7 @@
 
 **Goal:** Every known query that returned correct results on `main` via driver LINQ returns the same results on `EF-322c` via native LINQ — `MONGODB_EF_NATIVE_ONLY=1` is green on EF8/EF9/EF10 for every test that doesn't deliberately pin a mode — and the confirmed native regressions (silent wrong data, new loud failures) are fixed.
 
-**Architecture:** Three kinds of work. (1) Test infrastructure so *every* suite (spec **and** functional) can be forced to `NativeOnly` or `DriverLinq`, plus a differential runner that lists "driver passes / native fails" tests mechanically. (2) Fix the ten confirmed regressions F1–F10 found by the 2026-10-01 review. (3) Close native-translation gaps bucket by bucket — first the 129 implicit-mode tests that fall back today, then the explicit `DeclinesCleanly` pins whose driver oracle is correct (after confirming each against canonical `main`). Finally remove `IsNativeOnly` divergence and gate on a clean NativeOnly run. Issues that are wrong on `main` too are tracked separately, not fixed here.
+**Architecture:** Three kinds of work. (1) Test infrastructure so *every* suite (spec **and** functional) can be forced to `NativeOnly` or `DriverLinq`, plus a differential runner that lists "driver passes / native fails" tests mechanically. (2) Fix the eleven confirmed regressions: F1–F10 found by the 2026-10-01 review, plus F11 found by the Phase 0 final review. (3) Close native-translation gaps bucket by bucket — first the 129 implicit-mode tests that fall back today, then the explicit `DeclinesCleanly` pins whose driver oracle is correct (after confirming each against canonical `main`). Finally remove `IsNativeOnly` divergence and gate on a clean NativeOnly run. Issues that are wrong on `main` too are tracked separately, not fixed here.
 
 **Tech Stack:** C# / .NET 8 + 10, EF Core 8/9/10 (build configurations `Debug EF8|EF9|EF10`), MongoDB C# driver 3.x, xUnit (plain `Assert.*`), Testcontainers `mongodb-atlas-local`.
 
@@ -32,6 +32,7 @@ Inputs the review implies but no single task's tests naturally exercise — each
 3. **Non-UTC machine time zone** — Local `DateTime` handling (F2, kind read-back). Owning task: 1.2 (runs under `TZ=Pacific/Auckland` and `TZ=America/Los_Angeles`).
 4. **Late fallback after the native shaper is committed** (`Native` mode where the native factory declines at build time) — alias/emit/read agreement. Owning tasks: 2.4, 2.5, 3.x alias families (test via explicit `DriverLinq` leg + forced late-decline leg as in `NativeArrayProjectionTests`).
 5. **Value-converted / BsonRepresentation properties reaching newly-native operators** — constants must serialize through the right serializer and results read back through the property serializer. Owning tasks: 1.4, 2.2, every Phase 3 family touching comparisons/aggregates.
+6. **Correlations on a non-key outer member** (`db.Orders.Where(o => o.CustomerId == c.Code)` where `Code` is not the principal key, both operand orders, `Code != Id` in the seed). Every recognizer that turns a correlated `DbSet` subquery into a navigation must check *which* outer member is compared, not only that one side is rooted in the outer parameter (F11). Owning tasks: 1.11 and any task that adds or widens a correlation recognizer (2.6, 3.x join/ref-count families).
 
 ## Owner decisions (resolve before the owning task; recommendation is the default if the owner doesn't rule)
 
@@ -153,7 +154,7 @@ internal static class TestQueryMode
 MongoDB.EntityFrameworkCore.Infrastructure.MongoOptionsExtension.DefaultQueryMode = Utilities.TestQueryMode.Current;
 ```
 
-Spec: in `MongoTestStore.AddProviderOptions`, compute the mode with the same resolution (copy `Resolve()` into a spec-side `SpecQueryMode` helper — the projects don't reference each other) and call `UseQueryMode(mode)` whenever it isn't `Native`; make `MongoSpecTestHelpers.IsNativeOnly` read that helper. Also set `MongoOptionsExtension.DefaultQueryMode` from a spec `[ModuleInitializer]` so contexts that bypass `MongoTestStore` are covered.
+Spec: in `MongoTestStore.AddProviderOptions`, compute the mode with the same resolution (copy `Resolve()` into a spec-side `SpecQueryMode` helper — the projects don't reference each other) *[superseded in the Phase 0 final-fix wave: the spec project does reference FunctionalTests, so `SpecQueryMode` was deleted and both suites use the strict `TestQueryMode.Resolve`, which throws on unrecognised values and on an alias/mode conflict]* and call `UseQueryMode(mode)` whenever it isn't `Native`; make `MongoSpecTestHelpers.IsNativeOnly` read that helper. Also set `MongoOptionsExtension.DefaultQueryMode` from a spec `[ModuleInitializer]` so contexts that bypass `MongoTestStore` are covered.
 
 - [ ] **Step 4: Run the unit test → PASS.** Then run the functional suite once with `MONGODB_EF_QUERY_MODE=NativeOnly` (EF10) and confirm the failure set matches the FunctionalTests rows of `nativeonly-gaps.tsv` (≈93 methods; differences must be explained in the commit body).
 - [ ] **Step 5: Commit** — `EF-322: honor MONGODB_EF_QUERY_MODE / MONGODB_EF_NATIVE_ONLY in all test suites`
@@ -165,7 +166,7 @@ Spec: in `MongoTestStore.AddProviderOptions`, compute the mode with the same res
 - Create: `tests/tools/native-parity-diff.sh`, `tests/tools/native-parity-diff.py`
 - Modify: `tests/MongoDB.EntityFrameworkCore.SpecificationTests/AGENTS.md` (document the runner)
 
-**Interfaces:** Produces `tests/tools/native-parity-diff.sh <EF8|EF9|EF10> <outdir>` → `<outdir>/<ver>-<project>-regress.txt` (driver pass → native fail) and `-improve.txt`.
+**Interfaces:** Produces `tests/tools/native-parity-diff.sh <EF8|EF9|EF10> <outdir> [--gate]` (`--gate` added in the final-fix wave: exit nonzero on any regress entry) → `<outdir>/<ver>-<project>-regress.txt` (driver pass → native fail) and `-improve.txt`.
 
 - [ ] **Step 1:** In `AssertBaseline`, first line: `if (Environment.GetEnvironmentVariable("MONGODB_EF_SKIP_MQL_ASSERTIONS") == "1") return;` (differential runs only — MQL legitimately differs between paths).
 - [ ] **Step 2:** Write the shell script (no-build; requires a prior build):
@@ -216,9 +217,9 @@ The pin classifications judged "driver correct" against the **branch's** driver 
 
 ---
 
-## Phase 1 — Confirmed regressions (F1–F10)
+## Phase 1 — Confirmed regressions (F1–F11)
 
-Probe evidence for all of these: `probes-branch.txt` vs `probes-main.txt`. Each task adds its probe as a permanent functional test.
+Probe evidence for F1–F10: `probes-branch.txt` vs `probes-main.txt`. F11: `main-issues.md` (M12 probe note) and `.superpowers/sdd/2026-10-01-native-linq-parity/final-fix-report.md`. Each task adds its probe as a permanent functional test.
 
 ### Task 1.1: F1 — principal-side reference `Include` drops principals without a dependent (all modes)
 
@@ -399,6 +400,101 @@ Design: g5 §T5. **Files:** `MongoExpressionTranslator.TupleEquality.cs` (`TryDe
 Design: g4 §T9. **Files:** `src/MongoDB.EntityFrameworkCore/Storage/BsonBinding.cs` (add `GetScalarProjectionValueAtElement<T>` — missing element → `default(T)`; explicit BSON null → throw as today), `MongoProjectionBindingRemovingExpressionVisitor.cs:~254` (plain-property arm, **only** when `Route == NativeRoute.Projection`).
 
 - [ ] Failing tests (seed `{Title:"c"}` without Rank; 3 modes): `Select(x => x.Rank)` → `[1,2,0]`; `Select(x => new { x.Rank })` → same (confirm main via Task 0.4 first); explicit-null bare read still throws; whole-entity `ToList()` still throws. Implement, PASS, mutation, full suite. **Commit** — `EF-322: missing required scalar in a projection reads default, matching driver LINQ`
+
+### Task 1.11: F11 — correlated-collection matcher binds a non-key outer member as the navigation
+
+Found by the Phase 0 final review (refuting M12). `NativeCorrelationMatcher.TryMatchCorrelatedCollection` (`src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeCorrelationMatcher.cs:40-81`) checks that one equality side is rooted in the outer parameter and that the other side's property name is the FK, but never that the outer side is the FK's **principal key**. A correlation on any other outer member therefore binds as the navigation and emits `$lookup {localField: "_id", foreignField: "CustomerId"}`: silent wrong data. On `main` the same queries throw.
+
+Branch probe (EF8 and EF10, model below, `Code != Id`; correct answer by `Code`):
+
+| Shape | Correct | NativeOnly | Native | DriverLinq (branch) |
+|---|---|---|---|---|
+| `from c in Customers from o in db.Orders.Where(o => o.CustomerId == c.Code) select (c.Id, o.Id)` | `1-20, 3-10, 3-11, 3-12` | `1-10, 1-11, 1-12, 2-20` **wrong** | same **wrong** | throws `Unsupported cross-DbSet query` |
+| same, reversed operands `c.Code == o.CustomerId` | same | **wrong** (key rows) | **wrong** | throws |
+| same, `o.CustomerId == c.Code && o.Id > 10` | `3-11, 3-12` | `1-11, 1-12, 2-20` **wrong** | **wrong** | throws |
+| `Select(c => new { c.Id, F = db.Orders.Where(o => o.CustomerId == c.Code).OrderBy(o => o.Id).Select(o => o.Id).FirstOrDefault() })` | `1:20, 2:0, 3:10` | `1:10, 2:20, 3:0` **wrong** | **wrong** | throws |
+| `Where(c => db.Orders.Where(o => o.CustomerId == c.Code).Count() > 0)` | `[1, 3]` | `[1, 2]` **wrong** | **wrong** | `[1, 2]` **wrong** (the native slot populator registers the count `$lookup` before routing; main's RefCount family threw here) |
+| `Select(c => db.Orders.Where(o => o.CustomerId == c.Code).Count())` | `[1, 0, 3]` | `[3, 1, 0]` wrong | wrong | wrong: **main bug M35** (`ResolveCollectionNavigation`, identical on main) |
+| `Select(c => db.Orders.Count(o => o.CustomerId == c.Code))`, `Select(c => db.Orders.Where(…).Select(o => o.Id).ToList())` | — | throw `DbSet<Order>() could not be translated` in all modes (EF; same as main) | | |
+| key-correlated controls (`o.CustomerId == c.Id`) of the SelectMany / FirstOrDefault / Count shapes | key rows | correct, native | correct | SelectMany/FOD throw; Count correct |
+
+**Files:**
+- Modify: `src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeCorrelationMatcher.cs` (`TryMatchCorrelatedCollection`; also the null-guard arm of `TryGetCorrelationEqualitySides`, which accepts `x != null && equality` without checking `x` is the compared key)
+- Audit (every caller goes through the matcher; confirm each declines after the fix, add a test per caller): `NativeCorrelationMatcher.TryMatchReferenceCollectionCountNavigation` (→ `NativeProjectionBinder.TryTranslateProjectedCollectionCount` and `NativeReferenceCollectionCountPredicateBinder.TryTranslate`), `NativeSelectManyBinder.TryBindReferenceNavUnwind` / `TrySplitCorrelation` / `TryBindNestedReferenceNavUnwind` (synthetic level-1 parameter), `NativeProjectionBinder.TryTranslateProjectedCollectionNavigationList` (projected collection-list leaves), `NativeProjectionBinder.TryGetCorrelatedReducerLeaf` (correlated reducer). Re-grep `TryMatchCorrelatedCollection` before starting.
+- Not in scope: `MongoProjectionBindingExpressionVisitor.ResolveCollectionNavigation` (driver path, same hole on main = M35; tracked in `main-issues.md`).
+- Create: `tests/MongoDB.EntityFrameworkCore.FunctionalTests/Query/NativeNonKeyCorrelationTests.cs`
+
+- [ ] **Step 1: Failing tests** — model and seed (raw inserts; `Code` deliberately differs from `Id`). Context pattern from `NativeCorrelatedReducerProjectionTests` (`UseQueryMode(mode)`, per-collection names, `IgnoreCacheKeyFactory`):
+
+```csharp
+private class Customer { public int Id { get; set; } public int Code { get; set; } public List<Order> Orders { get; set; } = null!; }
+private class Order { public int Id { get; set; } public int CustomerId { get; set; } }
+// OnModelCreating: mb.Entity<Customer>().HasMany(c => c.Orders).WithOne().HasForeignKey(o => o.CustomerId);
+// Seed: customers {Id 1, Code 2}, {Id 2, Code 3}, {Id 3, Code 1}; orders {10, Cust 1}, {11, Cust 1}, {12, Cust 1}, {20, Cust 2}.
+
+public static TheoryData<string> NonKeyShapes => ["SelectMany", "SelectManyReversed", "SelectManyConjunct", "FirstOrDefault", "WhereCount"];
+
+[Theory, MemberData(nameof(NonKeyShapes))]
+public void Non_key_correlation_declines_in_NativeOnly(string shape)
+{
+    using var db = CreateContext(MongoQueryMode.NativeOnly);
+    Assert.Throws<NativeTranslationNotSupportedException>(() => Run(db, shape, key: false));
+}
+
+[Theory, MemberData(nameof(NonKeyShapes))]
+public void Non_key_correlation_in_Native_matches_main(string shape)
+{
+    // Native falls back; main (and DriverLinq once the slot populator declines) throws for every shape here.
+    using var db = CreateContext(MongoQueryMode.Native);
+    Assert.Throws<InvalidOperationException>(() => Run(db, shape, key: false));
+}
+
+[Theory, MemberData(nameof(NonKeyShapes))]
+public void Non_key_correlation_in_DriverLinq_matches_main(string shape)
+{
+    using var db = CreateContext(MongoQueryMode.DriverLinq);
+    Assert.Throws<InvalidOperationException>(() => Run(db, shape, key: false));
+}
+
+[Theory]
+[InlineData(MongoQueryMode.NativeOnly)] [InlineData(MongoQueryMode.Native)]
+public void Key_correlation_stays_native_and_correct(MongoQueryMode mode)
+{
+    using var db = CreateContext(mode);
+    Assert.Equal(["1-10", "1-11", "1-12", "2-20"], Run(db, "SelectMany", key: true));
+    Assert.Equal(["1:10", "2:20", "3:0"], Run(db, "FirstOrDefault", key: true));
+    Assert.Equal(["1", "2"], Run(db, "WhereCount", key: true));
+}
+
+[Fact]
+public void Bare_projected_non_key_count_declines_natively_and_falls_back_to_main_behavior()
+{
+    using (var db = CreateContext(MongoQueryMode.NativeOnly))
+        Assert.Throws<NativeTranslationNotSupportedException>(() => BareCount(db));
+    // M35: main and DriverLinq return the key-correlated counts [3, 1, 0] (correct: [1, 0, 3]). Parity with main,
+    // not correctness; flip this when M35 is fixed on main.
+    using var native = CreateContext(MongoQueryMode.Native);
+    using var driver = CreateContext(MongoQueryMode.DriverLinq);
+    Assert.Equal(BareCount(driver), BareCount(native));
+}
+// Run(db, shape, key) builds the shape from the probe table with `c.Code` (or `c.Id` when key) and formats rows as above.
+```
+Also: a nested two-level SelectMany whose level-2 correlation uses a non-key level-1 member (exercises the synthetic-parameter path), and a nullable-FK variant (`int? CustomerId`, which adds EF's `!= null` guard) for both the key control and a non-key guard.
+
+- [ ] **Step 2:** Run → the NativeOnly/Native non-key tests FAIL (wrong rows returned); `WhereCount` also fails under DriverLinq (`[1, 2]`).
+- [ ] **Step 3: Implement** — in `TryMatchCorrelatedCollection`, after selecting the single candidate, require the outer side to be a direct property access on `outerParameter` (after `RemoveConvert`; `EF.Property(outer, "x")` included; a nested member such as `c.Address.Code` declines) that resolves, **by `IProperty`, not name**, to the FK's principal key:
+
+```csharp
+var outerSide = ReferenceEquals(dependentSide, side1) ? side2 : side1;   // handles either operand order
+var outerProperty = TryGetDirectOuterProperty(outerSide, outerParameter, outerEntityType);   // IProperty? via FindProperty
+var candidate = candidates[0];
+if (outerProperty is null || !ReferenceEquals(outerProperty, candidate.ForeignKey.PrincipalKey.Properties[0]))
+    return false;
+```
+Apply the same principal-key identity to the null-guard arm of `TryGetCorrelationEqualitySides` (the guarded member must be the compared outer key). Callers need no change if they all route through the matcher; if any caller resolves a navigation another way, make it call the same predicate (the gate must call the fix's predicate, never restate it).
+- [ ] **Step 4:** PASS. Mutation: remove the principal-key check → the NativeOnly non-key tests return rows and fail; restore. Expected MQL for the key control unchanged (`$lookup {localField:"_id", foreignField:"CustomerId"}`).
+- [ ] **Step 5:** Full suite EF8/EF9/EF10 (shared correlation recognizer feeding several dispatch paths) plus `MONGODB_EF_QUERY_MODE=NativeOnly` functional run: no previously-native key-correlated test may start declining. Behaviour change vs released versions: none (main throws for every newly-declining shape) → no `BREAKING-CHANGES.md` entry.
+- [ ] **Step 6: Commit** — `EF-322: correlated-collection matcher requires the outer principal key`
 
 ---
 
@@ -582,7 +678,7 @@ When Split goes native (3.31/3.36), replace the "unsupported shape" in `QueryMod
 ## Execution order and checkpoints
 
 1. Phase 0 (0.1 → 0.2 → 0.3 → 0.4). Checkpoint: differential runner reproduces `nativeonly-gaps.tsv`; Phase 3 scope confirmed.
-2. Phase 1 (1.1, 1.7 first — they unblock 2.2.5; then 1.2–1.6, 1.8, 1.10). Checkpoint: full suite ×3 + review probes.
+2. Phase 1 (1.1, 1.7 first — they unblock 2.2.5; then 1.2–1.6, 1.8, 1.10, 1.11). Checkpoint: full suite ×3 + review probes.
 3. Phase 2 buckets in this order (smallest blast radius first): 2.7 → 2.2 → 2.1 → 2.5 → 2.4 → 2.3 → 2.6. Checkpoint after each bucket: full suite ×3 and `MONGODB_EF_QUERY_MODE=NativeOnly` functional run.
 4. Phase 3 families, largest in-scope count first (L, K, quantifiers, bare-size, alias families, …), each its own slice.
 5. Phase 4, then Phase 5 continuously.

@@ -23,7 +23,6 @@ update for Markdown formatting).
 | M9 | `HasValue` projected over a missing element answers True | `Select(x => x.Score.HasValue)` | True → False | Test comment (`NativeNullableMemberTests.cs:347`) | Native declines |
 | M10 | Converted-bool truthiness: predicates over a `"Y"/"N"`-stored bool | `Posts.Count(p => !p.Flag)` | 0 per row → actual count | Test comment (`NativeOwnedCollectionFilteredCountTests.cs:688`); Any/All variants code reading | Native declines |
 | M11 | Filtered `Include` with a parameterised `Take(n)`/`Skip(n)` drops the paging stage | `Include(c => c.Orders.OrderBy(o => o.Total).Take(n))` | all orders → n per customer | **Confirmed** (Task 0.4, EF10): `Take(n)` n=1 → customer 1 gets all 3 orders, unordered; `Skip(s)` s=1 likewise drops the stage; constant `Take(1)` is correct | Same |
-| M12 | Correlated-collection matcher never checks the outer key | `Customers.Select(c => db.Orders.Count(o => o.CustomerId == c.Region))` | binds as `Customer.Orders` → correct correlation | **Refuted** for main (Task 0.4, EF10): main can't translate a correlated `db.Orders.Count(...)` subquery at all — throws `The LINQ expression 'DbSet<Order>()' could not be translated` for the non-key `c.Code` AND the key-correlated control. No wrong data on main; the hole is branch-only (native matcher) | Same |
 | M13 | Default `TimeSpan` storage (string) compares/sorts lexicographically | `Where(x => x.Duration > TimeSpan.FromHours(10))` with 1 day | excluded → included | Code reading | Same (Min/Max: see plan decision D-TS) |
 | M14 | Set operations mixing Local-kind and default-kind `DateTime` read every row with one kind | `Select(x => x.LocalWhen).Union(Select(x => x.When))` | wrong `Kind` on half the rows | Test comments (`NativeDateTimeKindReadbackTests.cs:409,501-509`) | Native declines |
 | M15 | Date parts / `AddX` / `.Date` / `TimeOfDay` over Local-kind `DateTime` computed in UTC (EF-459) | `Select(x => x.LocalWhen.Hour)` | off by machine TZ offset | Test comments | Branch refuses in every mode |
@@ -46,8 +45,22 @@ update for Markdown formatting).
 | M32 | `Equals(term, StringComparison.OrdinalIgnoreCase)` doesn't fold non-ASCII | `Posts.Any(p => p.Title.Equals("éCOLE", OrdinalIgnoreCase))` over `"École"` (constant and parameter) | `[]` → `["match"]` | Confirmed (Task 0.4; `NativeOwnedCollectionCorrelatedTests.cs:137,168`) | Constant native correct; parameter declines |
 | M33 | Terminal `Contains(null)` over an array-field projection matches arrays that contain null | `Select(r => r.Tags).Contains(null)` with a row `Tags = ["x", null]` | `true` → `false` | Confirmed (Task 0.4; `NativeContainsTerminalTests.cs:193`) | Tolerant test (native declines or answers false) |
 | M34 | `Union` of bare owned-collection projections materializes a stored `[]` as `null` | `Where(b => b.Rank <= 3).Select(b => b.Posts).Union(Where(b => b.Rank >= 3).Select(b => b.Posts))`, every `Posts` stored `[]` | `[null]` → `[[]]` | Confirmed (Task 0.4; `NativeBareProjectionTests.cs:481`) | Native declines |
+| M35 | Projected `db.Set.Where(correlation).Count()` binds the single collection navigation whatever the correlation compares | `Customers.Select(c => db.Orders.Where(o => o.CustomerId == c.Code).Count())` (`Code != Id`; FK `Orders.CustomerId` → `Customer.Id`) | key-correlated counts `[3, 1, 0]` → `[1, 0, 3]` | Code reading (`ResolveCollectionNavigation` identical on `upstream/main`) + observed under branch DriverLinq (final-fix probe, EF8/EF10) | Same wrong data natively today; Task 1.11 makes native decline, so Native falls back to this |
 
 ## Probe notes (Task 0.4, not bugs on main)
+- M12 (refuted for main; moved out of the wrong-data table): "correlated-collection matcher never checks the outer
+  key", `Customers.Select(c => db.Orders.Count(o => o.CustomerId == c.Code))`. **Main throws; branch native returns
+  wrong data → plan Task 1.11 (F11).** Main (Task 0.4, EF10) can't translate the correlated `db.Orders.Count(pred)`
+  subquery at all (`The LINQ expression 'DbSet<Order>()' could not be translated`, also for the key-correlated
+  control). Branch probe (final-fix wave, EF8 + EF10, `Code != Id`): the `Count(pred)` spelling throws the same in all
+  three modes, but the native `SelectMany` (`from c … from o in db.Orders.Where(o => o.CustomerId == c.Code)`) and the
+  correlated `FirstOrDefault` reducer bind `Customer.Orders` and return key-correlated rows under NativeOnly and
+  Native, where DriverLinq throws; `Where(c => db.Orders.Where(o => o.CustomerId == c.Code).Count() > 0)` returns the
+  key-correlated `[1, 2]` (correct `[1, 3]`) in all three modes on the branch, DriverLinq included, because the native
+  slot populator registers the count `$lookup` before routing (main's RefCount family threw for this shape). Related **main** bug, same shape: `Select(c => db.Orders.Where(o => o.CustomerId ==
+  c.Code).Count())` returns the key-correlated count in **all** modes, including DriverLinq, because the driver path's
+  `MongoProjectionBindingExpressionVisitor.ResolveCollectionNavigation` ignores the predicate when there is a single
+  candidate navigation (same code on `upstream/main`). Tracked as M35.
 - D-F10: with `Rank` (non-nullable `int`) missing from a document, main returns `0` for the bare spelling
   `Select(x => x.Rank)` **and** for the anonymous spellings `Select(x => new { x.Rank })` /
   `Select(x => new { x.Title, x.Rank })` (`[1, 2, 0]`); only an entity read throws `Document element is missing`.
