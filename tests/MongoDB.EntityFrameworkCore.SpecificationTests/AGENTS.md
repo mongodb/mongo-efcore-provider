@@ -67,3 +67,19 @@ Test folders mirror `src/` (`UnitTests/`, `FunctionalTests/`, `SpecificationTest
 dotnet test tests/MongoDB.EntityFrameworkCore.SpecificationTests/MongoDB.EntityFrameworkCore.SpecificationTests.csproj \
   -c "Debug EF10" --no-build --filter "FullyQualifiedName~NorthwindWhere"
 ```
+
+## Native/driver differential runner
+
+`tests/tools/native-parity-diff.sh <EF8|EF9|EF10> <outdir>` runs the SpecificationTests and FunctionalTests projects
+twice (4 parallel `dotnet test` processes, each with its own Atlas-local container) — once with
+`MONGODB_EF_QUERY_MODE=DriverLinq` and once with `NativeOnly` — then runs `native-parity-diff.py` over the TRX files.
+It needs a prior build of `Debug <ver>` (`--no-build`) and unsets `MONGODB_URI`/`ATLAS_URI`.
+
+Outputs in `<outdir>`: `<ver>-<project>-regress.txt` (passes under DriverLinq, fails under NativeOnly: the native
+parity gaps) and `<ver>-<project>-improve.txt` (the reverse), each with the first 400 characters of the failure
+message, plus pass/fail and regress/improve counts on stdout.
+
+The script exports `MONGODB_EF_SKIP_MQL_ASSERTIONS=1` (`TestMqlLoggerFactory.AssertBaseline` returns early: MQL
+legitimately differs between the paths) and `MONGODB_EF_DIFFERENTIAL=1` (`IsNativeOnly` returns false in both runs and
+`AssertRefusal*` accepts either exception type). Because `IsNativeOnly` is false in both runs, tests whose
+`IsNativeOnly` branches diverge in outcome are NOT masked and show up as regress/improve entries.
