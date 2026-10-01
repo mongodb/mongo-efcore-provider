@@ -63,4 +63,65 @@ internal static class NativeModeAssert
         Assert.Equal(driver, native);
         return native;
     }
+
+    /// <summary>
+    /// Asserts the shape goes native (<see cref="MongoQueryMode.NativeOnly"/>), that <see cref="MongoQueryMode.Native"/>
+    /// agrees, and that both equal a hand-written <paramref name="expected"/>. Returns the NativeOnly results.
+    /// </summary>
+    /// <param name="run">Creates a context for the mode and reduces the query to a comparable list.</param>
+    /// <param name="expected">The correct answer, written by hand (an independent oracle).</param>
+    /// <param name="driverKnownWrong">
+    /// Set when driver-LINQ returns a wrong answer for this shape (name the bug ID in a comment at the call site).
+    /// <see cref="MongoQueryMode.DriverLinq"/> is then asserted to differ from <paramref name="expected"/>, so the
+    /// test fails loudly once the driver is fixed and the flag should be dropped. Otherwise DriverLinq must equal it.
+    /// </param>
+    /// <remarks>
+    /// Use instead of <see cref="NativeAndParity{T}"/> when the driver-LINQ oracle can't be trusted.
+    /// </remarks>
+    internal static List<T> NativeAndExpected<T>(
+        Func<MongoQueryMode, List<T>> run,
+        List<T> expected,
+        bool driverKnownWrong = false)
+    {
+        var nativeOnly = run(MongoQueryMode.NativeOnly);
+        var native = run(MongoQueryMode.Native);
+        var driver = run(MongoQueryMode.DriverLinq);
+
+        Assert.Equal(expected, nativeOnly);
+        Assert.Equal(expected, native);
+
+        if (driverKnownWrong)
+        {
+            Assert.NotEqual(expected, driver);
+        }
+        else
+        {
+            Assert.Equal(expected, driver);
+        }
+
+        return nativeOnly;
+    }
+
+    /// <summary>
+    /// Runs the same query twice with different parameter values and asserts each result, catching a parameter value
+    /// baked into a cached query plan.
+    /// </summary>
+    /// <param name="runWithParam">
+    /// Builds the context (the caller chooses the mode) and runs the query with the given value.
+    /// </param>
+    /// <remarks>
+    /// <paramref name="runWithParam"/> must use ONE query shape: a single lambda capturing the parameter, not a
+    /// different lambda or an inlined constant per call. Only then does the second run hit EF's compiled-query
+    /// cache, which is the point: a plan that captured the first value would return the first run's rows again.
+    /// </remarks>
+    internal static void TwiceWithDifferentValues<T>(
+        Func<object?, List<T>> runWithParam,
+        object? first,
+        List<T> expectedFirst,
+        object? second,
+        List<T> expectedSecond)
+    {
+        Assert.Equal(expectedFirst, runWithParam(first));
+        Assert.Equal(expectedSecond, runWithParam(second));
+    }
 }

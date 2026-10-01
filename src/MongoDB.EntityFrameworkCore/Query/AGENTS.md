@@ -225,3 +225,12 @@ Shapers and projections:
 - MQL baselines are regenerated (see SpecificationTests `AGENTS.md`).
 - Tests: `tests/…UnitTests/Query/` (native in `NativeTranslation/`), `tests/…FunctionalTests/Query/`; filter
   `FullyQualifiedName~Query`.
+- **Three-mode rule.** A parity test runs one query under `NativeOnly` (proves it goes native), `Native` (same
+  results) and `DriverLinq` (the oracle).
+- **Ragged-seed rule.** Seed missing / explicit-null / empty-array / populated rows with raw `BsonDocument`
+  inserts, never via the context: materialization normalizes missing owned collections to empty, so a
+  context-seeded fixture can't express the ragged states.
+- **Which helper** (`NativeModeAssert`): `NativeAndParity` when driver-LINQ is trustworthy;
+  `NativeAndExpected(..., driverKnownWrong: true)` with a hand-written expected list when driver-LINQ is wrong
+  (name the bug ID; the test breaks when the driver is fixed); `TwiceWithDifferentValues` for parameterized
+  queries, using one lambda shape so the second run hits the compiled-query cache.
