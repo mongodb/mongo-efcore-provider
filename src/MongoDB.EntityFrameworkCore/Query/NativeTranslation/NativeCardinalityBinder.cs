@@ -303,6 +303,13 @@ internal static class NativeCardinalityBinder
             else if (selector is null || !translator.TryTranslateValue(selector.Body, out operand))
                 return false; // untranslatable selector shape (e.g. a correlated method call) — fall back
 
+            // Min/Max reduce the stored value, so an operand whose server ordering differs from the CLR one (a default
+            // string-stored TimeSpan sorts lexicographically) declines. NativeAggregateReadBack owns the predicate.
+            if (op is MongoAggregateOperator.Min or MongoAggregateOperator.Max
+                && NativeAggregateReadBack.FindOperandProperty(select, operand) is { } orderedProperty
+                && !NativeAggregateReadBack.HasFaithfulServerOrdering(orderedProperty))
+                return false;
+
             // A non-nullable Min/Max/Average of a Length/IndexOf over a possibly-null string reduces all-null rows to
             // null, read back as 0 where EF throws; as for the grouped accumulators. Sum skips a null, as EF's SUM does.
             // An operand reading a flagged upstream alias (a bare Select's `_v`, a Distinct's key) carries the flag on

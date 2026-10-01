@@ -269,10 +269,23 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             {
                 var cardinality = mongoQueryExpression.Select.Cardinality!;
 
-                // Min/Max return one of the stored values, so a Local-kind DateTime operand reads back with that kind.
-                var dateTimeKindSource =
+                // Min/Max return one of the stored values, so an operand that is a bare property reads back through that
+                // property's serializer (an enum, DateOnly, char or Local-kind DateTime is not the generic mapped BSON value).
+                // Otherwise a Local-kind DateTime operand reached through a ternary/coalesce reads back with that kind.
+                var minMaxOperand =
                     cardinality is { Aggregate: MongoAggregateOperator.Min or MongoAggregateOperator.Max, Selector: { } operand }
-                        ? NativeDateTimeKindReadBack.FindForAggregateOperand(mongoQueryExpression.Select, operand)
+                        ? operand
+                        : null;
+                var readProperty = minMaxOperand == null
+                    ? null
+                    : NativeAggregateReadBack.FindOperandProperty(mongoQueryExpression.Select, minMaxOperand);
+                var dateTimeKindSource = readProperty == null && minMaxOperand != null
+                    ? NativeDateTimeKindReadBack.FindForAggregateOperand(mongoQueryExpression.Select, minMaxOperand)
+                    : null;
+                var scalarSerializer = readProperty != null
+                    ? BsonSerializerFactory.CreateTypeSerializer(readProperty)
+                    : dateTimeKindSource != null
+                        ? BsonSerializerFactory.CreateTypeSerializer(cardinality.ResultType, dateTimeKindSource)
                         : null;
                 return Expression.Call(null,
                     ExecuteAggregateMethodInfo.MakeGenericMethod(rootEntityType.ClrType, cardinality.ResultType),
@@ -285,10 +298,8 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                     Expression.Constant(cardinality),
                     Expression.Constant(aggregateFactory),
                     Expression.Constant(
-                        dateTimeKindSource == null
-                            ? null
-                            : BsonSerializerFactory.CreateTypeSerializer(cardinality.ResultType, dateTimeKindSource),
-                        typeof(IBsonSerializer)));
+                        scalarSerializer,
+                    typeof(IBsonSerializer)));
             }
 
             // Fell back (Native only; NativeOnly already threw): the predicate/selector couldn't be lowered.
@@ -880,8 +891,14 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             return default!;
         }
 
-        var serializationInfo = new BsonSerializationInfo(BsonValueSerializer.ScalarField, serializer, typeof(TResult));
-        return (TResult)serializationInfo.DeserializeValue(bsonValue);
+        var serializationInfo = new BsonSerializationInfo(BsonValueSerializer.ScalarField, serializer, serializer.ValueType);
+        var value = serializationInfo.DeserializeValue(bsonValue);
+
+        // The property's serializer yields its own CLR type (e.g. int? for a Max over an int? property); TResult may
+        // differ only by nullability.
+        return value is TResult typed
+            ? typed
+            : (TResult)Convert.ChangeType(value, Nullable.GetUnderlyingType(typeof(TResult)) ?? typeof(TResult));
     }
 
     // Reads the terminal stage's "v" field and coerces it to TResult (e.g. long for LongCount, double for Average).
@@ -903,14 +920,14 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         return (TResult)converted!;
     }
 
-    // $sum widens past int32/int64 server-side, and Convert.ChangeType's checked narrowing would throw. BCL Sum's
-    // per-element overflow semantics can't be reproduced anyway (accepted divergence), so narrow unchecked and
-    // return the wrapped/rounded value rather than throwing.
+    // $sum widens past int32/int64 server-side. LINQ's Sum is checked, so a total that doesn't fit the CLR result type
+    // throws OverflowException rather than wrapping. (A total that overflows only in an intermediate partial sum but
+    // fits in the end is the one divergence: BCL Sum would have thrown mid-sequence.)
     private static object ConvertNumericNarrowing(object mapped, Type targetType) => mapped switch
     {
-        long l when targetType == typeof(int) => unchecked((int)l),
-        double d when targetType == typeof(int) => unchecked((int)d),
-        double d when targetType == typeof(long) => unchecked((long)d),
+        long l when targetType == typeof(int) => checked((int)l),
+        double d when targetType == typeof(int) => checked((int)d),
+        double d when targetType == typeof(long) => checked((long)d),
         _ => Convert.ChangeType(mapped, targetType)
     };
 
