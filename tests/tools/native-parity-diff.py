@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Compare DriverLinq vs NativeOnly TRX results. Usage: native-parity-diff.py <outdir> <ver>
+"""Compare DriverLinq vs NativeOnly TRX results.
+Usage: native-parity-diff.py <outdir> <ver> [--fail-on-regress]
 
 Exits nonzero if a TRX is missing, a test is missing from one mode, or any outcome other than
-Passed/Failed/NotExecuted (xUnit skip) appears.
+Passed/Failed/NotExecuted (xUnit skip) appears. With --fail-on-regress (or NATIVE_PARITY_FAIL_ON_REGRESS=1),
+also exits nonzero when any regress entry (DriverLinq pass, NativeOnly fail) exists.
 """
 import os
 import re
@@ -34,11 +36,17 @@ def load(out, v, m, p):
 
 
 def main():
-    if len(sys.argv) != 3:
-        print("Usage: native-parity-diff.py <outdir> <ver>", file=sys.stderr)
+    args = sys.argv[1:]
+    fail_on_regress = os.environ.get('NATIVE_PARITY_FAIL_ON_REGRESS') == '1'
+    if '--fail-on-regress' in args:
+        args.remove('--fail-on-regress')
+        fail_on_regress = True
+    if len(args) != 2:
+        print("Usage: native-parity-diff.py <outdir> <ver> [--fail-on-regress]", file=sys.stderr)
         return 2
-    out, v = sys.argv[1], sys.argv[2]
+    out, v = args
     bad = False
+    regressed = 0
     for p in ['SpecificationTests', 'FunctionalTests']:
         d, n = load(out, v, 'DriverLinq', p), load(out, v, 'NativeOnly', p)
         if d is None or n is None:
@@ -73,6 +81,10 @@ def main():
                     fh.write(f"{mode} outcome {o}: {k}\n")
         if miss_n or miss_d or odd['driver'] or odd['native']:
             bad = True
+        regressed += len(reg)
+    if fail_on_regress and regressed:
+        print(f"== {v}: FAIL: {regressed} regress entr{'y' if regressed == 1 else 'ies'} (--fail-on-regress)")
+        bad = True
     return 1 if bad else 0
 
 

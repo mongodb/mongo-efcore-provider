@@ -14,7 +14,7 @@
  */
 
 using System.Runtime.CompilerServices;
-using Microsoft.EntityFrameworkCore;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests;
 
@@ -22,6 +22,7 @@ internal static class ModuleInitialization
 {
     [ModuleInitializer]
     internal static void ModuleInitializer()
-        // Covers contexts that bypass MongoTestStore; explicit UseQueryMode calls still win.
-        => MongoOptionsExtension.DefaultQueryMode = Utilities.SpecQueryMode.Current;
+        // Covers contexts that bypass MongoTestStore; explicit UseQueryMode calls still win. The functional assembly's
+        // module initializer (it runs once that assembly loads) applies the same value from the same resolver.
+        => TestQueryMode.ApplyProcessDefault();
 }

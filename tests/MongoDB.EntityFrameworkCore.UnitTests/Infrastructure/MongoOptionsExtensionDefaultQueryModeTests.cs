@@ -18,6 +18,17 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.UnitTests.Infrastructure;
 
+/// <summary>
+/// Tests that mutate process-wide query-mode state (<c>MongoOptionsExtension.DefaultQueryMode</c>, environment
+/// variables). UnitTests run in parallel, so these must not overlap with any other test.
+/// </summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class ProcessWideQueryModeStateCollection
+{
+    public const string Name = "Process-wide query-mode state";
+}
+
+[Collection(ProcessWideQueryModeStateCollection.Name)]
 public class MongoOptionsExtensionDefaultQueryModeTests
 {
     [Fact]

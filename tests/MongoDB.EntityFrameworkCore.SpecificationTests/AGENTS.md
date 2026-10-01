@@ -29,8 +29,10 @@ area. Connection and encryption env vars: see root `AGENTS.md`.
 - **Never enable test parallelization** (`Usings.cs` disables it; tests share global MongoDB state). Heavy fixtures
   use `[CollectionDefinition]` + `[XUnitCollection]`; encryption and compatibility tests get their own collections.
 - The container server is cached per test process (random port). `ATLAS_URI="Disabled"` skips Atlas tests.
-- `MONGODB_EF_NATIVE_ONLY=1` flips every spec context to `MongoQueryMode.NativeOnly`, so any fallback throws.
-  MQL shape alone does not prove a query went native.
+- `MONGODB_EF_QUERY_MODE=Native|NativeOnly|DriverLinq` (case-insensitive) sets the query mode for every spec and
+  functional context (`TestQueryMode`, the single resolver); `NativeOnly` makes any fallback throw.
+  `MONGODB_EF_NATIVE_ONLY=1` is an alias for `NativeOnly`. An unrecognised value, or the alias combined with a
+  different `MONGODB_EF_QUERY_MODE`, throws at startup. MQL shape alone does not prove a query went native.
 - MQL assertions are field-order-sensitive; a new translator branch often needs baselines updated across many tests.
 - After a `Mongo:*` annotation change, regenerate design-time compiled-model output under
   `FunctionalTests/Design/Generated/EF{8,9,10}/`. `Encryption/` is gated on `CRYPT_SHARED_LIB_PATH`; `Compatibility/`
@@ -70,10 +72,13 @@ dotnet test tests/MongoDB.EntityFrameworkCore.SpecificationTests/MongoDB.EntityF
 
 ## Native/driver differential runner
 
-`tests/tools/native-parity-diff.sh <EF8|EF9|EF10> <outdir>` runs the SpecificationTests and FunctionalTests projects
+`tests/tools/native-parity-diff.sh <EF8|EF9|EF10> <outdir> [--gate]` runs the SpecificationTests and FunctionalTests projects
 twice (4 parallel `dotnet test` processes, each with its own Atlas-local container) — once with
 `MONGODB_EF_QUERY_MODE=DriverLinq` and once with `NativeOnly` — then runs `native-parity-diff.py` over the TRX files.
-It needs a prior build of `Debug <ver>` (`--no-build`) and unsets `MONGODB_URI`/`ATLAS_URI`.
+It needs a prior build of `Debug <ver>` (`--no-build`) and unsets `MONGODB_URI`/`ATLAS_URI`/`MONGODB_EF_NATIVE_ONLY`.
+It exits nonzero on a missing TRX, a test missing from one mode, or an unexpected outcome; with `--gate` (passed to
+the Python script as `--fail-on-regress`, or set `NATIVE_PARITY_FAIL_ON_REGRESS=1`) it also exits nonzero when any
+regress entry exists.
 
 Outputs in `<outdir>`: `<ver>-<project>-regress.txt` (passes under DriverLinq, fails under NativeOnly: the native
 parity gaps) and `<ver>-<project>-improve.txt` (the reverse), each with the first 400 characters of the failure
@@ -81,5 +86,5 @@ message, plus pass/fail and regress/improve counts on stdout.
 
 The script exports `MONGODB_EF_SKIP_MQL_ASSERTIONS=1` (`TestMqlLoggerFactory.AssertBaseline` returns early: MQL
 legitimately differs between the paths) and `MONGODB_EF_DIFFERENTIAL=1` (`IsNativeOnly` returns false in both runs and
-`AssertRefusal*` accepts either exception type). Because `IsNativeOnly` is false in both runs, tests whose
+`AssertRefusal*` accepts either exception type; the test process warns once on stderr when it is set). Because `IsNativeOnly` is false in both runs, tests whose
 `IsNativeOnly` branches diverge in outcome are NOT masked and show up as regress/improve entries.

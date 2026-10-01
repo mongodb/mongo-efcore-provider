@@ -105,7 +105,8 @@ internal static class NativeModeAssert
 
     /// <summary>
     /// Runs the same query twice with different parameter values and asserts each result, catching a parameter value
-    /// baked into a cached query plan.
+    /// baked into a cached query plan. Covers one mode per call: call it once per mode (<c>NativeOnly</c>,
+    /// <c>Native</c>, <c>DriverLinq</c> — the three-mode rule), each with its own context.
     /// </summary>
     /// <param name="runWithParam">
     /// Builds the context (the caller chooses the mode) and runs the query with the given value.

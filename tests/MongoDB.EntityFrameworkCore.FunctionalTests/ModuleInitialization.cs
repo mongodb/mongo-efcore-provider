@@ -26,7 +26,7 @@ public static class ModuleInitialization
     public static void ModuleInitializer()
     {
         // Process-wide default query mode (MONGODB_EF_QUERY_MODE); explicit UseQueryMode calls still win.
-        Microsoft.EntityFrameworkCore.MongoOptionsExtension.DefaultQueryMode = Utilities.TestQueryMode.Current;
+        Utilities.TestQueryMode.ApplyProcessDefault();
 
         // We always need to do this before any of the test and just once
         try

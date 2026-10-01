@@ -35,7 +35,7 @@ internal static class MongoSpecTestHelpers
     /// makes this false so default-mode expectations are evaluated under both paths.
     /// </summary>
     internal static bool IsNativeOnly
-        => Utilities.SpecQueryMode.IsNativeOnly;
+        => FunctionalTests.Utilities.TestQueryMode.IsNativeOnly;
 
     /// <summary>
     /// Asserts that <paramref name="query"/> fails as a translation failure rather than returning (possibly wrong)
