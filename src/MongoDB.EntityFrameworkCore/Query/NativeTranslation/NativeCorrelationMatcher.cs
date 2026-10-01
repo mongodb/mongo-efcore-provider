@@ -38,6 +38,14 @@ internal static class NativeCorrelationMatcher
     /// dependent FK and resolves the single collection navigation (embedded iff <paramref name="requireEmbedded"/>)
     /// whose target and single-property FK match. Declines on no match, an ambiguous match, or any extra conjunct.
     /// </summary>
+    /// <remarks>
+    /// The outer operand must be a direct property of <paramref name="outerParameter"/> that resolves, by
+    /// <see cref="IProperty"/> identity, to the navigation's principal key (either operand order). Binding the
+    /// navigation emits <c>$lookup {localField: principalKey, foreignField: fk}</c>, so a correlation on any other
+    /// outer member (<c>o.CustomerId == c.Code</c>) would silently read the key-correlated rows. A null guard is
+    /// admitted only on that same outer key, as EF Core's nav-expansion emits it; a guard on any other member is a
+    /// user filter the bound navigation would drop.
+    /// </remarks>
     internal static bool TryMatchCorrelatedCollection(
         Expression whereBody,
         IEntityType outerEntityType,
@@ -48,7 +56,7 @@ internal static class NativeCorrelationMatcher
     {
         navigation = null!;
 
-        if (!TryGetCorrelationEqualitySides(whereBody, out var side1, out var side2))
+        if (!TryGetCorrelationEqualitySides(whereBody, out var side1, out var side2, out var nullGuarded))
             return false;
 
         var side1Root = GetRootParameter(side1);
@@ -77,32 +85,57 @@ internal static class NativeCorrelationMatcher
         if (candidates.Count != 1)
             return false;
 
+        var principalKeyProperty = candidates[0].ForeignKey.PrincipalKey.Properties[0];
+        var outerSide = ReferenceEquals(dependentSide, side1) ? side2 : side1;
+        if (!IsOuterProperty(outerSide, outerParameter, outerEntityType, principalKeyProperty)
+            || (nullGuarded != null && !IsOuterProperty(nullGuarded, outerParameter, outerEntityType, principalKeyProperty)))
+        {
+            return false;
+        }
+
         navigation = candidates[0];
         return true;
     }
 
     /// <summary>
+    /// Whether <paramref name="expression"/> is a direct property access on <paramref name="outerParameter"/>
+    /// (member or <c>EF.Property</c>, <c>Convert</c>-wrapped or not) resolving to exactly
+    /// <paramref name="property"/>. Nested members (<c>c.Address.Code</c>) never match.
+    /// </summary>
+    private static bool IsOuterProperty(
+        Expression expression, ParameterExpression outerParameter, IEntityType outerEntityType, IProperty property)
+        => expression.RemoveConvert().TryGetMemberOrEFProperty(out var receiver, out var name)
+           && ReferenceEquals(receiver.RemoveConvert(), outerParameter)
+           && ReferenceEquals(outerEntityType.FindProperty(name), property);
+
+    /// <summary>
     /// Extracts the compared sides of a bare equality, or of an equality guarded by exactly one null check
-    /// (<c>k != null &amp;&amp; equality</c>, either order; EF Core emits this for a nullable outer key). Any
-    /// other conjunct declines, so a user-filtered count (<c>c.Orders.Where(pred).Count()</c>) isn't mistaken
+    /// (<c>k != null &amp;&amp; equality</c>, either order; EF Core emits this for a nullable outer key), returning
+    /// the guarded operand in <paramref name="nullGuarded"/> for the caller to check it is the compared outer key.
+    /// Any other conjunct declines, so a user-filtered count (<c>c.Orders.Where(pred).Count()</c>) isn't mistaken
     /// for a plain FK correlation.
     /// </summary>
-    private static bool TryGetCorrelationEqualitySides(Expression body, out Expression left, out Expression right)
+    private static bool TryGetCorrelationEqualitySides(
+        Expression body, out Expression left, out Expression right, out Expression? nullGuarded)
     {
         var stripped = body.RemoveConvert();
+        nullGuarded = null;
 
         if (TryExtractEqualitySides(stripped, out left!, out right!))
             return true;
 
         if (stripped is BinaryExpression { NodeType: ExpressionType.AndAlso } andAlso)
         {
-            if (IsNullGuard(andAlso.Left) && TryExtractEqualitySides(andAlso.Right, out left!, out right!))
+            if (TryGetNullGuardedOperand(andAlso.Left, out nullGuarded)
+                && TryExtractEqualitySides(andAlso.Right, out left!, out right!))
                 return true;
-            if (IsNullGuard(andAlso.Right) && TryExtractEqualitySides(andAlso.Left, out left!, out right!))
+            if (TryGetNullGuardedOperand(andAlso.Right, out nullGuarded)
+                && TryExtractEqualitySides(andAlso.Left, out left!, out right!))
                 return true;
         }
 
         left = right = null!;
+        nullGuarded = null;
         return false;
     }
 
@@ -275,9 +308,16 @@ internal static class NativeCorrelationMatcher
         return true;
     }
 
-    private static bool IsNullGuard(Expression node)
-        => node.RemoveConvert() is BinaryExpression { NodeType: ExpressionType.NotEqual } bin
-           && (IsNullConstant(bin.Left) || IsNullConstant(bin.Right));
+    private static bool TryGetNullGuardedOperand(Expression node, [NotNullWhen(true)] out Expression? guarded)
+    {
+        guarded = null;
+        if (node.RemoveConvert() is BinaryExpression { NodeType: ExpressionType.NotEqual } bin)
+        {
+            guarded = IsNullConstant(bin.Right) ? bin.Left : IsNullConstant(bin.Left) ? bin.Right : null;
+        }
+
+        return guarded != null;
+    }
 
     internal static bool IsNullConstant(Expression node)
         => node.RemoveConvert() is ConstantExpression { Value: null };

@@ -411,12 +411,19 @@ Branch probe (EF8 and EF10, model below, `Code != Id`; correct answer by `Code`)
 |---|---|---|---|---|
 | `from c in Customers from o in db.Orders.Where(o => o.CustomerId == c.Code) select (c.Id, o.Id)` | `1-20, 3-10, 3-11, 3-12` | `1-10, 1-11, 1-12, 2-20` **wrong** | same **wrong** | throws `Unsupported cross-DbSet query` |
 | same, reversed operands `c.Code == o.CustomerId` | same | **wrong** (key rows) | **wrong** | throws |
-| same, `o.CustomerId == c.Code && o.Id > 10` | `3-11, 3-12` | `1-11, 1-12, 2-20` **wrong** | **wrong** | throws |
+| same, `o.CustomerId == c.Code && o.Id > 10` | `1-20, 3-11, 3-12` (corrected: customer 1 has `Code` 2, so order 20 qualifies) | `1-11, 1-12, 2-20` **wrong** | **wrong** | throws |
 | `Select(c => new { c.Id, F = db.Orders.Where(o => o.CustomerId == c.Code).OrderBy(o => o.Id).Select(o => o.Id).FirstOrDefault() })` | `1:20, 2:0, 3:10` | `1:10, 2:20, 3:0` **wrong** | **wrong** | throws |
 | `Where(c => db.Orders.Where(o => o.CustomerId == c.Code).Count() > 0)` | `[1, 3]` | `[1, 2]` **wrong** | **wrong** | `[1, 2]` **wrong** (the native slot populator registers the count `$lookup` before routing; main's RefCount family threw here) |
 | `Select(c => db.Orders.Where(o => o.CustomerId == c.Code).Count())` | `[1, 0, 3]` | `[3, 1, 0]` wrong | wrong | wrong: **main bug M35** (`ResolveCollectionNavigation`, identical on main) |
 | `Select(c => db.Orders.Count(o => o.CustomerId == c.Code))`, `Select(c => db.Orders.Where(…).Select(o => o.Id).ToList())` | — | throw `DbSet<Order>() could not be translated` in all modes (EF; same as main) | | |
 | key-correlated controls (`o.CustomerId == c.Id`) of the SelectMany / FirstOrDefault / Count shapes | key rows | correct, native | correct | SelectMany/FOD throw; Count correct |
+
+**Main oracle (Task 1.11 Step 2, built and run):** `upstream/main` at `dec7e26f`, Debug EF8/EF9/EF10, same model and raw
+seeds. Every shape above except the bare projected count throws `InvalidOperationException`, key-correlated or not:
+the SelectMany shapes (incl. nested and nullable-FK) and the correlated `FirstOrDefault` reducer with "The LINQ
+expression 'DbSet<…>()' could not be translated", the `Where(… Count() > 0)` shapes with "Unsupported cross-DbSet
+query". The bare projected `Where(corr).Count()` returns `[3, 1, 0]` for both the key and the non-key correlation
+(M35). No shape returns correct data on main that native would now refuse.
 
 **Files:**
 - Modify: `src/MongoDB.EntityFrameworkCore/Query/NativeTranslation/NativeCorrelationMatcher.cs` (`TryMatchCorrelatedCollection`; also the null-guard arm of `TryGetCorrelationEqualitySides`, which accepts `x != null && equality` without checking `x` is the compared key)

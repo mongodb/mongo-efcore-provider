@@ -45,7 +45,7 @@ update for Markdown formatting).
 | M32 | `Equals(term, StringComparison.OrdinalIgnoreCase)` doesn't fold non-ASCII | `Posts.Any(p => p.Title.Equals("éCOLE", OrdinalIgnoreCase))` over `"École"` (constant and parameter) | `[]` → `["match"]` | Confirmed (Task 0.4; `NativeOwnedCollectionCorrelatedTests.cs:137,168`) | Constant native correct; parameter declines |
 | M33 | Terminal `Contains(null)` over an array-field projection matches arrays that contain null | `Select(r => r.Tags).Contains(null)` with a row `Tags = ["x", null]` | `true` → `false` | Confirmed (Task 0.4; `NativeContainsTerminalTests.cs:193`) | Tolerant test (native declines or answers false) |
 | M34 | `Union` of bare owned-collection projections materializes a stored `[]` as `null` | `Where(b => b.Rank <= 3).Select(b => b.Posts).Union(Where(b => b.Rank >= 3).Select(b => b.Posts))`, every `Posts` stored `[]` | `[null]` → `[[]]` | Confirmed (Task 0.4; `NativeBareProjectionTests.cs:481`) | Native declines |
-| M35 | Projected `db.Set.Where(correlation).Count()` binds the single collection navigation whatever the correlation compares | `Customers.Select(c => db.Orders.Where(o => o.CustomerId == c.Code).Count())` (`Code != Id`; FK `Orders.CustomerId` → `Customer.Id`) | key-correlated counts `[3, 1, 0]` → `[1, 0, 3]` | Code reading (`ResolveCollectionNavigation` identical on `upstream/main`) + observed under branch DriverLinq (final-fix probe, EF8/EF10) | Same wrong data natively today; Task 1.11 makes native decline, so Native falls back to this |
+| M35 | Projected `db.Set.Where(correlation).Count()` binds the single collection navigation whatever the correlation compares | `Customers.Select(c => db.Orders.Where(o => o.CustomerId == c.Code).Count())` (`Code != Id`; FK `Orders.CustomerId` → `Customer.Id`) | key-correlated counts `[3, 1, 0]` → `[1, 0, 3]` | Code reading (`ResolveCollectionNavigation` identical on `upstream/main`) + observed under branch DriverLinq (final-fix probe, EF8/EF10); **confirmed on a `main` build** (`dec7e26f`, EF8/EF9/EF10, Task 1.11 oracle) | Native now declines (Task 1.11), so Native falls back to this; pinned by `NativeNonKeyCorrelationTests.Bare_projected_non_key_count_declines_natively_and_falls_back_to_main_behavior` |
 
 ## Probe notes (Task 0.4, not bugs on main)
 - M12 (refuted for main; moved out of the wrong-data table): "correlated-collection matcher never checks the outer
@@ -61,6 +61,11 @@ update for Markdown formatting).
   c.Code).Count())` returns the key-correlated count in **all** modes, including DriverLinq, because the driver path's
   `MongoProjectionBindingExpressionVisitor.ResolveCollectionNavigation` ignores the predicate when there is a single
   candidate navigation (same code on `upstream/main`). Tracked as M35.
+  **Confirmed by a `main` build (Task 1.11, `dec7e26f`, EF8/EF9/EF10):** every SelectMany (incl. reversed, conjunct,
+  nested, nullable-FK), correlated-reducer and `Where(… Count() > 0)` spelling throws `InvalidOperationException` on
+  main, key-correlated or not ("could not be translated" / "Unsupported cross-DbSet query"); only the bare projected
+  count returns data (M35). Fixed on the branch by Task 1.11: native declines, and the branch DriverLinq count
+  predicate (same matcher via the slot populator) throws as main does.
 - D-F10: with `Rank` (non-nullable `int`) missing from a document, main returns `0` for the bare spelling
   `Select(x => x.Rank)` **and** for the anonymous spellings `Select(x => new { x.Rank })` /
   `Select(x => new { x.Title, x.Rank })` (`[1, 2, 0]`); only an entity read throws `Document element is missing`.
