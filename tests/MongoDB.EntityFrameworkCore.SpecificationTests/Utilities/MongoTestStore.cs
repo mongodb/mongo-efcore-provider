@@ -39,14 +39,15 @@ public class MongoTestStore : TestStore
     protected override DbContext CreateDefaultContext()
         => throw new NotSupportedException();
 
-    // MONGODB_EF_NATIVE_ONLY=1 flips every spec context to MongoQueryMode.NativeOnly.
+    // MONGODB_EF_QUERY_MODE=NativeOnly|DriverLinq (or the alias MONGODB_EF_NATIVE_ONLY=1) flips every spec context
+    // to that MongoQueryMode; see SpecQueryMode.
     //
     // TODO(EF-417): this switch and the functional Native* parity tests use driver-LINQ as the oracle; retiring the
     // fallback needs a replacement oracle (in-memory LINQ or pinned result sets).
     public override DbContextOptionsBuilder AddProviderOptions(DbContextOptionsBuilder builder)
         => builder.UseMongoDB(TestServer.Client, Name,
-            Environment.GetEnvironmentVariable("MONGODB_EF_NATIVE_ONLY") == "1"
-                ? o => o.UseQueryMode(MongoQueryMode.NativeOnly)
+            SpecQueryMode.Current != MongoQueryMode.Native
+                ? o => o.UseQueryMode(SpecQueryMode.Current)
                 : null);
 
 #if !EF8
