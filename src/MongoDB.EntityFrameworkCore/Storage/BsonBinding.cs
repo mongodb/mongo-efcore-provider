@@ -500,7 +500,9 @@ internal static class BsonBinding
     /// Reads a bare scalar projection leaf from the flat alias in the projected document. Identical to
     /// <see cref="GetPropertyValueAtElement{T}"/> except that a MISSING element of a required property reads
     /// <c>default(T)</c> instead of throwing, as driver-LINQ's <c>$project</c> push-down did. Only the Projection
-    /// route uses this; whole-entity materialization stays strict.
+    /// route uses this; whole-entity materialization stays strict. An explicit BSON null still throws. A reference-typed
+    /// required leaf (e.g. <c>string</c>) reads <see langword="null"/> for a missing element, deliberately mirroring
+    /// the driver.
     /// </summary>
     internal static T? GetScalarProjectionValueAtElement<T>(BsonDocument document, string elementName, IReadOnlyProperty property)
     {
@@ -512,17 +514,15 @@ internal static class BsonBinding
             serializationInfo.Serializer,
             serializationInfo.NominalType);
 
-        if (TryReadElementValue(document, projectedSerializationInfo, out T? value))
+        // Check the RAW element: for a value-typed T the deserialized value is never null, so a post-read null check
+        // can't see an explicit BSON null (driver-LINQ throws FormatException for it).
+        if (!property.IsNullable && document.TryGetValue(elementName, out var raw) && raw.IsBsonNull)
         {
-            if (value == null && !property.IsNullable)
-            {
-                throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name}'.");
-            }
-
-            return value;
+            throw new InvalidOperationException(
+                $"Document element '{elementName}' is null for required non-nullable property '{property.Name}'.");
         }
 
-        return default;
+        return TryReadElementValue(document, projectedSerializationInfo, out T? value) ? value : default;
     }
 
     internal static T? GetElementValueAtPath<T>(BsonDocument document, string[] path)

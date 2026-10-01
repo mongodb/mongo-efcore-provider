@@ -223,7 +223,8 @@ public class NativeOwnedSubPropertyTests(TemporaryDatabaseFixture database)
 
     // Required-leaf half of the case above. Cid has no Home, yet Home is required and Location.City non-nullable.
     // A bare projection of a MISSING required scalar reads the CLR default in every mode (decision D-F10: native
-    // mirrors the driver's lenient deserializer on the Projection route), while a whole-entity read still throws
+    // mirrors the driver's lenient deserializer on the Projection route; a reference-typed required leaf such as
+    // string City reads null for the missing element, deliberately as the driver does), while a whole-entity read still throws
     // ("Field 'Home' required but not present"). Both legs are asserted.
     [Fact]
     public void Owned_required_subproperty_projection_over_absent_owned_reads_default_but_whole_entity_throws()

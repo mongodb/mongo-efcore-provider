@@ -81,15 +81,11 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
     }
 
     [Fact]
-    public void Bare_scalar_projection_of_an_explicit_null_is_unchanged_by_the_missing_element_rule()
+    public void Bare_scalar_projection_of_an_explicit_null_still_throws()
     {
-        var collection = Seed(
-            nameof(Bare_scalar_projection_of_an_explicit_null_is_unchanged_by_the_missing_element_rule), nullRow: true);
+        var collection = Seed(nameof(Bare_scalar_projection_of_an_explicit_null_still_throws), nullRow: true);
 
-        // Observed behavior, pinned so the missing-element rule can't silently widen to explicit null. Driver-LINQ
-        // throws FormatException. Native reads default(int): the "null on a required property" check in
-        // BsonBinding compares an unboxed int to null (never true), so it doesn't fire for a value-typed T.
-        // That native leniency predates this change and is a separate parity gap (see the Task 1.10 report).
+        // Driver-LINQ throws FormatException; native throws InvalidOperationException. Only a MISSING element reads default.
         using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
         {
             Assert.Throws<FormatException>(
@@ -99,8 +95,9 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
         foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
         {
             using var db = CreateContext(collection, mode);
-            Assert.Equal(
-                [0], db.Entities.AsNoTracking().Where(x => x.Title == "d").Select(x => x.Rank).ToList());
+            var ex = Assert.Throws<InvalidOperationException>(
+                () => db.Entities.AsNoTracking().Where(x => x.Title == "d").Select(x => x.Rank).ToList());
+            Assert.Contains("is null for required non-nullable property 'Rank'", ex.Message);
         }
     }
 
