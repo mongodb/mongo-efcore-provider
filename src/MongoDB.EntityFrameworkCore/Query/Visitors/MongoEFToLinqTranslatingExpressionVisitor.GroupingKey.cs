@@ -192,7 +192,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
     {
         protected override Expression VisitMember(MemberExpression node)
         {
-            if (node.Expression is { } receiver && node.Member.DeclaringType == typeof(DateTime) && node.Member.Name != nameof(DateTime.Kind))
+            if (IsServerDatePart(node, out var receiver))
             {
                 CheckResolved(receiver, node.Member.Name);
             }
@@ -202,9 +202,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
 
         protected override Expression VisitMethodCall(MethodCallExpression node)
         {
-            if (node.Object is { } receiver
-                && node.Method.DeclaringType == typeof(DateTime)
-                && node.Method.Name is nameof(DateTime.AddYears) or nameof(DateTime.AddMonths) or nameof(DateTime.AddDays))
+            if (IsCalendarAdd(node, out var receiver))
             {
                 CheckResolved(receiver, node.Method.Name);
             }
@@ -255,7 +253,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
         {
             if (node.Object != null
                 || node.Arguments.Count < 2
-                || (node.Method.DeclaringType != typeof(Enumerable) && node.Method.DeclaringType != typeof(Queryable))
+                || !IsQueryableOrEnumerable(node.Method)
                 || !ElementLambdaMethods.Contains(node.Method.Name)
                 || !IsElementSequence(node.Arguments[0])
                 || UnwrapLambda(node.Arguments[1]) is not { Parameters.Count: 1 } lambda
@@ -298,7 +296,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
                 }
 
                 if (expression is MethodCallExpression { Object: null, Arguments.Count: >= 1 } call
-                    && (call.Method.DeclaringType == typeof(Enumerable) || call.Method.DeclaringType == typeof(Queryable))
+                    && IsQueryableOrEnumerable(call.Method)
                     && ElementPreservingMethods.Contains(call.Method.Name))
                 {
                     expression = call.Arguments[0];
@@ -341,24 +339,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
                 case null:
                     return null;
 
-                case NewExpression { Members: { } members } newExpression:
-                    for (var i = 0; i < members.Count; i++)
-                    {
-                        if (members[i].Name == member.Member.Name)
-                        {
-                            return newExpression.Arguments[i];
-                        }
-                    }
-
-                    return null;
-
-                case NewExpression:
-                    return null;
-
-                case MemberInitExpression memberInit:
-                    return memberInit.Bindings
-                        .OfType<MemberAssignment>()
-                        .FirstOrDefault(b => b.Member.Name == member.Member.Name)?.Expression;
+                case var construction when construction is NewExpression or MemberInitExpression:
+                    return TryResolveConstructedMember(construction, member.Member.Name, out var memberValue)
+                        ? memberValue
+                        : null;
 
                 case var resolvedInner:
                     return Expression.MakeMemberAccess(resolvedInner, member.Member);

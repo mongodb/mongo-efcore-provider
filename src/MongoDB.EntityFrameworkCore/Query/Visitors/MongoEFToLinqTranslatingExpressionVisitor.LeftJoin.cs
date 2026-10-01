@@ -31,6 +31,7 @@ using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Serializers;
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
@@ -895,9 +896,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             _ => previous == null
                 ? matches.FirstOrDefault(candidate => matches.All(other =>
                     ReferenceEquals(other, candidate)
-                    || !candidate.LocalField.StartsWith(other.As + ".", StringComparison.Ordinal)))
+                    || !candidate.ReadsOutputOf(other)))
                 : matches.FirstOrDefault(candidate =>
-                    candidate.LocalField.StartsWith(previous.As + ".", StringComparison.Ordinal))
+                    candidate.ReadsOutputOf(previous))
         };
 
     /// <summary>
@@ -925,7 +926,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         {
             for (var j = i + 1; j < emissionOrder.Count; j++)
             {
-                if (emissionOrder[i].LocalField.StartsWith(emissionOrder[j].As + ".", StringComparison.Ordinal))
+                if (emissionOrder[i].ReadsOutputOf(emissionOrder[j]))
                 {
                     return false;
                 }
@@ -1065,29 +1066,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         => call.Method.Name == nameof(Queryable.Select)
            && call.Arguments.Count == 2
            && call.Arguments[1] is UnaryExpression { NodeType: ExpressionType.Quote, Operand: LambdaExpression selector }
-           && new IncludeExpressionFinder().Find(selector.Body);
-
-    private sealed class IncludeExpressionFinder : System.Linq.Expressions.ExpressionVisitor
-    {
-        private bool _found;
-
-        public bool Find(Expression expression)
-        {
-            Visit(expression);
-            return _found;
-        }
-
-        public override Expression? Visit(Expression? node)
-        {
-            if (node is IncludeExpression)
-            {
-                _found = true;
-                return node;
-            }
-
-            return _found ? node : base.Visit(node);
-        }
-    }
+           && ExpressionSearch.Contains(selector.Body, node => node is IncludeExpression);
 
     private static bool IsQueryableDistinct(MethodCallExpression call)
         => call.Method.DeclaringType == typeof(Queryable)
@@ -1120,14 +1099,12 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return source;
         }
 
-        var aliases = joinLookups.Select(l => l.As).ToList();
-        if (_pendingLookups.Any(l => !l.ForceUnwind
-                                     && aliases.Any(a => l.LocalField.StartsWith(a + ".", StringComparison.Ordinal))))
+        if (_pendingLookups.Any(l => !l.ForceUnwind && joinLookups.Any(l.ReadsOutputOf)))
         {
             return null;
         }
 
-        return AppendBsonStage(source, new BsonDocument("$unset", new BsonArray(aliases)));
+        return AppendBsonStage(source, new BsonDocument("$unset", new BsonArray(joinLookups.Select(l => l.As))));
     }
 
     /// <summary>
@@ -1151,20 +1128,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
     /// <summary>Appends a raw pipeline stage that keeps the element type (and serializer) of <paramref name="query"/>.</summary>
     private static Expression AppendBsonStage(Expression query, BsonDocument stage)
-    {
-        var sourceType = query.Type.TryGetItemType()!;
-        var serializerType = typeof(IBsonSerializer<>).MakeGenericType(sourceType);
-        return Expression.Call(
-            null,
-            typeof(MongoQueryable).GetMethod(nameof(MongoQueryable.AppendStage))!.MakeGenericMethod(sourceType, sourceType),
-            query,
-            Expression.New(
-                typeof(BsonDocumentPipelineStageDefinition<,>).MakeGenericType(sourceType, sourceType)
-                    .GetConstructor([typeof(BsonDocument), serializerType])!,
-                Expression.Constant(stage),
-                Expression.Constant(null, serializerType)),
-            Expression.Constant(null, serializerType));
-    }
+        => AppendRawStage(query, query.Type.TryGetItemType()!, stage);
 
     private static bool ContainsType(Type candidate, Type target)
     {
@@ -1286,18 +1250,23 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         {
             protected override Expression VisitMember(MemberExpression node)
             {
+                // The lambda's parameter is the identifier produced by join number (its own nesting depth - 1): a lambda
+                // composed BETWEEN two joins sees a shallower identifier than one composed above both. Scope 0 is the
+                // root document (an .Outer chain all the way down); scope k >= 1 is the Inner of join k - 1 (0 =
+                // innermost). A partial .Outer chain is itself a TransparentIdentifier with no flattened equivalent: it
+                // doesn't resolve, so the walk reaches the bare parameter and fails there.
                 if (node.Member.Name is "Outer" or "Inner"
                     && node.Member.DeclaringType.IsTransparentIdentifierType()
-                    && TryGetDepth(node.Expression, out var depth))
+                    && MongoTransparentScopeResolver.TryResolveScopeDepth(
+                        node, oldParam, MongoTransparentScopeResolver.TransparentIdentifierHops, NestingDepth(oldParam.Type),
+                        out var scopeIndex))
                 {
-                    if (node.Member.Name == "Outer")
+                    if (scopeIndex == 0)
                     {
-                        // .Outer at depth d is the source of join d: either the TI of join d-1
-                        // (handled by the caller re-entering here) or the root document.
-                        return depth == 0 ? owner._rootParam : Descend(depth - 1);
+                        return owner._rootParam;
                     }
 
-                    var lookup = owner.ResolveLookup(depth, node.Type);
+                    var lookup = owner.ResolveLookup(scopeIndex - 1, node.Type);
                     if (lookup == null)
                     {
                         owner.Failed = true;
@@ -1326,41 +1295,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 }
 
                 return base.VisitParameter(node);
-            }
-
-            /// <summary>
-            /// Depth of the TransparentIdentifier an expression denotes: the lambda's parameter is the
-            /// identifier produced by join number (its own nesting depth - 1) — a lambda composed BETWEEN
-            /// two joins sees a shallower identifier than one composed above both — and each
-            /// <c>.Outer</c> hop moves one level inwards.
-            /// </summary>
-            private bool TryGetDepth(Expression? expression, out int depth)
-            {
-                depth = NestingDepth(oldParam.Type) - 1;
-                while (true)
-                {
-                    switch (expression)
-                    {
-                        case ParameterExpression p when p == oldParam:
-                            return depth >= 0;
-                        case MemberExpression { Member.Name: "Outer" } m
-                            when m.Member.DeclaringType.IsTransparentIdentifierType():
-                            depth--;
-                            expression = m.Expression;
-                            continue;
-                        default:
-                            return false;
-                    }
-                }
-            }
-
-            /// <summary>Never reached for a valid tree: <c>.Outer</c> of depth d &gt; 0 is itself a
-            /// TransparentIdentifier, so the enclosing member access resolves it.</summary>
-            private Expression Descend(int depth)
-            {
-                _ = depth;
-                owner.Failed = true;
-                return owner._rootParam;
             }
 
             /// <summary>Number of nested TransparentIdentifier levels in a join element type.</summary>
@@ -1427,21 +1361,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         }
 
         var sourceType = query.Type.TryGetItemType() ?? _source.Type.TryGetItemType()!;
-        var appendStageMethod = typeof(MongoQueryable).GetMethod(nameof(MongoQueryable.AppendStage))!
-            .MakeGenericMethod(sourceType, sourceType);
-        var serializerType = typeof(IBsonSerializer<>).MakeGenericType(sourceType);
-        var stageDefinitionType = typeof(BsonDocumentPipelineStageDefinition<,>).MakeGenericType(sourceType, sourceType);
-        var stageConstructor = stageDefinitionType.GetConstructor([typeof(BsonDocument), serializerType])!;
 
         foreach (var lookup in lookupList)
         {
-            var lookupDoc = lookup.ToLookupStageDocument();
-
-            query = Expression.Call(null, appendStageMethod, query,
-                Expression.New(stageConstructor,
-                    Expression.Constant(lookupDoc),
-                    Expression.Constant(null, serializerType)),
-                Expression.Constant(null, serializerType));
+            query = AppendRawStage(query, sourceType, lookup.ToLookupStageDocument());
 
             if (lookup.ShouldUnwind)
             {
@@ -1449,13 +1372,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 // LookupExpression.PreserveNullAndEmptyArrays): an Include or LeftJoin/GroupJoin preserves
                 // the principal, a plain Join - including EF's lowering of a REQUIRED reference navigation -
                 // drops it when the foreign key matched nothing.
-                var unwindDoc = lookup.ToUnwindStageDocument(lookup.PreserveNullAndEmptyArrays);
-
-                query = Expression.Call(null, appendStageMethod, query,
-                    Expression.New(stageConstructor,
-                        Expression.Constant(unwindDoc),
-                        Expression.Constant(null, serializerType)),
-                    Expression.Constant(null, serializerType));
+                query = AppendRawStage(query, sourceType, lookup.ToUnwindStageDocument(lookup.PreserveNullAndEmptyArrays));
 
                 // A left-outer join's unmatched row leaves the joined field MISSING (not null) after
                 // `$unwind { preserveNullAndEmptyArrays: true }`, and the driver's TransparentIdentifier null check
@@ -1466,11 +1383,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 {
                     var setDoc = new BsonDocument("$set", new BsonDocument(lookup.As,
                         new BsonDocument("$ifNull", new BsonArray { "$" + lookup.As, BsonNull.Value })));
-                    query = Expression.Call(null, appendStageMethod, query,
-                        Expression.New(stageConstructor,
-                            Expression.Constant(setDoc),
-                            Expression.Constant(null, serializerType)),
-                        Expression.Constant(null, serializerType));
+                    query = AppendRawStage(query, sourceType, setDoc);
                 }
             }
         }

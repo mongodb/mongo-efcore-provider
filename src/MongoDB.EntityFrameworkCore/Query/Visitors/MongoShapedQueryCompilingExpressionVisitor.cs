@@ -412,15 +412,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 : ClientWholeEntityOperand.EntityFree;
 
     private static bool IsEntityShaperOperand(Expression operand)
-    {
-        var inner = operand;
-        while (inner is IncludeExpression include)
-        {
-            inner = include.EntityExpression;
-        }
-
-        return inner is StructuralTypeShaperExpression;
-    }
+        => operand.UnwrapIncludes() is StructuralTypeShaperExpression;
 
     // Finds anything in a shaper subtree that reads the row: an entity shaper, a projection binding, or any other
     // extension node (conservatively, since it can't be proven row-free).

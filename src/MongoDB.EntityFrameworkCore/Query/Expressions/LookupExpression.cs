@@ -179,6 +179,13 @@ internal sealed class LookupExpression
     /// <summary>The output array field name in the resulting document.</summary>
     public string As { get; set; }
 
+    /// <summary>
+    /// Whether this lookup's <see cref="LocalField"/> reads a field of <paramref name="other"/>'s output (is prefixed by
+    /// <c>"&lt;other.As&gt;."</c>), so it must be emitted after <paramref name="other"/>.
+    /// </summary>
+    internal bool ReadsOutputOf(LookupExpression other)
+        => LocalField.StartsWith(other.As + ".", System.StringComparison.Ordinal);
+
     /// <summary>The full field path for a property, accounting for composite keys stored under <c>_id</c>.</summary>
     /// <remarks>
     /// <c>internal</c> so <c>JoinLookupImplementsKeySelectors</c> compares against the same composite-key-aware

@@ -221,10 +221,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 return base.Visit(expression);
 
             case MemberExpression memberExpression:
-                var currentProjectionMember = GetCurrentProjectionMember();
-                _projectionMapping[currentProjectionMember] = memberExpression;
-
-                return new ProjectionBindingExpression(_queryExpression, currentProjectionMember, expression.Type);
+                return BindWholeLeaf(memberExpression);
 
             // Arithmetic leaf: register the whole binary node as one member. The default walk would map both operands
             // to the same member and silently produce (A*B)² instead of A*B.
@@ -234,9 +231,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             case BinaryExpression binaryExpression
                 when NativeProjectionBinder.IsArithmeticLeafShape(binaryExpression)
                      && _queryExpression.Select.Route == NativeRoute.Projection:
-                var arithProjectionMember = GetCurrentProjectionMember();
-                _projectionMapping[arithProjectionMember] = binaryExpression;
-                return new ProjectionBindingExpression(_queryExpression, arithProjectionMember, expression.Type);
+                return BindWholeLeaf(binaryExpression);
 
             // Numeric-cast leaf: register the whole Convert as one member. The default walk keeps only the operand, and
             // the read side would decode the $toInt/$toLong/... result with the pre-cast property's serializer (see
@@ -247,9 +242,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             case UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked,
                     Operand: not (StructuralTypeShaperExpression or NewExpression or MemberInitExpression) } castExpression
                 when _queryExpression.Select.Route == NativeRoute.Projection:
-                var castProjectionMember = GetCurrentProjectionMember();
-                _projectionMapping[castProjectionMember] = castExpression;
-                return new ProjectionBindingExpression(_queryExpression, castProjectionMember, expression.Type);
+                return BindWholeLeaf(castExpression);
 
             // String-to-char-sequence leaf (`e.City.AsEnumerable()`/ToList()/ToArray()): register the whole call as
             // one member, otherwise the wrapper is dropped and the shaper gets a string where IEnumerable<char>/
@@ -257,9 +250,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             case MethodCallExpression stringSequenceCall
                 when _queryExpression.Select.Route == NativeRoute.Projection
                      && NativeProjectionBinder.IsStringSequenceMaterializationCall(stringSequenceCall):
-                var stringSequenceMember = GetCurrentProjectionMember();
-                _projectionMapping[stringSequenceMember] = stringSequenceCall;
-                return new ProjectionBindingExpression(_queryExpression, stringSequenceMember, expression.Type);
+                return BindWholeLeaf(stringSequenceCall);
 
             // A ternary over client-only constructions (`c.City == "Seattle" ? new P { Id = "PAY" } : new P { ... }`)
             // whose test NativeProjectionBinder staged as this member's bool leaf (TryCollectClientConditionalBranches;
@@ -301,9 +292,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             // Conditional leaf: register the whole ConditionalExpression as one member; the default walk would write
             // Test/IfTrue/IfFalse to the same member. Route == Projection as for arithmetic.
             case ConditionalExpression when _queryExpression.Select.Route == NativeRoute.Projection:
-                var conditionalMember = GetCurrentProjectionMember();
-                _projectionMapping[conditionalMember] = expression;
-                return new ProjectionBindingExpression(_queryExpression, conditionalMember, expression.Type);
+                return BindWholeLeaf(expression);
 
             // Reference-collection-nav First/FirstOrDefault leaf (`a.IdentificationMethods.FirstOrDefault().Method`),
             // staged as a MongoCorrelatedReducerLeaf at emit time. Nav-expansion puts the member access inside the
@@ -312,10 +301,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             // TryGetCorrelatedReducerLeaf looks it up in CorrelatedReducerLeaves rather than re-deriving admissibility.
             case MethodCallExpression correlatedReducerCandidate
                 when TryGetCorrelatedReducerLeaf(correlatedReducerCandidate, out _):
-                var reducerMember = GetCurrentProjectionMember();
-                _projectionMapping[reducerMember] = correlatedReducerCandidate;
-
-                return new ProjectionBindingExpression(_queryExpression, reducerMember, expression.Type);
+                return BindWholeLeaf(correlatedReducerCandidate);
 
             // DateTime/DateTimeOffset .AddXxx(amount) leaf, already a MongoDateAddExpression. Register the whole call;
             // otherwise the start date and amount both write the same member and the alias ends up typed as the amount.
@@ -323,9 +309,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             case MethodCallExpression dateAddCandidate
                 when _queryExpression.Select.Route == NativeRoute.Projection
                      && MongoExpressionTranslator.IsDateAddMethod(dateAddCandidate):
-                var dateAddMember = GetCurrentProjectionMember();
-                _projectionMapping[dateAddMember] = dateAddCandidate;
-                return new ProjectionBindingExpression(_queryExpression, dateAddMember, expression.Type);
+                return BindWholeLeaf(dateAddCandidate);
 
             // ToLower/ToUpper (and the Invariant forms) over any string receiver: $toLower/$toUpper are ASCII-only, so
             // the call always runs client-side over the bound receiver (NativeProjectionBinder stages only the
@@ -365,8 +349,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                     // The mixed reader re-evaluates the leaf whole (see the client-computed case below): bound operand
                     // by operand, each operand would read as the last one bound, and the call re-applied over a bound
                     // Length would dereference a null string (`x.S.Length.ToString()` is null for a null S).
-                    _projectionMapping[computedMember] = expression;
-                    clientExpression = new ProjectionBindingExpression(_queryExpression, computedMember, expression.Type);
+                    clientExpression = BindWholeLeaf(expression);
                 }
                 else
                 {
@@ -378,10 +361,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
             case MethodCallExpression methodCallExpression
                 when IsScalarMethodPropertyAccess(methodCallExpression):
-                var projMember = GetCurrentProjectionMember();
-                _projectionMapping[projMember] = methodCallExpression;
-
-                return new ProjectionBindingExpression(_queryExpression, projMember, expression.Type);
+                return BindWholeLeaf(methodCallExpression);
 
             // A computed-arithmetic leaf (`c.Age * c.Score`) mixed with a whole entity reference (which forces the mixed
             // shaper). Register the binary node whole: the default walk writes both operands to the same ProjectionMember
@@ -389,10 +369,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             // (IsSimpleArithmeticLeaf); collection-navigation Sum()/Count() must still decompose so their own guards fire.
             case BinaryExpression binaryExpression
                 when NativeProjectionBinder.IsArithmeticLeafShape(binaryExpression) && IsSimpleArithmeticLeaf(binaryExpression):
-                var arithmeticMember = GetCurrentProjectionMember();
-                _projectionMapping[arithmeticMember] = binaryExpression;
-
-                return new ProjectionBindingExpression(_queryExpression, arithmeticMember, expression.Type);
+                return BindWholeLeaf(binaryExpression);
 
             // A computed scalar leaf outside a native projection (`S.IndexOf(T)`, `S + T.ToLower()`,
             // `string.Compare(S, T)`, `(int?)S.Trim().Length`), which only the mixed reader reads: over whole documents
@@ -402,9 +379,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             // Driver-LINQ push-down doesn't read the shaper, so it is unaffected.
             case BinaryExpression or ConditionalExpression or UnaryExpression or MethodCallExpression
                 when _queryExpression.Select.Route != NativeRoute.Projection && IsClientComputedLeaf(expression):
-                var clientLeafMember = GetCurrentProjectionMember();
-                _projectionMapping[clientLeafMember] = expression;
-                return new ProjectionBindingExpression(_queryExpression, clientLeafMember, expression.Type);
+                return BindWholeLeaf(expression);
 
             default:
                 return base.Visit(expression);
@@ -452,9 +427,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             return false;
         }
 
-        var alias = _queryExpression.Select.TryGetProjectionAlias(memberName, out var overriddenAlias)
-            ? overriddenAlias
-            : memberName;
+        var alias = _queryExpression.Select.ResolveProjectionAlias(memberName);
 
         foreach (var candidate in _queryExpression.CorrelatedReducerLeaves)
         {
@@ -939,9 +912,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         if (_queryExpression.Select.Route == NativeRoute.Projection
             && IsCanonicalCount(methodCallExpression.Method))
         {
-            var countProjectionMember = GetCurrentProjectionMember();
-            _projectionMapping[countProjectionMember] = methodCallExpression;
-            return new ProjectionBindingExpression(_queryExpression, countProjectionMember, methodCallExpression.Type);
+            return BindWholeLeaf(methodCallExpression);
         }
 
         if (methodCallExpression.TryGetEFPropertyArguments(out var source, out var memberName))
@@ -1023,19 +994,12 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             switch (navigationProjection)
             {
                 case EntityProjectionExpression entityProjection:
-                    return new StructuralTypeShaperExpression(
-                        navigation.TargetEntityType,
-                        Expression.Convert(Expression.Convert(entityProjection, typeof(object)), typeof(ValueBuffer)),
-                        nullable: true);
+                    return CreateNullableEntityShaper(navigation.TargetEntityType, entityProjection);
 
                 case ObjectArrayProjectionExpression objectArrayProjectionExpression:
                     {
-                        var innerShaperExpression = new StructuralTypeShaperExpression(
-                            navigation.TargetEntityType,
-                            Expression.Convert(
-                                Expression.Convert(objectArrayProjectionExpression.InnerProjection, typeof(object)),
-                                typeof(ValueBuffer)),
-                            nullable: true);
+                        var innerShaperExpression = CreateNullableEntityShaper(
+                            navigation.TargetEntityType, objectArrayProjectionExpression.InnerProjection);
 
                         return new CollectionShaperExpression(
                             objectArrayProjectionExpression,
@@ -1106,60 +1070,15 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 // => o.Heading).First()`, so the source is often the rebuilt Enumerable.Select rather than a
                 // CollectionShaperExpression. TryRebuildAsEnumerableSource accepts both while still only firing on
                 // sources that would otherwise crash.
-                case nameof(Queryable.First)
-                    when genericMethod == QueryableMethods.FirstWithoutPredicate:
-                    if (!TryRebuildAsEnumerableSource(method, visitedSource, methodCallExpression.Arguments[0], out var firstSource))
+                case var _
+                    when genericMethod != null
+                         && BareElementOperatorEnumerableMethods.TryGetValue(genericMethod, out var enumerableMethod):
+                    if (!TryRebuildAsEnumerableSource(method, visitedSource, methodCallExpression.Arguments[0], out var elementSource))
                     {
                         break;
                     }
 
-                    return Expression.Call(
-                        EnumerableMethods.FirstWithoutPredicate.MakeGenericMethod(method.GetGenericArguments()),
-                        firstSource);
-
-                case nameof(Queryable.FirstOrDefault)
-                    when genericMethod == QueryableMethods.FirstOrDefaultWithoutPredicate:
-                    if (!TryRebuildAsEnumerableSource(method, visitedSource, methodCallExpression.Arguments[0], out var firstOrDefaultSource))
-                    {
-                        break;
-                    }
-
-                    return Expression.Call(
-                        EnumerableMethods.FirstOrDefaultWithoutPredicate.MakeGenericMethod(method.GetGenericArguments()),
-                        firstOrDefaultSource);
-
-                case nameof(Queryable.Single)
-                    when genericMethod == QueryableMethods.SingleWithoutPredicate:
-                    if (!TryRebuildAsEnumerableSource(method, visitedSource, methodCallExpression.Arguments[0], out var singleSource))
-                    {
-                        break;
-                    }
-
-                    return Expression.Call(
-                        EnumerableMethods.SingleWithoutPredicate.MakeGenericMethod(method.GetGenericArguments()),
-                        singleSource);
-
-                case nameof(Queryable.SingleOrDefault)
-                    when genericMethod == QueryableMethods.SingleOrDefaultWithoutPredicate:
-                    if (!TryRebuildAsEnumerableSource(method, visitedSource, methodCallExpression.Arguments[0], out var singleOrDefaultSource))
-                    {
-                        break;
-                    }
-
-                    return Expression.Call(
-                        EnumerableMethods.SingleOrDefaultWithoutPredicate.MakeGenericMethod(method.GetGenericArguments()),
-                        singleOrDefaultSource);
-
-                case nameof(Queryable.Any)
-                    when genericMethod == QueryableMethods.AnyWithoutPredicate:
-                    if (!TryRebuildAsEnumerableSource(method, visitedSource, methodCallExpression.Arguments[0], out var anySource))
-                    {
-                        break;
-                    }
-
-                    return Expression.Call(
-                        EnumerableMethods.AnyWithoutPredicate.MakeGenericMethod(method.GetGenericArguments()),
-                        anySource);
+                    return Expression.Call(enumerableMethod.MakeGenericMethod(method.GetGenericArguments()), elementSource);
 
                 // The same rebuild for predicated Count/LongCount (bare `Select(b => b.Posts.Count(p => ...))`, optionally behind
                 // an arithmetic/cast spine). A native filtered count is claimed earlier, so only non-native shapes get here.
@@ -1483,19 +1402,12 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         switch (navigationProjection)
         {
             case EntityProjectionExpression entityProjection:
-                return new StructuralTypeShaperExpression(
-                    navigation.TargetEntityType,
-                    Expression.Convert(Expression.Convert(entityProjection, typeof(object)), typeof(ValueBuffer)),
-                    nullable: true);
+                return CreateNullableEntityShaper(navigation.TargetEntityType, entityProjection);
 
             case ObjectArrayProjectionExpression objectArrayProjectionExpression:
                 {
-                    var innerShaperExpression = new StructuralTypeShaperExpression(
-                        navigation.TargetEntityType,
-                        Expression.Convert(
-                            Expression.Convert(objectArrayProjectionExpression.InnerProjection, typeof(object)),
-                            typeof(ValueBuffer)),
-                        nullable: true);
+                    var innerShaperExpression = CreateNullableEntityShaper(
+                        navigation.TargetEntityType, objectArrayProjectionExpression.InnerProjection);
 
                     return new CollectionShaperExpression(
                         objectArrayProjectionExpression,
@@ -1579,9 +1491,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         // no last member, so without the override this is null and the alias-agreement check below fails.
         var arrayProjectionMember = GetCurrentProjectionMember();
         var arrayMemberName = arrayProjectionMember.Last?.Name;
-        var arrayAlias = _queryExpression.Select.TryGetProjectionAlias(arrayMemberName, out var overriddenAlias)
-            ? overriddenAlias
-            : arrayMemberName;
+        var arrayAlias = _queryExpression.Select.ResolveProjectionAlias(arrayMemberName);
 
         if (_queryExpression.Select.Route != NativeRoute.Projection
             || !NativeProjectionBinder.IsNativeArrayProjectionLeaf(
@@ -1599,12 +1509,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
         _projectionMapping[arrayProjectionMember] = aliasedArray;
 
-        var innerShaper = new StructuralTypeShaperExpression(
-            navigation.TargetEntityType,
-            Expression.Convert(
-                Expression.Convert(aliasedArray.InnerProjection, typeof(object)),
-                typeof(ValueBuffer)),
-            nullable: true);
+        var innerShaper = CreateNullableEntityShaper(navigation.TargetEntityType, aliasedArray.InnerProjection);
 
         arrayShaper = new CollectionShaperExpression(
             new ProjectionBindingExpression(_queryExpression, arrayProjectionMember, aliasedArray.Type),
@@ -1615,8 +1520,28 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         return true;
     }
 
+    /// <summary>
+    /// A nullable shaper for <paramref name="entityType"/> reading its value buffer from <paramref name="projection"/>.
+    /// </summary>
+    private static StructuralTypeShaperExpression CreateNullableEntityShaper(IEntityType entityType, Expression projection)
+        => new(
+            entityType,
+            Expression.Convert(Expression.Convert(projection, typeof(object)), typeof(ValueBuffer)),
+            nullable: true);
+
     private ProjectionMember GetCurrentProjectionMember()
         => _projectionMembers.Peek();
+
+    /// <summary>
+    /// Registers <paramref name="leaf"/> whole as the current projection member's mapping and returns the binding
+    /// that reads it, so the default walk doesn't write each operand to the same member.
+    /// </summary>
+    private ProjectionBindingExpression BindWholeLeaf(Expression leaf)
+    {
+        var projectionMember = GetCurrentProjectionMember();
+        _projectionMapping[projectionMember] = leaf;
+        return new ProjectionBindingExpression(_queryExpression, projectionMember, leaf.Type);
+    }
 
     private void EnterProjectionMember(MemberInfo memberInfo)
         => _projectionMembers.Push(_projectionMembers.Peek().Append(memberInfo));
@@ -1728,32 +1653,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// it is declined first.
     /// </summary>
     private static bool ContainsQueryParameter(Expression expression)
-    {
-        var detector = new QueryParameterDetector();
-        detector.Visit(expression);
-        return detector.Found;
-    }
-
-    private sealed class QueryParameterDetector : ExpressionVisitor
-    {
-        public bool Found { get; private set; }
-
-        public override Expression Visit(Expression node)
-        {
-            if (Found || node is null)
-            {
-                return node;
-            }
-
-            if (NativeQueryParameter.TryGetQueryParameterName(node, out _))
-            {
-                Found = true;
-                return node;
-            }
-
-            return base.Visit(node);
-        }
-    }
+        => ExpressionSearch.Contains(expression, node => NativeQueryParameter.TryGetQueryParameterName(node, out _));
 
     /// <summary>
     /// Whether <paramref name="expression"/> contains a shaper node (<see cref="StructuralTypeShaperExpression"/>,
@@ -1763,32 +1663,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// rebuild and fail with a confusing <c>KeyNotFoundException</c> instead of a clean decline.
     /// </summary>
     private static bool ContainsShaperReference(Expression expression)
-    {
-        var detector = new ShaperReferenceDetector();
-        detector.Visit(expression);
-        return detector.Found;
-    }
-
-    private sealed class ShaperReferenceDetector : ExpressionVisitor
-    {
-        public bool Found { get; private set; }
-
-        public override Expression Visit(Expression node)
-        {
-            if (Found || node is null)
-            {
-                return node;
-            }
-
-            if (node is StructuralTypeShaperExpression or ProjectionBindingExpression or EntityProjectionExpression)
-            {
-                Found = true;
-                return node;
-            }
-
-            return base.Visit(node);
-        }
-    }
+        => ExpressionSearch.Contains(
+            expression, node => node is StructuralTypeShaperExpression or ProjectionBindingExpression or EntityProjectionExpression);
 
     /// <summary>
     /// Checks whether a method call expression represents a scalar property access that should
@@ -1833,6 +1709,19 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             : targetType != expression.Type && targetType.TryGetItemType() == null
                 ? Expression.Convert(expression, targetType)
                 : expression;
+
+    /// <summary>
+    /// The bare (predicate-less) Queryable element operators the Queryable switch rebuilds against a materialized
+    /// collection, mapped to their Enumerable equivalents.
+    /// </summary>
+    private static readonly Dictionary<MethodInfo, MethodInfo> BareElementOperatorEnumerableMethods = new()
+    {
+        [QueryableMethods.FirstWithoutPredicate] = EnumerableMethods.FirstWithoutPredicate,
+        [QueryableMethods.FirstOrDefaultWithoutPredicate] = EnumerableMethods.FirstOrDefaultWithoutPredicate,
+        [QueryableMethods.SingleWithoutPredicate] = EnumerableMethods.SingleWithoutPredicate,
+        [QueryableMethods.SingleOrDefaultWithoutPredicate] = EnumerableMethods.SingleOrDefaultWithoutPredicate,
+        [QueryableMethods.AnyWithoutPredicate] = EnumerableMethods.AnyWithoutPredicate,
+    };
 
     private static readonly MethodInfo GetParameterValueMethodInfo
         = typeof(MongoProjectionBindingExpressionVisitor)

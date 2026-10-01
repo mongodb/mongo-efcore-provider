@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -95,7 +96,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
     // selector-less forms, which reduce the source's element).
     private void ThrowIfOrderingOrAggregateOverStoredOrdering(MethodCallExpression node)
     {
-        if (node.Method.DeclaringType != typeof(Queryable) && node.Method.DeclaringType != typeof(Enumerable))
+        if (!IsQueryableOrEnumerable(node.Method))
         {
             return;
         }
@@ -263,23 +264,12 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
 
                 return groupElements;
 
-            case ParameterExpression sequenceParameter when ParameterSources.TryGetValue(sequenceParameter, out var sequenceSources):
+            case ParameterExpression sequenceParameter:
                 // A sequence-typed parameter (a GroupJoin's inner group): its bound sources' elements.
-                var sequenceElements = new List<Expression>();
-                foreach (var sequenceSource in sequenceSources)
-                {
-                    if (FindElementExpressions(sequenceSource, depth + 1) is not { } parts)
-                    {
-                        return null;
-                    }
-
-                    sequenceElements.AddRange(parts);
-                }
-
-                return sequenceElements;
+                return FindParameterElements(sequenceParameter, depth + 1);
 
             case MethodCallExpression call
-                when (call.Method.DeclaringType == typeof(Queryable) || call.Method.DeclaringType == typeof(Enumerable))
+                when IsQueryableOrEnumerable(call.Method)
                      && call.Arguments.Count >= 1:
                 switch (call.Method.Name)
                 {
@@ -288,7 +278,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
                         return [selector.Body];
 
                     case nameof(Queryable.GroupBy)
-                        when call.Arguments.Skip(2).Select(UnwrapLambda).FirstOrDefault(l => l is { Parameters.Count: 2 }) is { } resultSelector:
+                        when FindGroupByResultSelector(call) is { } resultSelector:
                         // GroupBy(source, key, [element,] (key, group) => result): the result (its parameters are bound
                         // by LambdaParameterSourceCollector).
                         return [resultSelector.Body];
@@ -330,6 +320,66 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
         }
 
         return expression;
+    }
+
+    /// <summary>
+    /// The elements of every sequence <paramref name="parameter"/> is bound to (<see cref="ParameterSources"/>), or
+    /// <see langword="null"/> if it is unbound or any source's elements are unknown.
+    /// </summary>
+    private List<Expression>? FindParameterElements(ParameterExpression parameter, int depth = 0)
+    {
+        if (!ParameterSources.TryGetValue(parameter, out var sources))
+        {
+            return null;
+        }
+
+        var elements = new List<Expression>();
+        foreach (var source in sources)
+        {
+            if (FindElementExpressions(source, depth) is not { } sourceElements)
+            {
+                return null;
+            }
+
+            elements.AddRange(sourceElements);
+        }
+
+        return elements;
+    }
+
+    /// <summary>The <c>(key, group) =&gt; result</c> selector of a <c>GroupBy</c> call, if it has one.</summary>
+    private static LambdaExpression? FindGroupByResultSelector(MethodCallExpression groupBy)
+        => groupBy.Arguments.Skip(2).Select(UnwrapLambda).FirstOrDefault(l => l is { Parameters.Count: 2 });
+
+    /// <summary>
+    /// The value member <paramref name="name"/> of <paramref name="definition"/> is constructed from: an anonymous
+    /// type's constructor argument, a member-init assignment, or a <c>GroupBy</c>'s key selector for <c>Key</c>.
+    /// <paramref name="definition"/> is matched as given (callers strip converts first).
+    /// </summary>
+    private static bool TryResolveConstructedMember(
+        Expression definition, string name, [NotNullWhen(true)] out Expression? memberValue)
+    {
+        switch (definition)
+        {
+            case NewExpression { Members: { } members } newExpression
+                when members.ToList().FindIndex(m => m.Name == name) is var index and >= 0:
+                memberValue = newExpression.Arguments[index];
+                return true;
+
+            case MemberInitExpression memberInit
+                when memberInit.Bindings.OfType<MemberAssignment>().FirstOrDefault(b => b.Member.Name == name) is { } binding:
+                memberValue = binding.Expression;
+                return true;
+
+            case MethodCallExpression { Method.Name: nameof(Queryable.GroupBy) } groupBy
+                when name == nameof(IGrouping<object, object>.Key) && UnwrapLambda(groupBy.Arguments[1]) is { } keySelector:
+                memberValue = keySelector.Body;
+                return true;
+
+            default:
+                memberValue = null;
+                return false;
+        }
     }
 
     /// <summary>
@@ -423,7 +473,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
                     return;
 
                 case MethodCallExpression call
-                    when call.Method.DeclaringType == typeof(Queryable) || call.Method.DeclaringType == typeof(Enumerable):
+                    when IsQueryableOrEnumerable(call.Method):
                     WalkSequenceOperatorValue(call);
                     return;
 
@@ -608,27 +658,13 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
             {
                 switch (StripConverts(definition))
                 {
-                    case NewExpression { Members: { } members } newExpression:
-                        var index = members.ToList().FindIndex(m => m.Name == name);
-                        if (index >= 0)
-                        {
-                            Walk(newExpression.Arguments[index]);
-                        }
-                        else
-                        {
-                            Walk(newExpression);
-                        }
-
+                    case var constructed when TryResolveConstructedMember(constructed, name, out var memberValue):
+                        Walk(memberValue);
                         break;
 
-                    case MemberInitExpression memberInit
-                        when memberInit.Bindings.OfType<MemberAssignment>().FirstOrDefault(b => b.Member.Name == name) is { } binding:
-                        Walk(binding.Expression);
-                        break;
-
-                    case MethodCallExpression { Method.Name: nameof(Queryable.GroupBy) } groupBy
-                        when name == nameof(IGrouping<object, object>.Key) && UnwrapLambda(groupBy.Arguments[1]) is { } keySelector:
-                        Walk(keySelector.Body);
+                    case NewExpression { Members: not null } newExpression:
+                        // An anonymous construction without that member: walk all of it.
+                        Walk(newExpression);
                         break;
 
                     case var other when owner.IsMappedEntityType(other.Type):
@@ -674,23 +710,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
             switch (StripConverts(value))
             {
                 case ParameterExpression parameter:
-                    if (!owner.ParameterSources.TryGetValue(parameter, out var sources))
-                    {
-                        return null;
-                    }
-
-                    var elements = new List<Expression>();
-                    foreach (var source in sources)
-                    {
-                        if (owner.FindElementExpressions(source) is not { } sourceElements)
-                        {
-                            return null;
-                        }
-
-                        elements.AddRange(sourceElements);
-                    }
-
-                    return elements;
+                    return owner.FindParameterElements(parameter);
 
                 case MemberExpression { Expression: { } inner, Member: var member }:
                     if (ResolveValues(inner) is not { } innerDefinitions)
@@ -703,19 +723,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
                     {
                         switch (StripConverts(definition))
                         {
-                            case NewExpression { Members: { } members } newExpression
-                                when members.ToList().FindIndex(m => m.Name == member.Name) is var index and >= 0:
-                                resolved.Add(newExpression.Arguments[index]);
-                                break;
-
-                            case MemberInitExpression memberInit
-                                when memberInit.Bindings.OfType<MemberAssignment>().FirstOrDefault(b => b.Member.Name == member.Name) is { } binding:
-                                resolved.Add(binding.Expression);
-                                break;
-
-                            case MethodCallExpression { Method.Name: nameof(Queryable.GroupBy) } groupBy
-                                when member.Name == nameof(IGrouping<object, object>.Key) && UnwrapLambda(groupBy.Arguments[1]) is { } keySelector:
-                                resolved.Add(keySelector.Body);
+                            case var constructed when TryResolveConstructedMember(constructed, member.Name, out var memberValue):
+                                resolved.Add(memberValue);
                                 break;
 
                             case StoredCollectionElementExpression element:
@@ -846,7 +855,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
             // Only what flows into a sequence's elements can reach a value read from it: a filter predicate, a sort key
             // or a join key selects/orders rows but never becomes an element value, so its reads (e.g. an equality over
             // a converted enum) are not counted.
-            if (node.Method.DeclaringType == typeof(Queryable) || node.Method.DeclaringType == typeof(Enumerable))
+            if (IsQueryableOrEnumerable(node.Method))
             {
                 switch (node.Method.Name)
                 {
@@ -896,7 +905,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
 
         protected override Expression VisitMethodCall(MethodCallExpression node)
         {
-            if ((node.Method.DeclaringType == typeof(Queryable) || node.Method.DeclaringType == typeof(Enumerable))
+            if (IsQueryableOrEnumerable(node.Method)
                 && node.Arguments.Count >= 2)
             {
                 if (node.Method.Name is nameof(Queryable.Join) or nameof(Queryable.GroupJoin) && node.Arguments.Count >= 5)
@@ -919,7 +928,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
                     }
                 }
                 else if (node.Method.Name == nameof(Queryable.GroupBy)
-                         && node.Arguments.Skip(2).Select(UnwrapLambda).FirstOrDefault(l => l is { Parameters.Count: 2 }) is { } resultSelector)
+                         && FindGroupByResultSelector(node) is { } resultSelector)
                 {
                     // (key, group) => result: `key` is the key selector's value (a one-element "sequence" of it); `group`
                     // ranges over the element selector's value, or the source's elements.

@@ -852,9 +852,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     // propagated, as MongoProjectionBindingExpressionVisitor does for a named member.
     private static Expression BindPositionalCtorProjectionMember(MongoQueryExpression mongoQueryExpression, string memberName, Expression valueExpression)
     {
-        var alias = mongoQueryExpression.Select.TryGetProjectionAlias(memberName, out var overriddenAlias)
-            ? overriddenAlias
-            : memberName;
+        var alias = mongoQueryExpression.Select.ResolveProjectionAlias(memberName);
         var receiver = NativeProjectionBinder.PeelCaseMapping(valueExpression);
         var index = mongoQueryExpression.AddToProjection(receiver, alias);
         return ReapplyCaseMapping(
@@ -1172,11 +1170,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return null;
         }
 
-        var body = selector.Body;
-        while (body is IncludeExpression include)
-        {
-            body = include.EntityExpression;
-        }
+        var body = selector.Body.UnwrapIncludes();
 
         return body is MemberExpression { Member.Name: "Outer" or "Inner" } member
                && member.Expression == selector.Parameters[0]

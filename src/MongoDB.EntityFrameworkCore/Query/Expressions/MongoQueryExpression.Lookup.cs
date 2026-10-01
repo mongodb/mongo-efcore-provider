@@ -58,7 +58,7 @@ internal sealed partial class MongoQueryExpression
                 var candidate = remaining[i];
                 var dependsOnPending = remaining.Any(other =>
                     !ReferenceEquals(other, candidate)
-                    && candidate.LocalField.StartsWith(other.As + ".", StringComparison.Ordinal));
+                    && candidate.ReadsOutputOf(other));
 
                 if (!dependsOnPending)
                 {

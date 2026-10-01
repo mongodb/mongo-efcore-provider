@@ -365,6 +365,14 @@ internal sealed class MongoSelectDefinition
     }
 
     /// <summary>
+    /// The alias <paramref name="memberName"/> is emitted under: its override (see <see cref="TryGetProjectionAlias"/>),
+    /// else the member name itself.
+    /// </summary>
+    [return: NotNullIfNotNull(nameof(memberName))]
+    internal string? ResolveProjectionAlias(string? memberName)
+        => TryGetProjectionAlias(memberName, out var overriddenAlias) ? overriddenAlias : memberName;
+
+    /// <summary>
     /// Looks up the <see cref="MongoDocumentConstructionExpression"/> an emit-side recognizer already staged into
     /// <see cref="Projection"/> for <paramref name="memberName"/>, if any.
     /// </summary>
@@ -398,7 +406,7 @@ internal sealed class MongoSelectDefinition
             return false;
         }
 
-        var alias = TryGetProjectionAlias(memberName, out var overriddenAlias) ? overriddenAlias : memberName;
+        var alias = ResolveProjectionAlias(memberName);
 
         foreach (var projection in Projection)
         {
@@ -442,7 +450,7 @@ internal sealed class MongoSelectDefinition
             return false;
         }
 
-        var alias = TryGetProjectionAlias(memberName, out var overriddenAlias) ? overriddenAlias : memberName;
+        var alias = ResolveProjectionAlias(memberName);
         if (alias is null)
         {
             return false;
