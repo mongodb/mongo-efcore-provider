@@ -19,7 +19,6 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Entities.Guides;
-using Xunit.Abstractions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests;
 

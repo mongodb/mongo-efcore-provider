@@ -3,6 +3,9 @@
     <Configurations>Debug EF8;Release EF8;Debug EF9;Release EF9;Debug EF10;Release EF10</Configurations>
     <Platforms>AnyCPU</Platforms>
   </PropertyGroup>
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);xUnit1051</NoWarn>
+  </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)' == 'Debug EF8' ">
     <DefineConstants>TRACE;DEBUG;EF8</DefineConstants>
   </PropertyGroup>
@@ -25,7 +28,7 @@
   <Import Project="..\..\Versions.props" />
 
   <ItemGroup>
-    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.v3" Version="3.2.2" />
   </ItemGroup>
 
   <ItemGroup>
@@ -50,12 +53,5 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="$(EF10Version)" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Proxies" Version="$(EF10Version)" />
     <Compile Include="Design\Generated\EF10\**" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <AssemblyAttribute Include="Xunit.TestFramework">
-      <_Parameter1>XUnit.Startup.Dispose.Hooks.TestFramework</_Parameter1>
-      <_Parameter2>XUnit.Startup.Dispose.Hooks</_Parameter2>
-    </AssemblyAttribute>
   </ItemGroup>
 </Project>
