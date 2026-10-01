@@ -536,21 +536,30 @@ internal static class NativeSlotPopulator
             if (NativeGroupByBinder.TryResolveDistinctOrderingKey(
                     distinctGrouping, keySelector.Parameters[0], keySelector.Body, out var distinctKey))
             {
-                record(new MongoOrdering(distinctKey, ascending));
+                // Same StoredOrdering rule as every arm below (EF-337): a converted or represented Distinct key would
+                // $sort by its stored form.
+                if (StoredOrdering.SortKeyPreservesClrOrdering(distinctKey))
+                    record(new MongoOrdering(distinctKey, ascending));
+                else
+                    mongoQ.Select.MarkNotNativelyRepresentable();
                 return;
             }
 
             translator.DistinctAliasScope = distinctGrouping;
         }
 
-        if (translator.TryTranslateField(keySelector.Body, out var keyNode))
+        // Every arm's key must sort like the CLR value (StoredOrdering, EF-337), checked before any arm mutates state; an
+        // arm whose key fails falls through, and the final else declines. A computed key is already default-serialized.
+        if (translator.TryTranslateField(keySelector.Body, out var keyNode)
+            && StoredOrdering.SortKeyPreservesClrOrdering(keyNode))
             record(new MongoOrdering(keyNode, ascending));
         else if (TryTranslateComputedSortKey(translator, keySelector.Body, out var computedKey))
             record(new MongoOrdering(computedKey, ascending));
         else if (mongoQ.Select.JoinScope is { Levels.Count: 1 } singleLevelScope
                  && !NativeJoinScopeTranslator.ReferencesInnerScope(keySelector.Parameters[0], keySelector.Body)
                  && NativeJoinScopeTranslator.TryTranslateValue(
-                     singleLevelScope, keySelector.Parameters[0], keySelector.Body, out var joinSortKey))
+                     singleLevelScope, keySelector.Parameters[0], keySelector.Body, out var joinSortKey)
+                 && StoredOrdering.SortKeyPreservesClrOrdering(joinSortKey))
             record(new MongoOrdering(joinSortKey, ascending));
         // Sort key reaching a single-level join's Inner side (`Join(...).OrderBy(x => x.Inner.OrderID)`), deferred into
         // PostJoinOps so it lowers after the $lookup/$unwind. Collection navigations are allowed (as in the Where
@@ -559,7 +568,8 @@ internal static class NativeSlotPopulator
         else if (mongoQ.Select.JoinScope is { Levels.Count: 1 } innerSortScope
                  && mongoQ.Joins.Count == 1
                  && NativeJoinScopeTranslator.TryTranslateValue(
-                     innerSortScope, keySelector.Parameters[0], keySelector.Body, out var innerSortKey))
+                     innerSortScope, keySelector.Parameters[0], keySelector.Body, out var innerSortKey)
+                 && StoredOrdering.SortKeyPreservesClrOrdering(innerSortKey))
         {
             // Relocate first: an earlier outer-only key in the same chain is still a MongoSortOp in PipelineOps and
             // must share this $sort stage, or the order is silently wrong. See DeferTrailingSortPastConfirmedJoin.
@@ -573,7 +583,8 @@ internal static class NativeSlotPopulator
                  && mongoQ.Joins.Count == 1
                  && TryTranslateConditionalSortKey(
                      mongoQ, conditionalSortScope, keySelector.Parameters[0], keySelector.Body,
-                     out var conditionalSortKey))
+                     out var conditionalSortKey)
+                 && StoredOrdering.SortKeyPreservesClrOrdering(conditionalSortKey))
         {
             // Same relocate-then-confirm sequence as above.
             mongoQ.Select.DeferTrailingSortPastConfirmedJoin();
@@ -582,7 +593,8 @@ internal static class NativeSlotPopulator
         }
         else if (mongoQ.Select.JoinScope is { Levels.Count: > 1 } chainedScope
                  && NativeJoinScopeTranslator.TryTranslateRootScopeOnly(
-                     chainedScope, keySelector.Parameters[0], keySelector.Body, valueMode: true, out var chainedSortKey))
+                     chainedScope, keySelector.Parameters[0], keySelector.Body, valueMode: true, out var chainedSortKey)
+                 && StoredOrdering.SortKeyPreservesClrOrdering(chainedSortKey))
             record(new MongoOrdering(chainedSortKey, ascending));
         // Sort key through a positional-ctor DTO Select.
         // Nav-expansion composes `x => new CustomerListItem(x.CustomerID, x.City).City` and visits it before the Select
@@ -595,7 +607,8 @@ internal static class NativeSlotPopulator
                      ctor.GetParameters(), p => string.Equals(p.Name, prop.Name, StringComparison.OrdinalIgnoreCase)) is var argIndex
                  && argIndex >= 0
                  && argIndex < ctorExpr.Arguments.Count
-                 && TryTranslateSortKeyExpression(translator, ctorExpr.Arguments[argIndex], out var ctorSortKey))
+                 && TryTranslateSortKeyExpression(translator, ctorExpr.Arguments[argIndex], out var ctorSortKey)
+                 && StoredOrdering.SortKeyPreservesClrOrdering(ctorSortKey))
             record(new MongoOrdering(ctorSortKey, ascending));
         else
             mongoQ.Select.MarkNotNativelyRepresentable();
@@ -808,8 +821,9 @@ internal static class NativeSlotPopulator
     /// (<c>RenderAddFields</c> separately <c>$literal</c>-wraps bare values so a <c>"$"</c> string isn't a field path.)
     /// </para>
     /// <para>
-    /// A filtered owned-collection count key skips the operand-serialization guard inside its element predicate; over a
-    /// non-default <c>BsonRepresentation</c> it compares the stored representation, but driver-LINQ does the same.
+    /// A filtered owned-collection count key's element predicate goes through <c>TranslateComparisonCore</c>, so a
+    /// relational comparison over a property whose stored form doesn't order like its CLR value declines there
+    /// (<see cref="StoredOrdering"/>, EF-337) and the driver-LINQ bridge refuses it.
     /// </para>
     /// </remarks>
     private static bool TryTranslateComputedSortKey(

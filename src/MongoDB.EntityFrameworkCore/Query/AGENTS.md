@@ -66,7 +66,8 @@ Scope, joins, grouping:
 - **Navigation-less joins** are native iff `RebindInnerShaperToOuterQuery`'s raw-key branch resolved both keys
   (`JoinInfo.Lookup != null`); a navigation resolved to the wrong target is rebuilt by it, a non-simple key
   declines (`JoinLookupImplementsKeySelectors`). Composite-PK components live at `_id.<Name>`
-  (`LookupExpression.GetFieldPath`).
+  (`LookupExpression.GetFieldPath`). "Simple" includes an anonymous key of scalar properties (same anonymous type
+  both sides, one hop, same storage per pair: `IsStoredEqualityFaithfulKeyPair`), rendered as `let` + `$and`.
 - **Paging vs. joins.** EF hoists `Skip`/`Take`/`Where`/`OrderBy` ahead of a join's result selector; recorded ops
   are deferred until after the join unless the join is in the left-outer-reference-navigation "safe to page
   before `$lookup`" set (reducers there decline). Paging ahead of a row-multiplying join stays ahead; paging both
@@ -106,6 +107,12 @@ Rendering (null/missing/dialect semantics):
 - **Top-level aggregation `$eq`/`$ne` against null is `$ifNull`-wrapped**, but not inside a `$filter`/`$map` scope.
 - **`$expr` inside `$elemMatch` is a hard server error**; reject at `IsQueryDialectRenderable`. `$size` on a
   missing/null array also errors: `$ifNull` around `$size`/`$filter` is mandatory.
+- **Relational comparisons, sort keys and aggregates run on the stored form**: over a converted or non-default-
+  represented property they decline natively and the driver-LINQ bridge throws (EF-337). Shared predicates:
+  `StoredOrdering.PreservesClrOrdering` (comparison vs a value) and `PreservesClrOrderingForAggregateAndSort` (adds
+  integral narrowing converters); equality is never gated. Native aggregates stay on `HasDefaultKeySerialization`. The
+  bridge walks the whole key/operand (`??`, `?:`, projected members, `g.Key`, set-op sources); an unclassifiable
+  construct is refused if the query reads such a property.
 - **Non-default-serialized bools are truthiness-tested wrongly** (`HasConversion<string>()` stores `"True"`/
   `"False"`, both truthy): gate `$not`/`$and`/`$or` operands and bare boolean roots via
   `MongoExpressionTranslator.IsUnsafeTruthinessRoot`.

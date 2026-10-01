@@ -455,6 +455,20 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
 
     private static List<OrderStatus> Sorted(IQueryable<OrderStatus> query) => query.ToList().OrderBy(v => v).ToList();
 
+    // EF-337: an order-sensitive operator over a converted Distinct key declines natively, and Native and DriverLinq both
+    // get the driver-LINQ bridge's refusal naming the property; never an answer computed from the stored form. The same
+    // query evaluated in memory over the materialized entities (the client-side workaround the message suggests)
+    // documents the correct answer.
+    private void AssertStoredOrderingRefusal<T>(
+        string name, Func<IQueryable<ConvertedOrder>, List<T>> query, string property, List<T> expected)
+    {
+        var run = ConvertedRunner(name, query);
+        Assert.Equal(typeof(NotSupportedException), DeclinesToSameFailure(run));
+        Assert.Contains($"'{property}'", Assert.Throws<NotSupportedException>(() => run(MongoQueryMode.Native)).Message);
+
+        Assert.Equal(expected, ConvertedRunner(name + "_oracle", q => query(q.ToList().AsQueryable()))(MongoQueryMode.Native));
+    }
+
     // For a shape whose driver-LINQ fallback throws: NativeOnly declines, and Native (falling back) throws the same
     // exception type as DriverLinq rather than answering natively. Returns that exception type.
     private static Type DeclinesToSameFailure<T>(Func<MongoQueryMode, List<T>> run)
@@ -511,25 +525,49 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     [Fact]
-    public void Bare_scalar_value_converted_Distinct_then_OrderBy_sorts_by_stored_value_goes_native()
+    public void Bare_scalar_value_converted_Distinct_then_OrderBy_is_refused()
     {
-        // Stored (string) order, not enum-numeric order: the same order driver-LINQ and a native
-        // OrderBy(o => o.Status) over the entity give.
-        var result = NativeModeAssert.NativeAndParity(ConvertedRunner(
-            nameof(Bare_scalar_value_converted_Distinct_then_OrderBy_sorts_by_stored_value_goes_native),
-            q => q.Select(o => o.Status).Distinct().OrderBy(v => v).ToList()));
-
-        Assert.Equal([OrderStatus.Cancelled, OrderStatus.New, OrderStatus.Shipped], result);
+        // Sorting the stored (string) form would give Cancelled, New, Shipped instead of the enum order (EF-337): native
+        // declines and the driver-LINQ fallback refuses, naming the property.
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_value_converted_Distinct_then_OrderBy_is_refused),
+            q => q.Select(o => o.Status).Distinct().OrderBy(v => v).ToList(),
+            "ConvertedOrder.Status",
+            [OrderStatus.New, OrderStatus.Shipped, OrderStatus.Cancelled]);
     }
 
     [Fact]
-    public void Bare_scalar_value_converted_Distinct_then_OrderByDescending_Take_goes_native()
+    public void Bare_scalar_value_converted_Distinct_then_OrderByDescending_Take_is_refused()
     {
-        var result = NativeModeAssert.NativeAndParity(ConvertedRunner(
-            nameof(Bare_scalar_value_converted_Distinct_then_OrderByDescending_Take_goes_native),
-            q => q.Select(o => o.Status).Distinct().OrderByDescending(v => v).Take(2).ToList()));
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_value_converted_Distinct_then_OrderByDescending_Take_is_refused),
+            q => q.Select(o => o.Status).Distinct().OrderByDescending(v => v).Take(2).ToList(),
+            "ConvertedOrder.Status",
+            [OrderStatus.Cancelled, OrderStatus.Shipped]);
+    }
 
-        Assert.Equal([OrderStatus.Shipped, OrderStatus.New], result);
+    [Fact]
+    public void Bare_scalar_order_preserving_converted_Distinct_then_OrderBy_goes_native()
+    {
+        // The refusal above is only for storage that doesn't order like the CLR value. EF's CastingConverter int -> long
+        // is on the StoredOrdering allow-list, so a post-Distinct sort over it stays native and sorts correctly.
+        var run = ConvertedRunner<int[]>(
+            nameof(Bare_scalar_order_preserving_converted_Distinct_then_OrderBy_goes_native),
+            q =>
+            {
+                var distinct = q.Select(o => o.Year).Distinct();
+                return [distinct.OrderBy(v => v).ToArray(), distinct.OrderByDescending(v => v).Take(2).ToArray()];
+            },
+            mb =>
+            {
+                ConfigureConverters(mb);
+                mb.Entity<ConvertedOrder>().Property(o => o.Year).HasConversion<long>();
+            });
+
+        var result = NativeModeAssert.NativeAndParity(run);
+
+        Assert.Equal([999, 2020, 2021], result[0]);
+        Assert.Equal([2021, 2020], result[1]);
     }
 
     [Fact]
@@ -565,38 +603,43 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
                 [
                     distinct.ToList().OrderBy(v => v).ToArray(),
                     distinct.Where(v => v == 2021).ToArray(),
-                    distinct.Where(v => v != 2021).ToList().OrderBy(v => v).ToArray(),
-                    // Stored-string order and comparison ("999" > "2021"), as on driver-LINQ.
-                    distinct.OrderBy(v => v).ToArray(),
-                    distinct.Where(v => v > 2020).ToList().OrderBy(v => v).ToArray()
+                    distinct.Where(v => v != 2021).ToList().OrderBy(v => v).ToArray()
                 ];
             }));
 
         Assert.Equal([999, 2020, 2021], result[0]);
         Assert.Equal([2021], result[1]);
         Assert.Equal([999, 2020], result[2]);
-        Assert.Equal([2020, 2021, 999], result[3]);
-        Assert.Equal([999, 2021], result[4]);
+
+        // Stored-string order and comparison ("999" > "2021") are refused (EF-337).
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_int_to_string_converted_Distinct_materializes_and_compares_goes_native) + "_OrderBy",
+            q => q.Select(o => o.Year).Distinct().OrderBy(v => v).ToList(),
+            "ConvertedOrder.Year",
+            [999, 2020, 2021]);
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_int_to_string_converted_Distinct_materializes_and_compares_goes_native) + "_Where",
+            q => q.Select(o => o.Year).Distinct().Where(v => v > 2020).ToList(),
+            "ConvertedOrder.Year",
+            [2021]);
     }
 
     [Fact]
     public void Bare_scalar_bool_to_string_converted_Distinct_goes_native()
     {
-        // Paid is stored as "Y"/"N". Materialization and stored-value ordering have a driver-LINQ oracle.
-        var result = NativeModeAssert.NativeAndParity(ConvertedRunner<bool[]>(
+        // Paid is stored as "Y"/"N". Materialization has a driver-LINQ oracle; ordering by the stored form is refused
+        // (EF-337).
+        var result = NativeModeAssert.NativeAndParity(ConvertedRunner(
             nameof(Bare_scalar_bool_to_string_converted_Distinct_goes_native),
-            q =>
-            {
-                var distinct = q.Select(o => o.Paid).Distinct();
-                return
-                [
-                    distinct.ToList().OrderBy(v => v).ToArray(),
-                    distinct.OrderByDescending(v => v).ToArray(),
-                ];
-            }));
+            q => q.Select(o => o.Paid).Distinct().ToList().OrderBy(v => v).ToList()));
 
-        Assert.Equal([false, true], result[0]);
-        Assert.Equal([true, false], result[1]);
+        Assert.Equal([false, true], result);
+
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_bool_to_string_converted_Distinct_goes_native) + "_OrderByDescending",
+            q => q.Select(o => o.Paid).Distinct().OrderByDescending(v => v).ToList(),
+            "ConvertedOrder.Paid",
+            [true, false]);
     }
 
     [Fact]
@@ -656,16 +699,17 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     [Fact]
-    public void Bare_scalar_value_converted_Distinct_then_selectorless_aggregate_declines_cleanly()
+    public void Bare_scalar_value_converted_Distinct_then_selectorless_aggregate_is_refused()
     {
         // A selector-less Max/Min/Sum/Average would reduce the stored values and read the result through a generic
         // CLR serializer (Max over the enum stored as a string throws InvalidCastException natively); it declines,
-        // like the ungrouped Select(o => o.Status).Max(). The fallback reduces the stored strings too ("Shipped").
-        var result = NativeModeAssert.DeclinesCleanly(ConvertedRunner(
-            nameof(Bare_scalar_value_converted_Distinct_then_selectorless_aggregate_declines_cleanly),
-            q => new List<OrderStatus> { q.Select(o => o.Status).Distinct().Max() }));
-
-        Assert.Equal([OrderStatus.Shipped], result);
+        // like the ungrouped Select(o => o.Status).Max(), and the driver-LINQ fallback refuses it (EF-337) instead of
+        // reducing the stored strings ("Shipped").
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_value_converted_Distinct_then_selectorless_aggregate_is_refused),
+            q => new List<OrderStatus> { q.Select(o => o.Status).Distinct().Max() },
+            "ConvertedOrder.Status",
+            [OrderStatus.Cancelled]);
     }
 
     [Fact]
@@ -719,52 +763,50 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     [Fact]
-    public void Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Average_declines_to_driver_failure()
+    public void Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Average_is_refused()
     {
-        // Native once answered 0 here (a $avg over the stored strings, read back as a number). It now declines
-        // (TryBindDistinctTerminalAggregate's non-default-serialized key guard), so Native fails exactly as the
-        // driver-LINQ fallback does ($avg over strings is null: "Cannot deserialize a 'Double' from BsonType 'Null'")
-        // instead of silently answering 0.
-        var failure = DeclinesToSameFailure(ConvertedRunner(
-            nameof(Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Average_declines_to_driver_failure),
-            q => new List<double> { q.Select(o => o.Year).Distinct().Average() }));
-
-        Assert.Equal(typeof(FormatException), failure);
+        // Native once answered 0 here (a $avg over the stored strings, read back as a number). It declines
+        // (TryBindDistinctTerminalAggregate's non-default-serialized key guard), and the driver-LINQ fallback refuses it
+        // (EF-337) rather than running a $avg over strings.
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Average_is_refused),
+            q => new List<double> { q.Select(o => o.Year).Distinct().Average() },
+            "ConvertedOrder.Year",
+            [1680.0]);
     }
 
     [Fact]
-    public void Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Sum_declines_cleanly()
+    public void Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Sum_is_refused()
     {
-        // Declines like Average. NB: the driver-LINQ fallback's $sum skips the stored strings and answers 0 (the true
-        // sum is 5040), so only parity with the fallback is pinned; native is not the one answering 0.
-        var result = NativeModeAssert.DeclinesCleanly(ConvertedRunner(
-            nameof(Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Sum_declines_cleanly),
-            q => new List<int> { q.Select(o => o.Year).Distinct().Sum() }));
-
-        Assert.Single(result);
+        // Declines like Average; the driver-LINQ fallback refuses it (EF-337) instead of a $sum that skips the stored
+        // strings and answers 0 (the true sum is 5040).
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_int_to_string_converted_Distinct_then_selectorless_Sum_is_refused),
+            q => new List<int> { q.Select(o => o.Year).Distinct().Sum() },
+            "ConvertedOrder.Year",
+            [5040]);
     }
 
     [Fact]
-    public void Bare_scalar_value_converted_enum_Distinct_then_relational_Where_goes_native()
+    public void Bare_scalar_value_converted_enum_Distinct_then_relational_Where_is_refused()
     {
-        // Stored-string comparison, as on driver-LINQ and a native Where over the entity field: "Shipped" > "New",
-        // "Cancelled" < "New".
-        var result = NativeModeAssert.NativeAndParity(ConvertedRunner<OrderStatus[]>(
-            nameof(Bare_scalar_value_converted_enum_Distinct_then_relational_Where_goes_native),
-            q =>
-            {
-                var distinct = q.Select(o => o.Status).Distinct();
-                return
-                [
-                    distinct.Where(v => v > OrderStatus.New).ToList().OrderBy(v => v).ToArray(),
-                    distinct.Where(v => v < OrderStatus.Shipped).ToList().OrderBy(v => v).ToArray(),
-                    distinct.Where(v => v >= OrderStatus.New).ToList().OrderBy(v => v).ToArray(),
-                ];
-            }));
-
-        Assert.Equal([OrderStatus.Shipped], result[0]);
-        Assert.Equal([OrderStatus.New, OrderStatus.Cancelled], result[1]);
-        Assert.Equal([OrderStatus.New, OrderStatus.Shipped], result[2]);
+        // A stored-string comparison ("Shipped" > "New", "Cancelled" < "New") disagrees with the enum order, so it is
+        // refused (EF-337) rather than answered.
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_value_converted_enum_Distinct_then_relational_Where_is_refused) + "_gt",
+            q => q.Select(o => o.Status).Distinct().Where(v => v > OrderStatus.New).ToList(),
+            "ConvertedOrder.Status",
+            [OrderStatus.Shipped, OrderStatus.Cancelled]);
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_value_converted_enum_Distinct_then_relational_Where_is_refused) + "_lt",
+            q => q.Select(o => o.Status).Distinct().Where(v => v < OrderStatus.Shipped).ToList(),
+            "ConvertedOrder.Status",
+            [OrderStatus.New]);
+        AssertStoredOrderingRefusal(
+            nameof(Bare_scalar_value_converted_enum_Distinct_then_relational_Where_is_refused) + "_ge",
+            q => q.Select(o => o.Status).Distinct().Where(v => v >= OrderStatus.New).ToList(),
+            "ConvertedOrder.Status",
+            [OrderStatus.New, OrderStatus.Shipped, OrderStatus.Cancelled]);
     }
 
     [Fact]

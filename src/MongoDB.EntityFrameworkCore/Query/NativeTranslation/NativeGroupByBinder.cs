@@ -188,8 +188,9 @@ internal static class NativeGroupByBinder
     // The key is read back from _id through a generic CLR-type serializer (no backing IProperty), which only
     // reproduces the value for default/identity serialization. A value converter or non-default
     // BsonRepresentation would throw or return the raw stored value, diverging from driver-LINQ, so such keys
-    // fall back. Accumulator operands aren't checked: native and driver-LINQ are wrong the same way there.
-    // Also used by TranslateOfType's discriminator guard for the same reason.
+    // fall back. Accumulator operands are held to the same rule (TryTranslateValue, and TryBindDistinctAccumulator's
+    // field check): $sum/$max reduce the stored form. Also used by TranslateOfType's discriminator guard, and as the
+    // strict half of StoredOrdering.PreservesClrOrdering (EF-337).
     internal static bool HasDefaultKeySerialization(IProperty property)
         => property.GetValueConverter() == null
            && property.GetTypeMapping().Converter == null
@@ -1256,9 +1257,12 @@ internal static class NativeGroupByBinder
                 out var isKeyOnlyElementCondition, out var elementCondition))
             return false;
 
-        // Plain member access only; a computed selector falls back.
+        // Plain member access only; a computed selector falls back. A reducer runs on the stored form, so its operand
+        // must be default-serialized like every other accumulator operand (EF-337); a distinct count needs only
+        // injective serialization, which every serializer is.
         if (selectCall.Arguments[1].UnwrapLambdaFromQuote() is not { Body: MemberExpression } selector
-            || !translator.TryTranslateField(selector.Body, out var selectorField))
+            || !translator.TryTranslateField(selector.Body, out var selectorField)
+            || (!isSize && !HasDefaultKeySerialization(selectorField.Property)))
             return false;
 
         MongoExpression operand = selectorField;

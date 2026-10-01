@@ -957,13 +957,15 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     private Expression CreateAliasRead(string alias, Type type)
         => type.UnwrapNullableType() == typeof(TimeSpan) && _queryExpression.Select.IsTimeOfDayProjection(alias)
             ? BsonBinding.CreateGetElementValue(DocParameter, alias, type, BsonSerializerFactory.CreateTimeOfDaySerializer(type))
-            : BsonBinding.CreateGetElementValue(
-                DocParameter,
-                alias,
-                type,
-                type.UnwrapNullableType() == typeof(DateTime)
-                    ? NativeDateTimeKindReadBack.FindForProjectionAlias(_queryExpression.Select, alias)
-                    : null);
+            : type.UnwrapNullableType() == typeof(float)
+                ? BsonBinding.CreateGetElementValue(DocParameter, alias, type, BsonBinding.CreateNarrowingFloatSerializer(type))
+                : BsonBinding.CreateGetElementValue(
+                    DocParameter,
+                    alias,
+                    type,
+                    type.UnwrapNullableType() == typeof(DateTime)
+                        ? NativeDateTimeKindReadBack.FindForProjectionAlias(_queryExpression.Select, alias)
+                        : null);
 
     /// <summary>
     /// Reads one member of a <see cref="MongoDocumentConstructionExpression"/> leaf. The native implementation

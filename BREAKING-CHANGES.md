@@ -251,6 +251,105 @@ A case-insensitive comparison against a constant is an anchored case-insensitive
 
 `UseQueryMode(MongoQueryMode.DriverLinq)` restores the old behavior.
 
+### Server-side date parts and calendar adds over a `HasDateTimeKind(DateTimeKind.Local)` property now throw
+
+#### Old behavior
+
+For a `DateTime` property configured with `HasDateTimeKind(DateTimeKind.Local)`, any `DateTime` member other than `Kind` (`Hour`, `Date`, `Year`, `Month`, `Day`, `DayOfWeek`, ...) and `AddYears`/`AddMonths`/`AddDays` were evaluated by the server on the stored UTC instant:
+
+```c#
+context.Orders.Select(o => o.LocalDate.Hour);
+context.Orders.Where(o => o.LocalDate.AddDays(1) > cutoff);
+```
+
+The entity materializes as local time, so the server-computed value matched the C# value only on a UTC host, and for `AddDays`/`AddMonths`/`AddYears` only away from DST changes and month/day boundaries. Otherwise the query silently returned a wrong value or wrong rows.
+
+#### New behavior
+
+These queries throw `InvalidOperationException` (default and `DriverLinq` query modes; `NativeOnly` throws `NativeTranslationNotSupportedException`) naming the property. `AddHours`/`AddMinutes`/`AddSeconds`/`AddMilliseconds`, comparisons, and all of the above on `Utc`-kind or unconfigured `DateTime` properties are unchanged.
+
+#### Mitigations
+
+Use a `Utc`-kind (or default) property for the date arithmetic, or bring the rows to the client first: `context.Orders.AsEnumerable().Select(o => o.LocalDate.Hour)`.
+
+### Ordering, relational comparisons and aggregates over a value-converted or string-represented property now throw
+
+#### Old behavior
+
+A relational comparison (`<`, `<=`, `>`, `>=`, `string.Compare`/`CompareTo`), an `OrderBy`/`ThenBy` key, or `Sum`/`Min`/`Max`/`Average`/`MinBy`/`MaxBy` over a property configured with a value converter or a non-default `BsonRepresentation` was evaluated by the server on the **stored** value:
+
+```c#
+modelBuilder.Entity<Product>().Property(p => p.Price).HasBsonRepresentation(BsonType.String); // or HasConversion<string>()
+
+context.Products.OrderBy(p => p.Price);        // sorted "10" < "100" < "9"
+context.Products.Where(p => p.Price > 50);     // compared strings: matched 9, not 100
+context.Products.Sum(p => p.Price);            // $sum ignores strings: 0
+context.Products.Max(p => p.Price);            // 9
+```
+
+The same applied wherever such a comparison, key or aggregate appeared: inside an element predicate (`o.Lines.Any(l => l.Price > 50)`, a filtered `Count`), in a projection, in an `ExecuteUpdate`/`ExecuteDelete` filter, and when the property is reached through a computed expression (`p.Price ?? 0`, `cond ? p.Price : 0`, `-p.Price`, a projected member, `g.Key` of a `GroupBy` on the property, an element of a `Concat`/`Union`). The result silently differed from the .NET answer whenever the stored form does not order like the .NET value. Some such queries happened to return the right answer: an enum stored as its name sorted alphabetically (right only if the names are in value order), an order-preserving custom converter such as `v => v * 2` compared correctly (but `Sum` did not), and single-digit numbers stored as strings sorted correctly.
+
+#### New behavior
+
+These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query modes; `NativeOnly` throws `NativeTranslationNotSupportedException`). This includes computed shapes over the property (a member or method computed from its stored value, such as `p.Name.Length`, `p.When.Year` or `p.Price.ToString()`; a converted `bool` used for its truth in a key, such as `OrderBy(p => !p.Flag)`), and a key or operand the provider cannot trace back to its properties when such a property flows into it. Filters, equality comparisons and projections elsewhere in the query don't count, and a default-stored primitive collection (`p.Scores.Any(s => s > 5)`) is unaffected. It applies to **every custom value converter**, whether or not it happens to preserve order, so the following now throw for comparisons, sorting and aggregates:
+
+* strongly-typed ID value objects stored through a converter (`OrderBy(x => x.Id)` over `HasConversion(id => id.Value, v => new OrderId(v))`);
+* enums stored as their names (`HasConversion<string>()` or `HasBsonRepresentation(BsonType.String)`);
+* `DateTime` with `HasConversion<long>()` (EF's `DateTimeToBinaryConverter`, which is not order-exact);
+* `Guid`, `DateTime`, `decimal` or numbers stored as strings, and any other `BsonRepresentation` not listed below;
+* a fractional property stored as an integral type (`decimal`/`double` with `HasConversion<int>()`), which truncates;
+* a relational comparison against a value on an integral **narrowing** converter (`HasConversion<int>()` on a `long`): `x.Big > 3_000_000_000L` would wrap the constant. Sorting and aggregates over such a property keep working.
+
+Unchanged:
+
+* Equality (`==`, `!=`, `Contains`) over any such property.
+* Properties whose stored value is exactly the .NET value in a BSON type the server orders the same way:
+    * a `BsonRepresentation` equal to the type's default (for example `[BsonRepresentation(BsonType.String)]` on a `string`);
+    * a numeric (or enum) property stored as a numeric `BsonRepresentation` that holds every value exactly (for example `int` as `Int64`, `Double` or `Decimal128`; `decimal` as `Decimal128`);
+    * a `string` stored as `ObjectId`, and an `ObjectId` stored as `String`;
+    * EF Core's built-in numeric casting converter and enum-to-number converter to a type that holds every value exactly (for example `HasConversion<long>()` or `HasConversion<double>()` on an `int`, `HasConversion<long>()` on an enum), for comparisons, sorting and aggregates;
+    * the integral narrowing converters above (`HasConversion<int>()` on a `long`), for sorting and aggregates only.
+
+#### Mitigations
+
+Store the property in a form that orders like the .NET value (for example remove `HasConversion<string>()` from an enum or number, or use a numeric `BsonRepresentation`), or sort, compare or aggregate on the client: `context.Products.AsEnumerable().OrderBy(p => p.Price)`.
+
+### `Random.Next` and `Guid.NewGuid` calls inside a query now throw
+
+#### Old behavior
+
+A call to `Random.Next(...)` (on any `Random` instance, including `Random.Shared` and a seeded `new Random(seed)`) or to `Guid.NewGuid()` inside a predicate, ordering or projection was evaluated **once**, while the query was translated, and the single value was used for every row:
+
+```c#
+context.Orders.Where(o => o.Priority > Random.Shared.Next(0, 10));   // one random threshold for all rows
+context.Orders.OrderBy(o => Random.Shared.Next());                   // not shuffled: every row got the same key
+context.Orders.Select(o => new { o.Id, R = Random.Shared.Next() });  // the same number on every row
+```
+
+Some such queries happened to return the right answer because a per-row evaluation would have produced the same value anyway, for example a seeded `new Random(15).Next(...)` compared against a column, or `Guid.NewGuid() != Guid.Empty`, which is always true.
+
+#### New behavior
+
+These queries throw `InvalidOperationException` in the default and `DriverLinq` query modes (`NativeOnly` may instead throw `NativeTranslationNotSupportedException`) with the message:
+
+> The LINQ expression contains a call to 'Random.Next', which cannot be evaluated once per row on the server. Evaluate it before the query and pass the result in as a variable, or apply it client-side after AsEnumerable().
+
+Unchanged:
+
+* `DateTime.Now` and `DateTime.UtcNow`: they are evaluated afresh on every execution of the query.
+* Calls that EF Core itself evaluates into a query parameter before the provider sees them, such as `Random.Shared.NextDouble()`, `NextInt64(...)` or `Guid.CreateVersion7()`: as with other EF Core providers, these are evaluated once per execution.
+
+#### Mitigations
+
+Evaluate the value before the query and use the variable, which the query receives as a parameter:
+
+```c#
+var threshold = Random.Shared.Next(0, 10);
+context.Orders.Where(o => o.Priority > threshold);
+```
+
+For a genuinely per-row value, bring the rows to the client first: `context.Orders.AsEnumerable().Select(o => new { o.Id, R = Random.Shared.Next() })`.
+
 ## Breaking changes in 8.4.0 / 9.1.0 / 10.0.0
 
 ### The element name for discriminators may have changed

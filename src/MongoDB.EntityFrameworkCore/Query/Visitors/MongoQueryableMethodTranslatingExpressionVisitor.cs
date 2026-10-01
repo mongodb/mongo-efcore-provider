@@ -2340,6 +2340,14 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return false;
         }
 
+        // An anonymous-type key (EF-436): only the navigation-less branch builds its Lookup, from the same recognizer,
+        // with one key pair per member, so it matches by construction.
+        if (TryGetAnonymousJoinKeyMembers(outerKeySelector, innerKeySelector, out var outerMembers, out _))
+        {
+            return joinInfo.Navigation == null
+                && (lookup.CompositeKey?.Count ?? 1) == outerMembers.Count;
+        }
+
         if (outerKeySelector.Body.TryGetSimplePropertyName() == null
             || innerKeySelector.Body.TryGetSimplePropertyName() == null)
         {
@@ -2440,12 +2448,280 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         LambdaExpression innerKeySelector,
         [NotNullWhen(true)] out IProperty? outerProperty,
         [NotNullWhen(true)] out IProperty? innerProperty)
+        => TryResolveRawKeyJoinProperties(
+            fkOwnerEntityType, innerEntityType, fkPropertyName, innerKeySelector.Body.TryGetSimplePropertyName(),
+            out outerProperty, out innerProperty);
+
+    private static bool TryResolveRawKeyJoinProperties(
+        IEntityType fkOwnerEntityType,
+        IEntityType innerEntityType,
+        string? fkPropertyName,
+        string? innerKeyPropertyName,
+        [NotNullWhen(true)] out IProperty? outerProperty,
+        [NotNullWhen(true)] out IProperty? innerProperty)
     {
-        var innerKeyPropertyName = innerKeySelector.Body.TryGetSimplePropertyName();
         outerProperty = fkPropertyName != null ? fkOwnerEntityType.FindProperty(fkPropertyName) : null;
         innerProperty = innerKeyPropertyName != null ? innerEntityType.FindProperty(innerKeyPropertyName) : null;
         return outerProperty != null && innerProperty != null;
     }
+
+    /// <summary>
+    /// Recognizes an anonymous-type join key of simple properties. Both sides construct the same anonymous type, so
+    /// members pair by position (<c>new { a.X, Y = a.Z } equals new { b.X, Y = b.W }</c> pairs <c>a.X</c> with
+    /// <c>b.X</c> and <c>a.Z</c> with <c>b.W</c>): each member is a property read (<c>x.P</c> or
+    /// <c>EF.Property(x, "P")</c>), optionally lifted to its own nullable type, and each inner member reads directly
+    /// off the inner parameter. The outer members' hop, and each pair's scalar-ness and storage, are checked by
+    /// <see cref="TryResolveAnonymousKeyJoinProperties"/>.
+    /// </summary>
+    /// <remarks>
+    /// Anything else declines ("non-simple key declines"): constant or computed members, nested anonymous types,
+    /// non-anonymous constructions (<c>new Key(...)</c> or <c>new Key { ... }</c> compare by the type's own
+    /// <c>Equals</c>, reference equality for a plain class), and narrowing or representation-changing conversions.
+    /// </remarks>
+    private static bool TryGetAnonymousJoinKeyMembers(
+        LambdaExpression outerKeySelector,
+        LambdaExpression innerKeySelector,
+        out IReadOnlyList<Expression> outerMembers,
+        out IReadOnlyList<string> innerPropertyNames)
+    {
+        outerMembers = [];
+        innerPropertyNames = [];
+
+        if (outerKeySelector.Body is not NewExpression { Arguments.Count: > 0 } outerNew
+            || innerKeySelector.Body is not NewExpression innerNew
+            || outerNew.Type != innerNew.Type
+            || !IsAnonymousType(outerNew.Type)
+            || innerNew.Arguments.Count != outerNew.Arguments.Count)
+        {
+            return false;
+        }
+
+        var outer = new List<Expression>(outerNew.Arguments.Count);
+        var inner = new List<string>(innerNew.Arguments.Count);
+        for (var i = 0; i < outerNew.Arguments.Count; i++)
+        {
+            var outerMember = StripNullableLift(outerNew.Arguments[i]);
+            var innerMember = StripNullableLift(innerNew.Arguments[i]);
+            if (outerMember is null
+                || innerMember is null
+                || outerMember.TryGetSimplePropertyName() == null
+                || GetKeySelectorTargetObject(innerMember)?.RemoveConvert() is not { } innerTarget
+                || !ReferenceEquals(innerTarget, innerKeySelector.Parameters[0]))
+            {
+                return false;
+            }
+
+            outer.Add(outerMember);
+            inner.Add(innerMember.TryGetSimplePropertyName()!);
+        }
+
+        outerMembers = outer;
+        innerPropertyNames = inner;
+        return true;
+
+        // `(int?)x.P` over an `int` P preserves equality; any other conversion (narrowing, enum-to-int, boxing) may
+        // not, so it declines. A member that's already a bare read passes through.
+        static Expression? StripNullableLift(Expression member)
+            => member switch
+            {
+                UnaryExpression { NodeType: ExpressionType.Convert, Operand: var operand } convert
+                    when Nullable.GetUnderlyingType(convert.Type) == operand.Type => operand,
+                UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } => null,
+                _ => member
+            };
+
+        static bool IsAnonymousType(Type type)
+            => type.IsDefined(typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute), inherit: false)
+                && type.Name.Contains("AnonymousType", StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Resolves an anonymous join key (<see cref="TryGetAnonymousJoinKeyMembers"/>) to its property pairs: every
+    /// outer member must read off the same hop (the root, or one prior join's inner side; no owned-navigation segment)
+    /// and every member must name a mapped property.
+    /// </summary>
+    /// <remarks>
+    /// Each pair must also compare in the database as it does in C# (<see cref="IsStoredEqualityFaithfulKeyPair"/>):
+    /// otherwise the <c>$lookup</c> silently answers differently (element overlap for arrays, no match across two
+    /// stored forms).
+    /// </remarks>
+    private static bool TryResolveAnonymousKeyJoinProperties(
+        MongoQueryExpression outerQueryExpression,
+        IEntityType innerEntityType,
+        LambdaExpression outerKeySelector,
+        IReadOnlyList<Expression> outerMembers,
+        IReadOnlyList<string> innerPropertyNames,
+        int priorJoinCount,
+        out JoinInfo? throughJoin,
+        [NotNullWhen(true)] out List<(IProperty Outer, IProperty Inner)>? pairs)
+    {
+        throughJoin = null;
+        pairs = null;
+
+        (bool IsDirectFromRoot, int? ThroughLevel)? hop = null;
+        foreach (var member in outerMembers)
+        {
+            // RemoveConvert: EF.Property(x, "P") takes its entity as `(object)x`.
+            var (target, embeddedSegments) = PeelEmbeddedSegments(
+                GetKeySelectorTargetObject(member)?.RemoveConvert(), outerKeySelector.Parameters[0]);
+            if (embeddedSegments.Count > 0)
+            {
+                return false;
+            }
+
+            var memberHop = AnalyzeKeySelectorTarget(target, outerKeySelector.Parameters[0], priorJoinCount);
+            if (hop != null && hop != memberHop)
+            {
+                return false;
+            }
+
+            hop = memberHop;
+        }
+
+        IEntityType fkOwnerEntityType;
+        if (hop!.Value.IsDirectFromRoot)
+        {
+            fkOwnerEntityType = outerQueryExpression.CollectionExpression.EntityType;
+        }
+        else if (hop.Value.ThroughLevel is { } level && level >= 1 && level <= priorJoinCount)
+        {
+            throughJoin = outerQueryExpression.Joins[level - 1];
+            fkOwnerEntityType = throughJoin.InnerEntityType;
+        }
+        else
+        {
+            return false;
+        }
+
+        var resolved = new List<(IProperty Outer, IProperty Inner)>(outerMembers.Count);
+        for (var i = 0; i < outerMembers.Count; i++)
+        {
+            if (!TryResolveRawKeyJoinProperties(
+                    fkOwnerEntityType, innerEntityType, outerMembers[i].TryGetSimplePropertyName(),
+                    innerPropertyNames[i], out var outerProperty, out var innerProperty)
+                || !IsStoredEqualityFaithfulKeyPair(outerProperty, innerProperty))
+            {
+                return false;
+            }
+
+            resolved.Add((outerProperty, innerProperty));
+        }
+
+        pairs = resolved;
+        return true;
+    }
+
+    /// <summary>
+    /// Whether stored-value equality of an anonymous-key pair agrees with the member-wise C# equality.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Only scalar members: value types and <see cref="string"/>. A primitive collection would match by element
+    /// overlap (<c>localField</c>/<c>foreignField</c>) or array equality, and other reference types (<c>byte[]</c>,
+    /// lists) compare by reference in C#, so none of them is reproducible.
+    /// </para>
+    /// <para>
+    /// Both sides must be stored alike: the same <see cref="MongoPropertyExtensions.GetBsonRepresentation"/>, the
+    /// same provider CLR type, and either no value converter or equivalent ones. An enum stored as a string on one side
+    /// and as an int on the other never matches in the database. Converters count as equivalent only when they're the
+    /// same instance, or the same type from <see cref="StatelessConverterTypes"/> (generic arguments included). Every
+    /// other converter declines, since two instances of one type can encode differently: lambda-based
+    /// <c>ValueConverter</c>/<c>ValueConverter&lt;,&gt;</c>, <c>BoolToStringConverter("Y", "N")</c> vs
+    /// <c>("T", "F")</c>, user subclasses. This is stricter than the single-key path, which isn't gated.
+    /// </para>
+    /// </remarks>
+    private static bool IsStoredEqualityFaithfulKeyPair(IProperty outerProperty, IProperty innerProperty)
+    {
+        if (!IsScalarKeyType(outerProperty.ClrType)
+            || !IsScalarKeyType(innerProperty.ClrType)
+            || outerProperty.IsPrimitiveCollection
+            || innerProperty.IsPrimitiveCollection)
+        {
+            return false;
+        }
+
+        if (outerProperty.GetBsonRepresentation() != innerProperty.GetBsonRepresentation()
+            || outerProperty.GetProviderClrType() != innerProperty.GetProviderClrType())
+        {
+            return false;
+        }
+
+        // The effective converter: the type mapping's, which also covers one derived from the provider type alone
+        // (HasConversion<string>(), HasConversion<ObjectId>()) that GetValueConverter() doesn't report. Such a
+        // converter is one shared instance per (CLR type, provider type), so it passes by identity.
+        var outerConverter = outerProperty.FindTypeMapping()?.Converter ?? outerProperty.GetValueConverter();
+        var innerConverter = innerProperty.FindTypeMapping()?.Converter ?? innerProperty.GetValueConverter();
+        return (outerConverter, innerConverter) switch
+        {
+            (null, null) => true,
+            ({ } o, { } i) when ReferenceEquals(o, i) => true,
+            ({ } o, { } i) => o.GetType() == i.GetType() && IsStatelessConverterType(o.GetType()),
+            _ => false
+        };
+
+        static bool IsScalarKeyType(Type type)
+        {
+            var underlying = Nullable.GetUnderlyingType(type) ?? type;
+            return underlying.IsValueType || underlying == typeof(string);
+        }
+    }
+
+    /// <summary>
+    /// Converter types (generic definitions for generic ones) whose encoding is fixed by the type alone: their only
+    /// constructor argument is <c>ConverterMappingHints</c>, which doesn't change the stored value. Checked against
+    /// each constructor; excluded because constructor arguments choose the encoding: <c>BoolToStringConverter</c>,
+    /// <c>BoolToTwoValuesConverter&lt;&gt;</c>, <c>StringToBytesConverter</c> (<c>Encoding</c>),
+    /// <c>CollectionToJsonStringConverter&lt;&gt;</c>, and the lambda-based <c>ValueConverter</c> /
+    /// <c>ValueConverter&lt;,&gt;</c>. Includes the provider's own <c>ObjectId</c>/<c>Decimal128</c> converters, which
+    /// <c>MongoValueConverterSelector</c> creates per property.
+    /// </summary>
+    private static readonly HashSet<Type> StatelessConverterTypes =
+    [
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.BoolToZeroOneConverter<>),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.BytesToStringConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.CastingConverter<,>),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.CharToStringConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.DateOnlyToStringConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.DateTimeOffsetToBinaryConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.DateTimeOffsetToBytesConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.DateTimeOffsetToStringConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.DateTimeToBinaryConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.DateTimeToStringConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.DateTimeToTicksConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.EnumToNumberConverter<,>),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.EnumToStringConverter<>),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.GuidToBytesConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.GuidToStringConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.IPAddressToBytesConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.IPAddressToStringConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.NumberToBytesConverter<>),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.NumberToStringConverter<>),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.PhysicalAddressToBytesConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.PhysicalAddressToStringConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToBoolConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToCharConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToDateOnlyConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToDateTimeConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToDateTimeOffsetConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToEnumConverter<>),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToGuidConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToNumberConverter<>),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToTimeOnlyConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToTimeSpanConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToUriConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.TimeOnlyToStringConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.TimeOnlyToTicksConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.TimeSpanToStringConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.TimeSpanToTicksConverter),
+        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.UriToStringConverter),
+        typeof(Storage.ValueConversion.StringToObjectIdConverter),
+        typeof(Storage.ValueConversion.ObjectIdToStringConverter),
+        typeof(Storage.ValueConversion.Decimal128ToDecimalConverter),
+        typeof(Storage.ValueConversion.DecimalToDecimal128Converter),
+    ];
+
+    private static bool IsStatelessConverterType(Type type)
+        => StatelessConverterTypes.Contains(type.IsGenericType ? type.GetGenericTypeDefinition() : type);
 
     /// <summary>
     /// Migrates the inner entity's projection onto the outer <see cref="MongoQueryExpression"/> and registers the
@@ -2601,6 +2877,19 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // Each cross-collection projection carries its OWNING navigation and a stable "_lookup_<Navigation>" alias; the
         // shaper derives the field it reads from that plus UsesDriverJoinFields (native => "_inner"; flat => the alias),
         // so the projection is never retroactively rewritten.
+        // An anonymous-type key (EF-436) never resolves a navigation (GetKeySelectorTargetObject of a `new` is null,
+        // so no anchor above) and is built here as a navigation-less raw-key $lookup over every member pair.
+        List<(IProperty Outer, IProperty Inner)>? anonymousKeyPairs = null;
+        JoinInfo? anonymousKeyThroughJoin = null;
+        if (navigation == null
+            && TryGetAnonymousJoinKeyMembers(outerKeySelector, innerKeySelector, out var outerMembers, out var innerNames)
+            && TryResolveAnonymousKeyJoinProperties(
+                outerQueryExpression, innerEntityType, outerKeySelector, outerMembers, innerNames, priorJoinCount,
+                out anonymousKeyThroughJoin, out var resolvedPairs))
+        {
+            anonymousKeyPairs = resolvedPairs;
+        }
+
         joinInfo.Navigation = navigation;
         joinInfo.Alias = UniquifyLookupAlias(
             navigation != null
@@ -2613,6 +2902,34 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         {
             joinInfo.Lookup = BuildNavigationJoinLookup(
                 navigation, joinInfo.Alias, joinInfo.IsLeftOuter, throughJoin, embeddedPath);
+        }
+        else if (anonymousKeyPairs != null)
+        {
+            // Same field paths as the single-key branch below (composite-PK components under `_id`, a through-hop's
+            // local fields under its alias). One pair keeps the localField/foreignField form.
+            var keyPairs = anonymousKeyPairs
+                .Select(p =>
+                {
+                    var outerFieldPath = LookupExpression.GetFieldPath(p.Outer);
+                    return new LookupKeyPair(
+                        anonymousKeyThroughJoin != null ? $"{anonymousKeyThroughJoin.Alias}.{outerFieldPath}" : outerFieldPath,
+                        LookupExpression.GetFieldPath(p.Inner),
+                        p.Outer.IsNullable || p.Inner.IsNullable);
+                })
+                .ToList();
+
+            joinInfo.Lookup = keyPairs.Count == 1
+                ? new Expressions.LookupExpression(
+                    innerEntityType, innerEntityType.GetCollectionName(), keyPairs[0].LocalField, keyPairs[0].ForeignField,
+                    joinInfo.Alias, forceUnwind: true)
+                {
+                    PreserveNullAndEmptyArrays = joinInfo.IsLeftOuter
+                }
+                : new Expressions.LookupExpression(
+                    innerEntityType, innerEntityType.GetCollectionName(), keyPairs, joinInfo.Alias, forceUnwind: true)
+                {
+                    PreserveNullAndEmptyArrays = joinInfo.IsLeftOuter
+                };
         }
         else if (fkPropertyName != null)
         {

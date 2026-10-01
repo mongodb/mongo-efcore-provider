@@ -182,6 +182,16 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
         Assert.Equal(reference, native);
     }
 
+    // Server-side date arithmetic over a Local-kind property (EF-459): NativeOnly declines, and Native / DriverLinq both
+    // fail loudly (the driver-LINQ fallback refuses it too) rather than return a UTC-evaluated, wrong answer.
+    private void AssertDeclinesLoudly(Func<IQueryable<Order>, IQueryable<Owner>, List<string>> query)
+    {
+        var seed = Seed();
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Execute(seed, MongoQueryMode.NativeOnly, query));
+        Assert.Contains("Local", Assert.Throws<InvalidOperationException>(() => Execute(seed, MongoQueryMode.Native, query)).Message);
+        Assert.Contains("Local", Assert.Throws<InvalidOperationException>(() => Execute(seed, MongoQueryMode.DriverLinq, query)).Message);
+    }
+
     // Declines under NativeOnly; Native falls back to the same answer as explicit DriverLinq.
     private void AssertDeclines(Func<IQueryable<Order>, IQueryable<Owner>, List<string>> query)
     {
@@ -513,21 +523,21 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
 
     [Fact]
     public void Computed_date_projection_over_a_local_kind_property_declines()
-        => AssertDeclines((q, _) => q.Select(o => new { D = o.LocalDate.AddDays(1) }).AsEnumerable().Select(x => F(x.D)).ToList());
+        => AssertDeclinesLoudly((q, _) => q.Select(o => new { D = o.LocalDate.AddDays(1) }).AsEnumerable().Select(x => F(x.D)).ToList());
 
     [Fact]
     public void Date_component_projection_over_a_local_kind_property_declines()
-        => AssertDeclines((q, _) => q.Select(o => new { D = o.LocalDate.Date }).AsEnumerable().Select(x => F(x.D)).ToList());
+        => AssertDeclinesLoudly((q, _) => q.Select(o => new { D = o.LocalDate.Date }).AsEnumerable().Select(x => F(x.D)).ToList());
 
     // The server computes TimeOfDay from the UTC instant, where C# reads the Local-kind value's local time of day
-    // (EF-459); unlike Year/Hour, this shape is new to the native path, so it declines rather than join that gap.
+    // (EF-459): native declines, and the driver-LINQ fallback refuses it like the other Local-kind date parts.
     [Fact]
     public void TimeOfDay_projection_over_a_local_kind_property_declines()
-        => AssertDeclines((q, _) => q.Select(o => new { T = o.LocalDate.TimeOfDay }).AsEnumerable().Select(x => x.T.Ticks.ToString()).ToList());
+        => AssertDeclinesLoudly((q, _) => q.Select(o => new { T = o.LocalDate.TimeOfDay }).AsEnumerable().Select(x => x.T.Ticks.ToString()).ToList());
 
     [Fact]
     public void Bare_TimeOfDay_projection_over_a_local_kind_property_declines()
-        => AssertDeclines((q, _) => q.Select(o => o.LocalDate.TimeOfDay).AsEnumerable().Select(t => t.Ticks.ToString()).ToList());
+        => AssertDeclinesLoudly((q, _) => q.Select(o => o.LocalDate.TimeOfDay).AsEnumerable().Select(t => t.Ticks.ToString()).ToList());
 
     [Fact]
     public void TimeOfDay_projection_over_a_utc_kind_property_stays_native()
@@ -540,19 +550,19 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
 
     [Fact]
     public void Computed_group_key_over_a_local_kind_property_declines()
-        => AssertDeclines((q, _) =>
+        => AssertDeclinesLoudly((q, _) =>
             q.GroupBy(o => o.LocalDate.AddDays(1)).Select(g => new { g.Key, C = g.Count() }).AsEnumerable()
                 .Select(x => F(x.Key) + "#" + x.C).ToList());
 
     [Fact]
     public void Computed_group_max_over_a_local_kind_property_declines()
-        => AssertDeclines((q, _) =>
+        => AssertDeclinesLoudly((q, _) =>
             q.GroupBy(o => o.Country).Select(g => new { g.Key, M = g.Max(x => x.LocalDate.AddDays(1)) }).AsEnumerable()
                 .Select(x => x.Key + F(x.M)).ToList());
 
     [Fact]
     public void Computed_terminal_max_over_a_local_kind_property_declines()
-        => AssertDeclines((q, _) => [F(q.Max(o => o.LocalDate.AddDays(1)))]);
+        => AssertDeclinesLoudly((q, _) => [F(q.Max(o => o.LocalDate.AddDays(1)))]);
 
     [Fact]
     public void Ternary_mixing_local_and_default_kind_properties_declines()
@@ -574,18 +584,33 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
         [
             ..q.Where(o => o.LocalDate > Threshold).Select(o => "a" + o.Country + F(o.LocalDate)),
             ..q.Where(o => o.NLocalDate > Threshold).Select(o => "b" + o.Country + F(o.LocalDate)),
-            ..q.Where(o => o.LocalDate.AddDays(1) > Threshold).Select(o => "c" + o.Country + F(o.LocalDate)),
         ]);
-        Assert.Equal(["aFR" + F(D3.ToLocalTime()), "aUK" + F(D2.ToLocalTime()), "bFR" + F(D3.ToLocalTime()),
-            "cFR" + F(D3.ToLocalTime()), "cUK" + F(D2.ToLocalTime())], reference);
+        Assert.Equal(["aFR" + F(D3.ToLocalTime()), "aUK" + F(D2.ToLocalTime()), "bFR" + F(D3.ToLocalTime())], reference);
 
         var native = NativeModeAssert.NativeAndParity(mode => Execute(seed, mode, (q, _) =>
         [
             ..q.Where(o => o.LocalDate > Threshold).AsEnumerable().Select(o => "a" + o.Country + F(o.LocalDate)),
             ..q.Where(o => o.NLocalDate > Threshold).AsEnumerable().Select(o => "b" + o.Country + F(o.LocalDate)),
-            ..q.Where(o => o.LocalDate.AddDays(1) > Threshold).AsEnumerable().Select(o => "c" + o.Country + F(o.LocalDate)),
         ]));
         Assert.Equal(reference, native);
+    }
+
+    // A calendar-unit add is time-zone dependent (a local day is not always 24 hours), so it is refused even in a filter;
+    // hour-and-smaller adds are exact elapsed time and stay native.
+    [Fact]
+    public void Calendar_add_in_a_filter_over_a_local_kind_property_declines_loudly()
+        => AssertDeclinesLoudly((q, _) =>
+            q.Where(o => o.LocalDate.AddDays(1) > Threshold).AsEnumerable().Select(o => o.Country).ToList());
+
+    [Fact]
+    public void Hour_add_in_a_filter_over_a_local_kind_property_stays_native()
+    {
+        var seed = Seed();
+        Func<IQueryable<Order>, IQueryable<Owner>, List<string>> query = (q, _) =>
+            q.Where(o => o.LocalDate.AddHours(1) > Threshold).AsEnumerable().Select(o => o.Country + F(o.LocalDate)).ToList();
+        var reference = Reference(seed, query);
+        Assert.NotEmpty(reference);
+        Assert.Equal(reference, NativeModeAssert.NativeAndParity(mode => Execute(seed, mode, query)));
     }
 
     [Fact]
@@ -608,4 +633,122 @@ public class NativeDateTimeKindReadbackTests(TemporaryDatabaseFixture database) 
             ..q.Select(o => new { D = o.Country == "UK" ? o.UtcDate : o.PlainDate }).AsEnumerable().Select(x => "c" + F(x.D)),
             "t" + F(q.Max(o => o.PlainDate)),
         ]);
+
+    // ---- server-side date parts over a Local-kind property (EF-459) ----
+    // The server extracts parts from the stored UTC instant, but the entity materializes as local time, so Hour/Date/
+    // Year... would disagree with the C# value. Every path must decline loudly rather than answer wrongly.
+
+    private static readonly (string Name, Func<IQueryable<Order>, List<string>> Local, Func<IQueryable<Order>, List<string>> Utc)[]
+        DatePartShapes =
+    [
+        ("Select_Hour", q => q.Select(o => o.LocalDate.Hour).AsEnumerable().Select(x => "" + x).ToList(),
+            q => q.Select(o => o.UtcDate.Hour).AsEnumerable().Select(x => "" + x).ToList()),
+        ("Where_Hour", q => q.Where(o => o.LocalDate.Hour == 5 || o.LocalDate.Hour == 11 || o.LocalDate.Hour == 12).Select(o => o.Country).AsEnumerable().ToList(),
+            q => q.Where(o => o.UtcDate.Hour == 10 || o.UtcDate.Hour == 8).Select(o => o.Country).AsEnumerable().ToList()),
+        ("Select_Date", q => q.Select(o => o.LocalDate.Date).AsEnumerable().Select(F).ToList(),
+            q => q.Select(o => o.UtcDate.Date).AsEnumerable().Select(F).ToList()),
+        ("Where_Date", q => q.Where(o => o.LocalDate.Date == Threshold.Date).Select(o => o.Country).AsEnumerable().ToList(),
+            q => q.Where(o => o.UtcDate.Date == D2.Date).Select(o => o.Country).AsEnumerable().ToList()),
+        ("Select_Year_Month_Day", q => q.Select(o => o.LocalDate.Year + "-" + o.LocalDate.Month + "-" + o.LocalDate.Day).AsEnumerable().ToList(),
+            q => q.Select(o => o.UtcDate.Year + "-" + o.UtcDate.Month + "-" + o.UtcDate.Day).AsEnumerable().ToList()),
+        ("Select_AddDays", q => q.Select(o => new { D = o.LocalDate.AddDays(1) }).AsEnumerable().Select(x => F(x.D)).ToList(),
+            q => q.Select(o => new { D = o.UtcDate.AddDays(1) }).AsEnumerable().Select(x => F(x.D)).ToList()),
+        ("OrderBy_Hour", q => q.OrderBy(o => o.LocalDate.Hour).Select(o => o.Country).AsEnumerable().ToList(),
+            q => q.OrderBy(o => o.UtcDate.Hour).Select(o => o.Country).AsEnumerable().ToList()),
+        ("Nullable_Hour", q => q.Where(o => o.NLocalDate != null).Select(o => o.NLocalDate!.Value.Hour).AsEnumerable().Select(x => "" + x).ToList(),
+            q => q.Select(o => o.UtcDate.Hour).AsEnumerable().Select(x => "" + x).ToList()),
+        ("Navigation_Hour", q => q.Select(o => o.Owner.LocalDate.Hour).AsEnumerable().Select(x => "" + x).ToList(),
+            q => q.Select(o => o.PlainDate.Hour).AsEnumerable().Select(x => "" + x).ToList()),
+        ("GroupKey_Hour", q => q.GroupBy(o => o.LocalDate).Select(g => new { H = g.Key.Hour, C = g.Count() }).AsEnumerable().Select(x => x.H + "#" + x.C).ToList(),
+            q => q.GroupBy(o => o.UtcDate).Select(g => new { H = g.Key.Hour, C = g.Count() }).AsEnumerable().Select(x => x.H + "#" + x.C).ToList()),
+        ("Anonymous_Where_Hour", q => q.Select(o => new { o.Country, D = o.LocalDate }).Where(x => x.D.Hour == 5 || x.D.Hour == 11 || x.D.Hour == 12 || x.D.Hour == 10 || x.D.Hour == 8).Select(x => x.Country + x.D.Hour).AsEnumerable().ToList(),
+            q => q.Select(o => new { o.Country, D = o.UtcDate }).Where(x => x.D.Hour == 5 || x.D.Hour == 11 || x.D.Hour == 12 || x.D.Hour == 10 || x.D.Hour == 8).Select(x => x.Country + x.D.Hour).AsEnumerable().ToList()),
+        ("Anonymous_Select_Hour", q => q.Select(o => new { D = o.LocalDate }).Select(x => x.D.Hour).AsEnumerable().Select(h => "" + h).ToList(),
+            q => q.Select(o => new { D = o.UtcDate }).Select(x => x.D.Hour).AsEnumerable().Select(h => "" + h).ToList()),
+        ("Join_Result_Selector_Hour", q => q.Join(q, a => a.Country, c => c.Country, (a, c) => new { a.Country, c.LocalDate }).Where(x => x.LocalDate.Hour != 99).Select(x => x.LocalDate.Hour).AsEnumerable().Select(h => "" + h).ToList(),
+            q => q.Join(q, a => a.Country, c => c.Country, (a, c) => new { a.Country, c.UtcDate }).Where(x => x.UtcDate.Hour != 99).Select(x => x.UtcDate.Hour).AsEnumerable().Select(h => "" + h).ToList()),
+        ("GroupKey_Composite_Hour", q => q.GroupBy(o => new { D = o.LocalDate, o.Country }).Select(g => new { H = g.Key.D.Hour, g.Key.Country }).AsEnumerable().Select(x => x.Country + x.H).ToList(),
+            q => q.GroupBy(o => new { D = o.UtcDate, o.Country }).Select(g => new { H = g.Key.D.Hour, g.Key.Country }).AsEnumerable().Select(x => x.Country + x.H).ToList()),
+        ("Owned_Hour", q => q.Select(o => o.Detail.LocalDate.Hour).AsEnumerable().Select(x => "" + x).ToList(),
+            q => q.Select(o => o.Detail.LocalDate.Hour).AsEnumerable().Select(x => "" + x).ToList()),
+    ];
+
+    public static IEnumerable<object[]> LocalShapeNames()
+        => DatePartShapes.Select(s => new object[] { s.Name });
+
+    public static IEnumerable<object[]> UtcShapeNames()
+        => DatePartShapes.Where(s => s.Name is not ("Owned_Hour" or "GroupKey_Hour" or "GroupKey_Composite_Hour")).Select(s => new object[] { s.Name });
+
+    private static Func<IQueryable<Order>, List<string>> LocalShape(string name)
+        => DatePartShapes.Single(s => s.Name == name).Local;
+
+    // Correct answer or a loud InvalidOperationException, never a wrong answer; and the chosen outcome is pinned to a throw.
+    [Theory]
+    [MemberData(nameof(LocalShapeNames))]
+    public void Date_part_over_a_local_kind_property_is_correct_or_loud_in_every_mode(string shape)
+    {
+        // AddDays in a projection already declines to driver-LINQ, which has its own (separate) behaviour.
+        var seed = Seed();
+        var query = LocalShape(shape);
+        var reference = Sorted(Reference(seed, (o, _) => query(o)));
+
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            try
+            {
+                Assert.Equal(reference, Execute(seed, mode, (o, _) => query(o)));
+            }
+            catch (InvalidOperationException)
+            {
+                // declining loudly is acceptable
+            }
+        }
+    }
+
+    // The outcome this fix chooses (D2): decline, not render. Native falls back to driver-LINQ, which throws.
+    [Theory]
+    [MemberData(nameof(LocalShapeNames))]
+    public void Date_part_over_a_local_kind_property_throws_in_every_mode(string shape)
+    {
+        var seed = Seed();
+        var query = LocalShape(shape);
+
+        var ex = Assert.Throws<InvalidOperationException>(() => Execute(seed, MongoQueryMode.Native, (o, _) => query(o)));
+        Assert.Contains("Local", ex.Message);
+        ex = Assert.Throws<InvalidOperationException>(() => Execute(seed, MongoQueryMode.DriverLinq, (o, _) => query(o)));
+        Assert.Contains("Local", ex.Message);
+        Assert.Throws<NativeTranslationNotSupportedException>(() => Execute(seed, MongoQueryMode.NativeOnly, (o, _) => query(o)));
+    }
+
+    // No over-declining: the same shapes over a Utc-kind property still go native and agree with driver-LINQ and entities.
+    [Theory]
+    [MemberData(nameof(UtcShapeNames))]
+    public void Date_part_over_a_utc_kind_property_still_works(string shape)
+    {
+        var seed = Seed();
+        var query = DatePartShapes.Single(s => s.Name == shape).Utc;
+        var reference = Reference(seed, (o, _) => query(o));
+        var native = NativeModeAssert.NativeAndParity(mode => Execute(seed, mode, (o, _) => query(o)));
+        Assert.Equal(reference, native);
+    }
+
+    // A grouped Hour projection is driver-LINQ only (never native); it must still work for a Utc-kind key.
+    [Fact]
+    public void Group_key_date_part_over_a_utc_kind_property_still_works()
+    {
+        var seed = Seed();
+        var query = DatePartShapes.Single(s => s.Name == "GroupKey_Hour").Utc;
+        var reference = Reference(seed, (o, _) => query(o));
+        Assert.Equal(reference, Execute(seed, MongoQueryMode.Native, (o, _) => query(o)));
+        Assert.Equal(reference, Execute(seed, MongoQueryMode.DriverLinq, (o, _) => query(o)));
+    }
+
+    [Fact]
+    public void Date_part_over_an_unconfigured_property_still_works()
+    {
+        var seed = Seed();
+        Func<IQueryable<Order>, List<string>> query = q => q.Where(o => o.PlainDate.Hour == 10).Select(o => o.PlainDate.Day + "/" + o.PlainDate.Hour).AsEnumerable().ToList();
+        var reference = Reference(seed, (o, _) => query(o));
+        Assert.Equal(reference, NativeModeAssert.NativeAndParity(mode => Execute(seed, mode, (o, _) => query(o))));
+    }
 }

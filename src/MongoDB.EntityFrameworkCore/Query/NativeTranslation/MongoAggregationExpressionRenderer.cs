@@ -239,10 +239,12 @@ internal static class MongoAggregationExpressionRenderer
             // execution); RenderLiteralRegexAsExpr throws for field-to-field, so CanRender must agree.
             MongoRegexExpression { Kind: MongoRegexKind.Exact } exact
                 => exact.Term is MongoConstantExpression { Value: string },
-            // Pattern (Regex.IsMatch(field, constantPattern)): the translator only builds it with a constant
-            // string term (no placeholder support for raw patterns), so CanRender mirrors that exactly.
+            // Pattern (Regex.IsMatch(field, pattern)): the term is a constant string, a string parameter or a string
+            // field (EF-247); $regexMatch accepts all three as "regex". Anything else must decline.
             MongoRegexExpression { Kind: MongoRegexKind.Pattern } pattern
-                => pattern.Term is MongoConstantExpression { Value: string },
+                => CanRender(pattern.Field)
+                   && (pattern.Term is MongoConstantExpression { Value: string } or MongoParameterExpression or MongoFieldExpression)
+                   && CanRender(pattern.Term),
             MongoRegexExpression regex => CanRender(regex.Field) && CanRender(regex.Term),
             MongoTupleExpression tuple => tuple.Elements.All(CanRender),
             // Constructed nested sub-document (mirrors Render's arm), e.g. a composite anonymous-type needle in

@@ -1574,12 +1574,17 @@ OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "
 
     public override async Task Where_guid_newguid(bool async)
     {
+#if EF8 || EF9
+        // EF-255: Guid.NewGuid has no per-row server-side equivalent; the provider throws instead of baking one value.
+        await Assert.ThrowsAsync<InvalidOperationException>(() => base.Where_guid_newguid(async));
+#else
         await base.Where_guid_newguid(async);
 
         AssertMql(
             """
             Customers.
             """);
+#endif
     }
 
     public override async Task Where_string_to_upper(bool async)

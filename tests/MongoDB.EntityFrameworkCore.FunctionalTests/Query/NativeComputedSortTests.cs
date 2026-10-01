@@ -597,21 +597,15 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         Assert.NotEqual(MainInsertionOrderLabels, labels);
     }
 
-    // ── 21. A FILTERED owned-collection Count goes native as a sort key ──────────────────────────
-    // A filtered count's element predicate escapes MongoExpressionTranslator.AllFieldsDefaultSerialized, so an
-    // operand with a non-default BsonRepresentation compares in its raw stored form. Don't decline for that:
-    // driver-LINQ serializes the constant through the same property serializer and returns the same order, so
-    // this is the accepted-divergence family (Native == DriverLinq, both differ from CLR), consistent with
-    // MongoFilteredSizeExpression in predicate and projection position:
-    //
-    //   native -> [cA, cB, cC]      explicit DriverLinq -> [cA, cB, cC]      in-memory -> [cB, cC, cA]
-    //
-    // Leg 1 is the routing pin (a decline would fail only there); legs 3 and 4 document why a decline is wrong.
+    // ── 21. A FILTERED owned-collection Count over a string-represented operand is refused ───────────
+    // The element predicate `p.Code > 5` would compare the raw stored strings ("10" < "5"), so both server paths
+    // used to return [cA, cB, cC] where C# answers [cB, cC, cA]. That was once accepted as a Native == DriverLinq
+    // divergence; EF-337 (StoredOrdering) refuses the relational comparison on every path instead.
     [Fact]
-    public void Filtered_owned_collection_count_sort_key_goes_native()
+    public void Filtered_owned_collection_count_sort_key_over_a_string_represented_operand_is_refused()
     {
         var collection = database.MongoDatabase.GetCollection<CodeOwner>(
-            UniqueCollectionName(nameof(Filtered_owned_collection_count_sort_key_goes_native)));
+            UniqueCollectionName(nameof(Filtered_owned_collection_count_sort_key_over_a_string_represented_operand_is_refused)));
 
         // Code is stored as a string; for `Code > 5`, "10" < "5" lexically while 10 > 5 numerically, so each
         // owner's count differs between the two semantics, with no ties under either:
@@ -654,40 +648,25 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
             .SelectMany(d => d["Posts"].AsBsonArray.Select(p => p["Code"])).ToList();
         Assert.All(storedCodes, c => Assert.Equal(BsonType.String, c.BsonType));
 
-        // Leg 1 — NativeOnly: the routing pin; a decline would throw here and leave every other leg green.
+        // Leg 1 — NativeOnly declines (no stored-form answer).
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, CodeOwnerModel))
         {
-            var nativeOnlyLabels = nativeOnly.Entities.AsNoTracking()
+            Assert.Throws<NativeTranslationNotSupportedException>(() => nativeOnly.Entities.AsNoTracking()
                 .OrderBy(x => x.Posts.Count(p => p.Code > 5))
-                .Select(x => x.Label).ToList();
-
-            Assert.Equal(["cA", "cB", "cC"], nativeOnlyLabels);
+                .Select(x => x.Label).ToList());
         }
 
-        // Leg 2 — default Native: the same server-side order.
-        List<string> nativeLabels;
-        using (var native = CreateContext(collection, MongoQueryMode.Native, CodeOwnerModel))
+        // Legs 2 and 3 — default Native falls back, and DriverLinq goes straight to the bridge, which refuses.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
         {
-            nativeLabels = native.Entities.AsNoTracking()
+            using var db = CreateContext(collection, mode, CodeOwnerModel);
+            var ex = Assert.Throws<NotSupportedException>(() => db.Entities.AsNoTracking()
                 .OrderBy(x => x.Posts.Count(p => p.Code > 5))
-                .Select(x => x.Label).ToList();
+                .Select(x => x.Label).ToList());
+            Assert.Contains("CodeItem.Code'", ex.Message);
         }
 
-        Assert.Equal(["cA", "cB", "cC"], nativeLabels);
-
-        // Leg 3 — explicit DriverLinq answers identically (same property serializer), so native is not reordering
-        // relative to the fallback.
-        using (var driverLinq = CreateContext(collection, MongoQueryMode.DriverLinq, CodeOwnerModel))
-        {
-            var driverLabels = driverLinq.Entities.AsNoTracking()
-                .OrderBy(x => x.Posts.Count(p => p.Code > 5))
-                .Select(x => x.Label).ToList();
-
-            Assert.Equal(nativeLabels, driverLabels);
-        }
-
-        // Leg 4 — both server-side paths differ from in-memory LINQ: the accepted divergence, which a
-        // sort-position decline wouldn't fix.
+        // Leg 4 — the C# answer, which the old stored-form order ([cA, cB, cC]) contradicted.
         using (var oracleDb = CreateContext(collection, MongoQueryMode.Native, CodeOwnerModel))
         {
             var inMemory = oracleDb.Entities.AsNoTracking().ToList()
@@ -695,7 +674,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
                 .Select(x => x.Label).ToList();
 
             Assert.Equal(["cB", "cC", "cA"], inMemory);
-            Assert.NotEqual(inMemory, nativeLabels);
         }
     }
 
@@ -766,9 +744,9 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
     // ── 25. Not over a value-converted bool must decline, never answer wrong ──────────────────────────
     // A raw-field { $not: [...] } is truthiness-based and both converted values ("Y"/"N") are truthy, so rendering
     // it natively would tie every row on a wrong constant. MongoExpressionTranslator.AllFieldsDefaultSerialized
-    // therefore declines a MongoUnaryExpression over a non-default-serialized field. Driver-LINQ itself renders
-    // the same raw { $not: "$Flag" } here, so Native == DriverLinq is the bar (accepted divergence, as in
-    // Filtered_owned_collection_count_sort_key_goes_native); NativeOnly must decline rather than succeed wrongly.
+    // therefore declines a MongoUnaryExpression over a non-default-serialized field. Driver-LINQ would render the same
+    // raw { $not: "$Flag" }, so the bridge refuses it too (EF-337: a converted bool used for its truth in a key).
+    // In-memory the answer is [p2, p3, p1, p4]; both server paths used to return label order.
 
     public class ConvertedFlagItem
     {
@@ -797,14 +775,6 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
         ]);
         var collection = database.MongoDatabase.GetCollection<ConvertedFlagItem>(name);
 
-        List<string> RunLabels(MongoQueryMode mode)
-        {
-            using var db = CreateContext(collection, mode, ConvertedFlagModel);
-            return db.Entities.AsNoTracking()
-                .OrderBy(x => !x.Flag).ThenBy(x => x.Label)
-                .ToList().Select(x => x.Label).ToList();
-        }
-
         // NativeOnly: a clean decline, never silently-wrong data.
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, ConvertedFlagModel))
         {
@@ -814,8 +784,21 @@ public class NativeComputedSortTests(TemporaryDatabaseFixture database) : IClass
                     .ToList());
         }
 
-        // Native declines and so agrees with the DriverLinq fallback.
-        Assert.Equal(RunLabels(MongoQueryMode.DriverLinq), RunLabels(MongoQueryMode.Native));
+        // Native declines to the bridge, which refuses; so does explicit DriverLinq.
+        foreach (var mode in new[] { MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = CreateContext(collection, mode, ConvertedFlagModel);
+            var ex = Assert.Throws<NotSupportedException>(() => db.Entities.AsNoTracking()
+                .OrderBy(x => !x.Flag).ThenBy(x => x.Label)
+                .ToList());
+            Assert.Contains("ConvertedFlagItem.Flag'", ex.Message);
+        }
+
+        // The C# answer the old stored-form order contradicted.
+        using var oracleDb = CreateContext(collection, MongoQueryMode.Native, ConvertedFlagModel);
+        Assert.Equal(
+            ["p2", "p3", "p1", "p4"],
+            oracleDb.Entities.AsNoTracking().ToList().OrderBy(x => !x.Flag).ThenBy(x => x.Label).Select(x => x.Label));
     }
 
     // ── Seeds and helpers ───────────────────────────────────────────────────────────────────────

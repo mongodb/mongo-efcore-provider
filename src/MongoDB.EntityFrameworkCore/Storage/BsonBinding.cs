@@ -21,6 +21,8 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Options;
+using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Serializers;
 
@@ -219,6 +221,21 @@ internal static class BsonBinding
 
     internal static MethodCallExpression CreateGetElementValue(Expression bsonDocExpression, string name, Type type) =>
         Expression.Call(null, GetElementValueMethodInfo.MakeGenericMethod(type), bsonDocExpression, Expression.Constant(name));
+
+    /// <summary>
+    /// A <c>float</c> (or <c>float?</c>) serializer that narrows a BSON double to a <c>float</c> with rounding instead
+    /// of throwing <see cref="TruncationException"/>, but still throws on overflow.
+    /// </summary>
+    /// <remarks>
+    /// For an aliased server-computed value (an <c>$avg</c> accumulator, arithmetic), which the server returns as a
+    /// double that is generally not exactly representable as a <c>float</c>. The BCL narrows the same way: LINQ to
+    /// objects accumulates a <c>float</c> <c>Average</c> in <c>double</c> and casts the result to <c>float</c>.
+    /// </remarks>
+    internal static IBsonSerializer CreateNarrowingFloatSerializer(Type type)
+    {
+        var single = new SingleSerializer(BsonType.Double, new RepresentationConverter(allowOverflow: false, allowTruncation: true));
+        return type == typeof(float) ? single : new NullableSerializer<float>(single);
+    }
 
     /// <summary>
     /// As <see cref="CreateGetElementValue(Expression, string, Type)"/>, but when <paramref name="dateTimeKindSource"/>

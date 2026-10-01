@@ -39,7 +39,7 @@ internal static class ProjectionAnalyzer
 
     /// <summary>
     /// True when a projected value (the shaper itself, or a member/argument of the constructed result) is a
-    /// <c>ToLower</c>/<c>ToUpper</c> call, which the driver would render as the ASCII-only <c>$toLower</c>/<c>$toUpper</c>.
+    /// <c>DateTimeOffset.ToString</c> call (client-evaluated, EF-217) or a <c>ToLower</c>/<c>ToUpper</c> call, which the driver would render as the ASCII-only <c>$toLower</c>/<c>$toUpper</c>.
     /// The client shaper applies the .NET call instead (see <c>MongoProjectionBindingExpressionVisitor</c>). A call
     /// consumed by further computation (<c>x.S.ToLower().Length</c>) isn't a projected value and is left to push-down.
     /// </summary>
@@ -54,6 +54,7 @@ internal static class ProjectionAnalyzer
             UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert
                 => HasCaseMappingProjectedValue(convert.Operand),
             _ => MongoProjectionBindingExpressionVisitor.IsClientCaseMapping(shaperExpression)
+                 || MongoProjectionBindingExpressionVisitor.IsDateTimeOffsetToString(shaperExpression)
         };
 
     private static bool ContainsUntranslatableProjection(Expression expression)

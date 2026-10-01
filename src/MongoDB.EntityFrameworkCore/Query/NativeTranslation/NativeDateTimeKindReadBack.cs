@@ -77,6 +77,41 @@ internal static class NativeDateTimeKindReadBack
            && property.GetDateTimeKind() is not (DateTimeKind.Unspecified or DateTimeKind.Utc);
 
     /// <summary>
+    /// Whether <paramref name="value"/> is (or is computed from) a kind-sensitive <c>DateTime</c> property, so a server-side
+    /// date part or calendar-unit add over it would be evaluated in UTC while the C# value is in local time.
+    /// </summary>
+    /// <remarks>
+    /// Context-free: it walks only the nodes that carry a <c>DateTime</c> through (fields, date arithmetic, truncation,
+    /// branches, casts). Every property test goes through <see cref="IsKindSensitive"/>, the one predicate shared with
+    /// the read-back checks above and with the driver-LINQ bridge. The pass-through node set (casts, <c>.Date</c>,
+    /// <c>AddXxx</c>, <c>??</c>, <c>?:</c>) mirrors the bridge's LINQ-tree walker
+    /// <c>MongoEFToLinqTranslatingExpressionVisitor.FindLocalKindProperty</c>; change the two together.
+    /// </remarks>
+    internal static bool ReferencesKindSensitiveProperty(MongoExpression value)
+        => value switch
+        {
+            MongoFieldExpression field => IsKindSensitive(field.Property),
+            MongoOuterFieldExpression outerField => IsKindSensitive(outerField.Property),
+            MongoDateAddExpression dateAdd => ReferencesKindSensitiveProperty(dateAdd.StartDate),
+            MongoDatePartExpression { Part: MongoDatePart.Date } datePart => ReferencesKindSensitiveProperty(datePart.Operand),
+            MongoConvertExpression convert => ReferencesKindSensitiveProperty(convert.Operand),
+            MongoConditionalExpression conditional
+                => ReferencesKindSensitiveProperty(conditional.IfTrue) || ReferencesKindSensitiveProperty(conditional.IfFalse),
+            MongoCoalesceExpression coalesce
+                => ReferencesKindSensitiveProperty(coalesce.Left) || ReferencesKindSensitiveProperty(coalesce.Right),
+            MongoElementRefExpression { ValueProperty: { } valueProperty } => IsKindSensitive(valueProperty),
+            _ => false
+        };
+
+    /// <summary>
+    /// Whether adding <paramref name="unit"/>s is calendar arithmetic whose result depends on the time zone (a day is
+    /// 23 or 25 hours across a DST change, a month ends at a local midnight). Hour and smaller units are exact elapsed
+    /// time and agree between UTC and local.
+    /// </summary>
+    internal static bool IsCalendarUnit(MongoDateAddUnit unit)
+        => unit is MongoDateAddUnit.Year or MongoDateAddUnit.Month or MongoDateAddUnit.Day;
+
+    /// <summary>
     /// The kind-sensitive property whose stored value the <paramref name="select"/>'s projection output
     /// <paramref name="alias"/> holds unchanged, or <see langword="null"/> when there is none (the generic read is then
     /// already correct, or the query was declined by <see cref="HasUnreproducibleReadBack"/>).

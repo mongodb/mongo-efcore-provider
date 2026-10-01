@@ -104,6 +104,21 @@ internal sealed class LookupExpression
     }
 
     /// <summary>
+    /// Creates a <see cref="LookupExpression"/> for a navigation-less Join hop whose key is an anonymous type of two or
+    /// more properties (<c>new { a.X, a.Y } equals new { b.X, b.Y }</c>). Rendered as <c>let</c> + <c>pipeline</c>
+    /// matching every pair (see <see cref="ToLookupStageDocument"/>); <see cref="LocalField"/>/<see cref="ForeignField"/>
+    /// report the first pair.
+    /// </summary>
+    public LookupExpression(
+        IEntityType targetEntityType, string collectionName, IReadOnlyList<LookupKeyPair> compositeKey, string alias,
+        bool forceUnwind)
+        : this(targetEntityType, collectionName, compositeKey[0].LocalField, compositeKey[0].ForeignField, alias, forceUnwind)
+    {
+        System.Diagnostics.Debug.Assert(compositeKey.Count > 1, "A single-pair key uses the localField/foreignField form.");
+        CompositeKey = compositeKey;
+    }
+
+    /// <summary>
     /// The <c>_lookup_&lt;NavigationName&gt;</c> field a <c>$lookup</c> writes to and the shaper reads back from;
     /// centralized so write and read sites can't drift.
     /// </summary>
@@ -125,11 +140,41 @@ internal sealed class LookupExpression
     /// <summary>The target collection name to look up from.</summary>
     public string From { get; }
 
-    /// <summary>The field on the local document to match.</summary>
-    public string LocalField { get; set; }
+    /// <summary>The field on the local document to match (the first pair's, for a <see cref="CompositeKey"/>).</summary>
+    /// <remarks>
+    /// Re-prefixing (a transitive hop, the driver-LeftJoin <c>_outer</c>/<c>_inner</c> shape) throws for a
+    /// <see cref="CompositeKey"/> lookup: only the first pair would move, silently joining the rest on the wrong
+    /// fields. Its local paths are built fully prefixed instead. Every re-prefix site
+    /// (<c>MongoProjectionBindingExpressionVisitor</c>'s collection-Include path,
+    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.BuildNavigationJoinLookup</c> and
+    /// <c>NativeSelectManyBinder.TryBindNestedReferenceNavUnwind</c>) re-prefixes a lookup it has just built from an
+    /// <see cref="INavigation"/>, never a composite-key one, so the throw is unreachable today and guards future callers.
+    /// </remarks>
+    public string LocalField
+    {
+        get => _localField;
+        set
+        {
+            if (CompositeKey != null)
+            {
+                throw new System.InvalidOperationException(
+                    "The local field of a composite-key $lookup can't be re-targeted after construction.");
+            }
+
+            _localField = value;
+        }
+    }
+
+    private string _localField = null!;
 
     /// <summary>The field on the foreign document to match.</summary>
     public string ForeignField { get; }
+
+    /// <summary>
+    /// Every key pair of a navigation-less join on an anonymous key of two or more properties, or
+    /// <see langword="null"/> for a single-field lookup.
+    /// </summary>
+    public IReadOnlyList<LookupKeyPair>? CompositeKey { get; }
 
     /// <summary>The output array field name in the resulting document.</summary>
     public string As { get; set; }
@@ -281,6 +326,11 @@ internal sealed class LookupExpression
     /// </remarks>
     public BsonDocument ToLookupStageDocument()
     {
+        if (CompositeKey != null)
+        {
+            return CompositeKeyLookupStageDocument(CompositeKey);
+        }
+
         if (!HasPipeline)
         {
             return new BsonDocument("$lookup", new BsonDocument
@@ -312,6 +362,52 @@ internal sealed class LookupExpression
         });
     }
 
+    /// <summary>
+    /// The <c>let</c> + <c>pipeline</c> form for a <see cref="CompositeKey"/>: one variable per local field and a leading
+    /// <c>$match</c> of <c>$expr: { $and: [ { $eq: [ "$&lt;foreign&gt;", "$$k&lt;i&gt;" ] }, ... ] }</c>, then any
+    /// <see cref="PipelineStages"/>.
+    /// </summary>
+    /// <remarks>
+    /// Anonymous-type key equality is member-wise <c>EqualityComparer&lt;T&gt;.Default</c>, so a null part equals a
+    /// null part (EF Core relational compensates for nulls to match). The aggregation <c>$eq</c> answers false for
+    /// null vs missing, so a part that may be null is read through <c>$ifNull: [..., null]</c> on both sides, making
+    /// null and missing one value as they are once materialized. A single-pair key keeps the
+    /// <c>localField</c>/<c>foreignField</c> form, which already matches null to null or missing.
+    /// </remarks>
+    private BsonDocument CompositeKeyLookupStageDocument(IReadOnlyList<LookupKeyPair> keys)
+    {
+        var let = new BsonDocument();
+        var equalities = new BsonArray();
+        for (var i = 0; i < keys.Count; i++)
+        {
+            var key = keys[i];
+            var variable = $"k{i}";
+            let.Add(variable, NullNormalized($"${key.LocalField}", key.MayBeNull));
+            equalities.Add(new BsonDocument("$eq",
+                new BsonArray { NullNormalized($"${key.ForeignField}", key.MayBeNull), $"$${variable}" }));
+        }
+
+        var pipeline = new BsonArray
+        {
+            new BsonDocument("$match", new BsonDocument("$expr", new BsonDocument("$and", equalities)))
+        };
+        foreach (var stage in PipelineStages)
+        {
+            pipeline.Add(stage);
+        }
+
+        return new BsonDocument("$lookup", new BsonDocument
+        {
+            { "from", From },
+            { "let", let },
+            { "pipeline", pipeline },
+            { "as", As }
+        });
+
+        static BsonValue NullNormalized(string path, bool mayBeNull)
+            => mayBeNull ? new BsonDocument("$ifNull", new BsonArray { path, BsonNull.Value }) : path;
+    }
+
     /// <summary>Builds the <c>$unwind</c> stage document that flattens this lookup's output array.</summary>
     /// <remarks>
     /// <paramref name="preserveNullAndEmptyArrays"/> is a parameter, not read from
@@ -333,3 +429,9 @@ internal sealed class LookupExpression
             { "preserveNullAndEmptyArrays", preserveNullAndEmptyArrays }
         });
 }
+
+/// <summary>
+/// One local/foreign field pair of a <see cref="LookupExpression.CompositeKey"/>. <see cref="MayBeNull"/> when either
+/// side's property is nullable, so the pair is compared null-normalized.
+/// </summary>
+internal readonly record struct LookupKeyPair(string LocalField, string ForeignField, bool MayBeNull);

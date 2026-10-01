@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
@@ -107,17 +108,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
             return node;
         }
 
-        var source = node.Arguments[0];
-        while (source is MethodCallExpression { Method.Name: var name } sourceCall
-               && sourceCall.Method.DeclaringType == typeof(Queryable)
-               && GroupingPreservingQueryableMethods.Contains(name))
-        {
-            source = sourceCall.Arguments[0];
-        }
-
-        if (source is not MethodCallExpression { Method.Name: nameof(Queryable.GroupBy), Arguments.Count: 2 } groupBy
-            || groupBy.Method.DeclaringType != typeof(Queryable)
-            || UnwrapLambda(groupBy.Arguments[1]) is not { Parameters.Count: 1 } keySelector)
+        if (!TryFindGroupByKeySelector(node, out var keySelector))
         {
             return node;
         }
@@ -143,6 +134,93 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
         }
 
         return changed ? node.Update(node.Object, arguments) : node;
+    }
+
+    // The key selector of the GroupBy(source, key) that `node`'s grouping lambdas range over.
+    private static bool TryFindGroupByKeySelector(MethodCallExpression node, [NotNullWhen(true)] out LambdaExpression? keySelector)
+    {
+        keySelector = null;
+        if (node.Method.DeclaringType != typeof(Queryable) || node.Arguments.Count < 2)
+        {
+            return false;
+        }
+
+        var source = node.Arguments[0];
+        while (source is MethodCallExpression { Method.Name: var name } sourceCall
+               && sourceCall.Method.DeclaringType == typeof(Queryable)
+               && GroupingPreservingQueryableMethods.Contains(name))
+        {
+            source = sourceCall.Arguments[0];
+        }
+
+        if (source is not MethodCallExpression { Method.Name: nameof(Queryable.GroupBy), Arguments.Count: 2 } groupBy
+            || groupBy.Method.DeclaringType != typeof(Queryable)
+            || UnwrapLambda(groupBy.Arguments[1]) is not { Parameters.Count: 1 } selector)
+        {
+            return false;
+        }
+
+        keySelector = selector;
+        return true;
+    }
+
+    // g.Key.Hour / g.Key.Date.AddDays(..) in a grouping lambda, where the GroupBy key is a Local-kind DateTime property:
+    // the group key is a Local-kind value too, so the date operation is refused like it is on the property itself.
+    private void ThrowIfLocalKindGroupKeyDateOperation(MethodCallExpression node)
+    {
+        if (!TryFindGroupByKeySelector(node, out var keySelector))
+        {
+            return;
+        }
+
+        for (var i = 1; i < node.Arguments.Count; i++)
+        {
+            if (UnwrapLambda(node.Arguments[i]) is { Parameters.Count: >= 1 } lambda
+                && IsGroupingOf(lambda.Parameters[0].Type, keySelector.ReturnType, keySelector.Parameters[0].Type))
+            {
+                new GroupKeyDateOperationVisitor(
+                    lambda.Parameters[0],
+                    keySelector.Body,
+                    (receiver, operation) => ThrowIfLocalKindDateTime(receiver, operation)).Visit(lambda.Body);
+            }
+        }
+    }
+
+    private sealed class GroupKeyDateOperationVisitor(
+        ParameterExpression grouping, Expression keyBody, Action<Expression, string> check)
+        : System.Linq.Expressions.ExpressionVisitor
+    {
+        protected override Expression VisitMember(MemberExpression node)
+        {
+            if (node.Expression is { } receiver && node.Member.DeclaringType == typeof(DateTime) && node.Member.Name != nameof(DateTime.Kind))
+            {
+                CheckResolved(receiver, node.Member.Name);
+            }
+
+            return base.VisitMember(node);
+        }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (node.Object is { } receiver
+                && node.Method.DeclaringType == typeof(DateTime)
+                && node.Method.Name is nameof(DateTime.AddYears) or nameof(DateTime.AddMonths) or nameof(DateTime.AddDays))
+            {
+                CheckResolved(receiver, node.Method.Name);
+            }
+
+            return base.VisitMethodCall(node);
+        }
+
+        // Writes the receiver's g.Key references in terms of the key selector's body, then asks whether that is Local-kind.
+        private void CheckResolved(Expression receiver, string operation)
+        {
+            var resolved = new KeySubstitutor(grouping, keyBody).Visit(receiver);
+            if (resolved != receiver)
+            {
+                check(resolved, operation);
+            }
+        }
     }
 
     private static LambdaExpression? UnwrapLambda(Expression expression)

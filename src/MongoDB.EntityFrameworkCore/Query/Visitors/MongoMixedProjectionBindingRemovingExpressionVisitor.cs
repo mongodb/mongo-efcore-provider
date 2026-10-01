@@ -444,6 +444,8 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     {
         result = null!;
 
+        // Stricter than TryBindArithmeticLeaf's guard, which admits a driver Join's whole { _outer, _inner } documents:
+        // here any retained Select declines, leaving a Join's arithmetic leaf to TryBindArithmeticLeaf after this arm.
         if (_pushedDownSelectRetained
             || mappedExpression is null || !MongoProjectionBindingExpressionVisitor.IsClientComputedLeaf(mappedExpression))
         {
@@ -677,6 +679,17 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     private bool TryBindArithmeticLeaf(Expression? mappedExpression, Type resultType, out Expression result)
     {
         result = null!;
+
+        // Over a retained pushed-down Select the driver returns projected documents ({ R, V }), which don't hold the
+        // operands' source elements: every operand would read as missing (null, or "" for a concatenation) and the
+        // leaf answer a silently wrong value (EF-460). Decline, so the caller fails the query loudly. The projected
+        // value can't be read by name instead: $concat answers null where C# treats a null operand as empty.
+        // The flag is also set for a driver Join, whose result isn't an entity document either but whose documents are
+        // whole ({ _outer, _inner }), so those keep the client-side re-evaluation.
+        if (_pushedDownSelectRetained && _queryExpression.Select.JoinScope is null && !_queryExpression.UsesDriverJoinFields)
+        {
+            return false;
+        }
 
         if (mappedExpression is not BinaryExpression { NodeType: ExpressionType.Add or ExpressionType.Subtract
                 or ExpressionType.Multiply or ExpressionType.Divide or ExpressionType.Modulo } binaryExpression)

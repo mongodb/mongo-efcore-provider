@@ -89,7 +89,9 @@ internal sealed class MongoQueryLanguageRenderer
             Kind: not MongoRegexKind.IsMatch,
             Field: MongoFieldExpression or MongoElementRefExpression,
             Term: MongoConstantExpression { Value: string } or MongoParameterExpression
-        };
+        }
+        // A Pattern with a parameter/field pattern (EF-247) needs $regexMatch: $regularExpression requires a literal.
+        && (regex.Kind != MongoRegexKind.Pattern || regex.Term is MongoConstantExpression);
 
     // Query-native classification: bare field on the left, constant/parameter on the right. Field-to-field
     // and arithmetic operands have no query-dialect form and go to $expr.

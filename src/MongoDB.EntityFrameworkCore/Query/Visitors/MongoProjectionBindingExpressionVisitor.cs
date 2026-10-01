@@ -334,6 +334,14 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             case MethodCallExpression caseMappingCall when NativeProjectionBinder.IsCaseMappingCall(caseMappingCall):
                 return NullPropagatingStringCall(caseMappingCall, NullPropagatingReceiver(Visit(caseMappingCall.Object)!));
 
+            // DateTimeOffset.ToString(...): the driver would render the stored {DateTime, Ticks, Offset} sub-document as
+            // BSON JSON, and no server-side form matches .NET's culture-sensitive output. Bind the receiver and re-apply
+            // the call client-side (EF-217); ProjectionAnalyzer.HasCaseMappingProjectedValue keeps it off push-down.
+            case MethodCallExpression dateTimeOffsetToString when IsDateTimeOffsetToString(dateTimeOffsetToString):
+                return Expression.Call(
+                    VisitThroughConversions(dateTimeOffsetToString.Object!), dateTimeOffsetToString.Method,
+                    dateTimeOffsetToString.Arguments.Select(a => Visit(a)!));
+
             // A computed string/math/predicate leaf (`x.S.Substring(1, 2)`, `x.S.Contains("a")`, `!x.S.Contains("a")`,
             // `x.S == null`) that the native $project computes whole. Bind it as usual (receiver to the alias, the
             // call re-applied client-side), so the mixed shaper and driver-LINQ push-down analysis keep working in
@@ -481,6 +489,56 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     internal static bool IsClientCaseMapping(Expression expression)
         => expression is BlockExpression { Result: ConditionalExpression { IfFalse: MethodCallExpression call } }
            && NativeProjectionBinder.IsCaseMappingCall(call);
+
+    /// <summary>
+    /// True for <c>ToString(...)</c> on a <see cref="DateTimeOffset"/> (or nullable), including through a boxing
+    /// conversion (<c>((object)x.Dto).ToString()</c>), which is evaluated client-side (see <see cref="Visit"/>) and
+    /// which the EF-to-driver bridge refuses to push down.
+    /// </summary>
+    internal static bool IsDateTimeOffsetToString(Expression expression)
+        => expression is MethodCallExpression { Method.Name: nameof(ToString), Object: { } receiver }
+           && IsDateTimeOffsetValue(receiver);
+
+    /// <summary>
+    /// True for a string concatenation (<c>+</c> or <c>string.Concat</c>, whose object overloads box each operand)
+    /// with a <see cref="DateTimeOffset"/> operand. Both the native translator and the driver render the operand
+    /// as <c>$toString</c> over the stored {DateTime, Ticks, Offset} sub-document, which yields BSON JSON (EF-217):
+    /// the native translator declines it (<c>MongoExpressionTranslator.TranslateConcatOperand</c>) and the
+    /// EF-to-driver bridge throws.
+    /// </summary>
+    internal static bool IsDateTimeOffsetConcatenation(Expression expression)
+        => expression switch
+        {
+            BinaryExpression { NodeType: ExpressionType.Add } add when add.Type == typeof(string)
+                => IsDateTimeOffsetValue(add.Left) || IsDateTimeOffsetValue(add.Right),
+            MethodCallExpression { Method: { IsStatic: true, Name: nameof(string.Concat) } method } call
+                when method.DeclaringType == typeof(string)
+                => call.Arguments.Any(
+                    a => IsDateTimeOffsetValue(a) || a is NewArrayExpression array && array.Expressions.Any(IsDateTimeOffsetValue)),
+            _ => false
+        };
+
+    /// <summary>
+    /// True when <paramref name="expression"/>, ignoring conversions (the boxing <c>Convert(x, object)</c> of
+    /// <c>string + object</c> or an explicit cast), is a <see cref="DateTimeOffset"/> or nullable one.
+    /// </summary>
+    internal static bool IsDateTimeOffsetValue(Expression expression)
+    {
+        while (expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
+        {
+            expression = convert.Operand;
+        }
+
+        return (Nullable.GetUnderlyingType(expression.Type) ?? expression.Type) == typeof(DateTimeOffset);
+    }
+
+    // Binds the innermost operand of a conversion chain and re-applies the conversions, so a boxed DateTimeOffset
+    // receiver binds as a typed DateTimeOffset read rather than an object-typed leaf (which reads the stored
+    // sub-document as a BsonDocument).
+    private Expression VisitThroughConversions(Expression expression)
+        => expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert
+            ? convert.Update(VisitThroughConversions(convert.Operand))
+            : Visit(expression)!;
 
     // Null propagation down a client-side chain of string instance calls (`x.S.Trim()` under `.ToUpper()`), as over
     // the server-computed value. A native computed leaf keeps its raw read; only its client form (which the mixed

@@ -261,6 +261,11 @@ internal sealed partial class MongoExpressionTranslator
         if (!DatePartsByMemberName.TryGetValue(member.Member.Name, out var plainPart))
             return false;
 
+        // The server extracts the part from the stored UTC instant, but a Local-kind property materializes as local
+        // time, so Hour/Date/Year... would silently disagree with the C# value (EF-459). Decline; driver-LINQ throws.
+        if (NativeDateTimeKindReadBack.ReferencesKindSensitiveProperty(receiverExpr))
+            return false;
+
         result = new MongoDatePartExpression(receiverExpr, plainPart);
         return true;
     }
@@ -355,6 +360,12 @@ internal sealed partial class MongoExpressionTranslator
         if (startDate is null)
             return false;
 
+        // Calendar arithmetic (day/month/year) over a Local-kind property differs from UTC arithmetic across a DST
+        // change (EF-459); hour and smaller units are exact in both and stay native.
+        if (NativeDateTimeKindReadBack.IsCalendarUnit(unit)
+            && NativeDateTimeKindReadBack.ReferencesKindSensitiveProperty(startDate))
+            return false;
+
         var amount = TranslateOperand(call.Arguments[0], allowNumericWidening: true);
         if (amount is null)
             return false;
@@ -366,13 +377,16 @@ internal sealed partial class MongoExpressionTranslator
     /// <summary>
     /// Evaluates a closed subtree (no lambda parameter, EF query parameter, or other extension node) to a
     /// <see cref="MongoConstantExpression"/>. Covers literals EF's parameter extraction leaves un-folded because a
-    /// sibling operand references the query source. Declines for anything that can't be compiled in isolation.
+    /// sibling operand references the query source. Declines for anything that can't be compiled in isolation, and for
+    /// a non-deterministic call (<see cref="NonDeterministicCalls"/>): EF leaves <c>Guid.NewGuid()</c> in the tree, so
+    /// such a subtree does reach here, and evaluating it once would bake one value into every row
+    /// (NonDeterministicFunctionTests.Guid_NewGuid_in_closed_date_add_receiver_throws).
     /// </summary>
     private static bool TryEvaluateClosedSubtree(Expression node, out MongoExpression? result)
     {
         result = null;
 
-        if (ContainsParameterOrExtensionNode(node))
+        if (ContainsParameterOrExtensionNode(node) || ContainsNonDeterministicCall(node))
             return false;
 
         object? value;
@@ -393,6 +407,29 @@ internal sealed partial class MongoExpressionTranslator
 
         result = new MongoConstantExpression(value, forSerialization: null);
         return true;
+    }
+
+    private static bool ContainsNonDeterministicCall(Expression node)
+    {
+        var finder = new NonDeterministicCallFinder();
+        finder.Visit(node);
+        return finder.Found;
+    }
+
+    private sealed class NonDeterministicCallFinder : ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (NonDeterministicCalls.IsNonDeterministic(node))
+            {
+                Found = true;
+                return node;
+            }
+
+            return base.VisitMethodCall(node);
+        }
     }
 
     private static bool ContainsParameterOrExtensionNode(Expression node)
@@ -1296,6 +1333,11 @@ internal sealed partial class MongoExpressionTranslator
         if (TryResolveMember(leftUnwrapped, out var leftProperty, out var leftPath, out var leftIsOuter)
             && IsSimpleValue(rightUnwrapped))
         {
+            // A relational operator runs on the stored form; decline unless it orders like the CLR value (EF-337).
+            // Equality is exact whatever the storage.
+            if (!ComparisonPreservesClrOrdering(nodeType, leftProperty!))
+                return null;
+
             // A widening or identity-like cast on the member side is absorbed; any other cast falls through to the
             // $expr path as an explicit $toX (see HasNumericConvert), gated by CanFallThroughToExpr, with a type
             // bracket for a relational comparison.
@@ -1339,6 +1381,9 @@ internal sealed partial class MongoExpressionTranslator
         else if (TryResolveMember(rightUnwrapped, out var rightProperty, out var rightPath, out var rightIsOuter)
                  && IsSimpleValue(leftUnwrapped))
         {
+            if (!ComparisonPreservesClrOrdering(nodeType, rightProperty!))
+                return null;
+
             if (HasNumericConvert(right, rightProperty!.ClrType, out var rightWideningTarget, out var rightIdentityLike))
             {
                 if (!CanFallThroughToExpr(rightProperty))
@@ -1486,6 +1531,11 @@ internal sealed partial class MongoExpressionTranslator
     /// </remarks>
     private static bool NeedsNumericTypeBracket(ExpressionType comparisonNodeType)
         => IsRelationalComparison(comparisonNodeType);
+
+    // Query-native member-vs-value arm of TranslateComparisonCore; see StoredOrdering. The field-to-field/$expr arm is
+    // stricter (AllFieldsDefaultSerialized).
+    private static bool ComparisonPreservesClrOrdering(ExpressionType nodeType, IProperty property)
+        => !IsRelationalComparison(nodeType) || StoredOrdering.PreservesClrOrdering(property);
 
     // The four type-bracketed operators. Equality is absent: $eq/$ne partition every value, including null/missing.
     private static bool IsRelationalComparison(ExpressionType nodeType)
@@ -1890,6 +1940,11 @@ internal sealed partial class MongoExpressionTranslator
     /// </remarks>
     private MongoExpression? TranslateConcatOperand(Expression operand, bool allowNumericWidening)
     {
+        // $toString over a stored DateTimeOffset renders its {DateTime, Ticks, Offset} sub-document as BSON JSON
+        // (EF-217). Shared with the driver-LINQ bridge, which throws for the same operand.
+        if (Visitors.MongoProjectionBindingExpressionVisitor.IsDateTimeOffsetValue(operand))
+            return null;
+
         if (operand is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked, Type: var boxedType } boxing
             && boxedType == typeof(object))
             operand = boxing.Operand;

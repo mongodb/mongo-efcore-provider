@@ -163,6 +163,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             expressionToTranslate = RewriteLeftJoins(efQueryExpression, convertExplicitJoins: false);
         }
 
+        SetStoredOrderingQueryRoots(efQueryExpression, expressionToTranslate);
         var query = Visit(expressionToTranslate)!;
         AssertAllEarlyLookupInjectionsFired();
         return AppendLookupStages(query);
@@ -207,6 +208,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             expressionToTranslate = StripOuterSelectForJoin(efQueryExpression) ?? efQueryExpression;
         }
 
+        SetStoredOrderingQueryRoots(efQueryExpression, expressionToTranslate);
         var query = (MethodCallExpression)Visit(expressionToTranslate)!;
         AssertAllEarlyLookupInjectionsFired();
 
@@ -691,8 +693,116 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 { MongoVectorSearchScoreStage.ScoreField, new BsonDocument("$meta", "vectorSearchScore") }
             });
 
+    protected override Expression VisitMember(MemberExpression node)
+    {
+        // A server-side date part (Hour, Date, Year, ...) of a Local-kind DateTime property is extracted from the stored
+        // UTC instant, but the entity materializes as local time, so the value would silently disagree (EF-459).
+        if (node.Expression is { } receiver
+            && node.Member.DeclaringType == typeof(DateTime)
+            && node.Member.Name != nameof(DateTime.Kind))
+        {
+            ThrowIfLocalKindDateTime(receiver, node.Member.Name);
+        }
+
+        return base.VisitMember(node);
+    }
+
+    // Throws when `expression` is, or is computed from, a DateTime property configured HasDateTimeKind(Local). The
+    // property test is NativeTranslation.NativeDateTimeKindReadBack.IsKindSensitive, shared with the native translator's decline.
+    private void ThrowIfLocalKindDateTime(Expression expression, string operation)
+    {
+        if (FindLocalKindProperty(expression) is { } property)
+        {
+            throw new InvalidOperationException(
+                $"'{operation}' over the Local-kind DateTime property '{property.DeclaringType.DisplayName()}.{property.Name}' "
+                + "cannot be translated to a MongoDB query: the server evaluates it in UTC, so the result would differ from "
+                + "the local time the property materializes as. Server-side date arithmetic on a property configured with "
+                + "HasDateTimeKind(DateTimeKind.Local) is not supported; use a Utc-kind property or evaluate the date part "
+                + "on the client, for example after AsEnumerable().");
+        }
+    }
+
+    // The pass-through node set (casts, .Date, AddXxx, ??, ?:) mirrors the native translator's walker over the
+    // MongoExpression tree, NativeTranslation.NativeDateTimeKindReadBack.ReferencesKindSensitiveProperty; change the two
+    // together.
+    private IProperty? FindLocalKindProperty(Expression? expression)
+    {
+        switch (expression)
+        {
+            case UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked or ExpressionType.TypeAs } convert:
+                return FindLocalKindProperty(convert.Operand);
+
+            // Nullable<DateTime>.Value / GetValueOrDefault, and DateTime.Date: the same instant, still local.
+            case MemberExpression { Expression: { } inner, Member.Name: "Value" or nameof(DateTime.Date) }
+                when Nullable.GetUnderlyingType(inner.Type) == typeof(DateTime) || inner.Type == typeof(DateTime):
+                return FindLocalKindProperty(inner);
+
+            // Hour-and-smaller adds keep the property's kind (exact elapsed time).
+            case MethodCallExpression { Object: { } target } call
+                when call.Method.DeclaringType == typeof(DateTime) && call.Method.Name.StartsWith("Add", StringComparison.Ordinal):
+                return FindLocalKindProperty(target);
+
+            case BinaryExpression { NodeType: ExpressionType.Coalesce } coalesce:
+                return FindLocalKindProperty(coalesce.Left) ?? FindLocalKindProperty(coalesce.Right);
+
+            case ConditionalExpression conditional:
+                return FindLocalKindProperty(conditional.IfTrue) ?? FindLocalKindProperty(conditional.IfFalse);
+
+            case MethodCallExpression { Method: var method, Arguments: [{ } source, ConstantExpression { Value: string name }, ..] }
+                when method.IsEFPropertyMethod():
+                return FindLocalKindProperty(source.Type, name);
+
+            case MemberExpression { Expression: { } owner, Member: PropertyInfo propertyInfo }:
+                return FindLocalKindProperty(owner.Type, propertyInfo.Name);
+
+            default:
+                return null;
+        }
+    }
+
+    private IProperty? FindLocalKindProperty(Type entityClrType, string propertyName)
+    {
+        foreach (var entityType in _queryContext.Context.Model.FindEntityTypes(entityClrType))
+        {
+            if (entityType.FindProperty(propertyName) is { } property && NativeTranslation.NativeDateTimeKindReadBack.IsKindSensitive(property))
+                return property;
+        }
+
+        return null;
+    }
+
     protected override Expression VisitMethodCall(MethodCallExpression node)
     {
+        // The driver's partial evaluator folds a call with no query-source operands (Random.Next, Guid.NewGuid) into a
+        // single constant, giving every row the same value. Refuse rather than return silently wrong rows.
+        NonDeterministicCalls.ThrowIfNonDeterministic(node);
+
+        // A sort key or aggregate over a property whose stored form orders differently (EF-337); see the StoredOrdering
+        // partial.
+        ThrowIfOrderingOrAggregateOverStoredOrdering(node);
+
+        // Calendar arithmetic (day/month/year) over a Local-kind DateTime property is evaluated by the server in UTC.
+        if (node is { Object: { } addReceiver }
+            && node.Method.DeclaringType == typeof(DateTime)
+            && node.Method.Name is nameof(DateTime.AddYears) or nameof(DateTime.AddMonths) or nameof(DateTime.AddDays))
+        {
+            ThrowIfLocalKindDateTime(addReceiver, node.Method.Name);
+        }
+
+        // The driver renders a DateTimeOffset as its stored {DateTime, Ticks, Offset} sub-document, so ToString would
+        // silently yield BSON JSON (EF-217). A top-level projected call is evaluated client-side before reaching
+        // here (MongoProjectionBindingExpressionVisitor); anything else cannot be translated, so fail loudly.
+        if (MongoProjectionBindingExpressionVisitor.IsDateTimeOffsetToString(node))
+        {
+            throw new InvalidOperationException(
+                "DateTimeOffset.ToString() cannot be translated to a MongoDB query: the server has no equivalent of the .NET "
+                + "formatting. Project the DateTimeOffset and call ToString() on the client, for example after AsEnumerable().");
+        }
+
+        ThrowIfDateTimeOffsetConcatenation(node);
+
+        ThrowIfLocalKindGroupKeyDateOperation(node);
+
         // The driver renders g.Key inside a $group accumulator as the input document's _id; see the GroupingKey partial.
         node = RewriteGroupingKeyReferencesInElementLambdas(node);
 
@@ -1110,6 +1220,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
     protected override Expression VisitBinary(BinaryExpression node)
     {
+        ThrowIfRelationalComparisonOverStoredOrdering(node);
+        ThrowIfDateTimeOffsetConcatenation(node);
+
         if (node.NodeType is ExpressionType.Equal or ExpressionType.NotEqual)
         {
             var rewrite = TryRewriteEntityEquality(node.Left, node.Right, node.NodeType);
@@ -1118,6 +1231,20 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         }
 
         return base.VisitBinary(node);
+    }
+
+    // `"a" + x.Dto`, `string.Concat(x.Dto, ...)`: the driver renders the operand as $toString over the stored
+    // {DateTime, Ticks, Offset} sub-document, silently yielding BSON JSON (EF-217). A top-level projected call is not
+    // client-evaluated (unlike DateTimeOffset.ToString()), so fail loudly in every position.
+    private static void ThrowIfDateTimeOffsetConcatenation(Expression node)
+    {
+        if (MongoProjectionBindingExpressionVisitor.IsDateTimeOffsetConcatenation(node))
+        {
+            throw new InvalidOperationException(
+                "Concatenating a DateTimeOffset into a string cannot be translated to a MongoDB query: the server has no "
+                + "equivalent of the .NET formatting. Project the DateTimeOffset and build the string on the client, for "
+                + "example after AsEnumerable().");
+        }
     }
 
     /// <summary>

@@ -841,7 +841,7 @@ public class MongoAggregationExpressionRendererTests
     }
 
     [Fact]
-    public void CanRender_reports_false_for_a_field_to_field_pattern_term()
+    public void CanRender_reports_true_for_a_field_pattern_term()
     {
         var status = GetProperty<Customer>("Status");
         var nickname = GetProperty<Customer>("Nickname");
@@ -849,7 +849,62 @@ public class MongoAggregationExpressionRendererTests
             new MongoFieldExpression(status, "Status"), MongoRegexKind.Pattern,
             new MongoFieldExpression(nickname, "Nickname"), negated: false);
 
+        Assert.True(MongoAggregationExpressionRenderer.CanRender(node));
+    }
+
+    [Fact]
+    public void CanRender_reports_true_for_a_parameter_pattern_term()
+    {
+        var status = GetProperty<Customer>("Status");
+        var node = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.Pattern,
+            new MongoParameterExpression("p", forSerialization: null), negated: false);
+
+        Assert.True(MongoAggregationExpressionRenderer.CanRender(node));
+    }
+
+    [Fact]
+    public void CanRender_reports_false_for_a_pattern_term_that_is_neither_constant_parameter_nor_field()
+    {
+        var status = GetProperty<Customer>("Status");
+        var node = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.Pattern,
+            new MongoConstantExpression(5, forSerialization: null), negated: false);
+
         Assert.False(MongoAggregationExpressionRenderer.CanRender(node));
+    }
+
+    [Fact]
+    public void Renders_field_pattern_term_via_regexMatch_with_the_field_as_regex()
+    {
+        var status = GetProperty<Customer>("Status");
+        var nickname = GetProperty<Customer>("Nickname");
+        var expr = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.Pattern,
+            new MongoFieldExpression(nickname, "Nickname"), negated: false, patternOptions: "i");
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable());
+
+        Assert.Equal(
+            """{ "$regexMatch" : { "input" : "$Status", "regex" : "$Nickname", "options" : "i" } }""",
+            result.ToJson());
+    }
+
+    [Fact]
+    public void Renders_parameter_pattern_term_as_a_literal_regex()
+    {
+        var status = GetProperty<Customer>("Status");
+        var expr = new MongoRegexExpression(
+            new MongoFieldExpression(status, "Status"), MongoRegexKind.Pattern,
+            new MongoParameterExpression("p", forSerialization: null), negated: false);
+        var placeholders = new PlaceholderTable();
+
+        var result = MongoAggregationExpressionRenderer.Render(expr, placeholders);
+
+        var regexMatch = result["$regexMatch"].AsBsonDocument;
+        Assert.Equal("$Status", regexMatch["input"].AsString);
+        Assert.True(regexMatch["regex"].AsBsonDocument.Contains("$literal"));
+        Assert.Equal("", regexMatch["options"].AsString);
     }
 
     [Fact]

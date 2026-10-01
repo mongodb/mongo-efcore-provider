@@ -28,8 +28,9 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <remarks>
 /// <para>
 /// Forward shape: <c>field</c> resolves via <see cref="TryResolveMember"/> to a plain <see langword="string"/>
-/// field (not outer-scoped, not computed); <c>pattern</c> must be a compile-time constant — a parameterized
-/// pattern declines (no placeholder support for raw patterns). Options map via
+/// field (not outer-scoped, not computed); <c>pattern</c> is a compile-time constant, a query parameter, or a plain
+/// <see langword="string"/> field (not outer-scoped, not computed); the latter two render via <c>$expr</c>/<c>$regexMatch</c>
+/// only. Anything else declines. Options must be constant and map via
 /// <see cref="MapRegexOptions"/>; an unsupported flag (<see cref="RegexOptions.RightToLeft"/>,
 /// <see cref="RegexOptions.ECMAScript"/>, <see cref="RegexOptions.NonBacktracking"/>) declines. The pattern is a
 /// live .NET pattern passed to PCRE unchanged — dialect differences are the caller's.
@@ -107,8 +108,31 @@ internal sealed partial class MongoExpressionTranslator
             return false;
         }
 
-        if (Unwrap(call.Arguments[1]) is not ConstantExpression { Value: string pattern })
-            return false; // parameterized pattern declines — no placeholder support for raw patterns in this shape
+        // The pattern is a constant, a query parameter, or a plain string field (EF-247). Only a constant can use the
+        // query dialect ($regularExpression needs a literal); a parameter or field term routes to $expr/$regexMatch
+        // (see MongoRegexKind.Pattern). A parameter is never a regex placeholder here: the raw pattern is rendered as
+        // a string literal, since the placeholder machinery builds patterns from StartsWith/Contains/... terms.
+        var patternArg = Unwrap(call.Arguments[1]);
+        MongoExpression patternNode;
+        if (patternArg is ConstantExpression { Value: string pattern })
+        {
+            patternNode = new MongoConstantExpression(pattern, forSerialization: null);
+        }
+        else if (NativeQueryParameter.TryGetQueryParameterName(patternArg, out var patternParameterName)
+                 && patternArg.Type == typeof(string))
+        {
+            patternNode = new MongoParameterExpression(patternParameterName, forSerialization: null);
+        }
+        else if (TryResolveMember(patternArg, out var patternProperty, out var patternFieldPath, out var patternIsOuter)
+                 && !patternIsOuter
+                 && patternProperty.ClrType == typeof(string))
+        {
+            patternNode = new MongoFieldExpression(patternProperty, patternFieldPath);
+        }
+        else
+        {
+            return false;
+        }
 
         var patternOptions = "";
         if (call.Arguments.Count == 3)
@@ -123,7 +147,6 @@ internal sealed partial class MongoExpressionTranslator
         }
 
         var fieldNode = new MongoFieldExpression(property, fieldPath);
-        var patternNode = new MongoConstantExpression(pattern, forSerialization: null);
         result = new MongoRegexExpression(
             fieldNode, MongoRegexKind.Pattern, patternNode, negated: false, patternOptions: patternOptions);
         return true;
