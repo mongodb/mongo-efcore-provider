@@ -67,7 +67,7 @@ Scope, joins, grouping:
   (`JoinInfo.Lookup != null`); a navigation resolved to the wrong target is rebuilt by it, a non-simple key
   declines (`JoinLookupImplementsKeySelectors`). Composite-PK components live at `_id.<Name>`
   (`LookupExpression.GetFieldPath`). "Simple" includes an anonymous key of scalar properties (same anonymous type
-  both sides, one hop, same storage per pair: `IsStoredEqualityFaithfulKeyPair`), rendered as `let` + `$and`.
+  both sides, one hop, `StoredSerialization.StoredAlike` per pair), rendered as `let` + `$and`.
 - **Paging vs. joins.** EF hoists `Skip`/`Take`/`Where`/`OrderBy` ahead of a join's result selector; recorded ops
   are deferred until after the join unless the join is in the left-outer-reference-navigation "safe to page
   before `$lookup`" set (reducers there decline). Paging ahead of a row-multiplying join stays ahead; paging both
@@ -89,7 +89,11 @@ Scope, joins, grouping:
   key parts, declines unless `CanRebindConstantLeafToDocument` rebinds it (bare, ungrouped, int/long/double/bool/
   string). source1 may be a single-level confirmed join scope (`IsPreCombineJoinScope`); source2 has no lookups.
   Projected operands must store each alias the same way (`OperandSerializationsMatch`: same property, both default,
-  or equivalent converters).
+  or `StoredSerialization.StoredAlike`).
+- **One "stored alike" rule** (`StoredSerialization.StoredAlike`) for two properties whose stored values are compared
+  or read through one serializer: equal `BsonRepresentation`, equal provider type, converters absent, the same
+  instance, or the same type with structurally equal to/from-provider expressions (captured closures compare by
+  reference, so capturing lambdas decline). Don't add a per-caller variant.
 - **A composite `$group` `_id` omits a missing sub-key**; `MongoPipelineFactory.RenderCompositeKeyPart`
   `$ifNull`-normalizes every possibly-null part once. Key-only accumulator conditions use `NullSafeKeyRead`.
 

@@ -2689,43 +2689,21 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// lists) compare by reference in C#, so none of them is reproducible.
     /// </para>
     /// <para>
-    /// Both sides must be stored alike: the same <see cref="MongoPropertyExtensions.GetBsonRepresentation"/>, the
-    /// same provider CLR type, and either no value converter or equivalent ones. An enum stored as a string on one side
-    /// and as an int on the other never matches in the database. Converters count as equivalent only when they're the
-    /// same instance, or the same type from <see cref="StatelessConverterTypes"/> (generic arguments included). Every
-    /// other converter declines, since two instances of one type can encode differently: lambda-based
-    /// <c>ValueConverter</c>/<c>ValueConverter&lt;,&gt;</c>, <c>BoolToStringConverter("Y", "N")</c> vs
-    /// <c>("T", "F")</c>, user subclasses. This is stricter than the single-key path, which isn't gated.
+    /// Both sides must be stored alike (<see cref="StoredSerialization.StoredAlike"/>, shared with the projected set
+    /// op): the same <c>BsonRepresentation</c>, the same provider CLR type, and either no value converter or
+    /// equivalent ones (the same instance, or the same type with structurally equal conversion expressions). An enum
+    /// stored as a string on one side and as an int on the other never matches in the database; nor do
+    /// <c>BoolToStringConverter("N", "Y")</c> and <c>("F", "T")</c>, whose constants differ in their expressions. This
+    /// is stricter than the single-key path, which isn't gated.
     /// </para>
     /// </remarks>
     private static bool IsStoredEqualityFaithfulKeyPair(IProperty outerProperty, IProperty innerProperty)
     {
-        if (!IsScalarKeyType(outerProperty.ClrType)
-            || !IsScalarKeyType(innerProperty.ClrType)
-            || outerProperty.IsPrimitiveCollection
-            || innerProperty.IsPrimitiveCollection)
-        {
-            return false;
-        }
-
-        if (outerProperty.GetBsonRepresentation() != innerProperty.GetBsonRepresentation()
-            || outerProperty.GetProviderClrType() != innerProperty.GetProviderClrType())
-        {
-            return false;
-        }
-
-        // The effective converter: the type mapping's, which also covers one derived from the provider type alone
-        // (HasConversion<string>(), HasConversion<ObjectId>()) that GetValueConverter() doesn't report. Such a
-        // converter is one shared instance per (CLR type, provider type), so it passes by identity.
-        var outerConverter = outerProperty.FindTypeMapping()?.Converter ?? outerProperty.GetValueConverter();
-        var innerConverter = innerProperty.FindTypeMapping()?.Converter ?? innerProperty.GetValueConverter();
-        return (outerConverter, innerConverter) switch
-        {
-            (null, null) => true,
-            ({ } o, { } i) when ReferenceEquals(o, i) => true,
-            ({ } o, { } i) => o.GetType() == i.GetType() && IsStatelessConverterType(o.GetType()),
-            _ => false
-        };
+        return IsScalarKeyType(outerProperty.ClrType)
+               && IsScalarKeyType(innerProperty.ClrType)
+               && !outerProperty.IsPrimitiveCollection
+               && !innerProperty.IsPrimitiveCollection
+               && StoredSerialization.StoredAlike(outerProperty, innerProperty);
 
         static bool IsScalarKeyType(Type type)
         {
@@ -2733,63 +2711,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return underlying.IsValueType || underlying == typeof(string);
         }
     }
-
-    /// <summary>
-    /// Converter types (generic definitions for generic ones) whose encoding is fixed by the type alone: their only
-    /// constructor argument is <c>ConverterMappingHints</c>, which doesn't change the stored value. Checked against
-    /// each constructor; excluded because constructor arguments choose the encoding: <c>BoolToStringConverter</c>,
-    /// <c>BoolToTwoValuesConverter&lt;&gt;</c>, <c>StringToBytesConverter</c> (<c>Encoding</c>),
-    /// <c>CollectionToJsonStringConverter&lt;&gt;</c>, and the lambda-based <c>ValueConverter</c> /
-    /// <c>ValueConverter&lt;,&gt;</c>. Includes the provider's own <c>ObjectId</c>/<c>Decimal128</c> converters, which
-    /// <c>MongoValueConverterSelector</c> creates per property.
-    /// </summary>
-    private static readonly HashSet<Type> StatelessConverterTypes =
-    [
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.BoolToZeroOneConverter<>),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.BytesToStringConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.CastingConverter<,>),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.CharToStringConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.DateOnlyToStringConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.DateTimeOffsetToBinaryConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.DateTimeOffsetToBytesConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.DateTimeOffsetToStringConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.DateTimeToBinaryConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.DateTimeToStringConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.DateTimeToTicksConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.EnumToNumberConverter<,>),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.EnumToStringConverter<>),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.GuidToBytesConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.GuidToStringConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.IPAddressToBytesConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.IPAddressToStringConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.NumberToBytesConverter<>),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.NumberToStringConverter<>),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.PhysicalAddressToBytesConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.PhysicalAddressToStringConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToBoolConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToCharConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToDateOnlyConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToDateTimeConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToDateTimeOffsetConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToEnumConverter<>),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToGuidConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToNumberConverter<>),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToTimeOnlyConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToTimeSpanConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.StringToUriConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.TimeOnlyToStringConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.TimeOnlyToTicksConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.TimeSpanToStringConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.TimeSpanToTicksConverter),
-        typeof(Microsoft.EntityFrameworkCore.Storage.ValueConversion.UriToStringConverter),
-        typeof(Storage.ValueConversion.StringToObjectIdConverter),
-        typeof(Storage.ValueConversion.ObjectIdToStringConverter),
-        typeof(Storage.ValueConversion.Decimal128ToDecimalConverter),
-        typeof(Storage.ValueConversion.DecimalToDecimal128Converter),
-    ];
-
-    private static bool IsStatelessConverterType(Type type)
-        => StatelessConverterTypes.Contains(type.IsGenericType ? type.GetGenericTypeDefinition() : type);
 
     /// <summary>
     /// Migrates the inner entity's projection onto the outer <see cref="MongoQueryExpression"/> and registers the
@@ -3828,10 +3749,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     }
 
     // Both sides default-serialized (a computed value, null here, has no property and so no converter); or the same
-    // property; or two properties with no BsonRepresentation whose type-mapping converters (the ones
-    // BsonSerializerFactory wraps) are the same converter type with the same provider type and structurally equal
-    // conversion expressions, e.g. two HasConversion<string>() enums. Anything else (a converter against none, two
-    // different converters, a BsonRepresentation) declines; EF value converters have no equality of their own.
+    // property; or two properties stored identically (StoredSerialization.StoredAlike, shared with the anonymous-key
+    // join: equal BsonRepresentation, equal provider type, equivalent converters), e.g. two HasConversion<string>()
+    // enums or two [BsonRepresentation(String)] enums. Anything else (a converter or representation against none, two
+    // different converters or representations) declines.
     private static bool StoredSerializationsMatch(MongoFieldExpression? field1, MongoFieldExpression? field2)
     {
         var default1 = field1 == null || NativeGroupByBinder.HasDefaultKeySerialization(field1.Property);
@@ -3846,21 +3767,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             return false;
         }
 
-        if (field1.Property == field2.Property)
-        {
-            return true;
-        }
-
-        return field1.Property.GetBsonRepresentation() == null
-               && field2.Property.GetBsonRepresentation() == null
-               && field1.Property.GetTypeMapping().Converter is { } converter1
-               && field2.Property.GetTypeMapping().Converter is { } converter2
-               && converter1.GetType() == converter2.GetType()
-               && converter1.ProviderClrType == converter2.ProviderClrType
-               && ExpressionEqualityComparer.Instance.Equals(
-                   converter1.ConvertToProviderExpression, converter2.ConvertToProviderExpression)
-               && ExpressionEqualityComparer.Instance.Equals(
-                   converter1.ConvertFromProviderExpression, converter2.ConvertFromProviderExpression);
+        return field1.Property == field2.Property
+               || StoredSerialization.StoredAlike(field1.Property, field2.Property);
     }
 
     // The entity field whose stored value a projected operand's alias carries: the projected field itself, or, for a

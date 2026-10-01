@@ -20,6 +20,7 @@ using System.Threading;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
@@ -123,6 +124,9 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     // Code: lambda converter to string ("7") on ConvP, a different lambda converter (x10, "70") on ConvQ. Flag:
     // BoolToStringConverter("N", "Y") on ConvP, ("F", "T") on ConvQ. Same converter types, different encodings.
+    // Code3: the same non-capturing lambda converter (+100, "107") written out on both sides. Code4: a lambda converter
+    // capturing a prefix ("c7") on both sides, through one helper: the same encoding, but each side's closure is its
+    // own object.
     private class ConvP
     {
         public int Id { get; set; }
@@ -130,6 +134,8 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
         public int Code { get; set; }
         public bool Flag { get; set; }
         public int Code2 { get; set; }
+        public int Code3 { get; set; }
+        public int Code4 { get; set; }
     }
 
     private class ConvQ
@@ -139,6 +145,8 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
         public int Code { get; set; }
         public bool Flag { get; set; }
         public int Code2 { get; set; }
+        public int Code3 { get; set; }
+        public int Code4 { get; set; }
     }
 
     // Configured by converter type (HasConversion<TConverter>()): two different encodings with the same provider type.
@@ -223,13 +231,13 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     private static readonly BsonDocument[] ConvPDocuments =
     [
-        new() { { "_id", 1 }, { "Zone", 1 }, { "Code", "7" }, { "Flag", "Y" }, { "Code2", "7" } },
+        new() { { "_id", 1 }, { "Zone", 1 }, { "Code", "7" }, { "Flag", "Y" }, { "Code2", "7" }, { "Code3", "107" }, { "Code4", "c7" } },
     ];
 
     private static readonly BsonDocument[] ConvQDocuments =
     [
-        new() { { "_id", 10 }, { "Zone", 1 }, { "Code", "70" }, { "Flag", "T" }, { "Code2", "70" } },
-        new() { { "_id", 11 }, { "Zone", 1 }, { "Code", "80" }, { "Flag", "F" }, { "Code2", "80" } },
+        new() { { "_id", 10 }, { "Zone", 1 }, { "Code", "70" }, { "Flag", "T" }, { "Code2", "70" }, { "Code3", "107" }, { "Code4", "c7" } },
+        new() { { "_id", 11 }, { "Zone", 1 }, { "Code", "80" }, { "Flag", "F" }, { "Code2", "80" }, { "Code3", "108" }, { "Code4", "c8" } },
     ];
 
     private static readonly ObjectId OidA = ObjectId.Parse("65f000000000000000000001");
@@ -403,6 +411,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
     [InlineData("DifferentLambdaConverters")]
     [InlineData("DifferentBoolToStringConverters")]
     [InlineData("DifferentConverterTypes")]
+    [InlineData("CapturingLambdaConverters")]
     public void Non_simple_anonymous_keys_decline_loudly(string shape)
     {
         var (shipments, rates, slots) = Materialize();
@@ -451,6 +460,9 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
             "DifferentBoolToStringConverters" => db.ConvPs
                 .Join(db.ConvQs, p => new { p.Zone, p.Flag }, q => new { q.Zone, q.Flag }, (p, q) => new { p.Id, Q = q.Id })
                 .AsEnumerable().Select(x => $"{x.Id}:{x.Q}"),
+            "CapturingLambdaConverters" => db.ConvPs
+                .Join(db.ConvQs, p => new { p.Zone, p.Code4 }, q => new { q.Zone, q.Code4 }, (p, q) => new { p.Id, Q = q.Id })
+                .AsEnumerable().Select(x => $"{x.Id}:{x.Q}"),
             _ => db.ConvPs
                 .Join(db.ConvQs, p => new { p.Zone, p.Code2 }, q => new { q.Zone, q.Code2 }, (p, q) => new { p.Id, Q = q.Id })
                 .AsEnumerable().Select(x => $"{x.Id}:{x.Q}"),
@@ -487,6 +499,10 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
                 .Join(convQs, p => new { p.Zone, p.Code }, q => new { q.Zone, q.Code }, (p, q) => $"{p.Id}:{q.Id}"),
             "DifferentBoolToStringConverters" => convPs
                 .Join(convQs, p => new { p.Zone, p.Flag }, q => new { q.Zone, q.Flag }, (p, q) => $"{p.Id}:{q.Id}"),
+            // Code4 7 is stored "c7" on both sides, but the converters' expressions each capture their own closure
+            // object, so they aren't structurally equal and the pair declines (conservatively).
+            "CapturingLambdaConverters" => convPs
+                .Join(convQs, p => new { p.Zone, p.Code4 }, q => new { q.Zone, q.Code4 }, (p, q) => $"{p.Id}:{q.Id}"),
             _ => convPs
                 .Join(convQs, p => new { p.Zone, p.Code2 }, q => new { q.Zone, q.Code2 }, (p, q) => $"{p.Id}:{q.Id}"),
         }).OrderBy(x => x).ToList();
@@ -497,7 +513,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
                 Assert.Empty(expected);
                 break;
             case "OneSideConverted" or "RepresentationMismatch" or "DifferentLambdaConverters" or "DifferentBoolToStringConverters"
-                or "DifferentConverterTypes":
+                or "DifferentConverterTypes" or "CapturingLambdaConverters":
                 Assert.Equal(["1:10"], expected);
                 break;
         }
@@ -530,6 +546,33 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
             .OrderBy(x => x).ToList();
 
         Assert.Equal(["1:20"], expected);
+        Assert.Equal(expected, actual);
+        spy.AssertExecutedMqlContains("\"$and\"");
+    }
+
+    // Code3 carries the same lambda converter (v => (v + 100).ToString()) written separately on each entity type: two
+    // converter instances whose to/from-provider expressions are structurally equal, so the pair stays native.
+    [Theory]
+    [MemberData(nameof(AllModes))]
+    public void Identical_lambda_converters_on_both_sides_stay_native_and_match_oracle(MongoQueryMode mode)
+    {
+        List<ConvP> convPs;
+        List<ConvQ> convQs;
+        using (var seed = CreateContext(MongoQueryMode.DriverLinq, out _))
+        {
+            convPs = seed.ConvPs.ToList();
+            convQs = seed.ConvQs.ToList();
+        }
+
+        using var db = CreateContext(mode, out var spy);
+        var actual = db.ConvPs
+            .Join(db.ConvQs, p => new { p.Zone, p.Code3 }, q => new { q.Zone, q.Code3 }, (p, q) => new { p.Id, Q = q.Id })
+            .AsEnumerable().Select(x => $"{x.Id}:{x.Q}").OrderBy(x => x).ToList();
+        var expected = convPs
+            .Join(convQs, p => new { p.Zone, p.Code3 }, q => new { q.Zone, q.Code3 }, (p, q) => $"{p.Id}:{q.Id}")
+            .OrderBy(x => x).ToList();
+
+        Assert.Equal(["1:10"], expected);
         Assert.Equal(expected, actual);
         spy.AssertExecutedMqlContains("\"$and\"");
     }
@@ -677,6 +720,8 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
                 b.Property(p => p.Code).HasConversion(v => v.ToString(), v => int.Parse(v));
                 b.Property(p => p.Flag).HasConversion(new BoolToStringConverter("N", "Y"));
                 b.Property(p => p.Code2).HasConversion<TimesOneToStringConverter>();
+                b.Property(p => p.Code3).HasConversion(v => (v + 100).ToString(), v => int.Parse(v) - 100);
+                HasPrefixedConversion(b.Property(p => p.Code4), "c");
             });
             modelBuilder.Entity<ConvQ>(b =>
             {
@@ -684,12 +729,14 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
                 b.Property(q => q.Code).HasConversion(v => (v * 10).ToString(), v => int.Parse(v) / 10);
                 b.Property(q => q.Flag).HasConversion(new BoolToStringConverter("F", "T"));
                 b.Property(q => q.Code2).HasConversion<TimesTenToStringConverter>();
+                b.Property(q => q.Code3).HasConversion(v => (v + 100).ToString(), v => int.Parse(v) - 100);
+                HasPrefixedConversion(b.Property(q => q.Code4), "c");
             });
             modelBuilder.Entity<OidP>(b =>
             {
                 b.ToCollection("OidPs" + suffix);
                 b.Property(p => p.Ref).HasConversion<ObjectId>();
-                // An explicit instance per side, so equivalence rests on the stateless allow-list, not instance identity.
+                // An explicit instance per side, so equivalence rests on structural converter equality, not instance identity.
                 b.Property(p => p.Ref2).HasConversion(new MongoDB.EntityFrameworkCore.Storage.ValueConversion.StringToObjectIdConverter());
             });
             modelBuilder.Entity<OidQ>(b =>
@@ -699,6 +746,10 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
                 b.Property(q => q.Ref2).HasConversion(new MongoDB.EntityFrameworkCore.Storage.ValueConversion.StringToObjectIdConverter());
             });
         }
+
+        // Each call captures `prefix` in a new closure object.
+        private static void HasPrefixedConversion(PropertyBuilder<int> property, string prefix)
+            => property.HasConversion(v => prefix + v, v => int.Parse(v.Substring(prefix.Length)));
     }
 
     private sealed class IgnoreCacheKeyFactory : IModelCacheKeyFactory
