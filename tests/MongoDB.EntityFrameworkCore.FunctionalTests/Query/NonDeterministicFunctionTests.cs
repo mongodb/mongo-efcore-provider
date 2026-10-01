@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using MongoDB.Bson;
@@ -242,6 +243,99 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
             if (onCompilation is not null)
                 b.LogTo(_ => onCompilation(), [CoreEventId.QueryCompilationStarting]);
         });
+
+    // F12: a closed Where over a local collection that is the argument of Contains is folded into a plain collection
+    // (LocalCollectionFilterFoldingVisitor). A predicate reading the clock must be evaluated per EXECUTION, not once
+    // while compiling and baked into the cached plan. Captured array first (EF parameterizes it).
+    private static List<int> FoldedCaptured(SingleEntityDbContext<Row> db, DateTime[] candidates)
+        => db.Entities.Where(r => candidates.Where(d => d < DateTime.UtcNow).Contains(r.Created))
+            .OrderBy(r => r.Foo).Select(r => r.Foo).ToList();
+
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
+    public async Task Folded_local_collection_filter_reading_the_clock_is_evaluated_per_execution(MongoQueryMode mode)
+    {
+        static DateTime Ms(DateTime d) => new(d.Ticks - d.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc);
+
+        var now = Ms(DateTime.UtcNow);
+        var past = now.AddSeconds(-5);
+        var soon = now.AddSeconds(2);
+        var collection = database.CreateCollection<Row>($"fc_{mode}");
+        collection.InsertMany(
+        [
+            new Row { Id = ObjectId.GenerateNewId(), Foo = 1, Created = past },
+            new Row { Id = ObjectId.GenerateNewId(), Foo = 2, Created = soon },
+        ]);
+
+        var compilations = 0;
+        using var db = CreateClockContext(collection, mode, () => compilations++);
+        DateTime[] candidates = [past, soon];
+
+        Assert.Equal([1], FoldedCaptured(db, candidates));
+        await Task.Delay(3500);
+        Assert.Equal([1, 2], FoldedCaptured(db, candidates)); // a baked first filter keeps answering [1]
+        Assert.Equal(1, compilations);
+    }
+
+    // The same fold with a CONSTANT source: EF leaves an inline array of literals a ConstantExpression (no query
+    // parameter), which is what expression-built queries (and `new[] { literal, ... }`) produce. The array is
+    // wrapped in Expression.Constant here so its elements can be relative to "now".
+    private static IQueryable<Row> FoldedConstantSourceQuery(SingleEntityDbContext<Row> db, DateTime[] candidates)
+    {
+        var row = Expression.Parameter(typeof(Row), "r");
+        var d = Expression.Parameter(typeof(DateTime), "d");
+        var predicate = Expression.Lambda<Func<DateTime, bool>>(
+            Expression.LessThan(d, Expression.Property(null, typeof(DateTime), nameof(DateTime.UtcNow))), d);
+        var where = Expression.Call(
+            typeof(Enumerable), nameof(Enumerable.Where), [typeof(DateTime)], Expression.Constant(candidates), predicate);
+        var contains = Expression.Call(
+            typeof(Enumerable), nameof(Enumerable.Contains), [typeof(DateTime)], where,
+            Expression.Property(row, nameof(Row.Created)));
+        return db.Entities.Where(Expression.Lambda<Func<Row, bool>>(contains, row));
+    }
+
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
+    public async Task Folded_constant_local_collection_filter_reading_the_clock_is_evaluated_per_execution(MongoQueryMode mode)
+    {
+        var now = DateTime.UtcNow;
+        var past = new DateTime(now.Ticks - now.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc).AddSeconds(-5);
+        var soon = past.AddSeconds(7);
+        var collection = database.CreateCollection<Row>($"fk_{mode}");
+        collection.InsertMany(
+        [
+            new Row { Id = ObjectId.GenerateNewId(), Foo = 1, Created = past },
+            new Row { Id = ObjectId.GenerateNewId(), Foo = 2, Created = soon },
+        ]);
+
+        var compilations = 0;
+        using var db = CreateClockContext(collection, mode, () => compilations++);
+        var query = FoldedConstantSourceQuery(db, [past, soon]).OrderBy(r => r.Foo);
+
+        Assert.Equal([1], query.ToList().Select(r => r.Foo));
+        await Task.Delay(3500);
+        Assert.Equal([1, 2], query.ToList().Select(r => r.Foo)); // a baked first filter keeps answering [1]
+        Assert.Equal(1, compilations);
+    }
+
+    // A non-deterministic call in a folded predicate must not be evaluated once at compile time: it reaches the same
+    // EF-255 guard as without folding.
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
+    public void Folded_local_collection_filter_with_Guid_NewGuid_is_not_evaluated_once(MongoQueryMode mode)
+    {
+        using var db = CreateContext(mode, $"fg_{mode}");
+
+        Func<object> query = () => db.Entities
+            .Where(r => new[] { 1, 2, 3 }.Where(x => Guid.NewGuid() != Guid.Empty).Contains(r.Foo))
+            .ToList();
+
+        if (mode == MongoQueryMode.NativeOnly)
+        {
+            Assert.Throws<MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException>(query);
+        }
+        else
+        {
+            Assert.Contains("Guid.NewGuid", Assert.Throws<InvalidOperationException>(query).Message);
+        }
+    }
 
     // Pinned: before EF-255 a Random call in a projection was also evaluated once and returned the same value for every
     // row (the driver folds it into a constant), so it was never a working per-row client evaluation. It now fails loudly.

@@ -526,6 +526,27 @@ Apply the same principal-key identity to the null-guard arm of `TryGetCorrelatio
 
 **Commit:** `EF-322: throw for computed projections over missing non-nullable fields, matching driver LINQ`
 
+### Task 1.13: F12 — closed local-collection filter folding bakes clock members into the cached plan
+
+(Controller-authored task; added during Phase 1 execution from the Task 1.2 review.)
+
+**Suspected problem.** `LocalCollectionFilterFoldingVisitor` evaluates `constantSource.Where(pred).ToArray()` at compile time when `pred` is closed; its `FreeVariableFinder` ignores clock members, so the first execution's reading is baked into the cached plan.
+
+**Probe (EF10, `MONGODB_URI`/`ATLAS_URI` unset; one context, one cached compilation, 3.5 s wait; rows seeded at past and now+2 s).**
+
+| Spelling | Branch (Native / NativeOnly / DriverLinq) | `upstream/main` `dec7e26f` |
+|---|---|---|
+| Captured array `candidates.Where(d => d < DateTime.UtcNow).Contains(r.Created)` (EF parameterizes the source; the fold takes the per-execution runtime-parameter path) | `[1]` then `[1,2]` in all three: correct, not reproducible | `[1]` then `[1,2]` |
+| Constant source (inline literal array / `Expression.Constant(array)`, which EF leaves a `ConstantExpression`) | `[1]` then `[1]` in all three: **reproduced** (baked) | `[1]` then `[1,2]` |
+
+The fold runs after EF's funcletizer, so only a literal/constant source folds at compile time. Because the preprocessor is mode independent, all three modes regressed against main. `Guid.NewGuid()` in the same predicate was also folded silently (main throws the EF-255 error); `Random.Shared.Next` is not affected (EF parameterizes `Random.Shared`, so the predicate is not closed).
+
+**Fix.** (1) A predicate containing a non-deterministic call is never folded (`NonDeterministicCalls.ContainsNonDeterministicCall`, moved out of `MongoExpressionTranslator` so the translator and the visitor share one predicate). (2) A constant source whose predicate contains a clock (`RuntimeClock.ContainsClock`) takes the existing runtime-parameter path (extractor re-applies the filter on every execution) instead of the compile-time fold, so it stays native in NativeOnly (declining the fold instead left NativeOnly with a "not natively representable" gap, where main returned correct results).
+
+**Tests** (`NonDeterministicFunctionTests`): constant-source clock fold per execution, captured-array clock fold per execution (pins the already-correct path), and `Guid.NewGuid` in a folded predicate not evaluated once; all in three modes. Mutation (revert the visitor): the constant-source and Guid tests fail in all three modes.
+
+**Commit:** `EF-322: never fold local-collection filters that read the clock`
+
 ---
 
 ## Phase 2 — Implicit-mode NativeOnly gaps (the 129 tests in `nativeonly-gaps.tsv`)

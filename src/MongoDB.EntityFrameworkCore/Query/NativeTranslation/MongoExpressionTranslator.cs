@@ -382,7 +382,7 @@ internal sealed partial class MongoExpressionTranslator
 
         // A clock member must never be baked into the cached template: it is a per-execution value
         // (TryCreateRuntimeClockParameter); a clock subtree that isn't admitted there declines.
-        if (ContainsParameterOrExtensionNode(node) || ContainsNonDeterministicCall(node) || RuntimeClock.ContainsClock(node))
+        if (ContainsParameterOrExtensionNode(node) || NonDeterministicCalls.ContainsNonDeterministicCall(node) || RuntimeClock.ContainsClock(node))
             return false;
 
         object? value;
@@ -405,29 +405,6 @@ internal sealed partial class MongoExpressionTranslator
 
         result = new MongoConstantExpression(value, forSerialization: null);
         return true;
-    }
-
-    private static bool ContainsNonDeterministicCall(Expression node)
-    {
-        var finder = new NonDeterministicCallFinder();
-        finder.Visit(node);
-        return finder.Found;
-    }
-
-    private sealed class NonDeterministicCallFinder : ExpressionVisitor
-    {
-        public bool Found { get; private set; }
-
-        protected override Expression VisitMethodCall(MethodCallExpression node)
-        {
-            if (NonDeterministicCalls.IsNonDeterministic(node))
-            {
-                Found = true;
-                return node;
-            }
-
-            return base.VisitMethodCall(node);
-        }
     }
 
     private static bool ContainsParameterOrExtensionNode(Expression node)
