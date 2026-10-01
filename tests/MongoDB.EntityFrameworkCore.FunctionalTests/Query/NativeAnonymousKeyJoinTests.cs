@@ -97,12 +97,14 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
     }
 
     // K stored as a string (HasConversion<string>) and Code as a string (BsonRepresentation) - on this side only.
+    // K2: HasConversion<string>() here, an explicit EnumToStringConverter<Kind> instance on KindR.
     private class KindP
     {
         public int Id { get; set; }
         public int Zone { get; set; }
         public Kind K { get; set; }
         public int Code { get; set; }
+        public Kind K2 { get; set; }
     }
 
     // Default storage: K and Code as ints.
@@ -120,6 +122,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
         public int Id { get; set; }
         public int Zone { get; set; }
         public Kind K { get; set; }
+        public Kind K2 { get; set; }
     }
 
     // Code: lambda converter to string ("7") on ConvP, a different lambda converter (x10, "70") on ConvQ. Flag:
@@ -214,7 +217,7 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     private static readonly BsonDocument[] KindPDocuments =
     [
-        new() { { "_id", 1 }, { "Zone", 1 }, { "K", "B" }, { "Code", "7" } },
+        new() { { "_id", 1 }, { "Zone", 1 }, { "K", "B" }, { "Code", "7" }, { "K2", "B" } },
     ];
 
     private static readonly BsonDocument[] KindQDocuments =
@@ -225,8 +228,8 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
     private static readonly BsonDocument[] KindRDocuments =
     [
-        new() { { "_id", 20 }, { "Zone", 1 }, { "K", "B" } },
-        new() { { "_id", 21 }, { "Zone", 1 }, { "K", "A" } },
+        new() { { "_id", 20 }, { "Zone", 1 }, { "K", "B" }, { "K2", "B" } },
+        new() { { "_id", 21 }, { "Zone", 1 }, { "K", "A" }, { "K2", "A" } },
     ];
 
     private static readonly BsonDocument[] ConvPDocuments =
@@ -550,6 +553,28 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
         spy.AssertExecutedMqlContains("\"$and\"");
     }
 
+    // K2 is HasConversion<string>() on KindP (no configured converter instance, only a provider-type annotation) and
+    // an explicit `new EnumToStringConverter<Kind>()` on KindR (a converter, no annotation): the same effective converter
+    // type with structurally equal expressions, so both store "B" and the pair stays native.
+    [Theory]
+    [MemberData(nameof(AllModes))]
+    public void Provider_type_conversion_and_explicit_equivalent_converter_stay_native_and_match_oracle(MongoQueryMode mode)
+    {
+        using var db = CreateContext(mode, out var spy);
+        var (_, _, kindPs, _, kindRs) = MaterializeStorageShapes();
+
+        var actual = db.KindPs
+            .Join(db.KindRs, p => new { p.Zone, p.K2 }, r => new { r.Zone, r.K2 }, (p, r) => new { p.Id, R = r.Id })
+            .AsEnumerable().Select(x => $"{x.Id}:{x.R}").OrderBy(x => x).ToList();
+        var expected = kindPs
+            .Join(kindRs, p => new { p.Zone, p.K2 }, r => new { r.Zone, r.K2 }, (p, r) => $"{p.Id}:{r.Id}")
+            .OrderBy(x => x).ToList();
+
+        Assert.Equal(["1:20"], expected);
+        Assert.Equal(expected, actual);
+        spy.AssertExecutedMqlContains("\"$and\"");
+    }
+
     // Code3 carries the same lambda converter (v => (v + 100).ToString()) written separately on each entity type: two
     // converter instances whose to/from-provider expressions are structurally equal, so the pair stays native.
     [Theory]
@@ -707,12 +732,14 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
                 b.ToCollection("KindPs" + suffix);
                 b.Property(p => p.K).HasConversion<string>();
                 b.Property(p => p.Code).HasBsonRepresentation(BsonType.String);
+                b.Property(p => p.K2).HasConversion<string>();
             });
             modelBuilder.Entity<KindQ>().ToCollection("KindQs" + suffix);
             modelBuilder.Entity<KindR>(b =>
             {
                 b.ToCollection("KindRs" + suffix);
                 b.Property(r => r.K).HasConversion<string>();
+                b.Property(r => r.K2).HasConversion(new EnumToStringConverter<Kind>());
             });
             modelBuilder.Entity<ConvP>(b =>
             {

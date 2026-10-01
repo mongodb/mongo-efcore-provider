@@ -2690,8 +2690,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// </para>
     /// <para>
     /// Both sides must be stored alike (<see cref="StoredSerialization.StoredAlike"/>, shared with the projected set
-    /// op): the same <c>BsonRepresentation</c>, the same provider CLR type, and either no value converter or
-    /// equivalent ones (the same instance, or the same type with structurally equal conversion expressions). An enum
+    /// op): the same <c>BsonRepresentation</c>, and either no value converter or equivalent ones (the same instance,
+    /// or the same type and provider type with structurally equal conversion expressions). An enum
     /// stored as a string on one side and as an int on the other never matches in the database; nor do
     /// <c>BoolToStringConverter("N", "Y")</c> and <c>("F", "T")</c>, whose constants differ in their expressions. This
     /// is stricter than the single-key path, which isn't gated.
@@ -3750,7 +3750,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     // Both sides default-serialized (a computed value, null here, has no property and so no converter); or the same
     // property; or two properties stored identically (StoredSerialization.StoredAlike, shared with the anonymous-key
-    // join: equal BsonRepresentation, equal provider type, equivalent converters), e.g. two HasConversion<string>()
+    // join: equal BsonRepresentation, equivalent converters), e.g. two HasConversion<string>()
     // enums or two [BsonRepresentation(String)] enums. Anything else (a converter or representation against none, two
     // different converters or representations) declines.
     private static bool StoredSerializationsMatch(MongoFieldExpression? field1, MongoFieldExpression? field2)

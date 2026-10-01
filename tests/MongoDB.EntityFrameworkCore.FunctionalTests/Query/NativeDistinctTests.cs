@@ -1005,6 +1005,44 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     }
 
     [Fact]
+    public void Set_ops_over_provider_type_conversion_and_an_explicit_equivalent_converter_go_native()
+    {
+        // Status: HasConversion<string>() (a provider-type annotation; EF picks EnumToStringConverter<OrderStatus>).
+        // PrevStatus: an explicit EnumToStringConverter<OrderStatus> instance (no annotation). Both store "New" etc.,
+        // so they're stored alike; the configured provider-type annotation plays no part in serialization.
+        Action<ModelBuilder> configure = mb =>
+        {
+            mb.Entity<ConvertedOrder>().Property(o => o.Status).HasConversion<string>();
+            mb.Entity<ConvertedOrder>().Property(o => o.PrevStatus).HasConversion(new EnumToStringConverter<OrderStatus>());
+        };
+
+        var union = NativeModeAssert.NativeAndParity(ConvertedRunner(
+            nameof(Set_ops_over_provider_type_conversion_and_an_explicit_equivalent_converter_go_native),
+            q => q.Select(o => new { S = o.Status }).Union(q.Select(o => new { S = o.PrevStatus }))
+                .ToList().Select(r => r.S).OrderBy(v => v).ToList(),
+            configure));
+
+        Assert.Equal([OrderStatus.New, OrderStatus.Shipped, OrderStatus.Cancelled], union);
+
+        // Intersect/Except have no driver-LINQ oracle.
+        var run = ConvertedRunner<OrderStatus[]>(
+            nameof(Set_ops_over_provider_type_conversion_and_an_explicit_equivalent_converter_go_native) + "I",
+            q =>
+            [
+                q.Select(o => new { S = o.Status }).Intersect(q.Select(o => new { S = o.PrevStatus }))
+                    .ToList().Select(r => r.S).OrderBy(v => v).ToArray(),
+                q.Select(o => new { S = o.Status }).Except(q.Select(o => new { S = o.PrevStatus }))
+                    .ToList().Select(r => r.S).OrderBy(v => v).ToArray(),
+            ],
+            configure);
+
+        var result = run(MongoQueryMode.NativeOnly);
+
+        Assert.Equal([OrderStatus.New, OrderStatus.Shipped], result[0]);
+        Assert.Equal([OrderStatus.Cancelled], result[1]);
+    }
+
+    [Fact]
     public void Set_ops_over_two_properties_with_different_bson_representations_decline()
     {
         // Status stored "Shipped", PrevStatus stored 1L: equal in C#, never equal as stored.

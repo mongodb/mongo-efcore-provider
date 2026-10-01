@@ -91,9 +91,9 @@ Scope, joins, grouping:
   Projected operands must store each alias the same way (`OperandSerializationsMatch`: same property, both default,
   or `StoredSerialization.StoredAlike`).
 - **One "stored alike" rule** (`StoredSerialization.StoredAlike`) for two properties whose stored values are compared
-  or read through one serializer: equal `BsonRepresentation`, equal provider type, converters absent, the same
-  instance, or the same type with structurally equal to/from-provider expressions (captured closures compare by
-  reference, so capturing lambdas decline). Don't add a per-caller variant.
+  or read through one serializer: equal `BsonRepresentation`; converters absent, the same instance, or the same type
+  and provider type with structurally equal to/from-provider expressions (closures compare by reference: separately
+  created closures decline). Don't add a per-caller variant.
 - **A composite `$group` `_id` omits a missing sub-key**; `MongoPipelineFactory.RenderCompositeKeyPart`
   `$ifNull`-normalizes every possibly-null part once. Key-only accumulator conditions use `NullSafeKeyRead`.
 

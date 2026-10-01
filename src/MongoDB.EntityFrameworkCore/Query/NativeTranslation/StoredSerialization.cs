@@ -23,7 +23,8 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
 /// Whether two properties store equal CLR values as the same BSON, so the server can compare one property's stored
-/// values with the other's and either property's serializer can read both back.
+/// values with the other's and either property's serializer can read both back. DateTimeKind read-back is checked
+/// separately (<see cref="NativeDateTimeKindReadBack"/>), and BinaryVector storage isn't covered.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -43,12 +44,13 @@ internal static class StoredSerialization
 {
     /// <summary>
     /// Whether <paramref name="property1"/> and <paramref name="property2"/> are stored identically: equal
-    /// <see cref="MongoPropertyExtensions.GetBsonRepresentation"/> (both none, or equal), equal configured provider CLR
-    /// type, and equivalent effective converters (<see cref="ConvertersEquivalent"/>).
+    /// <see cref="MongoPropertyExtensions.GetBsonRepresentation"/> (both none, or equal) and equivalent effective
+    /// converters (<see cref="ConvertersEquivalent"/>). The configured provider-type annotation
+    /// (<c>GetProviderClrType()</c>) isn't compared: the serializer never reads it, only the effective converter (whose
+    /// provider type is compared), the representation and, without a converter, the CLR type.
     /// </summary>
     internal static bool StoredAlike(IProperty property1, IProperty property2)
         => property1.GetBsonRepresentation() == property2.GetBsonRepresentation()
-           && property1.GetProviderClrType() == property2.GetProviderClrType()
            && ConvertersEquivalent(EffectiveConverter(property1), EffectiveConverter(property2));
 
     /// <summary>
@@ -66,10 +68,14 @@ internal static class StoredSerialization
     /// <remarks>
     /// EF value converters have no equality of their own, but their encoding is their expressions: constructor
     /// arguments that choose the encoding appear in them as constants (<c>BoolToStringConverter("N", "Y")</c> vs
-    /// <c>("F", "T")</c>) or as captured closure objects, which compare by reference, so two lambdas capturing a local
-    /// variable (and two converters built around a captured <c>Encoding</c>) are never equal even when they would
-    /// encode alike. A lambda converter written the same way on both properties, or two instances of a converter whose
-    /// encoding is fixed by its type (<c>EnumToStringConverter&lt;&gt;</c>, the provider's ObjectId converters), are equal.
+    /// <c>("F", "T")</c>) or as captured closure objects. Closures compare by reference: separately created closures
+    /// (two calls to a helper capturing its argument, two converters built around a captured <c>Encoding</c>) decline
+    /// even when they would encode alike; two lambdas in one method capturing the same local share one closure and are
+    /// admitted, soundly. A lambda converter written the same way on both properties, or two instances of a converter
+    /// whose encoding is fixed by its type (<c>EnumToStringConverter&lt;&gt;</c>, the provider's ObjectId converters),
+    /// are equal. Assumes a converter's behaviour is fully described by its expressions: a subclass overriding
+    /// <c>ConvertToProviderTyped</c>/<c>ConvertFromProviderTyped</c> with state not in its expressions, or a captured
+    /// constant whose type has a lax <c>Equals</c>, would defeat it.
     /// </remarks>
     internal static bool ConvertersEquivalent(ValueConverter? converter1, ValueConverter? converter2)
         => (converter1, converter2) switch
