@@ -210,18 +210,8 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                         return memberAccess.ConvertIfRequired(projectionBindingExpression.Type);
                     }
 
-                    // When using the driver's native Join, scalar properties read from the root entity
-                    // live in the "_outer" sub-document, not at the document root. The resolver returns
-                    // the root doc parameter for such accesses; redirect it to "_outer" here.
-                    var docExpr = fieldAccess.DocumentExpression ?? _docParameter;
-                    if (_queryExpression.UsesDriverJoinFields
-                        && ReferenceEquals(docExpr, _docParameter))
-                    {
-                        docExpr = CreateGetValueExpression(_docParameter, "_outer", true, typeof(BsonDocument));
-                    }
-
                     return CreateGetValueExpression(
-                        docExpr,
+                        ResolveSourceDocument(fieldAccess.DocumentExpression),
                         fieldAccess.Property,
                         projectionBindingExpression.Type);
                 }
@@ -275,7 +265,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     {
         result = null!;
 
-        // Gated on the join, not just alias/path disagreement: BindSelectManyMember and BindGroupMember also produce
+        // Gated on the join, not just alias/path disagreement: BindProjectionByAlias and BindGroupMember also produce
         // index-bound leaves, and for them a path read would silently return a raw field where the alias read
         // currently fails loudly.
         if (_queryExpression.Select.JoinScope is null || _queryExpression.UsesDriverJoinFields)
@@ -314,14 +304,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         // Same property/binding-type invariant as the base visitor's alias read. Nullability may differ either way
         // (e.g. a `Nullable<T>.Value` leaf stages the nullable property), so compare unwrapped types; a genuine
         // mismatch would silently deserialize through the wrong serializer.
-        if (fieldInfo.Property.ClrType != projectionBindingExpression.Type
-            && fieldInfo.Property.ClrType.UnwrapNullableType() != projectionBindingExpression.Type.UnwrapNullableType())
-        {
-            throw new InvalidOperationException(
-                $"Aliased projection type '{projectionBindingExpression.Type}' does not match source property " +
-                $"'{fieldInfo.Property.Name}' of type '{fieldInfo.Property.ClrType}'; the property's serializer " +
-                "may produce values that cannot be cast to the binding's outer type.");
-        }
+        ThrowIfAliasedTypeMismatch(fieldInfo.Property, projectionBindingExpression.Type);
 
         // No BsonArray/BsonDocument arms, unlike CreateGetValueExpression: a bare field leaf is always a scalar
         // IProperty. Add them if a raw-BSON field leaf ever becomes possible.
@@ -344,11 +327,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         MongoDocumentConstructionExpression construction, string alias, string memberName, MongoFieldExpression field,
         Type memberType)
     {
-        var docExpr = (Expression)_docParameter;
-        if (_queryExpression.UsesDriverJoinFields)
-        {
-            docExpr = CreateGetValueExpression(_docParameter, "_outer", true, typeof(BsonDocument));
-        }
+        var docExpr = ResolveSourceDocument(null);
 
         // A join-scope member's ElementName is a dotted path relative to docExpr (e.g. "_lookup_Customer.CustomerID"),
         // so walk it with the multi-segment helper, which treats an absent intermediate (unmatched left-outer row)
@@ -594,25 +573,11 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
 
         private Expression? TryRead(Expression node)
         {
-            if (owner.TryBindNavigationMemberAccess(node, node.Type, out var navRead))
-            {
-                Reads.Add(navRead);
-                return navRead;
-            }
-
-            var fieldAccess = owner.TryResolveFieldAccess(node);
-            if (fieldAccess.Property is not { } property)
+            if (!owner.TryReadScalarProperty(node, node.Type, out var read))
             {
                 return null;
             }
 
-            var docExpr = fieldAccess.DocumentExpression ?? owner._docParameter;
-            if (owner._queryExpression.UsesDriverJoinFields && ReferenceEquals(docExpr, owner._docParameter))
-            {
-                docExpr = owner.CreateGetValueExpression(owner._docParameter, "_outer", true, typeof(BsonDocument));
-            }
-
-            var read = owner.CreateGetValueExpression(docExpr, property, node.Type);
             Reads.Add(read);
             return read;
         }
@@ -622,6 +587,37 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
             Unresolved = true;
             return node;
         }
+    }
+
+    // The document a resolved field access reads from: its own document, else the root. When using the driver's
+    // native Join, scalar properties read from the root entity live in the "_outer" sub-document, not at the
+    // document root; the resolver returns the root doc parameter for such accesses, so redirect it to "_outer".
+    private Expression ResolveSourceDocument(Expression? documentExpression)
+    {
+        var docExpr = documentExpression ?? _docParameter;
+        return _queryExpression.UsesDriverJoinFields && ReferenceEquals(docExpr, _docParameter)
+            ? CreateGetValueExpression(_docParameter, "_outer", true, typeof(BsonDocument))
+            : docExpr;
+    }
+
+    // Reads a scalar property access (member or EF.Property, on the root entity or a joined navigation target) from
+    // the materialized document, as a standalone scalar leaf would be read. False if node is no such access.
+    private bool TryReadScalarProperty(Expression node, Type type, out Expression read)
+    {
+        if (TryBindNavigationMemberAccess(node, type, out read))
+        {
+            return true;
+        }
+
+        var fieldAccess = TryResolveFieldAccess(node);
+        if (fieldAccess.Property is not { } property)
+        {
+            read = null!;
+            return false;
+        }
+
+        read = CreateGetValueExpression(ResolveSourceDocument(fieldAccess.DocumentExpression), property, type);
+        return true;
     }
 
     private bool TryBindStringSequenceLeaf(Expression? mappedExpression, Type resultType, out Expression result)
@@ -645,14 +641,8 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
             $"String-sequence projection leaf resolved to non-string property '{property.Name}' of type '{property.ClrType}'.");
 
         // The driver's native Join places root scalars under "_outer", as elsewhere in this visitor.
-        var docExpr = fieldAccess.DocumentExpression ?? _docParameter;
-        if (_queryExpression.UsesDriverJoinFields
-            && ReferenceEquals(docExpr, _docParameter))
-        {
-            docExpr = CreateGetValueExpression(_docParameter, "_outer", true, typeof(BsonDocument));
-        }
-
-        result = Expression.Call(call.Method, CreateGetValueExpression(docExpr, property, typeof(string)));
+        result = Expression.Call(
+            call.Method, CreateGetValueExpression(ResolveSourceDocument(fieldAccess.DocumentExpression), property, typeof(string)));
         result = result.ConvertIfRequired(resultType);
 
         return true;
@@ -684,8 +674,8 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
             return false;
         }
 
-        if (mappedExpression is not BinaryExpression { NodeType: ExpressionType.Add or ExpressionType.Subtract
-                or ExpressionType.Multiply or ExpressionType.Divide or ExpressionType.Modulo } binaryExpression)
+        if (mappedExpression is not BinaryExpression binaryExpression
+            || !NativeProjectionBinder.IsArithmeticLeafShape(binaryExpression))
         {
             return false;
         }
@@ -715,8 +705,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
             return operand;
         }
 
-        if (unwrapped is BinaryExpression { NodeType: ExpressionType.Add or ExpressionType.Subtract
-                or ExpressionType.Multiply or ExpressionType.Divide or ExpressionType.Modulo } nestedBinary)
+        if (unwrapped is BinaryExpression nestedBinary && NativeProjectionBinder.IsArithmeticLeafShape(nestedBinary))
         {
             Expression nestedResult = Expression.MakeBinary(
                 nestedBinary.NodeType,
@@ -728,24 +717,12 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
             return nestedResult.ConvertIfRequired(operand.Type);
         }
 
-        if (TryBindNavigationMemberAccess(unwrapped, operand.Type, out var navRead))
+        if (TryReadScalarProperty(unwrapped, operand.Type, out var propertyRead))
         {
-            return navRead;
+            return propertyRead;
         }
 
         var fieldAccess = TryResolveFieldAccess(unwrapped);
-        if (fieldAccess.Property != null)
-        {
-            var docExpr = fieldAccess.DocumentExpression ?? _docParameter;
-            if (_queryExpression.UsesDriverJoinFields
-                && ReferenceEquals(docExpr, _docParameter))
-            {
-                docExpr = CreateGetValueExpression(_docParameter, "_outer", true, typeof(BsonDocument));
-            }
-
-            return CreateGetValueExpression(docExpr, fieldAccess.Property, operand.Type);
-        }
-
         if (fieldAccess.FieldName != null)
         {
             return BsonBinding.CreateGetElementValue(

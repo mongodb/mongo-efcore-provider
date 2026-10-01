@@ -258,14 +258,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     var fieldAccess = TryResolveFieldAccess(projection.Expression);
                     if (fieldAccess.Property != null)
                     {
-                        if (fieldAccess.Property.ClrType != projectionBindingExpression.Type
-                            && fieldAccess.Property.ClrType.UnwrapNullableType() != projectionBindingExpression.Type.UnwrapNullableType())
-                        {
-                            throw new InvalidOperationException(
-                                $"Aliased projection type '{projectionBindingExpression.Type}' does not match source property " +
-                                $"'{fieldAccess.Property.Name}' of type '{fieldAccess.Property.ClrType}'; the property's serializer " +
-                                "may produce values that cannot be cast to the binding's outer type.");
-                        }
+                        ThrowIfAliasedTypeMismatch(fieldAccess.Property, projectionBindingExpression.Type);
 
                         var valueExpression = BsonBinding.CreateGetValueExpression(
                             DocParameter,
@@ -1022,6 +1015,23 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
         var elementType = typeMapping?.ClrType ?? type;
         return BsonBinding.CreateGetValueExpression(innerExpression, propertyName, required, elementType, entityType!);
+    }
+
+    /// <summary>
+    /// Throws when an alias read of <paramref name="property"/> is bound as <paramref name="bindingType"/> and the two
+    /// differ beyond nullability: the property's serializer would produce values that can't be cast to the binding's
+    /// type. Nullability may differ in either direction, so both sides are unwrapped.
+    /// </summary>
+    protected static void ThrowIfAliasedTypeMismatch(IProperty property, Type bindingType)
+    {
+        if (property.ClrType != bindingType
+            && property.ClrType.UnwrapNullableType() != bindingType.UnwrapNullableType())
+        {
+            throw new InvalidOperationException(
+                $"Aliased projection type '{bindingType}' does not match source property " +
+                $"'{property.Name}' of type '{property.ClrType}'; the property's serializer " +
+                "may produce values that cannot be cast to the binding's outer type.");
+        }
     }
 
     protected ResolvedFieldAccess TryResolveFieldAccess(Expression? expression)

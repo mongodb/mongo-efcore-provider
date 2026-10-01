@@ -349,12 +349,18 @@ internal sealed class LookupExpression
             });
         }
 
-        var pipeline = new BsonArray
-        {
-            new BsonDocument("$match",
-                new BsonDocument("$expr",
-                    new BsonDocument("$eq", new BsonArray { $"${ForeignField}", "$$localField" })))
-        };
+        return PipelineLookupStage(
+            new BsonDocument("localField", $"${LocalField}"),
+            new BsonDocument("$eq", new BsonArray { $"${ForeignField}", "$$localField" }));
+    }
+
+    /// <summary>
+    /// The pipeline form of the <c>$lookup</c> stage: <paramref name="let"/>, then a pipeline whose leading
+    /// <c>$match</c> is <c>$expr: <paramref name="matchExpression"/></c>, followed by <see cref="PipelineStages"/>.
+    /// </summary>
+    private BsonDocument PipelineLookupStage(BsonValue let, BsonValue matchExpression)
+    {
+        var pipeline = new BsonArray { new BsonDocument("$match", new BsonDocument("$expr", matchExpression)) };
         foreach (var stage in PipelineStages)
         {
             pipeline.Add(stage);
@@ -363,7 +369,7 @@ internal sealed class LookupExpression
         return new BsonDocument("$lookup", new BsonDocument
         {
             { "from", From },
-            { "let", new BsonDocument("localField", $"${LocalField}") },
+            { "let", let },
             { "pipeline", pipeline },
             { "as", As }
         });
@@ -394,22 +400,7 @@ internal sealed class LookupExpression
                 new BsonArray { NullNormalized($"${key.ForeignField}", key.MayBeNull), $"$${variable}" }));
         }
 
-        var pipeline = new BsonArray
-        {
-            new BsonDocument("$match", new BsonDocument("$expr", new BsonDocument("$and", equalities)))
-        };
-        foreach (var stage in PipelineStages)
-        {
-            pipeline.Add(stage);
-        }
-
-        return new BsonDocument("$lookup", new BsonDocument
-        {
-            { "from", From },
-            { "let", let },
-            { "pipeline", pipeline },
-            { "as", As }
-        });
+        return PipelineLookupStage(let, new BsonDocument("$and", equalities));
 
         static BsonValue NullNormalized(string path, bool mayBeNull)
             => mayBeNull ? new BsonDocument("$ifNull", new BsonArray { path, BsonNull.Value }) : path;

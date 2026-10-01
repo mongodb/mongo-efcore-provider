@@ -189,8 +189,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         {
             var elementType = wholeElementUnwind.InnerEntityType;
             return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, elementType,
-                (bsonDoc, behavior) => new MongoProjectionBindingRemovingExpressionVisitor(
-                    elementType, mongoQueryExpression, bsonDoc, behavior),
+                CreateDomBindingRemover(elementType, mongoQueryExpression),
                 allowStreaming: false);
         }
 
@@ -204,8 +203,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         // native pipeline returns, but the driver-LINQ fallback would not (it pushes the bare Select down as `_v`),
         // so strip that Select on fallback. See MongoSelectDefinition.HasBareJoinInnerEntityLeaf.
         return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
-            (bsonDoc, behavior) => new MongoProjectionBindingRemovingExpressionVisitor(
-                rootEntityType, mongoQueryExpression, bsonDoc, behavior),
+            CreateDomBindingRemover(rootEntityType, mongoQueryExpression),
             stripBareProjectionOnFallback: mongoQueryExpression.Select.HasBareJoinInnerEntityLeaf);
     }
 
@@ -234,8 +232,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             && mongoQueryExpression.Select.Route == NativeRoute.GroupBy)
         {
             return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
-                (bsonDoc, behavior) => new MongoProjectionBindingRemovingExpressionVisitor(
-                    rootEntityType, mongoQueryExpression, bsonDoc, behavior),
+                CreateDomBindingRemover(rootEntityType, mongoQueryExpression),
                 allowStreaming: false);
         }
 
@@ -247,8 +244,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             // Read the strip tier here, on the only branch that builds the alias-addressed projection shaper, so
             // it stays disjoint from the mixed path's StripPushedDownSelect below (never stripped twice).
             return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
-                (bsonDoc, behavior) => new MongoProjectionBindingRemovingExpressionVisitor(
-                    rootEntityType, mongoQueryExpression, bsonDoc, behavior),
+                CreateDomBindingRemover(rootEntityType, mongoQueryExpression),
                 allowStreaming: false,
                 stripBareProjectionOnFallback: ShouldStripBareProjectionOnFallback(mongoQueryExpression.Select),
                 createFallbackBindingRemover: HasJoinScopeInnerEntityProjectionLeaf(mongoQueryExpression)
@@ -268,7 +264,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         if (queryMode != MongoQueryMode.DriverLinq
             && mongoQueryExpression.Select.Route == NativeRoute.ScalarAggregate)
         {
-            var aggregateFactory = TryBuildAggregateFactory(queryMode, mongoQueryExpression);
+            var aggregateFactory = TryBuildPipeline(mongoQueryExpression, queryMode);
             if (aggregateFactory != null)
             {
                 var cardinality = mongoQueryExpression.Select.Cardinality!;
@@ -311,8 +307,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
                 shapedQueryExpression.ShaperExpression, mongoQueryExpression.Select.HasClientWrappedWholeEntityShaper))
         {
             return CompileShapedQuery(shapedQueryExpression, mongoQueryExpression, rootEntityType,
-                (bsonDoc, behavior) => new MongoProjectionBindingRemovingExpressionVisitor(
-                    rootEntityType, mongoQueryExpression, bsonDoc, behavior),
+                CreateDomBindingRemover(rootEntityType, mongoQueryExpression),
                 allowStreaming: false);
         }
 
@@ -605,6 +600,12 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     private static bool HasDocumentConstructionProjectionLeaf(MongoQueryExpression mongoQueryExpression)
         => mongoQueryExpression.Select.Projection.Any(p => p.Expression is MongoDocumentConstructionExpression);
 
+    // The DOM shaper's binding remover, rooted at entityType.
+    private static Func<ParameterExpression, QueryTrackingBehavior, System.Linq.Expressions.ExpressionVisitor>
+        CreateDomBindingRemover(IEntityType entityType, MongoQueryExpression mongoQueryExpression)
+        => (bsonDoc, behavior) => new MongoProjectionBindingRemovingExpressionVisitor(
+            entityType, mongoQueryExpression, bsonDoc, behavior);
+
     private MethodCallExpression CompileShapedQuery(
         ShapedQueryExpression shapedQueryExpression,
         MongoQueryExpression mongoQueryExpression,
@@ -768,7 +769,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             return null;
         }
 
-        // Scalar aggregates are native but built by TryBuildAggregateFactory, so decline them here. An unbound
+        // Scalar aggregates are native but built by VisitProjectedQuery's ScalarAggregate arm, so decline them here. An unbound
         // vector search classifies as Fallback, so the lowerer is never reached without a $vectorSearch slot.
         if (ClassifyNativeDisposition(mongoQueryExpression, mode) != NativeDisposition.Native
             || mongoQueryExpression.Select.Route == NativeRoute.ScalarAggregate)
@@ -779,13 +780,6 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         return TryBuildPipeline(mongoQueryExpression, mode);
     }
-
-    // Native pipeline for Route == ScalarAggregate. The aggregate shape was confirmed at bind time, but its composed
-    // predicate may still fail to lower (e.g. parameterized string.Contains) and fall back.
-    private static MongoPipelineFactory? TryBuildAggregateFactory(
-        MongoQueryMode mode,
-        MongoQueryExpression mongoQueryExpression)
-        => TryBuildPipeline(mongoQueryExpression, mode);
 
     private static MongoPipelineFactory? TryBuildPipeline(MongoQueryExpression mongoQueryExpression, MongoQueryMode mode)
     {

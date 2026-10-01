@@ -220,11 +220,16 @@ internal static class NativeDateTimeKindReadBack
     /// whole composite key member by member rather than through its type's class map.
     /// </summary>
     internal static bool IsKindSensitiveKeyPart(MongoSelectDefinition select, MongoExpression fieldRef)
-    {
-        var level = select.PriorGrouping != null ? Level.GroupInput : Level.Document;
-        return Find(fieldRef, select, level) != null
-               || (IsDateTimeTyped(fieldRef) && ReferencesKindSensitiveDate(fieldRef, select, level));
-    }
+        => CarriesKindSensitiveDate(fieldRef, select, GroupInputLevel(select));
+
+    // Whether `value` passes a kind-sensitive property's value through unchanged (Find), or is a DateTime derived from one.
+    private static bool CarriesKindSensitiveDate(MongoExpression value, MongoSelectDefinition select, Level level)
+        => Find(value, select, level) != null
+           || (IsDateTimeTyped(value) && ReferencesKindSensitiveDate(value, select, level));
+
+    // The level a $group's input is evaluated at: the prior grouping's output when one exists, else the document.
+    private static Level GroupInputLevel(MongoSelectDefinition select)
+        => select.PriorGrouping != null ? Level.GroupInput : Level.Document;
 
     private static Level ProjectionLevel(MongoSelectDefinition select)
         => select.Grouping != null ? Level.GroupOutput : Level.Document;
@@ -257,14 +262,11 @@ internal static class NativeDateTimeKindReadBack
     {
         switch (value)
         {
-            case MongoElementRefExpression { Path: GroupIdPath } when CompositeGroupingAt(select, level) is { } grouping:
-                var inputLevel = level == Level.PriorGroupOutput
-                    ? Level.Document
-                    : select.PriorGrouping != null ? Level.GroupInput : Level.Document;
+            case MongoElementRefExpression { Path: GroupIdPath }
+                when GroupingAt(select, level) is ({ IsCompositeKey: true } grouping, var inputLevel):
                 foreach (var part in grouping.Key)
                 {
-                    if (Find(part.FieldRef, select, inputLevel) != null
-                        || (IsDateTimeTyped(part.FieldRef) && ReferencesKindSensitiveDate(part.FieldRef, select, inputLevel))
+                    if (CarriesKindSensitiveDate(part.FieldRef, select, inputLevel)
                         || HoldsKindSensitiveDateInClassMapRead(part.FieldRef, select, inputLevel))
                         return true;
                 }
@@ -290,15 +292,15 @@ internal static class NativeDateTimeKindReadBack
 
     private const string GroupIdPath = "_id";
 
-    private static MongoGrouping? CompositeGroupingAt(MongoSelectDefinition select, Level level)
+    // The grouping whose output `level` is, and the level that grouping's input (key parts, accumulator operands) is
+    // evaluated at; no grouping for a non-group-output level.
+    private static (MongoGrouping? Grouping, Level InputLevel) GroupingAt(MongoSelectDefinition select, Level level)
         => level switch
         {
-            Level.GroupOutput => select.Grouping,
-            Level.PriorGroupOutput => select.PriorGrouping,
-            _ => null
-        } is { IsCompositeKey: true } grouping
-            ? grouping
-            : null;
+            Level.GroupOutput => (select.Grouping, GroupInputLevel(select)),
+            Level.PriorGroupOutput => (select.PriorGrouping, Level.Document),
+            _ => (null, Level.Document)
+        };
 
     // The kind-sensitive property whose stored value `value` passes through unchanged. A ternary or coalesce is admitted
     // when every branch is such a value (any Local-kind properties read back alike) or a null constant.
@@ -401,12 +403,7 @@ internal static class NativeDateTimeKindReadBack
         operand = null!;
         operandLevel = default;
 
-        var (grouping, inputLevel) = level switch
-        {
-            Level.GroupOutput => (select.Grouping, select.PriorGrouping != null ? Level.GroupInput : Level.Document),
-            Level.PriorGroupOutput => (select.PriorGrouping, Level.Document),
-            _ => (null, Level.Document)
-        };
+        var (grouping, inputLevel) = GroupingAt(select, level);
 
         if (grouping is null)
             return false;
@@ -451,7 +448,7 @@ internal static class NativeDateTimeKindReadBack
             case Level.GroupOutput when select.Grouping is { } grouping:
                 if (!TryResolveGroupOutput(grouping, elementRef.Path, valuePreservingOnly, out target))
                     return false;
-                targetLevel = select.PriorGrouping != null ? Level.GroupInput : Level.Document;
+                targetLevel = GroupInputLevel(select);
                 return true;
 
             case Level.GroupInput:

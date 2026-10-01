@@ -394,10 +394,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                     read);
             }
 
-            ifChain = Expression.IfThenElse(
-                Expression.Call(StringEqualsMethod, _name, Expression.Constant(property.GetElementName(), typeof(string))),
-                read,
-                ifChain);
+            ifChain = Dispatch(property.GetElementName(), read, ifChain);
         }
 
         foreach (var (navigation, child) in plan.OwnedNavigations)
@@ -406,25 +403,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                               ?? throw new NativeTranslationNotSupportedException(
                                   $"Owned navigation '{navigation.DeclaringEntityType.DisplayName()}.{navigation.Name}' has no element name.");
 
-            // If the owned element is BSON Null the sub-document is absent: ReadNull + present=false.
-            // Otherwise: present=true, descend (ReadStartDocument / sub-fill-loop / ReadEndDocument).
-            var descend = Expression.IfThenElse(
-                Expression.Equal(
-                    Expression.Call(_reader, GetCurrentBsonTypeMethod),
-                    Expression.Constant(BsonType.Null, typeof(BsonType))),
-                Expression.Block(
-                    Expression.Call(_reader, ReadNullMethod),
-                    Expression.Assign(child.Present!, Expression.Constant(false))),
-                Expression.Block(
-                    Expression.Assign(child.Present!, Expression.Constant(true)),
-                    Expression.Call(_reader, ReadStartDocumentMethod),
-                    BuildFillLoop(child),
-                    Expression.Call(_reader, ReadEndDocumentMethod)));
-
-            ifChain = Expression.IfThenElse(
-                Expression.Call(StringEqualsMethod, _name, Expression.Constant(elementName, typeof(string))),
-                descend,
-                ifChain);
+            ifChain = Dispatch(elementName, BuildNullGuardedDescent(child), ifChain);
         }
 
         foreach (var lookup in plan.LookupReferences)
@@ -433,23 +412,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             // entity's own fields). Same null-guarded descent as an owned reference, but keyed by the lookup
             // alias rather than an embedded containing-element name. BSON Null (no $lookup match) -> present
             // = false -> null navigation.
-            var descend = Expression.IfThenElse(
-                Expression.Equal(
-                    Expression.Call(_reader, GetCurrentBsonTypeMethod),
-                    Expression.Constant(BsonType.Null, typeof(BsonType))),
-                Expression.Block(
-                    Expression.Call(_reader, ReadNullMethod),
-                    Expression.Assign(lookup.Target.Present!, Expression.Constant(false))),
-                Expression.Block(
-                    Expression.Assign(lookup.Target.Present!, Expression.Constant(true)),
-                    Expression.Call(_reader, ReadStartDocumentMethod),
-                    BuildFillLoop(lookup.Target),
-                    Expression.Call(_reader, ReadEndDocumentMethod)));
-
-            ifChain = Expression.IfThenElse(
-                Expression.Call(StringEqualsMethod, _name, Expression.Constant(lookup.ElementName, typeof(string))),
-                descend,
-                ifChain);
+            ifChain = Dispatch(lookup.ElementName, BuildNullGuardedDescent(lookup.Target), ifChain);
         }
 
         foreach (var collection in plan.OwnedCollections)
@@ -458,10 +421,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                               ?? throw new NativeTranslationNotSupportedException(
                                   $"Owned collection '{collection.Navigation.DeclaringEntityType.DisplayName()}.{collection.Navigation.Name}' has no element name.");
 
-            ifChain = Expression.IfThenElse(
-                Expression.Call(StringEqualsMethod, _name, Expression.Constant(elementName, typeof(string))),
-                BuildCollectionLoop(collection),
-                ifChain);
+            ifChain = Dispatch(elementName, BuildCollectionLoop(collection), ifChain);
         }
 
         var breakTarget = Expression.Label("__fillDone_" + plan.EntityType.ShortName());
@@ -520,12 +480,40 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                     Expression.Throw(
                         Expression.New(
                             InvalidOperationExceptionCtor,
-                            Expression.Constant(
-                                $"Document element is missing for required non-nullable property '{property.Name}'.")))));
+                            Expression.Constant(Storage.BsonBinding.RequiredPropertyMissingMessage(property))))));
         }
 
         return Expression.Block(body);
     }
+
+    // One link of the fill loop's element-name dispatch: run `body` when the current element is `elementName`,
+    // else fall through to `chain`.
+    private Expression Dispatch(string elementName, Expression body, Expression chain)
+        => Expression.IfThenElse(
+            Expression.Call(StringEqualsMethod, _name, Expression.Constant(elementName, typeof(string))),
+            body,
+            chain);
+
+    // Whether the reader's current value is BSON Null.
+    private Expression IsCurrentNull()
+        => Expression.Equal(
+            Expression.Call(_reader, GetCurrentBsonTypeMethod),
+            Expression.Constant(BsonType.Null, typeof(BsonType)));
+
+    // Descends into an embedded sub-document read into `plan` (an owned reference or a joined `_lookup_<Nav>`). If
+    // the element is BSON Null the sub-document is absent: ReadNull + present=false. Otherwise: present=true, descend
+    // (ReadStartDocument / sub-fill-loop / ReadEndDocument).
+    private Expression BuildNullGuardedDescent(EntityPlan plan)
+        => Expression.IfThenElse(
+            IsCurrentNull(),
+            Expression.Block(
+                Expression.Call(_reader, ReadNullMethod),
+                Expression.Assign(plan.Present!, Expression.Constant(false))),
+            Expression.Block(
+                Expression.Assign(plan.Present!, Expression.Constant(true)),
+                Expression.Call(_reader, ReadStartDocumentMethod),
+                BuildFillLoop(plan),
+                Expression.Call(_reader, ReadEndDocumentMethod)));
 
     /// <summary>
     /// Build the array loop for an owned collection. The reader is positioned at the array value (after the
@@ -569,9 +557,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         // BSON Null: consume it and leave the accumulator null; BuildFillLoop normalizes it the same way as a
         // missing array, keeping the two absent states in one place.
         return Expression.IfThenElse(
-            Expression.Equal(
-                Expression.Call(_reader, GetCurrentBsonTypeMethod),
-                Expression.Constant(BsonType.Null, typeof(BsonType))),
+            IsCurrentNull(),
             Expression.Call(_reader, ReadNullMethod),
             arrayBody);
     }
@@ -963,23 +949,17 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         Expression onNull = !property.IsNullable && !local.Type.IsValueType
             ? Expression.Throw(
                 Expression.New(
-                    RequiredPropertyNullExceptionCtor,
-                    Expression.Constant(
-                        $"Document element is null for required non-nullable property '{property.Name}'.")))
+                    InvalidOperationExceptionCtor,
+                    Expression.Constant(Storage.BsonBinding.RequiredPropertyNullMessage(property))))
             : Expression.Assign(local, Expression.Default(local.Type));
 
         return Expression.IfThenElse(
-            Expression.Equal(
-                Expression.Call(_reader, GetCurrentBsonTypeMethod),
-                Expression.Constant(BsonType.Null, typeof(BsonType))),
+            IsCurrentNull(),
             Expression.Block(
                 Expression.Call(_reader, ReadNullMethod),
                 onNull),
             readAssign);
     }
-
-    private static readonly ConstructorInfo RequiredPropertyNullExceptionCtor
-        = typeof(InvalidOperationException).GetConstructor([typeof(string)])!;
 
     /// <summary>
     /// Rewrites an EF construction block so <c>ValueBufferTryReadValue</c> reads become the property's streaming

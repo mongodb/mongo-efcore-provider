@@ -40,13 +40,9 @@ internal static class EnumerableMethods
             nameof(Enumerable.Where), 1,
             types => [typeof(IEnumerable<>).MakeGenericType(types[0]), typeof(Func<,>).MakeGenericType(types[0], typeof(bool))]);
 
-        CountWithoutPredicate = GetMethod(
-            nameof(Enumerable.Count), 1,
-            types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
+        CountWithoutPredicate = GetSourceOnlyMethod(nameof(Enumerable.Count));
 
-        LongCountWithoutPredicate = GetMethod(
-            nameof(Enumerable.LongCount), 1,
-            types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
+        LongCountWithoutPredicate = GetSourceOnlyMethod(nameof(Enumerable.LongCount));
 
         // Enumerable-spelled Count/LongCount(source, predicate) must match a canonical MethodInfo.
         CountWithPredicate = GetMethod(
@@ -59,33 +55,17 @@ internal static class EnumerableMethods
 
         // Lets MongoProjectionBindingExpressionVisitor rebuild a stranded Queryable.First/Single/Any as its
         // Enumerable equivalent over a materialized CollectionShaperExpression.
-        FirstWithoutPredicate = GetMethod(
-            nameof(Enumerable.First), 1,
-            types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
-        FirstOrDefaultWithoutPredicate = GetMethod(
-            nameof(Enumerable.FirstOrDefault), 1,
-            types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
-        SingleWithoutPredicate = GetMethod(
-            nameof(Enumerable.Single), 1,
-            types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
-        SingleOrDefaultWithoutPredicate = GetMethod(
-            nameof(Enumerable.SingleOrDefault), 1,
-            types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
-        AnyWithoutPredicate = GetMethod(
-            nameof(Enumerable.Any), 1,
-            types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
+        FirstWithoutPredicate = GetSourceOnlyMethod(nameof(Enumerable.First));
+        FirstOrDefaultWithoutPredicate = GetSourceOnlyMethod(nameof(Enumerable.FirstOrDefault));
+        SingleWithoutPredicate = GetSourceOnlyMethod(nameof(Enumerable.Single));
+        SingleOrDefaultWithoutPredicate = GetSourceOnlyMethod(nameof(Enumerable.SingleOrDefault));
+        AnyWithoutPredicate = GetSourceOnlyMethod(nameof(Enumerable.Any));
 
         // Matched by MethodInfo, not name, in NativeProjectionBinder.IsStringSequenceMaterializationCall (a name
         // match would also claim unrelated "ToList" extensions).
-        AsEnumerable = GetMethod(
-            nameof(Enumerable.AsEnumerable), 1,
-            types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
-        ToList = GetMethod(
-            nameof(Enumerable.ToList), 1,
-            types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
-        ToArray = GetMethod(
-            nameof(Enumerable.ToArray), 1,
-            types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
+        AsEnumerable = GetSourceOnlyMethod(nameof(Enumerable.AsEnumerable));
+        ToList = GetSourceOnlyMethod(nameof(Enumerable.ToList));
+        ToArray = GetSourceOnlyMethod(nameof(Enumerable.ToArray));
 
         // Fully-generic (TSource, TResult) selector overloads, used when the selected type is not a fixed numeric one.
         MaxWithSelector = GetMethod(
@@ -128,6 +108,10 @@ internal static class EnumerableMethods
         AverageWithSelectorMethods = averageWithSelector;
         MinWithSelectorMethods = minWithSelector;
         MaxWithSelectorMethods = maxWithSelector;
+
+        // A single-type-parameter overload taking only the source sequence.
+        MethodInfo GetSourceOnlyMethod(string name)
+            => GetMethod(name, 1, types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
 
         MethodInfo GetMethod(string name, int genericParameterCount, Func<Type[], Type[]> parameterGenerator)
         {

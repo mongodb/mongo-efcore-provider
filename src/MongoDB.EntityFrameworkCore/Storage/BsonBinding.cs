@@ -252,9 +252,8 @@ internal static class BsonBinding
         Expression bsonDocExpression, string name, Type type, IReadOnlyProperty? dateTimeKindSource) =>
         dateTimeKindSource == null
             ? CreateGetElementValue(bsonDocExpression, name, type)
-            : Expression.Call(null, GetKindAwareElementValueMethodInfo.MakeGenericMethod(type), bsonDocExpression,
-                Expression.Constant(name),
-                Expression.Constant(BsonSerializerFactory.CreateTypeSerializer(type, dateTimeKindSource), typeof(IBsonSerializer)));
+            : CreateGetElementValue(
+                bsonDocExpression, name, type, BsonSerializerFactory.CreateTypeSerializer(type, dateTimeKindSource));
 
     /// <summary>
     /// As <see cref="CreateGetElementValue(Expression, string, Type)"/>, reading the element through
@@ -380,17 +379,36 @@ internal static class BsonBinding
         var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
         if (TryReadElementValue(document, serializationInfo, out T? value))
         {
-            if (value == null && !property.IsNullable)
-            {
-                throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name}'.");
-            }
-
+            ThrowIfNullForRequired(value, property);
             return value;
         }
 
         if (property.IsNullable) return default;
 
-        throw new InvalidOperationException($"Document element is missing for required non-nullable property '{property.Name}'.");
+        throw new InvalidOperationException(RequiredPropertyMissingMessage(property));
+    }
+
+    /// <summary>
+    /// The message thrown when a required non-nullable property's element is missing. Shared with the streaming
+    /// materializer (<c>MongoStreamingEntityMaterializerRewriter</c>), which mirrors <see cref="GetPropertyValue{T}"/>.
+    /// </summary>
+    internal static string RequiredPropertyMissingMessage(IReadOnlyProperty property)
+        => $"Document element is missing for required non-nullable property '{property.Name}'.";
+
+    /// <summary>
+    /// The message thrown when a required non-nullable property's element is BSON null. Shared with the streaming
+    /// materializer (<c>MongoStreamingEntityMaterializerRewriter</c>), which mirrors <see cref="GetPropertyValue{T}"/>.
+    /// </summary>
+    internal static string RequiredPropertyNullMessage(IReadOnlyProperty property)
+        => $"Document element is null for required non-nullable property '{property.Name}'.";
+
+    // A null read of a required non-nullable property. Never fires for a non-nullable value-typed T.
+    private static void ThrowIfNullForRequired<T>(T? value, IReadOnlyProperty property)
+    {
+        if (value == null && !property.IsNullable)
+        {
+            throw new InvalidOperationException(RequiredPropertyNullMessage(property));
+        }
     }
 
     /// <summary>
@@ -428,11 +446,7 @@ internal static class BsonBinding
             return placeholder;
         }
 
-        if (value == null && !property.IsNullable)
-        {
-            throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name}'.");
-        }
-
+        ThrowIfNullForRequired(value, property);
         return value;
     }
 
@@ -451,11 +465,7 @@ internal static class BsonBinding
 
         if (TryReadElementValue(document, projectedSerializationInfo, out T? value))
         {
-            if (value == null && !property.IsNullable)
-            {
-                throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name}'.");
-            }
-
+            ThrowIfNullForRequired(value, property);
             return value;
         }
 
