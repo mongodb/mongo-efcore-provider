@@ -68,7 +68,7 @@ Scope, joins, grouping:
   renamed (so an Inner-side op, `JoinInnerAccessConfirmed`, declines); over a chain no join is renamed and the Include
   renames itself (`existingIncompatibleLookup`), keeping later joins' `localField`s and Inner filters valid. Renames use
   `MongoQueryExpression.GetUnusedLookupAlias`. A join level the binding would take as the Include's intermediate
-  (`LookupExpression.IsCollectionIncludeIntermediateFor` the root type) declines: the binding nests by type, not alias.
+  (a lookup satisfying `LookupExpression.IsCollectionIncludeIntermediateFor(root type)`) declines: the binding nests by type, not alias.
 - **Navigation-less joins** are native iff `RebindInnerShaperToOuterQuery`'s raw-key branch resolved both keys
   (`JoinInfo.Lookup != null`); a navigation resolved to the wrong target is rebuilt by it, a non-simple key
   declines (`JoinLookupImplementsKeySelectors`). Composite-PK components live at `_id.<Name>`

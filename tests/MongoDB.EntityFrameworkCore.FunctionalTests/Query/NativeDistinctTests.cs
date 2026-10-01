@@ -980,7 +980,14 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
                 .ToList().Select(r => r.S).OrderBy(v => v).ToList(),
             StatusAndPrevStatusAsStrings));
 
-        Assert.Equal(10, concat.Count);
+        // Status {New, New, Shipped, Shipped, Cancelled} ++ PrevStatus {New, New, New, Shipped, Shipped}.
+        Assert.Equal(
+            [
+                OrderStatus.New, OrderStatus.New, OrderStatus.New, OrderStatus.New, OrderStatus.New,
+                OrderStatus.Shipped, OrderStatus.Shipped, OrderStatus.Shipped, OrderStatus.Shipped,
+                OrderStatus.Cancelled
+            ],
+            concat);
     }
 
     [Fact]

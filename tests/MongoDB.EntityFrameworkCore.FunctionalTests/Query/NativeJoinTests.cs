@@ -2156,6 +2156,9 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     // "EarlierLevelCollides": the FIRST join has it and nothing later reads that level.
     // "EarlierLevelCollidesAndIsRead": Owner.Orders join has the Include's `_lookup_Orders` alias and the next join
     // keys off its Inner side (localField `_lookup_Orders._id`).
+    // "MiddleLevelCollidesAndIsReadByLast": three levels; the MIDDLE join (Order.OrderLines) has the Include's
+    // `_lookup_OrderLines` alias and the last join keys off that middle level's Inner side (localField
+    // `_lookup_OrderLines._id`).
     // "CollidingLevelReadByFilter": as above, plus a Where over that level's Inner side (PostJoinOps reading
     // `_lookup_Orders.Total`).
     [Theory]
@@ -2165,6 +2168,7 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     [InlineData("EarlierLevelCollides")]
     [InlineData("EarlierLevelCollidesAndIsRead")]
     [InlineData("CollidingLevelReadByFilter")]
+    [InlineData("MiddleLevelCollidesAndIsReadByLast")]
     public void Collection_Include_on_the_root_of_a_multi_level_join_chain_goes_native(string shape)
     {
         var seed = SeedRaggedOwnersOrdersAndLines();
@@ -2218,7 +2222,8 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     // A join level whose $lookup is a reference/navigation-less hop TARGETING the Include's declaring (root) type: the
     // Include binding picks its "intermediate" lookup by target type, nests the root Include's $lookup under that join's
     // alias, and reads the plain alias at root (empty Includes, or a Document-vs-BsonArray read failure). Must decline
-    // natively. Only NativeOnly is asserted: the driver-LINQ fallback is wrong for these shapes too (same binding).
+    // natively. Only NativeOnly is asserted for the chain shapes: the driver-LINQ fallback is wrong for them too (same
+    // binding). The single-level shape (SingleLevelNavlessTargetsRootType) is correct under DriverLinq, which is asserted.
     [Theory]
     [InlineData("NavlessLevelTargetsRootType")]
     [InlineData("ReferenceLevelTargetsRootType")]
@@ -2231,6 +2236,15 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             nameof(Collection_Include_over_a_join_level_targeting_the_root_type_declines_under_NativeOnly) + shape);
 
         Assert.Throws<NativeTranslationNotSupportedException>(() => RunMultiLevelCollectionInclude(seed, shape, db));
+
+        if (shape == "SingleLevelNavlessTargetsRootType")
+        {
+            using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
+                nameof(Collection_Include_over_a_join_level_targeting_the_root_type_declines_under_NativeOnly) + shape + "DriverLinq");
+            Assert.Equal(
+                RunMultiLevelCollectionInclude(seed, shape, db: null),
+                RunMultiLevelCollectionInclude(seed, shape, driverLinq));
+        }
     }
 
     // A single-level collection Include whose join collides with the Include's alias, with a Where over the join's
@@ -2296,6 +2310,10 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             "EarlierLevelCollidesAndIsRead" => ReduceOwners(ownersWithOrders
                 .Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
                 .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => e.o)),
+            "MiddleLevelCollidesAndIsReadByLast" => ReduceOrders(ordersWithLines
+                .Join(owners, r => r.OwnerId, o => o.Id, (r, o) => new { r, o })
+                .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.r, l })
+                .Join(lines, x => x.l.Id, l2 => l2.Id, (x, l2) => x.r)),
             "CollidingLevelReadByFilter" => ReduceOwners(ownersWithOrders
                 .Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
                 .Join(lines, e => e.r.Id, l => l.OrderId, (e, l) => new { e.o, e.r })

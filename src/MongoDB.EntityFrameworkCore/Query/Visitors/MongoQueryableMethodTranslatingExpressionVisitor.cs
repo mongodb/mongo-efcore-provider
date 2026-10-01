@@ -483,7 +483,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 if (NativeJoinScopeTranslator.TryResolveBareScopeLeaf(
                         includeChainScope, selector.Parameters[0], collectionInclude.EntityExpression, out var includeScopeIndex)
                     && includeScopeIndex == 0
-                    && !(select.HasPaging && select.HasPagingRecordedAfterAJoin)
+                    && !select.HasPagingDeferredPastAChainJoin
                     && IsSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
                 {
                     NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, includeChainScope);
@@ -559,7 +559,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                  && NativeJoinScopeTranslator.TryResolveBareScopeLeaf(
                      chainedLeafScope, selector.Parameters[0], selector.Body, out var chainedLeafScopeIndex)
                  && chainedLeafScopeIndex == 0
-                 && !(mongoQueryExpression.Select.HasPaging && mongoQueryExpression.Select.HasPagingRecordedAfterAJoin)
+                 && !mongoQueryExpression.Select.HasPagingDeferredPastAChainJoin
                  && IsSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
         {
             NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, chainedLeafScope);

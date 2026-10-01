@@ -1076,6 +1076,13 @@ internal sealed class MongoSelectDefinition
     /// </summary>
     internal bool HasPagingRecordedAfterAJoin => _hasPagingRecordedAfterAJoin;
 
+    /// <summary>
+    /// <see langword="true"/> when paging exists and was recorded after a join existed, i.e. it would have to be
+    /// deferred past the <c>$lookup</c> chain. The chain-scope arms (collection Include over a join chain, chained
+    /// bare leaf) decline on this rather than restate the pair of flags.
+    /// </summary>
+    internal bool HasPagingDeferredPastAChainJoin => HasPaging && HasPagingRecordedAfterAJoin;
+
     /// <summary>Records a <c>Skip</c>/<c>Take</c> seen while <paramref name="joinCount"/> (at least one) joins existed.</summary>
     internal void MarkPagingRecordedAfterAJoin(int joinCount)
     {
