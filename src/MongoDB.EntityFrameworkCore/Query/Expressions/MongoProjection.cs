@@ -36,8 +36,10 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// <param name="ThrowsOnMalformedNull">
 /// Read-side only: the value is a reference to an upstream computed leaf that classified
 /// <c>NonNullableValueRead.ThrowOnMalformedNull</c> (a projected Distinct's flattened key over <c>x.Rank + 1</c>), so
-/// the read side reads it strictly, as it would the leaf itself. Unlike <paramref name="ThrowsOnNull"/>, no emit-side
-/// consumer looks at it, so no later operator declines over it.
+/// the read side reads it strictly, as it would the leaf itself. Also set for an upstream
+/// <c>NonNullableValueRead.DefaultOnMalformedMissing</c> leaf (<c>x.Rank > 1 ? -1 : x.Rank</c>): a lone <c>$group</c>
+/// key answers null for MISSING, so the flattened value can't tell an omitted field from an explicit null. Unlike
+/// <paramref name="ThrowsOnNull"/>, no emit-side consumer looks at it, so no later operator declines over it.
 /// </param>
 internal readonly record struct MongoProjection(
     string Alias,

@@ -547,6 +547,70 @@ The fold runs after EF's funcletizer, so only a literal/constant source folds at
 
 **Commit:** `EF-322: never fold local-collection filters that read the clock`
 
+### Task 1.14: F13 — a computed projection whose server result is MISSING reads default on main but throws natively
+
+(Controller-authored task; found by the Task 1.12 review.)
+
+**Problem.** For a non-nullable computed leaf whose server expression evaluates to MISSING (not null), e.g. `Select(x => x.Rank > 1 ? -1 : x.Rank)` with `int Rank` missing from a document, canonical main returns `0` for that row: `$cond` selecting `"$Rank"` makes `$project` omit `_v`, and the driver's deserializer reads an omitted member as `default`. Natively the same query threw (Task 1.12's strict read). A blanket "missing → default" is wrong too: native renders `(long)x.Rank` as a bare `"$Rank"` (MISSING) where the driver renders `$toLong` (null, FormatException).
+
+**Probe (Step 1).** Raw seeds a `{Rank:1, Score:5, Big:10}`, b `{Rank:2, Big:20}`, c `{}`, d `{Rank:null, Score:null, Big:null}`; `int Rank`, `int? Score`, `long Big`. Main = `upstream/main` `dec7e26f` exported with `git archive`, no `UseQueryMode`, EF10. Branch = EF-322c NativeOnly (Native identical in every row; DriverLinq identical to main in every row). Rows a/b agree everywhere. "throws" natively is `InvalidOperationException` (EF's "Nullable object must have a value." unless noted); main's "throws FE" is `FormatException` (`Cannot deserialize a 'Int32' from BsonType 'Null'`).
+
+| Shape | c missing: main | c: before | c: after | d null: main | d: before | d: after |
+|---|---|---|---|---|---|---|
+| `x.Rank > 1 ? -1 : x.Rank` | 0 | throws | 0 | throws FE | throws | throws |
+| `x.Rank > 1 ? x.Rank : -1` | -1 | -1 | -1 | -1 | -1 | -1 |
+| `x.Rank > 1 ? x.Rank : x.Rank` | 0 | throws | 0 | throws FE | throws | throws |
+| `x.Title == "c" ? x.Rank : 0` | 0 | throws | 0 | 0 | 0 | 0 |
+| `x.Rank > 1 ? -1 : (x.Rank > 0 ? 5 : x.Rank)` | 0 | throws | 0 | throws FE | throws | throws |
+| `x.Rank > 1 ? -1 : (int)x.Rank` | 0 | throws | 0 | throws FE | throws | throws |
+| `x.Rank > 1 ? -1L : x.Big` | 0 | throws | 0 | throws FE | throws | throws |
+| `x.Rank > 1 ? -1 : x.Rank + 1` | throws FE | throws | throws | throws FE | throws | throws |
+| `x.Rank > 1 ? -1L : (long)x.Rank` | throws FE | throws | throws | throws FE | throws | throws |
+| `(long)(x.Rank > 1 ? -1 : x.Rank)` | throws FE | throws | throws | throws FE | throws | throws |
+| `x.Title == "c" ? x.Big : x.Rank (long)` | 0 | throws | throws | throws FE | throws | throws |
+| `(int?)(x.Rank > 1 ? -1 : x.Rank)` | null | null | null | null | null | null |
+| `x.Score ?? x.Rank` | 0 | throws (missing) | 0 | throws FE | 0 | throws |
+| `x.Score ?? x.Rank + 1` | throws FE | 0 | throws | throws FE | 0 | throws |
+| `(int)x.Rank` | 0 | throws (missing) | 0 | throws FE | 0 | throws |
+| `(long)x.Rank` | throws FE | throws (missing) | throws | throws FE | 0 | throws |
+| `(double)x.Rank` | throws FE | throws (missing) | throws | throws FE | 0 | throws |
+| `(int?)x.Rank` | null | null | null | null | null | null |
+| `x.Rank` | 0 | 0 | 0 | throws FE | throws | throws |
+| `x.Rank + 0 (also - 0, 0 +, + captured 0)` | 0 | throws | throws | throws FE | throws | throws |
+| `-x.Rank` | throws FE | throws | throws | throws FE | throws | throws |
+| `Math.Abs(x.Rank)` | throws FE | throws | throws | throws FE | throws | throws |
+| `new { V = x.Rank > 1 ? -1 : x.Rank }` | 0 | throws | 0 | throws FE | throws | throws |
+| `new { V = (int)x.Rank }` | 0 | throws (missing) | 0 | throws FE | 0 | throws |
+| `new { V = (long)x.Rank }` | throws FE | throws (missing) | throws | throws FE | 0 | throws |
+| `condelse, then First()` | 0 | throws | 0 | throws FE | throws | throws |
+| `condelse, then Where(v => v < 100)` | 0 | throws | 0 | throws FE | throws | throws |
+| `condelse, then OrderBy(v => v)` | 0 | throws | 0 | throws FE | throws | throws |
+| `condelse Concat condelse` | 0,0 | throws | 0,0 | throws FE | throws | throws |
+| `condelse Union condelse` | 0 | throws | 0 | throws FE | throws | throws |
+| `condelse, then Distinct()` | 0 | throws | throws | throws FE | throws | throws |
+| `new { x.Title, V = condelse }, then Distinct()` | 0 | throws | throws | throws FE | throws | throws |
+| `x.Score ?? x.Rank, then Distinct()` | 0 | 0 | throws | throws FE | 0 | throws |
+| `castlongcond, then Distinct()` | throws FE | throws | throws | throws FE | throws | throws |
+| `condelse, then Max()` | 0 | 0 | 0 | throws FE | 0 | 0 |
+| `x.Rank, then Distinct()` | 0 | 0 | 0 | throws FE | 0 | 0 |
+| `(int)x.Score (Score is int?)` | 0 | throws (missing) | throws (missing) | throws FE | 0 | 0 |
+| `x.Score.Value` | 0 | throws | throws | throws FE | throws | throws |
+| `x.Rank > 1 ? -1 : x.Score.Value` | 0 | throws | throws | throws FE | throws | throws |
+
+**Discriminator (Step 2), from the table.** Native and driver render `$cond`/`$ifNull` identically, so the server's own answer is the oracle wherever the renderings agree: MISSING → `default`, null → throw. They disagree in three places: (1) native unwraps a widening cast (`TryTranslateValue`), so `(long)x.Rank` / `-1L : (long)x.Rank` / `(long)(cond)` are bare natively where the driver emits `$toLong`; (2) the driver simplifies `x + 0`, `x - 0`, `0 + x` and `x + <captured 0>` to `x`; (3) a projected `Distinct` groups natively on the value (`$group: {_id: {_v: …}}`, and a lone `$group` key turns MISSING into null) where the driver groups the projected document (`$$ROOT`, MISSING kept).
+
+**Fix.**
+- `ClassifyNonNullableValueRead` gains `DefaultOnMalformedMissing` (emit side: `Plain`): a leaf already `ThrowOnMalformedNull` whose value positions (`$cond` branches, `$ifNull` fallback) reach a stored field of exactly the read type (`MayAnswerMissing`). A reachable field of another type sits under a dropped widening (the driver's `$toX` answers null), which keeps the whole leaf strict. The missing-fields walk now also follows `$ifNull`'s fallback (`x.Score ?? x.Rank + 1` was read silently as `0` for c/d; main throws).
+- Read side (`TryCreateThrowOnMalformedNullAliasRead`, same classifier call): `DefaultOnMalformedMissing` reads `default(T)` when the alias is absent, else `T?` + `.Value`.
+- A projected Distinct's flattened key over such a leaf stays strict (`ThrowsOnMalformedNull`): (3) makes MISSING and null indistinguishable there.
+- Bare cast leaves staged as the field (`TryCreateRequiredScalarCastRead`, Projection route, required non-nullable property): an identity cast (`(int)x.Rank`, dropped by the driver) reads like `x.Rank` (Task 1.10: missing → `0`, null → throws); a `$toX` cast (`(long)x.Rank`, `(double)x.Rank`) reads strictly, so an explicit null throws as on main instead of reading `0`.
+
+**Residual divergences (loud; pinned in `Missing_required_element_divergences_from_main_are_loud`).** (2) additive-zero simplification (parameter-value dependent, which a compiled-once template can't follow); (1) a conditional mixing a same-typed field and a widened field (`c ? x.Big : x.Rank` as long) whose same-typed branch is MISSING; (3) Distinct over a field-selecting leaf for a document missing the field, including `(x.Score ?? x.Rank).Distinct()`, which read `0` (matching main for c, but also `0` for an explicit null) before this task. Out of scope, recorded: `Max` over a field-selecting leaf with an explicit null reads `0` (main throws); bare `x.Rank.Distinct()` and `(int)x.Rank` Distinct read an explicit null as `0` (main throws); casts over a nullable property (`(int)x.Score` missing → native throws, main `0`; null → native `0`, main throws) and `x.Score.Value` (Task 1.3's C# semantics: throws, main `0` for missing).
+
+**Tests** (`NativeMissingRequiredScalarProjectionTests`): `Projection_over_a_missing_or_null_required_element_matches_main`, a theory over 32 shapes asserting main's per-row outcome (a/b/c/d) in NativeOnly, Native and DriverLinq; the Task 1.12 pin `Conditional_selecting_a_missing_required_element_throws_natively_and_reads_default_on_driver_linq` becomes `Conditional_selecting_a_missing_required_element_reads_default` (`[1, -1, 0]` in all modes); the residual pin above.
+
+**Commit:** `EF-322: computed projections that evaluate to missing read default, matching driver LINQ`
+
 ---
 
 ## Phase 2 — Implicit-mode NativeOnly gaps (the 129 tests in `nativeonly-gaps.tsv`)

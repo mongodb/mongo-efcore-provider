@@ -156,6 +156,17 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         typeof(MongoProjectionBindingRemovingExpressionVisitor)
             .GetMethod(nameof(IsElementAbsentOrNull), BindingFlags.NonPublic | BindingFlags.Static)!;
 
+    /// <summary>
+    /// Whether <paramref name="elementName"/> is absent from <paramref name="document"/> (an explicit BSON null is
+    /// present): a <c>$project</c> output the server answered MISSING for.
+    /// </summary>
+    internal static bool IsElementAbsent(BsonDocument document, string elementName)
+        => !document.Contains(elementName);
+
+    private static readonly MethodInfo IsElementAbsentMethodInfo =
+        typeof(MongoProjectionBindingRemovingExpressionVisitor)
+            .GetMethod(nameof(IsElementAbsent), BindingFlags.NonPublic | BindingFlags.Static)!;
+
     private static readonly ConstructorInfo SequenceContainsNoElementsConstructorInfo =
         typeof(InvalidOperationException).GetConstructor([typeof(string)])!;
 
@@ -231,9 +242,11 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     // use the raw alias read like other computed leaves. Safe because the emit side
                     // (AllFieldsDefaultSerialized) never admits a cast over a converted/non-default-representation
                     // field. A nullable cast over a Local-kind DateTime still reads with that kind (CreateAliasRead).
-                    if (projection.Expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked })
+                    if (projection.Expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } castLeaf)
                     {
-                        return CreateAliasRead(projection.Alias, projectionBindingExpression.Type);
+                        return TryCreateRequiredScalarCastRead(castLeaf, projection.Alias, projectionBindingExpression.Type, out var castRead)
+                            ? castRead
+                            : CreateAliasRead(projection.Alias, projectionBindingExpression.Type);
                     }
 
                     // Native string-to-char-sequence leaf: only the raw string was pushed down (BSON has no
@@ -953,14 +966,16 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     /// non-nullable property's field, <c>x.Rank + 1</c>), reads it as a nullable and takes
     /// <see cref="Nullable{T}.Value"/>, so the null the server answers when a document omits that field throws EF's
     /// "Nullable object must have a value." (driver-LINQ's deserializer threw <see cref="FormatException"/>) instead of
-    /// reading as <c>default(T)</c>.
+    /// reading as <c>default(T)</c>. When it classifies <see cref="NonNullableValueRead.DefaultOnMalformedMissing"/> (the
+    /// leaf may select the omitted field itself: <c>x.Rank > 1 ? -1 : x.Rank</c>), a MISSING output reads
+    /// <c>default(T)</c>, as driver-LINQ's deserializer read it, and a null still throws.
     /// </summary>
     /// <remarks>
-    /// Read side only: the emit side treats the classification as <see cref="NonNullableValueRead.Plain"/>, so no later
-    /// operator declines over it. A projected Distinct's flattened key (on the <see cref="NativeRoute.GroupBy"/> route)
-    /// reads strictly through <see cref="MongoProjection.ThrowsOnMalformedNull"/>, which NativeGroupByBinder sets from
-    /// the same classification of the upstream leaf. Whole-document reads (<see cref="ReadsUnprojectedDocuments"/>) are
-    /// unaffected.
+    /// Read side only: the emit side treats both classifications as <see cref="NonNullableValueRead.Plain"/>, so no later
+    /// operator declines over them. A projected Distinct's flattened key (on the <see cref="NativeRoute.GroupBy"/> route)
+    /// reads strictly through <see cref="MongoProjection.ThrowsOnMalformedNull"/>, which NativeGroupByBinder sets from the same
+    /// classification of the upstream leaf (strict for both: a <c>$group</c> key answers null for MISSING).
+    /// Whole-document reads (<see cref="ReadsUnprojectedDocuments"/>) are unaffected.
     /// </remarks>
     private bool TryCreateThrowOnMalformedNullAliasRead(string alias, Type type, [NotNullWhen(true)] out Expression? read)
     {
@@ -983,20 +998,67 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
             // A projected Distinct's flattened key carries its upstream leaf's classification (ThrowsOnMalformedNull);
             // otherwise only this select's own computed leaf on the Projection route qualifies.
-            if (!projection.ThrowsOnMalformedNull
-                && (route != NativeRoute.Projection
-                    || MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(type, projection.Expression)
-                    != NonNullableValueRead.ThrowOnMalformedNull))
+            var malformedRead = projection.ThrowsOnMalformedNull
+                ? NonNullableValueRead.ThrowOnMalformedNull
+                : route == NativeRoute.Projection
+                    ? MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(type, projection.Expression)
+                    : NonNullableValueRead.Plain;
+            if (malformedRead is not (NonNullableValueRead.ThrowOnMalformedNull or NonNullableValueRead.DefaultOnMalformedMissing))
             {
                 return false;
             }
 
-            read = Expression.Property(
+            Expression strictRead = Expression.Property(
                 CreateAliasRead(alias, type.MakeNullable()), type.MakeNullable().GetProperty(nameof(Nullable<int>.Value))!);
+            read = malformedRead == NonNullableValueRead.DefaultOnMalformedMissing
+                ? Expression.Condition(
+                    Expression.Call(IsElementAbsentMethodInfo, DocParameter, Expression.Constant(alias)),
+                    Expression.Default(type),
+                    strictRead)
+                : strictRead;
             return true;
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// On the native <see cref="NativeRoute.Projection"/> route, reads a non-nullable cast of a required non-nullable
+    /// stored scalar that the emit side staged as the bare field (<c>(int)x.Rank</c>, <c>(long)x.Rank</c>) the way
+    /// driver-LINQ's rendering of the same cast answers for a malformed document: an identity cast, which the driver
+    /// drops, reads like the bare <c>x.Rank</c> (missing element → <c>default(T)</c>, explicit null → throws); a cast
+    /// the driver renders as <c>$toX</c> (<see cref="MongoConvertExpression.ToOperatorFor"/>), which answers null for a
+    /// missing or null field, reads strictly and throws for both, rather than reading a null as <c>0</c>.
+    /// </summary>
+    private bool TryCreateRequiredScalarCastRead(UnaryExpression castLeaf, string alias, Type type, [NotNullWhen(true)] out Expression? read)
+    {
+        read = null;
+        if (_queryExpression.Select.Route != NativeRoute.Projection
+            || ReadsUnprojectedDocuments
+            || !type.IsValueType
+            || Nullable.GetUnderlyingType(type) is not null
+            || TryResolveFieldAccess(castLeaf).Property is not { IsNullable: false } property
+            || !property.ClrType.IsValueType
+            || !_queryExpression.Select.Projection.Any(p => p.Alias == alias && p.Expression is MongoFieldExpression))
+        {
+            return false;
+        }
+
+        if (castLeaf.Operand.Type == type)
+        {
+            read = BsonBinding.CreateGetScalarProjectionValueExpression(DocParameter, alias, property, type);
+            return true;
+        }
+
+        // An enum's cast to its underlying type is a relabeling the driver doesn't render as $toX either.
+        if (MongoConvertExpression.ToOperatorFor(type) is null || castLeaf.Operand.Type.UnwrapNullableType().IsEnum)
+        {
+            return false;
+        }
+
+        read = Expression.Property(
+            CreateAliasRead(alias, type.MakeNullable()), type.MakeNullable().GetProperty(nameof(Nullable<int>.Value))!);
+        return true;
     }
 
     /// <summary>

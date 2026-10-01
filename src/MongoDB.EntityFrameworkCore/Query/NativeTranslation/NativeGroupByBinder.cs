@@ -1668,13 +1668,17 @@ internal static class NativeGroupByBinder
             // "_id.<alias>" by the flatten, and by operators over the Distinct through the key part (DistinctAliasScope).
             keyParts.Add(new MongoGroupingKeyPart(projection.Alias, projection.Expression, projection.ThrowsOnNull));
             // A computed key over a non-nullable field (`x.Rank + 1`) is null when a document omits the field; the flatten
-            // is read strictly like the leaf itself (read side only: ThrowsOnMalformedNull flags nothing downstream).
+            // is read strictly like the leaf itself (read side only: ThrowsOnMalformedNull flags nothing downstream). So
+            // is one that selects the field itself (`x.Rank > 1 ? -1 : x.Rank`, DefaultOnMalformedMissing): unlike its
+            // $project output, a lone `$group` `_id` sub-key answers null for MISSING, so the read can't tell the omitted
+            // field (driver-LINQ, grouping on the projected document, read 0) from an explicit null (driver-LINQ threw).
             flatten.Add(new MongoProjection(projection.Alias,
                 new MongoElementRefExpression("_id." + projection.Alias, projection.Expression.Type),
                 ThrowsOnNull: projection.ThrowsOnNull,
                 ThrowsOnMalformedNull: projection.ThrowsOnMalformedNull
                     || MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
-                        projection.Expression.Type, projection.Expression) == NonNullableValueRead.ThrowOnMalformedNull));
+                        projection.Expression.Type, projection.Expression)
+                        is NonNullableValueRead.ThrowOnMalformedNull or NonNullableValueRead.DefaultOnMalformedMissing));
         }
 
         select.ClearProjections();

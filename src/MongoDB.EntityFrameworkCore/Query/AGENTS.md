@@ -169,7 +169,13 @@ Rendering (null/missing/dialect semantics):
   leaf over a non-nullable field (`x.Rank + 1`) strictly on the `Projection` route
   (`NonNullableValueRead.ThrowOnMalformedNull`, treated as `Plain` by every emit-side caller), and a projected
   Distinct's flattened key over one via the read-only `MongoProjection.ThrowsOnMalformedNull`, so a document that
-  omits the field throws, as driver-LINQ did, instead of reading `0`.
+  omits the field throws, as driver-LINQ did, instead of reading `0`. Where the leaf selects the field itself (a
+  `$cond` branch or `$ifNull` fallback: `x.Rank > 1 ? -1 : x.Rank`, `x.Score ?? x.Rank`) the server answers MISSING,
+  not null, as on driver-LINQ, which read `default`: `DefaultOnMalformedMissing` reads a missing alias as `default`
+  and a null as a throw. Only where native's rendering answers MISSING exactly where the driver's does: a field under
+  a widening cast the translator dropped (the driver's `$toLong` answers null) makes the leaf strict, and a Distinct
+  key stays strict (a lone `$group` key turns MISSING into null). A bare cast leaf staged as the field reads like
+  `x.Rank` for an identity cast and strictly for a `$toX` cast (`TryCreateRequiredScalarCastRead`).
 
 Shapers and projections:
 

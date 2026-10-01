@@ -1042,6 +1042,11 @@ internal static class MongoAggregationExpressionRenderer
             MongoConditionalExpression conditional
                 => WalkNullBehindNonNullableType(conditional.IfTrue, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, true)], dateParts, missingFields)
                    | WalkNullBehindNonNullableType(conditional.IfFalse, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, false)], dateParts, missingFields),
+            // `x.Score ?? x.Rank`: $ifNull answers the fallback when the nullable side is null or missing, so a missing
+            // non-nullable fallback field (or an operator over one) is the leaf's malformed-document value. Only with
+            // missingFields: group keys and accumulators are unchanged.
+            MongoCoalesceExpression coalesce when missingFields
+                => WalkNullBehindNonNullableType(coalesce.Right, nonNull, dateParts, missingFields),
             _ => default
         };
 
@@ -1155,10 +1160,50 @@ internal static class MongoAggregationExpressionRenderer
         // when a malformed document omits it (`x.Rank + 1`). The read side alone reads it strictly; the emit side and
         // every later operator treat it as Plain (flagging non-nullable fields would decline Distinct/Min/Max/group
         // keys over every `x.A + x.B`).
-        return WalkNullBehindNonNullableType(node, [], dateParts: true, missingFields: true).MayBeNull
-            ? NonNullableValueRead.ThrowOnMalformedNull
-            : NonNullableValueRead.Plain;
+        if (!WalkNullBehindNonNullableType(node, [], dateParts: true, missingFields: true).MayBeNull)
+            return NonNullableValueRead.Plain;
+
+        // Where the leaf selects the omitted field itself (`x.Rank > 1 ? -1 : x.Rank`), the server answers MISSING rather
+        // than null, which driver-LINQ's deserializer read as default.
+        return MayAnswerMissing(readType, node) == MissingAnswer.Missing
+            ? NonNullableValueRead.DefaultOnMalformedMissing
+            : NonNullableValueRead.ThrowOnMalformedNull;
     }
+
+    private enum MissingAnswer
+    {
+        // Never MISSING: an operator or $toX over the field answers null instead.
+        Never,
+
+        // MISSING exactly where driver-LINQ's rendering of the same leaf is.
+        Missing,
+
+        // MISSING natively where driver-LINQ answers null: under a widening cast the translator unwrapped
+        // (TryTranslateValue) but the driver renders as $toX (`(long)(c ? -1 : x.Rank)`, `c ? x.Big : x.Rank` as long).
+        Unfaithful
+    }
+
+    // Whether a value read back as `readType` may be MISSING on the server: a stored field reached through the
+    // value positions of $cond (either branch) and $ifNull (the fallback; the nullable side is replaced when missing).
+    // Any other operator answers null for a missing operand. A field whose type isn't the read type sits under a
+    // widening conversion the translator dropped, which driver-LINQ renders as $toX (answering null), so a native
+    // MISSING there must not read as default. One unfaithful position makes the whole leaf strict: the read can't tell
+    // which branch the server took.
+    private static MissingAnswer MayAnswerMissing(Type readType, MongoExpression node)
+        => node switch
+        {
+            MongoConditionalExpression conditional
+                => Combine(MayAnswerMissing(readType, conditional.IfTrue), MayAnswerMissing(readType, conditional.IfFalse)),
+            MongoCoalesceExpression coalesce => MayAnswerMissing(readType, coalesce.Right),
+            MongoFieldExpression or MongoOuterFieldExpression
+                => node.Type.UnwrapNullableType() == readType ? MissingAnswer.Missing : MissingAnswer.Unfaithful,
+            _ => MissingAnswer.Never
+        };
+
+    private static MissingAnswer Combine(MissingAnswer a, MissingAnswer b)
+        => a == MissingAnswer.Unfaithful || b == MissingAnswer.Unfaithful ? MissingAnswer.Unfaithful
+            : a == MissingAnswer.Missing || b == MissingAnswer.Missing ? MissingAnswer.Missing
+            : MissingAnswer.Never;
 
     private static bool IsNullableClrType(Type type)
         => !type.IsValueType || Nullable.GetUnderlyingType(type) is not null;
@@ -1191,5 +1236,14 @@ internal enum NonNullableValueRead
     /// the leaf as <c>T?</c> and throwing EF's "Nullable object must have a value." on null, where driver-LINQ's
     /// deserializer threw <c>FormatException</c>, rather than reading <c>default(T)</c>.
     /// </summary>
-    ThrowOnMalformedNull
+    ThrowOnMalformedNull,
+
+    /// <summary>
+    /// As <see cref="ThrowOnMalformedNull"/>, but the leaf may select the omitted field itself (a <c>$cond</c> branch or
+    /// <c>$ifNull</c> fallback: <c>x.Rank > 1 ? -1 : x.Rank</c>, <c>x.Score ?? x.Rank</c>), for which the server answers
+    /// MISSING rather than null, exactly where driver-LINQ's rendering does. The read side reads a missing value as
+    /// <c>default(T)</c>, as driver-LINQ's deserializer did (and as a bare <c>x.Rank</c> does), and throws on null.
+    /// Emit-side callers treat it exactly as <see cref="Plain"/>.
+    /// </summary>
+    DefaultOnMalformedMissing
 }
