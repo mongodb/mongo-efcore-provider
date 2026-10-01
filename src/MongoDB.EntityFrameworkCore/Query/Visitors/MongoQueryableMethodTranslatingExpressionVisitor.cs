@@ -1570,24 +1570,26 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             }
             else
             {
-                // Single join: TranslateJoinCore never flattens a lone join, so register it here.
-                var lookup = new LookupExpression(navigation, forceUnwind: true)
-                {
-                    // Elsewhere the LINQ operator decides inner vs. left-outer, since IsRequired can't see a user
-                    // LeftJoin over a required FK. No operator is available here, but for EF's own
-                    // nav-expansion of a reference Include (Join for required, LeftJoin for optional) the two
-                    // coincide.
-                    PreserveNullAndEmptyArrays = !navigation.ForeignKey.IsRequired
-                };
-
-                // Defensive: not known reachable, since LookupExpression's constructor never prefixes LocalField
-                // and the sites that do mutate already-registered lookups.
-                if (lookup.LocalField.StartsWith(LookupExpression.LookupAliasPrefix, StringComparison.Ordinal))
+                // Single join: TranslateJoinCore never flattens a lone join, so register it here. Register the
+                // recorded join's own lookup rather than building one: it carries the real left-outer flag from the
+                // operator EF chose. EF emits an inner Join only for a dependent-side required navigation; a
+                // principal-side reference Include is always a LeftJoin even when the FK is required, so guessing
+                // from ForeignKey.IsRequired dropped principals that had no dependent.
+                var join = mongoQueryExpression.Joins.FirstOrDefault(
+                    j => j.Navigation == navigation && j.Lookup is { ForceUnwind: true });
+                if (join is null)
                 {
                     return false;
                 }
 
-                newLookups.Add(lookup);
+                // Defensive: not known reachable, since the lookup's constructor never prefixes LocalField and the
+                // sites that do mutate already-registered lookups.
+                if (join.Lookup!.LocalField.StartsWith(LookupExpression.LookupAliasPrefix, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                newLookups.Add(join.Lookup);
             }
         }
 
