@@ -162,7 +162,10 @@ Rendering (null/missing/dialect semantics):
   `Distinct` declines it, and a set op declines unless both operands' alias is TimeOfDay (`OperandSerializationsMatch`),
   so later operators never read it as a default `TimeSpan`; Local-kind receivers decline.
   A date operator (part, `AddXxx`, DateTimeOffset local reconstruction) over a nullable date throws on null as a
-  projection leaf (`ClassifyNonNullableValueRead`), but group keys/accumulators still read `0` (EF-461).
+  projection leaf (`ClassifyNonNullableValueRead`), but group keys/accumulators still read `0` (EF-461). So does any
+  non-nullable operator over a nullable-typed field (`x.Score.Value + 1`, `Math.Abs(...)`, `c ? x.Score.Value : 0`);
+  a bare field leaf is never flagged (read property-aware), and non-nullable fields are never flagged (that would
+  decline `Min`/`Max`/`Average`/group keys over every `x.A + x.B`).
 
 Shapers and projections:
 

@@ -966,8 +966,8 @@ internal static class MongoAggregationExpressionRenderer
     /// native. Filters are unaffected: the relational null guard covers them.
     /// </summary>
     /// <remarks>
-    /// Doesn't count a date operator over a nullable date (<c>o.OrderDate.Value.Day</c>, <c>.AddDays(1)</c>) as null
-    /// behind the type, unlike
+    /// Doesn't count a date operator over a nullable date (<c>o.OrderDate.Value.Day</c>, <c>.AddDays(1)</c>), or an
+    /// operator over a nullable stored value (<c>x.Score.Value + 1</c>), as null behind the type, unlike
     /// <see cref="ClassifyNonNullableValueRead"/>: declining those group keys and accumulators would move grouped queries
     /// that are native today onto the fallback, and a group key has no throw-on-null read yet. Their null still reads
     /// as <c>0</c> (EF-461).
@@ -1016,6 +1016,14 @@ internal static class MongoAggregationExpressionRenderer
                    | WalkNullBehindNonNullableType(dateAdd.Amount, nonNull, dateParts),
             MongoDateTimeOffsetLocalExpression local when dateParts
                 => new NullBehindNonNullable(MayBeNullUnlessProven(local.Operand, nonNull), false),
+            // A nullable-typed stored value under a non-nullable operator (`x.Score!.Value + 1`, `Math.Abs(x.Score!.Value)`,
+            // `c ? x.Score!.Value : 0`, with `.Value` peeled to the field): the operator propagates its null, which a
+            // non-nullable read would take as 0 where EF throws. A non-nullable property's field answers false here
+            // (MayBeNull is its CLR type), so `x.A + x.B` is not flagged. Projection leaves only (dateParts, as for the
+            // date operators above): group keys and accumulators are unchanged. A bare field leaf never reaches here
+            // (ClassifyNonNullableValueRead reads it property-aware).
+            MongoFieldExpression or MongoOuterFieldExpression when dateParts
+                => new NullBehindNonNullable(MayBeNullUnlessProven(node, nonNull), false),
             MongoMathExpression math => WalkMath(math, nonNull, dateParts),
             // Either branch may be the value read, each under what the test proves on it: `s == null ? a : b` and
             // `string.IsNullOrEmpty(s) ? a : b` make s non-null in b; `s != null ? a : b` makes it non-null in a.
@@ -1099,8 +1107,10 @@ internal static class MongoAggregationExpressionRenderer
     /// <summary>
     /// How a projection leaf read back as <paramref name="readType"/> handles a null behind the non-nullable type
     /// (<see cref="ReadsNullAsDefault"/>, and also a date operator over a nullable date: <c>o.OrderDate.Value.Year</c>,
-    /// <c>.Value.TimeOfDay</c>, <c>.Value.AddDays(1)</c>, <c>o.Dto.Value.DateTime</c>): <see cref="NonNullableValueRead.Plain"/>
-    /// when there is none;
+    /// <c>.Value.TimeOfDay</c>, <c>.Value.AddDays(1)</c>, <c>o.Dto.Value.DateTime</c>, and an operator over a nullable
+    /// stored value: <c>x.Score.Value + 1</c>, <c>Math.Abs(x.Score.Value)</c>, <c>c ? x.Score.Value : 0</c>):
+    /// <see cref="NonNullableValueRead.Plain"/> when there is none, or when the leaf is itself a bare field (read
+    /// through its property's binding);
     /// <see cref="NonNullableValueRead.ThrowOnNull"/> when every operator between that null and the leaf's value
     /// propagates it, so reading the leaf as <c>T?</c> and throwing on null is exactly EF's
     /// "Nullable object must have a value."; <see cref="NonNullableValueRead.Decline"/> when an operator may absorb it
@@ -1114,6 +1124,11 @@ internal static class MongoAggregationExpressionRenderer
     internal static NonNullableValueRead ClassifyNonNullableValueRead(Type readType, MongoExpression node)
     {
         if (!readType.IsValueType || Nullable.GetUnderlyingType(readType) is not null)
+            return NonNullableValueRead.Plain;
+
+        // A bare property leaf (`x.Score!.Value`) is read through the property's binding, which already handles its
+        // null; flagging it would only make later operators (Distinct, set ops, groups) decline it.
+        if (node is MongoFieldExpression or MongoOuterFieldExpression)
             return NonNullableValueRead.Plain;
 
         var walk = WalkNullBehindNonNullableType(node, [], dateParts: true);

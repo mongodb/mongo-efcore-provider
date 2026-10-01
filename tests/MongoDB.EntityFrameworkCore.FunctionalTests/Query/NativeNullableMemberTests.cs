@@ -382,6 +382,162 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
                 .Select(x => x.Converted!.Value).ToList());
     }
 
+    // ── 9. A non-nullable computed leaf over a null/missing nullable operand throws ──
+
+    public static TheoryData<string> NullableOperandShapes => new() { "add", "mul", "div", "abs", "cond" };
+
+    /// <summary>
+    /// The server propagates a null <c>Score</c> through <c>$add</c>/<c>$multiply</c>/<c>$divide</c>/<c>$abs</c>/
+    /// <c>$cond</c>, and a plain non-nullable alias read would take that null as <c>0</c>. EF (and driver-LINQ, which
+    /// fails in its deserializer) throws instead, so the leaf is flagged <c>MongoProjection.ThrowsOnNull</c> and read
+    /// as <c>int?</c> + <c>.Value</c> (<c>MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead</c>).
+    /// r2 has an explicit null Score, r3 omits it.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(NullableOperandShapes))]
+    public void Non_nullable_computed_leaf_over_null_or_missing_operand_throws(string shape)
+    {
+        var collection = SeedRagged(nameof(Non_nullable_computed_leaf_over_null_or_missing_operand_throws) + shape);
+
+        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.NativeOnly})
+        {
+            using var db = CreateContext(collection, mode);
+            var ex = Assert.Throws<InvalidOperationException>(() => Run(db, shape));
+            Assert.Contains("Nullable object must have a value", ex.Message);
+        }
+
+        // The oracle throws too (its deserializer can't read BSON null as Int32); exception types legitimately differ.
+        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
+        {
+            var ex = Assert.Throws<FormatException>(() => Run(db, shape));
+            Assert.Contains("Cannot deserialize a 'Int32' from BsonType 'Null'", ex.ToString());
+        }
+
+        static List<int> Run(SingleEntityDbContext<Item> db, string shape)
+        {
+            var q = db.Entities.AsNoTracking().OrderBy(x => x.Title);
+            return (shape switch
+            {
+                "add" => q.Select(x => x.Score!.Value + 1),
+                "mul" => q.Select(x => (int)x.Score! * 2),
+                "div" => q.Select(x => x.Score!.Value / 2),
+                "abs" => q.Select(x => Math.Abs(x.Score!.Value)),
+                _ => q.Select(x => x.Rank > 1 ? x.Score!.Value : 0),
+            }).ToList();
+        }
+    }
+
+    [Fact]
+    public void Non_nullable_computed_leaf_inside_a_construction_over_null_operand_throws()
+    {
+        var collection = SeedRagged(nameof(Non_nullable_computed_leaf_inside_a_construction_over_null_operand_throws));
+
+        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.NativeOnly})
+        {
+            using var db = CreateContext(collection, mode);
+            var ex = Assert.Throws<InvalidOperationException>(() =>
+                db.Entities.AsNoTracking().OrderBy(x => x.Title)
+                    .Select(x => new {x.Title, V = x.Score!.Value + 1}).ToList());
+            Assert.Contains("Nullable object must have a value", ex.Message);
+        }
+    }
+
+    [Fact]
+    public void Non_nullable_computed_leaf_over_a_proven_or_coalesced_operand_is_unchanged()
+    {
+        var collection = SeedRagged(nameof(Non_nullable_computed_leaf_over_a_proven_or_coalesced_operand_is_unchanged));
+
+        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        {
+            using var db = CreateContext(collection, mode);
+            var q = db.Entities.AsNoTracking().OrderBy(x => x.Title);
+            Assert.Equal([11, 1, 1, 4], q.Select(x => (x.Score ?? 0) + 1).ToList());
+            // Well-formed rows only: the flag changes nothing for a value that is present.
+            Assert.Equal([11, 4], q.Where(x => x.Rank <= 2).Select(x => x.Score!.Value + 1).ToList());
+        }
+
+        // The test proves Score non-null in the true branch, so the leaf stays a plain read.
+        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native})
+        {
+            using var db = CreateContext(collection, mode);
+            Assert.Equal(
+                [11, 0, 0, 4],
+                db.Entities.AsNoTracking().OrderBy(x => x.Title)
+                    .Select(x => x.Score != null ? x.Score.Value + 1 : 0).ToList());
+        }
+
+        // Driver-LINQ renders the test as a bare aggregation `$ne: ["$Score", null]`, which is true for a MISSING
+        // Score (missing != null in the aggregation dialect), so r3 takes the true branch, `$add` answers null, and its
+        // Int32 deserializer throws. Not this slice's concern; pinned so a driver fix is noticed.
+        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
+        {
+            var ex = Assert.Throws<FormatException>(() =>
+                db.Entities.AsNoTracking().OrderBy(x => x.Title)
+                    .Select(x => x.Score != null ? x.Score.Value + 1 : 0).ToList());
+            Assert.Contains("Cannot deserialize a 'Int32' from BsonType 'Null'", ex.ToString());
+        }
+    }
+
+    // Distinct carries the flag onto its key part and flattened alias (NativeGroupByBinder), so it stays native and
+    // the deduped null still throws rather than reading 0.
+    [Fact]
+    public void Distinct_over_a_flagged_computed_leaf_stays_native_and_throws_on_null()
+    {
+        var collection = SeedRagged(nameof(Distinct_over_a_flagged_computed_leaf_stays_native_and_throws_on_null));
+
+        // Well-formed rows only.
+        Assert.Equal(
+            [4, 11],
+            NativeModeAssert.NativeAndParity(mode =>
+            {
+                using var db = CreateContext(collection, mode);
+                return db.Entities.AsNoTracking().Where(x => x.Rank <= 2)
+                    .Select(x => x.Score!.Value + 1).Distinct().AsEnumerable().Order().ToList();
+            }));
+
+        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.NativeOnly})
+        {
+            using var db = CreateContext(collection, mode);
+            var ex = Assert.Throws<InvalidOperationException>(() =>
+                db.Entities.AsNoTracking().Select(x => x.Score!.Value + 1).Distinct().ToList());
+            Assert.Contains("Nullable object must have a value", ex.Message);
+        }
+    }
+
+    // A bare `.Value` leaf is read through the property's binding, which handles the null itself; it is not flagged, so
+    // an aggregate over it stays native. Pins ClassifyNonNullableValueRead's bare-field arm.
+    [Fact]
+    public void Max_over_a_bare_Value_leaf_stays_native()
+    {
+        var collection = SeedRagged(nameof(Max_over_a_bare_Value_leaf_stays_native));
+
+        // Well-formed rows only.
+        Assert.Equal(
+            [10],
+            NativeModeAssert.NativeAndParity(mode =>
+            {
+                using var db = CreateContext(collection, mode);
+                return new List<int> {db.Entities.AsNoTracking().Where(x => x.Rank <= 2).Select(x => x.Score!.Value).Max()};
+            }));
+    }
+
+    // Max over a flagged bare leaf would reduce an all-null input to null and read it as 0, so it declines (through the
+    // bare Select's flagged `_v` reference); the fallback agrees with driver-LINQ.
+    [Fact]
+    public void Max_over_a_flagged_computed_leaf_declines_cleanly()
+    {
+        var collection = SeedRagged(nameof(Max_over_a_flagged_computed_leaf_declines_cleanly));
+
+        // Well-formed rows only, so the fallback returns a value to compare.
+        Assert.Equal(
+            [11],
+            NativeModeAssert.DeclinesCleanly(mode =>
+            {
+                using var db = CreateContext(collection, mode);
+                return new List<int> {db.Entities.AsNoTracking().Where(x => x.Rank <= 2).Select(x => x.Score!.Value + 1).Max()};
+            }));
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────────
 
     // Runs the query under Native and DriverLinq and asserts equal results. Both legs must return: comparing
