@@ -459,7 +459,7 @@ internal static class NativeSelectManyBinder
             // Only an arithmetic computed body is admitted bare. A bare member access would need its document path as
             // alias for the late-fallback read (NativeProjectionBinder's tier 1), so it declines; `ti.Inner` (whole
             // element) is handled by the caller's WholeElement branch.
-            if (!IsArithmeticComputedLeaf(selector.Body))
+            if (!NativeProjectionBinder.IsArithmeticLeafShape(selector.Body))
                 return false;
 
             // EF folds `SelectMany(o => o.Items).Select(i => i.Price * 2)` into `ti => ti.Inner.Price * 2`. With
@@ -499,7 +499,7 @@ internal static class NativeSelectManyBinder
                     ? new MongoFieldExpression(field.Property, sources[scopeIndex - 1].InnerScopePath + "." + field.ElementName)
                     : field;
             }
-            else if (IsArithmeticComputedLeaf(argExpr)
+            else if (NativeProjectionBinder.IsArithmeticLeafShape(argExpr)
                      && TryTranslateComputedLeaf(argExpr, ti, sources, translators, scopeParams, out var computed))
             {
                 projected = computed;
@@ -525,16 +525,6 @@ internal static class NativeSelectManyBinder
             bareLeafAlias = members[0].MemberName;
         return true;
     }
-
-    /// <summary>
-    /// Arithmetic shapes a computed leaf may take; shared by the wrapped and bare arms so they admit the same set.
-    /// </summary>
-    private static bool IsArithmeticComputedLeaf(Expression expression)
-        => expression is BinaryExpression
-        {
-            NodeType: ExpressionType.Add or ExpressionType.Subtract or ExpressionType.Multiply
-            or ExpressionType.Divide or ExpressionType.Modulo
-        };
 
     /// <summary>
     /// Translates an arithmetic computed leaf, trying the single-scope form first and the cross-scope form only if

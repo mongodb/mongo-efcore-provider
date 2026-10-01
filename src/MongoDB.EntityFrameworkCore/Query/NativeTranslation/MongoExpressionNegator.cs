@@ -108,6 +108,44 @@ internal static class MongoExpressionNegator
     }
 
     /// <summary>
+    /// The comparison rule: <c>$eq</c>/<c>$ne</c> are inverted, the relational operators are <c>$not</c>-wrapped, and
+    /// anything else (an arithmetic operator) declines. Applies no dialect gate; callers decide where the result
+    /// may be placed.
+    /// </summary>
+    /// <remarks>
+    /// Shared by <see cref="TryNegateCore"/>'s query-native and aggregation-context comparison cases and by
+    /// <c>NativeGroupByBinder.TryNegateGroupComparison</c> (whose comparisons are <c>$expr</c>-only).
+    /// </remarks>
+    internal static bool TryNegateComparison(
+        MongoBinaryExpression comparison, [NotNullWhen(true)] out MongoExpression? negated)
+    {
+        switch (comparison.Operator)
+        {
+            // $eq and $ne partition every BSON value (including missing/null) — inversion is exact.
+            case MongoBinaryOperator.Equal:
+                negated = new MongoBinaryExpression(MongoBinaryOperator.NotEqual, comparison.Left, comparison.Right);
+                return true;
+
+            case MongoBinaryOperator.NotEqual:
+                negated = new MongoBinaryExpression(MongoBinaryOperator.Equal, comparison.Left, comparison.Right);
+                return true;
+
+            // Relational operators do NOT partition — wrap, never invert. See the class remarks.
+            case MongoBinaryOperator.LessThan:
+            case MongoBinaryOperator.LessThanOrEqual:
+            case MongoBinaryOperator.GreaterThan:
+            case MongoBinaryOperator.GreaterThanOrEqual:
+                negated = new MongoUnaryExpression(MongoUnaryOperator.Not, comparison);
+                return true;
+
+            // An arithmetic operator (or anything else reaching here) is not a predicate; nothing to complement.
+            default:
+                negated = null;
+                return false;
+        }
+    }
+
+    /// <summary>
     /// Negation switch shared by <see cref="TryNegate"/> and its recursions.
     /// </summary>
     /// <param name="node">The node to negate.</param>
@@ -148,33 +186,7 @@ internal static class MongoExpressionNegator
             // is kept explicit because this is the one case where getting it wrong is silent wrong data.
             case MongoBinaryExpression comparison
                 when MongoQueryLanguageRenderer.IsQueryNativeComparison(comparison):
-            {
-                switch (comparison.Operator)
-                {
-                    // $eq and $ne partition every BSON value (including missing/null) — inversion is exact.
-                    case MongoBinaryOperator.Equal:
-                        negated = new MongoBinaryExpression(
-                            MongoBinaryOperator.NotEqual, comparison.Left, comparison.Right);
-                        return true;
-
-                    case MongoBinaryOperator.NotEqual:
-                        negated = new MongoBinaryExpression(
-                            MongoBinaryOperator.Equal, comparison.Left, comparison.Right);
-                        return true;
-
-                    // Relational operators do NOT partition — wrap, never invert. See the class remarks.
-                    case MongoBinaryOperator.LessThan:
-                    case MongoBinaryOperator.LessThanOrEqual:
-                    case MongoBinaryOperator.GreaterThan:
-                    case MongoBinaryOperator.GreaterThanOrEqual:
-                        negated = new MongoUnaryExpression(MongoUnaryOperator.Not, comparison);
-                        return true;
-
-                    // An arithmetic operator is not a predicate; nothing to complement.
-                    default:
-                        return false;
-                }
-            }
+                return TryNegateComparison(comparison, out negated);
 
             // Array-count comparison: inverted, not wrapped, because it renders as $exists (see
             // MongoQueryLanguageRenderer.TryRenderSizeComparison), which partitions. The admitted set is closed
@@ -206,32 +218,7 @@ internal static class MongoExpressionNegator
             // $eq/$ne invert, relational operators are $not-wrapped (rendered by
             // MongoAggregationExpressionRenderer.RenderUnary).
             case MongoBinaryExpression comparison3 when inAggregationContext:
-            {
-                switch (comparison3.Operator)
-                {
-                    case MongoBinaryOperator.Equal:
-                        negated = new MongoBinaryExpression(
-                            MongoBinaryOperator.NotEqual, comparison3.Left, comparison3.Right);
-                        return true;
-
-                    case MongoBinaryOperator.NotEqual:
-                        negated = new MongoBinaryExpression(
-                            MongoBinaryOperator.Equal, comparison3.Left, comparison3.Right);
-                        return true;
-
-                    case MongoBinaryOperator.LessThan:
-                    case MongoBinaryOperator.LessThanOrEqual:
-                    case MongoBinaryOperator.GreaterThan:
-                    case MongoBinaryOperator.GreaterThanOrEqual:
-                        negated = new MongoUnaryExpression(MongoUnaryOperator.Not, comparison3);
-                        return true;
-
-                    // An arithmetic operator (or anything else reaching here) is not a predicate; nothing to
-                    // complement.
-                    default:
-                        return false;
-                }
-            }
+                return TryNegateComparison(comparison3, out negated);
 
             // Self-negating node kinds; see TryFlipNegatedFlag.
             case var selfNegating when TryFlipNegatedFlag(selfNegating, out var flipped):

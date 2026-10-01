@@ -602,12 +602,12 @@ internal sealed partial class MongoExpressionTranslator
     {
         var unwrapped = Unwrap(collectionExpr);
 
-        var elementType = GetEnumerableElementType(unwrapped.Type);
+        var elementType = unwrapped.Type.TryGetEnumerableElementType();
         if (elementType is null)
             return null;
 
-        var propertyType = Nullable.GetUnderlyingType(property.ClrType) ?? property.ClrType;
-        var underlyingElementType = Nullable.GetUnderlyingType(elementType) ?? elementType;
+        var propertyType = property.ClrType.UnwrapNullableType();
+        var underlyingElementType = elementType.UnwrapNullableType();
 
         // An EF-boxed `object[]`/`List<object>` has element type `object`, not the property's CLR type. No static
         // check needed: each element is coerced through the property's serializer at render/build time
@@ -689,7 +689,7 @@ internal sealed partial class MongoExpressionTranslator
     {
         var unwrapped = Unwrap(collectionExpr);
 
-        var elementType = GetEnumerableElementType(unwrapped.Type);
+        var elementType = unwrapped.Type.TryGetEnumerableElementType();
         if (elementType != elementClrType)
             return null;
 
@@ -738,13 +738,13 @@ internal sealed partial class MongoExpressionTranslator
         if (itemExpr is not ConstantExpression constant)
             return null;
 
-        var elementType = GetEnumerableElementType(arrayProperty.ClrType);
+        var elementType = arrayProperty.ClrType.TryGetEnumerableElementType();
         if (elementType is null)
             return null;
 
         // Defensive: the compiler already guarantees this for EF trees; guards hand-built ones.
-        var underlyingElementType = Nullable.GetUnderlyingType(elementType) ?? elementType;
-        var underlyingItemType = Nullable.GetUnderlyingType(itemExpr.Type) ?? itemExpr.Type;
+        var underlyingElementType = elementType.UnwrapNullableType();
+        var underlyingItemType = itemExpr.Type.UnwrapNullableType();
         if (underlyingItemType != underlyingElementType)
             return null;
 
@@ -821,22 +821,5 @@ internal sealed partial class MongoExpressionTranslator
         }
 
         return new MongoConcatExpression(operands);
-    }
-
-    private static Type? GetEnumerableElementType(Type type)
-    {
-        if (type.IsArray)
-            return type.GetElementType();
-
-        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
-            return type.GetGenericArguments()[0];
-
-        foreach (var iface in type.GetInterfaces())
-        {
-            if (iface.IsGenericType && iface.GetGenericTypeDefinition() == typeof(IEnumerable<>))
-                return iface.GetGenericArguments()[0];
-        }
-
-        return null;
     }
 }

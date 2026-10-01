@@ -224,7 +224,7 @@ internal sealed partial class MongoExpressionTranslator
             || !IsSelfParamTheEntity(Unwrap(item)))
             return false;
 
-        var elementType = GetEnumerableElementType(Unwrap(collection).Type);
+        var elementType = Unwrap(collection).Type.TryGetEnumerableElementType();
         if (elementType != _entityType.ClrType)
             return false;
 

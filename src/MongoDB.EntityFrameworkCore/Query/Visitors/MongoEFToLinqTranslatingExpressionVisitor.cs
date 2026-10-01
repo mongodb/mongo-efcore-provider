@@ -881,8 +881,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         }
 
         var countMethod = (node.Method.Name == nameof(Queryable.LongCount)
-                ? EnumerableLongCountMethod
-                : EnumerableCountMethod)
+                ? EnumerableMethods.LongCountWithoutPredicate
+                : EnumerableMethods.CountWithoutPredicate)
             .MakeGenericMethod(elementType);
 
         var emptyCollection = Expression.Constant(Activator.CreateInstance(fieldAccess!.Type), fieldAccess.Type);
@@ -1111,21 +1111,13 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
         var elementType = navClrType.TryGetItemType() ?? navigation.TargetEntityType.ClrType;
         var countMethod = (node.Method.Name == nameof(Queryable.LongCount)
-                ? EnumerableLongCountMethod
-                : EnumerableCountMethod)
+                ? EnumerableMethods.LongCountWithoutPredicate
+                : EnumerableMethods.CountWithoutPredicate)
             .MakeGenericMethod(elementType);
 
         result = Expression.Call(null, countMethod, fieldAccess);
         return true;
     }
-
-    private static readonly MethodInfo EnumerableCountMethod =
-        typeof(Enumerable).GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Single(m => m.Name == nameof(Enumerable.Count) && m.GetParameters().Length == 1);
-
-    private static readonly MethodInfo EnumerableLongCountMethod =
-        typeof(Enumerable).GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .Single(m => m.Name == nameof(Enumerable.LongCount) && m.GetParameters().Length == 1);
 
     /// <summary>
     /// Find the outer-entity reference in an FK-equality predicate body — the sub-expression rooted at a

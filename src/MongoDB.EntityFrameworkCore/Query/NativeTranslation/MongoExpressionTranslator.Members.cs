@@ -268,8 +268,8 @@ internal sealed partial class MongoExpressionTranslator
             // nullability; the nullable side is kept so the aggregation renderer's null-ordering guard still fires.
             var readType = projection.Expression.Type;
             var viewType = node.Type;
-            var scalarType = Nullable.GetUnderlyingType(readType) ?? readType;
-            if (scalarType != (Nullable.GetUnderlyingType(viewType) ?? viewType))
+            var scalarType = readType.UnwrapNullableType();
+            if (scalarType != viewType.UnwrapNullableType())
                 return false;
 
             // The alias has no IProperty, so a constant or parameter compared with it serializes by CLR type

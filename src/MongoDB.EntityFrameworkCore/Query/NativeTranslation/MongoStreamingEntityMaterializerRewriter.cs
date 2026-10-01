@@ -606,14 +606,14 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                 // plan for the array loop to emit); splice the fixup into the parent block, fed List<TElement>.
                 BuildCollectionElementConstructor(include.NavigationExpression, collectionPlan);
 
-                return SpliceCollectionInclude(entityBlockForCollection, navigation, collectionPlan.List, include.SetLoaded);
+                return SpliceInclude(entityBlockForCollection, navigation, collectionPlan.List, include.SetLoaded);
             }
 
             var entityBlock = (BlockExpression)RewriteMaterializer(include.EntityExpression, plan, collection);
 
             // A non-owned single reference is materialized from the cross-collection $lookup result field
             // (`_lookup_<Nav>`). It uses the same IncludeExpression / reference-fixup shape as an owned
-            // reference, so the fixup is spliced in via SpliceReferenceInclude the same way; the difference is
+            // reference, so the fixup is spliced in via SpliceInclude the same way; the difference is
             // purely how the joined entity is materialized — from a root-level lookup field, reading its own
             // PK as a normal field.
             if (!navigation.TargetEntityType.IsOwned())
@@ -622,13 +622,13 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                 var lookupNavExpression =
                     RewriteLookupReferenceNavigation(include.NavigationExpression, navigation, lookupPlan);
 
-                return SpliceReferenceInclude(entityBlock, navigation, lookupNavExpression, include.SetLoaded);
+                return SpliceInclude(entityBlock, navigation, lookupNavExpression, include.SetLoaded);
             }
 
             var child = FindChildPlan(plan, navigation);
             var navExpression = RewriteOwnedNavigation(include.NavigationExpression, navigation, child);
 
-            return SpliceReferenceInclude(entityBlock, navigation, navExpression, include.SetLoaded);
+            return SpliceInclude(entityBlock, navigation, navExpression, include.SetLoaded);
         }
 
         // Plain entity block: { bsonDocN; bsonDocN = projection as BsonDocument; bsonDocN == null ? null : <block> }.
@@ -640,20 +640,28 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     }
 
     /// <summary>
-    /// Splice an owned reference-navigation fixup into a rewritten entity materializer block, mirroring EF's
-    /// <c>IncludeReference</c> path. The block's trailing instance expression is preserved; the fixup call is
-    /// inserted just before it, using the block's own <c>entry</c> / <c>entityType</c> / <c>instance</c> locals.
+    /// Splice a navigation fixup into a rewritten entity materializer block, mirroring EF's
+    /// <c>IncludeReference</c>/<c>IncludeCollection</c> paths. The block's trailing instance expression is preserved; the
+    /// fixup call is inserted just before it, using the block's own <c>entry</c> / <c>entityType</c> / <c>instance</c>
+    /// locals.
     /// </summary>
-    private BlockExpression SpliceReferenceInclude(
+    /// <param name="entityBlock">The rewritten materializer block of the including entity.</param>
+    /// <param name="navigation">The included navigation.</param>
+    /// <param name="relatedEntityExpression">
+    /// For a reference navigation, the related entity's materialization. For a collection navigation, the
+    /// <c>List&lt;TElement&gt;</c> local filled by the array loop (<c>IncludeCollection&lt;TIncluding,TIncluded&gt;</c>
+    /// expects <c>IEnumerable&lt;TIncluded&gt;</c>; <c>List&lt;TElement&gt;</c> qualifies), each element of which
+    /// <see cref="MongoIncludeFixups"/>'s <c>IncludeCollection</c> wires onto the principal collection navigation
+    /// (and, when tracking, marks it loaded).
+    /// </param>
+    /// <param name="setLoaded">The <c>IncludeExpression.SetLoaded</c> flag.</param>
+    private BlockExpression SpliceInclude(
         BlockExpression entityBlock,
         INavigation navigation,
-        Expression navigationExpression,
+        Expression relatedEntityExpression,
         bool setLoaded)
     {
-        var includingClrType = navigation.DeclaringEntityType.ClrType;
-        var relatedEntityClrType = navigation.TargetEntityType.ClrType;
-
-        var instanceVariable = entityBlock.Variables.Single(v => v.Type == includingClrType);
+        var instanceVariable = entityBlock.Variables.Single(v => v.Type == navigation.DeclaringEntityType.ClrType);
         var concreteEntityTypeVariable = entityBlock.Variables.Single(v => v.Type == typeof(IEntityType));
 #pragma warning disable EF1001 // Internal EF Core API usage.
         var entryVariable = entityBlock.Variables.SingleOrDefault(v => v.Type == typeof(InternalEntityEntry));
@@ -661,75 +669,9 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             entryVariable ?? (Expression)Expression.Constant(null, typeof(InternalEntityEntry));
 #pragma warning restore EF1001 // Internal EF Core API usage.
 
-        var inverseNavigation = navigation.Inverse;
-        var fixup = MongoIncludeFixups.GenerateFixup(includingClrType, relatedEntityClrType, navigation, inverseNavigation);
-
-        var includeCall = Expression.IfThen(
-            Expression.Call(
-                Expression.Constant(navigation.DeclaringEntityType, typeof(IReadOnlyEntityType)),
-                MongoIncludeFixups.IsAssignableFromMethodInfo,
-                Expression.Convert(concreteEntityTypeVariable, typeof(IReadOnlyEntityType))),
-            Expression.Call(
-                MongoIncludeFixups.IncludeReferenceMethodInfo.MakeGenericMethod(includingClrType, relatedEntityClrType),
-                entityEntryExpression,
-                instanceVariable,
-                concreteEntityTypeVariable,
-                navigationExpression,
-                Expression.Constant(navigation),
-                Expression.Constant(inverseNavigation, typeof(INavigation)),
-                Expression.Constant(fixup),
-                Expression.Constant(setLoaded)));
-
-        var expressions = new List<Expression>(entityBlock.Expressions);
-        var trailing = expressions[^1];
-        expressions[^1] = includeCall;
-        expressions.Add(trailing);
-
-        return entityBlock.Update(entityBlock.Variables, expressions);
-    }
-
-    /// <summary>
-    /// Splice an owned collection-navigation fixup into a rewritten entity materializer block, mirroring EF's
-    /// <c>IncludeCollection</c> path. <paramref name="collectionExpression"/> is the materialized
-    /// <c>List&lt;TElement&gt;</c> local filled by the array loop; <see cref="MongoIncludeFixups"/>'s <c>IncludeCollection</c> wires each
-    /// element onto the principal collection navigation (and, when tracking, marks it loaded).
-    /// </summary>
-    private BlockExpression SpliceCollectionInclude(
-        BlockExpression entityBlock,
-        INavigation navigation,
-        Expression collectionExpression,
-        bool setLoaded)
-    {
-        var includingClrType = navigation.DeclaringEntityType.ClrType;
-        var relatedEntityClrType = navigation.TargetEntityType.ClrType;
-
-        var instanceVariable = entityBlock.Variables.Single(v => v.Type == includingClrType);
-        var concreteEntityTypeVariable = entityBlock.Variables.Single(v => v.Type == typeof(IEntityType));
-#pragma warning disable EF1001 // Internal EF Core API usage.
-        var entryVariable = entityBlock.Variables.SingleOrDefault(v => v.Type == typeof(InternalEntityEntry));
-        Expression entityEntryExpression =
-            entryVariable ?? (Expression)Expression.Constant(null, typeof(InternalEntityEntry));
-#pragma warning restore EF1001 // Internal EF Core API usage.
-
-        var inverseNavigation = navigation.Inverse;
-        var fixup = MongoIncludeFixups.GenerateFixup(includingClrType, relatedEntityClrType, navigation, inverseNavigation);
-
-        // IncludeCollection<TIncluding,TIncluded> expects IEnumerable<TIncluded>; List<TElement> qualifies.
-        var includeCall = Expression.IfThen(
-            Expression.Call(
-                Expression.Constant(navigation.DeclaringEntityType, typeof(IReadOnlyEntityType)),
-                MongoIncludeFixups.IsAssignableFromMethodInfo,
-                Expression.Convert(concreteEntityTypeVariable, typeof(IReadOnlyEntityType))),
-            Expression.Call(
-                MongoIncludeFixups.IncludeCollectionMethodInfo.MakeGenericMethod(includingClrType, relatedEntityClrType),
-                entityEntryExpression,
-                instanceVariable,
-                concreteEntityTypeVariable,
-                collectionExpression,
-                Expression.Constant(navigation),
-                Expression.Constant(inverseNavigation, typeof(INavigation)),
-                Expression.Constant(fixup),
-                Expression.Constant(setLoaded)));
+        var includeCall = MongoIncludeFixups.CreateIncludeCall(
+            navigation, entityEntryExpression, instanceVariable, concreteEntityTypeVariable, relatedEntityExpression,
+            setLoaded);
 
         var expressions = new List<Expression>(entityBlock.Expressions);
         var trailing = expressions[^1];
@@ -837,7 +779,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
             var nestedChild = FindChildPlan(child, nestedNavigation);
             var nestedNavExpression = RewriteOwnedNavigation(include.NavigationExpression, nestedNavigation, nestedChild);
-            rewrittenBlock = SpliceReferenceInclude(rewrittenBlock, nestedNavigation, nestedNavExpression, include.SetLoaded);
+            rewrittenBlock = SpliceInclude(rewrittenBlock, nestedNavigation, nestedNavExpression, include.SetLoaded);
         }
 
         // Replace the whole `{ bsonDocN; bsonDocN = ... as BsonDocument; bsonDocN == null ? null : <block> }`
@@ -1003,9 +945,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                 _context,
                 Expression.Default(typeof(BsonDeserializationArgs)));
 
-            deserialize = typedCall.Type == local.Type
-                ? typedCall
-                : Expression.Convert(typedCall, local.Type);
+            deserialize = typedCall.ConvertIfRequired(local.Type);
         }
         else
         {
@@ -1072,18 +1012,13 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                     && property.IsOwnedTypeOrdinalKey())
                 {
                     Expression ordinal = Expression.Add(_collection.Counter, Expression.Constant(1));
-                    return node.Type == ordinal.Type ? ordinal : Expression.Convert(ordinal, node.Type);
+                    return ordinal.ConvertIfRequired(node.Type);
                 }
 
                 var local = ResolveLocal(property);
                 if (local != null)
                 {
-                    if (node.Type == local.Type)
-                    {
-                        return local;
-                    }
-
-                    return Expression.Convert(local, node.Type);
+                    return local.ConvertIfRequired(node.Type);
                 }
 
                 throw new NativeTranslationNotSupportedException(

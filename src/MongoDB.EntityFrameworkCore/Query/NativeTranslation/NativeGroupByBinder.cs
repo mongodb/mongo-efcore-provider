@@ -645,7 +645,7 @@ internal static class NativeGroupByBinder
 
         // An ordinary value must not reference `g` at all: the ordinary translator knows nothing about the grouping
         // and could mis-resolve a same-named member against the wrong type.
-        if (ReferencesParameter(expr, groupingParameter))
+        if (expr.ReferencesParameter(groupingParameter))
             return false;
 
         return translator.TryTranslateValue(expr, out result);
@@ -666,12 +666,7 @@ internal static class NativeGroupByBinder
         var unwrappedExpr = Unwrap(expr);
         if (unwrappedExpr is BinaryExpression bin)
         {
-            if (bin.NodeType == ExpressionType.Equal
-                || bin.NodeType == ExpressionType.NotEqual
-                || bin.NodeType == ExpressionType.GreaterThan
-                || bin.NodeType == ExpressionType.GreaterThanOrEqual
-                || bin.NodeType == ExpressionType.LessThan
-                || bin.NodeType == ExpressionType.LessThanOrEqual)
+            if (MongoExpressionTranslator.MapComparisonOperator(bin.NodeType) is { } op)
             {
                 if (TryGetKeyMemberPath(bin.Left, groupingParameter, keyParts, isComposite, out var leftPath, allowWholeKeyRead: true)
                     && leftPath != null
@@ -680,7 +675,7 @@ internal static class NativeGroupByBinder
                         bin.Right, ResolveKeyMemberSerializationProperty(leftPath, keyParts, isComposite), out var rightConst))
                 {
                     result = new MongoBinaryExpression(
-                        MapComparisonOperator(bin.NodeType), new MongoElementRefExpression(leftPath, Unwrap(bin.Left).Type), rightConst);
+                        op, new MongoElementRefExpression(leftPath, Unwrap(bin.Left).Type), rightConst);
                     return true;
                 }
 
@@ -691,7 +686,7 @@ internal static class NativeGroupByBinder
                         bin.Left, ResolveKeyMemberSerializationProperty(rightPath, keyParts, isComposite), out var leftConst))
                 {
                     result = new MongoBinaryExpression(
-                        MapComparisonOperator(FlipComparison(bin.NodeType)), new MongoElementRefExpression(rightPath, Unwrap(bin.Right).Type), leftConst);
+                        MirroredComparisonOperator(bin.NodeType), new MongoElementRefExpression(rightPath, Unwrap(bin.Right).Type), leftConst);
                     return true;
                 }
             }
@@ -1074,11 +1069,8 @@ internal static class NativeGroupByBinder
         result = null;
         isKeyOnlyCondition = false;
 
-        if (Unwrap(predicateBody) is BinaryExpression
-            {
-                NodeType: ExpressionType.Equal or ExpressionType.NotEqual or ExpressionType.GreaterThan
-                or ExpressionType.GreaterThanOrEqual or ExpressionType.LessThan or ExpressionType.LessThanOrEqual
-            } bin)
+        if (Unwrap(predicateBody) is BinaryExpression bin
+            && MongoExpressionTranslator.MapComparisonOperator(bin.NodeType) is { } op)
         {
             // A key-only comparison reads the key part's raw per-row value, which over a left join may be an
             // unmatched inner side's missing value ($expr orders null below every value; see the per-element arm
@@ -1090,7 +1082,7 @@ internal static class NativeGroupByBinder
                 if (translator.HasLeftOuterJoinLevel)
                     return false;
 
-                result = new MongoBinaryExpression(MapComparisonOperator(bin.NodeType), NullSafeKeyRead(leftKey), rightConst);
+                result = new MongoBinaryExpression(op, NullSafeKeyRead(leftKey), rightConst);
                 isKeyOnlyCondition = true;
                 return true;
             }
@@ -1101,7 +1093,7 @@ internal static class NativeGroupByBinder
                 if (translator.HasLeftOuterJoinLevel)
                     return false;
 
-                result = new MongoBinaryExpression(MapComparisonOperator(FlipComparison(bin.NodeType)), NullSafeKeyRead(rightKey), leftConst);
+                result = new MongoBinaryExpression(MirroredComparisonOperator(bin.NodeType), NullSafeKeyRead(rightKey), leftConst);
                 isKeyOnlyCondition = true;
                 return true;
             }
@@ -1109,7 +1101,7 @@ internal static class NativeGroupByBinder
 
         // Any other reference to `g` (e.g. a mixed `e.Amount > 5 && g.Key == "x"`) declines: the ordinary translator
         // resolves members by name against the entity, so `g.Key` could silently bind to an entity "Key" property.
-        if (ReferencesParameter(predicateBody, groupingParameter))
+        if (predicateBody.ReferencesParameter(groupingParameter))
             return false;
 
         // An ordinary per-element predicate (e.g. e.Amount < 100).
@@ -1126,34 +1118,6 @@ internal static class NativeGroupByBinder
         }
 
         return true;
-    }
-
-    // Detects any reference to `parameter` in the tree.
-    private sealed class ParameterReferenceFinder(ParameterExpression parameter) : ExpressionVisitor
-    {
-        public bool Found { get; private set; }
-
-        [return: NotNullIfNotNull(nameof(node))]
-        public override Expression? Visit(Expression? node)
-        {
-            if (Found || node is null)
-                return node;
-
-            if (ReferenceEquals(node, parameter))
-            {
-                Found = true;
-                return node;
-            }
-
-            return base.Visit(node);
-        }
-    }
-
-    private static bool ReferencesParameter(Expression expr, ParameterExpression parameter)
-    {
-        var finder = new ParameterReferenceFinder(parameter);
-        finder.Visit(expr);
-        return finder.Found;
     }
 
     // Resolves the optional hop before g.Select(selector).Distinct().<Op>(): none, g.Distinct() (a no-op here,
@@ -1596,11 +1560,8 @@ internal static class NativeGroupByBinder
 
         const string outputField = "__agg0";
 
-        if (Unwrap(body) is not BinaryExpression
-            {
-                NodeType: ExpressionType.Equal or ExpressionType.NotEqual or ExpressionType.GreaterThan
-                or ExpressionType.GreaterThanOrEqual or ExpressionType.LessThan or ExpressionType.LessThanOrEqual
-            } bin)
+        if (Unwrap(body) is not BinaryExpression bin
+            || MongoExpressionTranslator.MapComparisonOperator(bin.NodeType) is not { } op)
         {
             return false;
         }
@@ -1610,7 +1571,7 @@ internal static class NativeGroupByBinder
             && (leftKeyPath == null || IsSafeZeroPartKeyComparison(leftKeyPath, keyParts, bin.Right))
             && TryTranslateComparisonConstant(bin.Right, leftKeyProperty, out var rightNode))
         {
-            comparisonNode = new MongoBinaryExpression(MapComparisonOperator(bin.NodeType), leftRef, rightNode);
+            comparisonNode = new MongoBinaryExpression(op, leftRef, rightNode);
             return true;
         }
 
@@ -1620,7 +1581,7 @@ internal static class NativeGroupByBinder
             && TryTranslateComparisonConstant(bin.Left, rightKeyProperty, out var leftNode))
         {
             comparisonNode = new MongoBinaryExpression(
-                MapComparisonOperator(FlipComparison(bin.NodeType)), rightRef, leftNode);
+                MirroredComparisonOperator(bin.NodeType), rightRef, leftNode);
             return true;
         }
 
@@ -1700,49 +1661,22 @@ internal static class NativeGroupByBinder
         }
     }
 
-    private static MongoBinaryOperator MapComparisonOperator(ExpressionType nodeType) => nodeType switch
-    {
-        ExpressionType.Equal => MongoBinaryOperator.Equal,
-        ExpressionType.NotEqual => MongoBinaryOperator.NotEqual,
-        ExpressionType.GreaterThan => MongoBinaryOperator.GreaterThan,
-        ExpressionType.GreaterThanOrEqual => MongoBinaryOperator.GreaterThanOrEqual,
-        ExpressionType.LessThan => MongoBinaryOperator.LessThan,
-        ExpressionType.LessThanOrEqual => MongoBinaryOperator.LessThanOrEqual,
-        _ => throw new ArgumentOutOfRangeException(nameof(nodeType))
-    };
-
     // The comparison `constant OP accumulator` is equivalent to `accumulator OP' constant` for the flipped
-    // relational operator OP' (equality/inequality are already symmetric).
-    private static ExpressionType FlipComparison(ExpressionType nodeType) => nodeType switch
-    {
-        ExpressionType.GreaterThan => ExpressionType.LessThan,
-        ExpressionType.GreaterThanOrEqual => ExpressionType.LessThanOrEqual,
-        ExpressionType.LessThan => ExpressionType.GreaterThan,
-        ExpressionType.LessThanOrEqual => ExpressionType.GreaterThanOrEqual,
-        _ => nodeType
-    };
+    // relational operator OP' (equality/inequality are already symmetric). Callers have already matched one of the
+    // six comparison node types.
+    private static MongoBinaryOperator MirroredComparisonOperator(ExpressionType nodeType)
+        => MongoExpressionTranslator.MapComparisonOperator(MongoExpressionTranslator.Mirror(nodeType))
+           ?? throw new ArgumentOutOfRangeException(nameof(nodeType));
 
     // Negates a group comparison (from TryBindGroupPredicateComparison, or the post-GroupBy All(pred) comparison
     // NativeCardinalityBinder.TryBindAggregate passes). These are $expr-only, so MongoExpressionNegator.TryNegate
-    // (gated on IsQueryDialectRenderable) can't be used; apply its aggregation rule: invert $eq/$ne, $not-wrap the
+    // (gated on IsQueryDialectRenderable) can't be used; apply its comparison rule: invert $eq/$ne, $not-wrap the
     // relational operators.
     internal static bool TryNegateGroupComparison(MongoExpression node, [NotNullWhen(true)] out MongoExpression? negated)
     {
-        negated = node is MongoBinaryExpression comparison
-            ? comparison.Operator switch
-            {
-                MongoBinaryOperator.Equal =>
-                    new MongoBinaryExpression(MongoBinaryOperator.NotEqual, comparison.Left, comparison.Right),
-                MongoBinaryOperator.NotEqual =>
-                    new MongoBinaryExpression(MongoBinaryOperator.Equal, comparison.Left, comparison.Right),
-                MongoBinaryOperator.LessThan or MongoBinaryOperator.LessThanOrEqual
-                    or MongoBinaryOperator.GreaterThan or MongoBinaryOperator.GreaterThanOrEqual =>
-                    new MongoUnaryExpression(MongoUnaryOperator.Not, comparison),
-                _ => null
-            }
-            : null;
-
-        return negated != null;
+        negated = null;
+        return node is MongoBinaryExpression comparison
+               && MongoExpressionNegator.TryNegateComparison(comparison, out negated);
     }
 
     /// <summary>

@@ -17,7 +17,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
-using System.Reflection;
 using Microsoft.EntityFrameworkCore.Query;
 using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
@@ -37,12 +36,6 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 /// </remarks>
 internal sealed class LocalCollectionFilterFoldingVisitor(QueryCompilationContext queryCompilationContext) : ExpressionVisitor
 {
-    private static readonly MethodInfo EnumerableWhere = typeof(Enumerable).GetMethods()
-        .Single(m => m.Name == nameof(Enumerable.Where)
-                     && m.GetParameters()[1].ParameterType.GetGenericTypeDefinition() == typeof(Func<,>));
-
-    private static readonly MethodInfo EnumerableToArray = typeof(Enumerable).GetMethod(nameof(Enumerable.ToArray))!;
-
     private int _foldedParameterCount;
 
     /// <inheritdoc />
@@ -63,7 +56,7 @@ internal sealed class LocalCollectionFilterFoldingVisitor(QueryCompilationContex
         folded = collection;
 
         if (collection is not MethodCallExpression { Method.IsGenericMethod: true } whereCall
-            || whereCall.Method.GetGenericMethodDefinition() != EnumerableWhere
+            || whereCall.Method.GetGenericMethodDefinition() != EnumerableMethods.Where
             || whereCall.Arguments[1] is not LambdaExpression predicate
             || !FreeVariableFinder.IsClosed(predicate))
         {
@@ -71,7 +64,7 @@ internal sealed class LocalCollectionFilterFoldingVisitor(QueryCompilationContex
         }
 
         var source = whereCall.Arguments[0];
-        var toArray = EnumerableToArray.MakeGenericMethod(whereCall.Method.GetGenericArguments()[0]);
+        var toArray = EnumerableMethods.ToArray.MakeGenericMethod(whereCall.Method.GetGenericArguments()[0]);
 
         if (source is ConstantExpression)
         {

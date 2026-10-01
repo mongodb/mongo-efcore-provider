@@ -299,6 +299,11 @@ internal static class ExpressionExtensionMethods
     {
         public bool Found { get; private set; }
 
+        // Stop descending once found.
+        [return: NotNullIfNotNull(nameof(node))]
+        public override Expression? Visit(Expression? node)
+            => Found ? node : base.Visit(node);
+
         protected override Expression VisitParameter(ParameterExpression node)
         {
             if (ReferenceEquals(node, parameter))

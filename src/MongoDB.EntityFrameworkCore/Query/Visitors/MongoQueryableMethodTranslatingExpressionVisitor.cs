@@ -1140,7 +1140,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     private static bool IsTransparentIdentifierMemberAccessSelector(LambdaExpression selector)
     {
         if (selector.Parameters.Count != 1
-            || !selector.Parameters[0].Type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal))
+            || !selector.Parameters[0].Type.IsTransparentIdentifierType())
         {
             return false;
         }
@@ -1155,7 +1155,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             body = include.EntityExpression;
         }
 
-        return body is MemberExpression { Member.Name: "Outer" or "Inner" } member
+        return body is MemberExpression member
+               && member.IsTransparentIdentifierOuterOrInnerAccess()
                && member.Expression == selector.Parameters[0];
     }
 
@@ -1255,7 +1256,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     internal static IncludeExpression? TryGetCollectionIncludeOverJoinScope(LambdaExpression selector)
     {
         if (selector.Parameters.Count != 1
-            || !selector.Parameters[0].Type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal))
+            || !selector.Parameters[0].Type.IsTransparentIdentifierType())
         {
             return null;
         }
@@ -1263,7 +1264,8 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         return selector.Body is IncludeExpression { Navigation: INavigation navigation } includeExpression
                && navigation.IsCollection
                && !navigation.IsEmbedded()
-               && includeExpression.EntityExpression is MemberExpression { Member.Name: "Outer" or "Inner" } member
+               && includeExpression.EntityExpression is MemberExpression member
+               && member.IsTransparentIdentifierOuterOrInnerAccess()
                && member.Expression == selector.Parameters[0]
             ? includeExpression
             : null;
@@ -1364,7 +1366,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         collectionLevel = null;
 
         if (selector.Parameters.Count != 1
-            || !selector.Parameters[0].Type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal))
+            || !selector.Parameters[0].Type.IsTransparentIdentifierType())
         {
             return false;
         }
@@ -3023,17 +3025,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         var current = targetObject;
         while (current != null && !ReferenceEquals(current, parameter))
         {
-            var (name, next) = current.RemoveConvert() switch
-            {
-                MemberExpression member when member.IsTransparentIdentifierOuterOrInnerAccess() => (null, null),
-                MemberExpression member => (member.Member.Name, member.Expression),
-                MethodCallExpression call when call.Method.IsEFPropertyMethod()
-                    && call.Arguments.Count == 2
-                    && call.Arguments[1] is ConstantExpression { Value: string propertyName } => (propertyName, call.Arguments[0]),
-                _ => (null, null)
-            };
-
-            if (name == null || next == null)
+            var step = current.RemoveConvert();
+            if (step is MemberExpression member && member.IsTransparentIdentifierOuterOrInnerAccess()
+                || !step.TryGetMemberOrEFProperty(out var next, out var name))
             {
                 // Reached the Outer/Inner plumbing or an unrecognized shape; AnalyzeKeySelectorTarget takes it.
                 break;

@@ -205,7 +205,7 @@ internal sealed partial class MongoExpressionTranslator
         if (node is not MemberExpression { Expression: { } receiver } member)
             return false;
 
-        var receiverType = Nullable.GetUnderlyingType(receiver.Type) ?? receiver.Type;
+        var receiverType = receiver.Type.UnwrapNullableType();
         if (receiverType != typeof(DateTime) && receiverType != typeof(DateTimeOffset))
             return false;
 
@@ -525,7 +525,7 @@ internal sealed partial class MongoExpressionTranslator
 
     private static bool IsIntegerType(Type type)
     {
-        var t = Nullable.GetUnderlyingType(type) ?? type;
+        var t = type.UnwrapNullableType();
         return t == typeof(int) || t == typeof(long) || t == typeof(short) || t == typeof(byte)
             || t == typeof(sbyte) || t == typeof(uint) || t == typeof(ulong) || t == typeof(ushort);
     }
@@ -646,8 +646,8 @@ internal sealed partial class MongoExpressionTranslator
     {
         while (e is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } u)
         {
-            var fromType = Nullable.GetUnderlyingType(u.Operand.Type) ?? u.Operand.Type;
-            var toType = Nullable.GetUnderlyingType(u.Type) ?? u.Type;
+            var fromType = u.Operand.Type.UnwrapNullableType();
+            var toType = u.Type.UnwrapNullableType();
 
             if (fromType != toType
                 && toType != typeof(object)
@@ -773,9 +773,8 @@ internal sealed partial class MongoExpressionTranslator
                 {
                     Method.Name: nameof(object.Equals), Object: not null, Arguments.Count: 1
                 } nullableEqualsCall
-                when (Nullable.GetUnderlyingType(nullableEqualsCall.Object!.Type) ?? nullableEqualsCall.Object.Type)
-                     == (Nullable.GetUnderlyingType(nullableEqualsCall.Arguments[0].RemoveObjectConvert().Type)
-                         ?? nullableEqualsCall.Arguments[0].RemoveObjectConvert().Type):
+                when nullableEqualsCall.Object!.Type.UnwrapNullableType()
+                     == nullableEqualsCall.Arguments[0].RemoveObjectConvert().Type.UnwrapNullableType():
                 return TranslateComparisonCore(
                     nullableEqualsCall.Object!, nullableEqualsCall.Arguments[0].RemoveObjectConvert(), ExpressionType.Equal);
 
@@ -807,8 +806,8 @@ internal sealed partial class MongoExpressionTranslator
                 if (leftArg.Type != rightArg.Type)
                 {
                     return ExpressionExtensionMethods.AreMismatchedExactEqualityTypes(
-                        Nullable.GetUnderlyingType(leftArg.Type) ?? leftArg.Type,
-                        Nullable.GetUnderlyingType(rightArg.Type) ?? rightArg.Type)
+                        leftArg.Type.UnwrapNullableType(),
+                        rightArg.Type.UnwrapNullableType())
                         ? new MongoConstantExpression(false, forSerialization: null)
                         : null;
                 }
@@ -895,7 +894,7 @@ internal sealed partial class MongoExpressionTranslator
                      && Unwrap(containsItem) is ConstantExpression
                      && TryResolveMember(Unwrap(arrayReceiver), out var arrayProperty, out var arrayFieldPath, out var arrayIsOuter)
                      && !arrayIsOuter // outer-scoped array receivers aren't supported
-                     && GetEnumerableElementType(arrayProperty.ClrType) is not null:
+                     && arrayProperty.ClrType.TryGetEnumerableElementType() is not null:
             {
                 var itemNode = TranslateArrayContainsItem(Unwrap(containsItem), arrayProperty);
                 if (itemNode is null)
@@ -1568,7 +1567,7 @@ internal sealed partial class MongoExpressionTranslator
            || NativeQueryParameter.TryGetQueryParameterName(node, out _)
            || NativeQueryParameter.TryGetParameterArrayElementIndex(node, out _, out _);
 
-    private static MongoBinaryOperator? MapComparisonOperator(ExpressionType nodeType)
+    internal static MongoBinaryOperator? MapComparisonOperator(ExpressionType nodeType)
         => nodeType switch
         {
             ExpressionType.Equal => MongoBinaryOperator.Equal,
@@ -1615,8 +1614,8 @@ internal sealed partial class MongoExpressionTranslator
     {
         if (node is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } unary)
         {
-            var fromType = Nullable.GetUnderlyingType(unary.Operand.Type) ?? unary.Operand.Type;
-            var toType = Nullable.GetUnderlyingType(unary.Type) ?? unary.Type;
+            var fromType = unary.Operand.Type.UnwrapNullableType();
+            var toType = unary.Type.UnwrapNullableType();
 
             // Boxing to object never changes the value; unwrap it rather than decline (there's no $toX for object).
             if (fromType != toType && toType != typeof(object)
@@ -1976,7 +1975,7 @@ internal sealed partial class MongoExpressionTranslator
     // Numeric CLR types accepted by $add/$subtract/$multiply/$divide/$mod.
     internal static bool IsNumericType(Type type)
     {
-        var underlying = Nullable.GetUnderlyingType(type) ?? type;
+        var underlying = type.UnwrapNullableType();
         return underlying == typeof(int) || underlying == typeof(long) || underlying == typeof(short)
             || underlying == typeof(byte) || underlying == typeof(sbyte) || underlying == typeof(uint)
             || underlying == typeof(ulong) || underlying == typeof(ushort)
@@ -2026,11 +2025,11 @@ internal sealed partial class MongoExpressionTranslator
     {
         toleratedWideningTarget = null;
         var sawIdentityLike = false;
-        var underlying = Nullable.GetUnderlyingType(propertyClrType) ?? propertyClrType;
+        var underlying = propertyClrType.UnwrapNullableType();
         while (operand is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } u)
         {
-            var to = Nullable.GetUnderlyingType(u.Type) ?? u.Type;
-            var from = Nullable.GetUnderlyingType(u.Operand.Type) ?? u.Operand.Type;
+            var to = u.Type.UnwrapNullableType();
+            var from = u.Operand.Type.UnwrapNullableType();
 
             // Skip nullability-only layers (long -> long?): from == to would otherwise decline. EF lowers a lifted
             // uint -> long widening as `Convert(Convert(e.EmployeeID, Int64), Nullable<Int64>)`.
@@ -2110,7 +2109,7 @@ internal sealed partial class MongoExpressionTranslator
         };
 
     // Mirrors a relational operator when the member is on the right-hand side.
-    private static ExpressionType Mirror(ExpressionType nodeType)
+    internal static ExpressionType Mirror(ExpressionType nodeType)
         => nodeType switch
         {
             ExpressionType.LessThan => ExpressionType.GreaterThan,
@@ -2120,7 +2119,7 @@ internal sealed partial class MongoExpressionTranslator
             _ => nodeType
         };
 
-    private static bool IsComparison(ExpressionType t)
+    internal static bool IsComparison(ExpressionType t)
         => t is ExpressionType.Equal or ExpressionType.NotEqual
             or ExpressionType.LessThan or ExpressionType.LessThanOrEqual
             or ExpressionType.GreaterThan or ExpressionType.GreaterThanOrEqual;

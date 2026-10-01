@@ -172,7 +172,7 @@ internal static class NativeJoinScopeTranslator
         // untouched and could resolve against the wrong entity downstream. Reject it.
         if (visitor.CrossScope
             || visitor.ResolvedScope is not { } resolved
-            || ReferencesParameterOutsideHopChain(candidate, rootParam))
+            || candidate.ReferencesParameter(rootParam))
         {
             return false;
         }
@@ -180,25 +180,6 @@ internal static class NativeJoinScopeTranslator
         scopeIndex = resolved;
         rewritten = candidate;
         return true;
-    }
-
-    /// <summary>True if <paramref name="rootParam"/> survives in <paramref name="rewritten"/> outside the hop chain.</summary>
-    private static bool ReferencesParameterOutsideHopChain(Expression rewritten, ParameterExpression rootParam)
-    {
-        var found = false;
-        new ParameterPresenceVisitor(rootParam, () => found = true).Visit(rewritten);
-        return found;
-    }
-
-    private sealed class ParameterPresenceVisitor(ParameterExpression target, Action onFound) : ExpressionVisitor
-    {
-        protected override Expression VisitParameter(ParameterExpression node)
-        {
-            if (ReferenceEquals(node, target))
-                onFound();
-
-            return base.VisitParameter(node);
-        }
     }
 
     /// <summary>

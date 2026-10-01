@@ -231,9 +231,9 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             // Route == Projection confines this to projections the binder accepted in full. A mixed shape like
             // `new { c, Total = c.Age * c.Score }` stays Fallback and goes to the mixed shaper, which can't read a raw
             // BinaryExpression and would read a nonexistent field named after the alias.
-            case BinaryExpression { NodeType: ExpressionType.Add or ExpressionType.Subtract
-                    or ExpressionType.Multiply or ExpressionType.Divide or ExpressionType.Modulo } binaryExpression
-                when _queryExpression.Select.Route == NativeRoute.Projection:
+            case BinaryExpression binaryExpression
+                when NativeProjectionBinder.IsArithmeticLeafShape(binaryExpression)
+                     && _queryExpression.Select.Route == NativeRoute.Projection:
                 var arithProjectionMember = GetCurrentProjectionMember();
                 _projectionMapping[arithProjectionMember] = binaryExpression;
                 return new ProjectionBindingExpression(_queryExpression, arithProjectionMember, expression.Type);
@@ -388,7 +388,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             // slot, so Age * Score would materialise as Score * Score. Scoped to simple scalar reads / nested arithmetic
             // (IsSimpleArithmeticLeaf); collection-navigation Sum()/Count() must still decompose so their own guards fire.
             case BinaryExpression binaryExpression
-                when IsArithmeticNodeType(binaryExpression.NodeType) && IsSimpleArithmeticLeaf(binaryExpression):
+                when NativeProjectionBinder.IsArithmeticLeafShape(binaryExpression) && IsSimpleArithmeticLeaf(binaryExpression):
                 var arithmeticMember = GetCurrentProjectionMember();
                 _projectionMapping[arithmeticMember] = binaryExpression;
 
@@ -684,10 +684,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         }
     }
 
-    private static bool IsArithmeticNodeType(ExpressionType nodeType)
-        => nodeType is ExpressionType.Add or ExpressionType.Subtract or ExpressionType.Multiply
-            or ExpressionType.Divide or ExpressionType.Modulo;
-
     private static bool IsSimpleArithmeticLeaf(Expression expression)
     {
         expression = expression.RemoveConvert();
@@ -697,7 +693,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             ConstantExpression => true,
             MemberExpression => true,
             MethodCallExpression methodCallExpression when methodCallExpression.TryGetEFPropertyArguments(out _, out _) => true,
-            BinaryExpression binaryExpression when IsArithmeticNodeType(binaryExpression.NodeType) =>
+            BinaryExpression binaryExpression when NativeProjectionBinder.IsArithmeticLeafShape(binaryExpression) =>
                 IsSimpleArithmeticLeaf(binaryExpression.Left) && IsSimpleArithmeticLeaf(binaryExpression.Right),
             _ => false,
         };
@@ -1690,11 +1686,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
         return root switch
         {
-            BinaryExpression
-            {
-                NodeType: ExpressionType.Add or ExpressionType.Subtract or ExpressionType.Multiply
-                    or ExpressionType.Divide or ExpressionType.Modulo
-            } binary
+            BinaryExpression binary when NativeProjectionBinder.IsArithmeticLeafShape(binary)
                 => IsReachableThroughArithmeticSpine(binary.Left, target) || IsReachableThroughArithmeticSpine(binary.Right, target),
             UnaryExpression { NodeType: ExpressionType.Convert } unary
                 => IsReachableThroughArithmeticSpine(unary.Operand, target),

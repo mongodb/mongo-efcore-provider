@@ -207,9 +207,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                         && fieldAccess.MemberInfo.DeclaringType?.IsAssignableFrom(parameterExpression.Type) == true)
                     {
                         var memberAccess = Expression.MakeMemberAccess(parameterExpression, fieldAccess.MemberInfo);
-                        return memberAccess.Type == projectionBindingExpression.Type
-                            ? memberAccess
-                            : Expression.Convert(memberAccess, projectionBindingExpression.Type);
+                        return memberAccess.ConvertIfRequired(projectionBindingExpression.Type);
                     }
 
                     // When using the driver's native Join, scalar properties read from the root entity
@@ -333,9 +331,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         // Mandatory: for a `.Value`-peeled leaf (`x.o.Rank.Value` over `int? Rank`) the read is typed `int?` but the
         // binding expects `int`, a shaper-compile type mismatch. Pinned by
         // NativeJoinTests.Whole_entity_leaf_beside_a_renamed_or_dotted_scalar_leaf_reads_correctly.
-        result = valueExpression.Type == projectionBindingExpression.Type
-            ? valueExpression
-            : Expression.Convert(valueExpression, projectionBindingExpression.Type);
+        result = valueExpression.ConvertIfRequired(projectionBindingExpression.Type);
         return true;
     }
 
@@ -459,7 +455,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
             return false;
         }
 
-        var body = rewritten.Type == resultType ? rewritten : Expression.Convert(rewritten, resultType);
+        var body = rewritten.ConvertIfRequired(resultType);
         var propagator = new NullPropagatingCastRewriter(rewriter.Reads);
         result = propagator.Visit(body);
         if (!resultType.IsValueType)
@@ -657,10 +653,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         }
 
         result = Expression.Call(call.Method, CreateGetValueExpression(docExpr, property, typeof(string)));
-        if (result.Type != resultType)
-        {
-            result = Expression.Convert(result, resultType);
-        }
+        result = result.ConvertIfRequired(resultType);
 
         return true;
     }
@@ -702,10 +695,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
 
         result = Expression.MakeBinary(
             binaryExpression.NodeType, left, right, binaryExpression.IsLiftedToNull, binaryExpression.Method);
-        if (result.Type != resultType)
-        {
-            result = Expression.Convert(result, resultType);
-        }
+        result = result.ConvertIfRequired(resultType);
 
         return true;
     }
@@ -735,7 +725,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                 nestedBinary.IsLiftedToNull,
                 nestedBinary.Method);
 
-            return nestedResult.Type == operand.Type ? nestedResult : Expression.Convert(nestedResult, operand.Type);
+            return nestedResult.ConvertIfRequired(operand.Type);
         }
 
         if (TryBindNavigationMemberAccess(unwrapped, operand.Type, out var navRead))

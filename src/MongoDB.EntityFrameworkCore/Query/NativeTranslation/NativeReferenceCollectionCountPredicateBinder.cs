@@ -36,11 +36,8 @@ internal static class NativeReferenceCollectionCountPredicateBinder
     {
         result = null;
 
-        if (predicateBody is not BinaryExpression
-            {
-                NodeType: ExpressionType.Equal or ExpressionType.NotEqual or ExpressionType.GreaterThan
-                    or ExpressionType.GreaterThanOrEqual or ExpressionType.LessThan or ExpressionType.LessThanOrEqual
-            } binary)
+        if (predicateBody is not BinaryExpression binary
+            || MongoExpressionTranslator.MapComparisonOperator(binary.NodeType) is not { } comparisonOperator)
         {
             return false;
         }
@@ -100,19 +97,7 @@ internal static class NativeReferenceCollectionCountPredicateBinder
 
         var leftNode = ReferenceEquals(countSide, binary.Left) ? (MongoExpression)sizeExpression : otherNode;
         var rightNode = ReferenceEquals(countSide, binary.Left) ? otherNode : (MongoExpression)sizeExpression;
-        result = new MongoBinaryExpression(MapOperator(binary.NodeType), leftNode, rightNode);
+        result = new MongoBinaryExpression(comparisonOperator, leftNode, rightNode);
         return true;
     }
-
-    private static MongoBinaryOperator MapOperator(ExpressionType nodeType)
-        => nodeType switch
-        {
-            ExpressionType.Equal => MongoBinaryOperator.Equal,
-            ExpressionType.NotEqual => MongoBinaryOperator.NotEqual,
-            ExpressionType.GreaterThan => MongoBinaryOperator.GreaterThan,
-            ExpressionType.GreaterThanOrEqual => MongoBinaryOperator.GreaterThanOrEqual,
-            ExpressionType.LessThan => MongoBinaryOperator.LessThan,
-            ExpressionType.LessThanOrEqual => MongoBinaryOperator.LessThanOrEqual,
-            _ => throw new System.NotSupportedException($"Unexpected comparison operator '{nodeType}'.")
-        };
 }

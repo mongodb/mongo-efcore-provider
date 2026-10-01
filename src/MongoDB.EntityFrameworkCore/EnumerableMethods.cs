@@ -36,6 +36,10 @@ internal static class EnumerableMethods
                 typeof(IEnumerable<>).MakeGenericType(types[0]), typeof(Func<,,>).MakeGenericType(types[0], typeof(int), types[1])
             ]);
 
+        Where = GetMethod(
+            nameof(Enumerable.Where), 1,
+            types => [typeof(IEnumerable<>).MakeGenericType(types[0]), typeof(Func<,>).MakeGenericType(types[0], typeof(bool))]);
+
         CountWithoutPredicate = GetMethod(
             nameof(Enumerable.Count), 1,
             types => [typeof(IEnumerable<>).MakeGenericType(types[0])]);
@@ -138,6 +142,7 @@ internal static class EnumerableMethods
     public static MethodInfo Cast { get; }
     public static MethodInfo Select { get; }
     public static MethodInfo SelectWithOrdinal { get; }
+    public static MethodInfo Where { get; }
 
     public static MethodInfo CountWithoutPredicate { get; }
     public static MethodInfo LongCountWithoutPredicate { get; }

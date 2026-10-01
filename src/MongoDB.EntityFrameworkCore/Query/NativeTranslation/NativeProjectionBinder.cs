@@ -792,12 +792,22 @@ internal static class NativeProjectionBinder
                        convert.Operand.Type.UnwrapNullableType(), convert.Type.UnwrapNullableType())
                    && (convert.Operand is UnaryExpression { NodeType: ExpressionType.Negate or ExpressionType.NegateChecked }
                            && IsNumericComputedLeafShape(convert.Operand)
-                       || convert.Operand is BinaryExpression
-                       {
-                           NodeType: ExpressionType.Add or ExpressionType.Subtract or ExpressionType.Multiply
-                           or ExpressionType.Divide or ExpressionType.Modulo
-                       } arithmetic && MongoExpressionTranslator.IsNumericType(arithmetic.Type)),
+                       || IsArithmeticLeafShape(convert.Operand) && MongoExpressionTranslator.IsNumericType(convert.Operand.Type)),
             _ => false
+        };
+
+    /// <summary>
+    /// True for a binary arithmetic node (<c>+ - * / %</c>): the top node of an arithmetic computed leaf.
+    /// </summary>
+    /// <remarks>
+    /// Shared by the emit side (<c>TryTranslateLeafCore</c>, <c>NativeSelectManyBinder</c>) and the read side
+    /// (<c>MongoProjectionBindingExpressionVisitor</c>), so both admit the same operator set.
+    /// </remarks>
+    internal static bool IsArithmeticLeafShape(Expression expression)
+        => expression is BinaryExpression
+        {
+            NodeType: ExpressionType.Add or ExpressionType.Subtract or ExpressionType.Multiply
+            or ExpressionType.Divide or ExpressionType.Modulo
         };
 
     /// <summary>
@@ -881,25 +891,8 @@ internal static class NativeProjectionBinder
         [NotNullWhen(true)] out INavigation? navigation)
     {
         navigation = null;
-        Expression receiver;
-        string name;
-        switch (leafExpression)
-        {
-            case MemberExpression { Expression: not null } me:
-                receiver = me.Expression;
-                name = me.Member.Name;
-                break;
-            case MethodCallExpression call when call.Method.IsEFPropertyMethod()
-                                                 && call.Arguments.Count == 2
-                                                 && call.Arguments[1] is ConstantExpression { Value: string navName }:
-                receiver = call.Arguments[0];
-                name = navName;
-                break;
-            default:
-                return false;
-        }
-
-        if (!IsSelectorParameter(receiver, outerParameter))
+        if (!leafExpression.TryGetMemberOrEFProperty(out var receiver, out var name)
+            || !IsSelectorParameter(receiver, outerParameter))
         {
             return false;
         }
@@ -1169,8 +1162,7 @@ internal static class NativeProjectionBinder
         // Arithmetic leaf (+ - * / %), rendered as an aggregation operator document. Gated on a binary arithmetic top
         // node: admitting any TryTranslateValue success would let a falsy (0/false) constant reach $project, which
         // reads it as an exclusion flag and aborts the aggregate.
-        if (leafExpression is BinaryExpression { NodeType: ExpressionType.Add or ExpressionType.Subtract
-                or ExpressionType.Multiply or ExpressionType.Divide or ExpressionType.Modulo }
+        if (IsArithmeticLeafShape(leafExpression)
             && translator.TryTranslateValue(leafExpression, out var computed))
         {
             result = computed;
@@ -1351,7 +1343,7 @@ internal static class NativeProjectionBinder
             current = include.EntityExpression.RemoveConvert();
         }
 
-        return outerParameter.Type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal)
+        return outerParameter.Type.IsTransparentIdentifierType()
                && current is MemberExpression { Member.Name: "Outer" or "Inner" } member
                && ReferenceEquals(member.Expression, outerParameter)
                && member.Type == mongoQ.CollectionExpression.EntityType.ClrType;
@@ -1741,7 +1733,7 @@ internal static class NativeProjectionBinder
             return true;
         }
 
-        var elementType = TryGetEnumerableElementType(navigationType);
+        var elementType = navigationType.TryGetEnumerableElementType();
         if (elementType is not null)
         {
             var listType = typeof(List<>).MakeGenericType(elementType);
@@ -1754,28 +1746,6 @@ internal static class NativeProjectionBinder
 
         empty = null;
         return false;
-    }
-
-    /// <summary>
-    /// The <c>T</c> of the <c>IEnumerable&lt;T&gt;</c> <paramref name="type"/> is or implements, or
-    /// <see langword="null"/>.
-    /// </summary>
-    private static Type? TryGetEnumerableElementType(Type type)
-    {
-        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
-        {
-            return type.GetGenericArguments()[0];
-        }
-
-        foreach (var candidate in type.GetInterfaces())
-        {
-            if (candidate.IsGenericType && candidate.GetGenericTypeDefinition() == typeof(IEnumerable<>))
-            {
-                return candidate.GetGenericArguments()[0];
-            }
-        }
-
-        return null;
     }
 
     /// <summary>
@@ -2537,15 +2507,7 @@ internal static class NativeProjectionBinder
     /// "Member")</c>) off <paramref name="parameter"/>, matched by identity.
     /// </summary>
     private static bool IsDirectMemberAccessOn(Expression expression, ParameterExpression parameter)
-        => expression switch
-        {
-            MemberExpression { Expression: ParameterExpression p } => ReferenceEquals(p, parameter),
-            MethodCallExpression call
-                when call.Method.IsEFPropertyMethod()
-                     && call.Arguments is [ParameterExpression p, ConstantExpression { Value: string }]
-                => ReferenceEquals(p, parameter),
-            _ => false
-        };
+        => expression.TryGetMemberOrEFProperty(out var receiver, out _) && ReferenceEquals(receiver, parameter);
 
     /// <summary>
     /// Whether a translated predicate renders to fully baked BSON (no <see cref="MongoParameterExpression"/>).
