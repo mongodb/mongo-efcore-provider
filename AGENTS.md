@@ -55,7 +55,8 @@ Each test gets a unique database (`TestDatabaseNamer.GetUniqueDatabaseName()`).
 | Driver-version override | `DRIVER_VERSION` |
 
 See `tests/MongoDB.EntityFrameworkCore.SpecificationTests/AGENTS.md` for baseline regeneration,
-`MONGODB_EF_NATIVE_ONLY` and fixture patterns.
+`MONGODB_EF_QUERY_MODE` (query mode for all test suites; `MONGODB_EF_NATIVE_ONLY=1` is an alias for `NativeOnly`)
+and fixture patterns.
 
 ## Versioning & breaking changes
 
