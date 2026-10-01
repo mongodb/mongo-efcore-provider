@@ -104,7 +104,7 @@ internal static class NativeSlotPopulator
         if (mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping == null && mongoQ.Select.PendingGroupKey != null
             && (methodDefinition == QueryableMethods.Skip || methodDefinition == QueryableMethods.Take))
         {
-            var count = TranslateCountExpression(call.Arguments[1]);
+            var count = NativeQueryParameter.TranslateConstantOrParameter(call.Arguments[1], forSerialization: null);
             if (count is null)
             {
                 mongoQ.Select.MarkNotNativelyRepresentable();
@@ -127,8 +127,7 @@ internal static class NativeSlotPopulator
         // slot op directly after a projected Distinct, whose arms resolve against the Distinct's own output schema
         // (NativeGroupByBinder.TryResolveDistinctOrderingKey / MongoExpressionTranslator.DistinctAliasScope) or
         // decline; Skip/Take have no field reference at all.
-        var isPostDistinctSlot = mongoQ.Select.IsDistinct && !mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping != null
-            && IsSevenSlotOperator(methodDefinition);
+        var isPostDistinctSlot = mongoQ.Select.IsProjectedDistinctOutput && IsSevenSlotOperator(methodDefinition);
 
         // Also exempt: a Where directly after a finalized keyed GroupBy(key).Select(...), which resolves against the
         // Select's output aliases (MongoExpressionTranslator.ProjectedAliasScope) or declines, and lands in
@@ -186,8 +185,8 @@ internal static class NativeSlotPopulator
             translator.SelfParam = predicate.Parameters[0];
             // After a projected Distinct, resolve against its output alias, never the entity (a renamed member can
             // collide with an unrelated entity property) — see MongoExpressionTranslator.DistinctAliasScope.
-            if (mongoQ.Select.IsDistinct && !mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping is { } distinctScope)
-                translator.DistinctAliasScope = distinctScope;
+            if (mongoQ.Select.IsProjectedDistinctOutput)
+                translator.DistinctAliasScope = mongoQ.Select.Grouping;
             if (translator.TryTranslate(predicate.Body, out var predicateNode))
                 mongoQ.Select.AddPredicateConjunct(predicateNode);
             // `customers.Contains(ti.Inner)` (Where_navigation_contains): references Inner but needs no $lookup, since
@@ -306,22 +305,11 @@ internal static class NativeSlotPopulator
         }
         else if (methodDefinition == QueryableMethods.Skip)
         {
-            // Each Skip appends a $skip at its arrival position. With no join recorded yet, this paging precedes any
-            // join and must not be deferred past a later one — see
-            // MongoSelectDefinition.HasPagingRecordedBeforeAnyJoin. The else arm records the opposite, so the join
-            // gate can decline a snapshot holding paging from both sides of a join.
-            if (mongoQ.Joins.Count == 0)
-                mongoQ.Select.MarkPagingRecordedBeforeAnyJoin();
-            else
-                mongoQ.Select.MarkPagingRecordedAfterAJoin(mongoQ.Joins.Count);
+            // Each Skip appends a $skip at its arrival position.
             PopulatePagingSlot(mongoQ, call, mongoQ.Select.AppendSkip);
         }
         else if (methodDefinition == QueryableMethods.Take)
         {
-            if (mongoQ.Joins.Count == 0)
-                mongoQ.Select.MarkPagingRecordedBeforeAnyJoin();
-            else
-                mongoQ.Select.MarkPagingRecordedAfterAJoin(mongoQ.Joins.Count);
             PopulatePagingSlot(mongoQ, call, mongoQ.Select.AppendLimit);
         }
         else if (methodDefinition == QueryableMethods.Reverse)
@@ -396,19 +384,8 @@ internal static class NativeSlotPopulator
         }
 
         var translated = new List<MongoExpression>();
-        var pending = new Stack<Expression>();
-        pending.Push(body);
-        while (pending.Count > 0)
+        foreach (var node in body.FlattenAndAlso())
         {
-            var node = pending.Pop();
-            if (node is BinaryExpression { NodeType: ExpressionType.AndAlso } andAlso)
-            {
-                // Right pushed first so conjuncts are emitted in source order.
-                pending.Push(andAlso.Right);
-                pending.Push(andAlso.Left);
-                continue;
-            }
-
             if (NativeJoinScopeTranslator.TryMatchInnerNullCheck(rootParam, node, out var isNotNull))
             {
                 if (!join.IsLeftOuter)
@@ -457,19 +434,8 @@ internal static class NativeSlotPopulator
 
         var translated = new List<MongoExpression>();
         var readsNonRootScope = false;
-        var pending = new Stack<Expression>();
-        pending.Push(body);
-        while (pending.Count > 0)
+        foreach (var node in body.FlattenAndAlso())
         {
-            var node = pending.Pop();
-            if (node is BinaryExpression { NodeType: ExpressionType.AndAlso } andAlso)
-            {
-                // Right pushed first so conjuncts are emitted in source order.
-                pending.Push(andAlso.Right);
-                pending.Push(andAlso.Left);
-                continue;
-            }
-
             if (NativeJoinScopeTranslator.TryMatchScopeNullCheck(scope, rootParam, node, out _, out _))
             {
                 // An inner join drops unmatched rows, so the check would be constant: the shared gate
@@ -531,8 +497,9 @@ internal static class NativeSlotPopulator
         // part) via TryResolveDistinctOrderingKey; otherwise fall through with DistinctAliasScope set so a computed key
         // over the Distinct's output translates. A name outside the Distinct's key parts never resolves against the
         // entity.
-        if (mongoQ.Select.IsDistinct && !mongoQ.Select.IsGroupBy && mongoQ.Select.Grouping is { } distinctGrouping)
+        if (mongoQ.Select.IsProjectedDistinctOutput)
         {
+            var distinctGrouping = mongoQ.Select.Grouping;
             if (NativeGroupByBinder.TryResolveDistinctOrderingKey(
                     distinctGrouping, keySelector.Parameters[0], keySelector.Body, out var distinctKey))
             {
@@ -686,7 +653,15 @@ internal static class NativeSlotPopulator
     private static void PopulatePagingSlot(
         MongoQueryExpression mongoQ, MethodCallExpression call, Action<MongoExpression> record)
     {
-        var count = TranslateCountExpression(call.Arguments[1]);
+        // With no join recorded yet, this paging precedes any join and must not be deferred past a later one — see
+        // MongoSelectDefinition.HasPagingRecordedBeforeAnyJoin. The else arm records the opposite, so the join gate
+        // can decline a snapshot holding paging from both sides of a join.
+        if (mongoQ.Joins.Count == 0)
+            mongoQ.Select.MarkPagingRecordedBeforeAnyJoin();
+        else
+            mongoQ.Select.MarkPagingRecordedAfterAJoin(mongoQ.Joins.Count);
+
+        var count = NativeQueryParameter.TranslateConstantOrParameter(call.Arguments[1], forSerialization: null);
         if (count is null)
             mongoQ.Select.MarkNotNativelyRepresentable();
         else
@@ -782,22 +757,6 @@ internal static class NativeSlotPopulator
 
         kind = default;
         return false;
-    }
-
-    /// <summary>
-    /// Translates a Skip/Take count expression to a <see cref="MongoExpression"/>
-    /// (either a <see cref="MongoConstantExpression"/> or a <see cref="MongoParameterExpression"/>).
-    /// Returns <see langword="null"/> if the expression cannot be represented natively.
-    /// </summary>
-    private static MongoExpression? TranslateCountExpression(Expression count)
-    {
-        if (count is ConstantExpression constant)
-            return new MongoConstantExpression(constant.Value, forSerialization: null);
-
-        if (NativeQueryParameter.TryGetQueryParameterName(count, out var parameterName))
-            return new MongoParameterExpression(parameterName, forSerialization: null);
-
-        return null;
     }
 
     /// <summary>

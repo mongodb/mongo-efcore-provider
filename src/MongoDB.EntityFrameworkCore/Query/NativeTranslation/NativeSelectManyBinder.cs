@@ -333,8 +333,7 @@ internal static class NativeSelectManyBinder
 
         // Conjunctive: find the one conjunct that is the FK correlation, then classify the rest (see remarks).
         navigation = null!;
-        var conjuncts = new List<Expression>();
-        FlattenAndAlso(predicateBody.RemoveConvert()!, conjuncts);
+        var conjuncts = predicateBody.RemoveConvert()!.FlattenAndAlso();
 
         Expression? fkConjunct = null;
         var rest = new List<Expression>();
@@ -391,19 +390,6 @@ internal static class NativeSelectManyBinder
            && strippedB.TryGetMemberOrEFProperty(out var rootB, out var nameB)
            && nameA == nameB
            && ReferenceEquals(rootA.RemoveConvert(), rootB.RemoveConvert());
-
-    private static void FlattenAndAlso(Expression expression, List<Expression> conjuncts)
-    {
-        if (expression is BinaryExpression { NodeType: ExpressionType.AndAlso } andAlso)
-        {
-            FlattenAndAlso(andAlso.Left, conjuncts);
-            FlattenAndAlso(andAlso.Right, conjuncts);
-        }
-        else
-        {
-            conjuncts.Add(expression);
-        }
-    }
 
     /// <summary>
     /// Translates one peeled reference-<c>SelectMany</c> filter layer. A layer referencing the outer parameter

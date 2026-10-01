@@ -17,7 +17,9 @@ using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;
+using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
@@ -82,5 +84,25 @@ internal static class NativeQueryParameter
         name = null;
         index = 0;
         return false;
+    }
+
+    /// <summary>
+    /// Translates a literal to a <see cref="MongoConstantExpression"/> (baked-in) or a query parameter to a
+    /// <see cref="MongoParameterExpression"/> (per-execution placeholder), both serialized through
+    /// <paramref name="forSerialization"/>; <see langword="null"/> for any other node. Doesn't unwrap converts.
+    /// </summary>
+    /// <remarks>
+    /// The plain form: no array-element parameters and no value type, unlike
+    /// <c>MongoExpressionTranslator.TranslateValue</c>.
+    /// </remarks>
+    public static MongoExpression? TranslateConstantOrParameter(Expression expr, IProperty? forSerialization)
+    {
+        if (expr is ConstantExpression constant)
+            return new MongoConstantExpression(constant.Value, forSerialization);
+
+        if (TryGetQueryParameterName(expr, out var name))
+            return new MongoParameterExpression(name, forSerialization);
+
+        return null;
     }
 }

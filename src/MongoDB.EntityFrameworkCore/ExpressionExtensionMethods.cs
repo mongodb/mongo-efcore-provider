@@ -316,6 +316,30 @@ internal static class ExpressionExtensionMethods
     }
 
     /// <summary>
+    /// The operands of a top-level (possibly nested) <c>&amp;&amp;</c> chain, in source order; just
+    /// <paramref name="expression"/> when it isn't one. Converts aren't unwrapped.
+    /// </summary>
+    internal static List<Expression> FlattenAndAlso(this Expression expression)
+    {
+        var conjuncts = new List<Expression>();
+        Flatten(expression);
+        return conjuncts;
+
+        void Flatten(Expression node)
+        {
+            if (node is BinaryExpression { NodeType: ExpressionType.AndAlso } andAlso)
+            {
+                Flatten(andAlso.Left);
+                Flatten(andAlso.Right);
+            }
+            else
+            {
+                conjuncts.Add(node);
+            }
+        }
+    }
+
+    /// <summary>
     /// Removes a single boxing conversion to <see cref="object"/> if present. Unlike
     /// <see cref="RemoveConvert"/>, this strips only one level and only an <see cref="object"/>-typed
     /// <see cref="ExpressionType.Convert"/> / <see cref="ExpressionType.ConvertChecked"/>, leaving numeric

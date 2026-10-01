@@ -43,7 +43,7 @@ internal static class NativeCardinalityBinder
         // $limit would truncate the grouped rows instead of reducing over them. Exempt: a set-op-only terminal
         // (the $limit goes into TrailingOps) and a projected Distinct, whose $limit routes into PostGroupOps via
         // ActiveOps (same carve-out as TryBindAggregate).
-        var isPostDistinctReducer = select.IsDistinct && !select.IsGroupBy && select.Grouping != null;
+        var isPostDistinctReducer = select.IsProjectedDistinctOutput;
 
         if (select.HasTerminalOperator && !select.IsSetOpTerminalOnly && !isPostDistinctReducer)
             return false;
@@ -182,14 +182,7 @@ internal static class NativeCardinalityBinder
     private static bool TryTranslateContainsItem(
         Expression item, IProperty property, [NotNullWhen(true)] out MongoExpression? node)
     {
-        var unwrapped = MongoExpressionTranslator.Unwrap(item);
-        node = unwrapped switch
-        {
-            ConstantExpression constant => new MongoConstantExpression(constant.Value, property),
-            _ when NativeQueryParameter.TryGetQueryParameterName(unwrapped, out var name)
-                => new MongoParameterExpression(name, property),
-            _ => null
-        };
+        node = NativeQueryParameter.TranslateConstantOrParameter(MongoExpressionTranslator.Unwrap(item), property);
         return node != null;
     }
 
@@ -234,27 +227,19 @@ internal static class NativeCardinalityBinder
         // so Count/LongCount/Any/All are safe, as is a selector-bearing Sum/Min/Max/Average (resolved against the
         // Distinct's flattened alias via DistinctAliasScope). The selector-less form is the direct
         // TryBindDistinctTerminalAggregate case above; requiring a selector keeps the two exclusive.
-        var isPostDistinctAggregate = select.IsDistinct && !select.IsGroupBy && select.Grouping != null
-            && select.Cardinality == null
-            && (op is MongoAggregateOperator.Count or MongoAggregateOperator.LongCount
-                or MongoAggregateOperator.Any or MongoAggregateOperator.All
-                || (op is MongoAggregateOperator.Sum or MongoAggregateOperator.Min
-                    or MongoAggregateOperator.Max or MongoAggregateOperator.Average && selector != null));
+        var isPostDistinctAggregate = select.IsProjectedDistinctOutput && select.Cardinality == null
+            && IsPostGroupAggregateShape(op, selector);
 
         // Same carve-out after an ordinary GroupBy(key).Select(aggregate), e.g.
         // GroupBy(o => o.CustomerID).Select(g => g.Sum(o => o.OrderID)).All(v => ...). A GroupBy nested on a
         // projected Distinct (IsDistinct also true) is excluded; MongoSelectLowerer handles it via PriorGrouping.
-        var isPostGroupBySelectAggregate = select.IsGroupBy && !select.IsDistinct && select.Grouping != null
-            && select.Cardinality == null
-            && (op is MongoAggregateOperator.Count or MongoAggregateOperator.LongCount
-                or MongoAggregateOperator.Any or MongoAggregateOperator.All
-                || (op is MongoAggregateOperator.Sum or MongoAggregateOperator.Min
-                    or MongoAggregateOperator.Max or MongoAggregateOperator.Average && selector != null));
+        var isPostGroupBySelectAggregate = select.IsKeyedGroupOutput && select.Cardinality == null
+            && IsPostGroupAggregateShape(op, selector);
 
         // A selector-less Min()/Max() over the single scalar a preceding GroupBy(key).Select(aggregate) projected
         // (the parameterless overloads require IComparable, so it's always one member). Sum/Average and the
         // Distinct variant are out of scope.
-        var isPostGroupBySelectlessMinMax = select.IsGroupBy && !select.IsDistinct && select.Grouping != null
+        var isPostGroupBySelectlessMinMax = select.IsKeyedGroupOutput
             && select.Cardinality == null && selector == null
             && op is MongoAggregateOperator.Min or MongoAggregateOperator.Max
             && select.Projection.Count == 1;
@@ -361,17 +346,6 @@ internal static class NativeCardinalityBinder
             select.AddPredicateConjunct(predNode);
         }
 
-        BuildEmptyBehavior(op, resultType, out var emptyValue, out var emptyBehavior);
-
-        // Any/All are presence-only: the result depends on whether a row survived, not on a field value.
-        var presenceOnly = op is MongoAggregateOperator.Any or MongoAggregateOperator.All;
-        object? presentValue = op switch
-        {
-            MongoAggregateOperator.Any => true,
-            MongoAggregateOperator.All => false,
-            _ => null
-        };
-
         // A presence-only aggregate after a join chain (e.g. Join(…).Join(…).Where(…).Any()) has no Select between
         // the joins and the aggregate, because nav-expansion only synthesizes one when row shape is needed. So the
         // Select-side confirming arms in TranslateSelect never run; confirm the chain here, using the same
@@ -383,8 +357,7 @@ internal static class NativeCardinalityBinder
             NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQ, select.JoinScope!);
         }
 
-        var cardinality = MongoCardinality.ForAggregate(
-            op, operand, emptyBehavior, emptyValue, resultType, presenceOnly, presentValue);
+        var cardinality = CreateAggregateCardinality(op, operand, resultType);
 
         // Cardinality and Grouping are ordinarily mutually exclusive; post-group aggregates are the sanctioned
         // exception. postGroupPredicate is null because any predicate built above already went into
@@ -394,6 +367,36 @@ internal static class NativeCardinalityBinder
         else
             select.Cardinality = cardinality;
         return true;
+    }
+
+    // The operators a post-group terminal (after a projected Distinct or a keyed GroupBy.Select) can run over the
+    // grouped output: Count/LongCount/Any/All, or Sum/Min/Max/Average with a selector (the selector-less forms are
+    // separate carve-outs).
+    private static bool IsPostGroupAggregateShape(MongoAggregateOperator op, LambdaExpression? selector)
+        => op is MongoAggregateOperator.Count or MongoAggregateOperator.LongCount
+               or MongoAggregateOperator.Any or MongoAggregateOperator.All
+           || (op is MongoAggregateOperator.Sum or MongoAggregateOperator.Min
+               or MongoAggregateOperator.Max or MongoAggregateOperator.Average && selector != null);
+
+    /// <summary>
+    /// The <see cref="MongoCardinality"/> of a scalar aggregate terminal: its empty-input behaviour
+    /// (<see cref="BuildEmptyBehavior"/>) and, for <c>Any</c>/<c>All</c>, presence-only reading.
+    /// </summary>
+    internal static MongoCardinality CreateAggregateCardinality(
+        MongoAggregateOperator op, MongoExpression? operand, Type resultType)
+    {
+        BuildEmptyBehavior(op, resultType, out var emptyValue, out var emptyBehavior);
+
+        // Any/All are presence-only: the result depends on whether a row survived, not on a field value.
+        var presenceOnly = op is MongoAggregateOperator.Any or MongoAggregateOperator.All;
+        object? presentValue = op switch
+        {
+            MongoAggregateOperator.Any => true,
+            MongoAggregateOperator.All => false,
+            _ => null
+        };
+
+        return MongoCardinality.ForAggregate(op, operand, emptyBehavior, emptyValue, resultType, presenceOnly, presentValue);
     }
 
     /// <summary>
