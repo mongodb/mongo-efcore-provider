@@ -13,12 +13,19 @@
  * limitations under the License.
  */
 
+using System.Runtime.CompilerServices;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
 public class AtlasTheory : TheoryAttribute
 {
-    public override string? Skip
-        => TestServer.SupportsAtlas
-            ? null
-            : "Requires Atlas search capabilities.";
+    public AtlasTheory(
+        [CallerFilePath] string? sourceFilePath = null,
+        [CallerLineNumber] int sourceLineNumber = -1)
+        : base(sourceFilePath, sourceLineNumber)
+    {
+        if (!TestServer.SupportsAtlas)
+        {
+            Skip = "Requires Atlas search capabilities.";
+        }
+    }
 }
