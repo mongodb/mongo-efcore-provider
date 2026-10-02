@@ -358,7 +358,11 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
     /// `"$Rank"` (MISSING, so 0), also for a captured `0` parameter, which a compiled-once native template can't follow;
     /// native renders `$add` (null) and throws. A long conditional mixing a long field with a widened int field: native
     /// drops the widening the driver renders as `$toLong`, so both branches are bare and the read can't tell which one
-    /// the server took; it reads strictly, where main read the long field's MISSING as 0.
+    /// the server took; it reads strictly, where main read the long field's MISSING as 0. A conditional mixing a nullable
+    /// <c>.Value</c> branch with a non-nullable field branch (<c>c ? x.Score!.Value : x.Rank</c>, Rank MISSING, the
+    /// non-nullable branch taken): the <c>.Value</c> operand flags the whole leaf <c>ThrowsOnNull</c> (Task 1.3's C#
+    /// semantics ruling: <c>x.Score.Value</c> over null/missing throws), and the read can't tell which branch the server
+    /// took, so the MISSING throws where main read 0. Ruled acceptable (Phase 1 final review): loud, not silent.
     /// </summary>
     [Fact]
     public void Missing_required_element_divergences_from_main_are_loud()
@@ -373,6 +377,8 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
                 Assert.Throws<InvalidOperationException>(() => row.Select(x => x.Rank + 0).ToList()).Message);
             Assert.Contains("Nullable object must have a value",
                 Assert.Throws<InvalidOperationException>(() => row.Select(x => x.Title == "c" ? x.Big : x.Rank).ToList()).Message);
+            Assert.Contains("Nullable object must have a value",
+                Assert.Throws<InvalidOperationException>(() => row.Select(x => x.Title == "zz" ? x.Score!.Value : x.Rank).ToList()).Message);
         }
 
         using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
@@ -380,6 +386,7 @@ public class NativeMissingRequiredScalarProjectionTests(TemporaryDatabaseFixture
             var row = db.Entities.AsNoTracking().Where(x => x.Title == "c");
             Assert.Equal([0], row.Select(x => x.Rank + 0).ToList());
             Assert.Equal([0L], row.Select(x => x.Title == "c" ? x.Big : x.Rank).ToList());
+            Assert.Equal([0], row.Select(x => x.Title == "zz" ? x.Score!.Value : x.Rank).ToList());
         }
     }
 

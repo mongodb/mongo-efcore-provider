@@ -147,15 +147,18 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
     public async Task UtcNow_add_receiver_is_evaluated_per_execution_not_baked_into_the_cached_plan(MongoQueryMode mode)
     {
         var collection = database.CreateCollection<Row>($"st_{mode}");
-        collection.InsertOne(new Row { Id = ObjectId.GenerateNewId(), Foo = 1, Created = DateTime.UtcNow.AddMilliseconds(600) });
 
         // ONE context for both executions: SingleEntityDbContext's IgnoreCacheKeyFactory gives every instance its own
         // model, so separate instances would each compile the query and could never observe a stale cached plan.
         var compilations = 0;
         using var db = CreateClockContext(collection, mode, () => compilations++);
 
-        Assert.Equal(0, CountRecent(db)); // the row is 600 ms in the future
-        await Task.Delay(1200);
+        // Warm-up (the one compilation) on the empty collection, so a slow first compile under parallel suites can't
+        // eat into the margin; then a row 3 s in the future, read again after 4.5 s.
+        Assert.Equal(0, CountRecent(db));
+        collection.InsertOne(new Row { Id = ObjectId.GenerateNewId(), Foo = 1, Created = DateTime.UtcNow.AddSeconds(3) });
+        Assert.Equal(0, CountRecent(db)); // the row is in the future
+        await Task.Delay(4500);
         Assert.Equal(1, CountRecent(db)); // a baked first reading keeps answering 0
 
         // Proves the second execution reused the cached plan (otherwise the test could not detect baking).
@@ -195,10 +198,12 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
         var compilations = 0;
         using var db = CreateClockContext(collection, mode, () => compilations++);
 
-        // The same threshold both times: only the clock moves past it between the two executions.
-        var threshold = DateTime.UtcNow.AddMilliseconds(600);
+        // Warm-up (the one compilation) with a threshold the clock never passes, then the same threshold both times: only
+        // the clock moves past it between the two executions. Wide margins: three suites may run in parallel.
+        Assert.Equal(0, CountAfter(db, DateTime.MaxValue));
+        var threshold = DateTime.UtcNow.AddSeconds(3);
         Assert.Equal(0, CountAfter(db, threshold));
-        Thread.Sleep(1200);
+        Thread.Sleep(4500);
         Assert.Equal(1, CountAfter(db, threshold)); // a baked first reading keeps answering 0
         Assert.Equal(1, compilations);
 
@@ -256,22 +261,26 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
     {
         static DateTime Ms(DateTime d) => new(d.Ticks - d.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc);
 
+        var collection = database.CreateCollection<Row>($"fc_{mode}");
+        var compilations = 0;
+        using var db = CreateClockContext(collection, mode, () => compilations++);
+
+        // Warm-up (the one compilation) on the empty collection before taking "now", so a slow first compile under
+        // parallel suites can't eat into the 3 s margin.
+        Assert.Empty(FoldedCaptured(db, []));
+
         var now = Ms(DateTime.UtcNow);
         var past = now.AddSeconds(-5);
-        var soon = now.AddSeconds(2);
-        var collection = database.CreateCollection<Row>($"fc_{mode}");
+        var soon = now.AddSeconds(3);
         collection.InsertMany(
         [
             new Row { Id = ObjectId.GenerateNewId(), Foo = 1, Created = past },
             new Row { Id = ObjectId.GenerateNewId(), Foo = 2, Created = soon },
         ]);
-
-        var compilations = 0;
-        using var db = CreateClockContext(collection, mode, () => compilations++);
         DateTime[] candidates = [past, soon];
 
         Assert.Equal([1], FoldedCaptured(db, candidates));
-        await Task.Delay(3500);
+        await Task.Delay(4500);
         Assert.Equal([1, 2], FoldedCaptured(db, candidates)); // a baked first filter keeps answering [1]
         Assert.Equal(1, compilations);
     }
@@ -296,9 +305,11 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
     [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
     public async Task Folded_constant_local_collection_filter_reading_the_clock_is_evaluated_per_execution(MongoQueryMode mode)
     {
+        // The constant array is part of the query tree, so there is no warm-up: the compile happens on the first
+        // execution, inside the 3 s margin (wide: three suites may run in parallel).
         var now = DateTime.UtcNow;
         var past = new DateTime(now.Ticks - now.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc).AddSeconds(-5);
-        var soon = past.AddSeconds(7);
+        var soon = past.AddSeconds(8);
         var collection = database.CreateCollection<Row>($"fk_{mode}");
         collection.InsertMany(
         [
@@ -311,7 +322,7 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
         var query = FoldedConstantSourceQuery(db, [past, soon]).OrderBy(r => r.Foo);
 
         Assert.Equal([1], query.ToList().Select(r => r.Foo));
-        await Task.Delay(3500);
+        await Task.Delay(4500);
         Assert.Equal([1, 2], query.ToList().Select(r => r.Foo)); // a baked first filter keeps answering [1]
         Assert.Equal(1, compilations);
     }

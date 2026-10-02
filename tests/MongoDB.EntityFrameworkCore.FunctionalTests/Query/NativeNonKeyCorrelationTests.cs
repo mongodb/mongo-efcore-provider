@@ -83,6 +83,36 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
         public int? CustomerId { get; set; }
     }
 
+    // Alternate principal key: Orders.CustomerCode references Customer.Code (HasPrincipalKey), not Id.
+    private class ACustomer
+    {
+        public int Id { get; set; }
+        public int Code { get; set; }
+        public List<AOrder> Orders { get; set; } = null!;
+    }
+
+    private class AOrder
+    {
+        public int Id { get; set; }
+        public int CustomerCode { get; set; }
+    }
+
+    // Composite alternate principal key (Code, Region).
+    private class KCustomer
+    {
+        public int Id { get; set; }
+        public int Code { get; set; }
+        public int Region { get; set; }
+        public List<KOrder> Orders { get; set; } = null!;
+    }
+
+    private class KOrder
+    {
+        public int Id { get; set; }
+        public int CustomerCode { get; set; }
+        public int CustomerRegion { get; set; }
+    }
+
     /// <summary>
     /// Correlations that must not bind the navigation. All but the <c>NoteGuard*</c> shapes correlate on a non-key
     /// outer member when <c>key</c> is false; the <c>NoteGuard*</c> shapes are key-correlated but guarded by a null
@@ -192,6 +222,58 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
     {
         using var db = CreateContext(mode);
         Assert.Equal(["3", "1", "0"], Run(db, "BareCount", key: true));
+    }
+
+    /// <summary>
+    /// An alternate principal key (<c>HasPrincipalKey(c =&gt; c.Code)</c>): a correlation on <c>c.Code</c> is the
+    /// navigation's principal key, so it binds natively and reads the Code-correlated rows (a key-by-Id binding would
+    /// read <c>1-12, 2-10, 2-11, 3-20</c>). Main throws for every spelling (see the class remarks), so no DriverLinq leg.
+    /// </summary>
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    public void Alternate_principal_key_correlation_binds_natively_and_correctly(MongoQueryMode mode)
+    {
+        using var db = CreateContext(mode);
+        Assert.Equal(["1-10", "1-11", "2-20", "3-12"], Format(
+            from c in db.ACustomers
+            from o in db.AOrders.Where(o => o.CustomerCode == c.Code)
+            select new { C = c.Id, O = o.Id },
+            a => $"{a.C}-{a.O}"));
+        Assert.Equal(["1:10", "2:20", "3:12", "4:0"], Format(
+            db.ACustomers.Select(c => new
+            {
+                c.Id, F = db.AOrders.Where(o => o.CustomerCode == c.Code).OrderBy(o => o.Id).Select(o => o.Id).FirstOrDefault()
+            }),
+            a => $"{a.Id}:{a.F}"));
+        Assert.Equal(["1", "2", "3"], Format(
+            db.ACustomers.Where(c => db.AOrders.Where(o => o.CustomerCode == c.Code).Count() > 0).Select(c => c.Id),
+            i => i.ToString()));
+    }
+
+    [Fact]
+    public void Alternate_principal_key_entity_correlated_on_Id_declines()
+    {
+        // Id is not the navigation's principal key here: binding would read the Code-correlated rows.
+        using var db = CreateContext(MongoQueryMode.NativeOnly);
+        Assert.Contains("could not be translated", Assert.Throws<InvalidOperationException>(() => Format(
+            from c in db.ACustomers
+            from o in db.AOrders.Where(o => o.CustomerCode == c.Id)
+            select new { C = c.Id, O = o.Id },
+            a => $"{a.C}-{a.O}")).Message);
+    }
+
+    [Fact]
+    public void Composite_principal_key_correlation_declines()
+    {
+        // NativeCorrelationMatcher proves a single principal-key property only; a composite key declines (and, with no
+        // driver-LINQ oracle for the reference SelectMany, fails translation, as on main).
+        using var db = CreateContext(MongoQueryMode.NativeOnly);
+        Assert.Contains("could not be translated", Assert.Throws<InvalidOperationException>(() => Format(
+            from c in db.KCustomers
+            from o in db.KOrders.Where(o => o.CustomerCode == c.Code && o.CustomerRegion == c.Region)
+            select new { C = c.Id, O = o.Id },
+            a => $"{a.C}-{a.O}")).Message);
     }
 
     private static List<string> Run(Ctx db, string shape, bool key)
@@ -351,6 +433,30 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
             new() { { "_id", 30 }, { "CustomerId", BsonNull.Value } },
             new() { { "_id", 31 } }
         ]);
+        database.MongoDatabase.GetCollection<BsonDocument>(prefix + "ac").InsertMany(
+        [
+            new() { { "_id", 1 }, { "Code", 2 } },
+            new() { { "_id", 2 }, { "Code", 3 } },
+            new() { { "_id", 3 }, { "Code", 1 } },
+            new() { { "_id", 4 }, { "Code", 9 } }
+        ]);
+        database.MongoDatabase.GetCollection<BsonDocument>(prefix + "ao").InsertMany(
+        [
+            new() { { "_id", 10 }, { "CustomerCode", 2 } },
+            new() { { "_id", 11 }, { "CustomerCode", 2 } },
+            new() { { "_id", 12 }, { "CustomerCode", 1 } },
+            new() { { "_id", 20 }, { "CustomerCode", 3 } }
+        ]);
+        database.MongoDatabase.GetCollection<BsonDocument>(prefix + "kc").InsertMany(
+        [
+            new() { { "_id", 1 }, { "Code", 2 }, { "Region", 1 } },
+            new() { { "_id", 2 }, { "Code", 2 }, { "Region", 2 } }
+        ]);
+        database.MongoDatabase.GetCollection<BsonDocument>(prefix + "ko").InsertMany(
+        [
+            new() { { "_id", 10 }, { "CustomerCode", 2 }, { "CustomerRegion", 1 } },
+            new() { { "_id", 20 }, { "CustomerCode", 2 }, { "CustomerRegion", 2 } }
+        ]);
     }
 
     private class Ctx(DbContextOptions options, string prefix) : DbContext(options)
@@ -360,6 +466,10 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
         public DbSet<Line> Lines { get; set; } = null!;
         public DbSet<NCustomer> NCustomers { get; set; } = null!;
         public DbSet<NOrder> NOrders { get; set; } = null!;
+        public DbSet<ACustomer> ACustomers { get; set; } = null!;
+        public DbSet<AOrder> AOrders { get; set; } = null!;
+        public DbSet<KCustomer> KCustomers { get; set; } = null!;
+        public DbSet<KOrder> KOrders { get; set; } = null!;
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -371,6 +481,14 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
             modelBuilder.Entity<Customer>().HasMany(c => c.Orders).WithOne().HasForeignKey(o => o.CustomerId);
             modelBuilder.Entity<Order>().HasMany(o => o.Lines).WithOne().HasForeignKey(l => l.OrderId);
             modelBuilder.Entity<NCustomer>().HasMany(c => c.Orders).WithOne().HasForeignKey(o => o.CustomerId);
+            modelBuilder.Entity<ACustomer>().ToCollection(prefix + "ac");
+            modelBuilder.Entity<AOrder>().ToCollection(prefix + "ao");
+            modelBuilder.Entity<KCustomer>().ToCollection(prefix + "kc");
+            modelBuilder.Entity<KOrder>().ToCollection(prefix + "ko");
+            modelBuilder.Entity<ACustomer>().HasMany(c => c.Orders).WithOne()
+                .HasForeignKey(o => o.CustomerCode).HasPrincipalKey(c => c.Code);
+            modelBuilder.Entity<KCustomer>().HasMany(c => c.Orders).WithOne()
+                .HasForeignKey(o => new { o.CustomerCode, o.CustomerRegion }).HasPrincipalKey(c => new { c.Code, c.Region });
         }
     }
 }

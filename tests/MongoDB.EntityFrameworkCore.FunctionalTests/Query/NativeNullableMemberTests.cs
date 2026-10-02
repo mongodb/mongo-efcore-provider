@@ -456,26 +456,27 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
             Assert.Equal([11, 4], q.Where(x => x.Rank <= 2).Select(x => x.Score!.Value + 1).ToList());
         }
 
-        // The test proves Score non-null in the true branch, so the leaf stays a plain read.
-        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native})
-        {
-            using var db = CreateContext(collection, mode);
-            Assert.Equal(
-                [11, 0, 0, 4],
-                db.Entities.AsNoTracking().OrderBy(x => x.Title)
-                    .Select(x => x.Score != null ? x.Score.Value + 1 : 0).ToList());
-        }
-
-        // Driver-LINQ renders the test as a bare aggregation `$ne: ["$Score", null]`, which is true for a MISSING
-        // Score (missing != null in the aggregation dialect), so r3 takes the true branch, `$add` answers null, and its
-        // Int32 deserializer throws. Not this slice's concern; pinned so a driver fix is noticed.
-        using (var db = CreateContext(collection, MongoQueryMode.DriverLinq))
-        {
-            var ex = Assert.Throws<FormatException>(() =>
-                db.Entities.AsNoTracking().OrderBy(x => x.Title)
-                    .Select(x => x.Score != null ? x.Score.Value + 1 : 0).ToList());
-            Assert.Contains("Cannot deserialize a 'Int32' from BsonType 'Null'", ex.ToString());
-        }
+        // The test proves Score non-null in the true branch, so the leaf stays a plain read. Driver-LINQ is wrong here
+        // (main-issues M39): it renders the test as a bare aggregation `$ne: ["$Score", null]`, which is true for a
+        // MISSING Score (missing != null in the aggregation dialect), so r3 takes the true branch, `$add` answers null,
+        // and its Int32 deserializer throws FormatException; that run reports the empty list.
+        NativeModeAssert.NativeAndExpected(
+            mode =>
+            {
+                using var db = CreateContext(collection, mode);
+                try
+                {
+                    return db.Entities.AsNoTracking().OrderBy(x => x.Title)
+                        .Select(x => x.Score != null ? x.Score.Value + 1 : 0).ToList();
+                }
+                catch (FormatException ex) when (mode == MongoQueryMode.DriverLinq
+                                                 && ex.ToString().Contains("Cannot deserialize a 'Int32' from BsonType 'Null'"))
+                {
+                    return [];
+                }
+            },
+            [11, 0, 0, 4],
+            driverKnownWrong: true);
     }
 
     // Distinct carries the flag onto its key part and flattened alias (NativeGroupByBinder), so it stays native and
