@@ -56,6 +56,10 @@ Gate and fallback:
   Retiring the query fallback does not retire it.
 - **New native join shapes must be tested under explicit `DriverLinq`** too; the native path can mask a broken
   fallback (and the reverse).
+- **A recognizer that turns a correlated `DbSet` subquery into a navigation** (`db.Orders.Where(o => o.CustomerId ==
+  c.X)` → `c.Orders`) must prove `c.X` is that navigation's FK principal key via `NativeCorrelationMatcher` (single-
+  property FK; an alternate key via `ForeignKey.PrincipalKey`; a composite key declines). Binding emits
+  `$lookup {localField: principalKey}`, so any other outer member silently reads the key-correlated rows.
 
 Scope, joins, grouping:
 
@@ -156,35 +160,63 @@ Rendering (null/missing/dialect semantics):
   `RuntimeEvaluator`, evaluated once per `Build` and serialized like a parameter (Local → UTC instant, as the
   driver does); one predicate (`RuntimeClock.IsRuntimeEvaluable`) gates `IsSimpleValue` and the factory.
   `TryEvaluateClosedSubtree` declines any clock; its `SpecifyKind` relabel is for literals only.
+- **Local-collection folding never folds a non-deterministic call or a clock member**
+  (`LocalCollectionFilterFoldingVisitor`: `NonDeterministicCalls.ContainsNonDeterministicCall`, `RuntimeClock.ContainsClock`).
+  The fold runs in the preprocessor for every mode, so a folded `Guid.NewGuid()`/`DateTime.UtcNow` would be evaluated
+  once and baked into the cached plan.
 - **`DateTime.TimeOfDay` is a projection leaf only** (`TryTranslateTimeOfDayLeaf`, never `TranslateOperand`): it is
   milliseconds, read by alias through `BsonSerializerFactory.TimeOfDayMillisecondsSerializer`
   (`MongoSelectDefinition.IsTimeOfDayProjection`). `AllFieldsDefaultSerialized` answers false for it, a projected
   `Distinct` declines it, and a set op declines unless both operands' alias is TimeOfDay (`OperandSerializationsMatch`),
   so later operators never read it as a default `TimeSpan`; Local-kind receivers decline.
-  A date operator (part, `AddXxx`, DateTimeOffset local reconstruction) over a nullable date throws on null as a
-  projection leaf (`ClassifyNonNullableValueRead`), but group keys/accumulators still read `0` (EF-461). So does any
-  non-nullable operator over a nullable-typed field (`x.Score.Value + 1`, `Math.Abs(...)`, `c ? x.Score.Value : 0`);
-  a bare field leaf is never flagged (read property-aware), and non-nullable fields are never flagged (that would
-  decline `Min`/`Max`/`Average`/group keys over every `x.A + x.B`). Instead, the read side alone reads a computed
-  leaf over a non-nullable field (`x.Rank + 1`) strictly on the `Projection` route
-  (`NonNullableValueRead.ThrowOnMalformedNull`, treated as `Plain` by every emit-side caller), and a projected
-  Distinct's flattened key over one via the read-only `MongoProjection.ThrowsOnMalformedNull`, so a document that
-  omits the field throws, as driver-LINQ did, instead of reading `0`. Where the leaf selects the field itself (a
-  `$cond` branch or `$ifNull` fallback: `x.Rank > 1 ? -1 : x.Rank`, `x.Score ?? x.Rank`) the server answers MISSING,
-  not null, as on driver-LINQ, which read `default`: `DefaultOnMalformedMissing` reads a missing alias as `default`
-  and a null as a throw. Only where native's rendering answers MISSING exactly where the driver's does: a field under
-  a widening cast the translator dropped (the driver's `$toLong` answers null) makes the leaf strict. A projected
-  Distinct key over such a leaf carries a `$type` missing marker (`MongoGroupingKeyPart.MarksMissing`; a lone `$group`
-  key turns MISSING into null) and its flatten restores MISSING (`MongoProjection.DefaultsOnMalformedMissing`). A bare
-  cast leaf staged as the field reads like `x.Rank` for an identity cast (also over a nullable source: missing →
-  `default`, null → throws) and strictly for a `$toX` cast (`TryCreateRequiredScalarCastRead`), also over a nullable
-  source (`(long)x.Score`). A projected Distinct key over a bare stored field is classified the same way against its
-  read type (`ClassifyMalformedFieldRead`: marker for the field's own type, strict under a dropped widening). A terminal
-  non-nullable `Min`/`Max` reduces `{_v: operand}` documents as driver-LINQ does
-  (`NativeAggregateReadBack.ReducesWrappedValue`, shared by lowerer and reader; MISSING winner → `default`, null → throws;
-  an unfaithful MISSING is `$ifNull`'d to null), and a non-nullable `Average`'s null throws. A malformed `bool` never
-  throws: the driver's `BooleanSerializer` reads null as `false` (`DriverReadsNullAsDefault`: the strict alias read,
-  `ClassifyMalformedFieldRead`, the wrapped read and `GetScalarProjectionValueAtElement` all honour it).
+- **Read modes: how a non-nullable value read back from the server treats null and MISSING.** Main (driver-LINQ)
+  is the oracle: a malformed document must answer what it answered there, never a silent `0`. Emit side, one call per
+  value leaf, both gate and flag: `MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead`
+  (`NonNullableValueRead`); a projected Distinct over a bare field uses `ClassifyMalformedFieldRead`. The stack:
+  - `Plain`: a bare field leaf, read through its property (D-F10 below). Non-nullable fields are never flagged on the
+    emit side (that would decline `Min`/`Max`/`Average`/group keys over every `x.A + x.B`).
+  - `ThrowOnNull` (`MongoProjection.ThrowsOnNull`): every operator between a null and the leaf propagates it
+    (`Length`/`IndexOf`, a date operator over a nullable date, an operator over a nullable field: `x.Score.Value + 1`,
+    `Math.Abs(...)`, `c ? x.Score.Value : 0`): read as `T?`, throwing EF's "Nullable object must have a value."; an
+    operator that may absorb the null declines (`Decline`). Group keys/accumulators over a date operator still read
+    `0` (EF-461).
+  - `ThrowOnMalformedNull`: a computed leaf over a non-nullable field (`x.Rank + 1`), null only when a document omits
+    the field: read strictly on the `Projection` route; read side only (every emit-side caller treats it as `Plain`); a
+    Distinct flatten carries it as `MongoProjection.ThrowsOnMalformedNull`.
+  - `DefaultOnMalformedMissing`: the leaf selects the field itself through `$cond`/`$ifNull` value positions
+    (`x.Rank > 1 ? -1 : x.Rank`, `x.Score ?? x.Rank`), so the server answers MISSING as driver-LINQ did: MISSING reads
+    `default`, null throws. Only where native answers MISSING exactly where the driver does (`MayAnswerMissing`): a field
+    under a widening the translator dropped (the driver's `$toLong` answers null) makes the leaf strict
+    (`ReclassifyMalformedReadAs`).
+  - bool null-as-false: the driver's `BooleanSerializer` reads null as `false`, so a malformed `bool` never throws
+    (`DriverReadsNullAsDefault`, honoured by the strict alias read, `ClassifyMalformedFieldRead`, the wrapped read and
+    `BsonBinding.GetScalarProjectionValueAtElement`).
+  - Identity and enum relabel casts (`TryCreateRequiredScalarCastRead`): an identity cast staged as the field reads like
+    `x.Rank` (also over a nullable source: missing → `default`, null throws); a `$toX` cast reads strictly
+    (`(long)x.Rank`, `(long)x.Score`); an enum's cast to its underlying type (`MongoExpressionTranslator.IsEnumUnderlyingRelabel`,
+    int- and long-backed; byte-backed declines) reads the stored integer, missing → `default`.
+  - Distinct markers: a projected Distinct key that would turn MISSING into null (a lone `$group` key does) carries a
+    `$type` missing marker (`MongoGroupingKeyPart.MarksMissing`), and its flatten restores MISSING
+    (`MongoProjection.DefaultsOnMalformedMissing`), so a missing and a null value are two groups (read `default` /
+    throw). A value-converted key read as its own type is marked too and read through its property, so the converter
+    applies (`ReadsConvertedDistinctKeyThroughProperty`); the set-op gate's `StoredField` sees through a marked flatten
+    to the key's field, so `OperandSerializationsMatch` still compares stored forms.
+  - Aggregate `{_v: ...}` reduction: a terminal non-nullable `Min`/`Max` reduces `{_v: operand}` documents as
+    driver-LINQ does (`NativeAggregateReadBack.ReducesWrappedValue`, shared by lowerer and reader; MISSING winner →
+    `default`, null → throws; an unfaithful MISSING is `$ifNull`'d to null); a non-nullable `Average`'s null throws.
+- **D-F10: on the `Projection` route a MISSING bare stored scalar reads `default(T)`, as driver-LINQ's `$project`
+  push-down did; an explicit BSON null throws** (a `bool` reads false). This covers root leaves
+  (`BsonBinding.GetScalarProjectionValueAtElement`) and join-scope leaves (`o.Customer!.Rank` over an unmatched
+  optional reference: `ReadsJoinScopeBareScalarThroughProperty`, read by `TryCreateJoinScopeBareScalarRead`).
+  Whole-entity reads stay strict ("Document element ... is missing"). The exception TYPE for malformed stored data
+  (native `InvalidOperationException` vs the driver's `FormatException`/converter exceptions) is not contract; the
+  outcome (value vs throw) is.
+- **`TranslateOperand` may return an enum-typed `MongoFieldExpression` for `(int)x.E`** over a default-serialized
+  enum field (`IsEnumUnderlyingRelabel`: the stored value is already the integer), so an operand's `Type` may be the
+  enum, not the cast target. Callers comparing or reading by type must allow for it.
+- **A null parameter for a non-nullable property serializes as BSON null** (`BsonValueSerializer.SerializeNullAware`),
+  never through the property's non-nullable serializer, so `x.Rank == p` with `int? p = null` matches the null/missing
+  rows, as driver-LINQ did.
 
 Shapers and projections:
 
