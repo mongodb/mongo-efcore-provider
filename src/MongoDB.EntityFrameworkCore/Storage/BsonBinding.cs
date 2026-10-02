@@ -515,8 +515,11 @@ internal static class BsonBinding
             serializationInfo.NominalType);
 
         // Check the RAW element: for a value-typed T the deserialized value is never null, so a post-read null check
-        // can't see an explicit BSON null (driver-LINQ throws FormatException for it).
-        if (!property.IsNullable && document.TryGetValue(elementName, out var raw) && raw.IsBsonNull)
+        // can't see an explicit BSON null (driver-LINQ throws FormatException for it). Except through the driver's
+        // BooleanSerializer, which reads null as false, as driver-LINQ did (see
+        // MongoAggregationExpressionRenderer.DriverReadsNullAsDefault).
+        if (!property.IsNullable && document.TryGetValue(elementName, out var raw) && raw.IsBsonNull
+            && serializationInfo.Serializer is not BooleanSerializer)
         {
             throw new InvalidOperationException(
                 $"Document element '{elementName}' is null for required non-nullable property '{property.Name}'.");

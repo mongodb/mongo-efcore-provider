@@ -283,9 +283,17 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         ThrowIfAliasedTypeMismatch(fieldAccess.Property, projectionBindingExpression.Type);
 
                         // Projection route: a bare stored scalar whose element is missing reads default(T), as the driver's
-                        // $project push-down did (decision D-F10). Whole-entity routes stay strict. Computed leaves
-                        // never reach here (they are aliased reads above).
-                        var valueExpression = _queryExpression.Select.Route == NativeRoute.Projection
+                        // $project push-down did (decision D-F10). So does a projected Distinct's flattened key over a
+                        // default-serialized property that got no missing marker (a bool: `new { x.Title, x.Flag }`,
+                        // whose composite `_id` omits a MISSING sub-key; the driver grouped the projected document, so
+                        // a missing member read default). A marked key is read by TryCreateThrowOnMalformedNullAliasRead
+                        // above. A converted key keeps its previous read: it gets no marker
+                        // (MongoAggregationExpressionRenderer.ClassifyMalformedFieldRead), so a lone key merges MISSING and
+                        // null there. Whole-entity routes stay strict. Computed leaves never reach here (they are aliased
+                        // reads above).
+                        var valueExpression = (_queryExpression.Select.Route == NativeRoute.Projection
+                                               || _queryExpression.Select is { Route: NativeRoute.GroupBy, IsDistinct: true, IsGroupBy: false }
+                                               && NativeGroupByBinder.HasDefaultKeySerialization(fieldAccess.Property))
                             && !ReadsUnprojectedDocuments
                             && fieldAccess.Property.ClrType.UnwrapNullableType() != typeof(BsonDocument)
                             && fieldAccess.Property.ClrType.UnwrapNullableType() != typeof(BsonArray)
@@ -1026,9 +1034,9 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
     /// emit side staged as the bare field (<c>(int)x.Rank</c>, <c>(int)x.Score</c>, <c>(long)x.Rank</c>) the way
     /// driver-LINQ's rendering of the same cast answers for that document: an identity cast (also over a nullable
     /// source), which the driver drops, reads a missing element as <c>default(T)</c> and throws on an explicit null; a
-    /// cast of a required non-nullable property the driver renders as <c>$toX</c>
-    /// (<see cref="MongoConvertExpression.ToOperatorFor"/>), which answers null for a missing or null field, reads
-    /// strictly and throws for both, rather than reading a null as <c>0</c>.
+    /// cast the driver renders as <c>$toX</c> (<see cref="MongoConvertExpression.ToOperatorFor"/>; <c>(long)x.Rank</c>,
+    /// and over a nullable source <c>(long)x.Score</c>), which answers null for a missing or null field, reads strictly and
+    /// throws for both, rather than reading a null as <c>0</c>.
     /// </summary>
     private bool TryCreateRequiredScalarCastRead(UnaryExpression castLeaf, string alias, Type type, [NotNullWhen(true)] out Expression? read)
     {
@@ -1053,8 +1061,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         }
 
         // An enum's cast to its underlying type is a relabeling the driver doesn't render as $toX either.
-        if (property.IsNullable
-            || MongoConvertExpression.ToOperatorFor(type) is null
+        if (MongoConvertExpression.ToOperatorFor(type) is null
             || castLeaf.Operand.Type.UnwrapNullableType().IsEnum)
         {
             return false;
@@ -1064,10 +1071,17 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
         return true;
     }
 
-    // `type` read as T? and unwrapped: a missing or null alias throws EF's "Nullable object must have a value.".
+    // `type` read as T? and unwrapped: a missing or null alias throws EF's "Nullable object must have a value.". A bool
+    // reads both as false instead: driver-LINQ's BooleanSerializer reads null as false
+    // (MongoAggregationExpressionRenderer.DriverReadsNullAsDefault).
     private Expression CreateStrictAliasRead(string alias, Type type)
-        => Expression.Property(
-            CreateAliasRead(alias, type.MakeNullable()), type.MakeNullable().GetProperty(nameof(Nullable<int>.Value))!);
+        => MongoAggregationExpressionRenderer.DriverReadsNullAsDefault(type)
+            ? Expression.Condition(
+                Expression.Call(IsElementAbsentOrNullMethodInfo, DocParameter, Expression.Constant(alias)),
+                Expression.Default(type),
+                CreateAliasRead(alias, type))
+            : Expression.Property(
+                CreateAliasRead(alias, type.MakeNullable()), type.MakeNullable().GetProperty(nameof(Nullable<int>.Value))!);
 
     // A missing alias reads default(T) (driver-LINQ's deserializer reading an omitted member); a null one throws.
     private Expression CreateDefaultOnMissingAliasRead(string alias, Type type)

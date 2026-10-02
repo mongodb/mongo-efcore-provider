@@ -1171,6 +1171,44 @@ internal static class MongoAggregationExpressionRenderer
     }
 
     /// <summary>
+    /// How a bare stored field <paramref name="node"/>, grouped on by a projected Distinct and read back as
+    /// <paramref name="readType"/>, treats a malformed document: <see cref="ClassifyNonNullableValueRead"/> answers
+    /// <see cref="NonNullableValueRead.Plain"/> for a bare field because the Projection route reads it through its
+    /// property (missing reads default, null throws), but a Distinct key is read back from the <c>$group</c> output, where
+    /// a lone key turns MISSING into null. <see cref="NonNullableValueRead.DefaultOnMalformedMissing"/> when read as the
+    /// field's own type (<c>x.Rank</c>, and the identity casts <c>(int)x.Rank</c>, <c>(int)x.Score</c> the driver drops):
+    /// MISSING is driver-LINQ's omitted member (default) and null throws. <see cref="NonNullableValueRead.ThrowOnMalformedNull"/>
+    /// under a widening the translator dropped (<c>(long)x.Rank</c>, <c>(long)x.Score</c>), which the driver renders as
+    /// <c>$toLong</c>, null for both. <see cref="NonNullableValueRead.Plain"/> for a nullable read, a <c>bool</c>
+    /// (<see cref="DriverReadsNullAsDefault"/>), the primary key (never missing), a non-default-serialized field (a marked
+    /// key's conditional flatten would take it off the converted-key set-op paths, and a strict read is a generic read the
+    /// converter or representation would defeat; it keeps its previous read), and anything that isn't a bare field.
+    /// </summary>
+    internal static NonNullableValueRead ClassifyMalformedFieldRead(Type readType, MongoExpression node)
+    {
+        if (!readType.IsValueType
+            || Nullable.GetUnderlyingType(readType) is not null
+            || DriverReadsNullAsDefault(readType)
+            || node is not (MongoFieldExpression or MongoOuterFieldExpression)
+            || node is MongoFieldExpression { NullSafe: false, ElementName: "_id" } key && key.Property.IsPrimaryKey()
+            || !MongoExpressionTranslator.AllFieldsDefaultSerialized(node))
+            return NonNullableValueRead.Plain;
+
+        return MayAnswerMissing(readType, node) == MissingAnswer.Missing
+            ? NonNullableValueRead.DefaultOnMalformedMissing
+            : NonNullableValueRead.ThrowOnMalformedNull;
+    }
+
+    /// <summary>
+    /// Whether driver-LINQ's deserializer for a non-nullable <paramref name="readType"/> reads an explicit BSON null as
+    /// <c>default</c> rather than throwing: the driver's <c>BooleanSerializer</c> reads null as <see langword="false"/>
+    /// (every other value serializer throws <c>FormatException</c>). A value of this type that is null or MISSING in a
+    /// malformed document reads <c>default</c> on main either way, so there is nothing to throw for.
+    /// </summary>
+    internal static bool DriverReadsNullAsDefault(Type readType)
+        => readType == typeof(bool);
+
+    /// <summary>
     /// <paramref name="classified"/>, a <see cref="ClassifyNonNullableValueRead"/> answer for a value of type
     /// <paramref name="classifiedType"/> (a projected Distinct's key), for that value read back as
     /// <paramref name="readType"/>. Read as a wider type (<c>(long)(c ? -1 : x.Rank)</c>, whose widening the translator
@@ -1182,6 +1220,15 @@ internal static class MongoAggregationExpressionRenderer
            && classifiedType.UnwrapNullableType() != readType.UnwrapNullableType()
             ? NonNullableValueRead.ThrowOnMalformedNull
             : classified;
+
+    /// <summary>
+    /// Whether <paramref name="node"/>, read back as <paramref name="readType"/>, may be MISSING on the server where
+    /// driver-LINQ's rendering of the same value is null: a stored field reached through <c>$cond</c>/<c>$ifNull</c> value
+    /// positions whose type isn't the read type sits under a widening the translator dropped (<c>(long)x.Rank</c>), which
+    /// the driver renders as <c>$toLong</c>. See <see cref="MayAnswerMissing"/>.
+    /// </summary>
+    internal static bool MayAnswerUnfaithfulMissing(Type readType, MongoExpression node)
+        => MayAnswerMissing(readType.UnwrapNullableType(), node) == MissingAnswer.Unfaithful;
 
     private enum MissingAnswer
     {

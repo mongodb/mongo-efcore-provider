@@ -61,6 +61,73 @@ internal static class NativeAggregateReadBack
         }
     }
 
+    /// <summary>The element a <see cref="ReducesWrappedValue"/> aggregate wraps each operand value in.</summary>
+    internal const string WrappedValueField = "_v";
+
+    /// <summary>
+    /// Whether a terminal <c>Min</c>/<c>Max</c> with a non-nullable value-type result reduces <c>{_v: operand}</c>
+    /// documents rather than the bare operand, as driver-LINQ does. A bare <c>$min</c>/<c>$max</c> skips a MISSING or null
+    /// operand, so over a malformed document (a required element omitted or explicitly null) it answers another row's
+    /// value, or null when no row has one, which read back as <c>0</c>. Document comparison orders <c>{}</c> (MISSING) below
+    /// <c>{_v: null}</c> below any value, so the reduction keeps driver-LINQ's answer: a MISSING winner reads
+    /// <c>default</c>, a null winner throws (<see cref="ReadWrappedValue"/>). The lowerer and the reader both call this.
+    /// A nullable result keeps the bare reduction: LINQ's nullable <c>Min</c>/<c>Max</c> skip nulls, which driver-LINQ's
+    /// wrapped reduction does not (a MISSING or null row wins its <c>Min</c>).
+    /// </summary>
+    internal static bool ReducesWrappedValue(MongoCardinality cardinality)
+        => cardinality is { Aggregate: MongoAggregateOperator.Min or MongoAggregateOperator.Max }
+           && cardinality.ResultType.IsValueType
+           && Nullable.GetUnderlyingType(cardinality.ResultType) is null;
+
+    /// <summary>
+    /// The operand a terminal aggregate's <c>$group</c> accumulator reduces. For a <see cref="ReducesWrappedValue"/>
+    /// aggregate whose operand (or the projection leaf it references: <c>Select(x =&gt; (long)x.Rank).Max()</c>) may be
+    /// MISSING where driver-LINQ's rendering is null (a widening the translator dropped and the driver renders as
+    /// <c>$toLong</c>; see <see cref="MongoAggregationExpressionRenderer.MayAnswerUnfaithfulMissing"/>), MISSING is mapped
+    /// to null (<c>$ifNull: [operand, null]</c>) so the reduction, like the driver's, throws instead of reading
+    /// <c>default</c>. Otherwise the selector itself.
+    /// </summary>
+    internal static MongoExpression ReductionOperand(MongoSelectDefinition select, MongoCardinality cardinality)
+    {
+        var operand = cardinality.Selector!;
+        if (!ReducesWrappedValue(cardinality))
+            return operand;
+
+        var leaf = operand;
+        if (operand is MongoElementRefExpression elementRef)
+        {
+            foreach (var projection in select.Projection)
+            {
+                if (projection.Alias == elementRef.Path)
+                    leaf = projection.Expression;
+            }
+        }
+
+        return MongoAggregationExpressionRenderer.MayAnswerUnfaithfulMissing(cardinality.ResultType, leaf)
+            ? new MongoCoalesceExpression(operand, new MongoConstantExpression(null, forSerialization: null))
+            : operand;
+    }
+
+    /// <summary>
+    /// The value a <see cref="ReducesWrappedValue"/> aggregate's <paramref name="wrapped"/> winner holds:
+    /// <see langword="null"/> when MISSING (<c>{}</c>, read as <c>default</c>); for an explicit null, throws EF's
+    /// "Nullable object must have a value." (driver-LINQ's deserializer threw <see cref="FormatException"/>), or
+    /// <see langword="null"/> (<c>default</c>) for a type whose driver deserializer reads null as default
+    /// (<see cref="MongoAggregationExpressionRenderer.DriverReadsNullAsDefault"/>: <c>bool</c>).
+    /// </summary>
+    internal static BsonValue? ReadWrappedValue(BsonValue wrapped, Type resultType)
+    {
+        if (wrapped is not BsonDocument document || !document.TryGetValue(WrappedValueField, out var value))
+            return null;
+
+        if (!value.IsBsonNull)
+            return value;
+
+        return MongoAggregationExpressionRenderer.DriverReadsNullAsDefault(resultType)
+            ? null
+            : throw new InvalidOperationException("Nullable object must have a value.");
+    }
+
     /// <summary>
     /// Whether the server's <c>$min</c>/<c>$max</c> over <paramref name="property"/>'s stored value orders like the CLR
     /// value. A default <c>TimeSpan</c> is stored as an invariant-format string ("00:01:00"), which the server orders

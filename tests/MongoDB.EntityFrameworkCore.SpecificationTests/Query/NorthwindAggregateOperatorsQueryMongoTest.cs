@@ -168,7 +168,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : 10248 } }, { "$group" : { "_id" : null, "v" : { "$max" : { "$subtract" : ["$_id", 10248] } } } }
+            Orders.{ "$match" : { "_id" : 10248 } }, { "$group" : { "_id" : null, "v" : { "$max" : { "_v" : { "$subtract" : ["$_id", 10248] } } } } }
             """);
     }
 
@@ -178,7 +178,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : 10248 } }, { "$group" : { "_id" : null, "v" : { "$min" : { "$subtract" : ["$_id", 10248] } } } }
+            Orders.{ "$match" : { "_id" : 10248 } }, { "$group" : { "_id" : null, "v" : { "$min" : { "_v" : { "$subtract" : ["$_id", 10248] } } } } }
             """);
     }
 
@@ -240,7 +240,7 @@ Orders.{ "$match" : { "_id" : 42 } }, { "$project" : { "_id" : "$_id" } }, { "$g
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "v" : { "$min" : "$_id" } } }
+            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "v" : { "$min" : { "_v" : "$_id" } } } }
             """);
     }
 
@@ -279,7 +279,7 @@ Orders.{ "$match" : { "_id" : 42 } }, { "$project" : { "_id" : "$_id" } }, { "$g
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "v" : { "$max" : "$_id" } } }
+            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "v" : { "$max" : { "_v" : "$_id" } } } }
             """);
     }
 
@@ -916,7 +916,7 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
         AssertMql(
             """
-Orders.{ "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$min" : "$_id" } } }
+Orders.{ "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$min" : { "_v" : "$_id" } } } }
 """);
     }
 
@@ -926,7 +926,7 @@ Orders.{ "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : {
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : null, "v" : { "$min" : "$_id" } } }
+            Orders.{ "$group" : { "_id" : null, "v" : { "$min" : { "_v" : "$_id" } } } }
             """);
     }
 
@@ -936,7 +936,7 @@ Orders.{ "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : {
 
         AssertMql(
             """
-Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$min" : { "$ifNull" : ["$UnitPrice", { "$literal" : { "$numberDecimal" : "0" } }] } } } }
+Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$min" : { "_v" : { "$ifNull" : ["$UnitPrice", { "$literal" : { "$numberDecimal" : "0" } }] } } } } }
 """);
     }
 
@@ -981,7 +981,7 @@ Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null,
 
         AssertMql(
             """
-Orders.{ "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$max" : "$_id" } } }
+Orders.{ "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$max" : { "_v" : "$_id" } } } }
 """);
     }
 
@@ -991,7 +991,7 @@ Orders.{ "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : {
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : null, "v" : { "$max" : "$_id" } } }
+            Orders.{ "$group" : { "_id" : null, "v" : { "$max" : { "_v" : "$_id" } } } }
             """);
     }
 
@@ -1001,7 +1001,7 @@ Orders.{ "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : {
 
         AssertMql(
             """
-Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$max" : { "$ifNull" : ["$UnitPrice", { "$literal" : { "$numberDecimal" : "0" } }] } } } }
+Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$max" : { "_v" : { "$ifNull" : ["$UnitPrice", { "$literal" : { "$numberDecimal" : "0" } }] } } } } }
 """);
     }
 
@@ -1719,7 +1719,7 @@ Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A"
 
         AssertMql(
             """
-Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$max" : "$_id" } } }
+Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$max" : { "_v" : { "$ifNull" : ["$_id", { "$literal" : null }] } } } } }
 """);
     }
 
@@ -1729,7 +1729,7 @@ Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A"
 
         AssertMql(
             """
-Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$min" : "$_id" } } }
+Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$min" : { "_v" : { "$ifNull" : ["$_id", { "$literal" : null }] } } } } }
 """);
     }
 
@@ -2274,7 +2274,7 @@ Customers.{ "$group" : { "_id" : null, "v" : { "$sum" : { "$cond" : { "if" : { "
 
         AssertMql(
             """
-Customers.{ "$group" : { "_id" : null, "v" : { "$max" : { "$cond" : { "if" : { "$in" : ["$City", { "$literal" : ["London", "Berlin"] }] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }
+Customers.{ "$group" : { "_id" : null, "v" : { "$max" : { "_v" : { "$cond" : { "if" : { "$in" : ["$City", { "$literal" : ["London", "Berlin"] }] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } } }
 """);
     }
 
@@ -2284,7 +2284,7 @@ Customers.{ "$group" : { "_id" : null, "v" : { "$max" : { "$cond" : { "if" : { "
 
         AssertMql(
             """
-Customers.{ "$group" : { "_id" : null, "v" : { "$min" : { "$cond" : { "if" : { "$in" : ["$City", { "$literal" : ["London", "Berlin"] }] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }
+Customers.{ "$group" : { "_id" : null, "v" : { "$min" : { "_v" : { "$cond" : { "if" : { "$in" : ["$City", { "$literal" : ["London", "Berlin"] }] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } } }
 """);
     }
 

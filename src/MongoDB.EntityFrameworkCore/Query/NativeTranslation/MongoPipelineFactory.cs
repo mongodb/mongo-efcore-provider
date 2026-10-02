@@ -339,12 +339,16 @@ internal sealed class MongoPipelineFactory
         => new("$unset", new BsonArray(stage.FieldNames));
 
     private static BsonDocument RenderGroup(MongoGroupAccumulatorStage stage, PlaceholderTable placeholders)
-        => new BsonDocument("$group", new BsonDocument
+    {
+        var operand = MongoAggregationExpressionRenderer.Render(stage.Operand, placeholders);
+        return new BsonDocument("$group", new BsonDocument
         {
             { "_id", BsonNull.Value },
             { stage.OutputField, new BsonDocument(
-                stage.Accumulator, MongoAggregationExpressionRenderer.Render(stage.Operand, placeholders)) }
+                stage.Accumulator,
+                stage.WrapsOperand ? new BsonDocument(NativeAggregateReadBack.WrappedValueField, operand) : operand) }
         });
+    }
 
     private static BsonDocument RenderKeyedGroup(MongoGroupStage stage, PlaceholderTable placeholders)
     {

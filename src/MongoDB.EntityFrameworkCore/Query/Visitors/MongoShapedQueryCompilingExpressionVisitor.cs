@@ -835,13 +835,28 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             {
                 var doc = rows.Current;
 
+                // A non-nullable Min/Max reduced {_v: operand} documents: a MISSING winner reads default and a null one
+                // throws, as on driver-LINQ; a value reads like a bare reduction's.
+                var wrapped = NativeAggregateReadBack.ReducesWrappedValue(cardinality);
+                var wrappedValue = wrapped ? NativeAggregateReadBack.ReadWrappedValue(doc[BsonValueSerializer.ScalarField], typeof(TResult)) : null;
+
                 // Any/All are presence-only: Any's $match holds the predicate; All's holds the negated predicate,
                 // so a surviving row means All is false.
-                value = cardinality.PresenceOnly
-                    ? (TResult)cardinality.PresentValue!
-                    : kindAwareScalarSerializer != null
-                        ? DeserializeKindAwareScalar<TResult>(doc, kindAwareScalarSerializer)
-                        : DeserializeScalar<TResult>(doc);
+                if (cardinality.PresenceOnly)
+                {
+                    value = (TResult)cardinality.PresentValue!;
+                }
+                else if (wrapped && wrappedValue is null)
+                {
+                    value = default!;
+                }
+                else
+                {
+                    var scalarDoc = wrapped ? new BsonDocument(BsonValueSerializer.ScalarField, wrappedValue) : doc;
+                    value = kindAwareScalarSerializer != null
+                        ? DeserializeKindAwareScalar<TResult>(scalarDoc, kindAwareScalarSerializer)
+                        : DeserializeScalar<TResult>(scalarDoc);
+                }
             }
             else
             {
@@ -882,13 +897,13 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
     // Reads a Min/Max "v" field holding a Local-kind DateTime property's stored value through the TResult serializer
     // with that property's kind (BsonTypeMapper would return Kind=Utc), built at compile time. BSON null is Min/Max over
-    // all-null values.
+    // all-null values (see ReadNullScalar).
     private static TResult DeserializeKindAwareScalar<TResult>(BsonDocument doc, IBsonSerializer serializer)
     {
         var bsonValue = doc[BsonValueSerializer.ScalarField];
         if (bsonValue.IsBsonNull)
         {
-            return default!;
+            return ReadNullScalar<TResult>();
         }
 
         var serializationInfo = new BsonSerializationInfo(BsonValueSerializer.ScalarField, serializer, serializer.ValueType);
@@ -901,6 +916,15 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             : (TResult)Convert.ChangeType(value, Nullable.GetUnderlyingType(typeof(TResult)) ?? typeof(TResult));
     }
 
+    // A non-empty aggregate's BSON null: null for a nullable or reference TResult. For a non-nullable value type it is an
+    // Average with no numeric row (every operand MISSING or null in a malformed document), which driver-LINQ's
+    // deserializer rejected (FormatException) and LINQ can't answer; throw EF's "Nullable object must have a value."
+    // rather than reading 0. (A non-nullable Min/Max reduces wrapped values and never reaches here with null.)
+    private static TResult ReadNullScalar<TResult>()
+        => typeof(TResult).IsValueType && Nullable.GetUnderlyingType(typeof(TResult)) is null
+            ? throw new InvalidOperationException("Nullable object must have a value.")
+            : default!;
+
     // Reads the terminal stage's "v" field and coerces it to TResult (e.g. long for LongCount, double for Average).
     private static TResult DeserializeScalar<TResult>(BsonDocument doc)
     {
@@ -908,10 +932,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         var mapped = BsonTypeMapper.MapToDotNetValue(bsonValue);
 
         // A non-empty aggregate can yield BSON null (e.g. Min over all-null values); Convert.ChangeType throws for
-        // null, so return null for a nullable TResult. Non-nullable TResult can't reach this.
+        // null, so return null for a nullable TResult (see ReadNullScalar).
         if (mapped is null)
         {
-            return default!;
+            return ReadNullScalar<TResult>();
         }
 
         var targetType = Nullable.GetUnderlyingType(typeof(TResult)) ?? typeof(TResult);

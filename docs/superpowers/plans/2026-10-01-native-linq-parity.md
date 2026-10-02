@@ -611,6 +611,129 @@ The fold runs after EF's funcletizer, so only a literal/constant source folds at
 
 **Commit:** `EF-322: computed projections that evaluate to missing read default, matching driver LINQ`
 
+### Task 1.15: F14 — explicit BSON null / MISSING reaching non-projection reads (aggregates, bare Distinct)
+
+(Controller-authored task; consolidates residuals found by the Task 1.12/1.14 reviews.)
+
+**Problem.** Tasks 1.10–1.14 made projection reads of a malformed document (a required non-nullable element MISSING, or an explicit BSON null) match driver LINQ. Values read some other way still read `0` natively where canonical main throws: a terminal `Min`/`Max`/`Average`, and a projected `Distinct` over a bare stored field (a bare field classifies `Plain`, so its key got no missing marker and its flatten read a null as `0`).
+
+**Probe (Step 1).** Raw seeds a `{Rank:1, Score:5, Big:10, Flag:true, …}`, b `{Rank:2, Big:20, Flag:false, …}` (Score missing), c `{}` (everything missing), d (every value an explicit null); `int Rank`, `int? Score`, `long Big`, `bool Flag`, plus `Guid`, `DateTime`, enum, `decimal`, `DateOnly` members. Row sets c, d, a+b+c, a+b+d, c+d, none (empty). Main = `upstream/main` `dec7e26f` exported with `git archive` (no worktree), no `UseQueryMode`, EF10. Branch = EF-322c NativeOnly; Native equals NativeOnly in every row except where NativeOnly declines, and DriverLinq equals main in every row (apart from `GroupBy`, which main can't translate). Cells read `main / before / after` (`main / native` where the branch didn't change); "throws" is main's `FormatException` (`Cannot deserialize a 'Int32' from BsonType 'Null'`) or the branch's `InvalidOperationException`; "empty-throws" is "Sequence contains no elements". Raw outputs are in the task's scratch dir (`sdd-task-1.15/`: `main-probe-final.txt`, `branch-probe-before-full.txt`, `branch-probe-final.txt`). Class: PARITY, LOUD->SILENT (main threw, native a value), WORKED->FAILS (main a value, native throws/declines), VALUE-DIFF (both values, different), MAIN-UNTRANSLATABLE; "-> fixed" = PARITY after this task.
+
+**Settled questions.** (1) `Max(x => <computed leaf over Rank>)` with an explicit-null row: main throws, native read `0` — confirmed (also for bare `x.Rank`, `Min`, `Average`, `(long)x.Rank`, `Big`, `x.Score.Value`). (2) Bare `Select(x => x.Rank).Distinct()` and `(int)x.Rank` over an explicit null: **main throws** (the F14 record was right; the reviewer's "main reads 0" was wrong), native read `0`. (3) Main's `Min`/`Max` reduce `{_v: value}` documents (`{$min: {_v: "$Rank"}}`, then `$replaceRoot`), so a MISSING row (`{}`) sorts below a null (`{_v: null}`) below every number: `Min` over a+b+c is `0` on main (native read `1`), `Min` over a+b+d throws. Main's `Average` is a bare `$avg`, null (throws) when no row has a number. Main's projected `Distinct` groups the projected document (`$group: {_id: "$$ROOT"}`), so MISSING and null are two values (`Distinct().Count()` over c+d is 2; native answered 1). (4) `GroupBy(x => x.Rank)` doesn't translate on main: out of scope. (5) The driver's `BooleanSerializer` reads an explicit null as `false`: main never throws for a malformed `bool`, and Tasks 1.10/1.12/1.14's strict reads were wrongly throwing for one (`Select(x => x.Flag)`, `new { x.Flag }`, `c ? true : x.Flag`, `First()`), and `new { x.Title, x.Flag }.Distinct()` threw for a MISSING `Flag`.
+
+| Shape | c | d | abc | abd | cd | none | Class |
+|---|---|---|---|---|---|---|---|
+| `max_bare` | 0 / 0 | throws / 0 / throws | 2 / 2 | 2 / 2 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `min_bare` | 0 / 0 | throws / 0 / throws | 0 / 1 / 0 | throws / 1 / throws | 0 / 0 | empty-throws / empty-throws | LOUD->SILENT,VALUE-DIFF -> fixed |
+| `sum_bare` | 0 / 0 | 0 / 0 | 3 / 3 | 3 / 3 | 0 / 0 | 0 / 0 | PARITY |
+| `avg_bare` | throws / 0 / throws | throws / 0 / throws | 1.5 / 1.5 | 1.5 / 1.5 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `selmax_bare` | 0 / 0 | throws / 0 / throws | 2 / 2 | 2 / 2 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `max_condelse` | 0 / 0 | throws / 0 / throws | 1 / 1 | 1 / 1 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `min_condelse` | 0 / 0 | throws / 0 / throws | 0 / -1 / 0 | throws / -1 / throws | 0 / 0 | empty-throws / empty-throws | LOUD->SILENT,VALUE-DIFF -> fixed |
+| `sum_condelse` | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | PARITY |
+| `avg_condelse` | throws / 0 / throws | throws / 0 / throws | 0 / 0 | 0 / 0 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `selmax_condelse` | 0 / 0 | throws / 0 / throws | 1 / 1 | 1 / 1 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `max_add1` | throws / 0 / throws | throws / 0 / throws | 3 / 3 | 3 / 3 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `min_add1` | throws / 0 / throws | throws / 0 / throws | throws / 2 / throws | throws / 2 / throws | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `sum_add1` | 0 / 0 | 0 / 0 | 5 / 5 | 5 / 5 | 0 / 0 | 0 / 0 | PARITY |
+| `avg_add1` | throws / 0 / throws | throws / 0 / throws | 2.5 / 2.5 | 2.5 / 2.5 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `selmax_add1` | throws / 0 / throws | throws / 0 / throws | 3 / 3 | 3 / 3 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `max_castlong` | throws / 0 / throws | throws / 0 / throws | 2 / 2 | 2 / 2 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `sum_castlong` | 0 / 0 | 0 / 0 | 3 / 3 | 3 / 3 | 0 / 0 | 0 / 0 | PARITY |
+| `max_castint` | 0 / 0 | throws / 0 / throws | 2 / 2 | 2 / 2 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `max_big` | 0 / 0 | throws / 0 / throws | 20 / 20 | 20 / 20 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `max_condtitle` | 0 / 0 | throws / 0 / throws | 2 / 2 | 2 / 2 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `max_nullable` | null / null | null / null | 2 / 2 | 2 / 2 | null / null | empty-throws / null | LOUD->SILENT |
+| `max_score` | null / null | null / null | 5 / 5 | 5 / 5 | null / null | empty-throws / null | LOUD->SILENT |
+| `sum_score` | 0 / 0 | 0 / 0 | 5 / 5 | 5 / 5 | 0 / 0 | 0 / 0 | PARITY |
+| `max_scorevalue` | 0 / 0 | throws / 0 / throws | 5 / 5 | 5 / 5 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `count_pred` | 0 / 0 | 0 / 0 | 2 / 2 | 2 / 2 | 0 / 0 | 0 / 0 | PARITY |
+| `distinct_bare` | 0 / 0 | throws / 0 / throws | 0,1,2 / 0,1,2 | throws / 0,1,2 / throws | throws / 0 / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_castint` | 0 / 0 | throws / 0 / throws | 0,1,2 / 0,1,2 | throws / 0,1,2 / throws | throws / 0 / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_castlong` | throws / 0 / throws | throws / 0 / throws | throws / 0,1,2 / throws | throws / 0,1,2 / throws | throws / 0 / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_add1` | throws / throws | throws / throws | throws / throws | throws / throws | throws / throws | [] / [] | PARITY |
+| `distinct_anon_bare` | 0 / 0 | throws / 0 / throws | 0,1,2 / 0,1,2 | throws / 0,1,2 / throws | throws / 0 / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_bare_count` | 1 / 1 | 1 / 1 | 3 / 3 | 3 / 3 | 2 / 1 / 2 | 0 / 0 | VALUE-DIFF -> fixed |
+| `distinct_bare_max` | 0 / 0 | throws / 0 / throws | 2 / 2 | 2 / 2 | throws / 0 / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `distinct_bare_sum` | 0 / 0 | 0 / 0 | 3 / 3 | 3 / 3 | 0 / 0 | 0 / 0 | PARITY |
+| `distinct_bare_first` | 0 / 0 | throws / 0 / throws | 0 / 0 | throws / 0 / throws | throws / 0 | empty-throws / empty-throws | LOUD->SILENT |
+| `distinct_castint_count` | 1 / 1 | 1 / 1 | 3 / 3 | 3 / 3 | 2 / 1 / 2 | 0 / 0 | VALUE-DIFF -> fixed |
+| `distinct_big` | 0 / 0 | throws / 0 / throws | 0,10,20 / 0,10,20 | throws / 0,10,20 / throws | throws / 0 / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_castlongscore` | throws / 0 / throws | throws / 0 / throws | throws / 0,5 / throws | throws / 0,5 / throws | throws / 0 / throws | [] / [] | LOUD->SILENT -> fixed |
+| `castlongscore` | throws / throws | throws / 0 / throws | throws / throws | throws / throws | throws / throws | [] / [] | LOUD->SILENT -> fixed |
+| `first_bare` | 0 / 0 | throws / throws | 1 / 1 | 1 / 1 | 0 / 0 | empty-throws / empty-throws | PARITY |
+| `firstod_bare` | 0 / 0 | throws / throws | 1 / 1 | 1 / 1 | 0 / 0 | 0 / 0 | PARITY |
+| `single_bare` | 0 / 0 | throws / throws | 0 / 0 | throws / throws | 0 / 0 | empty-throws / empty-throws | PARITY |
+| `first_add1` | throws / throws | throws / throws | 2 / 2 | 2 / 2 | throws / throws | empty-throws / empty-throws | PARITY |
+| `first_condelse` | 0 / 0 | throws / throws | 1 / 1 | 1 / 1 | 0 / 0 | empty-throws / empty-throws | PARITY |
+| `last_bare` | 0 / 0 | throws / throws | 0 / 0 | throws / throws | throws / throws | empty-throws / empty-throws | PARITY |
+| `elementat_bare` | 0 / declines | throws / declines | 1 / declines | 1 / declines | 0 / declines | empty-throws / declines | VALUE-DIFF,WORKED->FAILS |
+| `groupby_key` | untranslatable / declines | untranslatable / declines | untranslatable / declines | untranslatable / declines | untranslatable / declines | untranslatable / declines | MAIN-UNTRANSLATABLE |
+| `groupby_count` | untranslatable / 1 | untranslatable / 1 | untranslatable / 1,1,1 | untranslatable / 1,1,1 | untranslatable / 2 | untranslatable / [] | MAIN-UNTRANSLATABLE |
+| `orderby_bare` | 0 / 0 | throws / throws | 0,1,2 / 0,1,2 | throws / throws | throws / throws | [] / [] | PARITY |
+| `where_bare` | [] / [] | [] / [] | 1,2 / 1,2 | 1,2 / 1,2 | [] / [] | [] / [] | PARITY |
+| `contains_bare` | False / False | False / False | False / False | False / False | False / False | False / False | PARITY |
+| `any_bare` | False / False | False / False | False / False | False / False | False / False | False / False | PARITY |
+| `union_bare` | 0 / 0 | throws / throws | 0,1,2 / 0,1,2 | throws / throws | throws / throws | [] / [] | PARITY |
+| `concat_bare` | 0,0 / 0,0 | throws / throws | 0,0,1,1,2,2 / 0,0,1,1,2,2 | throws / throws | throws / throws | [] / [] | PARITY |
+| `skiptake_bare` | 0 / 0 | throws / throws | 1,2,0 / 1,2,0 | throws / throws | throws / throws | [] / [] | PARITY |
+| `min_nullable` | null / null | null / null | null / 1 | null / 1 | null / null | empty-throws / null | LOUD->SILENT,VALUE-DIFF |
+| `min_score` | null / null | null / null | null / 5 | null / 5 | null / null | empty-throws / null | LOUD->SILENT,VALUE-DIFF |
+| `avg_score` | null / null | null / null | 5 / 5 | 5 / 5 | null / null | null / null | PARITY |
+| `avg_nullable` | null / null | null / null | 1.5 / 1.5 | 1.5 / 1.5 | null / null | null / null | PARITY |
+| `min_scorevalue` | 0 / 0 | throws / 0 / throws | 0 / 5 / 0 | 0 / 5 / 0 | 0 / 0 | empty-throws / empty-throws | LOUD->SILENT,VALUE-DIFF -> fixed |
+| `max_title` | c / c | d / d | c / c | d / d | d / d | empty-throws / empty-throws | PARITY |
+| `max_id` | False / False | False / False | False / False | False / False | False / False | empty-throws / empty-throws | PARITY |
+| `distinct_bare_min` | 0 / 0 | throws / 0 / throws | 0 / 1 / 0 | throws / 1 / throws | 0 / 0 | empty-throws / empty-throws | LOUD->SILENT,VALUE-DIFF -> fixed |
+| `distinct_bare_longcount` | 1 / 1 | 1 / 1 | 3 / 3 | 3 / 3 | 2 / 1 / 2 | 0 / 0 | VALUE-DIFF -> fixed |
+| `distinct_score` | null / null | null / null | null,5 / null,5 | null,null,5 / null,5 | null,null / null | [] / [] | VALUE-DIFF |
+| `distinct_anon_title_rank` | 0 / throws / 0 | throws / 0 / throws | 0,1,2 / throws / 0,1,2 | throws / 0,1,2 / throws | throws / throws | [] / [] | LOUD->SILENT,WORKED->FAILS -> fixed |
+| `distinct_guid` | G0 / G0 | throws / G0 / throws | G0,G1,G2 / G0,G1,G2 | throws / G0,G1,G2 / throws | throws / G0 / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_when` | min / min | throws / min / throws | min,2020-01-01,2021-01-01 / min,2020-01-01,2021-01-01 | throws / min,2020-01-01,2021-01-01 / throws | throws / min / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_enum` | Red / Red | throws / Red / throws | Red,Green,Blue / Red,Green,Blue | throws / Red,Green,Blue / throws | throws / Red / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_dec` | 0 / 0 | throws / 0 / throws | 0,1.5,2.5 / 0,1.5,2.5 | throws / 0,1.5,2.5 / throws | throws / 0 / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_flag` | False / False | False / False | False,False,True / False,False,True | False,False,True / False,False,True | False,False / False | [] / [] | VALUE-DIFF |
+| `distinct_day` | min / min | throws / min / throws | min,2020-01-01,2021-01-01 / min,2020-01-01,2021-01-01 | throws / min,2020-01-01,2021-01-01 / throws | throws / min / throws | [] / [] | LOUD->SILENT -> fixed |
+| `distinct_anon_guid_when` | G0/min / throws / G0/min | throws / G0/min / throws | G0/min,G1/2020-01-01,G2/2021-01-01 / throws / G0/min,G1/2020-01-01,G2/2021-01-01 | throws / G0/min,G1/2020-01-01,G2/2021-01-01 / throws | throws / throws | [] / [] | LOUD->SILENT,WORKED->FAILS -> fixed |
+| `max_guid_when` | min / min | throws / min / throws | 2021-01-01 / 2021-01-01 | 2021-01-01 / 2021-01-01 | throws / min / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `max_enum` | Red / Red | throws / Red / throws | Blue / Blue | Blue / Blue | throws / Red / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `min_dec` | 0 / 0 | throws / 0 / throws | 0 / 1.5 / 0 | throws / 1.5 / throws | 0 / 0 | empty-throws / empty-throws | LOUD->SILENT,VALUE-DIFF -> fixed |
+| `max_day` | min / min | throws / min / throws | 2021-01-01 / 2021-01-01 | 2021-01-01 / 2021-01-01 | throws / min / throws | empty-throws / empty-throws | LOUD->SILENT -> fixed |
+| `max_flag` | False / False | False / False | True / True | True / True | False / False | empty-throws / empty-throws | PARITY |
+| `flag_bare` | False / False | False / throws / False | True,False,False / True,False,False | True,False,False / throws / True,False,False | False,False / throws / False,False | [] / [] | WORKED->FAILS -> fixed |
+| `flag_anon` | False / False | False / throws / False | True,False,False / True,False,False | True,False,False / throws / True,False,False | False,False / throws / False,False | [] / [] | WORKED->FAILS -> fixed |
+| `flag_cond` | False / False | False / throws / False | True,False,False / True,False,False | True,False,False / throws / True,False,False | False,False / throws / False,False | [] / [] | WORKED->FAILS -> fixed |
+| `flag_not` | True / True | True / True | False,True,True / False,True,True | False,True,True / False,True,True | True,True / True,True | [] / [] | PARITY |
+| `flag_first` | False / False | False / throws / False | True / True | True / True | False / False | empty-throws / empty-throws | WORKED->FAILS -> fixed |
+| `min_flag` | False / False | False / False | False / False | False / False | False / False | empty-throws / empty-throws | PARITY |
+| `distinct_anon_flag` | False / throws / False | False / False | False,False,True / throws / False,False,True | False,False,True / False,False,True | False,False / throws / False,False | [] / [] | WORKED->FAILS -> fixed |
+| `distinct_castint_enum` | 0 / throws | throws / throws | 0,1,2 / throws | throws / throws | throws / throws | [] / [] | WORKED->FAILS |
+| `castint_enum` | 0 / throws | throws / throws | 1,2,0 / throws | throws / throws | throws / throws | [] / [] | WORKED->FAILS |
+| `distinct_conv` | 0 / 0 | throws / 0 | 0,1,2 / 0,1,2 | throws / 0,1,2 | throws / 0 | [] / [] | LOUD->SILENT |
+| `distinct_anon_conv` | 0 / declines | throws / declines | 0,1,2 / declines | throws / declines | throws / declines | [] / declines | VALUE-DIFF,WORKED->FAILS |
+| `conv_bare` | 0 / 0 | throws / throws | 1,2,0 / 1,2,0 | throws / throws | throws / throws | [] / [] | PARITY |
+| `max_where_distinct` | empty-throws / empty-throws | empty-throws / empty-throws | 2 / 2 | 2 / 2 | empty-throws / empty-throws | empty-throws / empty-throws | PARITY |
+
+Rows still not PARITY after this task: `max_nullable`/`max_score`/`min_nullable`/`min_score` (`none`, and `abc`/`abd` for `Min`) and `distinct_score` are main bugs (M37, M36, M4), native is correct; `distinct_flag` `cd` (main returns `False` twice, native once; both keep a stored `false` apart from a null-as-false); `distinct_bare_first` `cd` (sort tie, order-dependent); `groupby_*` (main can't translate); `elementat_bare` (a NativeOnly decline; Native falls back to main's answer); `castint_enum`, `distinct_castint_enum`, `distinct_conv`, `distinct_anon_conv` (residuals below; unchanged by this task).
+
+**Fix (Step 2).** Every rule reuses the Task 1.10/1.12/1.14 read modes and classifier; no new declines.
+- Terminal non-nullable `Min`/`Max` reduce `{_v: operand}` documents, as main does (`MongoGroupAccumulatorStage.WrapsOperand`, rendered `{$min: {_v: <operand>}}`). The read unwraps the winner: MISSING (`{}`) reads `default`, an explicit null throws "Nullable object must have a value.", a value reads as before (property serializer / kind-aware / checked narrowing). One predicate, `NativeAggregateReadBack.ReducesWrappedValue(cardinality)`, drives both the lowerer and the reader. Nullable results keep the bare reduction (main's wrapped one is wrong there: M36). An operand that is MISSING natively where the driver's `$toLong` is null (a dropped widening: `Max(x => (long)x.Rank)`, `Select(x => (long)x.Rank).Max()`, `Min(x => (long)x.Score)`; `MongoAggregationExpressionRenderer.MayAnswerUnfaithfulMissing`, the Task 1.14 `MayAnswerMissing` walk) is wrapped as `$ifNull: [operand, null]` so it throws like main.
+- A non-nullable `Average` (or any scalar aggregate) whose server value is null throws instead of reading `0` (`ReadNullScalar`).
+- A projected `Distinct` over a bare stored field classifies with `ClassifyMalformedFieldRead(readType, field)` (read type = the selector's type, `MongoProjection.Source`): the field's own type → `DefaultOnMalformedMissing` (Task 1.14's `$type` missing marker on the key part; the flatten restores MISSING); under a dropped widening (`(long)x.Rank`, `(long)x.Score`) → `ThrowOnMalformedNull` (strict flatten read). This also fixes `new { x.Title, x.Rank }.Distinct()` (a composite `_id` omits a MISSING sub-key: it threw "missing but required" where main read 0, and read a null as 0). Excluded (`Plain`, no marker): nullable reads, the primary key (never missing; MQL only), non-default-serialized keys (a marked flatten takes a converted key off the converted set-op paths; see residuals), `bool`. An unmarked default-serialized key (in practice a `bool`: `new { x.Title, x.Flag }.Distinct()`) is read by the field-access arm with Task 1.10's `GetScalarProjectionValueAtElement` on the Distinct route too (MISSING → `default`); converted keys keep their previous read.
+- `(long)x.Score` (a `$toX` cast over a nullable source) reads strictly on the Projection route (`TryCreateRequiredScalarCastRead` no longer requires a non-nullable property).
+- `bool`: the driver's `BooleanSerializer` reads null as `false`, so a malformed bool never throws (`MongoAggregationExpressionRenderer.DriverReadsNullAsDefault`). Honoured by the strict alias read (absent or null → `false`), the wrapped `Min`/`Max` read, `ClassifyMalformedFieldRead`, and `GetScalarProjectionValueAtElement` (checks the property serializer is the driver's `BooleanSerializer`).
+
+**Residuals (not fixed; for the owner).**
+- Converted bare `Distinct` key (`HasConversion<string>()` int): a lone `$group` key merges MISSING and null, so the explicit-null row reads `0` where main throws `ArgumentNullException` (LOUD→SILENT; unchanged from before this task, MISSING still reads 0 as on main). The marker would fix it but makes `Distinct().Union(...)` over a converted key decline under NativeOnly (`NativeDistinctTests.Converted_Distinct_set_ops_*`), so it is left for a decision.
+- `(int)x.E` (enum → underlying cast; native renders `$toInt`, the driver drops the cast): MISSING throws natively (Task 1.12's strict read), main reads 0 — in projection and projected `Distinct` (WORKED→FAILS, pre-existing since Task 1.12, outside F14's non-projection scope).
+- `Select(x => x.Rank).Distinct().OrderBy(v => v).First()` over one MISSING and one null row: the two groups tie in the sort, so which one comes first (0 or throws) is server-order dependent on both paths.
+- `GroupBy(x => x.Rank)` (main can't translate) and `ElementAt` (NativeOnly declines; Native falls back to main's answer) are out of scope.
+- Main bugs, recorded in `main-issues.md`: M36 (nullable `Min` over a MISSING/null row answers null), M37 (nullable `Min`/`Max` over an empty sequence throw). Native is correct for both. Main's nullable `Distinct` keeping MISSING and null apart is M4.
+
+**Tests** (`NativeMalformedAggregateAndDistinctTests`, raw `BsonDocument` seeds, three modes, per row set c/d/abc/abd/c+d): `Aggregate_or_distinct_over_a_missing_or_null_required_element_matches_main` (a theory over the must-fix shapes plus parity pins, asserting main's per-row-set answer in NativeOnly, Native and DriverLinq); `Nullable_aggregate_or_distinct_where_main_is_wrong_stays_correct` (M36, M4 and the bool `Distinct`, native answer vs main's). 21 spec MQL baselines change (`{$min: "$x"}` → `{$min: {_v: "$x"}}`).
+
+**Commit:** `EF-322: explicit null and missing in aggregate and Distinct reads match driver LINQ`
+
 ---
 
 ## Phase 2 — Implicit-mode NativeOnly gaps (the 129 tests in `nativeonly-gaps.tsv`)

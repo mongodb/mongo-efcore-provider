@@ -177,7 +177,14 @@ Rendering (null/missing/dialect semantics):
   Distinct key over such a leaf carries a `$type` missing marker (`MongoGroupingKeyPart.MarksMissing`; a lone `$group`
   key turns MISSING into null) and its flatten restores MISSING (`MongoProjection.DefaultsOnMalformedMissing`). A bare
   cast leaf staged as the field reads like `x.Rank` for an identity cast (also over a nullable source: missing →
-  `default`, null → throws) and strictly for a `$toX` cast (`TryCreateRequiredScalarCastRead`).
+  `default`, null → throws) and strictly for a `$toX` cast (`TryCreateRequiredScalarCastRead`), also over a nullable
+  source (`(long)x.Score`). A projected Distinct key over a bare stored field is classified the same way against its
+  read type (`ClassifyMalformedFieldRead`: marker for the field's own type, strict under a dropped widening). A terminal
+  non-nullable `Min`/`Max` reduces `{_v: operand}` documents as driver-LINQ does
+  (`NativeAggregateReadBack.ReducesWrappedValue`, shared by lowerer and reader; MISSING winner → `default`, null → throws;
+  an unfaithful MISSING is `$ifNull`'d to null), and a non-nullable `Average`'s null throws. A malformed `bool` never
+  throws: the driver's `BooleanSerializer` reads null as `false` (`DriverReadsNullAsDefault`: the strict alias read,
+  `ClassifyMalformedFieldRead`, the wrapped read and `GetScalarProjectionValueAtElement` all honour it).
 
 Shapers and projections:
 
