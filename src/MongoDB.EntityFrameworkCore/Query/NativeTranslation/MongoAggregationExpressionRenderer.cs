@@ -1180,9 +1180,13 @@ internal static class MongoAggregationExpressionRenderer
     /// MISSING is driver-LINQ's omitted member (default) and null throws. <see cref="NonNullableValueRead.ThrowOnMalformedNull"/>
     /// under a widening the translator dropped (<c>(long)x.Rank</c>, <c>(long)x.Score</c>), which the driver renders as
     /// <c>$toLong</c>, null for both. <see cref="NonNullableValueRead.Plain"/> for a nullable read, a <c>bool</c>
-    /// (<see cref="DriverReadsNullAsDefault"/>), the primary key (never missing), a non-default-serialized field (a marked
-    /// key's conditional flatten would take it off the converted-key set-op paths, and a strict read is a generic read the
-    /// converter or representation would defeat; it keeps its previous read), and anything that isn't a bare field.
+    /// (<see cref="DriverReadsNullAsDefault"/>), the primary key (never missing), and anything that isn't a bare field. A
+    /// non-default-serialized (value-converted) field is marked too when read as its own type (<c>x.Conv</c> with
+    /// <c>HasConversion&lt;string&gt;()</c>; the flatten is read through the property, so the converter applies:
+    /// MISSING reads default, null throws, as main's converter did); under a dropped widening it stays
+    /// <see cref="NonNullableValueRead.Plain"/>, since a strict read is a generic read the converter would defeat. A marked
+    /// converted key still combines with another marked Distinct of an equivalently stored key, but no longer with a plain
+    /// projected operand (<c>Distinct().Concat(q.Select(x =&gt; x.Conv))</c> declines; plan Task 2.2.11).
     /// </summary>
     internal static NonNullableValueRead ClassifyMalformedFieldRead(Type readType, MongoExpression node)
     {
@@ -1190,14 +1194,30 @@ internal static class MongoAggregationExpressionRenderer
             || Nullable.GetUnderlyingType(readType) is not null
             || DriverReadsNullAsDefault(readType)
             || node is not (MongoFieldExpression or MongoOuterFieldExpression)
-            || IsRootPrimaryKey(node)
-            || !MongoExpressionTranslator.AllFieldsDefaultSerialized(node))
+            || IsRootPrimaryKey(node))
             return NonNullableValueRead.Plain;
 
-        return MayAnswerMissing(readType, node) == MissingAnswer.Missing
+        var missingAnswer = MayAnswerMissing(readType, node);
+        if (!MongoExpressionTranslator.AllFieldsDefaultSerialized(node))
+            return missingAnswer == MissingAnswer.Missing && ReadsConvertedDistinctKeyThroughProperty(readType, node)
+                ? NonNullableValueRead.DefaultOnMalformedMissing
+                : NonNullableValueRead.Plain;
+
+        return missingAnswer == MissingAnswer.Missing
             ? NonNullableValueRead.DefaultOnMalformedMissing
             : NonNullableValueRead.ThrowOnMalformedNull;
     }
+
+    /// <summary>
+    /// Whether a marked projected-Distinct key over the non-default-serialized bare field <paramref name="node"/>, read
+    /// back as <paramref name="readType"/>, is read through the field's property (so its value converter applies):
+    /// a non-nullable property read as its own CLR type. The read side
+    /// (<c>MongoProjectionBindingRemovingExpressionVisitor.TryCreateThrowOnMalformedNullAliasRead</c>) calls this too.
+    /// </summary>
+    internal static bool ReadsConvertedDistinctKeyThroughProperty(Type readType, MongoExpression node)
+        => node is MongoFieldExpression field
+           && !MongoExpressionTranslator.AllFieldsDefaultSerialized(field)
+           && field.Property.ClrType == readType;
 
     /// <summary>
     /// Whether driver-LINQ's deserializer for a non-nullable <paramref name="readType"/> reads an explicit BSON null as
@@ -1207,6 +1227,21 @@ internal static class MongoAggregationExpressionRenderer
     /// </summary>
     internal static bool DriverReadsNullAsDefault(Type readType)
         => readType == typeof(bool);
+
+    /// <summary>
+    /// Whether a join-scope projection leaf <paramref name="node"/> read back as <paramref name="readType"/> is a bare
+    /// stored scalar of a non-nullable property read as its own type (<c>o.Customer!.Rank</c>, <c>o.Customer!.Flag</c>),
+    /// which the Projection route reads through that property like a root bare leaf (decision D-F10): a MISSING element
+    /// (an unmatched optional reference after <c>$lookup</c>, or a matched document that omits the field) reads
+    /// <c>default</c>, as driver-LINQ's <c>$project</c> push-down did; an explicit null throws, except a <c>bool</c>
+    /// (<see cref="DriverReadsNullAsDefault"/>). The single predicate behind the read
+    /// (<c>MongoProjectionBindingRemovingExpressionVisitor.TryCreateJoinScopeBareScalarRead</c>).
+    /// </summary>
+    internal static bool ReadsJoinScopeBareScalarThroughProperty(Type readType, MongoExpression node)
+        => readType.IsValueType
+           && Nullable.GetUnderlyingType(readType) is null
+           && node is MongoFieldExpression field
+           && field.Property.ClrType == readType;
 
     /// <summary>
     /// <paramref name="classified"/>, a <see cref="ClassifyNonNullableValueRead"/> answer for a value of type

@@ -47,9 +47,15 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
         public int Conv { get; set; }
         public Color E { get; set; }
         public Color EStr { get; set; }
+        public ByteColor EB { get; set; }
+        public LongColor EL { get; set; }
     }
 
     public enum Color { Red, Green, Blue }
+
+    public enum ByteColor : byte { Red, Green, Blue }
+
+    public enum LongColor : long { Red, Green, Blue }
 
     private const string Throws = "throws";
 
@@ -105,6 +111,11 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
         ["anon_castint_enum"] = (q => Sorted(q.Select(x => new { V = (int)x.E }).AsEnumerable().Select(a => a.V)), ["0", Throws, "0,1,2", Throws, Throws]),
         ["distinct_castint_enum"] = (q => Sorted(q.Select(x => (int)x.E).Distinct()), ["0", Throws, "0,1,2", Throws, Throws]),
         ["distinct_castint_enum_count"] = (q => One(q.Select(x => (int)x.E).Distinct().Count()), ["1", "1", "3", "3", "2"]),
+        // A long-backed enum's cast to its underlying type relabels like an int-backed one (stored Int64).
+        ["castlong_enum_long"] = (q => Sorted(q.Select(x => (long)x.EL)), ["0", Throws, "0,1,2", Throws, Throws]),
+        ["anon_castlong_enum_long"] = (q => Sorted(q.Select(x => new { V = (long)x.EL }).AsEnumerable().Select(a => a.V)), ["0", Throws, "0,1,2", Throws, Throws]),
+        ["distinct_castlong_enum_long"] = (q => Sorted(q.Select(x => (long)x.EL).Distinct()), ["0", Throws, "0,1,2", Throws, Throws]),
+        ["distinct_castlong_enum_long_count"] = (q => One(q.Select(x => (long)x.EL).Distinct().Count()), ["1", "1", "3", "3", "2"]),
         ["castlong_nullable"] = (q => Sorted(q.Select(x => (long)x.Score!)), [Throws, Throws, Throws, Throws, Throws]),
         // The driver's BooleanSerializer reads an explicit null as false, so a malformed bool never throws on main.
         ["flag_bare"] = (q => Sorted(q.Select(x => x.Flag)), ["False", "False", "False,False,True", "False,False,True", "False,False"]),
@@ -113,6 +124,16 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
         ["flag_first"] = (q => One(q.OrderBy(x => x.Title).Select(x => x.Flag).First()), ["False", "False", "True", "True", "False"]),
         ["flag_max"] = (q => One(q.Max(x => x.Flag)), ["False", "False", "True", "True", "False"]),
         ["flag_min"] = (q => One(q.Min(x => x.Flag)), ["False", "False", "False", "False", "False"]),
+        // A value-converted key (Conv: HasConversion<string>()) is marked too and read through its property: MISSING
+        // reads default, null throws (main's converter throws ArgumentNullException), and the two are separate groups.
+        ["distinct_conv"] = (q => Sorted(q.Select(x => x.Conv).Distinct()), ["0", Throws, "0,1,2", Throws, Throws]),
+        ["distinct_conv_count"] = (q => One(q.Select(x => x.Conv).Distinct().Count()), ["1", "1", "3", "3", "2"]),
+        ["distinct_conv_union"] = (q => Sorted(q.Select(x => x.Conv).Distinct().Union(q.Where(x => x.Title == "a").Select(x => x.Conv))),
+            ["0", Throws, "0,1,2", Throws, Throws]),
+        ["distinct_conv_concat"] = (q => Sorted(q.Select(x => x.Conv).Distinct().Concat(q.Where(x => x.Title == "a").Select(x => x.Conv))),
+            ["0", Throws, "0,1,1,2", Throws, Throws]),
+        ["distinct_conv_union_distinct"] = (q => Sorted(q.Select(x => x.Conv).Distinct().Union(q.Where(x => x.Title == "a").Select(x => x.Conv).Distinct())),
+            ["0", Throws, "0,1,2", Throws, Throws]),
         ["flag_distinct_anon2"] = (q => Sorted(q.Select(x => new { x.Title, x.Flag }).Distinct().AsEnumerable().Select(a => a.Flag)), ["False", "False", "False,False,True", "False,False,True", "False,False"]),
         // Parity pins: already matched main before Task 1.15.
         ["sum_bare"] = (q => One(q.Sum(x => x.Rank)), ["0", "0", "3", "3", "0"]),
@@ -192,9 +213,8 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
     }
 
     /// <summary>
-    /// A converted bare Distinct key gets no missing marker (it would take the key off the converted set-op paths), so it
-    /// keeps its previous read: a MISSING row reads <c>default</c>, as on main. (An explicit-null row also reads
-    /// <c>default</c> natively, where main's converter throws: a known residual, Task 1.15.)
+    /// A converted bare Distinct key reads a MISSING row as <c>default</c>, as on main (an explicit-null row throws, as
+    /// main's converter does: see <c>distinct_conv</c> in <see cref="MainParityShapes"/>).
     /// </summary>
     [Fact]
     public void Distinct_over_a_converted_key_reads_a_missing_row_as_default()
@@ -209,6 +229,36 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
                 return db.Entities.AsNoTracking().Where(x => x.Title != "d")
                     .Select(x => x.Conv).Distinct().AsEnumerable().Order().ToList();
             }));
+    }
+
+    /// <summary>
+    /// A byte-backed enum's cast to its underlying type (<c>(byte)x.EB</c>) isn't relabeled natively: it declines under
+    /// NativeOnly, and Native falls back to main's answers (probe on upstream/main dec7e26f, EF10). A coverage gap, not
+    /// wrong data.
+    /// </summary>
+    [Fact]
+    public void Underlying_cast_of_a_byte_backed_enum_declines_and_falls_back_to_main()
+    {
+        var collection = Seed(nameof(Underlying_cast_of_a_byte_backed_enum_declines_and_falls_back_to_main));
+        Func<IQueryable<Item>, string>[] shapes =
+        [
+            q => Sorted(q.Select(x => (byte)x.EB)),
+            q => Sorted(q.Select(x => new { V = (byte)x.EB }).AsEnumerable().Select(a => a.V)),
+            q => Sorted(q.Select(x => (byte)x.EB).Distinct()),
+        ];
+        string[] main = ["0", Throws, "0,1,2", Throws, Throws];
+
+        foreach (var run in shapes)
+        {
+            using (var db = CreateContext(collection, MongoQueryMode.NativeOnly))
+            {
+                Assert.Throws<MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException>(
+                    () => run(db.Entities.AsNoTracking()));
+            }
+
+            Assert.Equal(main, RunPerRowSet(collection, MongoQueryMode.Native, run, main));
+            Assert.Equal(main, RunPerRowSet(collection, MongoQueryMode.DriverLinq, run, main));
+        }
     }
 
     /// <summary>
@@ -246,7 +296,9 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
                 perRowSet.Add(run(Rows(db.Entities.AsNoTracking(), RowSets[i])));
             }
             // A NativeOnly decline (NativeTranslationNotSupportedException) is not a row outcome: it fails the test.
-            catch (Exception ex) when (ex is FormatException or InvalidOperationException)
+            // Main's value converter throws ArgumentNullException for an explicit null (the exception type for malformed
+            // stored data is not contract).
+            catch (Exception ex) when (ex is FormatException or InvalidOperationException or ArgumentException)
             {
                 perRowSet.Add(Throws);
             }
@@ -277,13 +329,14 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
             TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8]);
         raw.InsertMany(
         [
-            new() { { "_id", ObjectId.GenerateNewId() }, { "Title", "a" }, { "Rank", 1 }, { "Score", 5 }, { "Big", 10L }, { "Flag", true }, { "When", new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc) }, { "Conv", "1" }, { "E", 1 }, { "EStr", "Green" } },
-            new() { { "_id", ObjectId.GenerateNewId() }, { "Title", "b" }, { "Rank", 2 }, { "Big", 20L }, { "Flag", false }, { "When", new DateTime(2021, 1, 1, 0, 0, 0, DateTimeKind.Utc) }, { "Conv", "2" }, { "E", 2 }, { "EStr", "Blue" } },
+            new() { { "_id", ObjectId.GenerateNewId() }, { "Title", "a" }, { "Rank", 1 }, { "Score", 5 }, { "Big", 10L }, { "Flag", true }, { "When", new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc) }, { "Conv", "1" }, { "E", 1 }, { "EStr", "Green" }, { "EB", 1 }, { "EL", 1L } },
+            new() { { "_id", ObjectId.GenerateNewId() }, { "Title", "b" }, { "Rank", 2 }, { "Big", 20L }, { "Flag", false }, { "When", new DateTime(2021, 1, 1, 0, 0, 0, DateTimeKind.Utc) }, { "Conv", "2" }, { "E", 2 }, { "EStr", "Blue" }, { "EB", 2 }, { "EL", 2L } },
             new() { { "_id", ObjectId.GenerateNewId() }, { "Title", "c" } },
             new()
             {
                 { "_id", ObjectId.GenerateNewId() }, { "Title", "d" }, { "Rank", BsonNull.Value }, { "Score", BsonNull.Value },
-                { "Big", BsonNull.Value }, { "Flag", BsonNull.Value }, { "When", BsonNull.Value }, { "Conv", BsonNull.Value }, { "E", BsonNull.Value }, { "EStr", BsonNull.Value }
+                { "Big", BsonNull.Value }, { "Flag", BsonNull.Value }, { "When", BsonNull.Value }, { "Conv", BsonNull.Value }, { "E", BsonNull.Value }, { "EStr", BsonNull.Value },
+                { "EB", BsonNull.Value }, { "EL", BsonNull.Value }
             },
         ]);
         return database.MongoDatabase.GetCollection<Item>(raw.CollectionNamespace.CollectionName);

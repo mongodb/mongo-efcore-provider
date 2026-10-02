@@ -3831,6 +3831,11 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         => value switch
         {
             MongoFieldExpression field => field,
+            // A marked Distinct key's flatten restores MISSING from the marker: $cond [marker, $$REMOVE, "_id.<alias>"].
+            // Without this a marked value-converted key (ClassifyMalformedFieldRead) would look default-serialized and
+            // match an operand stored differently.
+            MongoConditionalExpression { IfFalse: MongoElementRefExpression keyRef } when select is { IsDistinct: true, Grouping: not null }
+                => StoredField(select, keyRef),
             MongoElementRefExpression { Path: var path } when select.Grouping is { } grouping
                 => (path == "_id" && grouping.Key.Count == 1
                         ? grouping.Key[0]
