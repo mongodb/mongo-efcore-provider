@@ -736,7 +736,15 @@ Rows still not PARITY after this task: `max_nullable`/`max_score`/`min_nullable`
 
 ---
 
-## Phase 2 — Implicit-mode NativeOnly gaps (the 129 tests in `nativeonly-gaps.tsv`)
+## Phase 2 — Implicit-mode NativeOnly gaps (the 125 test methods in `nativeonly-gaps-2026-10-02.tsv`)
+
+**Inventory regenerated after Phase 1 (2026-10-02, HEAD `3d8dd75a`, `tests/tools/native-parity-diff.sh` per version):**
+125 test methods pass under DriverLinq and fail under NativeOnly (was 129 in `nativeonly-gaps.tsv`): 93 in all three
+versions, 19 EF8+EF9, 8 EF9-only, 4 EF10-only, 1 EF8-only. Per version (methods; spec / functional): EF8 113 (24 / 89),
+EF9 120 (31 / 89), EF10 97 (4 / 93); test runs (theory rows counted): EF8 54 / 102, EF9 68 / 102, EF10 10 / 106. The
+only change from the Phase 0 list is Task 1.2 closing `NorthwindWhereQueryMongoTest.Where_datetime_now/_today/_utcnow`
+and `Where_datetimeoffset_utcnow` (EF8, EF9); Phase 1 added no new gap. Known gaps outside this file (no implicit-mode test reaches them): rows
+2.2.12 and 2.7.10. Bucket task lists below still cite their original test names, all of which remain in the new file.
 
 For every task: (1) run the listed existing tests with `MONGODB_EF_QUERY_MODE=NativeOnly` and confirm the predicted decline (if the decline site differs, add the temporary decline-reason capture from g6 §Task 0 — never committed — and update the design); (2) add the listed parity tests; (3) implement per the referenced design section; (4) run the bucket's tests in all three modes, mutation-check, full suite ×3; (5) commit `EF-322: native <bucket short name>`.
 
@@ -767,6 +775,8 @@ Derived-`DbSet` root narrowing for `Join(db.Dogs)` (M2) is **out of scope** (wro
 | 2.2.8 | Owned-collection element `Select` leaf (g2 T8 option B) | `OwnedEntity_collection_projection_alias_with_bson_representation_uses_owned_property_serializer`, `SharedClrTypeProjectionTests.*` (3) | resolve element type from the navigation, never CLR type |
 | 2.2.9 | Test-only: `DateTimeOffsetMemberProjectionTests.*_throws` → `TestQueryMode.AssertRefusal<NotSupportedException>`; refresh stale EF-337 comments in `ProjectionTests.cs` (g2 T9) | `Select_DateTimeOffset_DateTime_component_with_string_representation_throws`, `…_with_value_converter_throws` | — |
 | 2.2.10 | Restore the original `OrderBy(p => p.orderFromSun)` in the four `Select_projection_alias_with_bson_representation_*` tests **only if** D-EF337 extends to representation sorts; otherwise leave `OrderBy(name)` and record M16 | (mainworks rows 2–5) | default: leave + record |
+| 2.2.11 | Teach the set-op gate (`OperandSerializationsMatch` / shape match) to accept a marked Distinct flatten (restores NativeOnly coverage for converted Distinct+Union/Concat). **Status (Phase 1 final fix wave):** the converted-key marker landed with `StoredField` seeing through the marked flatten, so converted `Distinct()` + `Union`/`Concat` (with a marked or a plain operand of an equivalently stored key) stayed native and match main (`NativeMalformedAggregateAndDistinctTests` `distinct_conv_*`, `NativeDistinctTests.Converted_Distinct_set_ops_*`); no coverage was lost. Keep the row as a check: re-verify under NativeOnly before Phase 4 and close it | `NativeDistinctTests.Converted_Distinct_set_ops_over_the_same_property_go_native`, `Cross_collection_converted_set_ops_with_the_same_converter_go_native_with_hand_oracle` (currently green) | mismatched stored forms must still decline (`Cross_collection_set_ops_with_mismatched_stored_forms_decline`) |
+| 2.2.12 | Byte-backed (and other non-int/long) enum cast to its underlying type (`(byte)x.EB`) declines under NativeOnly; Native falls back to main's answers. Extend the relabel (`MongoExpressionTranslator.IsEnumUnderlyingRelabel` / `TryCreateRequiredScalarCastRead`) to every integral underlying type the driver stores as an integer | `NativeMalformedAggregateAndDistinctTests.Underlying_cast_of_a_byte_backed_enum_declines_and_falls_back_to_main` (flip to a main-parity row) | found by the final fix wave's relabel pins |
 
 ### 2.3 Owned entities — design `g3-owned.md`
 
@@ -828,6 +838,7 @@ Harness: `GuidesDbContext.Create(…, MongoQueryMode? queryMode = null)`; `Nativ
 | 2.7.7 | Bitwise `& | ^ ~` on int/long (`MongoBinaryOperator.BitAnd/BitOr/BitXor`, `MongoUnaryOperator.BitNot`, new `MapBitwiseOperator`; gate the `and` override on `TestServer.SupportsBitwiseOperators` or special-case `$bitsAllSet`) | `Where_bitwise_binary_and/or/not` (8,9), `…_xor` (9) |
 | 2.7.8 | `g.Key` accumulator operand via `TryResolveKeyReferenceAsRawExpression` in `TryBindAccumulator` (NativeGroupByBinder.cs:810-815); remove `IsNativeOnly` branch | `GroupBy_aggregate_using_grouping_key_Pushdown` (8,9,10) |
 | 2.7.9 | AdHocJson: Task 0 decline capture for rows 1–2; row 2 (`Project_top_level_entity_with_null_value_required_scalars`, main-correct) made native; rows 1, 3, 4 (main threw) pinned with `AssertNativeTranslationFailedAsync` under NativeOnly | `AdHocJsonQueryMongoTest.*` (9) |
+| 2.7.10 | Inline array WITH clock elements filtered by a clock predicate (`new[] { DateTime.UtcNow.AddYears(50) }.Where(d => d > DateTime.UtcNow).Contains(x.When)`): Task 1.13's fold correctly refuses to fold it (clock), and the unfolded local-collection `Where(...).Contains` then declines under NativeOnly, while the driver (and main, probe on `dec7e26f` EF10: count `0`, no throw) handles it. Make the per-execution evaluation (`RuntimeEvaluator`, as for a closed clock subtree) cover a clock-holding local-collection filter | new: 3-mode test with a past and a future clock element (main parity) |
 
 ---
 
