@@ -1620,7 +1620,12 @@ internal sealed partial class MongoExpressionTranslator
                 if (!AllFieldsDefaultSerialized(converted))
                     return null;
 
-                return new MongoConvertExpression(converted, toType);
+                // An enum field's cast to its underlying type relabels the stored integer (identity-like): stage the
+                // field bare, as the driver does, so a MISSING field stays MISSING (driver-LINQ read default) rather
+                // than $toInt's null. A computed enum (`(int)o.OrderDate.DayOfWeek`) keeps its $toInt.
+                return converted is MongoFieldExpression or MongoOuterFieldExpression && IsEnumUnderlyingRelabel(fromType, toType)
+                    ? converted
+                    : new MongoConvertExpression(converted, toType);
             }
 
             return TranslateOperand(unary.Operand, allowNumericWidening); // benign or widening convert
@@ -2093,6 +2098,19 @@ internal sealed partial class MongoExpressionTranslator
         }
 
         return (fromType == typeof(char) && toType == typeof(int)) || toType == typeof(object);
+    }
+
+    /// <summary>
+    /// The <see cref="IsIdentityLikeConvert"/> case that leaves even the CLR numeric type unchanged: an enum to its exact
+    /// underlying type (<c>(int)x.Status</c>). A default-serialized enum stores that integer, so the cast is a relabeling
+    /// the driver doesn't render as <c>$toX</c>. Shared by the translator (stages the cast bare), the projection read
+    /// side (reads it like an identity cast) and the malformed-value classifier (the field answers MISSING as itself).
+    /// </summary>
+    internal static bool IsEnumUnderlyingRelabel(Type fromType, Type toType)
+    {
+        fromType = Nullable.GetUnderlyingType(fromType) ?? fromType;
+        toType = Nullable.GetUnderlyingType(toType) ?? toType;
+        return fromType.IsEnum && toType == Enum.GetUnderlyingType(fromType) && IsIdentityLikeConvert(fromType, toType);
     }
 
     // Whether an aggregation $not over this AndAlso/OrElse tree is its exact complement: every leaf is either a numeric

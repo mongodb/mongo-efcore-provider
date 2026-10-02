@@ -45,7 +45,11 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
         public bool Flag { get; set; }
         public DateTime When { get; set; }
         public int Conv { get; set; }
+        public Color E { get; set; }
+        public Color EStr { get; set; }
     }
+
+    public enum Color { Red, Green, Blue }
 
     private const string Throws = "throws";
 
@@ -96,6 +100,11 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
         ["distinct_max"] = (q => One(q.Select(x => x.Rank).Distinct().Max()), ["0", Throws, "2", "2", Throws]),
         ["distinct_min"] = (q => One(q.Select(x => x.Rank).Distinct().Min()), ["0", Throws, "0", Throws, "0"]),
         ["distinct_first"] = (q => One(q.Select(x => x.Rank).Distinct().OrderBy(v => v).First()), ["0", Throws, "0", Throws, Unordered]),
+        // An enum's cast to its underlying type: the driver drops it, so MISSING reads default and null throws.
+        ["castint_enum"] = (q => Sorted(q.Select(x => (int)x.E)), ["0", Throws, "0,1,2", Throws, Throws]),
+        ["anon_castint_enum"] = (q => Sorted(q.Select(x => new { V = (int)x.E }).AsEnumerable().Select(a => a.V)), ["0", Throws, "0,1,2", Throws, Throws]),
+        ["distinct_castint_enum"] = (q => Sorted(q.Select(x => (int)x.E).Distinct()), ["0", Throws, "0,1,2", Throws, Throws]),
+        ["distinct_castint_enum_count"] = (q => One(q.Select(x => (int)x.E).Distinct().Count()), ["1", "1", "3", "3", "2"]),
         ["castlong_nullable"] = (q => Sorted(q.Select(x => (long)x.Score!)), [Throws, Throws, Throws, Throws, Throws]),
         // The driver's BooleanSerializer reads an explicit null as false, so a malformed bool never throws on main.
         ["flag_bare"] = (q => Sorted(q.Select(x => x.Flag)), ["False", "False", "False,False,True", "False,False,True", "False,False"]),
@@ -202,6 +211,23 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
             }));
     }
 
+    /// <summary>
+    /// An enum stored as a string isn't relabeled bare (its stored value isn't the integer): the cast still declines natively.
+    /// </summary>
+    [Fact]
+    public void Underlying_cast_of_a_string_stored_enum_still_declines()
+    {
+        var collection = Seed(nameof(Underlying_cast_of_a_string_stored_enum_still_declines));
+
+        foreach (var distinct in new[] { false, true })
+        {
+            using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+            var q = db.Entities.AsNoTracking().Where(x => x.Title == "a").Select(x => (int)x.EStr);
+            Assert.Throws<MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException>(
+                () => (distinct ? q.Distinct() : q).ToList());
+        }
+    }
+
     private static List<string> RunPerRowSet(
         IMongoCollection<Item> collection, MongoQueryMode mode, Func<IQueryable<Item>, string> run, string[] expected)
     {
@@ -251,13 +277,13 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
             TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8]);
         raw.InsertMany(
         [
-            new() { { "_id", ObjectId.GenerateNewId() }, { "Title", "a" }, { "Rank", 1 }, { "Score", 5 }, { "Big", 10L }, { "Flag", true }, { "When", new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc) }, { "Conv", "1" } },
-            new() { { "_id", ObjectId.GenerateNewId() }, { "Title", "b" }, { "Rank", 2 }, { "Big", 20L }, { "Flag", false }, { "When", new DateTime(2021, 1, 1, 0, 0, 0, DateTimeKind.Utc) }, { "Conv", "2" } },
+            new() { { "_id", ObjectId.GenerateNewId() }, { "Title", "a" }, { "Rank", 1 }, { "Score", 5 }, { "Big", 10L }, { "Flag", true }, { "When", new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc) }, { "Conv", "1" }, { "E", 1 }, { "EStr", "Green" } },
+            new() { { "_id", ObjectId.GenerateNewId() }, { "Title", "b" }, { "Rank", 2 }, { "Big", 20L }, { "Flag", false }, { "When", new DateTime(2021, 1, 1, 0, 0, 0, DateTimeKind.Utc) }, { "Conv", "2" }, { "E", 2 }, { "EStr", "Blue" } },
             new() { { "_id", ObjectId.GenerateNewId() }, { "Title", "c" } },
             new()
             {
                 { "_id", ObjectId.GenerateNewId() }, { "Title", "d" }, { "Rank", BsonNull.Value }, { "Score", BsonNull.Value },
-                { "Big", BsonNull.Value }, { "Flag", BsonNull.Value }, { "When", BsonNull.Value }, { "Conv", BsonNull.Value }
+                { "Big", BsonNull.Value }, { "Flag", BsonNull.Value }, { "When", BsonNull.Value }, { "Conv", BsonNull.Value }, { "E", BsonNull.Value }, { "EStr", BsonNull.Value }
             },
         ]);
         return database.MongoDatabase.GetCollection<Item>(raw.CollectionNamespace.CollectionName);
@@ -270,6 +296,7 @@ public class NativeMalformedAggregateAndDistinctTests(TemporaryDatabaseFixture d
             {
                 mb.Entity<Item>().Property(x => x.When).HasDateTimeKind(DateTimeKind.Local);
                 mb.Entity<Item>().Property(x => x.Conv).HasConversion<string>();
+                mb.Entity<Item>().Property(x => x.EStr).HasConversion<string>();
             },
             optionsBuilderAction: b =>
             {

@@ -1060,7 +1060,15 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
             return true;
         }
 
-        // An enum's cast to its underlying type is a relabeling the driver doesn't render as $toX either.
+        // An enum's cast to its underlying type, staged bare by the translator (IsEnumUnderlyingRelabel): the alias holds
+        // the stored integer, read as such; missing → default, null → throws, as the driver (which drops the cast) did.
+        if (MongoExpressionTranslator.IsEnumUnderlyingRelabel(castLeaf.Operand.Type, type))
+        {
+            read = CreateDefaultOnMissingAliasRead(alias, type);
+            return true;
+        }
+
+        // Any other enum cast (to a wider integral type) keeps the plain alias read.
         if (MongoConvertExpression.ToOperatorFor(type) is null
             || castLeaf.Operand.Type.UnwrapNullableType().IsEnum)
         {

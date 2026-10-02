@@ -1190,7 +1190,7 @@ internal static class MongoAggregationExpressionRenderer
             || Nullable.GetUnderlyingType(readType) is not null
             || DriverReadsNullAsDefault(readType)
             || node is not (MongoFieldExpression or MongoOuterFieldExpression)
-            || node is MongoFieldExpression { NullSafe: false, ElementName: "_id" } key && key.Property.IsPrimaryKey()
+            || IsRootPrimaryKey(node)
             || !MongoExpressionTranslator.AllFieldsDefaultSerialized(node))
             return NonNullableValueRead.Plain;
 
@@ -1218,6 +1218,7 @@ internal static class MongoAggregationExpressionRenderer
     internal static NonNullableValueRead ReclassifyMalformedReadAs(NonNullableValueRead classified, Type classifiedType, Type readType)
         => classified == NonNullableValueRead.DefaultOnMalformedMissing
            && classifiedType.UnwrapNullableType() != readType.UnwrapNullableType()
+           && !MongoExpressionTranslator.IsEnumUnderlyingRelabel(classifiedType, readType)
             ? NonNullableValueRead.ThrowOnMalformedNull
             : classified;
 
@@ -1228,7 +1229,11 @@ internal static class MongoAggregationExpressionRenderer
     /// the driver renders as <c>$toLong</c>. See <see cref="MayAnswerMissing"/>.
     /// </summary>
     internal static bool MayAnswerUnfaithfulMissing(Type readType, MongoExpression node)
-        => MayAnswerMissing(readType.UnwrapNullableType(), node) == MissingAnswer.Unfaithful;
+        => !IsRootPrimaryKey(node) && MayAnswerMissing(readType.UnwrapNullableType(), node) == MissingAnswer.Unfaithful;
+
+    // The root document's own primary key ("_id", unprefixed): never missing from a stored document.
+    private static bool IsRootPrimaryKey(MongoExpression node)
+        => node is MongoFieldExpression { NullSafe: false, ElementName: "_id" } key && key.Property.IsPrimaryKey();
 
     private enum MissingAnswer
     {
@@ -1255,8 +1260,13 @@ internal static class MongoAggregationExpressionRenderer
             MongoConditionalExpression conditional
                 => Combine(MayAnswerMissing(readType, conditional.IfTrue), MayAnswerMissing(readType, conditional.IfFalse)),
             MongoCoalesceExpression coalesce => MayAnswerMissing(readType, coalesce.Right),
+            // An enum read as its underlying type is the translator's bare relabel (IsEnumUnderlyingRelabel), which the
+            // driver doesn't render as $toX either.
             MongoFieldExpression or MongoOuterFieldExpression
-                => node.Type.UnwrapNullableType() == readType ? MissingAnswer.Missing : MissingAnswer.Unfaithful,
+                => node.Type.UnwrapNullableType() == readType
+                   || MongoExpressionTranslator.IsEnumUnderlyingRelabel(node.Type, readType)
+                    ? MissingAnswer.Missing
+                    : MissingAnswer.Unfaithful,
             _ => MissingAnswer.Never
         };
 
