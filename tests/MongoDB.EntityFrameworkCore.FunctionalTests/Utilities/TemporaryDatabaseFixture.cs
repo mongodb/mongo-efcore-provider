@@ -29,7 +29,7 @@ public class TemporaryDatabaseFixture : TemporaryDatabaseFixtureBase
     public override TestServer TestServer
         => _server!;
 
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         _server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.None);
         await base.InitializeAsync();

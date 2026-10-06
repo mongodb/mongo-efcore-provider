@@ -15,23 +15,9 @@
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
-public class AtlasTemporaryDatabaseFixture : TemporaryDatabaseFixtureBase
+[Flags]
+public enum MongoCondition
 {
-    private TestServer? _server;
-
-    public static async Task<AtlasTemporaryDatabaseFixture> CreateInitializedAsync()
-    {
-        var fixture = new AtlasTemporaryDatabaseFixture();
-        await fixture.InitializeAsync();
-        return fixture;
-    }
-
-    public override TestServer TestServer
-        => _server!;
-
-    public override async ValueTask InitializeAsync()
-    {
-        _server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.IsAtlas);
-        await base.InitializeAsync();
-    }
+    None = 0,
+    IsAtlas = 1 << 0
 }

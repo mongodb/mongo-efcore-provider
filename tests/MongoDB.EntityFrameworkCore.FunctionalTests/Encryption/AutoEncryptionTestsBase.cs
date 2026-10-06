@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Runtime.CompilerServices;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
@@ -48,11 +49,16 @@ public abstract class AutoEncryptionTestsBase(TemporaryDatabaseFixture database)
 
     protected class QueryableEncryptionTheory : TheoryAttribute
     {
-        public override string? Skip
-            => TestServer.SupportsEncryption
-               && ShouldRunQueryableEncryptionTests
-                ? null
-                : "These Queryable Encryption tests require MongoDB 8.0 or later as declared by the VERSION environment variable.";
+        public QueryableEncryptionTheory(
+            [CallerFilePath] string? sourceFilePath = null,
+            [CallerLineNumber] int sourceLineNumber = -1)
+            : base(sourceFilePath, sourceLineNumber)
+        {
+            if (!TestServer.SupportsEncryption || !ShouldRunQueryableEncryptionTests)
+            {
+                Skip = "These Queryable Encryption tests require MongoDB 8.0 or later as declared by the VERSION environment variable.";
+            }
+        }
     }
 
     protected static bool ShouldRunQueryableEncryptionTests =>

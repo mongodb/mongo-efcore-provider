@@ -25,7 +25,7 @@ public class SampleGuidesFixtureCollection : ICollectionFixture<SampleGuidesFixt
 
 public class SampleGuidesFixture : TemporaryDatabaseFixture
 {
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
         SampleGuides.Populate(MongoDatabase);
@@ -36,7 +36,7 @@ public class SampleGuidesFixture : TemporaryDatabaseFixture
 // Connects via ATLAS_URI rather than the default MONGODB_URI server.
 public class AtlasSampleGuidesFixture : AtlasTemporaryDatabaseFixture
 {
-    public override async Task InitializeAsync()
+    public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
         SampleGuides.Populate(MongoDatabase);

@@ -15,23 +15,13 @@
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
-public class AtlasTemporaryDatabaseFixture : TemporaryDatabaseFixtureBase
+public static class TestDatabaseNamer
 {
-    private TestServer? _server;
+    public const string TestDatabasePrefix = "EFTest-";
 
-    public static async Task<AtlasTemporaryDatabaseFixture> CreateInitializedAsync()
-    {
-        var fixture = new AtlasTemporaryDatabaseFixture();
-        await fixture.InitializeAsync();
-        return fixture;
-    }
+    private static readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
+    private static int DbCount;
 
-    public override TestServer TestServer
-        => _server!;
-
-    public override async ValueTask InitializeAsync()
-    {
-        _server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.IsAtlas);
-        await base.InitializeAsync();
-    }
+    public static string GetUniqueDatabaseName(string? staticName = null)
+        => $"{TestDatabasePrefix}{TimeStamp}{staticName}-{Interlocked.Increment(ref DbCount)}";
 }

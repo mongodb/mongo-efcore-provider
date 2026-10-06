@@ -13,25 +13,14 @@
  * limitations under the License.
  */
 
+using MongoDB.Driver;
+
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
-public class AtlasTemporaryDatabaseFixture : TemporaryDatabaseFixtureBase
+public class ExternalDatabaseTestServer(string connectionString) : TestServer
 {
-    private TestServer? _server;
+    public override string ConnectionString
+        => connectionString;
 
-    public static async Task<AtlasTemporaryDatabaseFixture> CreateInitializedAsync()
-    {
-        var fixture = new AtlasTemporaryDatabaseFixture();
-        await fixture.InitializeAsync();
-        return fixture;
-    }
-
-    public override TestServer TestServer
-        => _server!;
-
-    public override async ValueTask InitializeAsync()
-    {
-        _server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.IsAtlas);
-        await base.InitializeAsync();
-    }
+    public override MongoClient Client { get; } = new(connectionString);
 }

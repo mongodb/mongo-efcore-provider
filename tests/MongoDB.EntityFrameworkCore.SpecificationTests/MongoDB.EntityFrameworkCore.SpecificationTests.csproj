@@ -24,10 +24,13 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\MongoDB.EntityFrameworkCore\MongoDB.EntityFrameworkCore.csproj" />
-    <ProjectReference Include="..\MongoDB.EntityFrameworkCore.FunctionalTests\MongoDB.EntityFrameworkCore.FunctionalTests.csproj" />
   </ItemGroup>
 
   <Import Project="..\..\Versions.props" />
+
+  <ItemGroup>
+    <PackageReference Include="xunit" Version="2.9.3" />
+  </ItemGroup>
 
   <ItemGroup Condition=" '$(Configuration)' == 'Release EF8' Or '$(Configuration)' == 'Debug EF8' ">
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="$(EF8Version)" />

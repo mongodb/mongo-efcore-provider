@@ -28,7 +28,7 @@ public class TestContainersTestServer : TestServer
     public override MongoClient Client
         => _client!;
 
-    public override async ValueTask InitializeAsync()
+    public override async Task InitializeAsync()
     {
         // Dispose any container left over from a prior failed start before allocating a new one.
         if (_container != null)
@@ -56,6 +56,6 @@ public class TestContainersTestServer : TestServer
         _client = new(ConnectionString);
     }
 
-    public override ValueTask DisposeAsync()
-        => _container == null ? ValueTask.CompletedTask : _container.DisposeAsync();
+    public override Task DisposeAsync()
+        => _container == null ? Task.CompletedTask : _container.DisposeAsync().AsTask();
 }

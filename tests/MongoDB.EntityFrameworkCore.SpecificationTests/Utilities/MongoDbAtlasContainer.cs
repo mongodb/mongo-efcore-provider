@@ -13,25 +13,17 @@
  * limitations under the License.
  */
 
+using DotNet.Testcontainers.Configurations;
+using DotNet.Testcontainers.Containers;
+
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
-public class AtlasTemporaryDatabaseFixture : TemporaryDatabaseFixtureBase
+public sealed class MongoDbAtlasContainer(ContainerConfiguration configuration) : DockerContainer(configuration)
 {
-    private TestServer? _server;
-
-    public static async Task<AtlasTemporaryDatabaseFixture> CreateInitializedAsync()
-    {
-        var fixture = new AtlasTemporaryDatabaseFixture();
-        await fixture.InitializeAsync();
-        return fixture;
-    }
-
-    public override TestServer TestServer
-        => _server!;
-
-    public override async ValueTask InitializeAsync()
-    {
-        _server = await TestServer.GetOrInitializeTestServerAsync(MongoCondition.IsAtlas);
-        await base.InitializeAsync();
-    }
+    public string GetConnectionString()
+        => new UriBuilder("mongodb", Hostname, GetMappedPublicPort(MongoDbAtlasBuilder.MongoDbAtlasPort))
+            {
+                Query = "?directConnection=true"
+            }
+            .ToString();
 }
