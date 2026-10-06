@@ -23,6 +23,80 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Infrastructure;
 
 public static class MongoClientSettingsHelperTests
 {
+    private const string DatabaseName = "mydb";
+
+    private static readonly CollectionNamespace KeyVaultNamespace = CollectionNamespace.FromFullName("keyvault.datakeys");
+
+    private static readonly Dictionary<string, IReadOnlyDictionary<string, object>> KmsProviders = new()
+    {
+        {"local", new Dictionary<string, object> {{"key", new byte[96]}}}
+    };
+
+    private static readonly Dictionary<string, BsonDocument> QueryableEncryptionSchema = new()
+    {
+        {"Patients", BsonDocument.Parse("{ fields: [{ path: 'ssn', bsonType: 'string', queries: { queryType: 'equality' } }] }")}
+    };
+
+    [Fact]
+    public static void CreateSettings_keys_the_model_schema_with_the_database_from_the_connection_string()
+    {
+        var options = new MongoOptionsExtension()
+            .WithConnectionString($"mongodb://localhost:27017/{DatabaseName}")
+            .WithKeyVaultNamespace(KeyVaultNamespace)
+            .WithKmsProviders(KmsProviders);
+
+        var settings = MongoClientSettingsHelper.CreateSettings(options, QueryableEncryptionSchema);
+
+        Assert.Equal(
+            QueryableEncryptionSchema["Patients"],
+            settings.AutoEncryptionOptions.EncryptedFieldsMap[$"{DatabaseName}.Patients"]);
+    }
+
+    [Fact]
+    public static void CreateSettings_keys_the_model_schema_with_the_database_name_option()
+    {
+        var options = new MongoOptionsExtension()
+            .WithClientSettings(new MongoClientSettings())
+            .WithDatabaseName(DatabaseName)
+            .WithKeyVaultNamespace(KeyVaultNamespace)
+            .WithKmsProviders(KmsProviders);
+
+        var settings = MongoClientSettingsHelper.CreateSettings(options, QueryableEncryptionSchema);
+
+        Assert.Equal(
+            QueryableEncryptionSchema["Patients"],
+            settings.AutoEncryptionOptions.EncryptedFieldsMap[$"{DatabaseName}.Patients"]);
+    }
+
+    [Fact]
+    public static void ResolveDatabaseName_rejects_malformed_connection_strings()
+    {
+        // The driver's exception type here is its own business, and it may throw as early as WithConnectionString
+        // or as late as here depending on what else validates the connection string - only assert it is rejected
+        // by the time the database name is needed.
+        Assert.ThrowsAny<Exception>(() =>
+        {
+            var options = new MongoOptionsExtension().WithConnectionString("not-a-connection-string");
+            return MongoClientSettingsHelper.ResolveDatabaseName(options);
+        });
+    }
+
+    [Theory]
+    [InlineData("mongodb://localhost:27017")]
+    [InlineData("mongodb://localhost:27017/")]
+    public static void CreateSettings_throws_when_the_model_schema_cannot_be_keyed_to_a_database(string connectionString)
+    {
+        var options = new MongoOptionsExtension()
+            .WithConnectionString(connectionString)
+            .WithKeyVaultNamespace(KeyVaultNamespace)
+            .WithKmsProviders(KmsProviders);
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => MongoClientSettingsHelper.CreateSettings(options, QueryableEncryptionSchema));
+
+        Assert.Contains("database name", ex.Message);
+    }
+
     [Fact]
     public static void CreateSettings_preserves_existing_AutoEncryptionOptions_when_applying_queryable_encryption_schema()
     {

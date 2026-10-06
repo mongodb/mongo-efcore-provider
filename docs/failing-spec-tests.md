@@ -43,7 +43,7 @@ that currently lack a ticket. Counts are sourced from `tests/MongoDB.EntityFrame
 | [EF-217](https://jira.mongodb.org/browse/EF-217) | `Call ToString on DateTimeOffset EF-217` | `DateTimeOffset.ToString()` cannot be translated. | 2 |
 | [EF-218](https://jira.mongodb.org/browse/EF-218) | `Projecting DateTimeOffset members EF-218` | Projecting individual members of a `DateTimeOffset` (e.g. `.Year`, `.Hour`) is not supported. | 2 |
 | [EF-220](https://jira.mongodb.org/browse/EF-220) | `Multiple query roots issue EF-220` | Queries that reference more than one `DbSet<>` (Cartesian product / cross-join) are not translatable. Includes `SelectMany` across DbSets and tautology-predicate cross-joins. | 10 |
-| [EF-221](https://jira.mongodb.org/browse/EF-221) | `Equals with different types issue EF-221` | `==` / `Equals` with operands of mismatched CLR types (e.g. `int == long`) is not translated correctly. | 4 |
+| [EF-221](https://jira.mongodb.org/browse/EF-221) | _(no remaining `// Fails:` tags)_ | `Equals` calls with genuinely mismatched, non-convertible simple types (e.g. `int?.Equals((ulong)x)`) are now folded to the correct constant result in `MongoEFToLinqTranslatingExpressionVisitor` instead of reaching the driver's `Equals` translator, which threw `InvalidCastException`. The four tests formerly tagged here now pass. | 0 |
 | [EF-222](https://jira.mongodb.org/browse/EF-222) | `translation of Like issue EF-222` | `EF.Functions.Like(...)` is not translated. | 9 |
 | [EF-227](https://jira.mongodb.org/browse/EF-227) | `Max over empty nullables issue EF-227` | `Min` / `Max` over an empty nullable sequence does not produce the EF-expected `null`. | 4 |
 | [EF-228](https://jira.mongodb.org/browse/EF-228) | `Truncation data loss issue EF-228` | `Sum`/`Average` over `float` columns suffers precision/truncation loss when accumulated server-side. | 2 |
@@ -64,7 +64,6 @@ that currently lack a ticket. Counts are sourced from `tests/MongoDB.EntityFrame
 | [EF-249](https://jira.mongodb.org/browse/EF-249) | `checked issue EF-249` | `checked { ... }` arithmetic is not honored — the `Checked_context_with_arithmetic_does_not_fail` test sees a different exception than EF expects. | 1 |
 | [EF-252](https://jira.mongodb.org/browse/EF-252) | `Concurrency detector tests broken EF-252` | `Throws_on_concurrent_query_first/list` — the concurrency detector does not fire as the EF base test expects. | 2 |
 | [EF-253](https://jira.mongodb.org/browse/EF-253) | `Multiple ordering issue EF-253` | `OrderBy(x).ThenBy(x)` on the same column with different directions does not emit the expected MQL. | 1 |
-| [EF-254](https://jira.mongodb.org/browse/EF-254) | `Take zero EF-254` | `.Skip(0).Take(0)` with a parameter does not produce the expected empty result. | 1 |
 | [EF-371](https://jira.mongodb.org/browse/EF-371) | `returns wrong data (0 rows instead of 6) EF-371` | A self-referencing two-hop reference navigation (`e.Manager.Manager`) collapses to a single join and hop 2 degrades to an inner `$unwind`, so the query returns 0 rows instead of 6. Baselined green on EF10 by asserting the wrong-data failure; the EF8/EF9 arm is a translation failure tagged EF-X020. | 1 |
 
 ## MongoDB C# Driver tickets — `CSHARP-NNNN`

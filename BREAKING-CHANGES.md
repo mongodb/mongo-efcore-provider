@@ -4,8 +4,6 @@ Please note that this provider **does not follow traditional semantic versioning
 
 In order to evolve the provider as we introduce new features, we will be using the minor version number for breaking and significant changes to our EF Core provider. Please bear this in mind when upgrading to newer versions of the MongoDB EF Core Provider and ensure you read the release notes and this document for the latest in breaking change information.
 
-## Breaking changes in 8.5.0 / 9.2.0 / 10.1.0
-
 ### Entity types with their own `DbSet` are no longer embedded when reached by a navigation
 
 #### Old behavior
@@ -33,6 +31,24 @@ modelBuilder.Entity<Order>().OwnsOne(o => o.ShippingAddress);
 ```
 
 (or `OwnsMany` for collection navigations). If you want the new separate-collection behavior, no change is required. Models whose embedded types never had their own `DbSet` are unaffected, and the stored documents for those types are unchanged.
+
+### The connection string is no longer written to logs
+
+#### Old behavior
+
+`MongoOptionsExtension.Info.LogFragment`, logged at debug level on `DbContext` initialization, included the connection string with only the password redacted — leaking the username, hosts, and all query-string options.
+
+#### New behavior
+
+`LogFragment` no longer includes the connection string at all; it now reports only `MongoClient`, `ClientSettings`, and `DatabaseName`.
+
+#### Why
+
+A password-only redaction still discloses the account and deployment topology, and can miss other secrets a connection string may carry — such as an AWS secret access key passed via `authMechanismProperties` for `MONGODB-AWS` auth. Logs are also routinely shipped to third parties.
+
+#### Mitigations
+
+Use `DatabaseName` to distinguish contexts, or log non-sensitive parts of the connection string yourself if you need it. `PopulateDebugInfo`'s connection-string hash (`Mongo:ConnectionString`) is unchanged.
 
 ## Breaking changes in 8.4.0 / 9.1.0 / 10.0.0
 

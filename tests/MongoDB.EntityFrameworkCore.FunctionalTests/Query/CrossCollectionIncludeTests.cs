@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.Extensions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
@@ -431,6 +432,37 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
                 .First(c => c.FullName == "Alice"));
     }
 
+#if !EF8 && !EF9
+    [Fact]
+    public void ThenInclude_does_not_misroute_transitive_hop_to_root_level_decoy_navigation()
+    {
+        // EF-379 regression: Root carries its own FK property ("LeafId") whose name collides with
+        // Mid's FK to Leaf, plus a direct navigation to Leaf. A 2-hop ThenInclude must still resolve
+        // the second hop against Mid's FK, not silently reuse Root's decoy navigation/FK. Assert on
+        // the navigated VALUE ("RIGHT" vs "WRONG"), not merely non-null: the misrouted $lookup can
+        // still return a non-null (wrong) Leaf, and change-tracker fix-up can mask a null too.
+        var (rootsCollection, midsCollection, leavesCollection) = SetupRootMidLeafWithDecoy();
+
+        var mqlMessages = new List<string>();
+        using var db = new RootMidLeafDbContext(
+            database, rootsCollection, midsCollection, leavesCollection, mqlMessages.Add);
+        var root = db.Roots.Include(r => r.Mid).ThenInclude(m => m.Leaf).First();
+
+        Assert.NotNull(root.Mid);
+        Assert.NotNull(root.Mid.Leaf);
+        Assert.Equal("RIGHT", root.Mid.Leaf.Name);
+
+        // Pipeline-level guard: the Leaf $lookup must match against the already-joined Mid document
+        // ("_lookup_Mid.leaf_id"), never against Root's own decoy "leaf_id" field. Assert on BOTH the
+        // localField AND its "as" alias together so a lookup that merely mentions "_lookup_Mid" for an
+        // unrelated reason can't satisfy the check.
+        var mql = Assert.Single(mqlMessages, m => m.Contains("ExecutedMqlQuery") || m.Contains("aggregate"));
+        Assert.Contains("\"localField\" : \"_lookup_Mid.leaf_id\"", mql);
+        Assert.Contains("\"as\" : \"_lookup_Leaf\"", mql);
+        Assert.DoesNotContain("\"localField\" : \"leaf_id\", \"foreignField\" : \"_id\", \"as\" : \"_lookup_Leaf\"", mql);
+    }
+#endif
+
     [Fact]
     public void Filtered_collection_include_predicate_is_not_silently_dropped()
     {
@@ -554,6 +586,34 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
 
         return (ordersName, customersName);
     }
+
+#if !EF8 && !EF9
+    private (string rootsCollection, string midsCollection, string leavesCollection) SetupRootMidLeafWithDecoy()
+    {
+        var rootsName = TemporaryDatabaseFixtureBase.CreateCollectionName("DecoyRoots") + Guid.NewGuid().ToString("N")[..8];
+        var midsName = TemporaryDatabaseFixtureBase.CreateCollectionName("DecoyMids") + Guid.NewGuid().ToString("N")[..8];
+        var leavesName = TemporaryDatabaseFixtureBase.CreateCollectionName("DecoyLeaves") + Guid.NewGuid().ToString("N")[..8];
+
+        var wrongLeafId = ObjectId.GenerateNewId();
+        var rightLeafId = ObjectId.GenerateNewId();
+        var midId = ObjectId.GenerateNewId();
+
+        database.MongoDatabase.GetCollection<BsonDocument>(leavesName).InsertMany([
+            new BsonDocument { { "_id", wrongLeafId }, { "name", "WRONG" } },
+            new BsonDocument { { "_id", rightLeafId }, { "name", "RIGHT" } }
+        ]);
+
+        database.MongoDatabase.GetCollection<BsonDocument>(midsName).InsertOne(
+            new BsonDocument { { "_id", midId }, { "leaf_id", rightLeafId } });
+
+        // Root's own "leaf_id" deliberately points at the WRONG leaf, and its name collides with
+        // Mid's FK property name — this is what a misrouted transitive hop would read instead.
+        database.MongoDatabase.GetCollection<BsonDocument>(rootsName).InsertOne(
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "mid_id", midId }, { "leaf_id", wrongLeafId } });
+
+        return (rootsName, midsName, leavesName);
+    }
+#endif
 
     class Order
     {
@@ -818,6 +878,94 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
                 b.HasOne(s => s.Manager)
                     .WithMany(s => s.DirectReports)
                     .HasForeignKey(s => s.ManagerId);
+            });
+        }
+
+        sealed class IgnoreCacheKeyFactory : IModelCacheKeyFactory
+        {
+            private static int _count;
+            public object Create(DbContext context, bool designTime)
+                => Interlocked.Increment(ref _count);
+        }
+    }
+
+    class Leaf
+    {
+        public ObjectId _id { get; set; }
+        public string Name { get; set; }
+    }
+
+    class Mid
+    {
+        public ObjectId _id { get; set; }
+        public ObjectId? LeafId { get; set; }
+        public Leaf Leaf { get; set; }
+    }
+
+    class Root
+    {
+        public ObjectId _id { get; set; }
+        public ObjectId? MidId { get; set; }
+        public Mid Mid { get; set; }
+        public ObjectId? LeafId { get; set; }
+        public Leaf DecoyLeaf { get; set; }
+    }
+
+    class RootMidLeafDbContext : DbContext
+    {
+        private readonly string _rootsCollection;
+        private readonly string _midsCollection;
+        private readonly string _leavesCollection;
+
+        public DbSet<Root> Roots { get; set; }
+        public DbSet<Mid> Mids { get; set; }
+        public DbSet<Leaf> Leaves { get; set; }
+
+        public RootMidLeafDbContext(
+            TemporaryDatabaseFixture database,
+            string rootsCollection,
+            string midsCollection,
+            string leavesCollection,
+            Action<string>? logAction = null)
+            : base(new DbContextOptionsBuilder<RootMidLeafDbContext>()
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
+                .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+                .LogTo(l => logAction?.Invoke(l), [MongoEventId.ExecutedMqlQuery])
+                .EnableSensitiveDataLogging()
+                .Options)
+        {
+            _rootsCollection = rootsCollection;
+            _midsCollection = midsCollection;
+            _leavesCollection = leavesCollection;
+        }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<Leaf>(b =>
+            {
+                b.ToCollection(_leavesCollection);
+                b.Property(l => l.Name).HasElementName("name");
+            });
+
+            modelBuilder.Entity<Mid>(b =>
+            {
+                b.ToCollection(_midsCollection);
+                b.Property(m => m.LeafId).HasElementName("leaf_id");
+                b.HasOne(m => m.Leaf).WithMany().HasForeignKey(m => m.LeafId);
+            });
+
+            modelBuilder.Entity<Root>(b =>
+            {
+                b.ToCollection(_rootsCollection);
+                b.Property(r => r.MidId).HasElementName("mid_id");
+                b.Property(r => r.LeafId).HasElementName("leaf_id");
+                b.HasOne(r => r.Mid).WithMany().HasForeignKey(r => r.MidId);
+                // Decoy: Root also has a direct navigation to Leaf, via an FK property with the SAME
+                // name ("LeafId") as Mid's FK to Leaf. This is the shape EF-379 misrouted.
+                b.HasOne(r => r.DecoyLeaf).WithMany().HasForeignKey(r => r.LeafId);
             });
         }
 

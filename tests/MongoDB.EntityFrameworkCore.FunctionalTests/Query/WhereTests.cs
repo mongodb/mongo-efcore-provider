@@ -161,6 +161,24 @@ public class WhereTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
+    public void Where_nullable_int_equals_mismatched_numeric_type_returns_no_results()
+    {
+        // EF-221: e.ReportsTo.Equals(longPrm) used to throw InvalidCastException instead of returning
+        // false (the correct plain-C# result for a boxed-type mismatch) - see MongoEFToLinqTranslatingExpressionVisitor.
+        ulong prm = 1655;
+        var results = _db.Moons.Where(m => m.yearOfDiscovery.Equals(prm)).ToArray();
+        Assert.Empty(results);
+    }
+
+    [Fact]
+    public void Where_nullable_int_equals_matching_type_returns_results()
+    {
+        int? prm = 1655;
+        var results = _db.Moons.Where(m => m.yearOfDiscovery.Equals(prm)).ToArray();
+        Assert.Single(results);
+    }
+
+    [Fact]
     public void Where_string_eq_with_param()
     {
         var prm = "Earth";
