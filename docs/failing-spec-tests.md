@@ -70,7 +70,7 @@ that currently lack a ticket. Counts are sourced from `tests/MongoDB.EntityFrame
 
 | Ticket | Comment subject | Description | Count |
 | --- | --- | --- | --- |
-| [CSHARP-5296](https://jira.mongodb.org/browse/CSHARP-5296) | `DateTimeOffset issue CSHARP-5296` | Driver-level: `DateTimeOffset.Now / UtcNow` component access (`.Year`, `.Hour`, etc.) is not translated by the LINQ provider. | 2 |
+| [CSHARP-5296](https://jira.mongodb.org/browse/CSHARP-5296) | `DateTimeOffset issue CSHARP-5296` | Driver-level: component access (`.Year`, `.Hour`, etc.) on the static `DateTimeOffset.Now` / `UtcNow` is not translated by the LINQ provider. Members of a stored `DateTimeOffset` property are handled by the provider itself (EF-218). | 2 |
 | [CSHARP-5836](https://jira.mongodb.org/browse/CSHARP-5836) | `Reverse not supported CSHARP-5836` | Driver-level: `Queryable.Reverse()` is not implemented in the driver's LINQ provider. | 14 |
 
 ## Upstream EF Core tickets — `dotnet/efcore#NNNNN`

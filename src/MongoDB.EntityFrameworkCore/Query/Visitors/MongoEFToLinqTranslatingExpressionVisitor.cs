@@ -49,7 +49,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     private static readonly HashSet<string> DateTimeOffsetComponentMembers =
     [
         nameof(DateTimeOffset.DateTime),
-        nameof(DateTimeOffset.LocalDateTime),
+        nameof(DateTimeOffset.LocalDateTime), // Recognised only so that it can be rejected explicitly.
         nameof(DateTimeOffset.UtcDateTime),
         nameof(DateTimeOffset.Date),
         nameof(DateTimeOffset.TimeOfDay),
@@ -449,6 +449,17 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
                 if (TryResolveDateTimeOffsetElementAccess(dateTimeOffsetSource, out var dtoDocSource, out var dtoElementName))
                 {
+                    // .NET evaluates LocalDateTime in the executing machine's time zone, which server-side
+                    // aggregation cannot know, so there is no faithful translation. Fail rather than return
+                    // a value that silently differs from .NET.
+                    if (dateTimeOffsetMember.Member.Name == nameof(DateTimeOffset.LocalDateTime))
+                    {
+                        throw new NotSupportedException(
+                            "DateTimeOffset.LocalDateTime cannot be translated to a server-side query because it depends "
+                            + "on the time zone of the machine executing the query. Use '.DateTime' (stored offset) or "
+                            + "'.UtcDateTime' instead, or evaluate on the client.");
+                    }
+
                     var dtoDocMethod = MqlFieldMethodInfo.MakeGenericMethod(dtoDocSource.Type, typeof(BsonValue));
                     var dtoDoc = Expression.Call(null, dtoDocMethod, dtoDocSource,
                         Expression.Constant(dtoElementName), Expression.Constant(BsonValueSerializer.Instance));
@@ -469,12 +480,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                     var localDateTime = Expression.Call(utcField, DateTimeAddMinutesMethodInfo,
                         Expression.Convert(offsetField, typeof(double)));
 
-                    // NOTE: .LocalDateTime is deliberately translated identically to .DateTime (both use the
-                    // value's stored Offset) — true .NET semantics need the *executing machine's* time zone,
-                    // which isn't available in server-side aggregation. Also: the "DateTime" sub-field is
-                    // millisecond-truncated (sub-ms ticks lost vs. client-side eval via "Ticks"), and the
-                    // reconstructed Kind is always Utc, not Unspecified/Local — don't call .ToLocalTime() on it.
-                    return dateTimeOffsetMember.Member.Name is nameof(DateTimeOffset.DateTime) or nameof(DateTimeOffset.LocalDateTime)
+                    // NOTE: the "DateTime" sub-field is millisecond-truncated (sub-ms ticks lost vs. client-side
+                    // eval via "Ticks"), and the reconstructed Kind is always Utc, not Unspecified - don't call
+                    // .ToLocalTime() on it.
+                    return dateTimeOffsetMember.Member.Name is nameof(DateTimeOffset.DateTime)
                         ? localDateTime
                         : Expression.MakeMemberAccess(localDateTime, typeof(DateTime).GetProperty(dateTimeOffsetMember.Member.Name)!);
                 }
@@ -719,6 +728,15 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         }
 
         doc = Visit(source)!;
+
+        // Composite keys are stored inside the _id document, so go via it as EF.Property access does.
+        if (property.IsPrimaryKey() && entityType!.FindPrimaryKey()?.Properties.Count > 1)
+        {
+            var mqlFieldDoc = MqlFieldMethodInfo.MakeGenericMethod(doc.Type, typeof(BsonValue));
+            doc = Expression.Call(null, mqlFieldDoc, doc, Expression.Constant("_id"),
+                Expression.Constant(BsonValueSerializer.Instance));
+        }
+
         elementName = property.GetElementName();
         return true;
     }
@@ -1063,7 +1081,54 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 return rewrite;
         }
 
+        if (node.NodeType is ExpressionType.Equal or ExpressionType.NotEqual or ExpressionType.LessThan
+            or ExpressionType.LessThanOrEqual or ExpressionType.GreaterThan or ExpressionType.GreaterThanOrEqual)
+        {
+            var leftIsWallClock = IsDateTimeOffsetWallClockMember(node.Left);
+            var rightIsWallClock = IsDateTimeOffsetWallClockMember(node.Right);
+            if (leftIsWallClock != rightIsWallClock)
+            {
+                var left = Visit(node.Left)!;
+                var right = Visit(node.Right)!;
+                return node.Update(
+                    leftIsWallClock ? left : AsUtcWallClockConstant(left),
+                    node.Conversion,
+                    rightIsWallClock ? right : AsUtcWallClockConstant(right));
+            }
+        }
+
         return base.VisitBinary(node);
+    }
+
+    // DateTimeOffset.DateTime/.Date are rewritten to a UTC-labelled wall-clock value (UTC field + stored offset).
+    private static bool IsDateTimeOffsetWallClockMember(Expression expression)
+    {
+        while (expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
+        {
+            expression = convert.Operand;
+        }
+
+        return expression is MemberExpression
+        {
+            Expression.Type: var type,
+            Member.Name: nameof(DateTimeOffset.DateTime) or nameof(DateTimeOffset.Date)
+        } && (type == typeof(DateTimeOffset) || Nullable.GetUnderlyingType(type) == typeof(DateTimeOffset));
+    }
+
+    // The driver converts an Unspecified-kind DateTime constant to UTC using the host time zone, but the
+    // other operand is already a wall-clock value, so the constant must be taken as-is (EF-473).
+    private static Expression AsUtcWallClockConstant(Expression expression)
+    {
+        switch (expression)
+        {
+            case ConstantExpression { Value: DateTime { Kind: DateTimeKind.Unspecified } dateTime } constant:
+                return Expression.Constant(DateTime.SpecifyKind(dateTime, DateTimeKind.Utc), constant.Type);
+            case UnaryExpression { NodeType: ExpressionType.Convert } convert
+                when AsUtcWallClockConstant(convert.Operand) is var operand && !ReferenceEquals(operand, convert.Operand):
+                return convert.Update(operand);
+            default:
+                return expression;
+        }
     }
 
     /// <summary>

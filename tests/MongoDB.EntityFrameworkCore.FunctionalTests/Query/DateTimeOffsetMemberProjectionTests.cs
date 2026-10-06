@@ -192,7 +192,6 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
             e.DateTimeOffset.DayOfWeek,
             e.DateTimeOffset.DayOfYear,
             e.DateTimeOffset.TimeOfDay,
-            e.DateTimeOffset.LocalDateTime,
             e.DateTimeOffset.UtcDateTime
         }).Single();
 
@@ -208,12 +207,51 @@ public class DateTimeOffsetMemberProjectionTests(TemporaryDatabaseFixture databa
         Assert.Equal(TestValue.TimeOfDay, result.TimeOfDay);
 
         Assert.Equal(TestValue.UtcDateTime, result.UtcDateTime);
+    }
 
-        // LocalDateTime is translated identically to DateTime (using the value's own stored offset),
-        // not the query-executing machine's system time zone — see the doc comment on that translation
-        // in MongoEFToLinqTranslatingExpressionVisitor.cs. Assert against TestValue.DateTime (not
-        // TestValue.LocalDateTime, which would be flaky/machine-timezone-dependent).
-        Assert.Equal(TestValue.DateTime, result.LocalDateTime);
+    [Fact]
+    public void Select_DateTimeOffset_LocalDateTime_throws()
+    {
+        using var db = SingleEntityDbContext.Create(CreateSeededCollection());
+
+        // Depends on the executing machine's time zone, which the server cannot know.
+        var exception = Assert.Throws<NotSupportedException>(() => db.Entities.Select(e => e.DateTimeOffset.LocalDateTime).Single());
+        Assert.Contains("LocalDateTime", exception.Message);
+    }
+
+    [Fact]
+    public void Where_DateTimeOffset_DateTime_component_with_non_utc_host_zone_value()
+    {
+        // A July value: hosts in zones observing DST (e.g. London, New York) have a non-zero UTC offset here, so an
+        // Unspecified-kind comparison constant mistakenly converted with the host zone would not match (EF-473).
+        var value = new DateTimeOffset(2024, 7, 15, 13, 45, 30, 250, TimeSpan.FromHours(1));
+        var collection = database.CreateCollection<DateTimeOffsetEntity>();
+        collection.InsertOne(new DateTimeOffsetEntity { Id = ObjectId.GenerateNewId(), DateTimeOffset = value });
+        using var db = SingleEntityDbContext.Create(collection);
+
+        Assert.Single(db.Entities.Where(e => e.DateTimeOffset.DateTime == value.DateTime));
+        Assert.Single(db.Entities.Where(e => value.DateTime == e.DateTimeOffset.DateTime));
+        Assert.Single(db.Entities.Where(e => e.DateTimeOffset.DateTime >= value.DateTime));
+        Assert.Empty(db.Entities.Where(e => e.DateTimeOffset.DateTime > value.DateTime));
+        Assert.Single(db.Entities.Where(e => e.DateTimeOffset.Date == value.Date));
+    }
+
+    [Fact]
+    public void Select_and_Where_DateTimeOffset_component_of_composite_key()
+    {
+        var value = new DateTimeOffset(2024, 3, 15, 13, 45, 30, 250, TimeSpan.FromHours(-5));
+        var collection = database.CreateCollection<CompositeKeyDateTimeOffsetEntity>();
+        using var db = SingleEntityDbContext.Create(collection,
+            modelBuilderAction: mb => mb.Entity<CompositeKeyDateTimeOffsetEntity>().HasKey(e => new { e.K1, e.K2 }));
+        db.Entities.AddRange(
+            new CompositeKeyDateTimeOffsetEntity { K1 = 1, K2 = value },
+            new CompositeKeyDateTimeOffsetEntity { K1 = 2, K2 = value.AddYears(-1) });
+        db.SaveChanges();
+        db.ChangeTracker.Clear();
+
+        Assert.Equal([2023, 2024], db.Entities.Select(e => e.K2.Year).ToList().Order());
+        Assert.Equal(1, db.Entities.Where(e => e.K2.Year == 2024).Single().K1);
+        Assert.Equal(value.DateTime, db.Entities.Where(e => e.K1 == 1).Select(e => e.K2.DateTime).Single());
     }
 }
 
@@ -222,4 +260,10 @@ public class DateTimeOffsetEntity
     public ObjectId Id { get; set; }
     public DateTimeOffset DateTimeOffset { get; set; }
     public DateTimeOffset? OptionalDateTimeOffset { get; set; }
+}
+
+public class CompositeKeyDateTimeOffsetEntity
+{
+    public int K1 { get; set; }
+    public DateTimeOffset K2 { get; set; }
 }
