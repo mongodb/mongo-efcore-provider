@@ -4,8 +4,6 @@ Please note that this provider **does not follow traditional semantic versioning
 
 In order to evolve the provider as we introduce new features, we will be using the minor version number for breaking and significant changes to our EF Core provider. Please bear this in mind when upgrading to newer versions of the MongoDB EF Core Provider and ensure you read the release notes and this document for the latest in breaking change information.
 
-## Breaking changes in 8.5.0 / 9.2.0 / 10.1.0
-
 ### Entity types with their own `DbSet` are no longer embedded when reached by a navigation
 
 #### Old behavior
