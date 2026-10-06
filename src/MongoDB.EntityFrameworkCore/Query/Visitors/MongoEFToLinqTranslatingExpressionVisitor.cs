@@ -44,6 +44,29 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         typeof(Mql).GetMethods(BindingFlags.Public | BindingFlags.Static)
             .Single(m => m.Name == nameof(Mql.Field) && m.GetParameters().Length == 3);
 
+    // DateTimeOffset members whose translation is rewritten below to work around the driver not
+    // implementing IBsonDocumentSerializer on DateTimeOffsetSerializer (CSHARP-5296 / EF-218).
+    private static readonly HashSet<string> DateTimeOffsetComponentMembers =
+    [
+        nameof(DateTimeOffset.DateTime),
+        nameof(DateTimeOffset.LocalDateTime), // Recognised only so that it can be rejected explicitly.
+        nameof(DateTimeOffset.UtcDateTime),
+        nameof(DateTimeOffset.Date),
+        nameof(DateTimeOffset.TimeOfDay),
+        nameof(DateTimeOffset.Year),
+        nameof(DateTimeOffset.Month),
+        nameof(DateTimeOffset.Day),
+        nameof(DateTimeOffset.Hour),
+        nameof(DateTimeOffset.Minute),
+        nameof(DateTimeOffset.Second),
+        nameof(DateTimeOffset.Millisecond),
+        nameof(DateTimeOffset.DayOfWeek),
+        nameof(DateTimeOffset.DayOfYear)
+    ];
+
+    private static readonly MethodInfo DateTimeAddMinutesMethodInfo =
+        typeof(DateTime).GetMethod(nameof(DateTime.AddMinutes), [typeof(double)])!;
+
     private readonly QueryContext _queryContext;
     private readonly Expression _source;
     private readonly BsonSerializerFactory _bsonSerializerFactory;
@@ -429,6 +452,58 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                     return navCall.ConvertIfRequired(memberExpression.Type);
                 }
 
+            // Rewrite DateTimeOffset.DateTime/.Year/.Date/etc member access into a UTC-field +
+            // Offset-field reconstruction that the driver's own DateTime member translator can
+            // then handle natively. Works around CSHARP-5296: the driver's DateTimeOffsetSerializer
+            // does not implement IBsonDocumentSerializer, so member access directly off a
+            // DateTimeOffset-typed expression fails in the driver's LINQ translator. See EF-218.
+            case MemberExpression { Expression: { } dateTimeOffsetSource } dateTimeOffsetMember
+                when dateTimeOffsetSource.Type == typeof(DateTimeOffset)
+                     && DateTimeOffsetComponentMembers.Contains(dateTimeOffsetMember.Member.Name):
+
+                if (TryResolveDateTimeOffsetElementAccess(dateTimeOffsetSource, out var dtoDocSource, out var dtoElementName))
+                {
+                    // .NET evaluates LocalDateTime in the executing machine's time zone, which server-side
+                    // aggregation cannot know, so there is no faithful translation. Fail rather than return
+                    // a value that silently differs from .NET.
+                    if (dateTimeOffsetMember.Member.Name == nameof(DateTimeOffset.LocalDateTime))
+                    {
+                        throw new NotSupportedException(
+                            "DateTimeOffset.LocalDateTime cannot be translated to a server-side query because it depends "
+                            + "on the time zone of the machine executing the query. Use '.DateTime' (stored offset) or "
+                            + "'.UtcDateTime' instead, or evaluate on the client.");
+                    }
+
+                    var dtoDocMethod = MqlFieldMethodInfo.MakeGenericMethod(dtoDocSource.Type, typeof(BsonValue));
+                    var dtoDoc = Expression.Call(null, dtoDocMethod, dtoDocSource,
+                        Expression.Constant(dtoElementName), Expression.Constant(BsonValueSerializer.Instance));
+
+                    var utcFieldMethod = MqlFieldMethodInfo.MakeGenericMethod(typeof(BsonValue), typeof(DateTime));
+                    var utcField = Expression.Call(null, utcFieldMethod, dtoDoc,
+                        Expression.Constant("DateTime"), Expression.Constant(DateTimeSerializer.Instance));
+
+                    if (dateTimeOffsetMember.Member.Name == nameof(DateTimeOffset.UtcDateTime))
+                    {
+                        return utcField;
+                    }
+
+                    var offsetFieldMethod = MqlFieldMethodInfo.MakeGenericMethod(typeof(BsonValue), typeof(int));
+                    var offsetField = Expression.Call(null, offsetFieldMethod, dtoDoc,
+                        Expression.Constant("Offset"), Expression.Constant(Int32Serializer.Instance));
+
+                    var localDateTime = Expression.Call(utcField, DateTimeAddMinutesMethodInfo,
+                        Expression.Convert(offsetField, typeof(double)));
+
+                    // NOTE: the "DateTime" sub-field is millisecond-truncated (sub-ms ticks lost vs. client-side
+                    // eval via "Ticks"), and the reconstructed Kind is always Utc, not Unspecified - don't call
+                    // .ToLocalTime() on it.
+                    return dateTimeOffsetMember.Member.Name is nameof(DateTimeOffset.DateTime)
+                        ? localDateTime
+                        : Expression.MakeMemberAccess(localDateTime, typeof(DateTime).GetProperty(dateTimeOffsetMember.Member.Name)!);
+                }
+
+                break;
+
             // Handle method call to VectorQuery
             case MethodCallExpression methodCallExpression
                 when methodCallExpression.IsVectorSearch():
@@ -603,6 +678,81 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 => (TValue?)_queryContext.Parameters[((QueryParameterExpression)methodCallExpression.Arguments[index]).Name];
 #endif
         }
+    }
+
+    /// <summary>
+    /// Resolves a DateTimeOffset-typed sub-expression down to the document and stored element name it
+    /// reads from. Returns false for shapes it doesn't recognize, so the caller falls back to default
+    /// translation (and the original driver error).
+    /// </summary>
+    private bool TryResolveDateTimeOffsetElementAccess(Expression expression, out Expression doc, out string elementName)
+    {
+        doc = null!;
+        elementName = null!;
+
+        // Unwrap Nullable<DateTimeOffset>.Value.
+        if (expression is MemberExpression { Member.Name: "Value" } valueMember
+            && Nullable.GetUnderlyingType(valueMember.Expression!.Type) == typeof(DateTimeOffset))
+        {
+            expression = valueMember.Expression!;
+        }
+
+        Expression source;
+        string propertyName;
+        switch (expression)
+        {
+            case MethodCallExpression methodCall
+                when methodCall.Method.IsEFPropertyMethod()
+                     && methodCall.Arguments[1] is ConstantExpression { Value: string name }:
+                source = methodCall.Arguments[0];
+                propertyName = name;
+                break;
+
+            case MemberExpression { Expression: { } memberSource } memberExpression:
+                source = memberSource;
+                propertyName = memberExpression.Member.Name;
+                break;
+
+            default:
+                return false;
+        }
+
+        var entityType = _queryContext.Context.Model.FindEntityType(source.Type);
+        var property = entityType?.FindProperty(propertyName);
+        if (property == null)
+        {
+            return false;
+        }
+
+        if (property.FindTypeMapping() is { Converter: not null })
+        {
+            throw new NotSupportedException(
+                $"Projecting a member of '{property.DeclaringType.DisplayName()}.{property.Name}' is not supported "
+                + "because the property has a value converter configured. Member access on DateTimeOffset "
+                + "(e.g. '.DateTime', '.Year') is only supported for the default document representation.");
+        }
+
+        if (property.GetBsonRepresentation() is { BsonType: not BsonType.Document } representation)
+        {
+            throw new NotSupportedException(
+                $"Projecting a member of '{property.DeclaringType.DisplayName()}.{property.Name}' is not supported "
+                + $"because the property uses a non-default BSON representation ('{representation.BsonType}'). "
+                + "Member access on DateTimeOffset (e.g. '.DateTime', '.Year') is only supported for the default "
+                + "document representation.");
+        }
+
+        doc = Visit(source)!;
+
+        // Composite keys are stored inside the _id document, so go via it as EF.Property access does.
+        if (property.IsPrimaryKey() && entityType!.FindPrimaryKey()?.Properties.Count > 1)
+        {
+            var mqlFieldDoc = MqlFieldMethodInfo.MakeGenericMethod(doc.Type, typeof(BsonValue));
+            doc = Expression.Call(null, mqlFieldDoc, doc, Expression.Constant("_id"),
+                Expression.Constant(BsonValueSerializer.Instance));
+        }
+
+        elementName = property.GetElementName();
+        return true;
     }
 
     private static readonly MethodInfo EFPropertyMethodInfo =
@@ -1011,7 +1161,54 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 return rewrite;
         }
 
+        if (node.NodeType is ExpressionType.Equal or ExpressionType.NotEqual or ExpressionType.LessThan
+            or ExpressionType.LessThanOrEqual or ExpressionType.GreaterThan or ExpressionType.GreaterThanOrEqual)
+        {
+            var leftIsWallClock = IsDateTimeOffsetWallClockMember(node.Left);
+            var rightIsWallClock = IsDateTimeOffsetWallClockMember(node.Right);
+            if (leftIsWallClock != rightIsWallClock)
+            {
+                var left = Visit(node.Left)!;
+                var right = Visit(node.Right)!;
+                return node.Update(
+                    leftIsWallClock ? left : AsUtcWallClockConstant(left),
+                    node.Conversion,
+                    rightIsWallClock ? right : AsUtcWallClockConstant(right));
+            }
+        }
+
         return base.VisitBinary(node);
+    }
+
+    // DateTimeOffset.DateTime/.Date are rewritten to a UTC-labelled wall-clock value (UTC field + stored offset).
+    private static bool IsDateTimeOffsetWallClockMember(Expression expression)
+    {
+        while (expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
+        {
+            expression = convert.Operand;
+        }
+
+        return expression is MemberExpression
+        {
+            Expression.Type: var type,
+            Member.Name: nameof(DateTimeOffset.DateTime) or nameof(DateTimeOffset.Date)
+        } && (type == typeof(DateTimeOffset) || Nullable.GetUnderlyingType(type) == typeof(DateTimeOffset));
+    }
+
+    // The driver converts an Unspecified-kind DateTime constant to UTC using the host time zone, but the
+    // other operand is already a wall-clock value, so the constant must be taken as-is (EF-473).
+    private static Expression AsUtcWallClockConstant(Expression expression)
+    {
+        switch (expression)
+        {
+            case ConstantExpression { Value: DateTime { Kind: DateTimeKind.Unspecified } dateTime } constant:
+                return Expression.Constant(DateTime.SpecifyKind(dateTime, DateTimeKind.Utc), constant.Type);
+            case UnaryExpression { NodeType: ExpressionType.Convert } convert
+                when AsUtcWallClockConstant(convert.Operand) is var operand && !ReferenceEquals(operand, convert.Operand):
+                return convert.Update(operand);
+            default:
+                return expression;
+        }
     }
 
     /// <summary>

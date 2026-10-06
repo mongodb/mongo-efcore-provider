@@ -19,7 +19,6 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Driver;
 using MongoDB.Driver.Core.Misc;
-using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Diagnostics;
 using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using Xunit.Sdk;
@@ -53,12 +52,8 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
             "Actual:   \"97\"",
             (await Assert.ThrowsAsync<EqualException>(() => base.Object_to_string_conversion())).Message);
 
-    // Fails: Projecting DateTimeOffset members EF-218
-    public override async Task Optional_datetime_reading_null_from_database()
-        => Assert.Contains(
-            "d.DateTimeOffset.Value.DateTime",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Optional_datetime_reading_null_from_database()))
-            .Message);
+    public override Task Optional_datetime_reading_null_from_database()
+        => base.Optional_datetime_reading_null_from_database();
     #else
     public override void Can_insert_and_read_back_with_string_key()
         => base.Can_insert_and_read_back_with_string_key();
@@ -78,11 +73,8 @@ public class BuiltInDataTypesMongoTest(BuiltInDataTypesMongoTest.BuiltInDataType
             "Unsupported conversion from object to string in $convert with no onError value.",
             Assert.Throws<MongoCommandException>(() => base.Object_to_string_conversion()).Message);
 
-    // Fails: Projecting DateTimeOffset members EF-218
     public override void Optional_datetime_reading_null_from_database()
-        => Assert.Contains(
-            "d.DateTimeOffset.Value.DateTime.Date",
-            Assert.Throws<ExpressionNotSupportedException>(() => base.Optional_datetime_reading_null_from_database()).Message);
+        => base.Optional_datetime_reading_null_from_database();
     #endif
 
     private static void AssertTranslationFailed(Action query)
