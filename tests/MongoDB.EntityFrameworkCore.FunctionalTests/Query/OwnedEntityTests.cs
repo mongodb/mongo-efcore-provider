@@ -1731,6 +1731,74 @@ public class OwnedEntityTests(TemporaryDatabaseFixture database)
         Assert.Equal([1, 0], counts);
     }
 
+    [Fact]
+    public void OwnedEntity_collection_count_projection_over_interface_typed_collections()
+    {
+        var collection = database.CreateCollection<InterfaceCountBlog>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.AddRange(
+                new InterfaceCountBlog
+                {
+                    _id = "1",
+                    IListPosts = [new CountPost(), new CountPost()],
+                    ICollectionPosts = [new CountPost()],
+                    IEnumerablePosts = [new CountPost(), new CountPost(), new CountPost()]
+                },
+                new InterfaceCountBlog { _id = "2" });
+            db.SaveChanges();
+        }
+
+        using var db2 = SingleEntityDbContext.Create(collection);
+        var results = db2.Entities.OrderBy(e => e._id)
+            .Select(e => new
+            {
+                A = e.IListPosts.Count,
+                B = e.ICollectionPosts.Count,
+                C = e.IEnumerablePosts.Count()
+            })
+            .ToList();
+
+        Assert.Equal(2, results[0].A);
+        Assert.Equal(1, results[0].B);
+        Assert.Equal(3, results[0].C);
+        Assert.Equal(0, results[1].A);
+        Assert.Equal(0, results[1].B);
+        Assert.Equal(0, results[1].C);
+    }
+
+    [Fact]
+    public void OwnedEntity_entity_and_collection_count_in_same_projection()
+    {
+        var collection = database.CreateCollection<CountBlog>();
+
+        {
+            using var db = SingleEntityDbContext.Create(collection);
+            db.Entities.AddRange(
+                new CountBlog { _id = "1", Title = "t1", Posts = [new CountPost { Rank = 1 }, new CountPost { Rank = 2 }] },
+                new CountBlog { _id = "2", Title = "t2", Posts = null! });
+            db.SaveChanges();
+        }
+
+        using var db2 = SingleEntityDbContext.Create(collection);
+        var results = db2.Entities.OrderBy(e => e._id)
+            .Select(b => new { Blog = b, N = b.Posts.Count })
+            .ToList();
+
+        Assert.Equal(["t1", "t2"], results.Select(r => r.Blog.Title).ToArray());
+        Assert.Equal([2, 0], results.Select(r => r.N).ToArray());
+        Assert.Equal(2, results[0].Blog.Posts.Count);
+    }
+
+    record InterfaceCountBlog
+    {
+        public string _id { get; set; }
+        public IList<CountPost> IListPosts { get; set; }
+        public ICollection<CountPost> ICollectionPosts { get; set; }
+        public IEnumerable<CountPost> IEnumerablePosts { get; set; }
+    }
+
     record CountBlog
     {
         public string _id { get; set; }
