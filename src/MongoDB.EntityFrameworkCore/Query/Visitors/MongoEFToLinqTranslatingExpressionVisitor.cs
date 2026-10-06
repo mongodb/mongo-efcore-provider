@@ -909,12 +909,19 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 : EnumerableCountMethod)
             .MakeGenericMethod(elementType);
 
-        var emptyCollection = Expression.Constant(Activator.CreateInstance(fieldAccess!.Type), fieldAccess.Type);
+        var emptyCollection = Expression.Constant(CreateEmptyCollection(fieldAccess!.Type, elementType), fieldAccess.Type);
         var normalizedFieldAccess = Expression.Coalesce(fieldAccess, emptyCollection);
 
         result = Expression.Call(null, countMethod, normalizedFieldAccess);
         return true;
     }
+
+    // Interface-typed (IList<T>, ICollection<T>, IEnumerable<T>, ...) collection properties can't be
+    // built by Activator.CreateInstance; an empty T[] is assignable to all of them.
+    private static object CreateEmptyCollection(Type collectionType, Type elementType)
+        => collectionType.IsInterface
+            ? Array.CreateInstance(elementType, 0)
+            : Activator.CreateInstance(collectionType)!;
 
     /// <summary>
     /// Rewrites <c>Queryable.Count(Queryable.Where(DbSet&lt;Target&gt;(), fkPredicate))</c> (and the
