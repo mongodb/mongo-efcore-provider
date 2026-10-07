@@ -71,6 +71,124 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     private static readonly Type[] AllowedQueryableExtensions =
         [typeof(Queryable), typeof(MongoQueryableExtensions), typeof(Driver.Linq.MongoQueryable)];
 
+    private static readonly HashSet<string> OrderingMethodNames =
+    [
+        nameof(Queryable.OrderBy), nameof(Queryable.OrderByDescending),
+        nameof(Queryable.ThenBy), nameof(Queryable.ThenByDescending)
+    ];
+
+    /// <summary>
+    /// Elides a <c>ThenBy</c>/<c>ThenByDescending</c> ordering whose key selector matches an earlier ordering
+    /// already established in the same <c>OrderBy</c>/<c>ThenBy</c> chain (see <see cref="KeySelectorsMatch"/>
+    /// for what "matches" means here). Once a key fully determines the sort order, re-ordering by it again -
+    /// in either direction - is a no-op; left untouched, the driver's LINQ provider renders both orderings
+    /// into a single <c>$sort</c> stage and MongoDB rejects the resulting document for its duplicate field
+    /// name (EF-253 / CSHARP-5690). Relational EF providers already drop this kind of redundant ordering from
+    /// the generated SQL, so this mirrors their behavior rather than merely working around the driver
+    /// limitation. Orderings that supply an explicit <see cref="IComparer{T}"/> are left untouched (in either
+    /// role - as a candidate for elision, or as prior state a later ordering could match) since a custom
+    /// comparer can make an otherwise-identical key selector not actually redundant.
+    /// </summary>
+    internal static Expression ElideRedundantOrderings(Expression expression)
+    {
+        if (expression is not MethodCallExpression { Arguments.Count: > 0 } methodCall
+            || !AllowedQueryableExtensions.Contains(methodCall.Method.DeclaringType))
+        {
+            return expression;
+        }
+
+        if (!OrderingMethodNames.Contains(methodCall.Method.Name))
+        {
+            var visitedSource = ElideRedundantOrderings(methodCall.Arguments[0]);
+            if (ReferenceEquals(visitedSource, methodCall.Arguments[0]))
+            {
+                return methodCall;
+            }
+
+            var updatedArgs = methodCall.Arguments.ToArray();
+            updatedArgs[0] = visitedSource;
+            return methodCall.Update(methodCall.Object, updatedArgs);
+        }
+
+        // Collect the contiguous ordering chain, outer (last-applied) to inner (first-applied), then
+        // reverse it so it can be replayed in chronological order.
+        var chain = new List<MethodCallExpression>();
+        var node = methodCall;
+        while (AllowedQueryableExtensions.Contains(node.Method.DeclaringType) && OrderingMethodNames.Contains(node.Method.Name))
+        {
+            chain.Add(node);
+            if (node.Arguments[0] is not MethodCallExpression next)
+            {
+                break;
+            }
+
+            node = next;
+        }
+
+        chain.Reverse();
+
+        Expression current = ElideRedundantOrderings(chain[0].Arguments[0]);
+        var seenKeys = new List<LambdaExpression>();
+        foreach (var call in chain)
+        {
+            // OrderBy/OrderByDescending establish a brand new ordering - even mid-chain (e.g.
+            // .OrderBy(k).OrderByDescending(k)) - superseding whatever came before, so only ThenBy/
+            // ThenByDescending calls continue an existing chain for duplicate-detection purposes.
+            if (call.Method.Name is nameof(Queryable.OrderBy) or nameof(Queryable.OrderByDescending))
+            {
+                seenKeys.Clear();
+            }
+
+            var keySelector = call.Arguments.Count == 2 ? call.Arguments[1].UnwrapLambdaFromQuote() : null;
+            var isDuplicate = keySelector is not null && seenKeys.Any(seen => KeySelectorsMatch(seen, keySelector));
+
+            if (keySelector is not null)
+            {
+                seenKeys.Add(keySelector);
+            }
+
+            if (isDuplicate)
+            {
+                continue;
+            }
+
+            if (ReferenceEquals(current, call.Arguments[0]))
+            {
+                current = call;
+                continue;
+            }
+
+            var newArgs = call.Arguments.ToArray();
+            newArgs[0] = current;
+            current = call.Update(call.Object, newArgs);
+        }
+
+        return current;
+    }
+
+    /// <summary>
+    /// Whether two ordering key selectors are both a *direct*, single-hop access to the same member of the
+    /// lambda parameter (e.g. <c>x =&gt; x.CustomerId</c>), modulo the identity of their (distinct) lambda
+    /// parameters. Deliberately narrow to a single hop: the driver's LINQ provider renders a direct property
+    /// access as-is against its raw field path, so two orderings on the *same* directly-accessed member are
+    /// what collide into a single <c>$sort</c> document with a duplicate field name (EF-253 / CSHARP-5690).
+    /// Anything requiring computation - a further member hop off that property (<c>x.Name.Length</c>), a
+    /// method call (<c>Math.Truncate(x.Amount)</c>), etc. - instead gets materialized by EF into its own
+    /// uniquely-named projected field even when repeated, so it never collides and must not be elided here.
+    /// </summary>
+    internal static bool KeySelectorsMatch(LambdaExpression a, LambdaExpression b)
+    {
+        if (a.Parameters.Count != 1 || b.Parameters.Count != 1)
+        {
+            return false;
+        }
+
+        var membersA = a.Parameters[0].MatchMemberAccess<MemberInfo>(a.Body);
+        var membersB = b.Parameters[0].MatchMemberAccess<MemberInfo>(b.Body);
+
+        return membersA is [var memberA] && membersB is [var memberB] && memberA == memberB;
+    }
+
     /// <summary>
     /// Visit the <see cref="MethodCallExpression"/> to capture the cardinality and final expression
     /// when found on a <see cref="Queryable"/> method.
@@ -80,7 +198,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// otherwise <see cref="QueryCompilationContext.NotTranslatedExpression"/>.</returns>
     protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
     {
-        _finalExpression ??= methodCallExpression;
+        _finalExpression ??= ElideRedundantOrderings(methodCallExpression);
 
         var method = methodCallExpression.Method;
 #if !EF8

@@ -44,6 +44,29 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         typeof(Mql).GetMethods(BindingFlags.Public | BindingFlags.Static)
             .Single(m => m.Name == nameof(Mql.Field) && m.GetParameters().Length == 3);
 
+    // DateTimeOffset members whose translation is rewritten below to work around the driver not
+    // implementing IBsonDocumentSerializer on DateTimeOffsetSerializer (CSHARP-5296 / EF-218).
+    private static readonly HashSet<string> DateTimeOffsetComponentMembers =
+    [
+        nameof(DateTimeOffset.DateTime),
+        nameof(DateTimeOffset.LocalDateTime),
+        nameof(DateTimeOffset.UtcDateTime),
+        nameof(DateTimeOffset.Date),
+        nameof(DateTimeOffset.TimeOfDay),
+        nameof(DateTimeOffset.Year),
+        nameof(DateTimeOffset.Month),
+        nameof(DateTimeOffset.Day),
+        nameof(DateTimeOffset.Hour),
+        nameof(DateTimeOffset.Minute),
+        nameof(DateTimeOffset.Second),
+        nameof(DateTimeOffset.Millisecond),
+        nameof(DateTimeOffset.DayOfWeek),
+        nameof(DateTimeOffset.DayOfYear)
+    ];
+
+    private static readonly MethodInfo DateTimeAddMinutesMethodInfo =
+        typeof(DateTime).GetMethod(nameof(DateTime.AddMinutes), [typeof(double)])!;
+
     private readonly QueryContext _queryContext;
     private readonly Expression _source;
     private readonly BsonSerializerFactory _bsonSerializerFactory;
@@ -429,6 +452,49 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                     return navCall.ConvertIfRequired(memberExpression.Type);
                 }
 
+            // Rewrite DateTimeOffset.DateTime/.Year/.Date/etc member access into a UTC-field +
+            // Offset-field reconstruction that the driver's own DateTime member translator can
+            // then handle natively. Works around CSHARP-5296: the driver's DateTimeOffsetSerializer
+            // does not implement IBsonDocumentSerializer, so member access directly off a
+            // DateTimeOffset-typed expression fails in the driver's LINQ translator. See EF-218.
+            case MemberExpression { Expression: { } dateTimeOffsetSource } dateTimeOffsetMember
+                when dateTimeOffsetSource.Type == typeof(DateTimeOffset)
+                     && DateTimeOffsetComponentMembers.Contains(dateTimeOffsetMember.Member.Name):
+
+                if (TryResolveDateTimeOffsetElementAccess(dateTimeOffsetSource, out var dtoDocSource, out var dtoElementName))
+                {
+                    var dtoDocMethod = MqlFieldMethodInfo.MakeGenericMethod(dtoDocSource.Type, typeof(BsonValue));
+                    var dtoDoc = Expression.Call(null, dtoDocMethod, dtoDocSource,
+                        Expression.Constant(dtoElementName), Expression.Constant(BsonValueSerializer.Instance));
+
+                    var utcFieldMethod = MqlFieldMethodInfo.MakeGenericMethod(typeof(BsonValue), typeof(DateTime));
+                    var utcField = Expression.Call(null, utcFieldMethod, dtoDoc,
+                        Expression.Constant("DateTime"), Expression.Constant(DateTimeSerializer.Instance));
+
+                    if (dateTimeOffsetMember.Member.Name == nameof(DateTimeOffset.UtcDateTime))
+                    {
+                        return utcField;
+                    }
+
+                    var offsetFieldMethod = MqlFieldMethodInfo.MakeGenericMethod(typeof(BsonValue), typeof(int));
+                    var offsetField = Expression.Call(null, offsetFieldMethod, dtoDoc,
+                        Expression.Constant("Offset"), Expression.Constant(Int32Serializer.Instance));
+
+                    var localDateTime = Expression.Call(utcField, DateTimeAddMinutesMethodInfo,
+                        Expression.Convert(offsetField, typeof(double)));
+
+                    // NOTE: .LocalDateTime is deliberately translated identically to .DateTime (both use the
+                    // value's stored Offset) — true .NET semantics need the *executing machine's* time zone,
+                    // which isn't available in server-side aggregation. Also: the "DateTime" sub-field is
+                    // millisecond-truncated (sub-ms ticks lost vs. client-side eval via "Ticks"), and the
+                    // reconstructed Kind is always Utc, not Unspecified/Local — don't call .ToLocalTime() on it.
+                    return dateTimeOffsetMember.Member.Name is nameof(DateTimeOffset.DateTime) or nameof(DateTimeOffset.LocalDateTime)
+                        ? localDateTime
+                        : Expression.MakeMemberAccess(localDateTime, typeof(DateTime).GetProperty(dateTimeOffsetMember.Member.Name)!);
+                }
+
+                break;
+
             // Handle method call to VectorQuery
             case MethodCallExpression methodCallExpression
                 when methodCallExpression.IsVectorSearch():
@@ -605,6 +671,72 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         }
     }
 
+    /// <summary>
+    /// Resolves a DateTimeOffset-typed sub-expression down to the document and stored element name it
+    /// reads from. Returns false for shapes it doesn't recognize, so the caller falls back to default
+    /// translation (and the original driver error).
+    /// </summary>
+    private bool TryResolveDateTimeOffsetElementAccess(Expression expression, out Expression doc, out string elementName)
+    {
+        doc = null!;
+        elementName = null!;
+
+        // Unwrap Nullable<DateTimeOffset>.Value.
+        if (expression is MemberExpression { Member.Name: "Value" } valueMember
+            && Nullable.GetUnderlyingType(valueMember.Expression!.Type) == typeof(DateTimeOffset))
+        {
+            expression = valueMember.Expression!;
+        }
+
+        Expression source;
+        string propertyName;
+        switch (expression)
+        {
+            case MethodCallExpression methodCall
+                when methodCall.Method.IsEFPropertyMethod()
+                     && methodCall.Arguments[1] is ConstantExpression { Value: string name }:
+                source = methodCall.Arguments[0];
+                propertyName = name;
+                break;
+
+            case MemberExpression { Expression: { } memberSource } memberExpression:
+                source = memberSource;
+                propertyName = memberExpression.Member.Name;
+                break;
+
+            default:
+                return false;
+        }
+
+        var entityType = _queryContext.Context.Model.FindEntityType(source.Type);
+        var property = entityType?.FindProperty(propertyName);
+        if (property == null)
+        {
+            return false;
+        }
+
+        if (property.FindTypeMapping() is { Converter: not null })
+        {
+            throw new NotSupportedException(
+                $"Projecting a member of '{property.DeclaringType.DisplayName()}.{property.Name}' is not supported "
+                + "because the property has a value converter configured. Member access on DateTimeOffset "
+                + "(e.g. '.DateTime', '.Year') is only supported for the default document representation.");
+        }
+
+        if (property.GetBsonRepresentation() is { BsonType: not BsonType.Document } representation)
+        {
+            throw new NotSupportedException(
+                $"Projecting a member of '{property.DeclaringType.DisplayName()}.{property.Name}' is not supported "
+                + $"because the property uses a non-default BSON representation ('{representation.BsonType}'). "
+                + "Member access on DateTimeOffset (e.g. '.DateTime', '.Year') is only supported for the default "
+                + "document representation.");
+        }
+
+        doc = Visit(source)!;
+        elementName = property.GetElementName();
+        return true;
+    }
+
     private static readonly MethodInfo EFPropertyMethodInfo =
         typeof(EF).GetMethod(nameof(EF.Property))!;
 
@@ -661,6 +793,15 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return sizeRewrite;
         }
 
+        // A bare/unfiltered embedded (owned) collection-navigation Count, e.g. `b.Posts.Count`, lowered by
+        // EF Core to Queryable.Count(Queryable.AsQueryable(EF.Property(shaper, "Posts"))). See
+        // TryRewriteEmbeddedCollectionNavigationCount for why this needs a null/missing-safe normalization
+        // the driver's own rendering of a bare Count (a server-side $size) doesn't provide.
+        if (TryRewriteEmbeddedCollectionNavigationCount(node, out var embeddedCountRewrite))
+        {
+            return embeddedCountRewrite;
+        }
+
         var zeroTakeRewrite = TryRewriteZeroTake(node);
         if (zeroTakeRewrite != null)
         {
@@ -668,6 +809,64 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         }
 
         return base.VisitMethodCall(node);
+    }
+
+    /// <summary>
+    /// Rewrites a bare embedded (owned) collection-navigation <c>Count</c>/<c>LongCount</c> (e.g.
+    /// <c>b.Posts.Count</c>) into <c>Enumerable.Count</c> over a <c>??</c>-normalized array read — needed
+    /// because the driver's bare-Count translation is a server-side <c>$size</c>, which throws on a
+    /// missing or null array (unlike a predicated Count, translated as null-tolerant <c>$map</c>/<c>$sum</c>).
+    /// </summary>
+    private bool TryRewriteEmbeddedCollectionNavigationCount(MethodCallExpression node, out Expression result)
+    {
+        result = null!;
+
+        if (node.Method.DeclaringType != typeof(Queryable)
+            || node.Arguments.Count != 1
+            || node.Method.Name is not (nameof(Queryable.Count) or nameof(Queryable.LongCount)))
+        {
+            return false;
+        }
+
+        if (node.Arguments[0] is not MethodCallExpression
+            {
+                Method: { Name: nameof(Queryable.AsQueryable), DeclaringType: var asQueryableDeclaring }
+            } asQueryableCall
+            || asQueryableDeclaring != typeof(Queryable))
+        {
+            return false;
+        }
+
+        // Narrow to genuinely embedded (owned) collection navigations only: AsQueryable(...) also shows
+        // up wrapping other enumerable sources (e.g. an IGrouping in a GroupBy/Union pipeline) that are
+        // not a document field read at all, so rewriting unconditionally miscompiles those shapes.
+        if (asQueryableCall.Arguments[0] is not MethodCallExpression efPropertyCall
+            || !efPropertyCall.Method.IsEFPropertyMethod()
+            || efPropertyCall.Arguments[1] is not ConstantExpression { Value: string propertyName }
+            || _queryContext.Context.Model.FindEntityType(efPropertyCall.Arguments[0].Type) is not { } sourceEntityType
+            || sourceEntityType.FindNavigation(propertyName) is not { } navigation
+            || !navigation.IsEmbedded())
+        {
+            return false;
+        }
+
+        var fieldAccess = Visit(asQueryableCall.Arguments[0]);
+        var elementType = fieldAccess?.Type.TryGetItemType();
+        if (elementType == null)
+        {
+            return false;
+        }
+
+        var countMethod = (node.Method.Name == nameof(Queryable.LongCount)
+                ? EnumerableLongCountMethod
+                : EnumerableCountMethod)
+            .MakeGenericMethod(elementType);
+
+        var emptyCollection = Expression.Constant(Activator.CreateInstance(fieldAccess!.Type), fieldAccess.Type);
+        var normalizedFieldAccess = Expression.Coalesce(fieldAccess, emptyCollection);
+
+        result = Expression.Call(null, countMethod, normalizedFieldAccess);
+        return true;
     }
 
     /// <summary>

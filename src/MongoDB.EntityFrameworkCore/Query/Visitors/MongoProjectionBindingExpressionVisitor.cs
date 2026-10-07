@@ -451,6 +451,39 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                         EnumerableMethods.Select.MakeGenericMethod(method.GetGenericArguments()),
                         shaper,
                         lambda);
+
+                // A Count/LongCount over an embedded/owned collection navigation in a projection (e.g.
+                // `b.Posts.Count(p => p.Rank > 0)`). Kept bound to the original method-call subtree, not
+                // the shaper, so it push-downs to the driver's native $size/$filter — routing through the
+                // shaper would materialize owned Post entities, which the tracking-materializer rejects.
+                case nameof(Queryable.Count) when genericMethod == QueryableMethods.CountWithoutPredicate:
+                case nameof(Queryable.LongCount) when genericMethod == QueryableMethods.LongCountWithoutPredicate:
+                case nameof(Queryable.Count) when genericMethod == QueryableMethods.CountWithPredicate:
+                case nameof(Queryable.LongCount) when genericMethod == QueryableMethods.LongCountWithPredicate:
+                    if (visitedSource is not CollectionShaperExpression
+                        || methodCallExpression.Arguments[0] is not MethodCallExpression
+                            {
+                                Method: { Name: nameof(Queryable.AsQueryable), DeclaringType: var asQueryableDeclaring }
+                            } asQueryableCall
+                        || asQueryableDeclaring != typeof(Queryable))
+                    {
+                        return null;
+                    }
+
+                    // A missing/null stored array materializes to a null reference, not an empty
+                    // collection (same gap as `.Select(e => e.Foo)`), so Count/LongCount must tolerate a
+                    // null source ($size/$filter both reject null) — guard on the raw field access, not
+                    // the AsQueryable-wrapped source.
+                    var countSource = asQueryableCall.Arguments[0];
+                    Expression nullSafeCount = Expression.Condition(
+                        Expression.Equal(countSource, Expression.Constant(null, countSource.Type)),
+                        Expression.Default(methodCallExpression.Type),
+                        methodCallExpression);
+
+                    var countProjectionMember = GetCurrentProjectionMember();
+                    _projectionMapping[countProjectionMember] = nullSafeCount;
+
+                    return new ProjectionBindingExpression(_queryExpression, countProjectionMember, methodCallExpression.Type);
             }
         }
 
