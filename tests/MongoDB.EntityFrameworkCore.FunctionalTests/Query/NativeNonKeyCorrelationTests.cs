@@ -276,6 +276,8 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
             a => $"{a.C}-{a.O}")).Message);
     }
 
+    // The `(int?)c.Code != null` guards are deliberate: they model a user-written guard on a nullable key.
+#pragma warning disable CS0472
     private static List<string> Run(Ctx db, string shape, bool key)
         => shape switch
         {
@@ -381,6 +383,7 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
                 i => i.ToString()),
             _ => throw new ArgumentOutOfRangeException(nameof(shape), shape, null)
         };
+#pragma warning restore CS0472
 
     private static List<string> Format<T>(IQueryable<T> query, Func<T, string> format)
         => query.ToList().Select(format).OrderBy(s => s, StringComparer.Ordinal).ToList();
