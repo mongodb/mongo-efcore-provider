@@ -173,8 +173,8 @@ internal sealed partial class MongoExpressionTranslator
     /// Builds the translator for an owned-collection element predicate (<c>Any</c>/<c>All</c>/<c>Count(pred)</c>)
     /// over <paramref name="elementType"/>: single-scope when the predicate is uncorrelated, two-scope
     /// (<paramref name="isCorrelated"/>) when its sole free parameter is this translator's own
-    /// <see cref="SelfParam"/> (by reference). Any other correlation, including two or more distinct free
-    /// parameters, declines.
+    /// <see cref="SelfParam"/> (by reference) or, on a two-scope translator, its outer parameter. Any other
+    /// correlation, including two or more distinct free parameters, declines.
     /// </summary>
     /// <remarks>
     /// The identity guard is load-bearing: single-scope <see cref="TryResolveMember"/> resolves by name, so without
@@ -192,13 +192,19 @@ internal sealed partial class MongoExpressionTranslator
             return true;
         }
 
-        if (SelfParam is null || freeParam is null || !ReferenceEquals(freeParam, SelfParam))
+        // The root is SelfParam on a single-scope translator, or the already-established outer parameter on a
+        // two-scope one (EF-446): MongoOuterFieldExpression resolves at document root at any nesting depth, so a
+        // nested predicate correlating back to the same root is admitted. A correlation to an intermediate scope
+        // (neither identity) still declines.
+        var rootParam = SelfParam ?? _outerParam;
+        var rootEntityType = SelfParam is not null ? _entityType : _outerEntityType;
+        if (rootParam is null || rootEntityType is null || freeParam is null || !ReferenceEquals(freeParam, rootParam))
             return false;
 
         // innerPrefix null, not "": the renderer prepends the element scope's variable itself (e.g. "$$e." via
         // $filter's "as"; see the two-scope constructor).
         translator = new MongoExpressionTranslator(
-            elementType, outerParam: SelfParam, outerEntityType: _entityType, innerPrefix: null);
+            elementType, outerParam: rootParam, outerEntityType: rootEntityType, innerPrefix: null);
         return true;
     }
 
