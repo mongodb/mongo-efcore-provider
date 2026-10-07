@@ -102,7 +102,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         Assert.NotEmpty(items);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
         Assert.Contains(logs, l => l.Contains($"{_dbName}.moons.aggregate([?])"));
-        Assert.DoesNotContain(logs, l => l.Contains(year.ToString()));
+        Assert.DoesNotContain(ExcludingContextInitialized(logs), l => l.Contains(year.ToString()));
     }
 
     [Fact]
@@ -121,7 +121,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         Assert.NotNull(item);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
         Assert.Contains(logs, l => l.Contains($"{_dbName}.moons.aggregate([?])"));
-        Assert.DoesNotContain(logs, l => l.Contains("1901"));
+        Assert.DoesNotContain(ExcludingContextInitialized(logs), l => l.Contains("1901"));
     }
 
     [Fact]
@@ -140,7 +140,7 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
         Assert.NotNull(item);
         Assert.Contains(logs, l => l.Contains("Executed MQL query"));
         Assert.Contains(logs, l => l.Contains($"{_dbName}.moons.aggregate([?])"));
-        Assert.DoesNotContain(logs, l => l.Contains("1949"));
+        Assert.DoesNotContain(ExcludingContextInitialized(logs), l => l.Contains("1949"));
     }
 
     [Fact]
@@ -510,4 +510,9 @@ public class LoggingTests(SampleGuidesFixture fixture, ITestOutputHelper testOut
 
     private static string AssertSingleLogEntry(List<string> logs, EventId eventId)
         => Assert.Single(logs, l => l.Contains(nameof(MongoEventId) + "." + eventId.Name.Split('.').Last()));
+
+    // ContextInitialized logs the provider's informational version, which embeds the commit SHA, so a digit
+    // sequence like "1901" can appear there regardless of what the query logs.
+    private static IEnumerable<string> ExcludingContextInitialized(List<string> logs)
+        => logs.Where(l => !l.Contains("CoreEventId.ContextInitialized"));
 }

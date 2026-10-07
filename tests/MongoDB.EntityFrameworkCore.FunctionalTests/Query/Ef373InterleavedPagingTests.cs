@@ -1,0 +1,500 @@
+/* Copyright 2023-present MongoDB Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.Logging;
+using MongoDB.Bson;
+using MongoDB.EntityFrameworkCore.Diagnostics;
+using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
+using MongoDB.EntityFrameworkCore.Infrastructure;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
+
+namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
+
+/// <summary>
+/// <c>Skip</c>/<c>Take</c> written between two joins must page the first join's rows, not be hoisted ahead of
+/// both <c>$lookup</c>s (a silently wrong page).
+/// <para>
+/// Tests assert row identity and stage order, not row count or navigation equality: identity fix-up can repair
+/// a graph read from the wrong rows, and a 1:1 second join hides the defect, so the second join here drops a row.
+/// </para>
+/// </summary>
+[XUnitCollection("QueryTests")]
+public class Ef373InterleavedPagingTests(TemporaryDatabaseFixture database)
+    : IClassFixture<TemporaryDatabaseFixture>
+{
+    // Seed by Name is N1, N2, N3; Mid matches all, Other only N2/N3. Skip(1).Take(2) between the joins yields
+    // {N2, N3}; paging after both joins would yield {N3}.
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Paging_between_two_joins_pages_the_rows_the_first_join_produced(MongoQueryMode mode)
+    {
+        using var db = Setup(mode);
+
+        var result = db.Roots
+            .Join(db.Mids, r => r.MidId, m => m._id, (r, m) => r)
+            .OrderBy(r => r.Name)
+            .Skip(1)
+            .Take(2)
+            .Join(db.Others, r => r.OtherId, o => o._id, (r, o) => r.Name)
+            .ToList();
+
+        Assert.Equal(["N2", "N3"], result);
+    }
+
+    // Stage-order pin: position is the actual defect.
+    [Fact]
+    public void Paging_between_two_joins_emits_the_second_lookup_above_the_paging()
+    {
+        using var db = Setup(MongoQueryMode.Native, out var spyLogger);
+
+        var result = db.Roots
+            .Join(db.Mids, r => r.MidId, m => m._id, (r, m) => r)
+            .OrderBy(r => r.Name)
+            .Skip(1)
+            .Take(2)
+            .Join(db.Others, r => r.OtherId, o => o._id, (r, o) => r.Name)
+            .ToList();
+
+        Assert.Equal(["N2", "N3"], result);
+
+        var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        var midLookup = mql.IndexOf("\"as\" : \"_lookup_Mid\"", StringComparison.Ordinal);
+        var otherLookup = mql.IndexOf("\"as\" : \"_lookup_Other\"", StringComparison.Ordinal);
+        var skip = mql.IndexOf("$skip", StringComparison.Ordinal);
+        var limit = mql.IndexOf("$limit", StringComparison.Ordinal);
+
+        Assert.True(midLookup >= 0, mql);
+        Assert.True(otherLookup >= 0, mql);
+        Assert.True(skip >= 0, mql);
+        Assert.True(limit >= 0, mql);
+
+        // The first join's $lookup precedes the paging; the second's follows it.
+        Assert.True(midLookup < skip, mql);
+        Assert.True(skip < limit, mql);
+        Assert.True(limit < otherLookup, mql);
+    }
+
+    // Control: paging before all joins keeps one contiguous lookup group after the paging, so the fix isn't
+    // over-broad.
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Paging_below_all_joins_still_emits_both_lookups_above_the_paging(MongoQueryMode mode)
+    {
+        using var db = Setup(mode, out var spyLogger);
+
+        var result = db.Roots
+            .OrderBy(r => r.Name)
+            .Skip(1)
+            .Take(2)
+            .Join(db.Mids, r => r.MidId, m => m._id, (r, m) => r)
+            .Join(db.Others, r => r.OtherId, o => o._id, (r, o) => r.Name)
+            .ToList();
+
+        // Paging first: {N2, N3}. Both survive the Other join.
+        Assert.Equal(["N2", "N3"], result);
+
+        var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        var otherLookup = mql.IndexOf("\"as\" : \"_lookup_Other\"", StringComparison.Ordinal);
+        var midLookup = mql.IndexOf("\"as\" : \"_lookup_Mid\"", StringComparison.Ordinal);
+        var limit = mql.IndexOf("$limit", StringComparison.Ordinal);
+
+        Assert.True(limit >= 0 && otherLookup >= 0 && midLookup >= 0, mql);
+
+        // Both lookups follow the paging as one contiguous group.
+        Assert.True(limit < otherLookup, mql);
+
+        // Incidental flush order (the lookups are independent, so either order is correct); asserted only to
+        // detect unintended change.
+        Assert.True(otherLookup < midLookup, mql);
+    }
+
+    // Lone interleaved Skip (no Take).
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Interleaved_Skip_without_Take_pages_the_rows_the_first_join_produced(MongoQueryMode mode)
+    {
+        using var db = Setup(mode);
+
+        var result = db.Roots
+            .Join(db.Mids, r => r.MidId, m => m._id, (r, m) => r)
+            .OrderBy(r => r.Name)
+            .Skip(1)
+            .Join(db.Others, r => r.OtherId, o => o._id, (r, o) => r.Name)
+            .ToList();
+
+        Assert.Equal(["N2", "N3"], result);
+    }
+
+    // Paging between two joins whose first join keeps BOTH sides (a transparent identifier), so the chain reaches
+    // the wrapped-projection / scalar-leaf join-scope Select arms rather than the whole-entity path above. Each shape
+    // is compared with LINQ-to-Objects over the same rows; paging deferred past both $lookup/$unwind blocks pages
+    // the fully joined result (N1 dropped by the second join first), giving a silently wrong page.
+    [Theory]
+    [InlineData(MongoQueryMode.Native, "WrappedSkipTake")]
+    [InlineData(MongoQueryMode.DriverLinq, "WrappedSkipTake")]
+    [InlineData(MongoQueryMode.Native, "WrappedSkip")]
+    [InlineData(MongoQueryMode.DriverLinq, "WrappedSkip")]
+    [InlineData(MongoQueryMode.Native, "WrappedTake")]
+    [InlineData(MongoQueryMode.DriverLinq, "WrappedTake")]
+    [InlineData(MongoQueryMode.Native, "WrappedBothScopes")]
+    [InlineData(MongoQueryMode.DriverLinq, "WrappedBothScopes")]
+    [InlineData(MongoQueryMode.Native, "ScalarLeaf")]
+    [InlineData(MongoQueryMode.DriverLinq, "ScalarLeaf")]
+    [InlineData(MongoQueryMode.Native, "WrappedThenTrailingSelect")]
+    [InlineData(MongoQueryMode.DriverLinq, "WrappedThenTrailingSelect")]
+    [InlineData(MongoQueryMode.Native, "LeftFirstJoinSkipTake")]
+    [InlineData(MongoQueryMode.DriverLinq, "LeftFirstJoinSkipTake")]
+    public void Paging_between_two_transparent_identifier_joins_matches_oracle(MongoQueryMode mode, string shape)
+    {
+        using var db = Setup(mode);
+
+        var actual = RunInterleavedTransparentIdentifierShape(db.Roots, db.Mids, db.Others, shape);
+
+        // Oracle: LINQ-to-Objects over the whole collections read back untracked.
+        var expected = RunInterleavedTransparentIdentifierShape(
+            db.Roots.AsNoTracking().ToList().AsQueryable(),
+            db.Mids.AsNoTracking().ToList().AsQueryable(),
+            db.Others.AsNoTracking().ToList().AsQueryable(),
+            shape);
+
+        Assert.NotEmpty(expected);
+        Assert.Equal(expected, actual);
+    }
+
+    // The native pipeline has no per-join position for paging, so each interleaved shape above must decline
+    // (IsSingleEligibleNativeJoinScope / MongoSelectDefinition.HasPagingRecordedBetweenJoins) rather than defer
+    // the paging past both $lookup blocks (which returns the wrong page).
+    [Theory]
+    [InlineData("WrappedSkipTake")]
+    [InlineData("WrappedSkip")]
+    [InlineData("WrappedTake")]
+    [InlineData("WrappedBothScopes")]
+    [InlineData("WrappedThenTrailingSelect")]
+    [InlineData("LeftFirstJoinSkipTake")]
+    public void Paging_between_two_transparent_identifier_joins_declines_under_NativeOnly(string shape)
+    {
+        using var db = Setup(MongoQueryMode.NativeOnly);
+
+        Assert.Throws<NativeTranslationNotSupportedException>(
+            () => RunInterleavedTransparentIdentifierShape(db.Roots, db.Mids, db.Others, shape));
+    }
+
+    // Aggregate terminal over an interleaved chain: TryBindAggregate confirms through the same gate.
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Count_over_paging_between_two_transparent_identifier_joins_matches_oracle(MongoQueryMode mode)
+    {
+        using var db = Setup(mode);
+
+        var actual = db.Roots
+            .Join(db.Mids, r => r.MidId, m => (ObjectId?)m._id, (r, m) => new { r, m })
+            .OrderBy(x => x.r.Name).Take(2)
+            .Join(db.Others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, o.Label })
+            .Count();
+
+        // Take(2) keeps N1, N2; only N2 has an Other. Paging after both joins would count N2 and N3.
+        Assert.Equal(1, actual);
+    }
+
+    // Control: paging written AFTER both joins (hoisted ahead of the chain's pending selector with every join
+    // present) still goes native and pages the fully joined rows.
+    [Fact]
+    public void Paging_after_both_transparent_identifier_joins_still_goes_native_under_NativeOnly()
+    {
+        using var db = Setup(MongoQueryMode.NativeOnly);
+
+        var actual = db.Roots
+            .Join(db.Mids, r => r.MidId, m => (ObjectId?)m._id, (r, m) => new { r, m })
+            .Join(db.Others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, o.Label })
+            .OrderBy(x => x.Name)
+            .Skip(1)
+            .ToList();
+
+        // Joined rows by name: N2, N3 (N1 has no Other); Skip(1) leaves N3.
+        Assert.Equal(["N3/O1"], actual.Select(x => x.Name + "/" + x.Label));
+    }
+
+    private static List<string> RunInterleavedTransparentIdentifierShape(
+        IQueryable<Root> roots, IQueryable<Mid> mids, IQueryable<Other> others, string shape)
+    {
+        var firstJoin = roots.Join(mids, r => r.MidId, m => (ObjectId?)m._id, (r, m) => new { r, m });
+        return shape switch
+        {
+            "WrappedSkipTake" => firstJoin.OrderBy(x => x.r.Name).Skip(1).Take(2)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, o.Label })
+                .AsEnumerable().Select(x => x.Name + "/" + x.Label).ToList(),
+            "WrappedSkip" => firstJoin.OrderBy(x => x.r.Name).Skip(1)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, o.Label })
+                .AsEnumerable().Select(x => x.Name + "/" + x.Label).ToList(),
+            // Take(1) keeps N1 only, which has no Other: the correct answer is EMPTY, so use Take(2) (N1, N2 -> N2)
+            // to keep the oracle non-empty; paging past both joins would return N2 and N3.
+            "WrappedTake" => firstJoin.OrderBy(x => x.r.Name).Take(2)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, o.Label })
+                .AsEnumerable().Select(x => x.Name + "/" + x.Label).ToList(),
+            "WrappedBothScopes" => firstJoin.OrderBy(x => x.r.Name).Skip(1).Take(2)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, x.m.Tag })
+                .AsEnumerable().Select(x => x.Name + "/" + x.Tag).ToList(),
+            "ScalarLeaf" => firstJoin.OrderBy(x => x.r.Name).Skip(1).Take(2)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x, o })
+                .Select(y => y.x.r.Name)
+                .ToList(),
+            "WrappedThenTrailingSelect" => firstJoin.OrderBy(x => x.r.Name).Skip(1).Take(2)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x, o })
+                .Select(y => new { y.x.r.Name, y.o.Label })
+                .AsEnumerable().Select(x => x.Name + "/" + x.Label).ToList(),
+            // First join left-outer (GroupJoin/SelectMany/DefaultIfEmpty over a collection navigation's inverse),
+            // second an inner join that drops N1.
+            "LeftFirstJoinSkipTake" => roots
+                .GroupJoin(mids, r => r.MidId, m => (ObjectId?)m._id, (r, ms) => new { r, ms })
+                .SelectMany(x => x.ms.DefaultIfEmpty(), (x, m) => new { x.r, m })
+                .OrderBy(x => x.r.Name).Skip(1).Take(2)
+                .Join(others, x => x.r.OtherId, o => (ObjectId?)o._id, (x, o) => new { x.r.Name, o.Label })
+                .AsEnumerable().Select(x => x.Name + "/" + x.Label).ToList(),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape))
+        };
+    }
+
+    // A sort between two joins whose second join is 1:N, so $unwind expands. Roots are inserted in reverse order
+    // (an unsorted pipeline fails) and each fans out to 3 leaves (losing the join fails).
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Sort_between_two_joins_orders_the_rows_a_one_to_many_second_join_expands(MongoQueryMode mode)
+    {
+        using var db = SetupFanOut(mode, out var spyLogger);
+
+        var result = db.Roots
+            .Join(db.Mids, r => r.MidId, m => m._id, (r, m) => r)
+            .OrderBy(r => r.Name)
+            .Join(db.Leaves, r => r._id, l => l.RootId, (r, l) => r.Name)
+            .ToList();
+
+        // ORDERED, not just set-equal: six roots, three leaves each, ascending by name.
+        string[] expected =
+        [
+            "N1", "N1", "N1", "N2", "N2", "N2", "N3", "N3", "N3",
+            "N4", "N4", "N4", "N5", "N5", "N5", "N6", "N6", "N6"
+        ];
+        Assert.Equal(expected, result);
+
+        // The data can't distinguish the layouts ($sort and a fan-out $unwind commute on key order), so pin
+        // stage position directly.
+        var mql = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
+        var midLookup = mql.IndexOf("\"as\" : \"_lookup_Mid\"", StringComparison.Ordinal);
+        var leafLookup = mql.IndexOf("\"as\" : \"_lookup_Leaves\"", StringComparison.Ordinal);
+        var sort = mql.IndexOf("$sort", StringComparison.Ordinal);
+
+        Assert.True(midLookup >= 0, mql);
+        Assert.True(leafLookup >= 0, mql);
+        Assert.True(sort >= 0, mql);
+        Assert.True(midLookup < sort, mql);
+        Assert.True(sort < leafLookup, mql);
+    }
+
+    private RootDbContext Setup(MongoQueryMode mode, out SpyLoggerProvider spyLogger)
+    {
+        var (loggerFactory, provider) = SpyLoggerProvider.Create();
+        spyLogger = provider;
+        return Setup(mode, loggerFactory);
+    }
+
+    private RootDbContext SetupFanOut(MongoQueryMode mode, out SpyLoggerProvider spyLogger)
+    {
+        var (loggerFactory, provider) = SpyLoggerProvider.Create();
+        spyLogger = provider;
+
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var rootsName = TemporaryDatabaseFixtureBase.CreateCollectionName("Ef373FanRoots") + suffix;
+        var midsName = TemporaryDatabaseFixtureBase.CreateCollectionName("Ef373FanMids") + suffix;
+        var othersName = TemporaryDatabaseFixtureBase.CreateCollectionName("Ef373FanOthers") + suffix;
+        var leavesName = TemporaryDatabaseFixtureBase.CreateCollectionName("Ef373FanLeaves") + suffix;
+
+        var m1 = ObjectId.GenerateNewId();
+        database.MongoDatabase.GetCollection<BsonDocument>(midsName).InsertMany([
+            new BsonDocument { { "_id", m1 }, { "tag", "M1" } }
+        ]);
+
+        // Inserted N6..N1, the reverse of the asserted order, so an unsorted pipeline fails.
+        var roots = new List<BsonDocument>();
+        var leaves = new List<BsonDocument>();
+        for (var i = 6; i >= 1; i--)
+        {
+            var rootId = ObjectId.GenerateNewId();
+            roots.Add(new BsonDocument { { "_id", rootId }, { "name", "N" + i }, { "mid_id", m1 } });
+            for (var j = 0; j < 3; j++)
+            {
+                leaves.Add(new BsonDocument
+                {
+                    { "_id", ObjectId.GenerateNewId() }, { "root_id", rootId }, { "label", $"N{i}-L{j}" }
+                });
+            }
+        }
+
+        database.MongoDatabase.GetCollection<BsonDocument>(rootsName).InsertMany(roots);
+        database.MongoDatabase.GetCollection<BsonDocument>(leavesName).InsertMany(leaves);
+
+        return new RootDbContext(database, rootsName, midsName, othersName, leavesName, mode, loggerFactory);
+    }
+
+    private RootDbContext Setup(MongoQueryMode mode, ILoggerFactory? loggerFactory = null)
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..8];
+        var rootsName = TemporaryDatabaseFixtureBase.CreateCollectionName("Ef373Roots") + suffix;
+        var midsName = TemporaryDatabaseFixtureBase.CreateCollectionName("Ef373Mids") + suffix;
+        var othersName = TemporaryDatabaseFixtureBase.CreateCollectionName("Ef373Others") + suffix;
+
+        var m1 = ObjectId.GenerateNewId();
+        var o1 = ObjectId.GenerateNewId();
+
+        database.MongoDatabase.GetCollection<BsonDocument>(midsName).InsertMany([
+            new BsonDocument { { "_id", m1 }, { "tag", "M1" } }
+        ]);
+        database.MongoDatabase.GetCollection<BsonDocument>(othersName).InsertMany([
+            new BsonDocument { { "_id", o1 }, { "label", "O1" } }
+        ]);
+        database.MongoDatabase.GetCollection<BsonDocument>(rootsName).InsertMany([
+            // N1 has no Other, so the second (inner) join drops it.
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "name", "N1" }, { "mid_id", m1 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "name", "N2" }, { "mid_id", m1 }, { "other_id", o1 } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "name", "N3" }, { "mid_id", m1 }, { "other_id", o1 } }
+        ]);
+
+        return new RootDbContext(
+            database, rootsName, midsName, othersName,
+            TemporaryDatabaseFixtureBase.CreateCollectionName("Ef373Leaves") + suffix, mode, loggerFactory);
+    }
+
+    public class Mid
+    {
+        public ObjectId _id { get; set; }
+        public string Tag { get; set; }
+        public List<Root> Roots { get; set; }
+    }
+
+    public class Other
+    {
+        public ObjectId _id { get; set; }
+        public string Label { get; set; }
+        public List<Root> Roots { get; set; }
+    }
+
+    // A collection navigation off Root, so the sort test's second join fans out 1:N.
+    public class Leaf
+    {
+        public ObjectId _id { get; set; }
+        public ObjectId RootId { get; set; }
+        public string Label { get; set; }
+        public Root Root { get; set; }
+    }
+
+    public class Root
+    {
+        public ObjectId _id { get; set; }
+        public string Name { get; set; }
+        public ObjectId? MidId { get; set; }
+        public Mid Mid { get; set; }
+        public ObjectId? OtherId { get; set; }
+        public Other Other { get; set; }
+        public List<Leaf> Leaves { get; set; }
+    }
+
+    public class RootDbContext : DbContext
+    {
+        private readonly string _roots;
+        private readonly string _mids;
+        private readonly string _others;
+        private readonly string _leaves;
+
+        public DbSet<Root> Roots { get; set; }
+        public DbSet<Mid> Mids { get; set; }
+        public DbSet<Other> Others { get; set; }
+        public DbSet<Leaf> Leaves { get; set; }
+
+        public RootDbContext(
+            TemporaryDatabaseFixture db, string roots, string mids, string others, string leaves,
+            MongoQueryMode mode, ILoggerFactory? loggerFactory)
+            : base(BuildOptions(db, mode, loggerFactory))
+        {
+            _roots = roots;
+            _mids = mids;
+            _others = others;
+            _leaves = leaves;
+        }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<Mid>(b =>
+            {
+                b.ToCollection(_mids);
+                b.Property(m => m.Tag).HasElementName("tag");
+            });
+
+            modelBuilder.Entity<Other>(b =>
+            {
+                b.ToCollection(_others);
+                b.Property(o => o.Label).HasElementName("label");
+            });
+
+            modelBuilder.Entity<Leaf>(b =>
+            {
+                b.ToCollection(_leaves);
+                b.Property(l => l.RootId).HasElementName("root_id");
+                b.Property(l => l.Label).HasElementName("label");
+            });
+
+            modelBuilder.Entity<Root>(b =>
+            {
+                b.ToCollection(_roots);
+                b.Property(r => r.Name).HasElementName("name");
+                b.Property(r => r.MidId).HasElementName("mid_id");
+                b.Property(r => r.OtherId).HasElementName("other_id");
+                b.HasOne(r => r.Mid).WithMany(m => m.Roots).HasForeignKey(r => r.MidId);
+                b.HasOne(r => r.Other).WithMany(o => o.Roots).HasForeignKey(r => r.OtherId);
+                b.HasMany(r => r.Leaves).WithOne(l => l.Root).HasForeignKey(l => l.RootId);
+            });
+        }
+
+        private static DbContextOptions<RootDbContext> BuildOptions(
+            TemporaryDatabaseFixture db, MongoQueryMode mode, ILoggerFactory? loggerFactory)
+        {
+            var builder = new DbContextOptionsBuilder<RootDbContext>()
+                .UseMongoDB(db.Client, db.MongoDatabase.DatabaseNamespace.DatabaseName, o => o.UseQueryMode(mode))
+                .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+            if (loggerFactory != null)
+            {
+                builder = builder.UseLoggerFactory(loggerFactory).EnableSensitiveDataLogging();
+            }
+
+            return builder.Options;
+        }
+
+        sealed class IgnoreCacheKeyFactory : IModelCacheKeyFactory
+        {
+            private static int _count;
+            public object Create(DbContext context, bool designTime) => Interlocked.Increment(ref _count);
+        }
+    }
+}

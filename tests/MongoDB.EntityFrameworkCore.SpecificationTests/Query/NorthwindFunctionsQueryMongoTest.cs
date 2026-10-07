@@ -19,6 +19,7 @@ using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestModels.Northwind;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Driver.Linq;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 using Xunit.Abstractions;
 using Xunit.Sdk;
 
@@ -167,29 +168,21 @@ public class NorthwindFunctionsQueryMongoTest : NorthwindFunctionsQueryTestBase<
 #if EF9
     public override async Task String_StartsWith_with_StringComparison_Ordinal(bool async)
     {
-        // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_StartsWith_with_StringComparison_Ordinal(async))).Message);
+        await base.String_StartsWith_with_StringComparison_Ordinal(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^Qu", "options" : "s" } } } }
 """);
     }
 
     public override async Task String_StartsWith_with_StringComparison_OrdinalIgnoreCase(bool async)
     {
-        // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_StartsWith_with_StringComparison_OrdinalIgnoreCase(async))).Message);
+        await base.String_StartsWith_with_StringComparison_OrdinalIgnoreCase(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^Qu", "options" : "is" } } } }
 """);
     }
 
@@ -200,16 +193,12 @@ Customers.
         await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.StartsWith("m", StringComparison.CurrentCultureIgnoreCase)));
 
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.StartsWith("M", StringComparison.InvariantCulture))))).Message);
+        await AssertTranslationFailed(() =>
+            AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.StartsWith("M", StringComparison.InvariantCulture))));
 
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.StartsWith("M", StringComparison.InvariantCultureIgnoreCase))))).Message);
+        await AssertTranslationFailed(() =>
+            AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.StartsWith("M", StringComparison.InvariantCultureIgnoreCase))));
 
         AssertMql(
             """
@@ -284,29 +273,21 @@ Customers.
 #if EF9
     public override async Task String_EndsWith_with_StringComparison_Ordinal(bool async)
     {
-        // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_EndsWith_with_StringComparison_Ordinal(async))).Message);
+        await base.String_EndsWith_with_StringComparison_Ordinal(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "DY$", "options" : "s" } } } }
 """);
     }
 
     public override async Task String_EndsWith_with_StringComparison_OrdinalIgnoreCase(bool async)
     {
-        // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_EndsWith_with_StringComparison_OrdinalIgnoreCase(async))).Message);
+        await base.String_EndsWith_with_StringComparison_OrdinalIgnoreCase(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "DY$", "options" : "is" } } } }
 """);
     }
 
@@ -317,16 +298,12 @@ Customers.
         await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.EndsWith("m", StringComparison.CurrentCultureIgnoreCase)));
 
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.EndsWith("M", StringComparison.InvariantCulture))))).Message);
+        await AssertTranslationFailed(() =>
+            AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.EndsWith("M", StringComparison.InvariantCulture))));
 
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.EndsWith("M", StringComparison.InvariantCultureIgnoreCase))))).Message);
+        await AssertTranslationFailed(() =>
+            AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.EndsWith("M", StringComparison.InvariantCultureIgnoreCase))));
 
         AssertMql(
             """
@@ -407,30 +384,22 @@ Customers.{ "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName",
 
     public override async Task String_FirstOrDefault_MethodCall(bool async)
     {
-        // Fails: Translate String.FirstOrDefault and String.LastOrDefault issue EF-248
-        Assert.Contains(
-            "StringSerializer must implement IBsonArraySerializer",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.String_FirstOrDefault_MethodCall(async))).Message);
+        await base.String_FirstOrDefault_MethodCall(async);
 
         AssertMql(
-            """
-            Customers.
-            """);
+"""
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$ContactName", null] }, null] }, "then" : null, "else" : { "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : { "$ifNull" : ["$ContactName", ""] } }, 0] }, "then" : "\u0000", "else" : { "$substrCP" : [{ "$ifNull" : ["$ContactName", ""] }, 0, 1] } } } } }, { "$literal" : "A" }] } } }
+""");
     }
 
     public override async Task String_LastOrDefault_MethodCall(bool async)
     {
-        // Fails: Translate String.FirstOrDefault and String.LastOrDefault issue EF-248
-        Assert.Contains(
-            "StringSerializer must implement IBsonArraySerializer",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.String_LastOrDefault_MethodCall(async))).Message);
+        await base.String_LastOrDefault_MethodCall(async);
 
         AssertMql(
-            """
-            Customers.
-            """);
+"""
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$ContactName", null] }, null] }, "then" : null, "else" : { "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : { "$ifNull" : ["$ContactName", ""] } }, 0] }, "then" : "\u0000", "else" : { "$substrCP" : [{ "$ifNull" : ["$ContactName", ""] }, { "$subtract" : [{ "$strLenCP" : { "$ifNull" : ["$ContactName", ""] } }, 1] }, 1] } } } } }, { "$literal" : "s" }] } } }
+""");
     }
 
     public override async Task String_Contains_MethodCall(bool async)
@@ -449,7 +418,9 @@ Customers.{ "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName",
         await AssertTranslationFailed(() => base.String_Join_over_non_nullable_column(async));
 
         AssertMql(
-        );
+            """
+            Customers.
+            """);
     }
 
     public override async Task String_Join_over_nullable_column(bool async)
@@ -458,7 +429,9 @@ Customers.{ "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName",
         await AssertTranslationFailed(() => base.String_Join_over_nullable_column(async));
 
         AssertMql(
-        );
+            """
+            Customers.
+            """);
     }
 
     public override async Task String_Join_with_predicate(bool async)
@@ -467,7 +440,9 @@ Customers.{ "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName",
         await AssertTranslationFailed(() => base.String_Join_with_predicate(async));
 
         AssertMql(
-        );
+            """
+            Customers.
+            """);
     }
 
     public override async Task String_Join_with_ordering(bool async)
@@ -476,21 +451,19 @@ Customers.{ "$match" : { "$expr" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName",
         await AssertTranslationFailed(() => base.String_Join_with_ordering(async));
 
         AssertMql(
-        );
+            """
+            Customers.
+            """);
     }
 
 #if EF9
     public override async Task String_Join_non_aggregate(bool async)
     {
-        // Fails: String.Join issue EF-245
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_Join_non_aggregate(async))).Message);
+        await base.String_Join_non_aggregate(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$CompanyName", { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "|" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "foo" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "|" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : null }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "|" }, { "$literal" : "" }] }, { "$ifNull" : [{ "$literal" : "bar" }, { "$literal" : "" }] }] }, { "$literal" : "Around the Horn|foo||bar" }] } } }
 """);
     }
 
@@ -502,7 +475,9 @@ Customers.
         await AssertTranslationFailed(() => base.String_Concat(async));
 
         AssertMql(
-        );
+            """
+            Customers.
+            """);
     }
 
     public override async Task String_Compare_simple_zero(bool async)
@@ -570,29 +545,29 @@ Customers.
         await base.String_compare_with_parameter(async);
 
         AssertMql(
-            """
-            Customers.{ "$match" : { "_id" : { "$gt" : "AROUT" } } }
-            """,
-            //
-            """
-            Customers.{ "$match" : { "_id" : { "$lt" : "AROUT" } } }
-            """,
-            //
-            """
-            Customers.{ "$match" : { "_id" : { "$lte" : "AROUT" } } }
-            """,
-            //
-            """
-            Customers.{ "$match" : { "_id" : { "$lte" : "AROUT" } } }
-            """,
-            //
-            """
-            Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
-            """,
-            //
-            """
-            Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
-            """);
+"""
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : [{ "$ifNull" : ["$_id", null] }, { "$literal" : "AROUT" }] }, 1] } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : [{ "$ifNull" : ["$_id", null] }, { "$literal" : "AROUT" }] }, -1] } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$lt" : [{ "$cmp" : [{ "$ifNull" : ["$_id", null] }, { "$literal" : "AROUT" }] }, 1] } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$lt" : [{ "$cmp" : [{ "$ifNull" : ["$_id", null] }, { "$literal" : "AROUT" }] }, 1] } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : [{ "$ifNull" : ["$_id", null] }, { "$literal" : "AROUT" }] }, -1] } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : [{ "$ifNull" : ["$_id", null] }, { "$literal" : "AROUT" }] }, -1] } } }
+""");
     }
 
     public override async Task String_Compare_simple_more_than_one(bool async)
@@ -601,15 +576,15 @@ Customers.
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$_id", "ALFKI"] }, 42] } } }
+            Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
             """,
             //
             """
-            Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$_id", "ALFKI"] }, 42] } } }
+            Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
             """,
             //
             """
-            Customers.{ "$match" : { "$expr" : { "$gt" : [42, { "$cmp" : ["$_id", "ALFKI"] }] } } }
+            Customers.{ "$match" : { } }
             """);
     }
 
@@ -618,29 +593,29 @@ Customers.
         await base.String_Compare_nested(async);
 
         AssertMql(
-            """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$_id", { "$concat" : ["M", "$_id"] }] }, 0] } } }
-            """,
-            //
-            """
-            Customers.{ "$match" : { "$expr" : { "$ne" : [0, { "$cmp" : ["$_id", { "$toUpper" : "$_id" }] }] } } }
-            """,
-            //
-            """
-            Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$_id", { "$replaceAll" : { "input" : "ALFKI", "find" : "ALF", "replacement" : "$_id" } }] }, 0] } } }
-            """,
-            //
-            """
-            Customers.{ "$match" : { "$expr" : { "$gte" : [0, { "$cmp" : ["$_id", { "$concat" : ["M", "$_id"] }] }] } } }
-            """,
-            //
-            """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [1, { "$cmp" : ["$_id", { "$toUpper" : "$_id" }] }] } } }
-            """,
-            //
-            """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$_id", { "$replaceAll" : { "input" : "ALFKI", "find" : "ALF", "replacement" : "$_id" } }] }, -1] } } }
-            """);
+"""
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$_id", { "$concat" : [{ "$literal" : "M" }, { "$ifNull" : ["$_id", ""] }] }] }, 0] } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$ne" : [0, { "$cmp" : ["$_id", { "$toUpper" : "$_id" }] }] } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : [{ "$ifNull" : ["$_id", null] }, { "$replaceAll" : { "input" : { "$literal" : "ALFKI" }, "find" : { "$literal" : "ALF" }, "replacement" : { "$ifNull" : ["$_id", ""] } } }] }, 0] } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$lte" : [{ "$cmp" : ["$_id", { "$concat" : [{ "$literal" : "M" }, { "$ifNull" : ["$_id", ""] }] }] }, 0] } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$eq" : [1, { "$cmp" : ["$_id", { "$toUpper" : "$_id" }] }] } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : [{ "$ifNull" : ["$_id", null] }, { "$replaceAll" : { "input" : { "$literal" : "ALFKI" }, "find" : { "$literal" : "ALF" }, "replacement" : { "$ifNull" : ["$_id", ""] } } }] }, -1] } } }
+""");
     }
 
     public override async Task String_Compare_multi_predicate(bool async)
@@ -649,11 +624,11 @@ Customers.
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$gte" : "ALFKI" } } }, { "$match" : { "_id" : { "$lt" : "CACTU" } } }
+            Customers.{ "$match" : { "_id" : { "$gte" : "ALFKI", "$lt" : "CACTU" } } }
             """,
             //
             """
-            Customers.{ "$match" : { "ContactTitle" : "Owner" } }, { "$match" : { "Country" : { "$ne" : "USA" } } }
+            Customers.{ "$match" : { "$and" : [{ "$expr" : { "$eq" : [{ "$cmp" : ["$ContactTitle", { "$literal" : "Owner" }] }, 0] } }, { "$expr" : { "$ne" : [{ "$cmp" : ["$Country", { "$literal" : "USA" }] }, 0] } }] } }
             """);
     }
 
@@ -722,28 +697,28 @@ Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
         await base.String_compare_to_with_parameter(async);
 
         AssertMql(
-            """
-Customers.{ "$match" : { "_id" : { "$gt" : "AROUT" } } }
+"""
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : [{ "$ifNull" : ["$_id", null] }, { "$literal" : "AROUT" }] }, 1] } } }
 """,
-            //
-            """
-Customers.{ "$match" : { "_id" : { "$lt" : "AROUT" } } }
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : [{ "$ifNull" : ["$_id", null] }, { "$literal" : "AROUT" }] }, -1] } } }
 """,
-            //
-            """
-Customers.{ "$match" : { "_id" : { "$lte" : "AROUT" } } }
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$lt" : [{ "$cmp" : [{ "$ifNull" : ["$_id", null] }, { "$literal" : "AROUT" }] }, 1] } } }
 """,
-            //
-            """
-Customers.{ "$match" : { "_id" : { "$lte" : "AROUT" } } }
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$lt" : [{ "$cmp" : [{ "$ifNull" : ["$_id", null] }, { "$literal" : "AROUT" }] }, 1] } } }
 """,
-            //
-            """
-Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : [{ "$ifNull" : ["$_id", null] }, { "$literal" : "AROUT" }] }, -1] } } }
 """,
-            //
-            """
-Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : [{ "$ifNull" : ["$_id", null] }, { "$literal" : "AROUT" }] }, -1] } } }
 """);
     }
 
@@ -753,15 +728,15 @@ Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$_id", "ALFKI"] }, 42] } } }
+            Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
             """,
             //
             """
-            Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$_id", "ALFKI"] }, 42] } } }
+            Customers.{ "$match" : { "_id" : { "$type" : -1 } } }
             """,
             //
             """
-            Customers.{ "$match" : { "$expr" : { "$gt" : [42, { "$cmp" : ["$_id", "ALFKI"] }] } } }
+            Customers.{ "$match" : { } }
             """);
     }
 
@@ -770,29 +745,29 @@ Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
         await base.String_Compare_to_nested(async);
 
         AssertMql(
-            """
-            Customers.{ "$match" : { "$expr" : { "$ne" : [{ "$cmp" : ["$_id", { "$concat" : ["M", "$_id"] }] }, 0] } } }
-            """,
-            //
-            """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [0, { "$cmp" : ["$_id", { "$toUpper" : "$_id" }] }] } } }
-            """,
-            //
-            """
-            Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : ["$_id", { "$replaceAll" : { "input" : "AROUT", "find" : "OUT", "replacement" : "$_id" } }] }, 0] } } }
-            """,
-            //
-            """
-            Customers.{ "$match" : { "$expr" : { "$gte" : [0, { "$cmp" : ["$_id", { "$concat" : ["M", "$_id"] }] }] } } }
-            """,
-            //
-            """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [1, { "$cmp" : ["$_id", { "$toUpper" : "$_id" }] }] } } }
-            """,
-            //
-            """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : ["$_id", { "$replaceAll" : { "input" : "AROUT", "find" : "OUT", "replacement" : "$_id" } }] }, -1] } } }
-            """);
+"""
+Customers.{ "$match" : { "$expr" : { "$ne" : [{ "$cmp" : ["$_id", { "$concat" : [{ "$literal" : "M" }, { "$ifNull" : ["$_id", ""] }] }] }, 0] } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$eq" : [0, { "$cmp" : ["$_id", { "$toUpper" : "$_id" }] }] } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : [{ "$ifNull" : ["$_id", null] }, { "$replaceAll" : { "input" : { "$literal" : "AROUT" }, "find" : { "$literal" : "OUT" }, "replacement" : { "$ifNull" : ["$_id", ""] } } }] }, 0] } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$lte" : [{ "$cmp" : ["$_id", { "$concat" : [{ "$literal" : "M" }, { "$ifNull" : ["$_id", ""] }] }] }, 0] } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$eq" : [1, { "$cmp" : ["$_id", { "$toUpper" : "$_id" }] }] } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cmp" : [{ "$ifNull" : ["$_id", null] }, { "$replaceAll" : { "input" : { "$literal" : "AROUT" }, "find" : { "$literal" : "OUT" }, "replacement" : { "$ifNull" : ["$_id", ""] } } }] }, -1] } } }
+""");
     }
 
     public override async Task String_Compare_to_multi_predicate(bool async)
@@ -801,11 +776,11 @@ Customers.{ "$match" : { "_id" : { "$gte" : "AROUT" } } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$gte" : "ALFKI" } } }, { "$match" : { "_id" : { "$lt" : "CACTU" } } }
+Customers.{ "$match" : { "_id" : { "$gte" : "ALFKI", "$lt" : "CACTU" } } }
 """,
             //
             """
-            Customers.{ "$match" : { "ContactTitle" : "Owner" } }, { "$match" : { "Country" : { "$ne" : "USA" } } }
+            Customers.{ "$match" : { "$and" : [{ "$expr" : { "$eq" : [{ "$cmp" : ["$ContactTitle", { "$literal" : "Owner" }] }, 0] } }, { "$expr" : { "$ne" : [{ "$cmp" : ["$Country", { "$literal" : "USA" }] }, 0] } }] } }
             """);
     }
 
@@ -946,9 +921,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_abs2(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "UnitPrice" : { "$lt" : { "$numberDecimal" : "7" } } } }, { "$match" : { "$expr" : { "$gt" : [{ "$toInt" : { "$abs" : "$Quantity" } }, 10] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "UnitPrice" : { "$lt" : { "$numberDecimal" : "7" } } }, { "$expr" : { "$gt" : [{ "$toInt" : { "$abs" : "$Quantity" } }, 10] } }] } }
+""");
     }
 
     public override async Task Where_math_abs3(bool async)
@@ -956,9 +931,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_abs3(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "Quantity" : { "$lt" : 5 } } }, { "$match" : { "$expr" : { "$gt" : [{ "$abs" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "Quantity" : { "$lt" : 5 } }, { "$expr" : { "$gt" : [{ "$abs" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } }] } }
+""");
     }
 
     public override async Task Where_math_abs_uncorrelated(bool async)
@@ -967,7 +942,7 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
 
         AssertMql(
             """
-            OrderDetails.{ "$match" : { "UnitPrice" : { "$lt" : { "$numberDecimal" : "7" } } } }, { "$match" : { "_id.ProductID" : { "$gt" : 10 } } }
+            OrderDetails.{ "$match" : { "UnitPrice" : { "$lt" : { "$numberDecimal" : "7" } }, "_id.ProductID" : { "$gt" : 10 } } }
             """);
     }
 
@@ -976,9 +951,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_ceiling1(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "UnitPrice" : { "$lt" : { "$numberDecimal" : "7" } } } }, { "$match" : { "$expr" : { "$gt" : [{ "$ceil" : "$Discount" }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "UnitPrice" : { "$lt" : { "$numberDecimal" : "7" } } }, { "$expr" : { "$gt" : [{ "$ceil" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_ceiling2(bool async)
@@ -986,9 +961,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_ceiling2(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "Quantity" : { "$lt" : 5 } } }, { "$match" : { "$expr" : { "$gt" : [{ "$ceil" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "Quantity" : { "$lt" : 5 } }, { "$expr" : { "$gt" : [{ "$ceil" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } }] } }
+""");
     }
 
     public override async Task Where_math_floor(bool async)
@@ -996,9 +971,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_floor(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "Quantity" : { "$lt" : 5 } } }, { "$match" : { "$expr" : { "$gt" : [{ "$floor" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "Quantity" : { "$lt" : 5 } }, { "$expr" : { "$gt" : [{ "$floor" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } }] } }
+""");
     }
 
     public override async Task Where_math_power(bool async)
@@ -1026,9 +1001,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_round(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "Quantity" : { "$lt" : 5 } } }, { "$match" : { "$expr" : { "$gt" : [{ "$round" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "Quantity" : { "$lt" : 5 } }, { "$expr" : { "$gt" : [{ "$round" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } }] } }
+""");
     }
 
     public override async Task Sum_over_round_works_correctly_in_projection(bool async)
@@ -1102,9 +1077,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_truncate(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "Quantity" : { "$lt" : 5 } } }, { "$match" : { "$expr" : { "$gt" : [{ "$trunc" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "Quantity" : { "$lt" : 5 } }, { "$expr" : { "$gt" : [{ "$trunc" : "$UnitPrice" }, { "$numberDecimal" : "10" }] } }] } }
+""");
     }
 
     public override async Task Where_math_exp(bool async)
@@ -1112,9 +1087,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_exp(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077 } }, { "$match" : { "$expr" : { "$gt" : [{ "$exp" : "$Discount" }, 1.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$exp" : "$Discount" }, 1.0] } }] } }
+""");
     }
 
     public override async Task Where_math_log10(bool async)
@@ -1122,9 +1097,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_log10(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } } }, { "$match" : { "$expr" : { "$lt" : [{ "$log10" : "$Discount" }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } }, { "$expr" : { "$lt" : [{ "$log10" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_log(bool async)
@@ -1132,9 +1107,9 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
         await base.Where_math_log(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } } }, { "$match" : { "$expr" : { "$lt" : [{ "$ln" : "$Discount" }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } }, { "$expr" : { "$lt" : [{ "$ln" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_log_new_base(bool async)
@@ -1144,12 +1119,12 @@ Orders.{ "$match" : { "OrderDate" : { "$lte" : { "$date" : "1998-05-04T00:00:00Z
 #if EF9
         AssertMql(
             """
-OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } } }, { "$match" : { "$expr" : { "$lt" : [{ "$log" : ["$Discount", 7.0] }, -1.0] } } }
-""");
+            OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } }, { "$expr" : { "$lt" : [{ "$log" : ["$Discount", 7.0] }, -1.0] } }] } }
+            """);
 #else
         AssertMql(
             """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } } }, { "$match" : { "$expr" : { "$lt" : [{ "$log" : ["$Discount", 7.0] }, 0.0] } } }
+            OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } }, { "$expr" : { "$lt" : [{ "$log" : ["$Discount", 7.0] }, 0.0] } }] } }
             """);
 #endif
     }
@@ -1159,9 +1134,9 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
         await base.Where_math_sqrt(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077 } }, { "$match" : { "$expr" : { "$gt" : [{ "$sqrt" : "$Discount" }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$sqrt" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_acos(bool async)
@@ -1169,9 +1144,9 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
         await base.Where_math_acos(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077 } }, { "$match" : { "$expr" : { "$gt" : [{ "$acos" : { "$toDouble" : "$Discount" } }, 1.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$acos" : "$Discount" }, 1.0] } }] } }
+""");
     }
 
     public override async Task Where_math_asin(bool async)
@@ -1179,9 +1154,9 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
         await base.Where_math_asin(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077 } }, { "$match" : { "$expr" : { "$gt" : [{ "$asin" : { "$toDouble" : "$Discount" } }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$asin" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_atan(bool async)
@@ -1189,9 +1164,9 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
         await base.Where_math_atan(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077 } }, { "$match" : { "$expr" : { "$gt" : [{ "$atan" : { "$toDouble" : "$Discount" } }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$atan" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_atan2(bool async)
@@ -1199,9 +1174,9 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
         await base.Where_math_atan2(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077 } }, { "$match" : { "$expr" : { "$gt" : [{ "$atan2" : [{ "$toDouble" : "$Discount" }, 1.0] }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$atan2" : ["$Discount", 1.0] }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_cos(bool async)
@@ -1209,9 +1184,9 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
         await base.Where_math_cos(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077 } }, { "$match" : { "$expr" : { "$gt" : [{ "$cos" : { "$toDouble" : "$Discount" } }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$cos" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_sin(bool async)
@@ -1219,9 +1194,9 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
         await base.Where_math_sin(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077 } }, { "$match" : { "$expr" : { "$gt" : [{ "$sin" : { "$toDouble" : "$Discount" } }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$sin" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_tan(bool async)
@@ -1229,65 +1204,49 @@ OrderDetails.{ "$match" : { "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } 
         await base.Where_math_tan(async);
 
         AssertMql(
-            """
-            OrderDetails.{ "$match" : { "_id.OrderID" : 11077 } }, { "$match" : { "$expr" : { "$gt" : [{ "$tan" : { "$toDouble" : "$Discount" } }, 0.0] } } }
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$tan" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_sign(bool async)
     {
-        // Fails: Math.Sign mapping issue EF-239
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_math_sign(async))).Message);
+        await base.Where_math_sign(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$switch" : { "branches" : [{ "case" : { "$gt" : ["$Discount", 0] }, "then" : 1 }, { "case" : { "$lt" : ["$Discount", 0] }, "then" : -1 }], "default" : 0 } }, 0] } }] } }
+""");
     }
 
     public override async Task Where_math_min(bool async)
     {
-        // Fails: Math.Min/Math.Max mapping issue EF-238
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_math_min(async))).Message);
+        await base.Where_math_min(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$eq" : [{ "$min" : ["$_id.OrderID", "$_id.ProductID"] }, "$_id.ProductID"] } }] } }
+""");
     }
 
 #if EF9
     public override async Task Where_math_min_nested(bool async)
     {
-        // Fails: Math.Min/Math.Max mapping issue EF-238
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_math_min_nested(async))).Message);
+        await base.Where_math_min_nested(async);
 
         AssertMql(
-            """
-OrderDetails.
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$eq" : [{ "$min" : ["$_id.OrderID", { "$min" : ["$_id.ProductID", 99999] }] }, "$_id.ProductID"] } }] } }
 """);
     }
 
     public override async Task Where_math_min_nested_twice(bool async)
     {
-        // Fails: Math.Min/Math.Max mapping issue EF-238
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_math_min_nested_twice(async))).Message);
+        await base.Where_math_min_nested_twice(async);
 
         AssertMql(
-            """
-OrderDetails.
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$eq" : [{ "$min" : [{ "$min" : [99999, { "$min" : ["$_id.OrderID", 99998] }] }, "$_id.ProductID"] }, "$_id.ProductID"] } }] } }
 """);
     }
 
@@ -1295,44 +1254,32 @@ OrderDetails.
 
     public override async Task Where_math_max(bool async)
     {
-        // Fails: Math.Min/Math.Max mapping issue EF-238
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_math_max(async))).Message);
+        await base.Where_math_max(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$eq" : [{ "$max" : ["$_id.OrderID", "$_id.ProductID"] }, "$_id.OrderID"] } }] } }
+""");
     }
 
 #if EF9
     public override async Task Where_math_max_nested(bool async)
     {
-        // Fails: Math.Min/Math.Max mapping issue EF-238
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_math_max_nested(async))).Message);
+        await base.Where_math_max_nested(async);
 
         AssertMql(
-            """
-OrderDetails.
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$eq" : [{ "$max" : ["$_id.OrderID", { "$max" : ["$_id.ProductID", 1] }] }, "$_id.OrderID"] } }] } }
 """);
     }
 
     public override async Task Where_math_max_nested_twice(bool async)
     {
-        // Fails: Math.Min/Math.Max mapping issue EF-238
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_math_max_nested_twice(async))).Message);
+        await base.Where_math_max_nested_twice(async);
 
         AssertMql(
-            """
-OrderDetails.
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$eq" : [{ "$max" : [{ "$max" : [1, { "$max" : ["$_id.OrderID", 2] }] }, "$_id.ProductID"] }, "$_id.OrderID"] } }] } }
 """);
     }
 
@@ -1340,67 +1287,49 @@ OrderDetails.
 
     public override async Task Where_math_degrees(bool async)
     {
-        // Fails: Double.RadiansToDegrees and Double.DegreesToRadians mapping issue EF-240
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_math_degrees(async))).Message);
+        await base.Where_math_degrees(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$radiansToDegrees" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_math_radians(bool async)
     {
-        // Fails: Double.RadiansToDegrees and Double.DegreesToRadians mapping issue EF-240
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_math_radians(async))).Message);
+        await base.Where_math_radians(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$degreesToRadians" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_abs1(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_abs1(async))).Message);
+        await base.Where_mathf_abs1(async);
 
         AssertMql(
-            """
-            Products.
-            """);
+"""
+Products.{ "$match" : { "$expr" : { "$gt" : [{ "$abs" : "$_id" }, 10.0] } } }
+""");
     }
 
     public override async Task Where_mathf_ceiling1(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_ceiling1(async))).Message);
+        await base.Where_mathf_ceiling1(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "UnitPrice" : { "$lt" : { "$numberDecimal" : "7" } } }, { "$expr" : { "$gt" : [{ "$ceil" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_floor(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_floor(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_floor(async));
 
         AssertMql(
             """
@@ -1410,39 +1339,29 @@ OrderDetails.
 
     public override async Task Where_mathf_power(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_power(async))).Message);
+        await base.Where_mathf_power(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$expr" : { "$gt" : [{ "$pow" : ["$Discount", 3.0] }, 0.004999999888241291] } } }
+""");
     }
 
     public override async Task Where_mathf_square(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_square(async))).Message);
+        await base.Where_mathf_square(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$expr" : { "$gt" : [{ "$pow" : ["$Discount", 2.0] }, 0.05000000074505806] } } }
+""");
     }
 
     public override async Task Where_mathf_round2(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_round2(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_round2(async));
 
         AssertMql(
             """
@@ -1452,25 +1371,19 @@ OrderDetails.
 
     public override async Task Select_mathf_round(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Select_mathf_round(async))).Message);
+        await base.Select_mathf_round(async);
 
         AssertMql(
             """
-            Orders.
+            Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$project" : { "_v" : { "$round" : "$_id" }, "_id" : 0 } }
             """);
     }
 
     public override async Task Select_mathf_round2(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Select_mathf_round2(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Select_mathf_round2(async));
 
         AssertMql(
             """
@@ -1481,10 +1394,8 @@ OrderDetails.
     public override async Task Where_mathf_truncate(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_truncate(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_mathf_truncate(async));
 
         AssertMql(
             """
@@ -1495,10 +1406,8 @@ OrderDetails.
     public override async Task Select_mathf_truncate(bool async)
     {
         // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Select_mathf_truncate(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Select_mathf_truncate(async));
 
         AssertMql(
             """
@@ -1508,222 +1417,174 @@ OrderDetails.
 
     public override async Task Where_mathf_exp(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_exp(async))).Message);
+        await base.Where_mathf_exp(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$exp" : "$Discount" }, 1.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_log10(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_log10(async))).Message);
+        await base.Where_mathf_log10(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } }, { "$expr" : { "$lt" : [{ "$log10" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_log(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_log(async))).Message);
+        await base.Where_mathf_log(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } }, { "$expr" : { "$lt" : [{ "$ln" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_log_new_base(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_log_new_base(async))).Message);
+        await base.Where_mathf_log_new_base(async);
 
+#if EF9
         AssertMql(
             """
-            OrderDetails.
+            OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } }, { "$expr" : { "$lt" : [{ "$log" : ["$Discount", 7.0] }, -1.0] } }] } }
             """);
+#else
+        AssertMql(
+            """
+            OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077, "Discount" : { "$gt" : 0.0 } }, { "$expr" : { "$lt" : [{ "$log" : ["$Discount", 7.0] }, 0.0] } }] } }
+            """);
+#endif
     }
 
     public override async Task Where_mathf_sqrt(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_sqrt(async))).Message);
+        await base.Where_mathf_sqrt(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$sqrt" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_acos(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_acos(async))).Message);
+        await base.Where_mathf_acos(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$acos" : "$Discount" }, 1.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_asin(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_asin(async))).Message);
+        await base.Where_mathf_asin(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$asin" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_atan(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_atan(async))).Message);
+        await base.Where_mathf_atan(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$atan" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_atan2(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_atan2(async))).Message);
+        await base.Where_mathf_atan2(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$atan2" : ["$Discount", 1.0] }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_cos(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_cos(async))).Message);
+        await base.Where_mathf_cos(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$cos" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_sin(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_sin(async))).Message);
+        await base.Where_mathf_sin(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$sin" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_tan(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_tan(async))).Message);
+        await base.Where_mathf_tan(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$tan" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_sign(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_sign(async))).Message);
+        await base.Where_mathf_sign(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$switch" : { "branches" : [{ "case" : { "$gt" : ["$Discount", 0] }, "then" : 1 }, { "case" : { "$lt" : ["$Discount", 0] }, "then" : -1 }], "default" : 0 } }, 0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_degrees(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_degrees(async))).Message);
+        await base.Where_mathf_degrees(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$radiansToDegrees" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_mathf_radians(bool async)
     {
-        // Fails: MathF mapping issue EF-237
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Where_mathf_radians(async))).Message);
+        await base.Where_mathf_radians(async);
 
         AssertMql(
-            """
-            OrderDetails.
-            """);
+"""
+OrderDetails.{ "$match" : { "$and" : [{ "_id.OrderID" : 11077 }, { "$expr" : { "$gt" : [{ "$degreesToRadians" : "$Discount" }, 0.0] } }] } }
+""");
     }
 
     public override async Task Where_guid_newguid(bool async)
     {
+#if EF8 || EF9
+        // EF-255: Guid.NewGuid has no per-row server-side equivalent; the provider throws instead of baking one value.
+        await Assert.ThrowsAsync<InvalidOperationException>(() => base.Where_guid_newguid(async));
+#else
         await base.Where_guid_newguid(async);
 
         AssertMql(
             """
             Customers.
             """);
+#endif
     }
 
     public override async Task Where_string_to_upper(bool async)
@@ -1732,7 +1593,7 @@ OrderDetails.
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^ALFKI$", "options" : "is" } } } }
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^ALFKI\\z", "options" : "is" } } } }
             """);
     }
 
@@ -1742,7 +1603,7 @@ OrderDetails.
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^alfki$", "options" : "is" } } } }
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^alfki\\z", "options" : "is" } } } }
             """);
     }
 
@@ -1751,17 +1612,16 @@ OrderDetails.
         await base.Where_functions_nested(async);
 
         AssertMql(
-            """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$pow" : [{ "$strLenCP" : "$_id" }, 2.0] }, 25.0] } } }
-            """);
+"""
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$pow" : [{ "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$_id", null] }, null] }, "then" : null, "else" : { "$strLenCP" : "$_id" } } }, 2.0] }, 25.0] } } }
+""");
     }
 
     public override async Task Convert_ToBoolean(bool async)
     {
         // Fails: Translate Convert methods issue EF-235
-        Assert.Contains(
-            "Expression not supported: ToBoolean(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Convert_ToBoolean(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Convert_ToBoolean(async));
 
         AssertMql(
             """
@@ -1772,9 +1632,8 @@ OrderDetails.
     public override async Task Convert_ToByte(bool async)
     {
         // Fails: Translate Convert methods issue EF-235
-        Assert.Contains(
-            "Expression not supported: ToByte(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Convert_ToByte(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Convert_ToByte(async));
 
         AssertMql(
             """
@@ -1785,9 +1644,8 @@ OrderDetails.
     public override async Task Convert_ToDecimal(bool async)
     {
         // Fails: Translate Convert methods issue EF-235
-        Assert.Contains(
-            "Expression not supported: ToDecimal(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Convert_ToDecimal(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Convert_ToDecimal(async));
 
         AssertMql(
             """
@@ -1798,9 +1656,8 @@ OrderDetails.
     public override async Task Convert_ToDouble(bool async)
     {
         // Fails: Translate Convert methods issue EF-235
-        Assert.Contains(
-            "Expression not supported: ToDouble(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Convert_ToDouble(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Convert_ToDouble(async));
 
         AssertMql(
             """
@@ -1811,9 +1668,8 @@ OrderDetails.
     public override async Task Convert_ToInt16(bool async)
     {
         // Fails: Translate Convert methods issue EF-235
-        Assert.Contains(
-            "Expression not supported: ToInt16(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Convert_ToInt16(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Convert_ToInt16(async));
 
         AssertMql(
             """
@@ -1824,9 +1680,8 @@ OrderDetails.
     public override async Task Convert_ToInt32(bool async)
     {
         // Fails: Translate Convert methods issue EF-235
-        Assert.Contains(
-            "Expression not supported: ToInt32(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Convert_ToInt32(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Convert_ToInt32(async));
 
         AssertMql(
             """
@@ -1837,9 +1692,8 @@ OrderDetails.
     public override async Task Convert_ToInt64(bool async)
     {
         // Fails: Translate Convert methods issue EF-235
-        Assert.Contains(
-            "Expression not supported: ToInt64(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Convert_ToInt64(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Convert_ToInt64(async));
 
         AssertMql(
             """
@@ -1850,9 +1704,8 @@ OrderDetails.
     public override async Task Convert_ToString(bool async)
     {
         // Fails: Translate Convert methods issue EF-235
-        Assert.Contains(
-            "Expression not supported: ToString(",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Convert_ToString(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Convert_ToString(async));
 
         AssertMql(
             """
@@ -1867,12 +1720,12 @@ OrderDetails.
 #if EF9
         AssertMql(
             """
-Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", "options" : "s" } } } }
-""");
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$Region", { "$literal" : "" }] }, 0] } } }
+            """);
 #else
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "$", "options" : "s" } } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$ContactName", { "$literal" : "" }] }, 0] } } }
             """);
 #endif
     }
@@ -1883,7 +1736,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "^.{1}a", "options" : "s" } } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$ContactName", { "$literal" : "a" }] }, 1] } } }
             """);
     }
 
@@ -1892,9 +1745,9 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
         await base.Indexof_with_one_parameter_arg(async);
 
         AssertMql(
-            """
-            Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "^.{1}a", "options" : "s" } } } }
-            """);
+"""
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$ifNull" : [{ "$literal" : "a" }, null] }, null] }, "then" : null, "else" : { "$indexOfCP" : ["$ContactName", { "$literal" : "a" }] } } }, 1] } } }
+""");
     }
 
     public override async Task Indexof_with_constant_starting_position(bool async)
@@ -1903,7 +1756,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "^.{2}(?!.{0,1}a).{2}a", "options" : "s" } } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$ContactName", { "$literal" : "a" }, 2] }, 4] } } }
             """);
     }
 
@@ -1913,7 +1766,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "^.{2}(?!.{0,1}a).{2}a", "options" : "s" } } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["$ContactName", { "$literal" : "a" }, 2] }, 4] } } }
             """);
     }
 
@@ -1923,7 +1776,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$replaceAll" : { "input" : "$ContactName", "find" : "ia", "replacement" : "" } }, "Mar Anders"] } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$replaceAll" : { "input" : "$ContactName", "find" : { "$literal" : "ia" }, "replacement" : { "$ifNull" : [{ "$literal" : "" }, ""] } } }, { "$literal" : "Mar Anders" }] } } }
             """);
     }
 
@@ -1933,7 +1786,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$replaceAll" : { "input" : "$ContactName", "find" : "$ContactName", "replacement" : "$_id" } }, "$_id"] } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$replaceAll" : { "input" : "$ContactName", "find" : "$ContactName", "replacement" : { "$ifNull" : ["$_id", ""] } } }, "$_id"] } } }
             """);
     }
 
@@ -1942,9 +1795,9 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
         await base.Substring_with_one_arg_with_zero_startindex(async);
 
         AssertMql(
-            """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$substrCP" : ["$_id", 0, { "$strLenCP" : "$_id" }] }, "ALFKI"] } } }, { "$project" : { "_v" : "$ContactName", "_id" : 0 } }
-            """);
+"""
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$_id", null] }, null] }, "then" : null, "else" : { "$substrCP" : ["$_id", 0, { "$subtract" : [{ "$strLenCP" : { "$ifNull" : ["$_id", ""] } }, 0] }] } } }, { "$literal" : "ALFKI" }] } } }, { "$project" : { "ContactName" : "$ContactName", "_id" : 0 } }
+""");
     }
 
     public override async Task Substring_with_one_arg_with_constant(bool async)
@@ -1952,9 +1805,9 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
         await base.Substring_with_one_arg_with_constant(async);
 
         AssertMql(
-            """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$substrCP" : ["$_id", 1, { "$subtract" : [{ "$strLenCP" : "$_id" }, 1] }] }, "LFKI"] } } }, { "$project" : { "_v" : "$ContactName", "_id" : 0 } }
-            """);
+"""
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$_id", null] }, null] }, "then" : null, "else" : { "$substrCP" : ["$_id", 1, { "$subtract" : [{ "$strLenCP" : { "$ifNull" : ["$_id", ""] } }, 1] }] } } }, { "$literal" : "LFKI" }] } } }, { "$project" : { "ContactName" : "$ContactName", "_id" : 0 } }
+""");
     }
 
     public override async Task Substring_with_one_arg_with_closure(bool async)
@@ -1962,9 +1815,9 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
         await base.Substring_with_one_arg_with_closure(async);
 
         AssertMql(
-            """
-            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$substrCP" : ["$_id", 2, { "$subtract" : [{ "$strLenCP" : "$_id" }, 2] }] }, "FKI"] } } }, { "$project" : { "_v" : "$ContactName", "_id" : 0 } }
-            """);
+"""
+Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$_id", null] }, null] }, "then" : null, "else" : { "$substrCP" : ["$_id", 2, { "$subtract" : [{ "$strLenCP" : { "$ifNull" : ["$_id", ""] } }, 2] }] } } }, { "$literal" : "FKI" }] } } }, { "$project" : { "ContactName" : "$ContactName", "_id" : 0 } }
+""");
     }
 
     public override async Task Substring_with_two_args_with_zero_startindex(bool async)
@@ -1972,9 +1825,9 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
         await base.Substring_with_two_args_with_zero_startindex(async);
 
         AssertMql(
-            """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$substrCP" : ["$ContactName", 0, 3] }, "_id" : 0 } }
-            """);
+"""
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$ContactName", null] }, null] }, "then" : null, "else" : { "$substrCP" : ["$ContactName", 0, 3] } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Substring_with_two_args_with_zero_length(bool async)
@@ -1982,9 +1835,9 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
         await base.Substring_with_two_args_with_zero_length(async);
 
         AssertMql(
-            """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$substrCP" : ["$ContactName", 2, 0] }, "_id" : 0 } }
-            """);
+"""
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$ContactName", null] }, null] }, "then" : null, "else" : { "$substrCP" : ["$ContactName", 2, 0] } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Substring_with_two_args_with_constant(bool async)
@@ -1992,9 +1845,9 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
         await base.Substring_with_two_args_with_constant(async);
 
         AssertMql(
-            """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$substrCP" : ["$ContactName", 1, 3] }, "_id" : 0 } }
-            """);
+"""
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$ContactName", null] }, null] }, "then" : null, "else" : { "$substrCP" : ["$ContactName", 1, 3] } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Substring_with_two_args_with_closure(bool async)
@@ -2002,9 +1855,9 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
         await base.Substring_with_two_args_with_closure(async);
 
         AssertMql(
-            """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$substrCP" : ["$ContactName", 2, 3] }, "_id" : 0 } }
-            """);
+"""
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$ContactName", null] }, null] }, "then" : null, "else" : { "$substrCP" : ["$ContactName", 2, 3] } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Substring_with_two_args_with_Index_of(bool async)
@@ -2012,9 +1865,9 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
         await base.Substring_with_two_args_with_Index_of(async);
 
         AssertMql(
-            """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$substrCP" : ["$ContactName", { "$indexOfCP" : ["$ContactName", "a"] }, 3] }, "_id" : 0 } }
-            """);
+"""
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$ContactName", null] }, null] }, "then" : null, "else" : { "$substrCP" : ["$ContactName", { "$indexOfCP" : ["$ContactName", { "$literal" : "a" }] }, 3] } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task IsNullOrEmpty_in_predicate(bool async)
@@ -2023,7 +1876,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "Region" : { "$in" : [null, ""] } } }
+            Customers.{ "$match" : { "$or" : [{ "Region" : null }, { "Region" : "" }] } }
             """);
     }
 
@@ -2033,7 +1886,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_id" : "$_id", "Value" : { "$in" : ["$Region", [null, ""]] } } }
+            Customers.{ "$project" : { "Id" : "$_id", "Value" : { "$or" : [{ "$eq" : [{ "$ifNull" : ["$Region", null] }, null] }, { "$eq" : ["$Region", { "$literal" : "" }] }] }, "_id" : 0 } }
             """);
     }
 
@@ -2043,7 +1896,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "Region" : { "$nin" : [null, ""] } } }
+            Customers.{ "$match" : { "$and" : [{ "Region" : { "$ne" : null } }, { "Region" : { "$ne" : "" } }] } }
             """);
     }
 
@@ -2053,7 +1906,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_id" : "$_id", "Value" : { "$not" : { "$in" : ["$Region", [null, ""]] } } } }
+            Customers.{ "$project" : { "Id" : "$_id", "Value" : { "$and" : [{ "$ne" : [{ "$ifNull" : ["$Region", null] }, null] }, { "$ne" : ["$Region", { "$literal" : "" }] }] }, "_id" : 0 } }
             """);
     }
 
@@ -2063,7 +1916,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "Region" : { "$in" : [null, { "$regularExpression" : { "pattern" : "^\\s*$", "options" : "" } }] } } }
+            Customers.{ "$match" : { "$or" : [{ "Region" : null }, { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$Region", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, { "$literal" : "" }] } }] } }
             """);
     }
 
@@ -2073,35 +1926,27 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$in" : [null, { "$regularExpression" : { "pattern" : "^\\s*$", "options" : "" } }] } } }
+            Customers.{ "$match" : { "$or" : [{ "_id" : null }, { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$_id", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, { "$literal" : "" }] } }] } }
             """);
     }
 
     public override async Task TrimStart_without_arguments_in_predicate(bool async)
     {
-        // Fails: Translate string.Trim methods issue EF-241
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.TrimStart_without_arguments_in_predicate(async)))
-            .Message);
+        await base.TrimStart_without_arguments_in_predicate(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$ContactTitle", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, { "$literal" : "Owner" }] } } }
             """);
     }
 
     public override async Task TrimStart_with_char_argument_in_predicate(bool async)
     {
-        // Fails: Translate string.Trim methods issue EF-241
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.TrimStart_without_arguments_in_predicate(async)))
-            .Message);
+        await base.TrimStart_with_char_argument_in_predicate(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$ContactTitle", "chars" : { "$literal" : "O" } } }, { "$literal" : "wner" }] } } }
             """);
     }
 
@@ -2111,35 +1956,27 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactTitle" : { "$regularExpression" : { "pattern" : "^[Ow]*(?![Ow])ner$", "options" : "s" } } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$ltrim" : { "input" : "$ContactTitle", "chars" : { "$literal" : "Ow" } } }, { "$literal" : "ner" }] } } }
             """);
     }
 
     public override async Task TrimEnd_without_arguments_in_predicate(bool async)
     {
-        // Fails: Translate string.Trim methods issue EF-241
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.TrimEnd_without_arguments_in_predicate(async)))
-            .Message);
+        await base.TrimEnd_without_arguments_in_predicate(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$ContactTitle", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, { "$literal" : "Owner" }] } } }
             """);
     }
 
     public override async Task TrimEnd_with_char_argument_in_predicate(bool async)
     {
-        // Fails: Translate string.Trim methods issue EF-241
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.TrimEnd_with_char_argument_in_predicate(async)))
-            .Message);
+        await base.TrimEnd_with_char_argument_in_predicate(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$ContactTitle", "chars" : { "$literal" : "r" } } }, { "$literal" : "Owne" }] } } }
             """);
     }
 
@@ -2149,7 +1986,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactTitle" : { "$regularExpression" : { "pattern" : "^Own(?<![er])[er]*$", "options" : "s" } } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$rtrim" : { "input" : "$ContactTitle", "chars" : { "$literal" : "er" } } }, { "$literal" : "Own" }] } } }
             """);
     }
 
@@ -2159,35 +1996,27 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-            Customers.{ "$match" : { "ContactTitle" : { "$regularExpression" : { "pattern" : "^(?:\\s*(?!\\s)|(?=\\s*$))Owner(?<!\\s)\\s*$", "options" : "s" } } } }
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$ContactTitle", "chars" : "\t\n\u000b\f\r \u0085             \u2028\u2029  　" } }, { "$literal" : "Owner" }] } } }
             """);
     }
 
     public override async Task Trim_with_char_argument_in_predicate(bool async)
     {
-        // Fails: Translate string.Trim methods issue EF-241
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Trim_with_char_argument_in_predicate(async)))
-            .Message);
+        await base.Trim_with_char_argument_in_predicate(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$ContactTitle", "chars" : { "$literal" : "O" } } }, { "$literal" : "wner" }] } } }
             """);
     }
 
     public override async Task Trim_with_char_array_argument_in_predicate(bool async)
     {
-        // Fails: Translate string.Trim methods issue EF-241
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Trim_with_char_argument_in_predicate(async)))
-            .Message);
+        await base.Trim_with_char_array_argument_in_predicate(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$trim" : { "input" : "$ContactTitle", "chars" : { "$literal" : "Or" } } }, { "$literal" : "wne" }] } } }
             """);
     }
 
@@ -2195,10 +2024,17 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
     {
         await base.Order_by_length_twice(async);
 
+#if EF8 || EF9
+        AssertMql(
+"""
+Customers.{ "$set" : { "__sort0" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$_id", null] }, null] }, "then" : null, "else" : { "$strLenCP" : "$_id" } } }, "__sort1" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" : ["$_id", null] }, null] }, "then" : null, "else" : { "$strLenCP" : "$_id" } } } } }, { "$sort" : { "__sort0" : 1, "__sort1" : 1, "_id" : 1 } }, { "$unset" : ["__sort0", "__sort1"] }
+""");
+#else
         AssertMql(
             """
             Customers.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$strLenCP" : "$_id" }, "_key2" : { "$strLenCP" : "$_id" } } }, { "$sort" : { "_key1" : 1, "_key2" : 1, "_document._id" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }
             """);
+#endif
     }
 
     public override async Task Order_by_length_twice_followed_by_projection_of_naked_collection_navigation(bool async)
@@ -2249,9 +2085,8 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
     public override async Task Where_DateOnly_FromDateTime(bool async)
     {
         // Fails: DateOnly support issue EF-242
-        Assert.Contains(
-            "Expression not supported: FromDateTime",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() => base.Where_DateOnly_FromDateTime(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Where_DateOnly_FromDateTime(async));
 
         AssertMql(
             """
@@ -2264,9 +2099,9 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
         await base.Projecting_Math_Truncate_and_ordering_by_it_twice(async);
 
         AssertMql(
-            """
-            Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$trunc" : "$_id" } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$trunc" : "$_id" } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$project" : { "A" : { "$trunc" : "$_id" }, "_id" : 0 } }
-            """);
+"""
+Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$set" : { "__sort0" : { "$trunc" : "$_id" } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$project" : { "A" : { "$trunc" : "$_id" }, "_id" : 0 } }
+""");
     }
 
     public override async Task Projecting_Math_Truncate_and_ordering_by_it_twice2(bool async)
@@ -2274,9 +2109,9 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
         await base.Projecting_Math_Truncate_and_ordering_by_it_twice2(async);
 
         AssertMql(
-            """
-            Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$trunc" : "$_id" } } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$trunc" : "$_id" } } }, { "$sort" : { "_key1" : -1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$project" : { "A" : { "$trunc" : "$_id" }, "_id" : 0 } }
-            """);
+"""
+Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$set" : { "__sort0" : { "$trunc" : "$_id" } } }, { "$sort" : { "__sort0" : -1 } }, { "$unset" : ["__sort0"] }, { "$project" : { "A" : { "$trunc" : "$_id" }, "_id" : 0 } }
+""");
     }
 
     public override async Task Projecting_Math_Truncate_and_ordering_by_it_twice3(bool async)
@@ -2284,9 +2119,9 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
         await base.Projecting_Math_Truncate_and_ordering_by_it_twice3(async);
 
         AssertMql(
-            """
-            Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : { "$trunc" : "$_id" }, "_key2" : { "$trunc" : "$_id" } } }, { "$sort" : { "_key1" : -1, "_key2" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$project" : { "A" : { "$trunc" : "$_id" }, "_id" : 0 } }
-            """);
+"""
+Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$set" : { "__sort0" : { "$trunc" : "$_id" }, "__sort1" : { "$trunc" : "$_id" } } }, { "$sort" : { "__sort0" : -1, "__sort1" : 1 } }, { "$unset" : ["__sort0", "__sort1"] }, { "$project" : { "A" : { "$trunc" : "$_id" }, "_id" : 0 } }
+""");
     }
 
     public override async Task Regex_IsMatch_MethodCall(bool async)
@@ -2301,25 +2136,19 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
     public override async Task Regex_IsMatch_MethodCall_constant_input(bool async)
     {
-        // Fails: Regex with non-constant pattern issue EF-247
-        Assert.Contains(
-            "Expression not supported: IsMatch",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Regex_IsMatch_MethodCall_constant_input(async))).Message);
+        await base.Regex_IsMatch_MethodCall_constant_input(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "$expr" : { "$regexMatch" : { "input" : { "$literal" : "ALFKI" }, "regex" : "$_id", "options" : "" } } } }
             """);
     }
 
     public override async Task Datetime_subtraction_TotalDays(bool async)
     {
         // Fails: DateTime subtraction issue EF-246
-        Assert.Contains(
-            "Expression not supported: (o.OrderDate.Value",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Datetime_subtraction_TotalDays(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Datetime_subtraction_TotalDays(async));
 
         AssertMql(
             """
@@ -2334,7 +2163,7 @@ Customers.{ "$match" : { "Region" : { "$regularExpression" : { "pattern" : "$", 
 
         AssertMql(
             """
-Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : [{ "$toString" : "$_id" }, "123"] }, -1] } } }
+Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : [{ "$toString" : "$_id" }, { "$literal" : "123" }] }, -1] } } }
 """);
     }
 
@@ -2343,8 +2172,8 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : [{ "$toString" : "$_
         await base.Select_IndexOf_ToString(async);
 
         AssertMql(
-            """
-Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["123", { "$toString" : "$_id" }] }, -1] } } }
+"""
+Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ "$ifNull" : [{ "$toString" : "$_id" }, null] }, null] }, "then" : null, "else" : { "$indexOfCP" : [{ "$literal" : "123" }, { "$toString" : "$_id" }] } } }, -1] } } }
 """);
     }
 
@@ -2354,7 +2183,7 @@ Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$indexOfCP" : ["123", { "$toString
 
         AssertMql(
             """
-Customers.{ "$project" : { "_id" : "$_id", "Value" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName", "$ContactName"] }, 0] } } }
+Customers.{ "$project" : { "Id" : "$_id", "Value" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName", "$ContactName"] }, 0] }, "_id" : 0 } }
 """);
     }
 
@@ -2364,7 +2193,7 @@ Customers.{ "$project" : { "_id" : "$_id", "Value" : { "$gte" : [{ "$indexOfCP" 
 
         AssertMql(
             """
-Customers.{ "$match" : { "$nor" : [{ "$expr" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName", "$ContactName"] }, 0] } }] } }
+Customers.{ "$match" : { "$expr" : { "$not" : [{ "$gte" : [{ "$indexOfCP" : ["$CompanyName", "$ContactName"] }, 0] }] } } }
 """);
     }
 
@@ -2374,35 +2203,27 @@ Customers.{ "$match" : { "$nor" : [{ "$expr" : { "$gte" : [{ "$indexOfCP" : ["$C
 
         AssertMql(
             """
-Customers.{ "$project" : { "_id" : "$_id", "Value" : { "$not" : { "$gte" : [{ "$indexOfCP" : ["$CompanyName", "$ContactName"] }, 0] } } } }
+Customers.{ "$project" : { "Id" : "$_id", "Value" : { "$not" : [{ "$gte" : [{ "$indexOfCP" : ["$CompanyName", "$ContactName"] }, 0] }] }, "_id" : 0 } }
 """);
     }
 
     public override async Task String_Contains_with_StringComparison_Ordinal(bool async)
     {
-        // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_Contains_with_StringComparison_Ordinal(async))).Message);
+        await base.String_Contains_with_StringComparison_Ordinal(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "M", "options" : "s" } } } }
 """);
     }
 
     public override async Task String_Contains_with_StringComparison_OrdinalIgnoreCase(bool async)
     {
-        // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.String_Contains_with_StringComparison_OrdinalIgnoreCase(async))).Message);
+        await base.String_Contains_with_StringComparison_OrdinalIgnoreCase(async);
 
         AssertMql(
             """
-Customers.
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "M", "options" : "is" } } } }
 """);
     }
 
@@ -2413,16 +2234,12 @@ Customers.
         await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.Contains("m", StringComparison.CurrentCultureIgnoreCase)));
 
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.Contains("M", StringComparison.InvariantCulture))))).Message);
+        await AssertTranslationFailed(() =>
+            AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.Contains("M", StringComparison.InvariantCulture))));
 
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.Contains("M", StringComparison.InvariantCultureIgnoreCase))))).Message);
+        await AssertTranslationFailed(() =>
+            AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.Contains("M", StringComparison.InvariantCultureIgnoreCase))));
 
         AssertMql(
             """
@@ -2449,6 +2266,12 @@ Customers.
 
     protected override void ClearLog()
         => Fixture.TestMqlLoggerFactory.Clear();
+
+    // Accepts any translation-failure exception (NativeTranslationNotSupportedException under NativeOnly, or the
+    // EF/driver exceptions the driver-LINQ fallback throws), but not assertion failures, so wrong-data
+    // regressions still fail.
+    protected new static Task AssertTranslationFailed(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 }
 
 #endif

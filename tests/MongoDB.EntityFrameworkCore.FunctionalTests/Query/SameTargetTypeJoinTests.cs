@@ -18,13 +18,15 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-375: two joins onto the SAME target entity type must still flatten. The trigger used to count
-/// distinct inner entity types, so a same-typed pair collapsed to one entry, flattening never fired, and
-/// the driver's second <c>LeftJoin</c> re-nested the document a level deeper than the shaper expected.
+/// EF-375: two joins onto the SAME target entity type must still flatten. Flattening was triggered by counting
+/// distinct inner entity types, so a same-typed pair collapsed to one entry and the driver's second <c>LeftJoin</c>
+/// re-nested the document a level deeper than the shaper expected.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class SameTargetTypeJoinTests(TemporaryDatabaseFixture database)
@@ -66,9 +68,6 @@ public class SameTargetTypeJoinTests(TemporaryDatabaseFixture database)
         Assert.Equal("M2", results[0].Second.Id);
     }
 
-    // Cross-collection Include is not translated at all on EF8/EF9 (EF-X020), so this shape can only be
-    // exercised on EF10. The explicit-Join cases above cover the same defect on every version.
-#if !EF8 && !EF9
     [Fact]
     public void Self_referencing_entity_with_two_same_typed_navigations_includes_both()
     {
@@ -87,7 +86,30 @@ public class SameTargetTypeJoinTests(TemporaryDatabaseFixture database)
         Assert.NotNull(employee.Mentor);
         Assert.Equal("E3", employee.Mentor!.Id);
     }
-#endif
+
+    // A container of the entity and its self-referencing reference navigation: a join-scope passthrough whose Outer and
+    // Inner are the same CLR type, so it can't be told apart by type. E2/E3 have no manager (a null element), and each
+    // element is the tracked instance: E1's manager is the same object as the E2 row's entity.
+    [Fact]
+    public void Entity_and_its_self_referencing_manager_in_an_object_array_go_native()
+    {
+        var names = Seed();
+
+        var result = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = new StJoinDbContext(database, names, null, mode);
+            var rows = db.Employees.OrderBy(e => e.Id).Select(e => new object[] { e, e.Manager }).ToList();
+
+            Assert.Equal(3, rows.Count);
+            Assert.Same(rows[1][0], rows[0][1]);
+            Assert.Same(rows[0][1], ((StEmployee)rows[0][0]).Manager);
+            Assert.Same(db.Employees.Local.Single(e => e.Id == "E2"), rows[1][0]);
+
+            return rows.Select(r => (((StEmployee)r[0]).Id, ((StEmployee?)r[1])?.Id, ((StEmployee?)r[1])?.Name)).ToList();
+        });
+
+        Assert.Equal([("E1", "E2", "Employee two"), ("E2", null, null), ("E3", null, null)], result);
+    }
 
     [Fact]
     public void Control_chained_join_onto_different_target_types_still_flattens()
@@ -241,18 +263,24 @@ public class SameTargetTypeJoinTests(TemporaryDatabaseFixture database)
     {
         private readonly CollectionNames _names;
 
-        public StJoinDbContext(TemporaryDatabaseFixture database, CollectionNames names, Action<string>? logTo)
-            : base(Build(database, logTo))
+        public StJoinDbContext(
+            TemporaryDatabaseFixture database, CollectionNames names, Action<string>? logTo, MongoQueryMode? mode = null)
+            : base(Build(database, logTo, mode))
         {
             _names = names;
         }
 
-        private static DbContextOptions Build(TemporaryDatabaseFixture database, Action<string>? logTo)
+        private static DbContextOptions Build(TemporaryDatabaseFixture database, Action<string>? logTo, MongoQueryMode? mode)
         {
             var builder = new DbContextOptionsBuilder<StJoinDbContext>()
                 .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning));
+
+            if (mode is { } queryMode)
+            {
+                new MongoDbContextOptionsBuilder(builder).UseQueryMode(queryMode);
+            }
 
             if (logTo != null)
             {

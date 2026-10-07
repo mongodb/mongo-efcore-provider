@@ -163,6 +163,11 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
                 EntityFrameworkEventSource.Log.QueryExecuting();
 #endif
 
+                // Initialize the state manager before creating the cursor: on the one-pass streaming path the
+                // driver materializes the first batch during Execute, so a tracked query would otherwise NRE.
+                // Harmless for the DOM / driver-LINQ paths, which materialize later.
+                _queryContext.InitializeStateManager(_standAloneStateManager);
+
                 try
                 {
                     _enumerator = _queryContext.MongoClient.Execute<TSource>(_executableQuery, out logAction).GetEnumerator();
@@ -173,8 +178,6 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
                     logAction?.Invoke();
                     throw;
                 }
-
-                _queryContext.InitializeStateManager(_standAloneStateManager);
             }
 
             var hasNext = _enumerator.MoveNext();
@@ -187,7 +190,8 @@ internal sealed class QueryingEnumerable<TSource, TTarget> : IAsyncEnumerable<TT
                 // single null by the scalar path) must not be passed to the entity shaper, which would
                 // dereference a null BsonDocument. Yield default(TTarget); a projected identity shaper
                 // would produce the same null, so scalar/aggregate results are unaffected.
-                Current = _enumerator.Current is null ? default! : _shaper(_queryContext, _enumerator.Current);
+                var row = _enumerator.Current;
+                Current = row is null ? default! : _shaper(_queryContext, row);
 
                 if (!_gotResults)
                 {

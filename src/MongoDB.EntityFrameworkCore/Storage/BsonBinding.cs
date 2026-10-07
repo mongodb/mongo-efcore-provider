@@ -21,6 +21,8 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
+using MongoDB.Bson.Serialization.Options;
+using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.EntityFrameworkCore.Extensions;
 using MongoDB.EntityFrameworkCore.Serializers;
 
@@ -129,6 +131,24 @@ internal static class BsonBinding
             property.IsNullable ? mappedType.MakeNullable() : mappedType);
     }
 
+    /// <summary>
+    /// Create the expression which reads a bare scalar projection leaf like <see cref="CreateGetValueExpression(Expression, string?, IProperty, Type)"/>, but
+    /// via <see cref="GetScalarProjectionValueAtElement{T}"/>: a missing element of a required property reads
+    /// <see langword="default"/>.
+    /// </summary>
+    internal static Expression CreateGetScalarProjectionValueExpression(
+        Expression bsonDocExpression,
+        string name,
+        IProperty property,
+        Type mappedType)
+        => Expression.Call(
+            null,
+            GetScalarProjectionValueAtElementMethodInfo.MakeGenericMethod(
+                property.IsNullable ? mappedType.MakeNullable() : mappedType),
+            bsonDocExpression,
+            Expression.Constant(name),
+            Expression.Constant(property));
+
     internal static MethodCallExpression CreateGetBsonArray(Expression bsonDocExpression, string name)
         => Expression.Call(null, GetBsonArrayMethodInfo, bsonDocExpression, Expression.Constant(name));
 
@@ -138,15 +158,45 @@ internal static class BsonBinding
 
     private static BsonArray? GetBsonArray(BsonDocument document, string name)
     {
-        if (!document.TryGetValue(name, out var bsonValue)) return null;
+        if (!TryGetValueAtPath(document, name, out var bsonValue)) return null;
 
         return bsonValue switch
         {
             {IsBsonArray: true} => bsonValue.AsBsonArray,
             {IsBsonNull: true} => null,
             _ => throw new InvalidOperationException(
-                $"Document element '{name}' is {bsonValue.BsonType} when {nameof(BsonArray)} is required.")
+                $"Document element '{name}' is {bsonValue?.BsonType} when {nameof(BsonArray)} is required.")
         };
+    }
+
+    /// <summary>
+    /// Resolves <paramref name="name"/> against <paramref name="document"/>, walking a dotted name segment by
+    /// segment rather than as one literal key.
+    /// </summary>
+    /// <remarks>
+    /// A dotted name here is a root-relative document path, and MongoDB renders a dotted <c>$project</c> key as
+    /// nested documents, so the two reads coincide. An absent segment, or a non-document intermediate, yields
+    /// <see langword="false"/> rather than throwing.
+    /// </remarks>
+    private static bool TryGetValueAtPath(BsonDocument document, string name, out BsonValue? value)
+    {
+        if (!name.Contains('.'))
+        {
+            return document.TryGetValue(name, out value);
+        }
+
+        BsonValue current = document;
+        foreach (var segment in name.Split('.'))
+        {
+            if (current is not BsonDocument segmentDocument || !segmentDocument.TryGetValue(segment, out current!))
+            {
+                value = null;
+                return false;
+            }
+        }
+
+        value = current;
+        return true;
     }
 
     private static MethodCallExpression CreateGetBsonDocument(
@@ -190,6 +240,125 @@ internal static class BsonBinding
     internal static MethodCallExpression CreateGetElementValue(Expression bsonDocExpression, string name, Type type) =>
         Expression.Call(null, GetElementValueMethodInfo.MakeGenericMethod(type), bsonDocExpression, Expression.Constant(name));
 
+    /// <summary>
+    /// A <c>float</c> (or <c>float?</c>) serializer that narrows a BSON double to a <c>float</c> with rounding instead
+    /// of throwing <see cref="TruncationException"/>, but still throws on overflow.
+    /// </summary>
+    /// <remarks>
+    /// For an aliased server-computed value (an <c>$avg</c> accumulator, arithmetic), which the server returns as a
+    /// double that is generally not exactly representable as a <c>float</c>. The BCL narrows the same way: LINQ to
+    /// objects accumulates a <c>float</c> <c>Average</c> in <c>double</c> and casts the result to <c>float</c>.
+    /// </remarks>
+    internal static IBsonSerializer CreateNarrowingFloatSerializer(Type type)
+    {
+        var single = new SingleSerializer(BsonType.Double, new RepresentationConverter(allowOverflow: false, allowTruncation: true));
+        return type == typeof(float) ? single : new NullableSerializer<float>(single);
+    }
+
+    /// <summary>
+    /// As <see cref="CreateGetElementValue(Expression, string, Type)"/>, but when <paramref name="dateTimeKindSource"/>
+    /// is non-null a <see cref="DateTime"/> reads back with that property's configured <see cref="DateTimeKind"/>.
+    /// </summary>
+    /// <remarks>
+    /// For an element holding the unchanged stored value of <paramref name="dateTimeKindSource"/> whose alias has no
+    /// backing property of its own (a <c>$group</c> key or <c>$min</c>/<c>$max</c> output, a cast leaf). Only the
+    /// kind is taken from the property; the serializer is still the one for <paramref name="type"/>, so nullability
+    /// follows <paramref name="type"/> rather than the property. The serializer is built once here, at shaper
+    /// compile time, not per row.
+    /// </remarks>
+    internal static MethodCallExpression CreateGetElementValue(
+        Expression bsonDocExpression, string name, Type type, IReadOnlyProperty? dateTimeKindSource) =>
+        dateTimeKindSource == null
+            ? CreateGetElementValue(bsonDocExpression, name, type)
+            : CreateGetElementValue(
+                bsonDocExpression, name, type, BsonSerializerFactory.CreateTypeSerializer(type, dateTimeKindSource));
+
+    /// <summary>
+    /// As <see cref="CreateGetElementValue(Expression, string, Type)"/>, reading the element through
+    /// <paramref name="serializer"/> (built once, at shaper compile time) instead of the generic serializer for
+    /// <paramref name="type"/>.
+    /// </summary>
+    internal static MethodCallExpression CreateGetElementValue(
+        Expression bsonDocExpression, string name, Type type, IBsonSerializer serializer)
+        => Expression.Call(null, GetKindAwareElementValueMethodInfo.MakeGenericMethod(type), bsonDocExpression,
+            Expression.Constant(name), Expression.Constant(serializer, typeof(IBsonSerializer)));
+
+    /// <summary>
+    /// Create the expression which reads an element nested under one or more parent documents, walking
+    /// <paramref name="path"/> segment by segment.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="CreateGetElementValue(Expression, string, Type)"/> because <see cref="GetElementValue{T}"/> treats its name
+    /// as a literal key, and existing callers may pass aliases containing dots.
+    /// </remarks>
+    internal static MethodCallExpression CreateGetElementValueAtPath(Expression bsonDocExpression, string[] path, Type type) =>
+        Expression.Call(null, GetElementValueAtPathMethodInfo.MakeGenericMethod(type), bsonDocExpression,
+            Expression.Constant(path));
+
+    /// <summary>
+    /// As <see cref="CreateGetElementValueAtPath(Expression, string[], Type)"/>, honouring
+    /// <paramref name="dateTimeKindSource"/>'s configured <see cref="DateTimeKind"/> as
+    /// <see cref="CreateGetElementValue(Expression, string, Type, IReadOnlyProperty?)"/> does.
+    /// </summary>
+    internal static MethodCallExpression CreateGetElementValueAtPath(
+        Expression bsonDocExpression, string[] path, Type type, IReadOnlyProperty? dateTimeKindSource) =>
+        dateTimeKindSource == null
+            ? CreateGetElementValueAtPath(bsonDocExpression, path, type)
+            : Expression.Call(null, GetKindAwareElementValueAtPathMethodInfo.MakeGenericMethod(type), bsonDocExpression,
+                Expression.Constant(path),
+                Expression.Constant(BsonSerializerFactory.CreateTypeSerializer(type, dateTimeKindSource), typeof(IBsonSerializer)));
+
+    /// <summary>
+    /// Create the expression which reads a value nested under one or more parent documents, walking
+    /// <paramref name="path"/> and reading the last segment through <paramref name="property"/>'s serializer and
+    /// nullability.
+    /// </summary>
+    /// <remarks>
+    /// Property-aware sibling of <see cref="CreateGetElementValueAtPath(Expression, string[], Type)"/> (which can't honor value converters or
+    /// non-default representations). Used when a leaf's alias differs from its document path and the shaper
+    /// reads whole, un-projected documents.
+    /// </remarks>
+    internal static MethodCallExpression CreateGetPropertyValueAtPath(
+        Expression bsonDocExpression, string[] path, IProperty property, Type mappedType)
+        => Expression.Call(
+            null,
+            GetPropertyValueAtPathMethodInfo.MakeGenericMethod(
+                property.IsNullable ? mappedType.MakeNullable() : mappedType),
+            bsonDocExpression,
+            Expression.Constant(path),
+            Expression.Constant(property));
+
+    private static readonly MethodInfo GetPropertyValueAtPathMethodInfo
+        = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Single(mi => mi.Name == nameof(GetPropertyValueAtPath));
+
+    internal static T? GetPropertyValueAtPath<T>(BsonDocument document, string[] path, IReadOnlyProperty property)
+    {
+        var current = document;
+        for (var i = 0; i < path.Length - 1; i++)
+        {
+            if (!current.TryGetValue(path[i], out var segmentValue) || segmentValue is not BsonDocument segmentDocument)
+            {
+                // An absent intermediate segment is an unmatched left-outer join row (no "_lookup_<Nav>"). Dispatch
+                // on whether T can hold absence, as GetElementValue{T} does, not on property.IsNullable — otherwise
+                // the DriverLinq/late-fallback leg throws where Native yields null. Pinned by NativeJoinTests
+                // .LeftJoin_unmatched_row_reads_a_dotted_scalar_leaf_through_the_whole_document_path.
+                if (typeof(T).IsNullableType())
+                {
+                    return default;
+                }
+
+                throw new InvalidOperationException(
+                    $"Document element '{string.Join(".", path)}' is missing for required non-nullable property '{
+                        property.Name}'.");
+            }
+
+            current = segmentDocument;
+        }
+
+        return GetPropertyValueAtElement<T>(current, path[^1], property);
+    }
+
     private static readonly MethodInfo GetPropertyValueMethodInfo
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetPropertyValue));
@@ -198,9 +367,25 @@ internal static class BsonBinding
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetPropertyValueAtElement));
 
+    private static readonly MethodInfo GetScalarProjectionValueAtElementMethodInfo
+        = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Single(mi => mi.Name == nameof(GetScalarProjectionValueAtElement));
+
     private static readonly MethodInfo GetElementValueMethodInfo
         = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
             .Single(mi => mi.Name == nameof(GetElementValue));
+
+    private static readonly MethodInfo GetElementValueAtPathMethodInfo
+        = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Single(mi => mi.Name == nameof(GetElementValueAtPath));
+
+    private static readonly MethodInfo GetKindAwareElementValueMethodInfo
+        = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Single(mi => mi.Name == nameof(GetKindAwareElementValue));
+
+    private static readonly MethodInfo GetKindAwareElementValueAtPathMethodInfo
+        = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Single(mi => mi.Name == nameof(GetKindAwareElementValueAtPath));
 
     internal static T? GetPropertyValue<T>(BsonDocument? document, IReadOnlyProperty property)
     {
@@ -216,17 +401,75 @@ internal static class BsonBinding
         var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
         if (TryReadElementValue(document, serializationInfo, out T? value))
         {
-            if (value == null && !property.IsNullable)
-            {
-                throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name}'.");
-            }
-
+            ThrowIfNullForRequired(value, property);
             return value;
         }
 
         if (property.IsNullable) return default;
 
-        throw new InvalidOperationException($"Document element is missing for required non-nullable property '{property.Name}'.");
+        throw new InvalidOperationException(RequiredPropertyMissingMessage(property));
+    }
+
+    /// <summary>
+    /// The message thrown when a required non-nullable property's element is missing. Shared with the streaming
+    /// materializer (<c>MongoStreamingEntityMaterializerRewriter</c>), which mirrors <see cref="GetPropertyValue{T}"/>.
+    /// </summary>
+    internal static string RequiredPropertyMissingMessage(IReadOnlyProperty property)
+        => $"Document element is missing for required non-nullable property '{property.Name}'.";
+
+    /// <summary>
+    /// The message thrown when a required non-nullable property's element is BSON null. Shared with the streaming
+    /// materializer (<c>MongoStreamingEntityMaterializerRewriter</c>), which mirrors <see cref="GetPropertyValue{T}"/>.
+    /// </summary>
+    internal static string RequiredPropertyNullMessage(IReadOnlyProperty property)
+        => $"Document element is null for required non-nullable property '{property.Name}'.";
+
+    // A null read of a required non-nullable property. Never fires for a non-nullable value-typed T.
+    private static void ThrowIfNullForRequired<T>(T? value, IReadOnlyProperty property)
+    {
+        if (value == null && !property.IsNullable)
+        {
+            throw new InvalidOperationException(RequiredPropertyNullMessage(property));
+        }
+    }
+
+    /// <summary>
+    /// Create the expression which reads <paramref name="property"/> like <see cref="GetPropertyValue{T}"/>, but yields
+    /// <paramref name="placeholder"/> instead of throwing when the element is absent from the document.
+    /// </summary>
+    /// <remarks>
+    /// Only for an owner key the shaped document legitimately lacks, where the value is unobservable (see
+    /// <c>MongoProjectionBindingRemovingExpressionVisitor.OwnerKeyMayBeAbsent</c>). The placeholder must be non-null
+    /// so the materializer's null-key check doesn't turn the owned entity into <see langword="null"/>.
+    /// </remarks>
+    internal static MethodCallExpression CreateGetPropertyValueOrPlaceholder(
+        Expression bsonDocExpression, IReadOnlyProperty property, Type resultType, object placeholder)
+        => Expression.Call(
+            null,
+            GetPropertyValueOrPlaceholderMethodInfo.MakeGenericMethod(resultType),
+            bsonDocExpression,
+            Expression.Constant(property, typeof(IReadOnlyProperty)),
+            Expression.Constant(placeholder, resultType));
+
+    private static readonly MethodInfo GetPropertyValueOrPlaceholderMethodInfo
+        = typeof(BsonBinding).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Single(mi => mi.Name == nameof(GetPropertyValueOrPlaceholder));
+
+    internal static T? GetPropertyValueOrPlaceholder<T>(BsonDocument? document, IReadOnlyProperty property, T placeholder)
+    {
+        if (document == null)
+        {
+            return default;
+        }
+
+        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
+        if (!TryReadElementValue(document, serializationInfo, out T? value))
+        {
+            return placeholder;
+        }
+
+        ThrowIfNullForRequired(value, property);
+        return value;
     }
 
     internal static T? GetPropertyValueAtElement<T>(BsonDocument document, string elementName, IReadOnlyProperty property)
@@ -244,11 +487,7 @@ internal static class BsonBinding
 
         if (TryReadElementValue(document, projectedSerializationInfo, out T? value))
         {
-            if (value == null && !property.IsNullable)
-            {
-                throw new InvalidOperationException($"Document element is null for required non-nullable property '{property.Name}'.");
-            }
-
+            ThrowIfNullForRequired(value, property);
             return value;
         }
 
@@ -257,10 +496,69 @@ internal static class BsonBinding
         throw new InvalidOperationException($"Document element '{elementName}' is missing for required non-nullable property '{property.Name}'.");
     }
 
-    internal static T? GetElementValue<T>(BsonDocument document, string elementName)
+    /// <summary>
+    /// Reads a bare scalar projection leaf from the flat alias in the projected document. Identical to
+    /// <see cref="GetPropertyValueAtElement{T}"/> except that a MISSING element of a required property reads
+    /// <c>default(T)</c> instead of throwing, as driver-LINQ's <c>$project</c> push-down did. Only the Projection
+    /// route uses this; whole-entity materialization stays strict. An explicit BSON null still throws. A reference-typed
+    /// required leaf (e.g. <c>string</c>) reads <see langword="null"/> for a missing element, deliberately mirroring
+    /// the driver.
+    /// </summary>
+    internal static T? GetScalarProjectionValueAtElement<T>(BsonDocument document, string elementName, IReadOnlyProperty property)
+    {
+        var serializationInfo = BsonSerializerFactory.GetPropertySerializationInfo(property);
+
+        // As GetPropertyValueAtElement: the value lives at the flat alias, not the property's original element path.
+        var projectedSerializationInfo = new BsonSerializationInfo(
+            elementName,
+            serializationInfo.Serializer,
+            serializationInfo.NominalType);
+
+        // Check the RAW element: for a value-typed T the deserialized value is never null, so a post-read null check
+        // can't see an explicit BSON null (driver-LINQ throws FormatException for it). Except through the driver's
+        // BooleanSerializer, which reads null as false, as driver-LINQ did (see
+        // MongoAggregationExpressionRenderer.DriverReadsNullAsDefault).
+        if (!property.IsNullable && document.TryGetValue(elementName, out var raw) && raw.IsBsonNull
+            && serializationInfo.Serializer is not BooleanSerializer)
+        {
+            throw new InvalidOperationException(
+                $"Document element '{elementName}' is null for required non-nullable property '{property.Name}'.");
+        }
+
+        return TryReadElementValue(document, projectedSerializationInfo, out T? value) ? value : default;
+    }
+
+    internal static T? GetElementValueAtPath<T>(BsonDocument document, string[] path)
+        => ReadElementValueAtPath<T>(document, path, BsonSerializerFactory.CreateTypeSerializer(typeof(T)));
+
+    // `serializer` is BsonSerializerFactory.CreateTypeSerializer(typeof(T), dateTimeKindSource), built at compile time.
+    internal static T? GetKindAwareElementValueAtPath<T>(BsonDocument document, string[] path, IBsonSerializer serializer)
+        => ReadElementValueAtPath<T>(document, path, serializer);
+
+    private static T? ReadElementValueAtPath<T>(BsonDocument document, string[] path, IBsonSerializer serializer)
     {
         var type = typeof(T);
-        var serializationInfo = new BsonSerializationInfo(elementName, BsonSerializerFactory.CreateTypeSerializer(type), type);
+        var serializationInfo = BsonSerializationInfo.CreateWithPath(path, serializer, type);
+        if (TryReadElementValue(document, serializationInfo, out T? value) || type.IsNullableType())
+        {
+            return value;
+        }
+
+        throw new InvalidOperationException($"Document element '{string.Join(".", path)}' is missing but required.");
+    }
+
+    internal static T? GetElementValue<T>(BsonDocument document, string elementName)
+        => ReadElementValue<T>(document, elementName, BsonSerializerFactory.CreateTypeSerializer(typeof(T)));
+
+    // `serializer` is built at compile time: BsonSerializerFactory.CreateTypeSerializer(typeof(T), dateTimeKindSource),
+    // or BsonSerializerFactory.CreateTimeOfDaySerializer for a native TimeOfDay leaf.
+    internal static T? GetKindAwareElementValue<T>(BsonDocument document, string elementName, IBsonSerializer serializer)
+        => ReadElementValue<T>(document, elementName, serializer);
+
+    private static T? ReadElementValue<T>(BsonDocument document, string elementName, IBsonSerializer serializer)
+    {
+        var type = typeof(T);
+        var serializationInfo = new BsonSerializationInfo(elementName, serializer, type);
         if (TryReadElementValue(document, serializationInfo, out T? value) || type.IsNullableType())
         {
             return value;

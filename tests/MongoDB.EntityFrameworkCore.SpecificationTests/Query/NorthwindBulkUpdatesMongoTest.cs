@@ -26,20 +26,15 @@ using Xunit.Abstractions;
 
 namespace MongoDB.EntityFrameworkCore.SpecificationTests.Query;
 
-// Conformance coverage for EF Core's bulk-update spec suite, scoped to the subset the MongoDB
-// provider supports: a single collection, scoped by Where, with constant / parameter /
-// self-referencing scalar setters (see README "What is supported" and EF-107).
+// Conformance coverage for EF Core's bulk-update spec suite, scoped to what the provider supports: a single
+// collection, scoped by Where, with constant / parameter / self-referencing scalar setters (EF-107).
 //
-// Supported cases call base, which asserts the affected-document count and the before/after
-// document state. Bulk operations emit Executing/ExecutedBulkUpdate|Delete diagnostics events
-// rather than ExecutedMqlQuery, so there is no MQL baseline to pin via AssertMql here (unlike the
-// Northwind *query* suites). Ordering/paging/Distinct-scoped bulk operations are supported via the
-// two-phase (_id-projection) execution path and call base. Per the suite convention (see
-// docs/failing-spec-tests.md) the remaining out-of-subset cases (joins, set operations, GroupBy,
-// SelectMany, navigations, non-entity projections, multiple-collection updates) are not skipped:
-// they run and assert the current failure mode (translation failure, cross-DbSet rejection, or a
-// non-translation exception), tagged with a // Fails: <reason> <ticket> comment. Behavioral
-// coverage for the supported subset also lives in FunctionalTests/Query/ExecuteUpdateTests.cs and
+// Supported cases call base, which asserts the affected-document count and before/after state. Bulk operations
+// emit Executing/ExecutedBulkUpdate|Delete events rather than ExecutedMqlQuery, so there is no AssertMql baseline.
+// Ordering/paging/Distinct-scoped operations use the two-phase (_id-projection) path and also call base.
+// Out-of-subset cases (joins, set operations, GroupBy, SelectMany, navigations, non-entity projections,
+// multiple-collection updates) are not skipped (docs/failing-spec-tests.md): they run and assert the current
+// failure mode, tagged with a // Fails: comment. More coverage: FunctionalTests/Query/ExecuteUpdateTests.cs and
 // ExecuteDeleteTests.cs.
 public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<NorthwindBulkUpdatesMongoFixture<NoopModelCustomizer>>
 {
@@ -140,8 +135,9 @@ public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<Northw
         => AssertTranslationFailed(() => base.Delete_Intersect(async));
 
     // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; SelectMany unsupported EF-X016
+    // The reference SelectMany declines with NotSupportedException (whole-inner-entity guard).
     public override Task Delete_SelectMany(bool async)
-        => AssertTranslationFailed(() => base.Delete_SelectMany(async));
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Delete_SelectMany(async), typeof(NotSupportedException));
 
     // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; SelectMany unsupported EF-X016
     public override Task Delete_SelectMany_subquery(bool async)
@@ -254,13 +250,14 @@ public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<Northw
     public override Task Update_Concat_set_constant(bool async)
         => Assert.ThrowsAnyAsync<Exception>(() => base.Update_Concat_set_constant(async));
 
-    // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; set operations unsupported EF-X016
+    // Fails: the Except source goes native, so the $unionWith pipeline runs inside the asserter's
+    // multi-document transaction and the server rejects it (MongoCommandException) EF-X002.
     public override Task Update_Except_set_constant(bool async)
-        => AssertTranslationFailed(() => base.Update_Except_set_constant(async));
+        => Assert.ThrowsAnyAsync<Exception>(() => base.Update_Except_set_constant(async));
 
-    // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; set operations unsupported EF-X016
+    // Fails: same $unionWith-inside-a-transaction rejection as Update_Except_set_constant EF-X002.
     public override Task Update_Intersect_set_constant(bool async)
-        => AssertTranslationFailed(() => base.Update_Intersect_set_constant(async));
+        => Assert.ThrowsAnyAsync<Exception>(() => base.Update_Intersect_set_constant(async));
 
     // Fails: Throws a non-translation exception, but still throws EF-X002
     public override Task Update_Union_set_constant(bool async)
@@ -314,8 +311,9 @@ public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<Northw
         => base.Update_Where_OrderBy_set_constant(async);
 
     // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; SelectMany unsupported EF-X016
+    // The reference SelectMany declines with NotSupportedException (whole-inner-entity guard).
     public override Task Update_Where_SelectMany_set_null(bool async)
-        => AssertTranslationFailed(() => base.Update_Where_SelectMany_set_null(async));
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Update_Where_SelectMany_set_null(async), typeof(NotSupportedException));
 
     // Fails: ExecuteUpdate/ExecuteDelete source restricted to a Where predicate; SelectMany unsupported EF-X016
     public override Task Update_Where_SelectMany_subquery_set_null(bool async)
@@ -434,17 +432,14 @@ public class NorthwindBulkUpdatesMongoTest : NorthwindBulkUpdatesTestBase<Northw
 
     // Out-of-subset bulk shapes (and the base *_throws cases) are rejected during translation: the
     // MongoDB provider surfaces them as an InvalidOperationException whose message reports the LINQ
-    // expression could not be translated.
-    private static async Task AssertTranslationFailed(Func<Task> query)
-        => Assert.Contains(
-            "could not be translated",
-            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+    // expression could not be translated (driver-LINQ mode) or a NativeTranslationNotSupportedException
+    // (native-only mode).
+    private static Task AssertTranslationFailed(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 
     // Fails: Cross-document navigation access issue EF-216
-    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
-        => Assert.Contains(
-            "Unsupported cross-DbSet query between",
-            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+    private static Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNoMultiCollectionQuerySupportAsync(query);
 }
 
 #endif

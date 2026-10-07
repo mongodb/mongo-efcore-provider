@@ -175,7 +175,7 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$count" : "_v" }
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$count" : "v" }
 """);
     }
 
@@ -192,7 +192,7 @@ Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_
 """,
             //
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }, { "$count" : "_v" }
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }, { "$count" : "v" }
 """,
             //
             """
@@ -204,11 +204,11 @@ Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_
 """,
             //
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }, { "$count" : "_v" }
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }, { "_id" : "RANDM" }] } }, { "$count" : "v" }
 """,
             //
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }] } }, { "$count" : "_v" }
+Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }, { "_id" : "ANTON" }, { "_id" : "AROUT" }, { "_id" : "BERGS" }, { "_id" : "BLAUS" }, { "_id" : "BLONP" }, { "_id" : "BOLID" }, { "_id" : "BONAP" }, { "_id" : "BSBEV" }, { "_id" : "CACTU" }, { "_id" : "CENTC" }, { "_id" : "CHOPS" }, { "_id" : "CONSH" }] } }, { "$count" : "v" }
 """);
     }
 
@@ -240,13 +240,22 @@ Customers.{ "$match" : { "_id" : "ANATR" } }
 """);
     }
 
+    // Fails: Cross-document navigation access issue EF-216
+    //
+    // The top-level expression is `<subquery1> + <subquery2>`, a BinaryExpression, and
+    // MongoQueryTranslationPostprocessor.Process only calls ApplyProjection() on a top-level
+    // ShapedQueryExpression. So neither sub-query's projection mapping is rewritten, and
+    // MongoProjectionBindingRemovingExpressionVisitor.GetProjectionIndex throws a parameterless
+    // InvalidOperationException from GetConstantValue<int>. Applying the projection to every shaped query in the
+    // tree would likely make this query succeed; until then this pins the throw site.
     public override void Multiple_queries()
     {
-        // Fails: two separately-compiled queries against different DbSets on the same context leak
-        // translation state between them (a pre-existing EF-216 cross-DbSet limitation); after the
-        // EF-233 fix this now surfaces as an ArgumentException from the driver-LINQ rebuild rather
-        // than the provider's own "Unsupported cross-DbSet query" guard.
-        Assert.Throws<ArgumentException>(() => base.Multiple_queries());
+        var exception = Assert.Throws<InvalidOperationException>(() => base.Multiple_queries());
+
+        // Asserts the frame because the parameterless exception has no distinguishing message; in particular,
+        // this must not be the driver-LINQ bridge's "Unsupported cross-DbSet query" guard.
+        Assert.Contains("GetConstantValue", exception.StackTrace);
+        Assert.DoesNotContain("Unsupported cross-DbSet query", exception.Message);
     }
 
     public override void Compiled_query_when_using_member_on_context()
@@ -473,8 +482,4 @@ Customers.{ "$match" : { "_id" : "ANATR" } }, { "$lookup" : { "from" : "Orders",
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);
 
-    // Fails: Cross-document navigation access issue EF-216
-    private static void AssertNoMultiCollectionQuerySupport(Action query)
-        => Assert.Contains("Unsupported cross-DbSet query between",
-            Assert.Throws<InvalidOperationException>(query).Message);
 }

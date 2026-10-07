@@ -16,17 +16,33 @@
 using System;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Query;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.Query;
 
 /// <inheritdoc />
-public class MongoQueryCompilationContext(QueryCompilationContextDependencies dependencies, bool async)
+public class MongoQueryCompilationContext(QueryCompilationContextDependencies dependencies, bool async, MongoQueryMode queryMode)
     : QueryCompilationContext(dependencies, async)
 {
+    /// <summary>
+    /// Creates a <see cref="MongoQueryCompilationContext"/> using the default <see cref="MongoQueryMode.Native"/> query mode.
+    /// </summary>
+    /// <param name="dependencies">The <see cref="QueryCompilationContextDependencies"/> this context depends upon.</param>
+    /// <param name="async">Whether the query is asynchronous.</param>
+    public MongoQueryCompilationContext(QueryCompilationContextDependencies dependencies, bool async)
+        : this(dependencies, async, MongoQueryMode.Native)
+    {
+    }
+
     /// <summary>
     /// The original expression that was passed to the query translator.
     /// </summary>
     public Expression? OriginalExpression { get; internal set; }
+
+    /// <summary>
+    /// The <see cref="MongoQueryMode"/> that controls how LINQ queries are translated for this compilation.
+    /// </summary>
+    public MongoQueryMode QueryMode { get; } = queryMode;
 
     /// <inheritdoc/>
     public override Func<QueryContext, TResult> CreateQueryExecutor<TResult>(Expression query)

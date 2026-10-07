@@ -42,7 +42,7 @@ public class NorthwindQueryFiltersQueryMongoTest
 
         AssertMql(
             """
-Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$count" : "_v" }
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$count" : "v" }
 """);
     }
 
@@ -62,7 +62,7 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
 
         AssertMql(
             """
-Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$match" : { "_id" : "ALFKI" } }, { "$limit" : 1 }
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } }, "_id" : "ALFKI" } }, { "$limit" : 1 }
 """);
     }
 
@@ -96,7 +96,7 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
 
         AssertMql(
             """
-Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^F", "options" : "s" } } } }, { "$project" : { "_id" : "$_id" } }
 """);
     }
 
@@ -106,7 +106,7 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
 
         AssertMql(
             """
-Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$project" : { "_id" : "$_id" } }
 """);
     }
 
@@ -134,34 +134,26 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
         // $lookup target makes the join inner a filtered sub-query, which is not supported EF-X022
         await Assert.ThrowsAnyAsync<Exception>(() => base.Included_many_to_one_query(async));
 
-#if EF8 || EF9
-        AssertMql(
-        );
-#else
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Orders.
 """);
-#endif
+        }
     }
 
     public override async Task Project_reference_that_itself_has_query_filter_with_another_reference(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Project_reference_that_itself_has_query_filter_with_another_reference(async));
-
-        AssertMql(
-);
-#else
-        Assert.Contains(
-            "is not defined for type",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
-                base.Project_reference_that_itself_has_query_filter_with_another_reference(async))).Message);
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Project_reference_that_itself_has_query_filter_with_another_reference(async), typeof(ArgumentException));
 
         AssertMql(
         );
-#endif
     }
 
     public override async Task Navs_query(bool async)
@@ -179,11 +171,11 @@ Orders.
 
         AssertMql(
             """
-Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$match" : { "_id" : "BERGS" } }
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } }, "_id" : "BERGS" } }
 """,
             //
             """
-Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } } } }, { "$match" : { "_id" : "BLAUS" } }
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^B", "options" : "s" } }, "_id" : "BLAUS" } }
 """);
     }
 
@@ -193,28 +185,36 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
         // makes the join inner a filtered sub-query, which is not supported EF-X022
         await Assert.ThrowsAnyAsync<Exception>(() => base.Entity_Equality(async));
 
-#if EF8 || EF9
-        AssertMql(
-        );
-#else
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Orders.
 """);
-#endif
+        }
     }
 
     public override async Task Client_eval(bool async)
     {
         // Fails: Does not throw expected unable to translate exception EF-X002
-        Assert.Contains(
-            "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() => base.Client_eval(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.Client_eval(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Products.
 """);
+        }
     }
 
     public override async Task Included_many_to_one_query2(bool async)
@@ -223,32 +223,42 @@ Products.
         // $lookup target makes the join inner a filtered sub-query, which is not supported EF-X022
         await Assert.ThrowsAnyAsync<Exception>(() => base.Included_many_to_one_query2(async));
 
-#if EF8 || EF9
-        AssertMql(
-        );
-#else
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
 Orders.
 """);
-#endif
+        }
     }
 
     public override async Task Included_one_to_many_query_with_client_eval(bool async)
     {
-        // Fails: Limited support on client evaluation EF-X003
-        var exception = await Assert.ThrowsAnyAsync<System.Exception>(
+        // Fails: Limited support on client evaluation EF-X003 (driver-LINQ mode throws a wrapped
+        // ExpressionNotSupportedException); native-only mode rejects the shape outright.
+        await Assert.ThrowsAnyAsync<System.Exception>(
             () => base.Included_one_to_many_query_with_client_eval(async));
-        Assert.Contains(
-            "Expression not supported",
-            (exception.InnerException ?? exception).Message);
 
-        AssertMql(
-            """
-            Products.
-            """);
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+                """
+                Products.
+                """);
+        }
     }
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);
+
+    protected new static Task AssertTranslationFailed(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 }

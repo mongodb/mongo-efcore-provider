@@ -18,28 +18,24 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Infrastructure;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// EF-370: the <c>$unwind</c> after a cross-collection <c>$lookup</c> must follow the join semantics the
-/// query actually asked for — EF lowers a REQUIRED reference navigation to an inner
-/// <see cref="Queryable.Join{TOuter,TInner,TKey,TResult}"/> and an OPTIONAL one to <c>LeftJoin</c>. This is
-/// the only fixture in the suite that seeds a <b>dangling foreign key</b> (a value matching no document,
-/// which MongoDB's lack of referential integrity permits); without one, inner and left-outer joins return
-/// identical rows. Assertions are on row counts/identities, never MQL, since wrong MQL here is
-/// indistinguishable from a legitimately different query.
+/// EF-370: the <c>$unwind</c> after a cross-collection <c>$lookup</c> must follow the join semantics the query asked
+/// for: a REQUIRED reference navigation lowers to an inner <see cref="Queryable.Join{TOuter,TInner,TKey,TResult}"/>,
+/// an OPTIONAL one to <c>LeftJoin</c>. The only fixture that seeds a <b>dangling foreign key</b> (permitted by
+/// MongoDB's lack of referential integrity); without one, inner and left-outer joins return identical rows.
+/// Assertions are on row counts/identities, never MQL.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
-    // ---------------------------------------------------------------------------------------------------
-    // Required navigations: INNER join semantics. Run on ALL THREE EF majors, deliberately: a required
-    // navigation lowers to Queryable.Join, which dispatches on every version (unlike LeftJoin, gated
-    // `#if !EF8 && !EF9`), so the defect reproduced there too — reading EF-X020 as "cross-collection
-    // reference Include doesn't work before EF10" is wrong.
-    // ---------------------------------------------------------------------------------------------------
+    // Required navigations: INNER join semantics, on ALL THREE EF majors. A required navigation lowers to
+    // Queryable.Join, which dispatches on every version (unlike LeftJoin, gated `#if !EF8 && !EF9`), so the defect
+    // reproduced there too; reading EF-X020 as "cross-collection reference Include doesn't work before EF10" is wrong.
 
     [Fact]
     public void Required_single_reference_Include_excludes_dangling_foreign_key()
@@ -51,6 +47,23 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
         // L5's prod_id matches no product, so it is excluded: Product is required.
         Assert.Equal(["L1", "L2", "L3", "L4", "L6"], LineNames(lines));
         Assert.All(lines, l => Assert.NotNull(l.Product));
+    }
+
+    // Native and driver-LINQ must return the same rows over a dangling foreign key, not merely both succeed.
+    [Theory]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    public void Required_single_reference_Include_excludes_dangling_foreign_key_in_every_mode(MongoQueryMode mode)
+    {
+        using var db = CreateContext(mode);
+
+        var orders = db.Orders.Include(o => o.Buyer).OrderBy(o => o.OrderName).ToList();
+
+        // O3's buyer_id is dangling and Buyer is required => inner join => O3 absent, in every mode.
+        Assert.Equal(3, orders.Count);
+        Assert.All(orders, o => Assert.NotNull(o.Buyer));
+        Assert.DoesNotContain(orders, o => o.Buyer == null);
     }
 
     [Fact]
@@ -112,6 +125,8 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
     {
         using var db = Setup();
 
+        // Natively a single-level collection Include is a flat $lookup with no $unwind, so
+        // PreserveNullAndEmptyArrays is never consulted: this is materialization coverage, not unwind coverage.
         var orders = db.Orders.Include(o => o.Lines).OrderBy(o => o.OrderName).ToList();
 
         // An Include must never drop principals. O4 has no lines at all and must still be returned.
@@ -131,24 +146,20 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
             .OrderBy(o => o.OrderName)
             .ToList();
 
-        // The site-3 boundary (MongoProjectionBindingExpressionVisitor.AddReferenceLookupStages): the nested
-        // reference $unwind runs inside the collection lookup's sub-pipeline, so a non-preserving unwind
-        // would drop collection ELEMENTS. L5's product is dangling yet L5 must still appear under O1, with a
-        // null Product. This inconsistency with the required-navigation rule above is deliberate — see the
-        // comment at that site.
+        // Site-3 boundary (MongoProjectionBindingExpressionVisitor.AddReferenceLookupStages): the nested reference $unwind
+        // runs inside the collection lookup's sub-pipeline, so a non-preserving unwind would drop collection ELEMENTS.
+        // L5's product is dangling yet L5 must still appear under O1 with a null Product; the inconsistency with the
+        // required-navigation rule above is deliberate.
         var o1Lines = orders.Single(o => o.OrderName == "O1").Lines;
         Assert.Equal(["L1", "L5", "L6"], LineNames(o1Lines));
         Assert.Null(o1Lines.Single(l => l.LineName == "L5").Product);
         Assert.NotNull(o1Lines.Single(l => l.LineName == "L1").Product);
     }
 
-    // ---------------------------------------------------------------------------------------------------
-    // Optional navigations: LEFT-OUTER semantics, EF10 only — EF lowers these to Queryable.LeftJoin, whose
-    // dispatch case is `#if !EF8 && !EF9`, so on EF8/EF9 EF Core itself throws "could not be translated"
-    // (EF-X020), asserted below rather than left implicit.
-    // ---------------------------------------------------------------------------------------------------
+    // Optional navigations: left-outer semantics, on all three EF majors. EF lowers these to Queryable.LeftJoin on
+    // EF10 and to EF Core's internal LeftJoin shim on EF8/EF9 (see IsEf8Ef9LeftJoinShim); only a user query calling
+    // Queryable.LeftJoin directly is EF10-gated.
 
-#if !EF8 && !EF9
     [Fact]
     public void Optional_reference_Include_still_preserves_principals()
     {
@@ -184,9 +195,6 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
     [Fact]
     public void User_authored_GroupJoin_is_left_outer()
     {
-        // EF10-only for the same EF-X020 reason as the cases above, not because of FK requiredness: on
-        // EF8/EF9 GroupJoin + DefaultIfEmpty does not translate at all (see the EF8/EF9 arm of
-        // NorthwindJoinQueryMongoTest.GroupJoin_DefaultIfEmpty).
         using var db = Setup();
 
         var pairs = db.Lines
@@ -201,9 +209,11 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
         Assert.Equal("O1", pairs.Single(p => p.LineName == "L1").Order.OrderName);
     }
 
+#if !EF8 && !EF9
     [Fact]
     public void User_authored_LeftJoin_is_left_outer()
     {
+        // EF10-only: Queryable.LeftJoin doesn't exist before .NET 10 (a compile-time surface, not a translation gap).
         using var db = Setup();
 
         var pairs = db.Lines
@@ -218,26 +228,13 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
     }
 #endif
 
-#if EF8 || EF9
-    [Fact]
-    public void Optional_reference_Include_is_not_translated_on_EF8_EF9()
-    {
-        // The counterpart of the three `#if !EF8 && !EF9` cases above, asserted so the asymmetry is a
-        // recorded fact rather than an unexplained absence. EF lowers the optional navigation to
-        // Queryable.LeftJoin, which has no dispatch case before EF10, so EF Core rejects the whole query
-        // (EF-X020). The REQUIRED cases in this class run on all three majors precisely because a required
-        // navigation lowers to Queryable.Join instead.
-        using var db = Setup();
-
-        Assert.Throws<InvalidOperationException>(() => db.Lines.Include(l => l.Carrier).ToList());
-    }
-#endif
-
     [Fact]
     public void Collection_Include_beside_a_required_reference_Include_preserves_childless_principals()
     {
         using var db = Setup();
 
+        // Only the Buyer half exercises unwind semantics (non-preserving $unwind drops O3); the Lines half is a
+        // flat $lookup (see Collection_Include_still_preserves_principals_with_no_children).
         var orders = db.Orders
             .Include(o => o.Lines)
             .Include(o => o.Buyer)
@@ -261,11 +258,9 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
             .Join(db.Buyers, x => x.o.BuyerId, b => b._id, (x, b) => new { x.o.OrderName, x.l.LineName })
             .ToList();
 
-        // Both joins are inner. O4 has no lines and must contribute nothing; O3's buyer_id dangles so O3/L3
-        // must not appear either. This is the shape that reaches the model-derived fallback in
-        // TranslateJoinCore with a COLLECTION navigation (Order.Lines) standing in for the first join, so it
-        // pins the fallback against being softened to "always preserve for a collection" - which would
-        // resurrect O4 with an empty line.
+        // Both joins are inner: O4 (no lines) and O3/L3 (dangling buyer) must not appear. This shape reaches the
+        // model-derived fallback in TranslateJoinCore with a COLLECTION navigation (Order.Lines) standing in for the first
+        // join, pinning it against being softened to "always preserve for a collection" (which would resurrect O4).
         Assert.Equal(
             ["O1/L1", "O1/L5", "O1/L6", "O2/L2"],
             rows.Select(r => r.OrderName + "/" + r.LineName).OrderBy(x => x).ToArray());
@@ -281,21 +276,17 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
             .Join(db.Products, x => x.l.ProductId, p => p._id, (x, p) => new { x.l.LineName, x.c.CarrierName, p.ProductName })
             .ToList();
 
-        // The first Join is over Line.CarrierId, the model's only navigation with a NULLABLE FK and no
-        // IsRequired() — yet a user Join is unambiguously inner regardless of FK optionality. L2 (no
-        // carrier) and L6 (dangling carrier) are excluded by the first join alone. The second join then
-        // forces the first to be retroactively flattened; if that flattening fell back to inferring
-        // left/inner from ForeignKey.IsRequired (false here), it would wrongly preserve L2/L6 with a null
-        // Carrier, and both go on to match a real product in the second join, producing spurious rows.
+        // The first Join is over Line.CarrierId (nullable FK, no IsRequired()), yet a user Join is inner regardless of FK
+        // optionality: L2 (no carrier) and L6 (dangling carrier) are excluded. The second join retroactively flattens the
+        // first; inferring left/inner from ForeignKey.IsRequired (false here) would wrongly preserve L2/L6 with a null
+        // Carrier, and both would match a real product, producing spurious rows.
         Assert.Equal(
             ["L1/C1/P1", "L3/C1/P1", "L4/C1/P1"],
             rows.Select(r => r.LineName + "/" + r.CarrierName + "/" + r.ProductName).OrderBy(x => x).ToArray());
     }
 
-    // ---------------------------------------------------------------------------------------------------
-    // EF-369, on REQUIRED navigations so it runs on all three majors (Ef369MultiJoinComposedTests uses
-    // nullable FKs throughout, so it's gated `#if !EF8 && !EF9`; the StripJoinForLookup fix itself is not).
-    // ---------------------------------------------------------------------------------------------------
+    // EF-369, on REQUIRED navigations so it runs on all three majors (Ef369MultiJoinComposedTests uses nullable FKs and
+    // is gated `#if !EF8 && !EF9`; the StripJoinForLookup fix itself is not).
 
     [Fact]
     public void Required_two_hop_ThenInclude_with_composed_nav_Where()
@@ -328,11 +319,9 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
         Assert.Equal(["L1", "L6"], LineNames(lines));
     }
 
-    // ---------------------------------------------------------------------------------------------------
-    // Base-source paging must not be reordered relative to a row-dropping $unwind: composing something
-    // above the Includes takes the reattach path in StripJoinForLookup, which emits the $lookup/$unwind
-    // stages right after the root source - i.e. potentially before a Take written below the joins.
-    // ---------------------------------------------------------------------------------------------------
+    // Base-source paging must not be reordered relative to a row-dropping $unwind: composing something above the
+    // Includes takes the reattach path in StripJoinForLookup, which emits $lookup/$unwind right after the root source,
+    // potentially before a Take written below the joins.
 
     [Fact]
     public void Base_source_paging_is_applied_before_a_required_navigations_inner_unwind()
@@ -347,9 +336,8 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
             .Where(l => l.Product.ProductName == "P1")
             .ToList();
 
-        // Take(4) is below the joins, so the base source is L1..L4. L4's ord_id dangles (dropped by the
-        // required Order join) and L2 is on P2, leaving L1 and L3. L6 is outside the Take and appearing
-        // would mean the unwinds ran first.
+        // Take(4) is below the joins, so the base source is L1..L4; L4 (dangling ord_id) is dropped and L2 is on P2,
+        // leaving L1 and L3. L6 is outside the Take; its appearance would mean the unwinds ran first.
         Assert.Equal(["L1", "L3"], LineNames(lines));
     }
 
@@ -365,17 +353,15 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
             .Include(l => l.Product)
             .ToList();
 
-        // The control for the case above: nothing is composed above the Includes, so the lookups are
-        // tail-appended and the ordering is not in question. Base source L1..L4, less the dangling L4.
+        // Control: nothing is composed above the Includes, so the lookups are tail-appended. Base source L1..L4, less L4.
         Assert.Equal(["L1", "L2", "L3"], LineNames(lines));
     }
 
     private static string[] LineNames(IEnumerable<Line> lines)
         => lines.Select(l => l.LineName).OrderBy(n => n).ToArray();
 
-    // BSON element names deliberately differ from the CLR property names so the tests also prove the
-    // $lookup/$unwind pipeline goes through EF's element-name mapping.
-    //
+    // BSON element names deliberately differ from the CLR property names so the tests also prove the $lookup/$unwind
+    // pipeline goes through EF's element-name mapping.
     // Seed (the dangling foreign keys are the point of this fixture):
     //   Buyers    B1 "Alice", B2 "Bob"
     //   Orders    O1 -> B1, O2 -> B2, O3 -> dangling buyer, O4 -> B1 (no lines)
@@ -383,7 +369,9 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
     //   Carriers  C1
     //   Lines     L1 O1/P1/C1, L2 O2/P2/no carrier, L3 O3/P1/C1,
     //             L4 dangling order/P1/C1, L5 O1/dangling product/C1, L6 O1/P1/dangling carrier
-    private RequiredNavDbContext Setup()
+    private RequiredNavDbContext CreateContext(MongoQueryMode mode) => Setup(mode);
+
+    private RequiredNavDbContext Setup(MongoQueryMode mode = MongoQueryMode.Native)
     {
         var suffix = Guid.NewGuid().ToString("N")[..8];
         var buyersName = TemporaryDatabaseFixtureBase.CreateCollectionName("ReqNavBuyers") + suffix;
@@ -462,7 +450,7 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
             }
         ]);
 
-        return new RequiredNavDbContext(database, buyersName, ordersName, productsName, carriersName, linesName);
+        return new RequiredNavDbContext(database, buyersName, ordersName, productsName, carriersName, linesName, mode);
     }
 
     class Buyer
@@ -529,9 +517,11 @@ public class RequiredNavigationUnwindTests(TemporaryDatabaseFixture database)
             string ordersCollection,
             string productsCollection,
             string carriersCollection,
-            string linesCollection)
+            string linesCollection,
+            MongoQueryMode mode = MongoQueryMode.Native)
             : base(new DbContextOptionsBuilder<RequiredNavDbContext>()
-                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName)
+                .UseMongoDB(database.Client, database.MongoDatabase.DatabaseNamespace.DatabaseName,
+                    b => b.UseQueryMode(mode))
                 .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
                 .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
                 .Options)

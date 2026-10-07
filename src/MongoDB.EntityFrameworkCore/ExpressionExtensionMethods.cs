@@ -16,9 +16,11 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Query;
 
 namespace MongoDB.EntityFrameworkCore;
 
@@ -102,6 +104,257 @@ internal static class ExpressionExtensionMethods
             : expression;
 
     /// <summary>
+    /// Peels every <see cref="IncludeExpression"/> wrapper off <paramref name="expression"/>, down to the outermost
+    /// non-Include <see cref="IncludeExpression.EntityExpression"/>. Strips nothing else (no <c>Convert</c>).
+    /// </summary>
+    internal static Expression UnwrapIncludes(this Expression expression)
+    {
+        while (expression is IncludeExpression include)
+        {
+            expression = include.EntityExpression;
+        }
+
+        return expression;
+    }
+
+    /// <summary>
+    /// Reads a wrapped projection body (anonymous type / DTO construction) into (member name, value) pairs:
+    /// a <see cref="NewExpression"/> with <see cref="NewExpression.Members"/>, or a
+    /// <see cref="MemberInitExpression"/> over a parameterless constructor. Returns <see langword="false"/> (with
+    /// empty <paramref name="members"/>) for anything else, an empty construction, or a nested/list binding.
+    /// </summary>
+    /// <param name="body">The projection body.</param>
+    /// <param name="members">The pairs read, or empty on <see langword="false"/>.</param>
+    /// <param name="allowPositionalConstructorArguments">
+    /// Also admit <c>new SomeNamedClass(args)</c>, whose <see cref="NewExpression.Members"/> is always
+    /// <see langword="null"/>, naming arguments <see cref="PositionalConstructorArgumentAliasPrefix"/> + index.
+    /// Only for callers that address values by index (the <c>GroupBy</c>/<c>SelectMany</c> result selectors);
+    /// <c>NativeProjectionBinder</c>/<c>NativeJoinScopeProjectionBinder</c> must not, since they resolve aliases
+    /// by real <c>MemberInfo</c> and would never find a synthetic name.
+    /// </param>
+    /// <param name="rowIndependentConstructorArgumentsOver">
+    /// When non-null, also admit a <see cref="MemberInitExpression"/> whose constructor arguments are all
+    /// row-independent over this selector parameter (<c>NativeProjectionBinder.IsRowIndependentLeaf</c>):
+    /// <c>new Dto(param) { A = x.A }</c>. Only the bindings are returned; the constructor arguments stay on the
+    /// shaper, which evaluates them client-side. Only for <c>NativeProjectionBinder</c>, whose read side evaluates
+    /// row-independent subtrees in place.
+    /// </param>
+    /// <param name="allowContainerElements">
+    /// Also admit a positional container, a non-empty <c>new[] { a, b }</c> (<see cref="ExpressionType.NewArrayInit"/>),
+    /// naming element <c>i</c> <see cref="PositionalConstructorArgumentAliasPrefix"/> + <c>i</c> like a positional
+    /// constructor argument. Only for the plain-<c>Select</c> container callers, which bind every element by index
+    /// (<c>NativeProjectionBinder</c>'s container arm and its <c>BuildPositionalCtorProjectionShaper</c> reader;
+    /// <c>NativeJoinScopeProjectionBinder</c> and its <c>BuildSelectManyResultShaper</c> reader). Deliberately separate
+    /// from <paramref name="allowPositionalConstructorArguments"/>, which the <c>GroupBy</c>/<c>SelectMany</c> result
+    /// selectors share: widening that flag would widen their gates.
+    /// <para>
+    /// A <see cref="ListInitExpression"/> (<c>new List&lt;object&gt; { a, b }</c>) is not admitted: the index-based
+    /// shaper can only be read off the native <c>$project</c>, and unlike an array the driver cannot push a list
+    /// initializer down (ExpressionNotSupportedException), so explicit <c>DriverLinq</c> or a late fallback would read the
+    /// synthetic aliases off whole documents and fail where the generic shaper works today.
+    /// </para>
+    /// </param>
+    internal static bool TryGetProjectionMembers(
+        this Expression body, out IReadOnlyList<(string MemberName, Expression Value)> members,
+        bool allowPositionalConstructorArguments = false,
+        ParameterExpression? rowIndependentConstructorArgumentsOver = null,
+        bool allowContainerElements = false)
+    {
+        switch (body)
+        {
+            case NewArrayExpression { NodeType: ExpressionType.NewArrayInit, Expressions: { Count: > 0 } elements }
+                when allowContainerElements:
+            {
+                var pairs = new List<(string, Expression)>(elements.Count);
+                for (var i = 0; i < elements.Count; i++)
+                {
+                    pairs.Add((PositionalConstructorArgumentAlias(i), elements[i]));
+                }
+
+                members = pairs;
+                return true;
+            }
+
+            case NewExpression
+            {
+                Members: { } newMembers, Arguments: { Count: > 0 } arguments
+            } when newMembers.Count == arguments.Count:
+            {
+                var pairs = new List<(string, Expression)>(arguments.Count);
+                for (var i = 0; i < arguments.Count; i++)
+                {
+                    pairs.Add((newMembers[i].Name, arguments[i]));
+                }
+
+                members = pairs;
+                return true;
+            }
+
+            // Constructor-only DTO; see allowPositionalConstructorArguments.
+            case NewExpression
+            {
+                Members: null, Arguments: { Count: > 0 } positionalArguments
+            } when allowPositionalConstructorArguments:
+            {
+                var pairs = new List<(string, Expression)>(positionalArguments.Count);
+                for (var i = 0; i < positionalArguments.Count; i++)
+                {
+                    pairs.Add((PositionalConstructorArgumentAlias(i), positionalArguments[i]));
+                }
+
+                members = pairs;
+                return true;
+            }
+
+            case MemberInitExpression { NewExpression.Arguments.Count: 0, Bindings.Count: > 0 }:
+            case MemberInitExpression { NewExpression.Arguments.Count: > 0, Bindings.Count: > 0 } memberInitWithArguments
+                when rowIndependentConstructorArgumentsOver is not null
+                     && memberInitWithArguments.NewExpression.Arguments.All(
+                         a => Query.NativeTranslation.NativeProjectionBinder.IsRowIndependentLeaf(
+                             a, rowIndependentConstructorArgumentsOver)):
+            {
+                var memberInit = (MemberInitExpression)body;
+                var pairs = new List<(string, Expression)>(memberInit.Bindings.Count);
+                foreach (var binding in memberInit.Bindings)
+                {
+                    if (binding is not MemberAssignment assignment)
+                    {
+                        members = [];
+                        return false;
+                    }
+
+                    pairs.Add((assignment.Member.Name, assignment.Expression));
+                }
+
+                members = pairs;
+                return true;
+            }
+
+            default:
+                members = [];
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Pseudo-member-name prefix for a constructor-only DTO's positional arguments (argument <c>i</c> becomes
+    /// <c>"_ctorArg" + i</c>); see <see cref="TryGetProjectionMembers"/>.
+    /// </summary>
+    internal const string PositionalConstructorArgumentAliasPrefix = "_ctorArg";
+
+    private static string PositionalConstructorArgumentAlias(int index)
+        => PositionalConstructorArgumentAliasPrefix + index;
+
+    /// <summary>
+    /// Inverse of <see cref="TryGetProjectionMembers"/>: rebuilds the construction with each member's value
+    /// replaced by the matching entry of <paramref name="values"/>.
+    /// </summary>
+    /// <remarks>
+    /// Only valid on a body <see cref="TryGetProjectionMembers"/> accepted, with <paramref name="values"/> in its
+    /// order; that is what makes the <see cref="MemberAssignment"/> cast safe.
+    /// </remarks>
+    internal static Expression RebuildProjectionMembers(this Expression body, IReadOnlyList<Expression> values)
+        => body switch
+        {
+            NewExpression newExpression => newExpression.Update(values),
+            NewArrayExpression { NodeType: ExpressionType.NewArrayInit } newArray => newArray.Update(values),
+            MemberInitExpression memberInit => memberInit.Update(
+                memberInit.NewExpression,
+                memberInit.Bindings.Select(
+                    (binding, i) => (MemberBinding)((MemberAssignment)binding).Update(values[i]))),
+            _ => throw new InvalidOperationException(
+                $"'{body.GetType().Name}' is not a wrapped projection construction; "
+                + $"{nameof(RebuildProjectionMembers)} may only be used on a body "
+                + $"{nameof(TryGetProjectionMembers)} accepted.")
+        };
+
+    /// <summary>
+    /// Matches a single access hop — a <see cref="MemberExpression"/> or EF Core's
+    /// <c>EF.Property&lt;T&gt;(root, "Name")</c> — yielding the receiver and name, so both spellings resolve
+    /// identically wherever a member chain is walked.
+    /// </summary>
+    internal static bool TryGetMemberOrEFProperty(this Expression expression, out Expression receiver, out string name)
+    {
+        switch (expression)
+        {
+            case MemberExpression { Expression: { } inner } member:
+                receiver = inner;
+                name = member.Member.Name;
+                return true;
+
+            case MethodCallExpression call
+                when call.Method.IsEFPropertyMethod()
+                     && call.Arguments is [var root, ConstantExpression { Value: string propertyName }]:
+                receiver = root;
+                name = propertyName;
+                return true;
+
+            default:
+                receiver = null!;
+                name = null!;
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="expression"/> anywhere references <paramref name="parameter"/> (by identity).
+    /// </summary>
+    /// <remarks>
+    /// Scope is decided by parameter identity, never member name (see <c>Query/AGENTS.md</c>): two scopes
+    /// commonly share a member such as <c>Id</c>.
+    /// </remarks>
+    internal static bool ReferencesParameter(this Expression expression, ParameterExpression parameter)
+    {
+        var visitor = new ParameterReferenceVisitor(parameter);
+        visitor.Visit(expression);
+        return visitor.Found;
+    }
+
+    private sealed class ParameterReferenceVisitor(ParameterExpression parameter) : ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        // Stop descending once found.
+        [return: NotNullIfNotNull(nameof(node))]
+        public override Expression? Visit(Expression? node)
+            => Found ? node : base.Visit(node);
+
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            if (ReferenceEquals(node, parameter))
+            {
+                Found = true;
+            }
+
+            return node;
+        }
+    }
+
+    /// <summary>
+    /// The operands of a top-level (possibly nested) <c>&amp;&amp;</c> chain, in source order; just
+    /// <paramref name="expression"/> when it isn't one. Converts aren't unwrapped.
+    /// </summary>
+    internal static List<Expression> FlattenAndAlso(this Expression expression)
+    {
+        var conjuncts = new List<Expression>();
+        Flatten(expression);
+        return conjuncts;
+
+        void Flatten(Expression node)
+        {
+            if (node is BinaryExpression { NodeType: ExpressionType.AndAlso } andAlso)
+            {
+                Flatten(andAlso.Left);
+                Flatten(andAlso.Right);
+            }
+            else
+            {
+                conjuncts.Add(node);
+            }
+        }
+    }
+
+    /// <summary>
     /// Removes a single boxing conversion to <see cref="object"/> if present. Unlike
     /// <see cref="RemoveConvert"/>, this strips only one level and only an <see cref="object"/>-typed
     /// <see cref="ExpressionType.Convert"/> / <see cref="ExpressionType.ConvertChecked"/>, leaving numeric
@@ -112,6 +365,49 @@ internal static class ExpressionExtensionMethods
            && unaryExpression.Type == typeof(object)
             ? unaryExpression.Operand
             : expression;
+
+    /// <summary>
+    /// Whether <paramref name="type"/> is EF Core's <c>TransparentIdentifier&lt;TOuter, TInner&gt;</c>, the type
+    /// a join's result selector wraps its outer/inner pair in.
+    /// </summary>
+    /// <remarks>
+    /// Check an <c>Outer</c>/<c>Inner</c> member's declaring type with this, not the name alone, or a user type
+    /// with such a member is mistaken for join plumbing.
+    /// </remarks>
+    internal static bool IsTransparentIdentifierType(this Type? type)
+        => type is { IsGenericType: true }
+           && type.Name.StartsWith("TransparentIdentifier", StringComparison.Ordinal);
+
+    // Types whose Equals(object) requires an exact runtime-type match. Both the driver-LINQ bridge and the native
+    // translator fold a mismatched-type Equals(...) to `false` using this set, so they agree.
+    private static readonly HashSet<Type> ExactTypeEqualityTypes =
+    [
+        typeof(bool), typeof(byte), typeof(sbyte), typeof(short), typeof(ushort),
+        typeof(int), typeof(uint), typeof(long), typeof(ulong), typeof(float), typeof(double),
+        typeof(decimal), typeof(char), typeof(string), typeof(Guid), typeof(DateTime),
+        typeof(DateTimeOffset), typeof(TimeSpan)
+    ];
+
+    /// <summary>
+    /// True when <paramref name="left"/> and <paramref name="right"/> are different members of
+    /// <see cref="ExactTypeEqualityTypes"/>, so they are never equal. Limited to that set because an arbitrary
+    /// type's <c>Equals(object)</c> could compare across types.
+    /// </summary>
+    internal static bool AreMismatchedExactEqualityTypes(Type left, Type right)
+        => left != right && ExactTypeEqualityTypes.Contains(left) && ExactTypeEqualityTypes.Contains(right);
+
+    /// <summary>
+    /// True when <paramref name="receiver"/>.Equals(<paramref name="argument"/>) always returns
+    /// <see langword="false"/> because of a type mismatch (e.g. <c>((int?)1).Equals((ulong)2)</c>).
+    /// </summary>
+    internal static bool IsAlwaysFalseAcrossTypeMismatch(Expression receiver, Expression argument)
+    {
+        var receiverType = Nullable.GetUnderlyingType(receiver.Type) ?? receiver.Type;
+        var argumentType = argument.RemoveObjectConvert().Type;
+        argumentType = Nullable.GetUnderlyingType(argumentType) ?? argumentType;
+
+        return AreMismatchedExactEqualityTypes(receiverType, argumentType);
+    }
 
     /// <summary>
     /// Extracts the simple member/property name from a key-selector-style expression — a member access
@@ -131,11 +427,10 @@ internal static class ExpressionExtensionMethods
         };
 
     /// <summary>
-    /// Whether <paramref name="member"/> is an access to the <c>Outer</c>/<c>Inner</c> field of an EF-
-    /// generated <c>TransparentIdentifier&lt;TOuter,TInner&gt;</c> — the wrapper nav-expansion introduces
-    /// for each join in a chain. Checked by declaring type (not just member name) so a joined entity that
-    /// happens to declare its own real <c>Outer</c>/<c>Inner</c> property isn't mistaken for join-chain
-    /// plumbing.
+    /// Whether <paramref name="member"/> is the <c>Outer</c>/<c>Inner</c> field of an EF-generated
+    /// <c>TransparentIdentifier&lt;TOuter,TInner&gt;</c> (the wrapper nav-expansion adds per join). Checked by
+    /// declaring type, not name, so a joined entity with its own <c>Outer</c>/<c>Inner</c> property isn't mistaken
+    /// for join plumbing.
     /// </summary>
     internal static bool IsTransparentIdentifierOuterOrInnerAccess(this MemberExpression member)
         => member.Member.Name is "Outer" or "Inner"

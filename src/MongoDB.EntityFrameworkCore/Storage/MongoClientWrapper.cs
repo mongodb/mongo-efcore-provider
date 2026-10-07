@@ -15,6 +15,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -24,6 +25,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using MongoDB.Driver.Core.Configuration;
 using MongoDB.EntityFrameworkCore.Diagnostics;
@@ -96,8 +99,39 @@ public class MongoClientWrapper : IMongoClientWrapper
     {
         log = () => { };
 
-        if (executableQuery.Cardinality != ResultCardinality.Enumerable)
+        // Native reducers (First/Single/...) are non-Enumerable but carry a NativePipeline; they must take the
+        // cursor path below so EF Core's cardinality reduction runs. ExecuteScalar is driver-LINQ only.
+        if (executableQuery.Cardinality != ResultCardinality.Enumerable && executableQuery.NativePipeline is null)
             return ExecuteScalar<T>(executableQuery);
+
+        if (executableQuery.NativePipeline is { } stages)
+        {
+            // Set the log action before executing so the MQL is logged even if the server throws. Log the
+            // native stages directly; the driver Provider never translated anything, so its LoggedStages is empty.
+            var loggedStages = stages as BsonDocument[] ?? stages.ToArray();
+            log = () => _commandLogger.ExecutedMqlQuery(executableQuery.CollectionNamespace, loggedStages);
+            if (executableQuery.Streaming)
+            {
+                Debug.Assert(executableQuery.OutputSerializer != null, "Streaming native path requires output serializer.");
+
+                // The output serializer runs the compiled EF materializer off the cursor's IBsonReader, so the
+                // cursor yields shaped T instances in one pass (no intermediate BsonDocument).
+                var entityCollection = Database.GetCollection<BsonDocument>(executableQuery.CollectionNamespace.CollectionName);
+                PipelineDefinition<BsonDocument, BsonDocument> basePipe = loggedStages;
+                var typedPipeline = basePipe.As((IBsonSerializer<T>)executableQuery.OutputSerializer);
+                var typedCursor = executableQuery.Session is { } typedSession
+                    ? entityCollection.Aggregate(typedSession, typedPipeline)
+                    : entityCollection.Aggregate(typedPipeline);
+                return typedCursor.ToEnumerable();
+            }
+
+            var collection = Database.GetCollection<BsonDocument>(executableQuery.CollectionNamespace.CollectionName);
+            PipelineDefinition<BsonDocument, BsonDocument> pipeline = loggedStages;
+            var cursor = executableQuery.Session is { } session
+                ? collection.Aggregate(session, pipeline)
+                : collection.Aggregate(pipeline);
+            return (IEnumerable<T>)cursor.ToEnumerable();
+        }
 
         var queryable = executableQuery.Provider.CreateQuery<T>(executableQuery.Query);
         log = () => _commandLogger.ExecutedMqlQuery(executableQuery);

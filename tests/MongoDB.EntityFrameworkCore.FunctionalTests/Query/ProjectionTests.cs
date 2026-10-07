@@ -41,6 +41,25 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
+    public void Anonymous_projection_after_filter_and_order_returns_correct_values()
+    {
+        // Terminal anonymous projection after Where + OrderBy exercises the native $project pushdown end-to-end.
+        var results = _db.Planets
+            .Where(p => p.orderFromSun > 4)
+            .OrderBy(p => p.name)
+            .Select(p => new { p.name, p.orderFromSun })
+            .ToList();
+
+        Assert.Equal(4, results.Count); // Jupiter, Neptune, Saturn, Uranus
+        Assert.All(results, r =>
+        {
+            Assert.False(string.IsNullOrEmpty(r.name));
+            Assert.InRange(r.orderFromSun, 5, 8);
+        });
+        Assert.Equal(["Jupiter", "Neptune", "Saturn", "Uranus"], results.Select(r => r.name));
+    }
+
+    [Fact]
     public void Select_projection_to_anonymous()
     {
         var results = _db.Planets.Take(10).Select(p => new {Name = p.name, Order = p.orderFromSun});
@@ -569,8 +588,9 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     {
         using var db = CreateStringOrderContext(
             nameof(Select_projection_alias_with_bson_representation_uses_source_property_serializer));
+        // Ordered by name (Mercury, Venus): sorting by the string-represented orderFromSun is refused (EF-337).
         var results = db.Entities
-            .OrderBy(p => p.orderFromSun)
+            .OrderBy(p => p.name)
             .Select(p => new { Position = p.orderFromSun })
             .ToList();
 
@@ -584,8 +604,9 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     {
         using var db = CreateStringOrderContext(
             nameof(Select_projection_alias_with_bson_representation_ef_property_uses_source_property_serializer));
+        // Ordered by name (Mercury, Venus): sorting by the string-represented orderFromSun is refused (EF-337).
         var results = db.Entities
-            .OrderBy(p => p.orderFromSun)
+            .OrderBy(p => p.name)
             .Select(p => new { Position = EF.Property<int>(p, nameof(PlanetWithStringOrder.orderFromSun)) })
             .ToList();
 
@@ -599,8 +620,9 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     {
         using var db = CreateStringOrderContext(
             nameof(Select_projection_alias_with_bson_representation_widening_cast));
+        // Ordered by name (Mercury, Venus): sorting by the string-represented orderFromSun is refused (EF-337).
         var results = db.Entities
-            .OrderBy(p => p.orderFromSun)
+            .OrderBy(p => p.name)
             .Select(p => new { Position = (long)p.orderFromSun })
             .ToList();
 
@@ -614,8 +636,9 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     {
         using var db = CreateStringOrderContext(
             nameof(Select_projection_alias_with_bson_representation_nullable_lift));
+        // Ordered by name (Mercury, Venus): sorting by the string-represented orderFromSun is refused (EF-337).
         var results = db.Entities
-            .OrderBy(p => p.orderFromSun)
+            .OrderBy(p => p.name)
             .Select(p => new { Position = (int?)p.orderFromSun })
             .ToList();
 
@@ -670,11 +693,14 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
-    public void Count_with_value_converter_in_predicate()
+    public void Count_with_value_converter_in_predicate_is_refused()
     {
+        // long stored as int (narrowing): a relational comparison against a constant is refused (EF-337), because a
+        // constant outside the int range would wrap. Sort and aggregates above stay supported; equality below works.
         using var db = CreateLongOrderContext();
-        var result = db.Entities.Count(p => p.orderFromSun > 4L);
-        Assert.Equal(4, result);
+        var ex = Assert.Throws<NotSupportedException>(() => db.Entities.Count(p => p.orderFromSun > 4L));
+        Assert.Contains("PlanetWithLongOrder.orderFromSun'", ex.Message);
+        Assert.Equal(1, db.Entities.Count(p => p.orderFromSun == 4L));
     }
 
     [Fact]
@@ -746,7 +772,7 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
                     Sub = new
                     {
                         Double = p.orderFromSun * 2,
-                        NameUpper = p.name.ToUpper()
+                        NameLength = p.name.Length
                     }
                 })
                 .ToList());
@@ -1099,7 +1125,7 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
         Assert.ThrowsAny<Exception>(() =>
             _db.Planets.Select(p => new
             {
-                Upper = p.name.ToUpper(),
+                Trimmed = p.name.Trim(),
                 Label = FormatLabel(p.name)
             }).ToList());
     }
@@ -1126,13 +1152,16 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     }
 
     [Fact]
-    public void Select_projection_group_by_not_supported()
+    public void Select_projection_group_by()
     {
-        Assert.ThrowsAny<Exception>(() =>
-            _db.Planets
-                .GroupBy(p => p.hasRings)
-                .Select(g => new { g.Key, Count = g.Count() })
-                .ToList());
+        var results = _db.Planets
+            .GroupBy(p => p.hasRings)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToList();
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal(4, results.Single(r => r.Key).Count);
+        Assert.Equal(4, results.Single(r => !r.Key).Count);
     }
 
     private class OrderWithDates
@@ -1298,6 +1327,37 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
 
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("\"$match\" : { \"name\" : \"Saturn\" }", message);
+    }
+
+    [Fact]
+    public void Select_projection_after_orderby_take_returns_correct_paged_rows()
+    {
+        // Take before a terminal Select must page on orderFromSun before $project drops it; Mercury/Venus prove it.
+        // (No MQL-capture helper in FunctionalTests, so this checks results rather than stage order.)
+        var results = _db.Planets
+            .OrderBy(p => p.orderFromSun)
+            .Select(p => new { p.name, p.orderFromSun })
+            .Take(2)
+            .ToList();
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal("Mercury", results[0].name);
+        Assert.Equal(1, results[0].orderFromSun);
+        Assert.Equal("Venus", results[1].name);
+        Assert.Equal(2, results[1].orderFromSun);
+    }
+
+    [Fact]
+    public void Select_projection_with_case_differing_members_falls_back_and_throws()
+    {
+        // Two members differing only by case (Name / name): the native $project guard forces a fallback, and driver
+        // LINQ can't represent the constructor either (ExpressionNotSupportedException). Pins the throw so a
+        // regression to silently dropped/null values is caught.
+        Assert.ThrowsAny<Exception>(() =>
+            _db.Planets
+                .Where(p => p.name == "Earth")
+                .Select(p => new { Name = p.name, name = p.hasRings })
+                .ToList());
     }
 
     public void Dispose()

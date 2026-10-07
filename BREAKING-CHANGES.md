@@ -4,6 +4,61 @@ Please note that this provider **does not follow traditional semantic versioning
 
 In order to evolve the provider as we introduce new features, we will be using the minor version number for breaking and significant changes to our EF Core provider. Please bear this in mind when upgrading to newer versions of the MongoDB EF Core Provider and ensure you read the release notes and this document for the latest in breaking change information.
 
+### A missing or `null` embedded array now materializes as an empty collection, not `null`
+
+#### Old behavior
+
+When a stored document had no field at all for an embedded (owned) collection, or had that field explicitly set to BSON `null`, the provider created no collection for the navigation. What you observed then depended on your own class: a navigation declared as a plain `public List<Post> Posts { get; set; }` read back as `null`, while one declared `public List<Post> Posts { get; set; } = []` read back as an empty collection, because the field initializer had already supplied one.
+
+Projecting the collection directly made the `null` unambiguous and usable, since no field initializer was involved: `Select(b => b.Posts)` returned `null` for those documents, so `posts is null` was a reliable test for "the stored array was absent or `null`", as distinct from "the stored array was present but empty".
+
+#### New behavior
+
+A missing or explicitly-`null` embedded array now materializes as an **empty** collection on every read path — whole-entity queries, `Include`, and projections alike — regardless of how the navigation property is declared. The collection is created through the navigation's own collection accessor, so a `HashSet<T>` or custom collection navigation gets its declared type.
+
+The distinction between "the stored array was absent or `null`" and "the stored array was present but empty" is therefore no longer observable through a materialized collection navigation.
+
+Nullable primitive collection *properties* (for example `List<string>? Tags`) are unaffected and still read back as `null`, because they map through a property serializer with its own nullability semantics rather than as a collection navigation.
+
+**This can change stored documents, through a read-modify-write cycle.** The write path itself is unchanged: assigning `null` to a collection navigation and saving still persists `null`. But if you load an entity, change anything about it, and call `SaveChanges`, what gets written back for the collection navigation is now the empty collection that materialization produced, where it used to be the `null` that materialization produced. Measured, for a tracked load of one document, an edit to an unrelated scalar property, and `SaveChanges` — identical in both query modes:
+
+| Stored `Posts` before the cycle | Written back, previous versions | Written back, this version |
+|---|---|---|
+| field absent | `"Posts": null` | `"Posts": []` |
+| `"Posts": null` | `"Posts": null` | `"Posts": []` |
+| `"Posts": []` | `"Posts": []` | `"Posts": []` |
+
+So loading, mutating and saving entities whose embedded arrays are ragged will normalize those arrays **in the database**. Note this is not new *document-rewriting* behavior — the previous versions already replaced an absent field with `"Posts": null` on the same cycle; what changed is the value written. It follows from the read change described above, and nothing about how a collection is serialized changed.
+
+#### Why
+
+Empty-not-null is Entity Framework Core's contract for a collection navigation, independent of the CLR type's nullability or its field initializer. The previous behavior made the materialized result depend on the application's field initializer, which meant two models over the same documents disagreed, and different read paths over the same document could disagree with each other. It also made a projected count of such a collection throw `ArgumentNullException` instead of returning `0`.
+
+#### Mitigations
+
+If you need to tell an absent or `null` stored array apart from a present-but-empty one, ask the database rather than the materialized collection. A LINQ predicate cannot express it (`!b.Posts.Any()` is true for all three states), so query the documents through the driver, where the stored shape is visible:
+
+```c#
+var collection = client.GetDatabase("mydb").GetCollection<BsonDocument>("Blogs");
+var absentOrNull = collection.Find(
+        Builders<BsonDocument>.Filter.Or(
+            Builders<BsonDocument>.Filter.Exists("Posts", false),
+            Builders<BsonDocument>.Filter.Eq("Posts", BsonNull.Value)))
+    .ToList();
+```
+
+Use the same `IMongoClient` your `DbContext` is configured with, or a new `MongoClient` against the same connection string. If you were relying on `Select(b => b.Posts)` returning `null`, replace that test with the above.
+
+Do that check **before** the documents pass through a read-modify-write cycle, because that cycle normalizes them (see *New behavior*). If you need the ragged stored shape preserved, avoid round-tripping those entities through the change tracker: update only the fields you actually want to change, either with `ExecuteUpdate` (whose setter API differs between EF Core versions — see the EF Core docs for the form your version takes) or with a driver update, which leaves the array field untouched:
+
+```c#
+collection.UpdateOne(
+    Builders<BsonDocument>.Filter.Eq("_id", id),
+    Builders<BsonDocument>.Update.Set("Title", "New title"));
+```
+
+Otherwise, treat the normalization as a one-time migration of the documents you save, and take whatever record of the distinction you need — a backup, or an audit query using the `Find` above — before saving.
+
 ### Entity types with their own `DbSet` are no longer embedded when reached by a navigation
 
 #### Old behavior
@@ -49,6 +104,190 @@ A password-only redaction still discloses the account and deployment topology, a
 #### Mitigations
 
 Use `DatabaseName` to distinguish contexts, or log non-sensitive parts of the connection string yourself if you need it. `PopulateDebugInfo`'s connection-string hash (`Mongo:ConnectionString`) is unchanged.
+
+### Query results can differ for a numeric cast in a `Where` clause
+
+#### Old behavior
+
+A numeric cast applied to a mapped property inside a `Where` clause — `(int)x.D`, `(double)x.Weight` — was translated by the MongoDB C# driver's LINQ provider, which for many shapes **silently dropped the cast** and filtered on the raw stored value instead:
+
+```c#
+context.Blogs.Where(x => (int)x.Score > 0);   // ran as though it were: x.Score > 0
+```
+
+#### New behavior
+
+The provider's own MQL translator now renders the cast explicitly, as `$toInt` / `$toLong` / `$toDouble` / `$toDecimal`, instead of handing the query to the driver's LINQ provider. Two observable consequences for a query that ran successfully in `10.0.2` / `9.1.2` / `8.4.2`:
+
+* **A narrowing cast compared against a constant now returns the C#-correct rows.** `Where(x => (int)x.D > 0)` over a document with `D = 0.5` previously matched (the cast was dropped, so `0.5 > 0` was evaluated); it no longer does, because `(int)0.5` is `0`. This is a deliberate correctness fix — the new result is the one C# itself produces for the same expression.
+
+* **A value outside the target type's range now raises a server error** where rows were previously returned. `Where(x => (int)x.D > 0)` over a document storing `D = 1e30` fails with `MongoDB.Driver.MongoCommandException: … Conversion would overflow target type in $convert with no onError value: 1e+30`. **The failure aborts the whole query, not just the offending document** — the conversion is evaluated for every document the query scans, including documents that would never have matched the predicate — so no rows are returned at all. Unchecked C# would instead have produced an unspecified truncated value for that document.
+
+#### Why
+
+Dropping a cast answers a different question from the one the query asked, and does so silently. Rendering it explicitly makes a filtered query agree with what the same expression means in C#.
+
+The overflow case is a deliberate choice between three answers that all differ: the previous behavior (rows, from a comparison the query did not ask for), unchecked C# (an unspecified value), and suppressing the error (a converted-to-`null` operand, which then participates in a BSON-ordering comparison and quietly moves the document into or out of the result depending on the operator). A loud failure is the only one of the three that cannot be mistaken for an answer, and a value that does not fit the cast's target type indicates a defect in the query or in the stored data.
+
+#### Mitigations
+
+In preference order:
+
+1. **Fix the expression or the data.** If the cast was incidental, remove it (`Where(x => x.D > 0)`) — that is the query the old behavior actually ran. If a stored value genuinely cannot fit the cast's target type, either widen the target (`(long)`, `(double)`) or correct the document.
+
+2. **Restore the previous behavior for the whole context** by opting out of the native translator:
+
+    ```c#
+    optionsBuilder.UseMongoDB(connectionString, databaseName)
+        .UseQueryMode(MongoQueryMode.DriverLinq);
+    ```
+
+    This routes every query through the driver's LINQ provider, as in earlier versions, and restores the old result for both consequences above.
+
+Queries with no numeric cast in their filter are unaffected, as are casts whose stored values all fit the target type and whose truncation does not change the comparison's outcome. A relational comparison (`<`, `<=`, `>`, `>=`) whose cast is applied to a **nullable** property is also unaffected: that shape still routes through the driver's LINQ provider, so it keeps the old behavior described above rather than either new consequence.
+
+### A document missing a field now compares equal to `null` in a projection or ordering
+
+#### Old behavior
+
+A null comparison used as a projected value or an ordering key — `Select(x => x.Text == null)`, `Select(x => x.NullableInt == null)`, `Select(x => string.IsNullOrEmpty(x.Text))`, `OrderBy(x => x.Text == null)` — answered `false` (and sorted as non-null) for a document with no element for that property at all, because the driver's aggregation `$eq` distinguishes a missing element from `null`.
+
+#### New behavior
+
+A missing element is treated as `null`: those expressions answer `true` and sort as null for such documents. This matches LINQ-to-objects over the materialized entities, and the same comparison in a `Where`, which already matched missing elements.
+
+#### Mitigations
+
+`UseQueryMode(MongoQueryMode.DriverLinq)` restores the old behavior.
+
+### `ToUpper`/`ToLower` in a projection are applied client-side
+
+#### Old behavior
+
+`Select(x => x.Text.ToUpper())` / `ToLower()` (including over a `Trim`, `Substring` or `Replace` receiver) ran on the server as `$toUpper`/`$toLower`: a `null` value yielded `""`, and only ASCII characters were mapped.
+
+#### New behavior
+
+The raw string is projected and the case mapping is applied client-side, in **every** query mode, including `DriverLinq`: `null` yields `null`, and non-ASCII characters map as in .NET (`"é"` → `"É"`). A value-reading operator after such a projection (for example `.Distinct()`) routes through the driver's LINQ provider and keeps the old server-side mapping (`null` → `""`, ASCII-only).
+
+#### Mitigations
+
+`UseQueryMode(MongoQueryMode.DriverLinq)` does **not** restore the old behavior. To keep the old `null` → `""` result, coalesce explicitly: `x.Text == null ? "" : x.Text.ToUpper()`.
+
+### `Equals(…, StringComparison.OrdinalIgnoreCase)` in a `Where` is Unicode-aware
+
+#### Old behavior
+
+`Where(x => x.Text.Equals("seattle", StringComparison.OrdinalIgnoreCase))` (and the static `string.Equals` form) ran as `$strcasecmp`, which folds ASCII characters only, so `"ÉCOLE"` did not match `"école"`.
+
+`Where(x => x.Text.ToLower() == "seattle")` / `ToUpper() == "SEATTLE"` already ran as an anchored case-insensitive regex (`/^seattle$/is`), which also matched a value with a trailing newline (`"seattle\n"`).
+
+#### New behavior
+
+A case-insensitive comparison against a constant is an anchored case-insensitive regex that folds non-ASCII characters too, so `"ÉCOLE"` now matches `"école"`. The regex is anchored with `\z`, so neither form matches a trailing newline any more: `"seattle\n"` no longer matches `ToLower() == "seattle"`.
+
+#### Mitigations
+
+`UseQueryMode(MongoQueryMode.DriverLinq)` restores the old behavior.
+
+### Server-side date parts and calendar adds over a `HasDateTimeKind(DateTimeKind.Local)` property now throw
+
+#### Old behavior
+
+For a `DateTime` property configured with `HasDateTimeKind(DateTimeKind.Local)`, any `DateTime` member other than `Kind` (`Hour`, `Date`, `Year`, `Month`, `Day`, `DayOfWeek`, ...) and `AddYears`/`AddMonths`/`AddDays` were evaluated by the server on the stored UTC instant:
+
+```c#
+context.Orders.Select(o => o.LocalDate.Hour);
+context.Orders.Where(o => o.LocalDate.AddDays(1) > cutoff);
+```
+
+The entity materializes as local time, so the server-computed value matched the C# value only on a UTC host, and for `AddDays`/`AddMonths`/`AddYears` only away from DST changes and month/day boundaries. Otherwise the query silently returned a wrong value or wrong rows.
+
+#### New behavior
+
+These queries throw `InvalidOperationException` (default and `DriverLinq` query modes; `NativeOnly` throws `NativeTranslationNotSupportedException`) naming the property. `AddHours`/`AddMinutes`/`AddSeconds`/`AddMilliseconds`, comparisons, and all of the above on `Utc`-kind or unconfigured `DateTime` properties are unchanged.
+
+#### Mitigations
+
+Use a `Utc`-kind (or default) property for the date arithmetic, or bring the rows to the client first: `context.Orders.AsEnumerable().Select(o => o.LocalDate.Hour)`.
+
+### Ordering, relational comparisons and aggregates over a value-converted or string-represented property now throw
+
+#### Old behavior
+
+A relational comparison (`<`, `<=`, `>`, `>=`, `string.Compare`/`CompareTo`), an `OrderBy`/`ThenBy` key, or `Sum`/`Min`/`Max`/`Average`/`MinBy`/`MaxBy` over a property configured with a value converter or a non-default `BsonRepresentation` was evaluated by the server on the **stored** value:
+
+```c#
+modelBuilder.Entity<Product>().Property(p => p.Price).HasBsonRepresentation(BsonType.String); // or HasConversion<string>()
+
+context.Products.OrderBy(p => p.Price);        // sorted "10" < "100" < "9"
+context.Products.Where(p => p.Price > 50);     // compared strings: matched 9, not 100
+context.Products.Sum(p => p.Price);            // $sum ignores strings: 0
+context.Products.Max(p => p.Price);            // 9
+```
+
+The same applied wherever such a comparison, key or aggregate appeared: inside an element predicate (`o.Lines.Any(l => l.Price > 50)`, a filtered `Count`), in a projection, in an `ExecuteUpdate`/`ExecuteDelete` filter, and when the property is reached through a computed expression (`p.Price ?? 0`, `cond ? p.Price : 0`, `-p.Price`, a projected member, `g.Key` of a `GroupBy` on the property, an element of a `Concat`/`Union`). The result silently differed from the .NET answer whenever the stored form does not order like the .NET value. Some such queries happened to return the right answer: an enum stored as its name sorted alphabetically (right only if the names are in value order), an order-preserving custom converter such as `v => v * 2` compared correctly (but `Sum` did not), and single-digit numbers stored as strings sorted correctly.
+
+#### New behavior
+
+These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query modes; `NativeOnly` throws `NativeTranslationNotSupportedException`). This includes computed shapes over the property (a member or method computed from its stored value, such as `p.Name.Length`, `p.When.Year` or `p.Price.ToString()`; a converted `bool` used for its truth in a key, such as `OrderBy(p => !p.Flag)`), and a key or operand the provider cannot trace back to its properties when such a property flows into it. Filters, equality comparisons and projections elsewhere in the query don't count, and a default-stored primitive collection (`p.Scores.Any(s => s > 5)`) is unaffected. It applies to **every custom value converter**, whether or not it happens to preserve order, so the following now throw for comparisons, sorting and aggregates:
+
+* strongly-typed ID value objects stored through a converter (`OrderBy(x => x.Id)` over `HasConversion(id => id.Value, v => new OrderId(v))`);
+* enums stored as their names (`HasConversion<string>()` or `HasBsonRepresentation(BsonType.String)`);
+* `DateTime` with `HasConversion<long>()` (EF's `DateTimeToBinaryConverter`, which is not order-exact);
+* `Guid`, `DateTime`, `decimal` or numbers stored as strings, and any other `BsonRepresentation` not listed below;
+* a fractional property stored as an integral type (`decimal`/`double` with `HasConversion<int>()`), which truncates;
+* a relational comparison against a value on an integral **narrowing** converter (`HasConversion<int>()` on a `long`): `x.Big > 3_000_000_000L` would wrap the constant. Sorting and aggregates over such a property keep working.
+
+Unchanged:
+
+* Equality (`==`, `!=`, `Contains`) over any such property.
+* Properties whose stored value is exactly the .NET value in a BSON type the server orders the same way:
+    * a `BsonRepresentation` equal to the type's default (for example `[BsonRepresentation(BsonType.String)]` on a `string`);
+    * a numeric (or enum) property stored as a numeric `BsonRepresentation` that holds every value exactly (for example `int` as `Int64`, `Double` or `Decimal128`; `decimal` as `Decimal128`);
+    * a `string` stored as `ObjectId`, and an `ObjectId` stored as `String`;
+    * EF Core's built-in numeric casting converter and enum-to-number converter to a type that holds every value exactly (for example `HasConversion<long>()` or `HasConversion<double>()` on an `int`, `HasConversion<long>()` on an enum), for comparisons, sorting and aggregates;
+    * the integral narrowing converters above (`HasConversion<int>()` on a `long`), for sorting and aggregates only.
+
+#### Mitigations
+
+Store the property in a form that orders like the .NET value (for example remove `HasConversion<string>()` from an enum or number, or use a numeric `BsonRepresentation`), or sort, compare or aggregate on the client: `context.Products.AsEnumerable().OrderBy(p => p.Price)`.
+
+### `Random.Next` and `Guid.NewGuid` calls inside a query now throw
+
+#### Old behavior
+
+A call to `Random.Next(...)` (on any `Random` instance, including `Random.Shared` and a seeded `new Random(seed)`) or to `Guid.NewGuid()` inside a predicate, ordering or projection was evaluated **once**, while the query was translated, and the single value was used for every row:
+
+```c#
+context.Orders.Where(o => o.Priority > Random.Shared.Next(0, 10));   // one random threshold for all rows
+context.Orders.OrderBy(o => Random.Shared.Next());                   // not shuffled: every row got the same key
+context.Orders.Select(o => new { o.Id, R = Random.Shared.Next() });  // the same number on every row
+```
+
+Some such queries happened to return the right answer because a per-row evaluation would have produced the same value anyway, for example a seeded `new Random(15).Next(...)` compared against a column, or `Guid.NewGuid() != Guid.Empty`, which is always true.
+
+#### New behavior
+
+These queries throw `InvalidOperationException` in the default and `DriverLinq` query modes (`NativeOnly` may instead throw `NativeTranslationNotSupportedException`) with the message:
+
+> The LINQ expression contains a call to 'Random.Next', which cannot be evaluated once per row on the server. Evaluate it before the query and pass the result in as a variable, or apply it client-side after AsEnumerable().
+
+Unchanged:
+
+* `DateTime.Now` and `DateTime.UtcNow`: they are evaluated afresh on every execution of the query.
+* Calls that EF Core itself evaluates into a query parameter before the provider sees them, such as `Random.Shared.NextDouble()`, `NextInt64(...)` or `Guid.CreateVersion7()`: as with other EF Core providers, these are evaluated once per execution.
+
+#### Mitigations
+
+Evaluate the value before the query and use the variable, which the query receives as a parameter:
+
+```c#
+var threshold = Random.Shared.Next(0, 10);
+context.Orders.Where(o => o.Priority > threshold);
+```
+
+For a genuinely per-row value, bring the rows to the client first: `context.Orders.AsEnumerable().Select(o => new { o.Id, R = Random.Shared.Next() })`.
 
 ## Breaking changes in 8.4.0 / 9.1.0 / 10.0.0
 

@@ -144,7 +144,6 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         using var db = new OrderCustomerDbContext(database, ordersCollection, customersCollection);
         var orders = db.Orders.Include(o => o.Customer).ToList();
 
-        // All four orders (three with a customer + the orphan) must be returned (left-outer, not inner).
         Assert.Equal(4, orders.Count);
         var orphan = Assert.Single(orders, o => o.OrderDescription == "Orphan order");
         Assert.Null(orphan.Customer);
@@ -225,14 +224,12 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
 
         using var db = new OrderCustomerDbContext(database, ordersCollection, customersCollection);
 
-        // Include both reference (Customer) and then get customer's Orders (collection)
         var order = db.Orders
             .Include(o => o.Customer)
             .First();
 
         Assert.NotNull(order.Customer);
 
-        // Now test customer with collection include
         var customer = db.Customers
             .Include(c => c.Orders)
             .First(c => c.FullName == "Alice");
@@ -346,9 +343,8 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Include_two_sibling_reference_navigations_to_same_target_type()
     {
-        // EF-378: Root.A and Root.B both target Mid via distinct navigations. The provider used to track
-        // prior joins keyed by target entity type, so the second join's type collapsed onto the first's
-        // entry and was never detected as "second or later," breaking materialization.
+        // EF-378: Root.A and Root.B both target Mid via distinct navigations. Joins were once tracked by target
+        // entity type, so the second join collapsed onto the first and broke materialization.
         var midCollection = TemporaryDatabaseFixtureBase.CreateCollectionName("SibMid") + Guid.NewGuid().ToString("N")[..8];
         var rootCollection = TemporaryDatabaseFixtureBase.CreateCollectionName("SibRoot") + Guid.NewGuid().ToString("N")[..8];
 
@@ -436,11 +432,9 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void ThenInclude_does_not_misroute_transitive_hop_to_root_level_decoy_navigation()
     {
-        // EF-379 regression: Root carries its own FK property ("LeafId") whose name collides with
-        // Mid's FK to Leaf, plus a direct navigation to Leaf. A 2-hop ThenInclude must still resolve
-        // the second hop against Mid's FK, not silently reuse Root's decoy navigation/FK. Assert on
-        // the navigated VALUE ("RIGHT" vs "WRONG"), not merely non-null: the misrouted $lookup can
-        // still return a non-null (wrong) Leaf, and change-tracker fix-up can mask a null too.
+        // Root has its own "LeafId" FK (same name as Mid's) and a direct Leaf navigation. The 2-hop
+        // ThenInclude must resolve the second hop against Mid's FK. Assert the value ("RIGHT" vs "WRONG"),
+        // not non-null: a misrouted $lookup still returns a (wrong) Leaf, and fix-up can mask a null.
         var (rootsCollection, midsCollection, leavesCollection) = SetupRootMidLeafWithDecoy();
 
         var mqlMessages = new List<string>();
@@ -452,10 +446,8 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         Assert.NotNull(root.Mid.Leaf);
         Assert.Equal("RIGHT", root.Mid.Leaf.Name);
 
-        // Pipeline-level guard: the Leaf $lookup must match against the already-joined Mid document
-        // ("_lookup_Mid.leaf_id"), never against Root's own decoy "leaf_id" field. Assert on BOTH the
-        // localField AND its "as" alias together so a lookup that merely mentions "_lookup_Mid" for an
-        // unrelated reason can't satisfy the check.
+        // The Leaf $lookup must match on "_lookup_Mid.leaf_id", not Root's decoy "leaf_id". Assert localField
+        // and "as" together so an unrelated mention of "_lookup_Mid" can't satisfy the check.
         var mql = Assert.Single(mqlMessages, m => m.Contains("ExecutedMqlQuery") || m.Contains("aggregate"));
         Assert.Contains("\"localField\" : \"_lookup_Mid.leaf_id\"", mql);
         Assert.Contains("\"as\" : \"_lookup_Leaf\"", mql);
@@ -496,6 +488,24 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
                 .Include(c => c.Orders)
                 .First(c => c.FullName == "Alice"));
     }
+
+#if !EF8 && !EF9
+    [Fact]
+    public void Filtered_include_with_paging_still_runs_and_is_correct()
+    {
+        // Control against over-declining paging inside a $lookup sub-pipeline (cf. NativeJoinInnerDeclineTests):
+        // for a filtered Include, per-outer-row paging is exactly Include's semantics, so it must stay native.
+        var (ordersCollection, customersCollection) = SetupOrdersAndCustomers();
+        using var db = new OrderCustomerDbContext(database, ordersCollection, customersCollection);
+
+        var alice = db.Customers
+            .Where(c => c.FullName == "Alice")
+            .Include(c => c.Orders.OrderBy(o => o.OrderDescription).Take(1))
+            .Single();
+
+        Assert.Equal(["Order 1"], alice.Orders.Select(o => o.OrderDescription).ToArray());
+    }
+#endif
 
     // BSON uses: desc, cust_id for Orders; name for Customers
     // C# uses:   OrderDescription, CustomerId for Orders; FullName for Customers
@@ -606,8 +616,7 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
         database.MongoDatabase.GetCollection<BsonDocument>(midsName).InsertOne(
             new BsonDocument { { "_id", midId }, { "leaf_id", rightLeafId } });
 
-        // Root's own "leaf_id" deliberately points at the WRONG leaf, and its name collides with
-        // Mid's FK property name — this is what a misrouted transitive hop would read instead.
+        // Root's own "leaf_id" (same name as Mid's FK) points at the wrong leaf; a misrouted hop reads it.
         database.MongoDatabase.GetCollection<BsonDocument>(rootsName).InsertOne(
             new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "mid_id", midId }, { "leaf_id", wrongLeafId } });
 
@@ -963,8 +972,7 @@ public class CrossCollectionIncludeTests(TemporaryDatabaseFixture database)
                 b.Property(r => r.MidId).HasElementName("mid_id");
                 b.Property(r => r.LeafId).HasElementName("leaf_id");
                 b.HasOne(r => r.Mid).WithMany().HasForeignKey(r => r.MidId);
-                // Decoy: Root also has a direct navigation to Leaf, via an FK property with the SAME
-                // name ("LeafId") as Mid's FK to Leaf. This is the shape EF-379 misrouted.
+                // Decoy: Root's direct navigation to Leaf uses an FK named "LeafId", same as Mid's FK to Leaf.
                 b.HasOne(r => r.DecoyLeaf).WithMany().HasForeignKey(r => r.LeafId);
             });
         }

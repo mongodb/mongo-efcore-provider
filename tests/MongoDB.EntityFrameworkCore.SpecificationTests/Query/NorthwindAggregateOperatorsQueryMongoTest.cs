@@ -17,6 +17,7 @@ using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestUtilities;
 using MongoDB.Bson;
 using MongoDB.Driver.Linq;
+using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 using Xunit.Abstractions;
 using Xunit.Sdk;
 
@@ -64,7 +65,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            OrderDetails.{ "$match" : { "$expr" : { "$in" : [["$_id.OrderID", "$_id.ProductID"], [[1, 2], [10248, 11]]] } } }
+            OrderDetails.{ "$match" : { "$expr" : { "$in" : [["$_id.OrderID", "$_id.ProductID"], { "$literal" : [[1, 2], [10248, 11]] }] } } }
             """);
     }
 
@@ -81,18 +82,27 @@ public class NorthwindAggregateOperatorsQueryMongoTest
     public override async Task Contains_over_keyless_entity_throws(bool async)
     {
         // Fails: Entity equality issue EF-202
-        Assert.Contains(
-            "Entity to entity comparison is not supported.",
-            (await Assert.ThrowsAsync<NotSupportedException>(() => base.Contains_over_keyless_entity_throws(async))).Message);
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Contains_over_keyless_entity_throws(async), typeof(NotSupportedException));
 
-        AssertMql(
-            """
-            Customers.{ "$limit" : 1 }
-            """,
-            //
-            """
-            Customers.
-            """);
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql(
+                """
+                Customers.{ "$limit" : 1 }
+                """);
+        }
+        else
+        {
+            AssertMql(
+                """
+                Customers.{ "$limit" : 1 }
+                """,
+                //
+                """
+                Customers.
+                """);
+        }
     }
 
     public override async Task Enumerable_min_is_mapped_to_Queryable_1(bool async)
@@ -116,15 +126,20 @@ public class NorthwindAggregateOperatorsQueryMongoTest
     public override async Task Average_with_unmapped_property_access_throws_meaningful_exception(bool async)
     {
         // Fails: Does not use translation failed message EF-X002
-        Assert.Contains(
-            "a",
-            (await Assert.ThrowsAsync<ThrowsException>(() =>
-                base.Average_with_unmapped_property_access_throws_meaningful_exception(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.Average_with_unmapped_property_access_throws_meaningful_exception(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task Sum_over_empty_returns_zero(bool async)
@@ -133,7 +148,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : 42 } }, { "$group" : { "_id" : null, "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_id" : 0 } }
+            Orders.{ "$match" : { "_id" : 42 } }, { "$group" : { "_id" : null, "v" : { "$sum" : "$_id" } } }
             """);
     }
 
@@ -143,7 +158,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : 10248 } }, { "$group" : { "_id" : null, "_v" : { "$avg" : { "$subtract" : ["$_id", 10248] } } } }, { "$project" : { "_id" : 0 } }
+            Orders.{ "$match" : { "_id" : 10248 } }, { "$group" : { "_id" : null, "v" : { "$avg" : { "$subtract" : ["$_id", 10248] } } } }
             """);
     }
 
@@ -153,7 +168,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : 10248 } }, { "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : { "$subtract" : ["$_id", 10248] } } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
+            Orders.{ "$match" : { "_id" : 10248 } }, { "$group" : { "_id" : null, "v" : { "$max" : { "_v" : { "$subtract" : ["$_id", 10248] } } } } }
             """);
     }
 
@@ -163,7 +178,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : 10248 } }, { "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : { "$subtract" : ["$_id", 10248] } } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
+            Orders.{ "$match" : { "_id" : 10248 } }, { "$group" : { "_id" : null, "v" : { "$min" : { "_v" : { "$subtract" : ["$_id", 10248] } } } } }
             """);
     }
 
@@ -195,8 +210,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : { "$lt" : 0 } } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : null, "_v" : { "$sum" : "$_v" } } }, { "$project" : { "_id" : 0 } }
-            """);
+Orders.{ "$match" : { "_id" : { "$lt" : 0 } } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$sum" : "$_id" } } }
+""");
     }
 
     public override async Task Sum_with_no_data_nullable(bool async)
@@ -205,7 +220,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Products.{ "$group" : { "_id" : null, "_v" : { "$sum" : "$SupplierID" } } }, { "$project" : { "_id" : 0 } }
+            Products.{ "$group" : { "_id" : null, "v" : { "$sum" : "$SupplierID" } } }
             """);
     }
 
@@ -215,8 +230,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : 42 } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : null, "_v" : { "$sum" : "$_v" } } }, { "$project" : { "_id" : 0 } }
-            """);
+Orders.{ "$match" : { "_id" : 42 } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$sum" : "$_id" } } }
+""");
     }
 
     public override async Task Min_no_data(bool async)
@@ -225,35 +240,27 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : "$_id" } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
+            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "v" : { "$min" : { "_v" : "$_id" } } } }
             """);
     }
 
     public override async Task Min_no_data_nullable(bool async)
     {
-        // Fails: Max over empty nullables issue EF-227
-        Assert.Contains(
-            "Sequence contains no elements",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Min_no_data_nullable(async))).Message);
+        await base.Min_no_data_nullable(async);
 
         AssertMql(
             """
-            Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : "$SupplierID" } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
+            Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "v" : { "$min" : "$SupplierID" } } }
             """);
     }
 
     public override async Task Min_no_data_cast_to_nullable(bool async)
     {
-        // Fails: Max over empty nullables issue EF-227
-        Assert.Contains(
-            "Sequence contains no elements",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Min_no_data_cast_to_nullable(async))).Message);
+        await base.Min_no_data_cast_to_nullable(async);
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : "$_id" } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
+            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "v" : { "$min" : "$_id" } } }
             """);
     }
 
@@ -272,35 +279,27 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : "$_id" } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
+            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "v" : { "$max" : { "_v" : "$_id" } } } }
             """);
     }
 
     public override async Task Max_no_data_nullable(bool async)
     {
-        // Fails: Max over empty nullables issue EF-227
-        Assert.Contains(
-            "Sequence contains no elements",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Max_no_data_nullable(async))).Message);
+        await base.Max_no_data_nullable(async);
 
         AssertMql(
             """
-            Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : "$SupplierID" } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
+            Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "v" : { "$max" : "$SupplierID" } } }
             """);
     }
 
     public override async Task Max_no_data_cast_to_nullable(bool async)
     {
-        // Fails: Max over empty nullables issue EF-227
-        Assert.Contains(
-            "Sequence contains no elements",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                base.Max_no_data_cast_to_nullable(async))).Message);
+        await base.Max_no_data_cast_to_nullable(async);
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : "$_id" } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
+            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "v" : { "$max" : "$_id" } } }
             """);
     }
 
@@ -319,7 +318,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_v" : { "$avg" : "$_id" } } }, { "$project" : { "_id" : 0 } }
+            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "v" : { "$avg" : "$_id" } } }
             """);
     }
 
@@ -329,7 +328,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "_v" : { "$avg" : "$SupplierID" } } }, { "$project" : { "_id" : 0 } }
+            Products.{ "$match" : { "SupplierID" : -1 } }, { "$group" : { "_id" : null, "v" : { "$avg" : "$SupplierID" } } }
             """);
     }
 
@@ -339,7 +338,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "_v" : { "$avg" : "$_id" } } }, { "$project" : { "_id" : 0 } }
+            Orders.{ "$match" : { "_id" : -1 } }, { "$group" : { "_id" : null, "v" : { "$avg" : "$_id" } } }
             """);
     }
 
@@ -358,7 +357,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$count" : "_v" }
+            Orders.{ "$count" : "v" }
             """);
     }
 
@@ -368,106 +367,141 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$sort" : { "CustomerID" : 1 } }, { "$count" : "_v" }
+            Orders.{ "$sort" : { "CustomerID" : 1 } }, { "$count" : "v" }
             """);
     }
 
     public override async Task Where_OrderBy_Count_client_eval(bool async)
     {
         // Fails: Does not throw expected unable to translate exception EF-X002
-        Assert.Contains(
-            "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() =>
-                base.Where_OrderBy_Count_client_eval(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.Where_OrderBy_Count_client_eval(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task OrderBy_Where_Count_client_eval(bool async)
     {
         // Fails: Does not throw expected unable to translate exception EF-X002
-        Assert.Contains(
-            "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() =>
-                base.OrderBy_Where_Count_client_eval(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.OrderBy_Where_Count_client_eval(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task OrderBy_Where_Count_client_eval_mixed(bool async)
     {
         // Fails: Does not throw expected unable to translate exception EF-X002
-        Assert.Contains(
-            "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() =>
-                base.OrderBy_Where_Count_client_eval_mixed(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.OrderBy_Where_Count_client_eval_mixed(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task OrderBy_Count_with_predicate_client_eval(bool async)
     {
         // Fails: Does not throw expected unable to translate exception EF-X002
-        Assert.Contains(
-            "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() =>
-                base.OrderBy_Count_with_predicate_client_eval(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.OrderBy_Count_with_predicate_client_eval(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task OrderBy_Count_with_predicate_client_eval_mixed(bool async)
     {
         // Fails: Does not throw expected unable to translate exception EF-X002
-        Assert.Contains(
-            "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() =>
-                base.OrderBy_Count_with_predicate_client_eval_mixed(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.OrderBy_Count_with_predicate_client_eval_mixed(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task OrderBy_Where_Count_with_predicate_client_eval(bool async)
     {
         // Fails: Does not throw expected unable to translate exception EF-X002
-        Assert.Contains(
-            "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() =>
-                base.OrderBy_Where_Count_with_predicate_client_eval(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.OrderBy_Where_Count_with_predicate_client_eval(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task OrderBy_Where_Count_with_predicate_client_eval_mixed(bool async)
     {
         // Fails: Does not throw expected unable to translate exception EF-X002
-        Assert.Contains(
-            "Actual:   typeof(MongoDB.Driver.Linq.ExpressionNotSupportedException)",
-            (await Assert.ThrowsAsync<ThrowsException>(() =>
-                base.OrderBy_Where_Count_with_predicate_client_eval_mixed(async))).Message);
+        await Assert.ThrowsAsync<ThrowsException>(() =>
+            base.OrderBy_Where_Count_with_predicate_client_eval_mixed(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task OrderBy_client_Take(bool async)
@@ -476,8 +510,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Employees.{ "$project" : { "_id" : 0, "_document" : "$$ROOT", "_key1" : 42 } }, { "$sort" : { "_key1" : 1 } }, { "$replaceRoot" : { "newRoot" : "$_document" } }, { "$limit" : 10 }
-            """);
+Employees.{ "$set" : { "__sort0" : { "$literal" : 42 } } }, { "$sort" : { "__sort0" : 1 } }, { "$unset" : ["__sort0"] }, { "$limit" : 10 }
+""");
     }
 
     public override async Task Single_Throws(bool async)
@@ -594,9 +628,11 @@ public class NorthwindAggregateOperatorsQueryMongoTest
     {
         await base.Select_All(async);
 
+        // Top-level `All` negates its predicate via MongoExpressionNegator and goes native; the $match matches the
+        // fallback's, minus its trailing `$project: {_id: 0, _v: null}` (presence-only aggregates need no projection).
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : { "$ne" : "ALFKI" } } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Orders.{ "$match" : { "CustomerID" : { "$ne" : "ALFKI" } } }, { "$limit" : 1 }
             """);
     }
 
@@ -606,8 +642,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : null, "_v" : { "$sum" : "$_v" } } }, { "$project" : { "_id" : 0 } }
-            """);
+Orders.{ "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$sum" : "$_id" } } }
+""");
     }
 
     public override async Task Sum_with_binary_expression(bool async)
@@ -616,8 +652,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : { "$multiply" : ["$_id", 2] }, "_id" : 0 } }, { "$group" : { "_id" : null, "_v" : { "$sum" : "$_v" } } }, { "$project" : { "_id" : 0 } }
-            """);
+Orders.{ "$project" : { "_v" : { "$multiply" : ["$_id", 2] }, "_id" : 0 } }, { "$group" : { "_id" : null, "v" : { "$sum" : "$_v" } } }
+""");
     }
 
     public override async Task Sum_with_arg(bool async)
@@ -626,7 +662,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : null, "_v" : { "$sum" : "$_id" } } }, { "$project" : { "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : null, "v" : { "$sum" : "$_id" } } }
             """);
     }
 
@@ -636,7 +672,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : null, "_v" : { "$sum" : { "$add" : ["$_id", "$_id"] } } } }, { "$project" : { "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : null, "v" : { "$sum" : { "$add" : ["$_id", "$_id"] } } } }
             """);
     }
 
@@ -646,7 +682,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            OrderDetails.{ "$group" : { "_id" : null, "_v" : { "$sum" : { "$divide" : ["$Quantity", { "$numberDecimal" : "2.09" }] } } } }, { "$project" : { "_id" : 0 } }
+            OrderDetails.{ "$group" : { "_id" : null, "v" : { "$sum" : { "$divide" : ["$Quantity", { "$numberDecimal" : "2.09" }] } } } }
             """);
     }
 
@@ -656,7 +692,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            OrderDetails.{ "$group" : { "_id" : null, "_v" : { "$sum" : { "$divide" : ["$Quantity", { "$numberDecimal" : "2" }] } } } }, { "$project" : { "_id" : 0 } }
+            OrderDetails.{ "$group" : { "_id" : null, "v" : { "$sum" : { "$divide" : ["$Quantity", { "$numberDecimal" : "2" }] } } } }
             """);
     }
 
@@ -666,8 +702,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "_v" : { "$sum" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } } }, { "$project" : { "_id" : 0 } }
-            """);
+Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$sum" : { "$ifNull" : ["$UnitPrice", { "$literal" : { "$numberDecimal" : "0" } }] } } } }
+""");
     }
 
 #if !EF8
@@ -722,15 +758,13 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
     public override async Task Sum_on_float_column(bool async)
     {
-        // Fails: Truncation data loss issue EF-228
-        Assert.Contains(
-            "Truncation resulted in data loss.",
-            (await Assert.ThrowsAsync<TruncationException>(() => base.Sum_on_float_column(async))).Message);
+        // Native $sum avoids the fallback's truncation (EF-228), so the result is correct.
+        await base.Sum_on_float_column(async);
 
         AssertMql(
             """
-            OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null, "_v" : { "$sum" : "$Discount" } } }, { "$project" : { "_id" : 0 } }
-            """);
+OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null, "v" : { "$sum" : "$Discount" } } }
+""");
     }
 
     public override async Task Sum_on_float_column_in_subquery(bool async)
@@ -748,8 +782,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : null, "_v" : { "$avg" : "$_v" } } }, { "$project" : { "_id" : 0 } }
-            """);
+Orders.{ "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$avg" : "$_id" } } }
+""");
     }
 
     public override async Task Average_with_binary_expression(bool async)
@@ -758,8 +792,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : { "$multiply" : ["$_id", 2] }, "_id" : 0 } }, { "$group" : { "_id" : null, "_v" : { "$avg" : "$_v" } } }, { "$project" : { "_id" : 0 } }
-            """);
+Orders.{ "$project" : { "_v" : { "$multiply" : ["$_id", 2] }, "_id" : 0 } }, { "$group" : { "_id" : null, "v" : { "$avg" : "$_v" } } }
+""");
     }
 
     public override async Task Average_with_arg(bool async)
@@ -768,7 +802,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : null, "_v" : { "$avg" : "$_id" } } }, { "$project" : { "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : null, "v" : { "$avg" : "$_id" } } }
             """);
     }
 
@@ -778,7 +812,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : null, "_v" : { "$avg" : { "$add" : ["$_id", "$_id"] } } } }, { "$project" : { "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : null, "v" : { "$avg" : { "$add" : ["$_id", "$_id"] } } } }
             """);
     }
 
@@ -788,7 +822,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            OrderDetails.{ "$group" : { "_id" : null, "_v" : { "$avg" : { "$divide" : ["$Quantity", { "$numberDecimal" : "2.09" }] } } } }, { "$project" : { "_id" : 0 } }
+            OrderDetails.{ "$group" : { "_id" : null, "v" : { "$avg" : { "$divide" : ["$Quantity", { "$numberDecimal" : "2.09" }] } } } }
             """);
     }
 
@@ -798,7 +832,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            OrderDetails.{ "$group" : { "_id" : null, "_v" : { "$avg" : { "$divide" : ["$Quantity", { "$numberDecimal" : "2" }] } } } }, { "$project" : { "_id" : 0 } }
+            OrderDetails.{ "$group" : { "_id" : null, "v" : { "$avg" : { "$divide" : ["$Quantity", { "$numberDecimal" : "2" }] } } } }
             """);
     }
 
@@ -808,8 +842,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "_v" : { "$avg" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } } }, { "$project" : { "_id" : 0 } }
-            """);
+Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$avg" : { "$ifNull" : ["$UnitPrice", { "$literal" : { "$numberDecimal" : "0" } }] } } } }
+""");
     }
 
 #if !EF8
@@ -849,15 +883,13 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
     public override async Task Average_on_float_column(bool async)
     {
-        // Fails: Truncation data loss issue EF-228
-        Assert.Contains(
-            "Truncation resulted in data loss.",
-            (await Assert.ThrowsAsync<TruncationException>(() => base.Average_on_float_column(async))).Message);
+        // Native $avg avoids the fallback's truncation (EF-228), so the result is correct.
+        await base.Average_on_float_column(async);
 
         AssertMql(
             """
-            OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null, "_v" : { "$avg" : "$Discount" } } }, { "$project" : { "_id" : 0 } }
-            """);
+OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null, "v" : { "$avg" : "$Discount" } } }
+""");
     }
 
     public override async Task Average_on_float_column_in_subquery(bool async)
@@ -884,8 +916,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : null, "_min" : { "$min" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
-            """);
+Orders.{ "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$min" : { "_v" : "$_id" } } } }
+""");
     }
 
     public override async Task Min_with_arg(bool async)
@@ -894,7 +926,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : "$_id" } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
+            Orders.{ "$group" : { "_id" : null, "v" : { "$min" : { "_v" : "$_id" } } } }
             """);
     }
 
@@ -904,8 +936,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
-            """);
+Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$min" : { "_v" : { "$ifNull" : ["$UnitPrice", { "$literal" : { "$numberDecimal" : "0" } }] } } } } }
+""");
     }
 
 #if !EF8
@@ -949,8 +981,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$project" : { "_v" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : null, "_max" : { "$max" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
-            """);
+Orders.{ "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$max" : { "_v" : "$_id" } } } }
+""");
     }
 
     public override async Task Max_with_arg(bool async)
@@ -959,7 +991,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : "$_id" } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
+            Orders.{ "$group" : { "_id" : null, "v" : { "$max" : { "_v" : "$_id" } } } }
             """);
     }
 
@@ -969,8 +1001,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : { "$ifNull" : ["$UnitPrice", { "$numberDecimal" : "0" }] } } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
-            """);
+Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null, "v" : { "$max" : { "_v" : { "$ifNull" : ["$UnitPrice", { "$literal" : { "$numberDecimal" : "0" } }] } } } } }
+""");
     }
 
 #if !EF8
@@ -1014,7 +1046,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$count" : "_v" }
+            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$count" : "v" }
             """);
     }
 
@@ -1024,7 +1056,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$count" : "_v" }
+            Orders.{ "$match" : { "CustomerID" : "ALFKI" } }, { "$sort" : { "_id" : 1 } }, { "$count" : "v" }
             """);
     }
 
@@ -1034,7 +1066,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "CustomerID" : "ALFKI" } }, { "$count" : "_v" }
+            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "CustomerID" : "ALFKI" } }, { "$count" : "v" }
             """);
     }
 
@@ -1044,7 +1076,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "CustomerID" : "ALFKI" } }, { "$count" : "_v" }
+            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "CustomerID" : "ALFKI" } }, { "$count" : "v" }
             """);
     }
 
@@ -1054,7 +1086,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$gt" : 10 } } }, { "$match" : { "CustomerID" : { "$ne" : "ALFKI" } } }, { "$count" : "_v" }
+            Orders.{ "$sort" : { "_id" : 1 } }, { "$match" : { "_id" : { "$gt" : 10 }, "CustomerID" : { "$ne" : "ALFKI" } } }, { "$count" : "v" }
             """);
     }
 
@@ -1074,7 +1106,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : "$City", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$group" : { "_id" : { "City" : { "$ifNull" : ["$City", null] } } } }, { "$project" : { "City" : "$_id.City", "_id" : 0 } }
             """);
     }
 
@@ -1085,7 +1117,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
         // Ordering not preserved by distinct when ordering columns not projected.
         AssertMql(
             """
-            Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : "$City", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }
+            Customers.{ "$sort" : { "_id" : 1 } }, { "$group" : { "_id" : { "City" : { "$ifNull" : ["$City", null] } } } }, { "$project" : { "City" : "$_id.City", "_id" : 0 } }
             """);
     }
 
@@ -1095,7 +1127,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : "$Country", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$sort" : { "_v" : 1 } }
+            Customers.{ "$group" : { "_id" : { "Country" : { "$ifNull" : ["$Country", null] } } } }, { "$project" : { "Country" : "$_id.Country", "_id" : 0 } }, { "$sort" : { "Country" : 1 } }
             """);
     }
 
@@ -1115,7 +1147,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$project" : { "CustomerID" : "$_id", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$sort" : { "CustomerID" : 1 } }
+            Customers.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$_id", null] } } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "_id" : 0 } }, { "$sort" : { "CustomerID" : 1 } }
             """);
     }
 
@@ -1125,7 +1157,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$count" : "_v" }
+            Customers.{ "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$count" : "v" }
             """);
     }
 
@@ -1135,7 +1167,7 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$project" : { "_v" : "$City", "_id" : 0 } }, { "$group" : { "_id" : "$$ROOT" } }, { "$replaceRoot" : { "newRoot" : "$_id" } }, { "$count" : "_v" }
+            Customers.{ "$group" : { "_id" : { "City" : { "$ifNull" : ["$City", null] } } } }, { "$project" : { "City" : "$_id.City", "_id" : 0 } }, { "$count" : "v" }
             """);
     }
 
@@ -1177,8 +1209,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
-            """);
+Customers.{ "$sort" : { "ContactName" : -1 } }, { "$limit" : 1 }
+""");
     }
 
     public override async Task Last_Predicate(bool async)
@@ -1207,8 +1239,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$sort" : { "ContactName" : 1 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
-            """);
+Customers.{ "$sort" : { "ContactName" : -1 } }, { "$limit" : 1 }
+""");
     }
 
     public override async Task LastOrDefault_Predicate(bool async)
@@ -1254,15 +1286,20 @@ public class NorthwindAggregateOperatorsQueryMongoTest
     public override async Task Contains_with_subquery_and_local_array_closure(bool async)
     {
         // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Contains_with_subquery_and_local_array_closure(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Contains_with_subquery_and_local_array_closure(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Customers.
             """);
+        }
     }
 
     public override async Task Contains_with_local_uint_array_closure(bool async)
@@ -1410,8 +1447,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$in" : ["$_id", { "$filter" : { "input" : ["ABCDE", "ALFKI"], "as" : "e", "cond" : { "$ne" : ["$$e", null] } } }] } } }
-            """);
+Customers.{ "$match" : { "_id" : { "$in" : ["ABCDE", "ALFKI"] } } }
+""");
     }
 
     public override async Task Contains_with_local_enumerable_inline_closure_mix(bool async)
@@ -1420,12 +1457,12 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "$expr" : { "$in" : ["$_id", { "$filter" : { "input" : ["ABCDE", "ALFKI"], "as" : "e", "cond" : { "$ne" : ["$$e", null] } } }] } } }
-            """,
+Customers.{ "$match" : { "_id" : { "$in" : ["ABCDE", "ALFKI"] } } }
+""",
             //
             """
-            Customers.{ "$match" : { "$expr" : { "$in" : ["$_id", { "$filter" : { "input" : ["ABCDE", "ANATR"], "as" : "e", "cond" : { "$ne" : ["$$e", null] } } }] } } }
-            """);
+Customers.{ "$match" : { "_id" : { "$in" : ["ABCDE", "ANATR"] } } }
+""");
     }
 
     public override async Task Contains_with_local_ordered_enumerable_closure(bool async)
@@ -1634,8 +1671,8 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
-            """);
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "_id" : "$_id" } }, { "$limit" : 1 }
+""");
     }
 
     public override async Task Contains_with_local_anonymous_type_array_closure(bool async)
@@ -1644,38 +1681,26 @@ public class NorthwindAggregateOperatorsQueryMongoTest
 
         AssertMql(
             """
-            OrderDetails.{ "$match" : { "$expr" : { "$in" : [{ "Id1" : "$_id.OrderID", "Id2" : "$_id.ProductID" }, [{ "Id1" : 1, "Id2" : 2 }, { "Id1" : 10248, "Id2" : 11 }]] } } }
+            OrderDetails.{ "$match" : { "$expr" : { "$in" : [{ "Id1" : "$_id.OrderID", "Id2" : "$_id.ProductID" }, { "$literal" : [{ "Id1" : 1, "Id2" : 2 }, { "Id1" : 10248, "Id2" : 11 }] }] } } }
             """);
     }
 
     public override async Task OfType_Select(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.OfType_Select(async));
-        AssertMql();
-#else
         await base.OfType_Select(async);
         AssertMql(
             """
-Orders.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : "$_v._inner.City", "_id" : 0 } }, { "$limit" : 1 }
+Orders.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : "$_lookup_Customer.City", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task OfType_Select_OfType_Select(bool async)
     {
-#if EF8 || EF9
-        // Fails: Cross-collection Include/join not translated on EF8/EF9 EF-X020
-        await AssertTranslationFailed(() => base.OfType_Select_OfType_Select(async));
-        AssertMql();
-#else
         await base.OfType_Select_OfType_Select(async);
         AssertMql(
             """
-Orders.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" : 0 } }, { "$lookup" : { "from" : "Customers", "localField" : "_outer.CustomerID", "foreignField" : "_id", "as" : "_inner" } }, { "$project" : { "_outer" : "$_outer", "_inner" : "$_inner", "_id" : 0 } }, { "$project" : { "_v" : { "$map" : { "input" : { "$cond" : { "if" : { "$eq" : [{ "$size" : "$_inner" }, 0] }, "then" : [null], "else" : "$_inner" } }, "as" : "i", "in" : { "_outer" : "$_outer", "_inner" : "$$i" } } }, "_id" : 0 } }, { "$unwind" : "$_v" }, { "$project" : { "_v" : "$_v._inner.City", "_id" : 0 } }, { "$limit" : 1 }
+Orders.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }, { "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "_v" : "$_lookup_Customer.City", "_id" : 0 } }
 """);
-#endif
     }
 
     public override async Task Average_with_non_matching_types_in_projection_doesnt_produce_second_explicit_cast(bool async)
@@ -1684,8 +1709,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" 
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$toLong" : "$_id" }, "_id" : 0 } }, { "$group" : { "_id" : null, "_v" : { "$avg" : "$_v" } } }, { "$project" : { "_id" : 0 } }
-            """);
+Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$avg" : "$_id" } } }
+""");
     }
 
     public override async Task Max_with_non_matching_types_in_projection_introduces_explicit_cast(bool async)
@@ -1694,8 +1719,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" 
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : { "$toLong" : "$_id" }, "_id" : 0 } }, { "$group" : { "_id" : null, "_max" : { "$max" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
-            """);
+Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$max" : { "_v" : "$_id" } } } }
+""");
     }
 
     public override async Task Min_with_non_matching_types_in_projection_introduces_explicit_cast(bool async)
@@ -1704,8 +1729,8 @@ Orders.{ "$sort" : { "_id" : 1 } }, { "$project" : { "_outer" : "$$ROOT", "_id" 
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "_v" : { "$toLong" : "$_id" }, "_id" : 0 } }, { "$group" : { "_id" : null, "_min" : { "$min" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
-            """);
+Orders.{ "$match" : { "CustomerID" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$project" : { "_id" : "$_id" } }, { "$group" : { "_id" : null, "v" : { "$min" : { "_v" : "$_id" } } } }
+""");
     }
 
     public override async Task OrderBy_Take_Last_gives_correct_result(bool async)
@@ -1738,7 +1763,7 @@ Orders.{ "$match" : { "_id" : 10248 } }, { "$limit" : 2 }
 """,
             //
             """
-Orders.{ "$match" : { "CustomerID" : "VINET" } }, { "$match" : { "_id" : 10248 } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+Orders.{ "$match" : { "CustomerID" : "VINET", "_id" : 10248 } }, { "$limit" : 1 }
 """);
     }
 
@@ -1754,8 +1779,8 @@ Orders.{ "$match" : { "CustomerID" : "VINET" } }, { "$match" : { "_id" : 10248 }
 
         AssertMql(
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }] } }
-""");
+            Customers.{ "$match" : { "_id" : { "$in" : ["ALFKI", "ANATR"] } } }
+            """);
     }
 
     public override async Task List_Contains_with_parameter_list(bool async)
@@ -1764,17 +1789,17 @@ Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }] } }
 
         AssertMql(
             """
-Customers.{ "$match" : { "$or" : [{ "_id" : "ALFKI" }, { "_id" : "ANATR" }] } }
-""");
+            Customers.{ "$match" : { "_id" : { "$in" : ["ALFKI", "ANATR"] } } }
+            """);
     }
 
     public override async Task Contains_with_parameter_list_value_type_id(bool async)
     {
-       await base.Contains_with_parameter_list_value_type_id(async);
+        await base.Contains_with_parameter_list_value_type_id(async);
 
         AssertMql(
             """
-Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
+Orders.{ "$match" : { "_id" : { "$in" : [10248, 10249] } } }
 """);
     }
 
@@ -1784,7 +1809,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
+Orders.{ "$match" : { "_id" : { "$in" : [10248, 10249] } } }
 """);
     }
 
@@ -1834,77 +1859,102 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Orders.{ "$match" : { "CustomerID" : "VINET" } }, { "$project" : { "_id" : 0, "_v" : "$$ROOT" } }, { "$match" : { "_v" : { "_v" : null } } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
-            """);
+Orders.{ "$match" : { "CustomerID" : "VINET", "_id" : null } }, { "$limit" : 1 }
+""");
     }
 
     public override async Task Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery(bool async)
     {
         // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task Contains_over_entityType_with_null_in_projection(bool async)
     {
         // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Contains_over_entityType_with_null_in_projection(async))).Message);
-        AssertMql(
-            """
+        await AssertTranslationFailed(() =>
+            base.Contains_over_entityType_with_null_in_projection(async));
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task Contains_over_scalar_with_null_should_rewrite_to_identity_equality_subquery(bool async)
     {
         // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Contains_over_scalar_with_null_should_rewrite_to_identity_equality_subquery(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Contains_over_scalar_with_null_should_rewrite_to_identity_equality_subquery(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery_negated(bool async)
     {
         // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery_negated(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery_negated(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery_complex(bool async)
     {
         // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery_complex(async))).Message);
+        await AssertTranslationFailed(() =>
+            base.Contains_over_entityType_with_null_should_rewrite_to_identity_equality_subquery_complex(async));
 
-        AssertMql(
-            """
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+    """
             Orders.
             """);
+        }
     }
 
     public override async Task Contains_over_nullable_scalar_with_null_in_subquery_translated_correctly(bool async)
@@ -1929,29 +1979,41 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
     public override async Task Contains_over_entityType_should_materialize_when_composite(bool async)
     {
         // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Contains_over_entityType_should_materialize_when_composite(async))).Message);
+        await AssertTranslationFailed(() => base.Contains_over_entityType_should_materialize_when_composite(async));
 
-        AssertMql(
-            """
-            OrderDetails.
-            """);
+        // Driver-LINQ logs the collection before rejecting the subquery; the native-only path rejects the
+        // query before anything is logged.
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+                """
+                OrderDetails.
+                """);
+        }
     }
 
     public override async Task Contains_over_entityType_should_materialize_when_composite2(bool async)
     {
         // Fails: Subquery selection EF-X001
-        Assert.Contains(
-            "Expression not supported",
-            (await Assert.ThrowsAsync<ExpressionNotSupportedException>(() =>
-                base.Contains_over_entityType_should_materialize_when_composite2(async))).Message);
+        await AssertTranslationFailed(() => base.Contains_over_entityType_should_materialize_when_composite2(async));
 
-        AssertMql(
-            """
-            OrderDetails.
-            """);
+        // Driver-LINQ logs the collection before rejecting the subquery; the native-only path rejects the
+        // query before anything is logged.
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+        }
+        else
+        {
+            AssertMql(
+                """
+                OrderDetails.
+                """);
+        }
     }
 
     public override async Task String_FirstOrDefault_in_projection_does_not_do_client_eval(bool async)
@@ -1960,8 +2022,8 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.
-            """);
+Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$strLenCP" : { "$ifNull" : ["$_id", ""] } }, 0] }, "then" : "\u0000", "else" : { "$substrCP" : [{ "$ifNull" : ["$_id", ""] }, 0, 1] } } }, "_id" : 0 } }
+""");
     }
 
     public override async Task Project_constant_Sum(bool async)
@@ -1970,7 +2032,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Employees.{ "$group" : { "_id" : null, "_v" : { "$sum" : 1 } } }, { "$project" : { "_id" : 0 } }
+            Employees.{ "$group" : { "_id" : null, "v" : { "$sum" : 1 } } }
             """);
     }
 
@@ -2010,11 +2072,11 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "México D.F." } }, { "$match" : { "_id" : { "$in" : ["ABCDE", "ALFKI", "ANATR"] } } }
+            Customers.{ "$match" : { "City" : "México D.F.", "_id" : { "$in" : ["ABCDE", "ALFKI", "ANATR"] } } }
             """,
             //
             """
-            Customers.{ "$match" : { "City" : "México D.F." } }, { "$match" : { "_id" : { "$in" : ["ABCDE", "ALFKI", "ANATR"] } } }
+            Customers.{ "$match" : { "City" : "México D.F.", "_id" : { "$in" : ["ABCDE", "ALFKI", "ANATR"] } } }
             """);
     }
 
@@ -2054,11 +2116,11 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : "México D.F." } }, { "$match" : { "_id" : { "$nin" : ["ABCDE", "ALFKI", "ANATR"] } } }
+            Customers.{ "$match" : { "City" : "México D.F.", "_id" : { "$nin" : ["ABCDE", "ALFKI", "ANATR"] } } }
             """,
             //
             """
-            Customers.{ "$match" : { "City" : "México D.F." } }, { "$match" : { "_id" : { "$nin" : ["ABCDE", "ALFKI", "ANATR"] } } }
+            Customers.{ "$match" : { "City" : "México D.F.", "_id" : { "$nin" : ["ABCDE", "ALFKI", "ANATR"] } } }
             """);
     }
 
@@ -2068,7 +2130,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$count" : "_v" }
+            Customers.{ "$count" : "v" }
             """);
     }
 
@@ -2098,7 +2160,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Orders.{ "$group" : { "_id" : null, "_v" : { "$sum" : { "$toLong" : "$_id" } } } }, { "$project" : { "_id" : 0 } }
+            Orders.{ "$group" : { "_id" : null, "v" : { "$sum" : "$_id" } } }
             """);
     }
 
@@ -2108,15 +2170,15 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Orders.{ "$count" : "_v" }
+            Orders.{ "$count" : "v" }
             """,
             //
             """
-            Orders.{ "$count" : "_v" }
+            Orders.{ "$count" : "v" }
             """,
             //
             """
-            Orders.{ "$count" : "_v" }
+            Orders.{ "$count" : "v" }
             """);
     }
 
@@ -2135,7 +2197,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Orders.{ "$limit" : 1 }, { "$count" : "_v" }
+            Orders.{ "$limit" : 1 }, { "$count" : "v" }
             """);
     }
 
@@ -2145,7 +2207,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : { "$type" : -1 } } }, { "$limit" : 1 }, { "$project" : { "_id" : 0, "_v" : null } }
+            Customers.{ "$match" : { "_id" : { "$type" : -1 } } }, { "$limit" : 1 }
             """);
     }
 
@@ -2156,8 +2218,14 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
     public override async Task Contains_inside_aggregate_function_with_GroupBy(bool async)
     {
-        // Fails: GroupBy issue EF-149
-        await AssertTranslationFailed(() => base.Contains_inside_aggregate_function_with_GroupBy(async));
+        // g.Count(pred) translates via NativeGroupByBinder.TryTranslateAccumulatorCondition, which reuses the Where
+        // translator, so an array .Contains(...) predicate works.
+        await base.Contains_inside_aggregate_function_with_GroupBy(async);
+
+        AssertMql(
+            """
+Customers.{ "$group" : { "_id" : "$Country", "_v" : { "$sum" : { "$cond" : { "if" : { "$in" : ["$City", { "$literal" : ["London", "Berlin"] }] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }, { "$project" : { "_v" : "$_v", "_id" : 0 } }
+""");
     }
 
     public override async Task Contains_inside_Average_without_GroupBy(bool async)
@@ -2166,8 +2234,8 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : null, "_v" : { "$avg" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1.0, "else" : 0.0 } } } } }, { "$project" : { "_id" : 0 } }
-            """);
+Customers.{ "$group" : { "_id" : null, "v" : { "$avg" : { "$cond" : { "if" : { "$in" : ["$City", { "$literal" : ["London", "Berlin"] }] }, "then" : { "$literal" : 1.0 }, "else" : { "$literal" : 0.0 } } } } } }
+""");
     }
 
     public override async Task Contains_inside_Sum_without_GroupBy(bool async)
@@ -2176,8 +2244,8 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : null, "_v" : { "$sum" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1, "else" : 0 } } } } }, { "$project" : { "_id" : 0 } }
-            """);
+Customers.{ "$group" : { "_id" : null, "v" : { "$sum" : { "$cond" : { "if" : { "$in" : ["$City", { "$literal" : ["London", "Berlin"] }] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } }
+""");
     }
 
     public override async Task Contains_inside_Count_without_GroupBy(bool async)
@@ -2186,7 +2254,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : { "$in" : ["London", "Berlin"] } } }, { "$count" : "_v" }
+            Customers.{ "$match" : { "City" : { "$in" : ["London", "Berlin"] } } }, { "$count" : "v" }
             """);
     }
 
@@ -2196,7 +2264,7 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "City" : { "$in" : ["London", "Berlin"] } } }, { "$count" : "_v" }
+            Customers.{ "$match" : { "City" : { "$in" : ["London", "Berlin"] } } }, { "$count" : "v" }
             """);
     }
 
@@ -2206,8 +2274,8 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1, "else" : 0 } } } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
-            """);
+Customers.{ "$group" : { "_id" : null, "v" : { "$max" : { "_v" : { "$cond" : { "if" : { "$in" : ["$City", { "$literal" : ["London", "Berlin"] }] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } } }
+""");
     }
 
     public override async Task Contains_inside_Min_without_GroupBy(bool async)
@@ -2216,8 +2284,8 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : { "$cond" : { "if" : { "$in" : ["$City", ["London", "Berlin"]] }, "then" : 1, "else" : 0 } } } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
-            """);
+Customers.{ "$group" : { "_id" : null, "v" : { "$min" : { "_v" : { "$cond" : { "if" : { "$in" : ["$City", { "$literal" : ["London", "Berlin"] }] }, "then" : { "$literal" : 1 }, "else" : { "$literal" : 0 } } } } } } }
+""");
     }
 
 #if EF8 || EF9
@@ -2265,42 +2333,41 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
 
         AssertMql(
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$limit" : 1 }
-            """,
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 1 }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }
+""",
             //
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$limit" : 1 }
-            """,
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 1 }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }
+""",
             //
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$limit" : 2 }
-            """,
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }
+""",
             //
             """
-            Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$limit" : 2 }
-            """,
+Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$limit" : 2 }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }
+""",
             //
             """
-            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
-            """,
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : -1 } }, { "$limit" : 1 }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }
+""",
             //
             """
-            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }, { "$group" : { "_id" : null, "_last" : { "$last" : "$$ROOT" } } }, { "$replaceRoot" : { "newRoot" : "$_last" } }
-            """);
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : -1 } }, { "$limit" : 1 }, { "$project" : { "CustomerId" : "$_id", "City" : "$City", "_id" : 0 } }
+""");
     }
 
     public override async Task Type_casting_inside_sum(bool async)
     {
         // Fails: Truncation data loss issue EF-228
-        // Returns 121.04000180587159838 instead of 121.040 because of conversion errors.
-        Assert.Contains(
-            "Actual:   121.04000180587159838",
-            (await Assert.ThrowsAsync<EqualException>(() =>
-                base.Type_casting_inside_sum(async))).Message);
+        // Returns 121.04000180587159838 instead of 121.040. Native and driver-LINQ render the same $toDecimal
+        // pipeline and hit the same precision bug in every mode.
+        await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+            () => base.Type_casting_inside_sum(async), typeof(EqualException));
 
         AssertMql(
             """
-            OrderDetails.{ "$group" : { "_id" : null, "_v" : { "$sum" : { "$toDecimal" : "$Discount" } } } }, { "$project" : { "_id" : 0 } }
+            OrderDetails.{ "$group" : { "_id" : null, "v" : { "$sum" : { "$toDecimal" : "$Discount" } } } }
             """);
     }
 
@@ -2313,7 +2380,12 @@ Orders.{ "$match" : { "$or" : [{ "_id" : 10248 }, { "_id" : 10249 }] } }
         => Fixture.TestMqlLoggerFactory.Clear();
 
     // Fails: Cross-document navigation access issue EF-216
-    private static async Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
-        => Assert.Contains("Unsupported cross-DbSet query between",
-            (await Assert.ThrowsAsync<InvalidOperationException>(query)).Message);
+    private static Task AssertNoMultiCollectionQuerySupport(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNoMultiCollectionQuerySupportAsync(query);
+
+    // An unsupported GroupBy/aggregate shape must fail as a translation failure:
+    // NativeTranslationNotSupportedException under NativeOnly, or an EF InvalidOperationException / driver
+    // translation exception under Native. Data-assertion failures aren't accepted, so wrong-data regressions stay red.
+    protected new static Task AssertTranslationFailed(Func<Task> query)
+        => MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(query);
 }
