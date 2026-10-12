@@ -141,6 +141,18 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         _bsonSerializerFactory = bsonSerializerFactory;
         _pendingLookups = pendingLookups ?? Array.Empty<LookupExpression>();
         _innerSources = innerSources ?? new Dictionary<IEntityType, Expression>();
+
+        // This bridge peels a join back to a flat $lookup + $unwind and drops the join's inner source, and with it
+        // any filter on that source (M22). A lookup that carries one (LookupExpression.InnerPredicate) can only be
+        // honored by the native renderer, so refuse here rather than return unfiltered rows. Reached from explicit
+        // DriverLinq mode and from a Native-mode fallback after the native path declined late.
+        if (_pendingLookups.FirstOrDefault(l => l.HasInnerPredicate) is { } filteredJoinLookup)
+        {
+            throw new NativeTranslation.NativeTranslationNotSupportedException(
+                $"The join onto '{filteredJoinLookup.TargetEntityType.DisplayName()}' filters its inner side, which the "
+                + "driver-LINQ translation would silently drop, returning unfiltered rows. Only the native translator "
+                + "honors it; use MongoQueryMode.Native or NativeOnly, or filter after the join.");
+        }
     }
 
     public Dictionary<string, object> AdditionalState { get; } = new();

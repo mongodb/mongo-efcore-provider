@@ -87,6 +87,37 @@ Scope, joins, grouping:
   predicate (and any paging/Distinct after it) in `PostJoinOps`, lowered after every `$lookup`. That equals paging before
   the Include's left-outer (row-preserving) join; a REQUIRED navigation's inner join can drop rows the page counted and
   stays declined (`NativeFilterJoinBeforeIncludeTests`). Confirmations must equal `Joins.Count`.
+- **A filtered join inner is carried on the join's own `$lookup`** (`LookupExpression.InnerPredicate`, kind
+  `FilteredJoinInner`), set by `TryCarryInnerFilterOnLookup` only for `MongoSelectDefinition.IsFilterOnlyCollectionScan`
+  (nothing recorded but `$match`) on an otherwise-eligible join with a single-pair, un-stamped lookup. It renders in
+  `MongoPipelineFactory.RenderLookup` as `localField`/`foreignField` + `pipeline: [{$match}, ...nested stages]`, through
+  the placeholder table, so parameters and clocks are read per execution; never bake it into `PipelineStages`. The
+  predicate is relative to the joined document, so nothing is re-rooted (`MongoExpression.VisitChildren` is a no-op,
+  so a translated predicate cannot be rebased). An inner `Select`/`Include` is a pending selector on the join result,
+  not part of the inner query, so it needs no handling here.
+  - **No non-native consumer may see such a lookup.** The driver-LINQ bridge drops a join's inner source, and with it
+    the filter (M22); `MongoEFToLinqTranslatingExpressionVisitor`'s constructor refuses any pending lookup with
+    `HasInnerPredicate`. Call that one predicate; don't restate it. Making a join eligible without it turns a loud
+    `DriverLinq` failure into silently unfiltered rows.
+  - It is an **explicit join** feature: `TryConfirmReferenceIncludeChain` declines an Include-chain level whose own
+    lookup carries a predicate (a query-filtered Include target is a separate feature with its own required/optional-FK
+    rules). Ordering, paging, `Distinct` and composite-key lookups stay declined (`NativeJoinFilteredInnerTests` pins
+    each). A collection `Include` on a filtered inner composes: its nested stages follow the filter in the same
+    sub-pipeline. An inner `Select` or reference `Include` is a pending selector on the join result and needs nothing
+    here; a `ThenInclude` on it declines. Projecting only scalars off a TPH-derived join inner declines (the inner scope
+    is the root type, the member's the derived type).
+  - **A TPH-derived entity set is narrowed in the preprocessor.** `MongoQueryTranslationPreprocessor`'s
+    `DerivedEntityRootNarrower` rewrites `Set<Dog>()` (Dog : Animal) to `Set<Animal>().OfType<Dog>()` before navigation
+    expansion, so the one discriminator predicate (`MongoDiscriminatorPredicate`) applies in every mode, fallback
+    included, and on any join side or subquery. Without it the whole collection was read and sibling-type documents
+    crashed materialization or, when only scalars were projected, came back as the derived type. Not applied with a
+    vector search (the replacer re-attaches the call at the first root).
+  - **Paging written before a join stays ahead of its `$lookup` whenever the join can drop rows**
+    (`JoinInfo.PagingBeforeItMustStayAhead`): a collection or navigation-less join, an inner join onto an optional or
+    principal-side reference (an explicit `Join` over a nullable FK), or any join whose lookup carries an `InnerPredicate`.
+    Only a REQUIRED dependent-side reference defers it (dangling data is the sole way it drops a row: the accepted
+    divergence). Deferring paging past a dropping join pages the joined rows, not the outer rows
+    (`NativeJoinFilteredInnerTests.Take_before_*`). Paging written AFTER the join is correctly applied to the joined rows.
 - **Navigation-less joins** are native iff `RebindInnerShaperToOuterQuery`'s raw-key branch resolved both keys
   (`JoinInfo.Lookup != null`); a navigation resolved to the wrong target is rebuilt by it, a non-simple key
   declines (`JoinLookupImplementsKeySelectors`). Composite-PK components live at `_id.<Name>`

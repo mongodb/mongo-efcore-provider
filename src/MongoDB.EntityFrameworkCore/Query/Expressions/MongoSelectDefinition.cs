@@ -1250,8 +1250,26 @@ internal sealed class MongoSelectDefinition
     /// <see cref="_postGroupOps"/> are only populated when an earlier conjunct already fails.
     /// </remarks>
     internal bool IsBareCollectionScan
+        => _pipelineOps.Count == 0 && HasNothingBeyondPipelineOps;
+
+    /// <summary>
+    /// Whether the only thing recorded on this select is a <c>$match</c> (one or more <see cref="MongoMatchOp"/>): a
+    /// collection scan filtered by predicates over the scanned document. A join's inner side of this shape can carry
+    /// its filter inside the <c>$lookup</c> sub-pipeline (<see cref="LookupExpression.InnerPredicate"/>); any other
+    /// recorded operation (ordering, paging, dedup, projection, ...) changes which rows the inner contributes and can't.
+    /// </summary>
+    /// <remarks>
+    /// Shares <see cref="HasNothingBeyondPipelineOps"/> with <see cref="IsBareCollectionScan"/>, so the two cannot drift
+    /// on what else disqualifies a select. The gate must call this, never restate it.
+    /// </remarks>
+    internal bool IsFilterOnlyCollectionScan
+        => _pipelineOps.Count > 0
+           && _pipelineOps.All(op => op is MongoMatchOp)
+           && HasNothingBeyondPipelineOps;
+
+    /// <summary>Every <see cref="IsBareCollectionScan"/> conjunct except the emptiness of <see cref="PipelineOps"/>.</summary>
+    private bool HasNothingBeyondPipelineOps
         => !_hasUnsupportedOperator
-           && _pipelineOps.Count == 0
            && _trailingOps.Count == 0
            && _postJoinOps.Count == 0
            && _projections.Count == 0

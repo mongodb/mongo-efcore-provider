@@ -67,4 +67,24 @@ internal sealed class JoinInfo(IEntityType innerEntityType, bool isLeftOuter)
     /// no <see cref="Lookup"/> was resolved (fail closed). See <see cref="MongoQueryExpression.AreAllJoinsRowCountPreserving"/>.
     /// </summary>
     internal bool IsRowCountPreserving => IsLeftOuter && Lookup is { Navigation.IsCollection: false };
+
+    /// <summary>
+    /// Whether paging written BEFORE this join (<c>Take</c>/<c>Skip</c> on the outer rows) must stay ahead of its
+    /// <c>$lookup</c> rather than be deferred past it: the join can multiply rows (a collection or navigation-less join) or
+    /// legitimately drop them (an inner join onto an optional or principal-side reference, e.g. an explicit
+    /// <c>Join</c> over a nullable foreign key). Paging after such a join pages the joined rows, not the outer rows
+    /// the query asked to page.
+    /// </summary>
+    /// <remarks>
+    /// The one inner join that may still defer is a required dependent-side reference: EF synthesizes it for a
+    /// navigation dereference, and only dangling data can drop a row, which is an accepted divergence (pinned by
+    /// <c>Paging_after_a_dangling_required_reference_dereference_pages_the_joined_result_under_NativeOnly</c>). A
+    /// left-outer reference neither multiplies nor drops, so it never forces paging ahead.
+    /// </remarks>
+    internal bool PagingBeforeItMustStayAhead
+        // A filtered inner drops rows however the foreign key is declared; a required reference's "only dangling data
+        // drops a row" does not hold once the inner side has a Where.
+        => Lookup is { HasInnerPredicate: true }
+           || Lookup?.Navigation is not { IsCollection: false } navigation
+           || (!IsLeftOuter && !(navigation.IsOnDependent && navigation.ForeignKey.IsRequired));
 }

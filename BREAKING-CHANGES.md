@@ -4,6 +4,52 @@ Please note that this provider **does not follow traditional semantic versioning
 
 In order to evolve the provider as we introduce new features, we will be using the minor version number for breaking and significant changes to our EF Core provider. Please bear this in mind when upgrading to newer versions of the MongoDB EF Core Provider and ensure you read the release notes and this document for the latest in breaking change information.
 
+### Querying a derived entity type now returns only that type
+
+#### Old behavior
+
+In a table-per-hierarchy mapping, `db.Set<Dog>()` (or a join onto it) did not filter by discriminator, so it read every document in the shared collection. Materialization then failed for documents of a sibling type (`Unable to materialize entity instance of type 'Dog'. No discriminators matched the discriminator value 'Cat'`), or, when the query projected only scalar values, returned the sibling's values as if they were the derived type's.
+
+#### New behavior
+
+`Set<Dog>()` is treated as `Set<Animal>().OfType<Dog>()`: only documents of `Dog` and its subtypes are returned, in every query mode, as a root, a join side or a subquery.
+
+#### Why
+
+Querying a derived type returning only that type is what EF Core means by it, and what `OfType<Dog>()` already did.
+
+#### Mitigations
+
+A query that relied on reading sibling documents through the derived set must query the base type (`Set<Animal>()`) instead.
+
+### A filtered join inner side is now honored, and `MongoQueryMode.DriverLinq` refuses it
+
+#### Old behavior
+
+On EF Core 10, a `Join` (or `GroupJoin`/`LeftJoin`) whose inner source had its own `Where` **and** an `Include` silently ignored that `Where`:
+
+```csharp
+from c in db.Customers
+join o in db.Orders.Where(o => o.OrderID < 10500).Include(o => o.Customer) on c.CustomerID equals o.CustomerID
+select new { c, o }
+```
+
+returned every order of each matching customer, including those with `OrderID >= 10500`. The same join **without** the `Include` failed with `ExpressionNotSupportedException`.
+
+#### New behavior
+
+The filter on the inner source is applied inside the join's `$lookup`, so only the filtered rows are joined, with or without an `Include`. Left joins keep the outer row with a `null` inner when no inner row passes the filter. A parameter in the filter is read on each execution.
+
+`MongoQueryMode.DriverLinq` cannot honor such a filter, so it now throws `NativeTranslationNotSupportedException` for these queries instead of returning unfiltered rows. The same applies to a `Native`-mode query that falls back to driver-LINQ after the native translator declines for a different reason.
+
+#### Why
+
+The previous result was wrong: the query returned rows that its own `Where` excluded. Returning the filtered rows is what the LINQ query means, and what EF Core's in-memory provider returns.
+
+#### Mitigations
+
+If your application depended on the unfiltered result, remove the `Where` from the join's inner source and filter after the join, or apply the filter you actually want explicitly. Queries that already filtered the inner source correctly (for example by filtering after the join) are unaffected.
+
 ### A missing or `null` embedded array now materializes as an empty collection, not `null`
 
 #### Old behavior

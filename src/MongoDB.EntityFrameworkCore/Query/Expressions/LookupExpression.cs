@@ -32,6 +32,10 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// <see cref="CorrelatedReducer"/>: reference-collection-nav First/FirstOrDefault projection leaf, rendered via
 /// the localField/foreignField+pipeline shape (<c>MongoPipelineFactory.RenderLookup</c>) since it has a real
 /// equality FK.
+/// <see cref="FilteredJoinInner"/>: an explicit join whose inner side is a filtered collection scan; the filter is
+/// <see cref="LookupExpression.InnerPredicate"/> and renders in the same localField/foreignField+pipeline shape, but
+/// through the placeholder table so a parameter is read per execution. No non-native consumer can honor it, so such a
+/// lookup must never reach the driver-LINQ bridge (see <see cref="LookupExpression.HasInnerPredicate"/>).
 /// </summary>
 internal enum LookupPipelineKind
 {
@@ -39,7 +43,8 @@ internal enum LookupPipelineKind
     DiscriminatorNarrowed,
     FilteredInclude,
     NestedInclude,
-    CorrelatedReducer
+    CorrelatedReducer,
+    FilteredJoinInner
 }
 
 /// <summary>
@@ -216,6 +221,23 @@ internal sealed class LookupExpression
     /// pipeline form of <c>$lookup</c> is used instead of localField/foreignField.
     /// </summary>
     public List<BsonDocument> PipelineStages { get; } = [];
+
+    /// <summary>
+    /// The filter of an explicit join's inner side (<see cref="LookupPipelineKind.FilteredJoinInner"/>), relative to the
+    /// joined document, or <see langword="null"/>.
+    /// </summary>
+    /// <remarks>
+    /// Not baked into <see cref="PipelineStages"/>: those are rendered once, with no per-execution placeholder
+    /// substitution, so a parameter would be frozen into the cached plan. It is rendered at pipeline-build time
+    /// instead (<c>MongoPipelineFactory.RenderLookup</c>). Written once, by <c>TranslateJoinCore</c>.
+    /// </remarks>
+    public MongoExpression? InnerPredicate { get; internal set; }
+
+    /// <summary>
+    /// Whether this lookup carries a join-inner filter that only the native renderer can honor. The one predicate every
+    /// non-native consumer (the driver-LINQ bridge) must call to refuse, never restate.
+    /// </summary>
+    public bool HasInnerPredicate => InnerPredicate is not null;
 
     /// <summary>See <see cref="LookupPipelineKind"/>.</summary>
     /// <remarks>

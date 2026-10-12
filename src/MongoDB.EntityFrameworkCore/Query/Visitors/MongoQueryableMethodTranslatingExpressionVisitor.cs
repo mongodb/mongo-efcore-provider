@@ -1044,8 +1044,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 // NativeJoinTests.Outer_paging_before_a_navigation_less_one_to_many_join_pages_the_outer_rows). Such paging
                 // is already ahead of the $lookup in PipelineOps, so it stays there, unless paging was also recorded
                 // after a join, which leaves no correct single placement, so decline.
+                //
+                // "May multiply" also covers an inner join onto an optional or principal-side reference (an explicit
+                // user Join over a nullable foreign key), which legitimately DROPS rows: `OrderByDescending(Id).Take(2)
+                // .Join(Customers, ...)` pages the outer rows first and then drops the unmatched ones, so deferring the
+                // paging would page the joined rows instead (JoinInfo.PagingBeforeItMustStayAhead).
                 if (mongoQueryExpression.Select.HasPagingRecordedBeforeAnyJoin
-                    && mongoQueryExpression.Joins.Any(j => j.Lookup?.Navigation is not { IsCollection: false }))
+                    && mongoQueryExpression.Joins.Any(j => j.PagingBeforeItMustStayAhead))
                 {
                     if (mongoQueryExpression.Select.HasPagingRecordedAfterAJoin)
                     {
@@ -1595,8 +1600,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             var alias = LookupExpression.GetLookupAlias(navigation);
             if (pendingByAlias.TryGetValue(alias, out var existing))
             {
-                // Registered by TranslateJoinCore's multi-join flattening; confirm rather than re-register.
-                if (!existing.ForceUnwind)
+                // Registered by TranslateJoinCore's multi-join flattening; confirm rather than re-register. A level whose
+                // own lookup carries a join-inner filter is an explicit join, not an Include: declined, so a query-filtered
+                // Include target keeps its existing behavior (a separate feature with its own required/optional-FK rules).
+                if (!existing.ForceUnwind || existing.HasInnerPredicate)
                 {
                     return false;
                 }
@@ -1622,7 +1629,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 // from ForeignKey.IsRequired dropped principals that had no dependent.
                 var join = mongoQueryExpression.Joins.FirstOrDefault(
                     j => j.Navigation == navigation && j.Lookup is { ForceUnwind: true });
-                if (join is null)
+                if (join is null || join.Lookup!.HasInnerPredicate)
                 {
                     return false;
                 }
@@ -2441,14 +2448,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // subquery (EF-344).
         outerQueryExpression.Select.PropagateFallbackWrongDataFrom(innerQueryExpression.Select);
 
-        // The reference-Include path emits a flat $lookup with no sub-pipeline, so it can only stand in for a join
-        // whose inner is a bare collection scan. Record that here, the only point the inner's select is in hand;
-        // TryConfirmReferenceIncludeChain declines on it. See MongoSelectDefinition.IsBareCollectionScan.
-        if (!innerQueryExpression.Select.IsBareCollectionScan)
-        {
-            outerQueryExpression.Select.MarkSawNonBareJoinInner();
-        }
-
         var innerEntityType = innerQueryExpression.CollectionExpression.EntityType;
         outerQueryExpression.AddInnerCollection(innerEntityType);
 
@@ -2479,11 +2478,29 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
         // Computed for every join so a later join can tell whether every join so far is eligible. This only
         // builds JoinScope; confirming ($lookup registration) is deferred to the consuming Select arm.
-        joinInfo.IsNativelyEligible =
-            innerQueryExpression.Select.IsBareCollectionScan
-            && !outerQueryExpression.Select.IsGroupBy && !innerQueryExpression.Select.IsGroupBy
+        var eligibleApartFromInnerShape =
+            !outerQueryExpression.Select.IsGroupBy && !innerQueryExpression.Select.IsGroupBy
             && !outerQueryExpression.Select.IsDistinct && !innerQueryExpression.Select.IsDistinct
             && JoinLookupImplementsKeySelectors(joinInfo, outerQueryExpression, outerKeySelector, innerKeySelector);
+
+        // A filter-only inner rides on this join's own $lookup instead of being dropped (M22). Only for a join that is
+        // otherwise eligible, so an ineligible join never carries a predicate that a fallback would silently lose.
+        var innerFilterCarried = eligibleApartFromInnerShape
+            && TryCarryInnerFilterOnLookup(innerQueryExpression.Select, joinInfo);
+
+        // The reference-Include path emits a flat $lookup with no sub-pipeline, so it can only stand in for a join
+        // whose inner is a bare collection scan. Record that here, the only point the inner's select is in hand;
+        // TryConfirmReferenceIncludeChain declines on it. See MongoSelectDefinition.IsBareCollectionScan. An inner
+        // whose filter this join's own lookup carries is not recorded: that lookup is an explicit join, and an Include
+        // chain level that itself carries a predicate is declined separately (LookupExpression.HasInnerPredicate).
+        if (!innerQueryExpression.Select.IsBareCollectionScan && !innerFilterCarried)
+        {
+            outerQueryExpression.Select.MarkSawNonBareJoinInner();
+        }
+
+        joinInfo.IsNativelyEligible =
+            eligibleApartFromInnerShape
+            && (innerQueryExpression.Select.IsBareCollectionScan || innerFilterCarried);
 
         // JoinScope covers only an unbroken run of eligible joins; one ineligible join stops it.
         if (outerQueryExpression.Joins.All(j => j.IsNativelyEligible))
@@ -2502,6 +2519,43 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 resultSelector.Body));
 
         return outer.UpdateShaperExpression(newResultSelector);
+    }
+
+    /// <summary>
+    /// Moves a filter-only join inner's predicates onto <paramref name="joinInfo"/>'s own <c>$lookup</c>
+    /// (<see cref="LookupExpression.InnerPredicate"/>), where the native renderer evaluates them inside the lookup
+    /// sub-pipeline, relative to the joined document.
+    /// </summary>
+    /// <returns>
+    /// Whether the filter is now carried. <see langword="false"/> (nothing changed) when the inner is not
+    /// <see cref="MongoSelectDefinition.IsFilterOnlyCollectionScan"/>, the join has no lookup, or the lookup can't hold a
+    /// plain predicate: a composite-key lookup renders in the <c>let</c>/<c>$expr</c> form, and an already-stamped
+    /// <see cref="LookupPipelineKind"/> (a TPH discriminator narrowing) is write-once.
+    /// </returns>
+    private static bool TryCarryInnerFilterOnLookup(MongoSelectDefinition innerSelect, JoinInfo joinInfo)
+    {
+        // A TPH-derived root is normally rewritten to OfType<TDerived>(root) by the query preprocessor
+        // (DerivedEntityRootNarrower), so the discriminator is part of the predicate carried here and the inner's collection
+        // is the hierarchy root. A derived collection type can only reach this point un-narrowed (the preprocessor skips a
+        // vector search), and carrying a filter with no discriminator would join documents of a sibling type: decline.
+        if (!innerSelect.IsFilterOnlyCollectionScan
+            || joinInfo.InnerEntityType.BaseType is not null
+            || joinInfo.Lookup is not { CompositeKey: null, PipelineKind: LookupPipelineKind.None } lookup)
+        {
+            return false;
+        }
+
+        MongoExpression? predicate = null;
+        foreach (var op in innerSelect.PipelineOps.Cast<MongoMatchOp>())
+        {
+            predicate = predicate is null
+                ? op.Predicate
+                : new MongoBinaryExpression(MongoBinaryOperator.AndAlso, predicate, op.Predicate);
+        }
+
+        lookup.InnerPredicate = predicate;
+        lookup.PipelineKind = LookupPipelineKind.FilteredJoinInner;
+        return true;
     }
 
     /// <summary>

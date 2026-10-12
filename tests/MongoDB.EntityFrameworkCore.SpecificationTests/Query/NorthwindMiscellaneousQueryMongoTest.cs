@@ -3629,21 +3629,13 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
     public override async Task Join_take_count_works(bool async)
     {
-        // Fails: Join/GroupJoin inner sub-query (filtered/ordered) not supported EF-X022
-        await AssertTranslationFailed(() =>
-            base.Join_take_count_works(async));
+        // The filtered inner side is carried in the $lookup sub-pipeline; the base test checks the rows.
+        await base.Join_take_count_works(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql();
-        }
-        else
-        {
-            AssertMql(
-    """
-Orders.
+        AssertMql(
+            """
+Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "foreignField" : "_id", "pipeline" : [{ "$match" : { "_id" : "ALFKI" } }], "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : false } }, { "$match" : { "_id" : { "$gt" : 690, "$lt" : 710 } } }, { "$limit" : 5 }, { "$count" : "v" }
 """);
-        }
     }
 
     public override async Task OrderBy_empty_list_contains(bool async)
@@ -4392,20 +4384,13 @@ Employees.{ "$project" : { "Title" : "$Title", "_id" : 0 } }
 
     public override async Task Perform_identity_resolution_reuses_same_instances_across_joins(bool async, bool useAsTracking)
     {
-        // Fails: the inner side (a filtered Orders scan with its own Include) is not a bare collection scan, so no native
-        // join scope exists and driver-LINQ answers it, DROPPING the inner Where (wrong rows on main). Native support
-        // would have to match that bug or diverge from main, so NativeOnly refuses it and the default keeps main's answer.
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
-                () => base.Perform_identity_resolution_reuses_same_instances_across_joins(async, useAsTracking));
-            return;
-        }
-
+        // The base test only asserts identity resolution, never which rows come back, so it cannot see the inner
+        // `OrderID < 10500` filter. The native pipeline carries it in the first $lookup's sub-pipeline (the baseline below);
+        // driver-LINQ dropped it (M22). NativeJoinFilteredInnerTests asserts the rows.
         await base.Perform_identity_resolution_reuses_same_instances_across_joins(async, useAsTracking);
         AssertMql(
             """
-Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Orders.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$set" : { "_lookup_Customer" : { "$ifNull" : ["$_lookup_Customer", null] } } }
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "pipeline" : [{ "$match" : { "_id" : { "$lt" : 10500 } } }], "as" : "_lookup_Orders" } }, { "$unwind" : { "path" : "$_lookup_Orders", "preserveNullAndEmptyArrays" : false } }, { "$lookup" : { "from" : "Customers", "localField" : "_lookup_Orders.CustomerID", "foreignField" : "_id", "as" : "_lookup_Customer" } }, { "$unwind" : { "path" : "$_lookup_Customer", "preserveNullAndEmptyArrays" : true } }, { "$project" : { "c" : "$$ROOT", "_lookup_Orders" : "$_lookup_Orders", "_lookup_Customer" : "$_lookup_Customer", "_id" : 0 } }
 """);
     }
 

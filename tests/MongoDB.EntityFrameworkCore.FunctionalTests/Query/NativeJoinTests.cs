@@ -1168,18 +1168,34 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     }
 #endif
 
-    [Fact]
-    public void Query_filtered_join_target_still_declines_cleanly_in_NativeOnly()
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Filtered_join_inner_goes_native_and_driver_linq_refuses_to_drop_the_filter(MongoQueryMode mode)
     {
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
-            nameof(Query_filtered_join_target_still_declines_cleanly_in_NativeOnly));
+        using var db = CreateContext(seed, mode,
+            nameof(Filtered_join_inner_goes_native_and_driver_linq_refuses_to_drop_the_filter) + mode);
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() =>
-            db.Owners
-                .Join(db.Orders.Where(r => r.Total > 0), o => o.Id, r => r.OwnerId, (o, r) => new { o.Name, r.Total })
-                .AsEnumerable()
-                .ToList());
+        List<(string Name, decimal Total)> Run()
+            => db.Owners
+                .Join(db.Orders.Where(r => r.Total > 15m), o => o.Id, r => r.OwnerId, (o, r) => new { o.Name, r.Total })
+                .AsEnumerable().Select(x => (x.Name, x.Total)).OrderBy(x => x.Name).ThenBy(x => x.Total).ToList();
+
+        // The filter is carried in the $lookup sub-pipeline (EF-322). Driver-LINQ would drop it, so it refuses rather
+        // than return unfiltered rows (see NativeJoinFilteredInnerTests).
+        if (mode == MongoQueryMode.DriverLinq)
+        {
+            Assert.ThrowsAny<Exception>(Run);
+            return;
+        }
+
+        var expected = seed.Owners
+            .Join(seed.Orders.Where(r => r.Total > 15m), o => o.Id, r => r.OwnerId, (o, r) => (o.Name, r.Total))
+            .OrderBy(x => x.Name).ThenBy(x => x.Total).ToList();
+        Assert.Equal(2, expected.Count); // Alice's 10 is filtered out
+        Assert.Equal(expected, Run());
     }
 
     // Nav-null-check ternary as ONE MEMBER of a wrapped projection over a LEFT join (EF Core's

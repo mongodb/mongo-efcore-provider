@@ -149,7 +149,7 @@ internal sealed class MongoPipelineFactory
             MongoSortStage sort => RenderSort(sort),
             MongoSkipStage skip => RenderSkip(skip, placeholders),
             MongoLimitStage limit => RenderLimit(limit, placeholders),
-            MongoLookupStage lookup => RenderLookup(lookup.Lookup),
+            MongoLookupStage lookup => RenderLookup(lookup.Lookup, renderer, placeholders),
             MongoUnwindStage unwind => RenderUnwind(unwind.Lookup, unwind.PreserveNullAndEmptyArrays),
             MongoUnwindFieldStage unwindField => unwindField.IncludeArrayIndex is null
                 ? new BsonDocument("$unwind", "$" + unwindField.ElementPath)
@@ -417,8 +417,33 @@ internal sealed class MongoPipelineFactory
         PlaceholderTable placeholders)
         => new BsonDocument("$limit", MongoValueRenderer.RenderValue(stage.Limit, placeholders));
 
-    private static BsonDocument RenderLookup(LookupExpression lookup)
+    private static BsonDocument RenderLookup(
+        LookupExpression lookup,
+        MongoQueryLanguageRenderer renderer,
+        PlaceholderTable placeholders)
     {
+        // A join whose inner side was filtered: the predicate is relative to the joined document, which is exactly the
+        // scope inside the sub-pipeline. Rendered here, not stored as BSON on the lookup, so a parameter or clock
+        // value goes through the placeholder table and is read per execution instead of frozen into the cached
+        // plan. Stages nested by an inner-side collection Include follow the filter, so they see only the rows that
+        // passed it. Same indexable localField/foreignField + pipeline form as CorrelatedReducer.
+        if (lookup.InnerPredicate is { } innerPredicate)
+        {
+            // A composite-key lookup renders in the let/$expr form; TranslateJoinCore never attaches a predicate to one.
+            System.Diagnostics.Debug.Assert(lookup.CompositeKey == null, "An inner predicate is never carried by a composite-key lookup.");
+
+            var pipeline = new BsonArray { new BsonDocument("$match", renderer.Render(innerPredicate, placeholders)) };
+            pipeline.AddRange(lookup.PipelineStages);
+            return new BsonDocument("$lookup", new BsonDocument
+            {
+                { "from", lookup.From },
+                { "localField", lookup.LocalField },
+                { "foreignField", lookup.ForeignField },
+                { "pipeline", pipeline },
+                { "as", lookup.As }
+            });
+        }
+
         // CorrelatedReducer uses localField/foreignField plus a pipeline ($match/$sort/$limit:1): an indexable
         // equality join. ToLookupStageDocument's let+pipeline ($expr) shape is for kinds like NestedInclude,
         // which have no single equality field at this level.
