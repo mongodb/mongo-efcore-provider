@@ -56,7 +56,6 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         var dataKeyId = CreateDataKey();
         var expectedPatients = CreateSamplePatients;
 
-        // Create data with a server schema
         {
             using var db = CreateContext(cryptProvider, mb =>
             {
@@ -102,7 +101,6 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         var dataKeyId = CreateDataKey();
         var expectedPatients = CreateSamplePatients;
 
-        // Create a server schema for this data
         {
             await using var db = CreateContext(cryptProvider, mb =>
             {
@@ -148,7 +146,6 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         var expectedPatients = CreateSamplePatients;
         var dataKeyId = CreateDataKey();
 
-        // Create a server schema for this data
         {
             using var db = CreateContext(cryptProvider, mb =>
             {
@@ -198,7 +195,6 @@ public class QueryableEncryptionTests(TemporaryDatabaseFixture database)
         var expectedPatients = CreateSamplePatients;
         var dataKeyId = CreateDataKey();
 
-        // Create a server schema for this data
         {
             await using var db = CreateContext(cryptProvider, mb =>
             {

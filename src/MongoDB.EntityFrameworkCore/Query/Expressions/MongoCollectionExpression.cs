@@ -24,19 +24,13 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 internal sealed class MongoCollectionExpression : EntityTypedExpression
 {
-    /// <summary>
-    /// Create a <see cref="MongoCollectionExpression"/> for a given <see cref="IEntityType"/>.
-    /// </summary>
-    /// <param name="entityType">The <see cref="IEntityType"/> this collection contains.</param>
     public MongoCollectionExpression(IEntityType entityType)
         : base(entityType)
     {
         CollectionName = entityType.GetCollectionName();
     }
 
-    /// <summary>
-    /// The name of this collection in MongoDB.
-    /// </summary>
+    /// <summary>The name of this collection in MongoDB.</summary>
     public string CollectionName { get; }
 
     /// <inheritdoc/>

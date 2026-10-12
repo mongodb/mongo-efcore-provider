@@ -7,120 +7,53 @@ allowed-tools: Bash(dotnet *), Bash(docker info), Bash(printenv:*), Read, Glob, 
 
 # Test All EF Versions
 
-`$SLN` refers to the solution file path: `{working directory}/MongoDB.EFCoreProvider.sln`
+`$SLN` = `{working directory}/MongoDB.EFCoreProvider.sln`
 
 ## Arguments
 
-Parse `$ARGUMENTS` for:
-1. --model <model> — If present, extract and remove it.
-   Use as the `model` parameter when spawning agents. If absent, use `haiku`.
-2. Remaining text — Optional filter:
-    - If empty, run all tests across all three versions.
-    - If it looks like a project name (e.g. "UnitTests"), run only that project.
-    - If it looks like a test filter, pass it via `--filter` to `dotnet test`.
+Parse `$ARGUMENTS`:
+1. `--model <model>`: extract and remove it; use it as the `model` for spawned agents (default `haiku`).
+2. Remaining text is an optional filter: empty runs everything on all three versions; a project name (e.g. "UnitTests") runs only that project; otherwise pass it via `--filter`.
 
-## Phase 1: Pre-flight Checks (MUST pass before anything else)
+## Phase 1: Pre-flight (must pass first)
 
-1. net10.0 SDK — Run `dotnet --list-sdks` and verify a 10.x SDK is installed.
-   If missing, stop with: "net10.0 SDK is not installed."
+A variable is a **real external database** only if it is set, not empty/whitespace, and not `"Disabled"` (case-insensitive; that is the skip-Atlas sentinel). This mirrors `TestServer.GetOrInitialize`.
 
-A variable counts as a **real external database** only when it matches what
-`TestServer.GetOrInitialize` treats as a usable connection: it is set, **not
-empty or whitespace-only** (the harness treats blank as unset), and **not
-`"Disabled"` compared case-insensitively** (`Disabled` / `disabled` / `DISABLED`
-are all the skip-Atlas sentinel, not a connection). Apply this same test in both
-checks below.
+1. `dotnet --list-sdks` must show a 10.x SDK, else stop: "net10.0 SDK is not installed."
+2. `docker info` succeeds OR `MONGODB_URI` (via `printenv`) is a real external database, else stop: "No database available. Start Docker or set `MONGODB_URI`." `ATLAS_URI` alone does not satisfy this: the default server every test uses comes from `MONGODB_URI` or a testcontainer.
+3. `SHARED_DB = true` if `MONGODB_URI` **or** `ATLAS_URI` is a real external database (tests then hit a shared database); otherwise `false` (each EF version gets its own testcontainer).
 
-2. Database connectivity — Run `printenv MONGODB_URI`, then check that either:
-    - Docker is available (`docker info` succeeds), OR
-    - `MONGODB_URI` is a real external database (per the rule above).
-      `ATLAS_URI` does **not** satisfy this check: it only supplies the Atlas-specific
-      server, while the *default* server every test uses comes from `MONGODB_URI` or a
-      testcontainer (`TestServer.cs`). So without Docker or `MONGODB_URI`, the run
-      can't start even if `ATLAS_URI` is set.
-      If neither holds, stop with: "No database available. Start Docker or set `MONGODB_URI`."
+## Phase 2: Build & test via sub-agents
 
-3. Shared-database detection — Run `printenv MONGODB_URI` and `printenv ATLAS_URI`.
-   If `MONGODB_URI` **or** `ATLAS_URI` is a real external database (per the rule
-   above), the test runs hit that **shared database** instead of a per-process
-   testcontainer — record `SHARED_DB = true`, which forces serial execution in
-   Phase 2. Otherwise `SHARED_DB = false`: each EF version gets its own
-   testcontainer, so parallel execution is safe. (An empty/whitespace value or
-   `ATLAS_URI=Disabled` keeps `SHARED_DB = false`.)
+One build+test pass per EF version (EF8, EF9, EF10), each via the Agent tool with `model` set.
 
-## Phase 2: Build & Test via Sub-agents
+- `SHARED_DB = false`: spawn all three **in parallel** (one message, three `Agent` blocks); separate output dirs and containers mean no contention.
+- `SHARED_DB = true`: run **serially** (dispatch, wait, dispatch next). The versions would race on shared global state in the same database (intra-assembly parallelization is disabled for that reason, `tests/.../FunctionalTests/Usings.cs`).
 
-Run one build + test pass per EF version (EF8, EF9, EF10), each via the Agent
-tool with the `model` parameter set. **How they are scheduled depends on
-`SHARED_DB` from Phase 1:**
+Each agent runs, against the whole `$SLN` (all of `UnitTests`, `FunctionalTests`, `SpecificationTests`; don't narrow unless the user passed a filter):
 
-- **`SHARED_DB = false`** (testcontainers) — spawn all three sub-agents **in
-  parallel** (one assistant message with three `Agent` blocks). Each EF version
-  builds into a separate output dir and gets its own testcontainer, so there is
-  no contention.
-- **`SHARED_DB = true`** (`MONGODB_URI` / `ATLAS_URI` set) — run the three
-  sub-agents **serially**: dispatch one, wait for it to finish, then dispatch the
-  next. The three versions would otherwise all hit the same database
-  concurrently and race on shared global state (the test suite disables
-  intra-assembly parallelization for exactly this reason — see
-  `tests/.../FunctionalTests/Usings.cs`). Never run them in parallel when a
-  shared database is configured.
+1. `dotnet build $SLN -c "Debug EF{version}" -v quiet`
+2. `dotnet test  $SLN -c "Debug EF{version}" --no-build --logger "console;verbosity=normal" -v quiet`
 
-Each agent's prompt must run the build and test commands below. Both operate on
-the **whole solution `$SLN`**, which is required: it runs **all** test projects —
-`MongoDB.EntityFrameworkCore.UnitTests`, `MongoDB.EntityFrameworkCore.FunctionalTests`,
-and `MongoDB.EntityFrameworkCore.SpecificationTests`. Do not narrow to a single
-project unless the user passed an explicit filter (see Arguments).
-
-1. Build:  dotnet build $SLN -c "Debug EF{version}" -v quiet
-2. Test:   dotnet test  $SLN -c "Debug EF{version}" --no-build
-   --logger "console;verbosity=normal" -v quiet
-
-(If the user passed a filter/project arg, append it — e.g. `--filter "<expr>"`
-or the project path — to the test command; otherwise run the full solution so
-unit, functional, and specification tests all execute.)
+Append the user's `--filter "<expr>"` or project path to the test command if given. Drop `--no-build` if the build step did not run in the same invocation (stale binaries give a false green).
 
 ### Execution hygiene (include verbatim in every sub-agent's prompt)
 
-Each sub-agent runs its build+test in the **foreground** and reports only **after
-the test process has exited** with a summary:
+Run build+test in the **foreground** and report only **after the test process has exited**:
 
-- **Do NOT background the run** — no `&`, no `nohup`, no background-run tool, no
-  "I'll report once the background task notifies me." Run the command, block until
-  it exits, then parse. A reply sent while the run is still going is a failed
-  dispatch, not a status — the controller must re-run it.
-- **Write the output to a log file and parse the log** (not scrollback), so the counts survive: `dotnet test … > <logfile> 2>&1`.
-- **A whole-solution run prints THREE summary blocks — one per test assembly** (`UnitTests`, `FunctionalTests`, `SpecificationTests`). Search the log for each `Passed!`/`Failed!` block and sum the three per-assembly `Passed`/`Failed`/`Skipped` totals.
-  two assemblies — `SpecificationTests` is usually last and is roughly half the
-  tests, so reading only it undercounts by thousands.
-- `--no-build` above is correct **because Phase 2 built first**. If the build step
-  did not run in this same invocation, drop `--no-build` — a stale binary produces
-  a false green.
+- Do NOT background the run (no `&`, `nohup`, background-run tool, or "I'll report when it notifies me"). A reply sent while the run is going is a failed dispatch; the controller must re-run it.
+- Write output to a log file and parse the log, not scrollback: `dotnet test ... > <logfile> 2>&1`.
+- A whole-solution run prints **three** summary blocks (one per test assembly: `UnitTests`, `FunctionalTests`, `SpecificationTests`). Find each `Passed!`/`Failed!` block and sum the `Passed`/`Failed`/`Skipped` totals. `SpecificationTests` is usually last and about half the tests, so reading only it undercounts by thousands.
 
-## Important Rules
+## Rules
 
-- Always use absolute paths — never `cd` into directories.
-- Quote configuration names — they contain spaces ("Debug EF8").
-- Parallelism depends on `SHARED_DB`: safe only when each EF version gets its own
-  testcontainer (`SHARED_DB = false`). When `MONGODB_URI`/`ATLAS_URI` point at a
-  shared database (`SHARED_DB = true`), run the versions serially — builds still
-  go to separate output dirs, but their tests must not hit the shared database
-  concurrently.
-- Run the full solution by default — unit, functional, and specification tests
-  must all run unless the user passed an explicit filter.
-- Continue on failure — if one version fails, still report the others.
+- Use absolute paths; never `cd`. Quote configuration names ("Debug EF8").
+- Run the full solution by default.
+- Continue on failure: if one version fails, still report the others.
 
-## Phase 3: Console Summary
+## Phase 3: Console summary
 
-Populate the summary table with the actual results from each sub-agent.
-For each EF version, parse the `dotnet test` output and extract the real
-`Passed`, `Failed`, and `Skipped` totals from the test summary. A whole-solution
-run prints a **separate summary block per test assembly (three total)** — sum all
-three. If a sub-agent reports only a single block, the run is incomplete or it
-read the wrong block; send it back rather than reporting a partial count.
-Set the `Build` column to the actual build result for that version (`OK` or `FAILED`).
-
-Use this format for the console summary:
+Fill the table from real results. Sum all three assembly blocks per version; if a sub-agent reports a single block, the run is incomplete or it read the wrong block, so send it back. `Build` is `OK` or `FAILED`.
 
 | Version | Build  | Passed | Failed | Skipped |
 |---------|--------|--------|--------|---------|

@@ -34,7 +34,6 @@ public class TokenSearchIndexBuilder(SearchIndexTokenDefinition definition)
     /// By default, fields are not normalized to lowercase.
     /// </summary>
     /// <param name="normalize">If <see langword="true"/>, then fields are normalized to lowercase, otherwise they are not.</param>
-    /// <returns>This builder, so that method calls can be chained.</returns>
     public TokenSearchIndexBuilder NormalizeToLowercase(bool normalize = true)
     {
         definition.NormalizeToLowercase = normalize;

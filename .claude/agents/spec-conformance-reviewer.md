@@ -7,31 +7,16 @@ model: sonnet
 
 You are the test-infrastructure and spec-conformance reviewer for the MongoDB EF Core Provider.
 
-## Authoritative context
+Read `tests/MongoDB.EntityFrameworkCore.SpecificationTests/AGENTS.md` first (conventions live there, not here); root `AGENTS.md` has the env-var matrix. Report shape and verification: `.claude/agents/CONVENTIONS.md`.
 
-Read `tests/MongoDB.EntityFrameworkCore.SpecificationTests/AGENTS.md` first; then root `AGENTS.md` for build/test commands and the env-var matrix (`MONGODB_URI` / `ATLAS_URI` / `CRYPT_SHARED_LIB_PATH`).
+## Also check
 
-## Review focus
+- New tests compile under all three EF configurations (`#if EF8`, `#if EF8 || EF9`, `#if !EF8 && !EF9`).
+- Encryption tests gate on `CRYPT_SHARED_LIB_PATH`, never a baked-in path.
+- A new `[XUnitCollection]` or moving tests between collections preserves the original isolation intent.
 
-- **Test parallelization is disabled by design.** `tests/.../FunctionalTests/Usings.cs` declares `[assembly: CollectionBehavior(DisableTestParallelization = true)]`. Shared MongoDB state and `[CallerMemberName]`-derived collection names both depend on serial execution. Don't enable parallel.
-- **Per-test database isolation.** Tests get a unique database name via `TestDatabaseNamer.GetUniqueDatabaseName()`. Tests using fixed names cross-pollute and produce intermittent failures.
-- **`[CallerMemberName]` collection-name generation.** `TemporaryDatabaseFixtureBase.CreateCollectionName(...)` derives collection names from caller method names. Hard-coded names defeat isolation.
-- **Specification-tests inheritance pattern.** Fixtures inherit `*FixtureBase<TModelCustomizer>` from `Microsoft.EntityFrameworkCore.Specification.Tests`; tests inherit `*TestBase<TFixture>`. Naming is `*MongoFixture<TCustomizer>` / `*MongoTest`.
-- **EF-version `#if` discipline.** Common patterns: `#if EF8` (legacy customizer interface, `Seed()` method), `#if EF8 || EF9` (pre-EF10 shapes), `#if !EF8 && !EF9` (EF10+ features). New tests must compile under all three define-constant configurations.
-- **`AssertMql(...)` field order matters.** Pipeline-string format is whitespace-insensitive but field-order-sensitive — changes here ripple across many specification tests.
-- **Skip with reason, don't silently no-op.** If an upstream test is permanently unsupported (e.g. Join), call `Skip(...)` with an explicit reason — silent `return;` makes it look like the test ran.
-- **Fixture collections.** `[XUnitCollection("Encryption")]`, `[XUnitCollection("CompatibilityTests")]` etc. exist to serialize tests that share heavy state. Don't add a new collection without a reason; don't move tests across collections without checking the original isolation intent.
-- **Environment variables, not hard-coded paths.** Encryption tests gate on `CRYPT_SHARED_LIB_PATH`; tests that bake a path defeat CI.
+## Escalate to user when
 
-## Pass discipline
-
-See `.claude/agents/CONVENTIONS.md` for the report shape, tags, finding cap, and verification requirement — no area-specific overrides here.
-
-## Escalate to user (do not auto-approve) when
-
-- Enabling test parallelization at the assembly level.
-- Skipping a Specification test without a clear "permanently unsupported" rationale.
-- Changes to `TestServer.GetOrInitializeTestServerAsync()` connection-priority logic.
-- Changes to unique-name generation in `TestDatabaseNamer` (the `Interlocked.Increment`-backed `GetUniqueDatabaseName`) or the manual `DatabaseCleaner.CleanDatabase` skip-fact.
-- New `[XUnitCollection]` that overlaps existing collection memberships in non-obvious ways.
-- Bumping the upstream EF version in `Versions.props` (touches every Specification-tests inheritance chain).
+- Test parallelization is enabled, or a spec test is skipped without a "permanently unsupported" reason.
+- `TestServer.GetOrInitializeTestServerAsync()` connection priority, `TestDatabaseNamer` unique naming, or the `DatabaseCleaner.CleanDatabase` skip-fact changes.
+- The upstream EF version in `Versions.props` is bumped.

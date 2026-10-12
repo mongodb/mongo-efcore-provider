@@ -14,6 +14,7 @@
  */
 
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Query;
 using Microsoft.EntityFrameworkCore.TestUtilities;
@@ -58,16 +59,17 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
         AssertMql(
             """
-            Entities.{ "$match" : { "_id" : { "$lt" : 4 } } }
+            Entities.{ "$match" : { "_id" : { "$lt" : 4 } } }, { "$project" : { "Id" : "$_id", "OptionalReference" : "$OptionalReference", "RequiredReference" : "$RequiredReference", "Collection" : "$Collection", "_id" : "$_id" } }
             """);
     }
 
     public override async Task Project_nested_json_entity_with_missing_scalars(bool async)
     {
-        // Fails: No support for nested JSON EF-X008
+        // Fails: No support for nested JSON EF-X008. Declined cleanly by the assignability guard in
+        // MongoProjectionBindingExpressionVisitor.VisitMethodCall.
         Assert.Contains(
-            "An item with the same key has already been added.",
-            (await Assert.ThrowsAsync<ArgumentException>(() =>
+            CoreStrings.TranslationFailed("")[48..],
+            (await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 base.Project_nested_json_entity_with_missing_scalars(async)))
             .Message);
 
@@ -80,7 +82,7 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
         AssertMql(
             """
-            Entities.{ "$match" : { "_id" : 4 } }
+            Entities.{ "$match" : { "_id" : 4 } }, { "$project" : { "Id" : "$_id", "RequiredReference" : "$RequiredReference", "_id" : "$_id" } }
             """);
     }
 
@@ -102,6 +104,14 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
     public override async Task Project_missing_required_navigation(bool async)
     {
         // Fails: Entity id=5 has no RequiredReference field EF-X005
+        // A bare owned-reference leaf is not a native projection (main threw here too): NativeOnly refuses it.
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Project_missing_required_navigation(async));
+            AssertMql();
+            return;
+        }
+
         Assert.Contains(
             "Field 'RequiredReference' required but not present",
             (await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -132,6 +142,14 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
     public override async Task Project_null_required_navigation(bool async)
     {
         // Fails: NestedRequiredReference is null in BsonDocument for entity id=6 EF-X005
+        // A bare owned-reference leaf is not a native projection (main threw here too): NativeOnly refuses it.
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Project_null_required_navigation(async));
+            AssertMql();
+            return;
+        }
+
         Assert.Contains(
             "Field 'NestedRequiredReference' required but not present",
             (await Assert.ThrowsAsync<InvalidOperationException>(
@@ -150,7 +168,7 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
         AssertMql(
             """
-            Entities.{ "$match" : { "_id" : 2 } }, { "$project" : { "_id" : "$_id", "Number" : "$RequiredReference.Number" } }
+            Entities.{ "$match" : { "_id" : 2 } }, { "$project" : { "Id" : "$_id", "Number" : "$RequiredReference.Number", "_id" : 0 } }
             """);
     }
 
@@ -160,7 +178,7 @@ public class AdHocJsonQueryMongoTest : AdHocJsonQueryTestBase
 
         AssertMql(
             """
-            Entities.{ "$match" : { "_id" : 4 } }, { "$project" : { "_id" : "$_id", "Number" : "$RequiredReference.Number" } }
+            Entities.{ "$match" : { "_id" : 4 } }, { "$project" : { "Id" : "$_id", "Number" : "$RequiredReference.Number", "_id" : 0 } }
             """);
     }
 

@@ -1,0 +1,1 @@
+NativeReferenceIncludeTests.User_join_is_not_admitted_by_the_candidate_join_signal	Throws<NTNSE>	OK ["15:Bob:Springfield", "35:Alice:Springfield", "5:Alice:Springfield"]

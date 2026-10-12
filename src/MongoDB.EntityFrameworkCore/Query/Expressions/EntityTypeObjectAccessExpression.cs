@@ -16,14 +16,6 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 internal sealed class EntityTypeObjectAccessExpression : ObjectAccessExpression
 {
-    /// <summary>
-    /// Create an <see cref="EntityTypeObjectAccessExpression"/> for a cross-collection join result
-    /// where no navigation is defined (explicit Join).
-    /// </summary>
-    /// <param name="entityType">The <see cref="IEntityType"/> this object access relates to.</param>
-    /// <param name="accessExpression">The <see cref="Expression"/> of the parent containing the object.</param>
-    /// <param name="required">Whether this object is required.</param>
-    /// <param name="name">The explicit field name to access in the document.</param>
     public EntityTypeObjectAccessExpression(
         IEntityType entityType,
         Expression accessExpression,

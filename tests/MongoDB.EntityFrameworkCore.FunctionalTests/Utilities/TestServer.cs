@@ -31,7 +31,6 @@ public abstract class TestServer : IAsyncLifetime
     {
         if (requiredCondition.HasFlag(MongoCondition.IsAtlas))
         {
-            // Double-check locking; don't tell Java!
             if (Atlas != null)
             {
                 return Atlas;
@@ -62,7 +61,6 @@ public abstract class TestServer : IAsyncLifetime
 
         static async Task<TestServer> GetOrCreateDefault()
         {
-            // Double-check locking; don't tell Java!
             if (Default != null)
             {
                 return Default;
@@ -127,6 +125,9 @@ public abstract class TestServer : IAsyncLifetime
 
     public bool SupportsBitwiseOperators
         => ServerVersion >= new SemanticVersion(6, 3, 0);
+
+    public bool SupportsSortArray
+        => ServerVersion >= new SemanticVersion(5, 2, 0);
 
     public static bool SupportsAtlas
     {
