@@ -190,6 +190,17 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
                 (c, g) => new { c.Id, Os = g.Where(o => o.Total > 15).OrderBy(o => o.Id).ToList() }),
             z => z.Id + ":" + Ids(z.Os), ["A1:2,3", "A2:4", "B1:5", "C0:"]);
 
+    [Fact]
+    public void Two_entity_leaves_over_the_same_group_in_one_projection()
+        => Assert3(true,
+            db => db.Set<Cust>().Select(c => new
+            {
+                c.Id,
+                All = c.Orders.OrderByDescending(o => o.Id).ToList(),
+                First = c.Orders.OrderBy(o => o.Total).FirstOrDefault()
+            }),
+            z => z.Id + ":" + Ids(z.All) + ":" + Id(z.First), ["A1:3,2,1:1", "A2:4:4", "B1:5:5", "C0::null"]);
+
     // ---- constant paging after the ordering
 
     [Fact]

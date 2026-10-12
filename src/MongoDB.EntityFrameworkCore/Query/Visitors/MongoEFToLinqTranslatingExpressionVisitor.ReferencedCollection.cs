@@ -88,31 +88,47 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
     // The rewritten aggregates whose result can be null (an empty group), by reference.
     private readonly HashSet<Expression> _nullableReferencedAggregates = new(ReferenceEqualityComparer.Instance);
 
-    /// <summary>The <c>Where(root, correlation)</c> at the bottom of a chain of <see cref="ReferencedCollectionChainOperators"/>.</summary>
+    /// <summary>
+    /// The correlation <c>Where</c> of a chain of <see cref="ReferencedCollectionChainOperators"/> over a query root: the one
+    /// <c>Where</c> whose predicate reads the outer entity. Any other <c>Where</c> is an element filter, whether written before the
+    /// correlation (<c>GroupJoin(db.Rates.Where(f), ..)</c>) or after it. Two predicates that read the outer entity are ambiguous.
+    /// </summary>
     private static bool TryFindCorrelationBase(
         Expression chain, out MethodCallExpression correlationWhere, out EntityQueryRootExpression root)
     {
         correlationWhere = null!;
         root = null!;
 
+        MethodCallExpression? candidate = null;
         var current = chain;
-        while (current is MethodCallExpression { Method: { DeclaringType: var declaring } method } call
-               && declaring == typeof(Queryable))
+        while (current is not EntityQueryRootExpression)
         {
-            if (method.Name == nameof(Queryable.Where) && call.Arguments is [EntityQueryRootExpression rootExpression, _])
+            if (current is not MethodCallExpression { Method: { DeclaringType: var declaring } method } call
+                || declaring != typeof(Queryable)
+                || !ReferencedCollectionChainOperators.Contains(method.Name))
             {
-                correlationWhere = call;
-                root = rootExpression;
-                return true;
+                return false;
             }
 
-            if (!ReferencedCollectionChainOperators.Contains(method.Name))
-                return false;
+            if (method.Name == nameof(Queryable.Where)
+                && call.Arguments[1].UnwrapLambdaFromQuote() is { Parameters.Count: 1 } predicate
+                && FindOuterReference(predicate.Body, predicate.Parameters[0]) is not null)
+            {
+                if (candidate is not null)
+                    return false;
+
+                candidate = call;
+            }
 
             current = call.Arguments[0];
         }
 
-        return false;
+        if (candidate is null)
+            return false;
+
+        correlationWhere = candidate;
+        root = (EntityQueryRootExpression)current;
+        return true;
     }
 
     /// <summary>
@@ -157,12 +173,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
         // No navigation for this correlation (a GroupJoin on arbitrary keys, an explicit subquery, a model with no collection navigation):
         // the plain keyed array the binder staged for exactly the two properties the predicate compares.
         if (FindEntityType(outerParameter.Type) is { } outerEntityType
-            && NativeTranslation.NativeCorrelationMatcher.TryMatchRawKeyCorrelation(
-                predicate.Body, outerEntityType, outerParameter, targetEntityType,
-                out var outerProperty, out var innerProperty, out var guarded))
+            && NativeTranslation.NativeCorrelationMatcher.TryMatchCorrelationKeys(
+                predicate.Body, outerEntityType, outerParameter, targetEntityType, out var keyParts))
         {
-            var alias = NativeTranslation.NativeCorrelationMatcher.BuildCorrelatedArrayLookup(
-                targetEntityType, outerProperty, innerProperty, guarded).As;
+            var alias = NativeTranslation.NativeCorrelationMatcher.BuildCorrelatedArrayLookup(targetEntityType, keyParts).As;
             if (_pendingLookups.Where(l => l.IsBridgeReadableArray).Concat(_bridgeOwnedLookups).FirstOrDefault(l => l.As == alias) is { } keyedLookup)
             {
                 array = MqlField(
@@ -203,7 +217,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
             // subquery's elements, whose own correlated subqueries correlate with the element, not the root document.
             if (node.Method.DeclaringType == typeof(Queryable)
                 && node.Arguments.Count >= 1
-                && !IsCorrelationBaseWhere(node)
                 && TryFindCorrelationBase(node.Arguments[0], out _, out _))
             {
                 Visit(node.Arguments[0]);
@@ -212,9 +225,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
 
             if (node.Method is { Name: nameof(Queryable.Where), DeclaringType: var declaring }
                 && declaring == typeof(Queryable)
-                && node.Arguments is [EntityQueryRootExpression root, var lambdaArgument]
+                && TryGetChainRoot(node.Arguments[0], out var root)
                 && root.EntityType.BaseType is null
-                && lambdaArgument.UnwrapLambdaFromQuote() is { Parameters.Count: 1 } predicate
+                && node.Arguments[1].UnwrapLambdaFromQuote() is { Parameters.Count: 1 } predicate
                 && FindOuterReference(predicate.Body, predicate.Parameters[0]) is { } outerReference)
             {
                 var outerParameter = outerReference.RemoveConvert();
@@ -223,12 +236,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
 
                 if (outerParameter is ParameterExpression
                     && owner.FindEntityType(outerParameter.Type) is { } outerEntityType
-                    && NativeTranslation.NativeCorrelationMatcher.TryMatchRawKeyCorrelation(
-                        predicate.Body, outerEntityType, outerParameter, root.EntityType,
-                        out var outerProperty, out var innerProperty, out var guarded))
+                    && NativeTranslation.NativeCorrelationMatcher.TryMatchCorrelationKeys(
+                        predicate.Body, outerEntityType, outerParameter, root.EntityType, out var keyParts))
                 {
-                    var plain = NativeTranslation.NativeCorrelationMatcher.BuildCorrelatedArrayLookup(
-                        root.EntityType, outerProperty, innerProperty, guarded);
+                    var plain = NativeTranslation.NativeCorrelationMatcher.BuildCorrelatedArrayLookup(root.EntityType, keyParts);
 
                     if (!owner._pendingLookups.Any(l => l.IsBridgeReadableArray && l.As == plain.As)
                         && !owner._bridgeOwnedLookups.Any(l => l.As == plain.As))
@@ -244,8 +255,25 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
             return base.VisitMethodCall(node);
         }
 
-        private static bool IsCorrelationBaseWhere(MethodCallExpression node)
-            => node.Method.Name == nameof(Queryable.Where) && node.Arguments is [EntityQueryRootExpression, _];
+        /// <summary>The query root at the bottom of a chain of <see cref="ReferencedCollectionChainOperators"/>.</summary>
+        private static bool TryGetChainRoot(Expression chain, out EntityQueryRootExpression root)
+        {
+            root = null!;
+
+            var current = chain;
+            while (current is MethodCallExpression { Method: { DeclaringType: var declaring } method } call
+                   && declaring == typeof(Queryable)
+                   && ReferencedCollectionChainOperators.Contains(method.Name))
+            {
+                current = call.Arguments[0];
+            }
+
+            if (current is not EntityQueryRootExpression rootExpression)
+                return false;
+
+            root = rootExpression;
+            return true;
+        }
     }
 
     /// <summary>
@@ -254,8 +282,13 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
     /// </summary>
     private Expression? RewriteChainOverArray(Expression chain, MethodCallExpression correlationWhere, Expression array)
     {
-        if (ReferenceEquals(chain, correlationWhere))
+        // The query root is the array. The correlation itself is consumed by the array, which already holds only the correlated elements;
+        // every other Where is an element filter that stays.
+        if (chain is EntityQueryRootExpression)
             return array;
+
+        if (ReferenceEquals(chain, correlationWhere))
+            return RewriteChainOverArray(((MethodCallExpression)chain).Arguments[0], correlationWhere, array);
 
         if (chain is not MethodCallExpression call
             || RewriteChainOverArray(call.Arguments[0], correlationWhere, array) is not { } source

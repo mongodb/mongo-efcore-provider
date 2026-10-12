@@ -1992,27 +1992,29 @@ internal static class NativeProjectionBinder
                 LookupExpression.GetLookupAlias(navigation), navigation.TargetEntityType);
         }
 
-        // Any other equality between two scalar properties (a GroupJoin on arbitrary keys, or a model with no navigation): a keyed array lookup built from exactly the properties compared. The subquery
-        // may carry uncorrelated filters before or after the correlation (`GroupJoin(Orders.Where(f), ...)`, `Orders.Where(corr).Where(f)`): exactly one Where of the chain is the correlation, the rest
-        // are element filters applied inside the lookup.
+        // Any other equality between two scalar properties, or a conjunction of them (a GroupJoin on arbitrary or anonymous-type keys, or a
+        // model with no navigation): a keyed array lookup built from exactly the properties the predicate compares.
+        // The subquery may carry uncorrelated filters ahead of or after the correlation (`GroupJoin(Orders.Where(f), ...)`,
+        // `Orders.Where(corr).Where(f)`): exactly one Where of the chain is the correlation, and the rest are element filters
+        // applied inside the lookup.
         if (NativeCorrelationMatcher.TryMatchRootWhereChain(source, out var root, out var wheres))
         {
             var correlated = new List<int>();
             for (var i = 0; i < wheres.Count; i++)
             {
-                if (NativeCorrelationMatcher.TryMatchRawKeyCorrelation(
-                        wheres[i].Body, mongoQ.CollectionExpression.EntityType, outerParameter, root.EntityType, out _, out _, out _))
+                if (NativeCorrelationMatcher.TryMatchCorrelationKeys(
+                        wheres[i].Body, mongoQ.CollectionExpression.EntityType, outerParameter, root.EntityType, out _))
                 {
                     correlated.Add(i);
                 }
             }
 
             if (correlated.Count == 1
-                && NativeCorrelationMatcher.TryMatchRawKeyCorrelation(
+                && NativeCorrelationMatcher.TryMatchCorrelationKeys(
                     wheres[correlated[0]].Body, mongoQ.CollectionExpression.EntityType, outerParameter, root.EntityType,
-                    out var outerProperty, out var innerProperty, out var guarded)
+                    out var keyParts)
                 && TryStageKeyedArrayLookup(
-                    mongoQ, outerParameter, root.EntityType, outerProperty, innerProperty, guarded,
+                    mongoQ, outerParameter, root.EntityType, keyParts,
                     wheres.Where((_, i) => i != correlated[0]).ToList(), pendingLookups, pendingBareCountStamps, out var stagedKeyed))
             {
                 return new MongoExpressionTranslator.ReferencedCollectionSource(stagedKeyed.As, root.EntityType);
@@ -2031,9 +2033,7 @@ internal static class NativeProjectionBinder
         MongoQueryExpression mongoQ,
         ParameterExpression outerParameter,
         IEntityType targetEntityType,
-        IProperty outerProperty,
-        IProperty innerProperty,
-        bool guarded,
+        IReadOnlyList<CorrelationKeyPart> keyParts,
         List<LambdaExpression> filters,
         List<LookupExpression> pendingLookups,
         List<LookupExpression> pendingBareCountStamps,
@@ -2070,7 +2070,7 @@ internal static class NativeProjectionBinder
                     : new MongoBinaryExpression(MongoBinaryOperator.AndAlso, filterPredicate, translated);
             }
 
-            var baseAlias = NativeCorrelationMatcher.BuildCorrelatedArrayLookup(targetEntityType, outerProperty, innerProperty, guarded).As;
+            var baseAlias = NativeCorrelationMatcher.BuildCorrelatedArrayLookup(targetEntityType, keyParts).As;
             var existing = pendingLookups.Concat(mongoQ.GetPendingLookups())
                 .Where(l => l.IsCorrelatedArraySource && (l.ElementFilters.Count > 0 || l.HasElementStages)
                             && l.As.StartsWith(baseAlias + "_f", StringComparison.Ordinal))
@@ -2084,8 +2084,7 @@ internal static class NativeProjectionBinder
         }
 
         var keyed = NativeCorrelationMatcher.BuildCorrelatedArrayLookup(
-            targetEntityType, outerProperty, innerProperty, guarded, filters, filterPredicate, aliasSuffix, elementSort, elementLimit,
-            elementSkip);
+            targetEntityType, keyParts, filters, filterPredicate, aliasSuffix, elementSort, elementLimit, elementSkip);
         if (!NativeCorrelationMatcher.TryStageNativeCollectionLookup(mongoQ, keyed, pendingLookups, out staged))
             return false;
 
@@ -2188,9 +2187,8 @@ internal static class NativeProjectionBinder
             return false;
         }
 
-        if (!NativeCorrelationMatcher.TryMatchRawKeyCorrelation(
-                shape.Correlation.Body, mongoQ.CollectionExpression.EntityType, outerParameter, target,
-                out var outerProperty, out var innerProperty, out var guarded))
+        if (!NativeCorrelationMatcher.TryMatchCorrelationKeys(
+                shape.Correlation.Body, mongoQ.CollectionExpression.EntityType, outerParameter, target, out var keyParts))
         {
             return false;
         }
@@ -2212,7 +2210,7 @@ internal static class NativeProjectionBinder
         }
 
         if (!TryStageKeyedArrayLookup(
-                mongoQ, outerParameter, target, outerProperty, innerProperty, guarded, shape.Filters.ToList(),
+                mongoQ, outerParameter, target, keyParts, shape.Filters.ToList(),
                 pendingLookups, pendingBareCountStamps, out var staged, sort, shape.IsFirst ? 1 : shape.Take, shape.Skip))
         {
             return false;

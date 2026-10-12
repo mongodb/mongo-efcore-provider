@@ -456,18 +456,34 @@ internal sealed class LookupExpression
     // answers false for null vs missing, so a part that may be null is $ifNull-normalized on both sides.
     private BsonDocument CompositeKeyLookupStageDocument(IReadOnlyList<LookupKeyPair> keys)
     {
+        var (let, match) = CompositeKeyLetAndMatch(keys);
+        return PipelineLookupStage(let, match);
+    }
+
+    /// <summary>
+    /// The <c>let</c> (one null-normalized variable per local field) and the <c>$expr</c> match (every pair equal, and a pair that
+    /// <see cref="LookupKeyPair.ExcludesNullLocal"/> also non-null on the local side) of a composite-key lookup. Shared by the join
+    /// form and by the sub-pipeline form that a filtered, ordered or paged keyed array uses.
+    /// </summary>
+    internal static (BsonDocument Let, BsonDocument Match) CompositeKeyLetAndMatch(IReadOnlyList<LookupKeyPair> keys)
+    {
         var let = new BsonDocument();
-        var equalities = new BsonArray();
+        var conditions = new BsonArray();
         for (var i = 0; i < keys.Count; i++)
         {
             var key = keys[i];
             var variable = $"k{i}";
             let.Add(variable, NullNormalized($"${key.LocalField}", key.MayBeNull));
-            equalities.Add(new BsonDocument("$eq",
+
+            // A guarded part (EF's `outerKey != null &&`) matches nothing for a null outer value; an unguarded one equates null with null.
+            if (key.ExcludesNullLocal)
+                conditions.Add(new BsonDocument("$ne", new BsonArray { $"$${variable}", BsonNull.Value }));
+
+            conditions.Add(new BsonDocument("$eq",
                 new BsonArray { NullNormalized($"${key.ForeignField}", key.MayBeNull), $"$${variable}" }));
         }
 
-        return PipelineLookupStage(let, new BsonDocument("$and", equalities));
+        return (let, new BsonDocument("$and", conditions));
 
         static BsonValue NullNormalized(string path, bool mayBeNull)
             => mayBeNull ? new BsonDocument("$ifNull", new BsonArray { path, BsonNull.Value }) : path;
@@ -494,4 +510,4 @@ internal sealed class LookupExpression
 /// One local/foreign field pair of a <see cref="LookupExpression.CompositeKey"/>. <see cref="MayBeNull"/> when either
 /// side's property is nullable, so the pair is compared null-normalized.
 /// </summary>
-internal readonly record struct LookupKeyPair(string LocalField, string ForeignField, bool MayBeNull);
+internal readonly record struct LookupKeyPair(string LocalField, string ForeignField, bool MayBeNull, bool ExcludesNullLocal = false);

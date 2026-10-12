@@ -422,10 +422,16 @@ internal sealed class MongoPipelineFactory
         // An element sort or limit (a keyed array behind `OrderBy(..).ToList()` / `FirstOrDefault()`) uses the same shape, with or without a filter.
         if (lookup.InnerPredicate is not null || lookup.HasElementStages)
         {
-            // A composite-key lookup renders in the let/$expr form; TranslateJoinCore never attaches a predicate to one.
-            System.Diagnostics.Debug.Assert(lookup.CompositeKey == null, "An inner predicate is never carried by a composite-key lookup.");
-
             var stages = new BsonArray();
+
+            // A composite key matches every pair in the let/$expr form, ahead of the filter.
+            BsonDocument? compositeLet = null;
+            if (lookup.CompositeKey is { } compositeKey)
+            {
+                var (let, match) = LookupExpression.CompositeKeyLetAndMatch(compositeKey);
+                compositeLet = let;
+                stages.Add(new BsonDocument("$match", new BsonDocument("$expr", match)));
+            }
 
             // A null local key that must match nothing needs the let form; the filter then follows the key match.
             if (lookup.ExcludesNullLocalKey)
@@ -450,6 +456,17 @@ internal sealed class MongoPipelineFactory
                 stages.Add(new BsonDocument("$limit", limit));
 
             stages.AddRange(lookup.PipelineStages);
+
+            if (compositeLet is not null)
+            {
+                return new BsonDocument("$lookup", new BsonDocument
+                {
+                    { "from", lookup.From },
+                    { "let", compositeLet },
+                    { "pipeline", stages },
+                    { "as", lookup.As }
+                });
+            }
 
             if (lookup.ExcludesNullLocalKey)
             {

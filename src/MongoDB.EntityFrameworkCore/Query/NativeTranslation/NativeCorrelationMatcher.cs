@@ -30,6 +30,12 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// Recognizes EF Core's FK correlation predicate (a <c>Where</c> over an <see cref="Microsoft.EntityFrameworkCore.Query.EntityQueryRootExpression"/>
 /// comparing an outer key to a dependent FK) and resolves it to the single matching collection navigation off the outer entity.
 /// </summary>
+/// <summary>
+/// One compared pair of a correlated subquery's key: the outer property, the subquery element's property, and whether the predicate
+/// guards the outer property against null (<see cref="NativeCorrelationMatcher.TryMatchCorrelationKeys"/>).
+/// </summary>
+internal readonly record struct CorrelationKeyPart(IProperty Outer, IProperty Inner, bool Guarded);
+
 internal static class NativeCorrelationMatcher
 {
     /// <summary>
@@ -100,6 +106,19 @@ internal static class NativeCorrelationMatcher
         if (!TryGetCorrelationEqualitySides(whereBody, out var side1, out var side2, out nullGuarded))
             return false;
 
+        return TryAssignSides(side1, side2, outerRoot, out dependentSide, out outerSide);
+    }
+
+    /// <summary>
+    /// Assigns the two compared sides of one equality to the subquery's own element (a lambda parameter) and the outer entity
+    /// (<paramref name="outerRoot"/>), in either order.
+    /// </summary>
+    private static bool TryAssignSides(
+        Expression side1, Expression side2, Expression outerRoot,
+        [NotNullWhen(true)] out Expression? dependentSide, [NotNullWhen(true)] out Expression? outerSide)
+    {
+        dependentSide = outerSide = null;
+
         var side1Root = GetRootExpression(side1);
         var side2Root = GetRootExpression(side2);
 
@@ -148,8 +167,31 @@ internal static class NativeCorrelationMatcher
         outerProperty = innerProperty = null;
         guarded = false;
 
-        if (!TryResolveCorrelationSides(whereBody, outerRoot, out var dependentSide, out var outerSide, out var nullGuarded))
+        if (!TryResolveCorrelationSides(whereBody, outerRoot, out var dependentSide, out var outerSide, out var nullGuarded)
+            || !TryResolveKeyProperties(dependentSide, outerSide, outerEntityType, outerRoot, targetEntityType, out var outer, out var dependent))
+        {
             return false;
+        }
+
+        if (nullGuarded != null && !IsOuterProperty(nullGuarded, outerRoot, outerEntityType, outer))
+            return false;
+
+        outerProperty = outer;
+        innerProperty = dependent;
+        guarded = nullGuarded != null;
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves the two compared sides of one equality to the outer and the dependent property: each a direct property of its own
+    /// side (an <c>EF.Property</c> or member access), a scalar CLR type, and the two stored alike, so the keyed lookup built from them
+    /// cannot answer differently from the LINQ the author wrote.
+    /// </summary>
+    private static bool TryResolveKeyProperties(
+        Expression dependentSide, Expression outerSide, IEntityType outerEntityType, Expression outerRoot, IEntityType targetEntityType,
+        [NotNullWhen(true)] out IProperty? outerProperty, [NotNullWhen(true)] out IProperty? dependentProperty)
+    {
+        outerProperty = dependentProperty = null;
 
         if (!dependentSide.RemoveConvert().TryGetMemberOrEFProperty(out var dependentReceiver, out var dependentName)
             || dependentReceiver.RemoveConvert() is not ParameterExpression
@@ -161,15 +203,11 @@ internal static class NativeCorrelationMatcher
             return false;
         }
 
-        if (nullGuarded != null && !IsOuterProperty(nullGuarded, outerRoot, outerEntityType, outer))
-            return false;
-
         if (!IsScalarKey(outer) || !IsScalarKey(dependent) || !StoredSerialization.StoredAlike(outer, dependent))
             return false;
 
         outerProperty = outer;
-        innerProperty = dependent;
-        guarded = nullGuarded != null;
+        dependentProperty = dependent;
         return true;
 
         static bool IsScalarKey(IProperty property)
@@ -180,34 +218,199 @@ internal static class NativeCorrelationMatcher
     }
 
     /// <summary>
-    /// Builds the keyed, not-unwound <c>$lookup</c> for a subquery matched by <see cref="TryMatchRawKeyCorrelation"/>. The alias
-    /// encodes target, both key paths and null-key exclusion, so different keys never share an array and identical ones deduplicate.
+    /// The key of a correlated subquery over properties that are not a collection navigation's foreign key: the single strict equality
+    /// of <see cref="TryMatchRawKeyCorrelation"/>, or a CONJUNCTION of such equalities (an anonymous-type <c>GroupJoin</c> key, or an
+    /// explicit <c>r.A == s.A &amp;&amp; r.B == s.B</c>). Each outer property may carry its own null guard
+    /// (<c>!(s.A == null)</c>, as EF's rewrite writes one per part); a guarded part matches nothing for a null outer value, an unguarded
+    /// one equates null with null. Any other conjunct, a property used twice, or a guard on a property not compared declines.
+    /// </summary>
+    internal static bool TryMatchCorrelationKeys(
+        Expression whereBody,
+        IEntityType outerEntityType,
+        Expression outerRoot,
+        IEntityType targetEntityType,
+        [NotNullWhen(true)] out IReadOnlyList<CorrelationKeyPart>? parts)
+    {
+        parts = null;
+
+        if (TryMatchRawKeyCorrelation(whereBody, outerEntityType, outerRoot, targetEntityType, out var outerProperty, out var innerProperty, out var guarded))
+        {
+            parts = [new CorrelationKeyPart(outerProperty, innerProperty, guarded)];
+            return true;
+        }
+
+        var conjuncts = new List<Expression>();
+        FlattenAndAlso(whereBody, conjuncts);
+
+        var keyParts = new List<CorrelationKeyPart>();
+        var guards = new List<Expression>();
+        foreach (var conjunct in conjuncts)
+        {
+            var stripped = conjunct.RemoveConvert();
+            if (TryExtractEqualitySides(stripped, out var left, out var right))
+            {
+                // EF8 and EF9 keep a GroupJoin's anonymous key whole (`Equals(new { s.A, s.B }, new { r.A, r.B })`): member-wise equality,
+                // where a null member equals a null member, so each member pair is an unguarded part.
+                var pairs = TryExpandAnonymousKeys(left, right, out var memberPairs) ? memberPairs : [(left, right)];
+                foreach (var (leftSide, rightSide) in pairs)
+                {
+                    if (!TryAssignSides(leftSide, rightSide, outerRoot, out var dependentSide, out var outerSide)
+                        || !TryResolveKeyProperties(dependentSide, outerSide, outerEntityType, outerRoot, targetEntityType, out var outer, out var dependent))
+                    {
+                        return false;
+                    }
+
+                    keyParts.Add(new CorrelationKeyPart(outer, dependent, Guarded: false));
+                }
+            }
+            else if (TryGetNullGuardedOperand(stripped, out var guardedOperand))
+            {
+                // `!(new { s.A, s.B } == null)`, EF8/EF9's guard on the whole key: an object built in the query is never null, so it
+                // excludes nothing.
+                if (guardedOperand.RemoveConvert() is not NewExpression)
+                    guards.Add(guardedOperand);
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        if (keyParts.Count < 1
+            || keyParts.Select(p => p.Outer).Distinct().Count() != keyParts.Count
+            || keyParts.Select(p => p.Inner).Distinct().Count() != keyParts.Count)
+        {
+            return false;
+        }
+
+        foreach (var guard in guards)
+        {
+            var index = keyParts.FindIndex(p => !p.Guarded && IsOuterProperty(guard, outerRoot, outerEntityType, p.Outer));
+            if (index < 0)
+                return false;
+
+            keyParts[index] = keyParts[index] with { Guarded = true };
+        }
+
+        parts = keyParts;
+        return true;
+    }
+
+    /// <summary>
+    /// The member pairs of an equality between two constructions of the same anonymous type (<c>new { s.A, s.B }</c> and
+    /// <c>new { r.A, r.B }</c>): anonymous-type equality is member-wise.
+    /// </summary>
+    private static bool TryExpandAnonymousKeys(
+        Expression left, Expression right, out List<(Expression Left, Expression Right)> pairs)
+    {
+        pairs = [];
+
+        if (left.RemoveConvert() is not NewExpression { Arguments.Count: > 0 } leftNew
+            || right.RemoveConvert() is not NewExpression rightNew
+            || leftNew.Type != rightNew.Type
+            || rightNew.Arguments.Count != leftNew.Arguments.Count
+            || !leftNew.Type.IsDefined(typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute), inherit: false)
+            || !leftNew.Type.Name.Contains("AnonymousType", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        for (var i = 0; i < leftNew.Arguments.Count; i++)
+            pairs.Add((leftNew.Arguments[i], rightNew.Arguments[i]));
+
+        return true;
+    }
+
+    private static void FlattenAndAlso(Expression expression, List<Expression> conjuncts)
+    {
+        if (expression.RemoveConvert() is BinaryExpression { NodeType: ExpressionType.AndAlso } andAlso)
+        {
+            FlattenAndAlso(andAlso.Left, conjuncts);
+            FlattenAndAlso(andAlso.Right, conjuncts);
+        }
+        else
+        {
+            conjuncts.Add(expression);
+        }
+    }
+
+    /// <summary>
+    /// Builds the keyed, not-unwound <c>$lookup</c> behind a correlated subquery matched by <see cref="TryMatchRawKeyCorrelation"/>.
+    /// The alias encodes the target, both key paths and whether a null local key is excluded, so two subqueries over the same
+    /// collection with different keys never share an array and identical ones deduplicate.
     /// </summary>
     internal static LookupExpression BuildCorrelatedArrayLookup(
         IEntityType targetEntityType, IProperty outerProperty, IProperty innerProperty, bool guarded,
         IReadOnlyList<LambdaExpression>? filters = null, MongoExpression? filterPredicate = null, string aliasSuffix = "",
         IReadOnlyList<(string Field, int Direction)>? elementSort = null, int? elementLimit = null, int? elementSkip = null)
+        => BuildCorrelatedArrayLookup(
+            targetEntityType, [new CorrelationKeyPart(outerProperty, innerProperty, guarded)], filters, filterPredicate, aliasSuffix,
+            elementSort, elementLimit, elementSkip);
+
+    /// <summary>
+    /// <see cref="BuildCorrelatedArrayLookup(IEntityType, IProperty, IProperty, bool, IReadOnlyList{LambdaExpression}?, MongoExpression?, string, IReadOnlyList{ValueTuple{string, int}}?, int?, int?)"/>
+    /// over one or several key pairs. Several pairs are a composite-key lookup (the <c>let</c> + <c>$expr</c> form), each pair
+    /// null-normalized when either property is nullable and optionally excluding a null outer value.
+    /// </summary>
+    internal static LookupExpression BuildCorrelatedArrayLookup(
+        IEntityType targetEntityType, IReadOnlyList<CorrelationKeyPart> parts,
+        IReadOnlyList<LambdaExpression>? filters = null, MongoExpression? filterPredicate = null, string aliasSuffix = "",
+        IReadOnlyList<(string Field, int Direction)>? elementSort = null, int? elementLimit = null, int? elementSkip = null)
     {
-        var localField = LookupExpression.GetFieldPath(outerProperty);
-        var foreignField = LookupExpression.GetFieldPath(innerProperty);
-
-        // A null outer key matches nothing only when EF guarded the predicate AND the key can be null; otherwise the plain (indexable) form is exact.
-        var excludesNull = guarded && outerProperty.IsNullable;
-
-        var alias = LookupExpression.LookupAliasPrefix
-                    + targetEntityType.ShortName() + "_" + foreignField.Replace('.', '_') + "_" + localField.Replace('.', '_')
-                    + (excludesNull ? "_nn" : "") + aliasSuffix;
-
-        var lookup = new LookupExpression(
-            targetEntityType, targetEntityType.GetCollectionName(), localField, foreignField, alias, forceUnwind: false)
+        LookupExpression lookup;
+        if (parts.Count == 1)
         {
-            IsCorrelatedArraySource = true,
-            ExcludesNullLocalKey = excludesNull,
-            ElementFilters = filters ?? [],
-            ElementSort = elementSort ?? [],
-            ElementLimit = elementLimit,
-            ElementSkip = elementSkip
-        };
+            var (outerProperty, innerProperty, guarded) = parts[0];
+            var localField = LookupExpression.GetFieldPath(outerProperty);
+            var foreignField = LookupExpression.GetFieldPath(innerProperty);
+
+            // A null outer key matches nothing only when EF guarded the predicate AND the key can be null; a non-nullable key can't be
+            // null, so the plain (indexable) form is exact there.
+            var excludesNull = guarded && outerProperty.IsNullable;
+
+            var alias = LookupExpression.LookupAliasPrefix
+                        + targetEntityType.ShortName() + "_" + foreignField.Replace('.', '_') + "_" + localField.Replace('.', '_')
+                        + (excludesNull ? "_nn" : "") + aliasSuffix;
+
+            lookup = new LookupExpression(
+                targetEntityType, targetEntityType.GetCollectionName(), localField, foreignField, alias, forceUnwind: false)
+            {
+                IsCorrelatedArraySource = true,
+                ExcludesNullLocalKey = excludesNull,
+                ElementFilters = filters ?? [],
+                ElementSort = elementSort ?? [],
+                ElementLimit = elementLimit,
+                ElementSkip = elementSkip
+            };
+        }
+        else
+        {
+            var pairs = new List<LookupKeyPair>();
+            var aliasParts = new List<string>();
+            foreach (var (outerProperty, innerProperty, guarded) in parts)
+            {
+                var localField = LookupExpression.GetFieldPath(outerProperty);
+                var foreignField = LookupExpression.GetFieldPath(innerProperty);
+                var excludesNull = guarded && outerProperty.IsNullable;
+
+                pairs.Add(new LookupKeyPair(
+                    localField, foreignField, outerProperty.IsNullable || innerProperty.IsNullable, excludesNull));
+                aliasParts.Add(foreignField.Replace('.', '_') + "_" + localField.Replace('.', '_') + (excludesNull ? "_nn" : ""));
+            }
+
+            // Distinct from a single-pair alias (`_c<N>_`), and the order of the pairs is part of it.
+            var alias = LookupExpression.LookupAliasPrefix
+                        + targetEntityType.ShortName() + "_c" + parts.Count + "_" + string.Join("__", aliasParts) + aliasSuffix;
+
+            lookup = new LookupExpression(targetEntityType, targetEntityType.GetCollectionName(), pairs, alias, forceUnwind: false)
+            {
+                IsCorrelatedArraySource = true,
+                ElementFilters = filters ?? [],
+                ElementSort = elementSort ?? [],
+                ElementLimit = elementLimit,
+                ElementSkip = elementSkip
+            };
+        }
 
         // Uncorrelated filters ride inside the lookup's sub-pipeline (LookupPipelineKind.FilteredJoinInner), so a parameter in one is read per execution.
         if (filterPredicate is not null)

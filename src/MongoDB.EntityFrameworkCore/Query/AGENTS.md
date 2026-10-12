@@ -105,6 +105,20 @@ Scope, joins, grouping:
     Element filters ride in the sub-pipeline (`InnerPredicate`, placeholder-rendered like a filtered join inner); each distinct filter
     set (structural `ExpressionEqualityComparer`) gets its own alias suffix `_fN`, so different filters or parameters never share an
     array. A filter that references the outer entity is a second correlation and declines.
+  - **A correlation on SEVERAL properties** (an anonymous-type `GroupJoin` key, or an explicit `r.A == s.A && r.B == s.B`) is a
+    composite-key keyed array: `NativeCorrelationMatcher.TryMatchCorrelationKeys` returns the list of `CorrelationKeyPart`s (the
+    single-pair match is its one-part case, so the single-key alias and form are unchanged). The predicate must be a pure conjunction
+    of equalities, each compared property used once on each side, plus at most one null guard per compared OUTER property: EF's rewrite
+    writes one `!(s.X == null)` per part, so a guarded part excludes a null outer value (`LookupKeyPair.ExcludesNullLocal`, a
+    `$ne: [$$kI, null]` ahead of the equalities) while an unguarded part equates null with null, as the same key does in a `Join`. A
+    GroupJoin's group is therefore EMPTY for an outer row with a null part on EF10, unlike LINQ-to-objects on the same anonymous key. EF8
+    and EF9 hand over a DIFFERENT tree: the key stays whole, `!(new { s.A, s.B } == null) && Equals(new { s.A, s.B }, new { r.A, r.B })`,
+    which is member-wise equality (null equals null) behind a guard that can never be false; `TryExpandAnonymousKeys` expands it to
+    unguarded member pairs and ignores a guard on a constructed object. The provider answers each version's own rewrite, so the same
+    LINQ gives different (each self-consistent) answers for a null part there. A guard on
+    a property not compared, a further conjunct, a constant side or an `||` declines (never answering by the part it understood). A
+    composite lookup renders in the `let` + `$match $expr` form, and may carry an element filter, ordering and paging in the same
+    sub-pipeline (`LookupExpression.CompositeKeyLetAndMatch`, shared with the join form).
   - **A keyed lookup has no TPH discriminator narrowing** (the navigation constructor does it), so `TryStageKeyedArrayLookup` declines a
     derived target (`BaseType is not null`); without it the count included sibling types' documents.
   - **The driver-LINQ bridge answers the aggregate, quantifier and count leaves over these arrays itself**
@@ -116,6 +130,9 @@ Scope, joins, grouping:
     binder folds an element filter into the lookup it stages, which the bridge cannot use, so the bridge stages its OWN plain array
     for every correlation of the query root (`StageBridgeOwnedLookups`) and applies the filter as an `Enumerable.Where`; the
     filtered native array is then `IsBridgeIgnorable` and not emitted. Emitted right after the root, like a navigation count.
+    - **The correlation `Where` may sit anywhere in the chain** (`TryFindCorrelationBase`): the one `Where` whose predicate reads the
+      outer entity; a `Where` before it (`GroupJoin(db.Rates.Where(f), ..)`) or after it is an element filter, and two outer-reading
+      predicates are ambiguous. A query parameter is not the outer entity (`NativeQueryParameter`).
     - **Never resolve a subquery that correlates with a non-root document.** The pre-scan skips every lambda of a correlated
       subquery (`c.Orders.Sum(o => o.Details.Sum(..))` correlates the inner one with `o`, so a root-level array would read the wrong
       rows: it did, silently), a set operation's other operands (`$unionWith` cannot see an array staged after the root), and
@@ -136,6 +153,10 @@ Scope, joins, grouping:
     moving it into the lookup would be wrong: it declines. `Take` on a `FirstOrDefault`, a non-positive `Take`, a second `OrderBy` and a sort key that is
     not a plain default-stored scalar whose stored order is the CLR order also decline. A distinct (filters, sort, skip, limit) gets
     its own `_fN` alias.
+    - **Two element leaves of the same element type in one projection need distinct identities.** Without a navigation their
+      `ArrayAliasProjectionExpression`s and element `RootReferenceExpression`s are structurally equal, and the shaper pipeline merges
+      equal shapers into one variable declared only in the first array's lambda ("variable referenced from scope '' but not defined").
+      Both carry the projection member as an `Identity` that takes part in equality.
     - **The read side finds the lookup by the member's alias, never by re-deriving it**: the binder records the alias on the lookup
       (`ElementLeafAliases`) only at its commit point, and `TryBindReferencedElementLeaf` binds only a leaf that finds itself there
       (native route only). The shaper is a `CollectionShaperExpression` with NO navigation over an `ArrayAliasProjectionExpression`, so

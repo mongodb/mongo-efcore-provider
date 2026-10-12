@@ -253,6 +253,7 @@ public class NativeNavigationlessCorrelationTests(TemporaryDatabaseFixture datab
     [Theory]
     [InlineData(MongoQueryMode.NativeOnly)]
     [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
     public void GroupJoin_over_a_filtered_inner_is_read_per_execution(MongoQueryMode mode)
     {
         var names = Seed();

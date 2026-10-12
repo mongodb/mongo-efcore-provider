@@ -213,7 +213,7 @@ for the gate and the null guard.
 | 3 | Navigation-less correlation + null-key guard | Done |
 | 4 | Element leaves: `FirstOrDefault`, `ToList` | Done (native), with constant `Skip`/`Take` |
 | 5 | Bridge parity | Done for aggregates, quantifiers, counts, predicates and orderings; element leaves still refuse |
-| 6 | Spec pins | Done for every pin that can flip; composite anonymous-key `GroupJoin` pins stay (composite keys decline) |
+| 6 | Spec pins | Done for every pin that can flip; the composite anonymous-key `GroupJoin` pins are covered by functional tests (below) |
 
 Where the build differs from the design above:
 
@@ -236,7 +236,15 @@ Still open:
 
 * Element leaves (`ToList`/`FirstOrDefault`) in the bridge: they refuse (`IsNativeOnlyArray`). Answering them needs the non-native shaper to
   read a filtered, ordered array, which `TryBindProjectedCollectionNavigation` supports only for a plain `Include`-shaped list.
-* Composite anonymous keys (`GroupJoin(.., c => new { c.A, c.B }, ..)` with an aggregate) decline.
 * A parameterized `Skip`/`Take` (a captured variable) declines: the element stages are constants.
 * Each element leaf with a distinct (filter, ordering, paging) stages its own array, even when an aggregate over the same group reads a plain
   one. Deriving them from one array with `$filter`/`$sortArray`/`$slice` would save the extra `$lookup`s.
+
+Composite keys (added after the table above): a `GroupJoin` on an anonymous-type key, and an explicit subquery correlated on several
+equalities, are a composite-key keyed array in the native translator and the bridge, with aggregates, filters, ordering, paging and element
+leaves (`NativeCorrelationMatcher.TryMatchCorrelationKeys`). EF's rewrite guards every outer part with `!= null`, so a `GroupJoin`'s group is
+empty for an outer row with a null part; that is EF's rewritten query and is followed, which differs from LINQ-to-objects on the same
+anonymous key. The upstream spec pins `GroupJoin_aggregate_anonymous_key_selectors*` stay, for three reasons that are not the key shape: a CONSTANT key
+part (`new { c.CustomerID, c.City } equals new { o.CustomerID, City = "London" }`, `Year = 1996`: a condition on the outer row alone), a
+COMPUTED inner key part (`o.OrderDate.Value.Year`), and an aggregate over a computed selector (`Sum(o => o.CustomerID.Length)`; the
+aggregate arms take one numeric element property). Each is a separate extension.

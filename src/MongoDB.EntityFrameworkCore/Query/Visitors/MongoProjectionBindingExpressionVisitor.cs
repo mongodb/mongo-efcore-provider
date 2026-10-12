@@ -1517,7 +1517,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         if (lookup is null)
             return false;
 
-        var aliasedArray = new ArrayAliasProjectionExpression(targetType, new RootReferenceExpression(targetType));
+        var aliasedArray = new ArrayAliasProjectionExpression(
+            targetType, new RootReferenceExpression(targetType, arrayProjectionMember), arrayProjectionMember);
         _projectionMapping[arrayProjectionMember] = aliasedArray;
 
         var innerShaper = CreateElementShaperWithOwnedIncludes(targetType, aliasedArray.InnerProjection);

@@ -1131,7 +1131,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
         protected override Expression VisitParameter(ParameterExpression node)
         {
-            if (Found == null && node != innerParam)
+            // A query parameter (a captured variable, `__cutoff_0`) is a value, not the outer entity the predicate correlates with.
+            if (Found == null && node != innerParam && !NativeTranslation.NativeQueryParameter.TryGetQueryParameterName(node, out _))
             {
                 Found = node;
             }
