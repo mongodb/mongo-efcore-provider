@@ -414,12 +414,11 @@ internal sealed class MongoPipelineFactory
         MongoQueryLanguageRenderer renderer,
         PlaceholderTable placeholders)
     {
-        // A join whose inner side was filtered: the predicate is relative to the joined document, which is exactly the
-        // scope inside the sub-pipeline. Rendered here, not stored as BSON on the lookup, so a parameter or clock
-        // value goes through the placeholder table and is read per execution instead of frozen into the cached
-        // plan. Stages nested by an inner-side collection Include follow the filter, so they see only the rows that
-        // passed it. Same indexable localField/foreignField + pipeline form as CorrelatedReducer.
-        // An element sort or limit (a keyed array behind `OrderBy(..).ToList()` / `FirstOrDefault()`) uses the same shape, with or without a filter.
+        // A join whose inner side was filtered: the predicate is relative to the joined document, i.e. the scope inside the
+        // sub-pipeline. Rendered here, not stored as BSON on the lookup, so a parameter or clock value goes through the placeholder
+        // table and is read per execution instead of frozen into the cached plan. Stages nested by an inner-side collection Include
+        // follow the filter. Same indexable localField/foreignField + pipeline form as CorrelatedReducer.
+        // An element sort or limit (a keyed array behind `OrderBy(..).ToList()`/`FirstOrDefault()`) uses the same shape.
         if (lookup.InnerPredicate is not null || lookup.HasElementStages)
         {
             var stages = new BsonArray();

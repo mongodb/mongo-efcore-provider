@@ -136,10 +136,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         _pendingLookups = pendingLookups ?? Array.Empty<LookupExpression>();
         _innerSources = innerSources ?? new Dictionary<IEntityType, Expression>();
 
-        // This bridge peels a join back to a flat $lookup + $unwind and drops the join's inner source, and with it
-        // any filter on that source (M22). A lookup that carries one (LookupExpression.InnerPredicate) can only be
-        // honored by the native renderer, so refuse here rather than return unfiltered rows. Reached from explicit
-        // DriverLinq mode and from a Native-mode fallback after the native path declined late.
+        // This bridge peels a join to a flat $lookup + $unwind and drops the join's inner source, and with it any filter on it (M22). A lookup
+        // with an InnerPredicate can only be honored by the native renderer, so refuse rather than return unfiltered rows. Reached from
+        // explicit DriverLinq and from a Native-mode fallback after a late native decline.
         if (_pendingLookups.FirstOrDefault(l => l.HasInnerPredicate && !l.IsCorrelatedArraySource) is { } filteredJoinLookup)
         {
             throw new NativeTranslation.NativeTranslationNotSupportedException(
@@ -815,7 +814,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return referencedOperatorRewrite;
         }
 
-        // Bare embedded-collection Count (`b.Posts.Count`); see TryRewriteEmbeddedCollectionNavigationCount.
         if (TryRewriteEmbeddedCollectionNavigationCount(node, out var embeddedCountRewrite))
         {
             return embeddedCountRewrite;

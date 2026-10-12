@@ -335,9 +335,8 @@ internal static class NativeCorrelationMatcher
     }
 
     /// <summary>
-    /// Builds the keyed, not-unwound <c>$lookup</c> behind a correlated subquery matched by <see cref="TryMatchRawKeyCorrelation"/>.
-    /// The alias encodes the target, both key paths and whether a null local key is excluded, so two subqueries over the same
-    /// collection with different keys never share an array and identical ones deduplicate.
+    /// Builds the keyed, not-unwound <c>$lookup</c> for a subquery matched by <see cref="TryMatchRawKeyCorrelation"/>. The alias
+    /// encodes target, both key paths and null-key exclusion, so different keys never share an array and identical ones deduplicate.
     /// </summary>
     internal static LookupExpression BuildCorrelatedArrayLookup(
         IEntityType targetEntityType, IProperty outerProperty, IProperty innerProperty, bool guarded,
@@ -364,8 +363,7 @@ internal static class NativeCorrelationMatcher
             var localField = LookupExpression.GetFieldPath(outerProperty);
             var foreignField = LookupExpression.GetFieldPath(innerProperty);
 
-            // A null outer key matches nothing only when EF guarded the predicate AND the key can be null; a non-nullable key can't be
-            // null, so the plain (indexable) form is exact there.
+            // A null outer key matches nothing only when EF guarded the predicate AND the key can be null; otherwise the plain (indexable) form is exact.
             var excludesNull = guarded && outerProperty.IsNullable;
 
             var alias = LookupExpression.LookupAliasPrefix

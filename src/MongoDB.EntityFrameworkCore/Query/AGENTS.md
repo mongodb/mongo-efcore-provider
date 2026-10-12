@@ -77,104 +77,71 @@ Scope, joins, grouping:
     `Set<Dog>()` -> `Set<Animal>().OfType<Dog>()` before nav-expansion), so one discriminator predicate applies in every
     mode, on any join side or subquery. Not applied with a vector search.
   - **Paging written before a join stays ahead of its `$lookup` whenever the join can drop rows**
-    (`JoinInfo.PagingBeforeItMustStayAhead`): a collection or navigation-less join, an inner join onto an optional or
-    principal-side reference (an explicit `Join` over a nullable FK), or any join whose lookup carries an `InnerPredicate`.
-    Only a REQUIRED dependent-side reference defers it (dangling data is the sole way it drops a row: the accepted
-    divergence). Deferring paging past a dropping join pages the joined rows, not the outer rows
-    (`NativeJoinFilteredInnerTests.Take_before_*`). Paging written AFTER the join is correctly applied to the joined rows.
-- **Aggregates and quantifiers over a referenced (cross-document) collection** (`c.Orders.Any(..)`, `.All(..)`, `.Count(pred)`,
-  `.Sum/Min/Max/Average(o => o.Prop)`, also what EF makes of a `GroupJoin` with an aggregate) are projection leaves over the not-unwound
-  `$lookup` array `_lookup_<Nav>`. `MongoExpressionTranslator.ReferencedCollectionResolver` (set only on the projection binder's
-  root translator, `NativeProjectionBinder.ResolveReferencedCollection`) maps the strict FK correlation
-  (`NativeCorrelationMatcher`, never a target-type guess) to that array and stages the lookup; `TryResolveOwnedCollectionPath` then
-  serves the existing `Count`/filtered-count arms unchanged. Any/All have no value-position translation (the predicate arm renders
-  `$elemMatch`, query dialect only), so a projected `Any(pred)` is `Count(pred) >= 1` and `All(pred)` is `Count(not pred) == 0` (the
-  aggregation dialect's `$not` is the exact complement; true for the empty group). `Sum/Min/Max/Average` of one numeric element
-  property use `MongoArrayReduceExpression` over the path through the array (`{ $sum: "$_lookup_Orders.Total" }`). An empty group:
-  `$sum` is 0; `$min/$max/$avg` are null, which `WalkNullBehindNonNullableType` reads strictly for a non-nullable result (throws like
-  LINQ). The read side (`MongoProjectionBindingExpressionVisitor`) only binds the whole call as one member once the native binder accepted
-  the projection (`Route == Projection`); the native binder is the single gatekeeper. Owned collections keep their existing behavior
-  (no `Sum/Min/Max/Average`, no value-position `Any/All`). `FirstOrDefault`/`ToList` elements and driver-LINQ bridge parity are later
-  slices of the design.
-  - **A correlation with no collection navigation** (`db.Orders.Where(o => c.Key != null && c.Key == o.Fk)`, what EF makes of a
-    `GroupJoin` + aggregate on arbitrary keys) is a keyed array lookup (`LookupExpression.IsCorrelatedArraySource`, not unwound), built
-    from exactly the two properties the predicate compares (`NativeCorrelationMatcher.TryMatchRawKeyCorrelation`; exactly one such
-    `Where` in the chain, the rest are element filters). Null semantics: `$lookup` matches a null/missing local key to null/missing
-    foreign values, which is C# `==` for an unguarded subquery, so that stays the plain form; a guarded outer key (`c.Key != null &&`)
-    means a null key matches NOTHING, which only the `let`/`pipeline` form (`ExcludesNullLocalKey`) expresses.
-    Element filters ride in the sub-pipeline (`InnerPredicate`, placeholder-rendered like a filtered join inner); each distinct filter
-    set (structural `ExpressionEqualityComparer`) gets its own alias suffix `_fN`, so different filters or parameters never share an
-    array. A filter that references the outer entity is a second correlation and declines.
-  - **A correlation on SEVERAL properties** (an anonymous-type `GroupJoin` key, or an explicit `r.A == s.A && r.B == s.B`) is a
-    composite-key keyed array: `NativeCorrelationMatcher.TryMatchCorrelationKeys` returns the list of `CorrelationKeyPart`s (the
-    single-pair match is its one-part case, so the single-key alias and form are unchanged). The predicate must be a pure conjunction
-    of equalities, each compared property used once on each side, plus at most one null guard per compared OUTER property: EF's rewrite
-    writes one `!(s.X == null)` per part, so a guarded part excludes a null outer value (`LookupKeyPair.ExcludesNullLocal`, a
-    `$ne: [$$kI, null]` ahead of the equalities) while an unguarded part equates null with null, as the same key does in a `Join`. A
-    GroupJoin's group is therefore EMPTY for an outer row with a null part on EF10, unlike LINQ-to-objects on the same anonymous key. EF8
-    and EF9 hand over a DIFFERENT tree: the key stays whole, `!(new { s.A, s.B } == null) && Equals(new { s.A, s.B }, new { r.A, r.B })`,
-    which is member-wise equality (null equals null) behind a guard that can never be false; `TryExpandAnonymousKeys` expands it to
-    unguarded member pairs and ignores a guard on a constructed object. The provider answers each version's own rewrite, so the same
-    LINQ gives different (each self-consistent) answers for a null part there. A guard on
-    a property not compared, a further conjunct, a constant side or an `||` declines (never answering by the part it understood). A
-    composite lookup renders in the `let` + `$match $expr` form, and may carry an element filter, ordering and paging in the same
-    sub-pipeline (`LookupExpression.CompositeKeyLetAndMatch`, shared with the join form).
-  - **A keyed lookup has no TPH discriminator narrowing** (the navigation constructor does it), so `TryStageKeyedArrayLookup` declines a
-    derived target (`BaseType is not null`); without it the count included sibling types' documents.
-  - **The driver-LINQ bridge answers the aggregate, quantifier and count leaves over these arrays itself**
-    (`MongoEFToLinqTranslatingExpressionVisitor.ReferencedCollection.cs`, slice 5), by rewriting the terminal operator and the chain
-    under it (`Where`/`Select`/`OrderBy` between the correlation and the terminal) to the `Enumerable` operators over
-    `Mql.Field(outerDoc, <array alias>, serializer)`, which the driver renders server-side. Only the exact correlation the binder staged
-    for may read an array: a navigation correlation re-verified through `TryMatchCorrelatedCollection`, a navigation-less one through
-    `TryMatchRawKeyCorrelation` and the lookup alias built from it. The bridge reads only PLAIN arrays (`IsBridgeReadableArray`): the
-    binder folds an element filter into the lookup it stages, which the bridge cannot use, so the bridge stages its OWN plain array
-    for every correlation of the query root (`StageBridgeOwnedLookups`) and applies the filter as an `Enumerable.Where`; the
-    filtered native array is then `IsBridgeIgnorable` and not emitted. Emitted right after the root, like a navigation count.
-    - **The correlation `Where` may sit anywhere in the chain** (`TryFindCorrelationBase`): the one `Where` whose predicate reads the
-      outer entity; a `Where` before it (`GroupJoin(db.Rates.Where(f), ..)`) or after it is an element filter, and two outer-reading
-      predicates are ambiguous. A query parameter is not the outer entity (`NativeQueryParameter`).
-    - **Never resolve a subquery that correlates with a non-root document.** The pre-scan skips every lambda of a correlated
-      subquery (`c.Orders.Sum(o => o.Details.Sum(..))` correlates the inner one with `o`, so a root-level array would read the wrong
-      rows: it did, silently), a set operation's other operands (`$unionWith` cannot see an array staged after the root), and
-      `_referencedElementLambdaDepth > 0` refuses the rewrite there. A set operation with ANY referenced terminal fails at translation
-      (`MultiBranchNavigationCountFinder`), not at the server.
-    - **A relational comparison of a nullable rewritten aggregate is null-guarded** (`VisitBinary`, `_nullableReferencedAggregates`):
-      the aggregation dialect orders null below every number, so `Max(..) < 650` would match the empty group where C# answers false.
-    - **Element leaves (`ToList`/`FirstOrDefault`) are still native-only**: the bridge refuses them (`ElementLeafAliases`/
-      `HasElementStages`), as does a join-inner predicate (`HasInnerPredicate` without `IsCorrelatedArraySource`).
-  - **Element leaves: `ToList` and `FirstOrDefault` of the group** (`c.Orders.Where(..).OrderBy(..).ToList()`, `.FirstOrDefault(pred)`,
-    the same off a `GroupJoin` group, `Select(o => o.Total).ToList()`) match `NativeReferencedElementMatcher` (purely structural, called by
-    both sides) and stage ONE keyed array lookup, with or without a collection navigation (`TryTranslateReferencedElementLeaf`; the
-    correlation is `TryMatchRawKeyCorrelation`, never the navigation). Element filters ride in `InnerPredicate` (placeholder-rendered,
-    so parameters are per execution); the ordering and the `FirstOrDefault` limit are `LookupExpression.ElementSort`/`ElementLimit`,
-    typed fields rendered by `RenderLookup` after the filter, NOT `PipelineStages` (`HasPipeline` would make the lookup non-native). A
-    filter moved ahead of the ordering is equivalent. Constant `Skip`/`Take` are `ElementSkip`/`ElementLimit` (`$skip` then `$limit`,
-    after the sort); they must be the OUTERMOST operators, because a `Where` written after them filters the page, not the group, so
-    moving it into the lookup would be wrong: it declines. `Take` on a `FirstOrDefault`, a non-positive `Take`, a second `OrderBy` and a sort key that is
-    not a plain default-stored scalar whose stored order is the CLR order also decline. A distinct (filters, sort, skip, limit) gets
-    its own `_fN` alias.
-    - **Two element leaves of the same element type in one projection need distinct identities.** Without a navigation their
-      `ArrayAliasProjectionExpression`s and element `RootReferenceExpression`s are structurally equal, and the shaper pipeline merges
-      equal shapers into one variable declared only in the first array's lambda ("variable referenced from scope '' but not defined").
-      Both carry the projection member as an `Identity` that takes part in equality.
-    - **The read side finds the lookup by the member's alias, never by re-deriving it**: the binder records the alias on the lookup
-      (`ElementLeafAliases`) only at its commit point, and `TryBindReferencedElementLeaf` binds only a leaf that finds itself there
-      (native route only). The shaper is a `CollectionShaperExpression` with NO navigation over an `ArrayAliasProjectionExpression`, so
-      materializing assigns a plain list and does not fix the elements up into the principal's own collection (which would leave it holding
-      only the filtered subset); `FirstOrDefault` is `Enumerable.FirstOrDefault` over that list, and a scalar `Select` is re-applied to the
-      materialized entities (`IsSelfContainedLambda`). The leaf is not an `isArrayLeaf` (siblings such as `Count` stay readable) but sets
-      `HasArrayProjectionLeaf`, so set operations decline it.
-    - **`IsNativeOnlyArray` is the one predicate the bridge refuses on.** The emit side stages these lookups in every mode, so without
-      it explicit `DriverLinq` rendered a plain `$lookup` nothing reads and silently returned empty lists.
-  - **`Where` and `OrderBy`/`ThenBy` keys** use the same resolver through `NativeReferencedCollectionBinder` (tried after
-    `NativeReferenceCollectionCountPredicateBinder`, and after the sort arms, in `NativeSlotPopulator`). A `Where` translates in
-    predicate mode, so `Any(pred)`/`All(pred)` are `$elemMatch` over `_lookup_<Nav>` (query dialect) and a count/sum comparison is
-    `$expr`; a sort key translates in value mode and is a computed `__sort` key. Accept on "the resolver resolved a source", never on "it
-    staged a new lookup": an earlier `Where`/`OrderBy` may already have registered the same lookup, so nothing new is staged. The commit
-    stages nothing until the whole predicate/key translated, then `AddLookup`s, relocates a trailing sort
-    (`DeferTrailingSortPastConfirmedJoin`: one logical ordering must stay one `$sort`, the post-lookup key must not become primary) and
-    flips to `PostJoinOps` (`MarkReferenceCollectionCountPredicateConfirmed`). Ops recorded earlier stay ahead of the lookup, so
-    `Take(n).Where(Any(..))` pages first. A join scope or terminal operator declines (the flip has no place in that lowering).
+    (`JoinInfo.PagingBeforeItMustStayAhead`): collection/navigation-less joins, inner joins onto optional or
+    principal-side references, any lookup with an `InnerPredicate`. Only a REQUIRED dependent-side reference defers it
+    (dangling data is the accepted divergence). Paging written AFTER the join applies to joined rows.
+- **Aggregates and quantifiers over a referenced (cross-document) collection** (`c.Orders.Any/All/Count(pred)`,
+  `.Sum/Min/Max/Average(o => o.Prop)`, GroupJoin aggregates) are projection leaves over the not-unwound `$lookup` array
+  `_lookup_<Nav>`. `MongoExpressionTranslator.ReferencedCollectionResolver` (set only on the projection binder's root
+  translator) maps the strict FK correlation (`NativeCorrelationMatcher`, never a target-type guess) to that array.
+  Value-position `Any(pred)` is `Count(pred) >= 1` and `All(pred)` is `Count(not pred) == 0` (`$elemMatch` is query
+  dialect only). Empty group: `$sum` is 0; `$min/$max/$avg` are null, read strictly for a non-nullable result (throws
+  like LINQ). The read side binds the whole call only once the native binder accepted the projection
+  (`Route == Projection`). Owned collections keep their existing behavior (no `Sum/Min/Max/Average`, no value-position
+  `Any/All`). Element leaves and the driver-LINQ bridge are below.
+  - **A correlation with no collection navigation** (`o => c.Key != null && c.Key == o.Fk`) is a keyed array lookup
+    (`IsCorrelatedArraySource`, `NativeCorrelationMatcher.TryMatchRawKeyCorrelation`; exactly one such `Where`, the rest
+    are element filters). `$lookup` matches a null/missing local key to null/missing foreign values (C# `==` for an
+    unguarded subquery); a guarded outer key means null matches NOTHING, which only the `let`/`pipeline` form
+    (`ExcludesNullLocalKey`) expresses. Each distinct element-filter set (structural comparer) gets its own alias suffix
+    `_fN`; a filter referencing the outer entity is a second correlation and declines.
+  - **A correlation on several properties** (an anonymous-type `GroupJoin` key, or `r.A == s.A && r.B == s.B`) is a composite-key
+    keyed array: `NativeCorrelationMatcher.TryMatchCorrelationKeys` returns `CorrelationKeyPart`s (the single-pair match is its one-part
+    case). The predicate must be a pure conjunction of equalities, each compared property used once per side, plus at most one null guard
+    per compared OUTER property; a guard on a property not compared, a further conjunct, a constant side or an `||` declines. A guarded
+    part excludes a null outer value (`LookupKeyPair.ExcludesNullLocal`), an unguarded part equates null with null, as in a `Join`.
+    EF10's GroupJoin rewrite guards every outer part, so the group is EMPTY for an outer row with a null part. EF8/EF9 keep the key whole
+    (`Equals(new { s.A, s.B }, new { r.A, r.B })` behind a guard on a constructed object that is never false): member-wise, null equals
+    null; `TryExpandAnonymousKeys` expands it to unguarded pairs. Each version's own rewrite is answered, so the two differ for a null
+    part. A composite lookup renders `let` + `$match $expr` and can carry an element filter, ordering and paging in the same
+    sub-pipeline (`LookupExpression.CompositeKeyLetAndMatch`).
+  - **A keyed lookup has no TPH discriminator narrowing**, so `TryStageKeyedArrayLookup` declines a derived target.
+  - **Element leaves, `ToList`/`FirstOrDefault` of the group** (`c.Orders.Where(..).OrderBy(..).Skip(..).Take(..).ToList()`,
+    `.FirstOrDefault(pred)`, off a GroupJoin group, `Select(o => o.Total).ToList()`) match `NativeReferencedElementMatcher` (structural,
+    shared by both sides) and stage ONE keyed array lookup, whether or not a navigation exists
+    (`TryTranslateReferencedElementLeaf`, correlation via `TryMatchCorrelationKeys`, never the navigation). Filters ride in
+    `InnerPredicate`; ordering, `Skip` and the limit are the typed `ElementSort`/`ElementSkip`/`ElementLimit`, rendered by `RenderLookup`
+    after the filter (not `PipelineStages`: `HasPipeline` would make the lookup non-native). A filter moved ahead of the ordering is
+    equivalent, but `Skip`/`Take` must be the OUTERMOST operators: a `Where` after them filters the page, so it declines. `Take` on a
+    `FirstOrDefault`, a non-positive `Take`, a second `OrderBy` and a sort key that is not a default-stored scalar in CLR order also
+    decline. Each distinct (filters, sort, skip, limit) gets its own `_fN` alias.
+    - The read side finds the lookup by the member's alias in `LookupExpression.ElementLeafAliases` (written at the binder's commit),
+      never by re-deriving it (`TryBindReferencedElementLeaf`, native route only). The shaper is a `CollectionShaperExpression` with NO
+      navigation over an `ArrayAliasProjectionExpression`: the list is assigned plainly and never fixed up into the principal's own
+      collection (it would hold only the filtered subset). A scalar `Select` is re-applied to the materialized entities. The leaf is
+      not an `isArrayLeaf` (siblings such as `Count` stay readable) but sets `HasArrayProjectionLeaf`.
+    - Two element leaves of one element type in a projection need distinct `Identity` (the projection member) on their
+      `ArrayAliasProjectionExpression` and element `RootReferenceExpression`: otherwise they are structurally equal and the shaper
+      pipeline merges them into one variable declared only in the first array's lambda.
+  - **`Where` and `OrderBy`/`ThenBy` keys** use the same resolver via `NativeReferencedCollectionBinder`. Accept on "the
+    resolver resolved a source", never on "it staged a new lookup" (an earlier op may have registered it). Stage nothing
+    until the whole predicate/key translated, then relocate a trailing sort
+    (`DeferTrailingSortPastConfirmedJoin`: one ordering must stay one `$sort`) and flip to `PostJoinOps`. Ops recorded
+    earlier stay ahead (`Take(n).Where(Any(..))` pages first). A join scope or terminal operator declines.
+  - **The driver-LINQ bridge answers the aggregate, quantifier and count leaves itself**
+    (`MongoEFToLinqTranslatingExpressionVisitor.ReferencedCollection.cs`): the terminal operator and the `Where`/`Select`/`OrderBy`
+    chain under it become the `Enumerable` operators over `Mql.Field(outerDoc, <array alias>, serializer)`. It reads only PLAIN arrays
+    (`IsBridgeReadableArray`) and stages its own for the query root's correlations (`StageBridgeOwnedLookups`), applying the filter as
+    `Enumerable.Where`, because the binder folds the filter into the lookup it stages; that filtered array is `IsBridgeIgnorable`.
+    - The correlation `Where` may sit anywhere in the chain (`TryFindCorrelationBase`); any other `Where` is an element filter and two
+      outer-reading predicates are ambiguous. A query parameter is not the outer entity.
+    - Never resolve a subquery correlated with a non-root document (an aggregate inside another aggregate's lambda reads the wrong
+      rows) nor a set operation's other operands (`$unionWith` cannot see an array staged after the root). A set operation with any
+      referenced terminal fails at translation (`MultiBranchNavigationCountFinder`), not at the server.
+    - A relational comparison of a nullable rewritten aggregate is null-guarded (`VisitBinary`): the aggregation dialect orders null
+      below every number, so `Max(..) < 650` would match the empty group.
+    - Element leaves still refuse in the bridge (`ElementLeafAliases`/`HasElementStages`), as does a join-inner predicate; the emit
+      side stages these lookups in every mode, so without the refusal `DriverLinq` read an empty array.
 - **Navigation-less joins** are native iff `RebindInnerShaperToOuterQuery`'s raw-key branch resolved both keys
   (`JoinInfo.Lookup != null`); a non-simple key declines. Composite-PK components live at `_id.<Name>`
   (`LookupExpression.GetFieldPath`). "Simple" includes an anonymous key of scalar properties (same anonymous type both

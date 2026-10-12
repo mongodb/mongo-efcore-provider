@@ -30,8 +30,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <summary>
 /// A projected element leaf over a cross-document collection: <c>FirstOrDefault</c> of the group (a whole entity) and
 /// <c>ToList</c> of the group (whole entities or a scalar projection), written through a collection navigation and as a
-/// <c>GroupJoin</c> on a model with no navigation (design:
-/// <c>docs/superpowers/specs/2026-10-08-native-referenced-collection-aggregates-design.md</c>, slice 4).
+/// <c>GroupJoin</c> on a model with no navigation.
 /// Hand-computed over raw seeds, including a customer with no orders (the empty group: <c>FirstOrDefault</c> is null,
 /// <c>ToList</c> is empty) and orders whose customer is dangling or null (never in any group).
 /// <para>

@@ -154,8 +154,8 @@ public class NativeProjectedCollectionListLeafTests
     }
 
     /// <summary>
-    /// Not this recognizer's shape (it declines a filtered Include), but an element leaf (slice 4): a keyed array lookup whose sub-pipeline
-    /// carries the filter, read back through the member's own alias.
+    /// Not this recognizer's shape (it declines a filtered Include), but an element leaf: a keyed array lookup whose sub-pipeline carries
+    /// the filter, read back through the member's own alias.
     /// </summary>
     [Fact]
     public void A_Where_directly_on_the_projected_nav_is_an_element_leaf()
@@ -180,7 +180,7 @@ public class NativeProjectedCollectionListLeafTests
         Assert.Equal(["Orders"], lookup.ElementLeafAliases);
     }
 
-    // ---- element leaves: constant paging, filters and the declines around them (slice 4 and the gaps after it)
+    // ---- element leaves: constant paging, filters and the declines around them
 
     [Fact]
     public void Take_after_the_ordering_is_a_limit_on_the_lookup()
@@ -293,7 +293,7 @@ public class NativeProjectedCollectionListLeafTests
     [Theory]
     [InlineData(nameof(Customer.Id), true, true, true)]
     // Guard and compared key both non-key: not the navigation's key, so the list-leaf recognizer declines, but it is a well-formed correlation
-    // on two stored-alike properties, which the element leaf (slice 4) reads through a lookup built from exactly those properties.
+    // on two stored-alike properties, which the element leaf reads through a lookup built from exactly those properties.
     [InlineData(nameof(Customer.Code), true, true, true)]
     [InlineData(nameof(Customer.Code), false, true, false)] // compared key non-key, guard on the key
     [InlineData(nameof(Customer.Code), true, false, false)] // compared key is the key, guard on a different member

@@ -448,8 +448,8 @@ public class NativeCorrelatedReducerLeafTests
         => AssertDeclined(q => q.Select(a => new { a.Id, M = a.IdentificationMethods.FirstOrDefault()!.Detail }));
 
     /// <summary>
-    /// <c>nav.FirstOrDefault()</c> with no member read reduces to a whole entity, which this leaf doesn't shape: it is an element leaf
-    /// (slice 4), a keyed array lookup limited to one element and read back as an entity.
+    /// <c>nav.FirstOrDefault()</c> with no member read reduces to a whole entity, which this leaf doesn't shape: it is an element leaf,
+    /// a keyed array lookup limited to one element and read back as an entity.
     /// </summary>
     [Fact]
     public void Whole_element_reduction_with_no_member_read_is_an_element_leaf()

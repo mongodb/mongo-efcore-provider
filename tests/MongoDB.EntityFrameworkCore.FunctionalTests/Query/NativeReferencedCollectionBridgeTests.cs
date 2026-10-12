@@ -28,11 +28,10 @@ using MongoDB.EntityFrameworkCore.Infrastructure;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// The driver-LINQ bridge parity of the aggregate, quantifier, predicate and ordering leaves over a cross-document collection
-/// (design: <c>docs/superpowers/specs/2026-10-08-native-referenced-collection-aggregates-design.md</c>, slice 5). Same data and
-/// expectations as <see cref="NativeReferencedCollectionAggregateTests"/> and <see cref="NativeReferencedCollectionPredicateTests"/>,
-/// but every mode, explicit <see cref="MongoQueryMode.DriverLinq"/> included, must answer exactly: the bridge has to answer
-/// correctly now, not refuse.
+/// The driver-LINQ bridge parity of the aggregate, quantifier, predicate and ordering leaves over a cross-document collection. Same
+/// data and expectations as <see cref="NativeReferencedCollectionAggregateTests"/> and
+/// <see cref="NativeReferencedCollectionPredicateTests"/>, but every mode, explicit <see cref="MongoQueryMode.DriverLinq"/> included,
+/// must answer exactly, not refuse.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeReferencedCollectionBridgeTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -94,7 +93,7 @@ public class NativeReferencedCollectionBridgeTests(TemporaryDatabaseFixture data
         }
     }
 
-    // ---- projected aggregates and quantifiers (slice 1)
+    // ---- projected aggregates and quantifiers
 
     [Fact]
     public void Any_without_a_predicate()
@@ -155,7 +154,7 @@ public class NativeReferencedCollectionBridgeTests(TemporaryDatabaseFixture data
         }
     }
 
-    // ---- predicates and orderings (slice 2)
+    // ---- predicates and orderings
 
     private void StrictIds(Func<Ctx, IQueryable<Cust>> query, List<string> expected, bool sorted = true)
         => Strict3(query, c => c.Id, expected, sorted);

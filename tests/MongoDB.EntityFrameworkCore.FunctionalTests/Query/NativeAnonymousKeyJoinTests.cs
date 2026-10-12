@@ -591,8 +591,8 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
         spy.AssertExecutedMqlContains("\"$and\"");
     }
 
-    // g.Sum(...) over a GroupJoin grouping is an aggregate over the keyed array lookup (slices 3 and 5 of the referenced-collection
-    // aggregates design, native and bridge); a missing/null outer key matches nothing, as the rewrite's `outerKey != null` guard says.
+    // g.Sum(...) over a GroupJoin grouping is an aggregate over the keyed array lookup (native and bridge); a missing/null outer key
+    // matches nothing, as the rewrite's `outerKey != null` guard says.
     [Theory]
     [InlineData(MongoQueryMode.NativeOnly)]
     [InlineData(MongoQueryMode.Native)]

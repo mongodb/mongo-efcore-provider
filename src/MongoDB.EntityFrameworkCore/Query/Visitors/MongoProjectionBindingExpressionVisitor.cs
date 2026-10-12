@@ -822,17 +822,15 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
     {
         // A projected element leaf over a cross-document collection (`c.Orders.OrderBy(..).ToList()`, `.FirstOrDefault()`), staged at
-        // emit time as a keyed array lookup (NativeProjectionBinder.TryTranslateReferencedElementLeaf). Native route only: any
-        // other route has no array to read and falls through to the translation failure below.
+        // emit time as a keyed array lookup (NativeProjectionBinder.TryTranslateReferencedElementLeaf). Native route only.
         if (TryBindReferencedElementLeaf(methodCallExpression, out var boundElements))
         {
             return boundElements;
         }
 
-        // A projected cross-collection collection navigation (e.g. select new { ..., Orders = c.Orders.ToList() }).
-        // EF Core lowers this to Enumerable.ToList(Queryable.Select(Queryable.Where(DbSet<Target>(), joinPred), selector)).
-        // There is no enclosing IncludeExpression to set up the $lookup, so bind it here to a CollectionShaperExpression
-        // that reads from a dedicated "_lookup_<Nav>" array, mirroring the cross-collection Include path.
+        // A projected cross-collection collection navigation (`Orders = c.Orders.ToList()`) is lowered by EF to
+        // ToList(Select(Where(DbSet<Target>(), joinPred), selector)) with no enclosing IncludeExpression: bind it to a
+        // CollectionShaperExpression over a dedicated "_lookup_<Nav>" array, mirroring the cross-collection Include path.
         if (TryBindProjectedCollectionNavigation(methodCallExpression, out var boundCollection))
         {
             return boundCollection;
@@ -1551,10 +1549,9 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     }
 
     /// <summary>
-    /// The shaper for one element of an alias-addressed owned array: the element's own shaper, wrapped in an
-    /// <see cref="IncludeExpression"/> per eager-loaded embedded navigation (recursively), as EF's nav-expansion builds
-    /// it for a whole owned entity. Without them a nested owned collection would never be populated. The admission rule
-    /// (<see cref="NativeProjectionBinder.IsNativeArrayProjectionLeaf"/>) guarantees every eager navigation is embedded.
+    /// The shaper for one element of an alias-addressed owned array: wrapped in an <see cref="IncludeExpression"/> per
+    /// eager embedded navigation (recursively), as nav-expansion builds it for a whole owned entity; without them a
+    /// nested owned collection would never be populated.
     /// </summary>
     private static Expression CreateElementShaperWithOwnedIncludes(IEntityType elementType, EntityProjectionExpression elementProjection)
     {

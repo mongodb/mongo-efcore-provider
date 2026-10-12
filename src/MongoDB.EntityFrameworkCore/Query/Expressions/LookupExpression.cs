@@ -301,7 +301,7 @@ internal sealed class LookupExpression
     /// </summary>
     public bool IsBridgeIgnorable => IsCorrelatedArraySource && HasInnerPredicate && ElementLeafAliases.Count == 0;
 
-    /// <summary>The <c>let</c> of the null-excluding form: the local key, null-normalized so a missing field reads as null.</summary>
+    /// <summary>The <c>let</c> of the null-excluding form: the local key, null-normalized.</summary>
     internal BsonDocument NullExcludingLet()
         => new("k", new BsonDocument("$ifNull", new BsonArray { $"${LocalField}", BsonNull.Value }));
 

@@ -24,9 +24,8 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
-// Aggregates, quantifiers and counts over a cross-document collection reached through a collection navigation
-// (`c.Orders.Sum(o => o.Total)`, `.Any(pred)`, `.Count(pred)`), design:
-// docs/superpowers/specs/2026-10-08-native-referenced-collection-aggregates-design.md, slice 5.
+// Aggregates, quantifiers and counts over a cross-document collection (`c.Orders.Sum(o => o.Total)`, `.Any(pred)`, `.Count(pred)`),
+// reached through a collection navigation or a keyed correlation.
 internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
 {
     private static readonly HashSet<string> ReferencedCollectionTerminalOperators =

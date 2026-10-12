@@ -64,11 +64,9 @@ internal static class NativeProjectionBinder
         var pendingReducerLeaves = new List<MongoCorrelatedReducerLeaf>();
         // Lookups a projected reference-collection Count leaf needs stamped IsBareCountSizeSource (see NativeCorrelationMatcher.TryBuildReferenceCollectionCountLookup).
         var pendingBareCountStamps = new List<LookupExpression>();
-        // Referenced-collection element leaves (`c.Orders.OrderBy(..).ToList()`, `.FirstOrDefault()`): the keyed lookup that backs each and
-        // the projection alias the read side finds it by. Staged, not applied, as above.
+        // Element leaves (`c.Orders.OrderBy(..).ToList()`, `.FirstOrDefault()`): each one's keyed lookup and the alias the read side finds it by. Staged, not applied.
         var pendingElementLeaves = new List<(LookupExpression Lookup, string Alias)>();
-        // A correlated subquery over another collection (`c.Orders.Any(...)`, `.Sum(...)`) resolves to its staged `$lookup` array, so
-        // the quantifier / count / aggregate arms that serve owned collections serve it too. Staged, not applied, as above.
+        // A correlated subquery over another collection (`c.Orders.Any(...)`) resolves to its staged `$lookup` array, so the arms serving owned collections serve it too.
         translator.ReferencedCollectionResolver = source => ResolveReferencedCollection(
             mongoQ, selector.Parameters[0], source, pendingLookups, pendingBareCountStamps);
         // AddToProjection disambiguates aliases case-insensitively, so two members differing only by case would make the DOM shaper read a renamed alias the native
@@ -1114,8 +1112,7 @@ internal static class NativeProjectionBinder
             return true;
         }
 
-        // A relabel cast over a non-default-stored field: project the bare stored field; the shaper reads it through the
-        // property's serializer and applies the cast (IsClientRelabelCast, shared with the read side).
+        // A relabel cast over a non-default-stored field: project the bare stored field; the shaper reads it through the property's serializer and applies the cast (IsClientRelabelCast).
         if (leafExpression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } relabelCast
             && IsPlainTopLevelFieldRead(translator, relabelCast.Operand, out var relabelField)
             && IsClientRelabelCast(relabelCast, relabelField.Property))
@@ -1444,11 +1441,7 @@ internal static class NativeProjectionBinder
         return true;
     }
 
-    /// <summary>
-    /// Whether <paramref name="lambda"/> can be compiled and run on its own over materialized owned entities: no
-    /// parameter other than its own (a query parameter or the query root would not exist there), and no
-    /// <c>EF.Property</c> call, which throws outside a query.
-    /// </summary>
+    /// <summary>Whether <paramref name="lambda"/> can be compiled and run on its own over materialized owned entities: no parameter other than its own (a query parameter or the root wouldn't exist there) and no <c>EF.Property</c> call, which throws outside a query.</summary>
     internal static bool IsSelfContainedLambda(LambdaExpression lambda)
     {
         var checker = new SelfContainedChecker();
@@ -1992,11 +1985,9 @@ internal static class NativeProjectionBinder
                 LookupExpression.GetLookupAlias(navigation), navigation.TargetEntityType);
         }
 
-        // Any other equality between two scalar properties, or a conjunction of them (a GroupJoin on arbitrary or anonymous-type keys, or a
-        // model with no navigation): a keyed array lookup built from exactly the properties the predicate compares.
-        // The subquery may carry uncorrelated filters ahead of or after the correlation (`GroupJoin(Orders.Where(f), ...)`,
-        // `Orders.Where(corr).Where(f)`): exactly one Where of the chain is the correlation, and the rest are element filters
-        // applied inside the lookup.
+        // Any other equality between two scalar properties, or a conjunction of them (a GroupJoin on arbitrary or anonymous-type keys, or a model with no navigation): a keyed array lookup built from exactly the properties compared. The subquery
+        // may carry uncorrelated filters before or after the correlation (`GroupJoin(Orders.Where(f), ...)`, `Orders.Where(corr).Where(f)`): exactly one Where of the chain is the correlation, the rest
+        // are element filters applied inside the lookup.
         if (NativeCorrelationMatcher.TryMatchRootWhereChain(source, out var root, out var wheres))
         {
             var correlated = new List<int>();
