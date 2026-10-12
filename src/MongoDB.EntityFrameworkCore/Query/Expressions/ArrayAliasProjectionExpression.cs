@@ -31,8 +31,29 @@ internal sealed class ArrayAliasProjectionExpression : Expression, IPrintableExp
         INavigation navigation,
         Expression accessExpression,
         EntityProjectionExpression? innerProjection = null)
+        : this(navigation.TargetEntityType, navigation, accessExpression, innerProjection)
     {
-        var targetType = navigation.TargetEntityType;
+    }
+
+    /// <summary>
+    /// An array of <paramref name="targetType"/> entities that materializes into no navigation: a filtered, ordered or navigation-less
+    /// list read from a projected alias (<see cref="Navigation"/> is <see langword="null"/>).
+    /// </summary>
+    public ArrayAliasProjectionExpression(
+        IEntityType targetType,
+        Expression accessExpression,
+        EntityProjectionExpression? innerProjection = null)
+        : this(targetType, null, accessExpression, innerProjection)
+    {
+    }
+
+    private ArrayAliasProjectionExpression(
+        IEntityType targetType,
+        INavigation? navigation,
+        Expression accessExpression,
+        EntityProjectionExpression? innerProjection)
+    {
+        TargetEntityType = targetType;
         Type = typeof(IEnumerable<>).MakeGenericType(targetType.ClrType);
         Navigation = navigation;
         AccessExpression = accessExpression;
@@ -45,7 +66,12 @@ internal sealed class ArrayAliasProjectionExpression : Expression, IPrintableExp
 
     public override Type Type { get; }
 
-    public INavigation Navigation { get; }
+    public IEntityType TargetEntityType { get; }
+
+    /// <summary>The collection navigation this array materializes into, or <see langword="null"/> for none.</summary>
+    public INavigation? Navigation { get; }
+
+    IEntityType? IArrayProjectionExpression.OwnerEntityType => Navigation?.DeclaringEntityType;
 
     public Expression AccessExpression { get; }
 
@@ -62,14 +88,14 @@ internal sealed class ArrayAliasProjectionExpression : Expression, IPrintableExp
         Expression accessExpression,
         EntityProjectionExpression innerProjection)
         => accessExpression != AccessExpression || innerProjection != InnerProjection
-            ? new ArrayAliasProjectionExpression(Navigation, accessExpression, innerProjection)
+            ? new ArrayAliasProjectionExpression(TargetEntityType, Navigation, accessExpression, innerProjection)
             : this;
 
     void IPrintableExpression.Print(ExpressionPrinter expressionPrinter)
         => expressionPrinter.Append(ToString());
 
     public override string ToString()
-        => $"{AccessExpression}[<alias>] /* {Navigation.Name} */";
+        => $"{AccessExpression}[<alias>] /* {Navigation?.Name ?? TargetEntityType.DisplayName()} */";
 
     public override bool Equals(object? obj)
         => obj != null
@@ -77,10 +103,11 @@ internal sealed class ArrayAliasProjectionExpression : Expression, IPrintableExp
                || obj is ArrayAliasProjectionExpression other && Equals(other));
 
     private bool Equals(ArrayAliasProjectionExpression other)
-        => Navigation == other.Navigation
+        => TargetEntityType == other.TargetEntityType
+           && Navigation == other.Navigation
            && AccessExpression.Equals(other.AccessExpression)
            && InnerProjection.Equals(other.InnerProjection);
 
     public override int GetHashCode()
-        => HashCode.Combine(Navigation, AccessExpression, InnerProjection);
+        => HashCode.Combine(TargetEntityType, Navigation, AccessExpression, InnerProjection);
 }

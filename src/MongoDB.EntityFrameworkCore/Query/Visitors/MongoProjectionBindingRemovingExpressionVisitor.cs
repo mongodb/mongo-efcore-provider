@@ -388,8 +388,14 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
                     var accessExpression = arrayProjection.InnerProjection.ParentAccessExpression;
                     _projectionBindings[accessExpression] = jObjectParameter;
-                    _ownerMappings[accessExpression] = (arrayProjection.Navigation.DeclaringEntityType, arrayProjection.AccessExpression);
-                    _ownerMappings[jObjectParameter] = (arrayProjection.Navigation.DeclaringEntityType, arrayProjection.AccessExpression);
+                    // An array that materializes into no navigation (a list of another collection's entities) has no owner: its
+                    // elements are root documents of their own collection, never owned entities reading the owner's key.
+                    if (arrayProjection.OwnerEntityType is { } ownerEntityType)
+                    {
+                        _ownerMappings[accessExpression] = (ownerEntityType, arrayProjection.AccessExpression);
+                        _ownerMappings[jObjectParameter] = (ownerEntityType, arrayProjection.AccessExpression);
+                    }
+
                     _ordinalMappings[accessExpression] = Expression.Add(ordinalParameter, Expression.Constant(1, typeof(int)));
                     var innerShaper = (BlockExpression)Visit(collectionShaperExpression.InnerShaper);
 
@@ -402,7 +408,14 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                             bsonArrayExpression),
                         Expression.Lambda(innerShaper, jObjectParameter, ordinalParameter));
 
-                    var navigation = collectionShaperExpression.Navigation!;
+                    // No navigation: a plain list of the materialized entities, assigned by the projection, not fixed up into a principal.
+                    if (collectionShaperExpression.Navigation is not { } navigation)
+                    {
+                        return Expression.Call(
+                            EnumerableMethods.ToList.MakeGenericMethod(collectionShaperExpression.ElementType),
+                            entities);
+                    }
+
                     return Expression.Call(
                         PopulateCollectionMethodInfo.MakeGenericMethod(navigation.TargetEntityType.ClrType, navigation.ClrType),
                         Expression.Constant(navigation.GetCollectionAccessor()),

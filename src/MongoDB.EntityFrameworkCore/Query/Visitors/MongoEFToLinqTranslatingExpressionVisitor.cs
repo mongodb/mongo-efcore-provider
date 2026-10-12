@@ -146,6 +146,16 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 + "driver-LINQ translation would silently drop, returning unfiltered rows. Only the native translator "
                 + "honors it; use MongoQueryMode.Native or NativeOnly, or filter after the join.");
         }
+
+        // A projected list or first element of another collection (`c.Orders.OrderBy(..).ToList()`) is read from an array only the native
+        // reader materializes; here the lookup would be a plain $lookup nothing reads, so the list would come back empty.
+        if (_pendingLookups.FirstOrDefault(l => l.IsNativeOnlyArray) is { } nativeOnlyArray)
+        {
+            throw new NativeTranslation.NativeTranslationNotSupportedException(
+                $"The projected collection of '{nativeOnlyArray.TargetEntityType.DisplayName()}' entities is only supported by the "
+                + "native translator; the driver-LINQ translation would return an empty or unfiltered list. "
+                + "Use MongoQueryMode.Native or NativeOnly.");
+        }
     }
 
     public Dictionary<string, object> AdditionalState { get; } = new();

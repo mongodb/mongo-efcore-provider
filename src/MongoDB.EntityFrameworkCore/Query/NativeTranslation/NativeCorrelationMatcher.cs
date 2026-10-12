@@ -185,7 +185,8 @@ internal static class NativeCorrelationMatcher
     /// </summary>
     internal static LookupExpression BuildCorrelatedArrayLookup(
         IEntityType targetEntityType, IProperty outerProperty, IProperty innerProperty, bool guarded,
-        IReadOnlyList<LambdaExpression>? filters = null, MongoExpression? filterPredicate = null, string aliasSuffix = "")
+        IReadOnlyList<LambdaExpression>? filters = null, MongoExpression? filterPredicate = null, string aliasSuffix = "",
+        IReadOnlyList<(string Field, int Direction)>? elementSort = null, int? elementLimit = null)
     {
         var localField = LookupExpression.GetFieldPath(outerProperty);
         var foreignField = LookupExpression.GetFieldPath(innerProperty);
@@ -202,7 +203,9 @@ internal static class NativeCorrelationMatcher
         {
             IsCorrelatedArraySource = true,
             ExcludesNullLocalKey = excludesNull,
-            ElementFilters = filters ?? []
+            ElementFilters = filters ?? [],
+            ElementSort = elementSort ?? [],
+            ElementLimit = elementLimit
         };
 
         // Uncorrelated filters ride inside the lookup's sub-pipeline (LookupPipelineKind.FilteredJoinInner), so a parameter in one is read per execution.

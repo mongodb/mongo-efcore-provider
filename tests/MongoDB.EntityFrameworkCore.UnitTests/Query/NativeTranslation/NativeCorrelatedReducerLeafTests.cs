@@ -448,11 +448,19 @@ public class NativeCorrelatedReducerLeafTests
         => AssertDeclined(q => q.Select(a => new { a.Id, M = a.IdentificationMethods.FirstOrDefault()!.Detail }));
 
     /// <summary>
-    /// <c>nav.FirstOrDefault()</c> with no member read reduces to a whole entity, which this leaf doesn't shape.
+    /// <c>nav.FirstOrDefault()</c> with no member read reduces to a whole entity, which this leaf doesn't shape: it is an element leaf
+    /// (slice 4), a keyed array lookup limited to one element and read back as an entity.
     /// </summary>
     [Fact]
-    public void Whole_element_reduction_with_no_member_read_declines()
-        => AssertDeclined(q => q.Select(a => new { a.Id, M = a.IdentificationMethods.FirstOrDefault() }));
+    public void Whole_element_reduction_with_no_member_read_is_an_element_leaf()
+    {
+        var mongoQ = BindAccepted(q => q.Select(a => new { a.Id, M = a.IdentificationMethods.FirstOrDefault() }));
+
+        Assert.Empty(mongoQ.CorrelatedReducerLeaves);
+        var lookup = Assert.Single(mongoQ.GetPendingLookups());
+        Assert.True(lookup.IsCorrelatedArraySource);
+        Assert.Equal(1, lookup.ElementLimit);
+    }
 
     /// <summary>
     /// Owned collections are handled elsewhere: nav-expansion leaves an <c>EF.Property(...).AsQueryable()</c>

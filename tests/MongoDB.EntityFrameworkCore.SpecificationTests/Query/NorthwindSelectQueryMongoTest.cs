@@ -1118,10 +1118,12 @@ Orders.{ "$project" : { "One" : "$CustomerID", "Two" : { "$cond" : { "if" : { "$
 
     public override async Task Filtered_collection_projection_with_to_list_is_tracked(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Filtered_collection_projection_with_to_list_is_tracked(async));
+        await base.Filtered_collection_projection_with_to_list_is_tracked(async);
 
-        AssertMql();
+        AssertMql(
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "pipeline" : [{ "$match" : { "_id" : { "$gt" : 11000 } } }], "as" : "_lookup_Order_CustomerID__id_f1" } }, { "$project" : { "Customer" : "$$ROOT", "FilteredOrders" : "$_lookup_Order_CustomerID__id_f1", "_id" : 0 } }
+""");
     }
 
     public override async Task SelectMany_with_collection_being_correlated_subquery_which_references_inner_and_outer_entity(

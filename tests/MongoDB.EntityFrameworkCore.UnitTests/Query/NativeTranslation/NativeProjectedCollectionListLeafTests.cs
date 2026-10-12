@@ -153,16 +153,31 @@ public class NativeProjectedCollectionListLeafTests
         AssertDeclined(q => q.Select(c => new { A = c.Orders.ToList(), B = c.Orders.ToList() }));
     }
 
+    /// <summary>
+    /// Not this recognizer's shape (it declines a filtered Include), but an element leaf (slice 4): a keyed array lookup whose sub-pipeline
+    /// carries the filter, read back through the member's own alias.
+    /// </summary>
     [Fact]
-    public void A_Where_directly_on_the_projected_nav_declines()
+    public void A_Where_directly_on_the_projected_nav_is_an_element_leaf()
     {
-        AssertDeclined(q => q.Select(c => new { c.Name, Orders = c.Orders.Where(o => o.Id > 0).ToList() }));
+        var mongoQ = BindAccepted(q => q.Select(c => new { c.Name, Orders = c.Orders.Where(o => o.Id > 0).ToList() }));
+
+        var lookup = Assert.Single(mongoQ.GetPendingLookups());
+        Assert.True(lookup.IsCorrelatedArraySource);
+        Assert.NotNull(lookup.InnerPredicate);
+        Assert.Equal(["Orders"], lookup.ElementLeafAliases);
     }
 
     [Fact]
-    public void An_OrderBy_directly_on_the_projected_nav_declines()
+    public void An_OrderBy_directly_on_the_projected_nav_is_an_element_leaf()
     {
-        AssertDeclined(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderBy(o => o.Id).ToList() }));
+        var mongoQ = BindAccepted(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderBy(o => o.Id).ToList() }));
+
+        var lookup = Assert.Single(mongoQ.GetPendingLookups());
+        Assert.True(lookup.IsCorrelatedArraySource);
+        Assert.Equal(1, Assert.Single(lookup.ElementSort).Direction);
+        Assert.Null(lookup.ElementLimit);
+        Assert.Equal(["Orders"], lookup.ElementLeafAliases);
     }
 
     [Fact]
@@ -189,7 +204,9 @@ public class NativeProjectedCollectionListLeafTests
     /// </summary>
     [Theory]
     [InlineData(nameof(Customer.Id), true, true, true)]
-    [InlineData(nameof(Customer.Code), true, true, false)] // guard and compared key both non-key
+    // Guard and compared key both non-key: not the navigation's key, so the list-leaf recognizer declines, but it is a well-formed correlation
+    // on two stored-alike properties, which the element leaf (slice 4) reads through a lookup built from exactly those properties.
+    [InlineData(nameof(Customer.Code), true, true, true)]
     [InlineData(nameof(Customer.Code), false, true, false)] // compared key non-key, guard on the key
     [InlineData(nameof(Customer.Code), true, false, false)] // compared key is the key, guard on a different member
     public void Correlation_on_a_non_key_outer_member_declines(

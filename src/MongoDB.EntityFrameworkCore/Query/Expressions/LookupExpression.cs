@@ -252,7 +252,39 @@ internal sealed class LookupExpression
     /// </summary>
     public IReadOnlyList<System.Linq.Expressions.LambdaExpression> ElementFilters { get; init; } = [];
 
-    /// <summary>The <c>let</c> of the null-excluding form: the local key, null-normalized.</summary>
+    /// <summary>
+    /// The ordering a keyed array lookup applies inside its sub-pipeline (<c>c.Orders.OrderBy(o =&gt; o.Id).ToList()</c>), as
+    /// (element field path, 1 or -1) pairs, primary key first. Rendered after the element filter by
+    /// <c>MongoPipelineFactory.RenderLookup</c>.
+    /// </summary>
+    public IReadOnlyList<(string Field, int Direction)> ElementSort { get; init; } = [];
+
+    /// <summary>
+    /// The number of elements a keyed array lookup keeps (<c>FirstOrDefault</c> keeps one), applied after <see cref="ElementSort"/>.
+    /// </summary>
+    public int? ElementLimit { get; init; }
+
+    /// <summary>
+    /// Whether the sub-pipeline sorts or limits the array. Like <see cref="HasInnerPredicate"/>, only the native renderer honors it, so
+    /// a non-native consumer must not read such an array as the whole group.
+    /// </summary>
+    public bool HasElementStages => ElementSort.Count > 0 || ElementLimit is not null;
+
+    /// <summary>
+    /// The projection aliases of the element leaves (<c>Os = c.Orders.OrderBy(..).ToList()</c>) this array backs; the read side
+    /// finds the lookup by the member's alias. Written at the projection binder's commit point, never by a declined leaf.
+    /// </summary>
+    public List<string> ElementLeafAliases { get; } = [];
+
+    /// <summary>
+    /// Whether this lookup is an array only the native reader can use: one a projected element leaf is read from
+    /// (<see cref="ElementLeafAliases"/>, whose sub-pipeline may also sort, limit or filter it). The driver-LINQ bridge renders a
+    /// pending lookup as a plain <c>$lookup</c> and reads nothing back for it, so it must refuse such a query with this one predicate
+    /// rather than return empty or unfiltered lists. Evaluated at refusal time, after the projection binder's commit.
+    /// </summary>
+    public bool IsNativeOnlyArray => HasInnerPredicate || HasElementStages || ElementLeafAliases.Count > 0;
+
+    /// <summary>The <c>let</c> of the null-excluding form: the local key, null-normalized so a missing field reads as null.</summary>
     internal BsonDocument NullExcludingLet()
         => new("k", new BsonDocument("$ifNull", new BsonArray { $"${LocalField}", BsonNull.Value }));
 

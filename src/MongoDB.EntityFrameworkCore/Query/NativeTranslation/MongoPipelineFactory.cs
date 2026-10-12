@@ -414,39 +414,57 @@ internal sealed class MongoPipelineFactory
         MongoQueryLanguageRenderer renderer,
         PlaceholderTable placeholders)
     {
-        // A join whose inner side was filtered: the predicate is relative to the joined document, i.e. the scope inside the
-        // sub-pipeline. Rendered here, not stored as BSON on the lookup, so a parameter or clock value goes through the placeholder
-        // table and is read per execution instead of frozen into the cached plan. Stages nested by an inner-side collection Include
-        // follow the filter. Same indexable localField/foreignField + pipeline form as CorrelatedReducer.
-        if (lookup.InnerPredicate is { } innerPredicate)
+        // A join whose inner side was filtered: the predicate is relative to the joined document, which is exactly the
+        // scope inside the sub-pipeline. Rendered here, not stored as BSON on the lookup, so a parameter or clock
+        // value goes through the placeholder table and is read per execution instead of frozen into the cached
+        // plan. Stages nested by an inner-side collection Include follow the filter, so they see only the rows that
+        // passed it. Same indexable localField/foreignField + pipeline form as CorrelatedReducer.
+        // An element sort or limit (a keyed array behind `OrderBy(..).ToList()` / `FirstOrDefault()`) uses the same shape, with or without a filter.
+        if (lookup.InnerPredicate is not null || lookup.HasElementStages)
         {
             // A composite-key lookup renders in the let/$expr form; TranslateJoinCore never attaches a predicate to one.
             System.Diagnostics.Debug.Assert(lookup.CompositeKey == null, "An inner predicate is never carried by a composite-key lookup.");
 
-            var filter = new BsonDocument("$match", renderer.Render(innerPredicate, placeholders));
+            var stages = new BsonArray();
 
             // A null local key that must match nothing needs the let form; the filter then follows the key match.
             if (lookup.ExcludesNullLocalKey)
+                stages.Add(new BsonDocument("$match", new BsonDocument("$expr", lookup.NullExcludingMatch())));
+
+            if (lookup.InnerPredicate is { } innerPredicate)
+                stages.Add(new BsonDocument("$match", renderer.Render(innerPredicate, placeholders)));
+
+            // Sort, then limit: the first element is the first by the ordering. Element stages are constants (field paths, directions), baked.
+            if (lookup.ElementSort.Count > 0)
             {
-                var nullExcluding = new BsonArray { new BsonDocument("$match", new BsonDocument("$expr", lookup.NullExcludingMatch())), filter };
-                nullExcluding.AddRange(lookup.PipelineStages);
+                var sort = new BsonDocument();
+                foreach (var (field, direction) in lookup.ElementSort)
+                    sort.Add(field, direction);
+                stages.Add(new BsonDocument("$sort", sort));
+            }
+
+            if (lookup.ElementLimit is { } limit)
+                stages.Add(new BsonDocument("$limit", limit));
+
+            stages.AddRange(lookup.PipelineStages);
+
+            if (lookup.ExcludesNullLocalKey)
+            {
                 return new BsonDocument("$lookup", new BsonDocument
                 {
                     { "from", lookup.From },
                     { "let", lookup.NullExcludingLet() },
-                    { "pipeline", nullExcluding },
+                    { "pipeline", stages },
                     { "as", lookup.As }
                 });
             }
 
-            var pipeline = new BsonArray { filter };
-            pipeline.AddRange(lookup.PipelineStages);
             return new BsonDocument("$lookup", new BsonDocument
             {
                 { "from", lookup.From },
                 { "localField", lookup.LocalField },
                 { "foreignField", lookup.ForeignField },
-                { "pipeline", pipeline },
+                { "pipeline", stages },
                 { "as", lookup.As }
             });
         }

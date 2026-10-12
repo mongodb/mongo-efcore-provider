@@ -470,11 +470,12 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
     public override async Task Collection_select_nav_prop_first_or_default(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Collection_select_nav_prop_first_or_default(async));
+        await base.Collection_select_nav_prop_first_or_default(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "pipeline" : [{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }], "as" : "_lookup_Order_CustomerID__id_f1" } }, { "$project" : { "First" : "$_lookup_Order_CustomerID__id_f1", "_id" : 0 } }
+""");
     }
 
     public override async Task Collection_select_nav_prop_first_or_default_then_nav_prop(bool async)
@@ -604,11 +605,12 @@ OrderDetails.{ "$lookup" : { "from" : "Orders", "localField" : "_id.OrderID", "f
 
     public override async Task Project_single_entity_value_subquery_works(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Project_single_entity_value_subquery_works(async));
+        await base.Project_single_entity_value_subquery_works(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "pipeline" : [{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }], "as" : "_lookup_Order_CustomerID__id_f1" } }, { "$project" : { "CustomerID" : "$_id", "Order" : "$_lookup_Order_CustomerID__id_f1", "_id" : 0 } }
+""");
     }
 
     public override async Task Project_single_scalar_value_subquery_in_query_with_optional_navigation_works(bool async)

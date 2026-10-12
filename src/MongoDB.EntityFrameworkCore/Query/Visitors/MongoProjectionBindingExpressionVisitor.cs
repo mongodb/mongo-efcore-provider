@@ -821,9 +821,18 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// <inheritdoc />
     protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
     {
-        // A projected cross-collection collection navigation (`Orders = c.Orders.ToList()`) is lowered by EF to
-        // ToList(Select(Where(DbSet<Target>(), joinPred), selector)) with no enclosing IncludeExpression: bind it to a
-        // CollectionShaperExpression over a dedicated "_lookup_<Nav>" array, mirroring the cross-collection Include path.
+        // A projected element leaf over a cross-document collection (`c.Orders.OrderBy(..).ToList()`, `.FirstOrDefault()`), staged at
+        // emit time as a keyed array lookup (NativeProjectionBinder.TryTranslateReferencedElementLeaf). Native route only: any
+        // other route has no array to read and falls through to the translation failure below.
+        if (TryBindReferencedElementLeaf(methodCallExpression, out var boundElements))
+        {
+            return boundElements;
+        }
+
+        // A projected cross-collection collection navigation (e.g. select new { ..., Orders = c.Orders.ToList() }).
+        // EF Core lowers this to Enumerable.ToList(Queryable.Select(Queryable.Where(DbSet<Target>(), joinPred), selector)).
+        // There is no enclosing IncludeExpression to set up the $lookup, so bind it here to a CollectionShaperExpression
+        // that reads from a dedicated "_lookup_<Nav>" array, mirroring the cross-collection Include path.
         if (TryBindProjectedCollectionNavigation(methodCallExpression, out var boundCollection))
         {
             return boundCollection;
@@ -1467,9 +1476,83 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     }
 
     /// <summary>
-    /// The shaper for one element of an alias-addressed owned array: wrapped in an <see cref="IncludeExpression"/> per
-    /// eager embedded navigation (recursively), as nav-expansion builds it for a whole owned entity; without them a
-    /// nested owned collection would never be populated.
+    /// Binds a projected element leaf over a cross-document collection (<see cref="ReferencedElementShape"/>) to a
+    /// <see cref="CollectionShaperExpression"/> over the keyed array the emit side staged, read from the member's own
+    /// <c>$project</c> alias; <c>FirstOrDefault</c> takes the first element of that (at most one element) list.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Only binds what the emit side accepted: the lookup is found by this member's alias in
+    /// <see cref="LookupExpression.ElementLeafAliases"/> (written at the projection binder's commit point), never re-derived from the
+    /// tree, so the two sides cannot disagree about admissibility. A leaf the emit side declined finds no lookup and falls through.
+    /// </para>
+    /// <para>
+    /// The shaper has no navigation, so materializing it assigns a plain list and does not fix the elements up into a principal's
+    /// own collection (which would leave it holding only the filtered subset). Like <see cref="TryBindNativeArrayProjection"/> it runs
+    /// before descending, because visiting the outer shaper calls <c>AddToProjection</c>.
+    /// </para>
+    /// </remarks>
+    private bool TryBindReferencedElementLeaf(MethodCallExpression methodCallExpression, out Expression result)
+    {
+        result = null!;
+
+        if (_queryExpression.Select.Route != NativeRoute.Projection
+            || !NativeReferencedElementMatcher.TryMatch(methodCallExpression, out var shape))
+        {
+            return false;
+        }
+
+        var arrayProjectionMember = GetCurrentProjectionMember();
+        if (arrayProjectionMember.Last?.Name is not { } memberName)
+            return false;
+
+        var arrayAlias = _queryExpression.Select.ResolveProjectionAlias(memberName);
+        var targetType = shape.Root.EntityType;
+        var lookup = _queryExpression.GetPendingLookups().FirstOrDefault(
+            l => l.IsCorrelatedArraySource
+                 && l.TargetEntityType == targetType
+                 && l.ElementLeafAliases.Contains(arrayAlias)
+                 && (l.ElementLimit == 1) == shape.IsFirst);
+        if (lookup is null)
+            return false;
+
+        var aliasedArray = new ArrayAliasProjectionExpression(targetType, new RootReferenceExpression(targetType));
+        _projectionMapping[arrayProjectionMember] = aliasedArray;
+
+        var innerShaper = CreateElementShaperWithOwnedIncludes(targetType, aliasedArray.InnerProjection);
+        Expression collection = new CollectionShaperExpression(
+            new ProjectionBindingExpression(_queryExpression, arrayProjectionMember, aliasedArray.Type),
+            innerShaper,
+            navigation: null,
+            targetType.ClrType);
+
+        if (shape.IsFirst)
+        {
+            result = Expression.Call(EnumerableMethods.FirstOrDefaultWithoutPredicate.MakeGenericMethod(targetType.ClrType), collection);
+        }
+        else if (shape.Selector is { } selector)
+        {
+            // The selector runs over the materialized entities, as for an element Select over an owned collection.
+            result = Expression.Call(
+                EnumerableMethods.ToList.MakeGenericMethod(selector.ReturnType),
+                Expression.Call(
+                    EnumerableMethods.Select.MakeGenericMethod(targetType.ClrType, selector.ReturnType),
+                    collection,
+                    selector));
+        }
+        else
+        {
+            result = collection;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The shaper for one element of an alias-addressed owned array: the element's own shaper, wrapped in an
+    /// <see cref="IncludeExpression"/> per eager-loaded embedded navigation (recursively), as EF's nav-expansion builds
+    /// it for a whole owned entity. Without them a nested owned collection would never be populated. The admission rule
+    /// (<see cref="NativeProjectionBinder.IsNativeArrayProjectionLeaf"/>) guarantees every eager navigation is embedded.
     /// </summary>
     private static Expression CreateElementShaperWithOwnedIncludes(IEntityType elementType, EntityProjectionExpression elementProjection)
     {
