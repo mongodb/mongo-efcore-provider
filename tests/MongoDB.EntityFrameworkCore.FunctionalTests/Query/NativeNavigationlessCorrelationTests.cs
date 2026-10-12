@@ -142,24 +142,8 @@ public class NativeNavigationlessCorrelationTests(TemporaryDatabaseFixture datab
         foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
         {
             using var db = Create(names, mode, withNavigation);
-            List<string>? rows = null;
-            try
-            {
-                rows = query(db);
-            }
-            catch (Exception) when (mode == MongoQueryMode.DriverLinq)
-            {
-                // The bridge may refuse these for now (never answer wrongly).
-            }
-
-            if (rows is not null)
-            {
-                Assert.True(expected.SequenceEqual(rows), $"{mode} returned [{string.Join(", ", rows)}], expected [{string.Join(", ", expected)}]");
-            }
-            else
-            {
-                Assert.Equal(MongoQueryMode.DriverLinq, mode);
-            }
+            var rows = query(db);
+            Assert.True(expected.SequenceEqual(rows), $"{mode} returned [{string.Join(", ", rows)}], expected [{string.Join(", ", expected)}]");
         }
     }
 

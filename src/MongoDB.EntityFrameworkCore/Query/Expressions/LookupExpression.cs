@@ -284,6 +284,20 @@ internal sealed class LookupExpression
     /// </summary>
     public bool IsNativeOnlyArray => HasInnerPredicate || HasElementStages || ElementLeafAliases.Count > 0;
 
+    /// <summary>
+    /// Whether the driver-LINQ bridge can read this lookup's array: a plain keyed array behind a correlated subquery
+    /// (<see cref="IsCorrelatedArraySource"/>) that filters, sorts and limits nothing. The bridge emits it right after the root, as it
+    /// does an <see cref="InjectAfterRoot"/> lookup, so a projection above can read it.
+    /// </summary>
+    public bool IsBridgeReadableArray => IsCorrelatedArraySource && !IsNativeOnlyArray;
+
+    /// <summary>
+    /// Whether the driver-LINQ bridge should leave this lookup out: a keyed array whose element filter only the native renderer applies
+    /// and that no element leaf reads. The bridge reads the aggregate from its own plain array and applies the filter as an
+    /// <c>Enumerable.Where</c> over it, so emitting this one would only add an unread array.
+    /// </summary>
+    public bool IsBridgeIgnorable => IsCorrelatedArraySource && HasInnerPredicate && ElementLeafAliases.Count == 0;
+
     /// <summary>The <c>let</c> of the null-excluding form: the local key, null-normalized so a missing field reads as null.</summary>
     internal BsonDocument NullExcludingLet()
         => new("k", new BsonDocument("$ifNull", new BsonArray { $"${LocalField}", BsonNull.Value }));

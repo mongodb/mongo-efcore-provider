@@ -709,7 +709,12 @@ Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null,
 
     public override async Task Sum_over_subquery(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Sum_over_subquery(async));
+        await base.Sum_over_subquery(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Order_CustomerID__id" } }, { "$group" : { "_id" : null, "_v" : { "$sum" : { "$sum" : "$_lookup_Order_CustomerID__id._id" } } } }, { "$project" : { "_id" : 0 } }
+""");
     }
 
     public override async Task Sum_over_nested_subquery(bool async)
@@ -851,7 +856,12 @@ Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null,
 
     public override async Task Average_over_subquery(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Average_over_subquery(async));
+        await base.Average_over_subquery(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Order_CustomerID__id" } }, { "$group" : { "_id" : null, "_v" : { "$avg" : { "$sum" : "$_lookup_Order_CustomerID__id._id" } } } }, { "$project" : { "_id" : 0 } }
+""");
     }
 
     public override async Task Average_over_nested_subquery(bool async)
@@ -949,7 +959,12 @@ Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null,
 
     public override async Task Min_over_subquery(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Min_over_subquery(async));
+        await base.Min_over_subquery(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Order_CustomerID__id" } }, { "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : { "$sum" : "$_lookup_Order_CustomerID__id._id" } } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
+""");
     }
 
     public override async Task Min_over_nested_subquery(bool async)
@@ -1014,7 +1029,12 @@ Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null,
 
     public override async Task Max_over_subquery(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Max_over_subquery(async));
+        await base.Max_over_subquery(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Order_CustomerID__id" } }, { "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : { "$sum" : "$_lookup_Order_CustomerID__id._id" } } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
+""");
     }
 
     public override async Task Max_over_nested_subquery(bool async)

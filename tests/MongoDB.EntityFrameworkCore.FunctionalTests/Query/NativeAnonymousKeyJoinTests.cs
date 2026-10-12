@@ -591,11 +591,12 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
         spy.AssertExecutedMqlContains("\"$and\"");
     }
 
-    // g.Sum(...) over a GroupJoin grouping is a native aggregate over the keyed array lookup (slice 3 of the referenced-collection
-    // aggregates design); a missing/null outer key matches nothing, as the rewrite's `outerKey != null` guard says.
+    // g.Sum(...) over a GroupJoin grouping is an aggregate over the keyed array lookup (slices 3 and 5 of the referenced-collection
+    // aggregates design, native and bridge); a missing/null outer key matches nothing, as the rewrite's `outerKey != null` guard says.
     [Theory]
     [InlineData(MongoQueryMode.NativeOnly)]
     [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
     public void GroupJoin_with_Sum_over_the_grouping_matches_the_in_memory_oracle(MongoQueryMode mode)
     {
         var (shipments, rates, _) = Materialize();
@@ -610,17 +611,6 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
 
         Assert.Equal(expected, actual);
         Assert.Contains(actual, x => x.Sum > 0);
-    }
-
-    // Driver-LINQ cannot translate the rewritten correlated subquery (bridge parity is a later slice); pinned so a fix is noticed.
-    [Fact]
-    public void GroupJoin_with_Sum_over_the_grouping_still_fails_under_DriverLinq()
-    {
-        using var db = CreateContext(MongoQueryMode.DriverLinq, out _);
-
-        Assert.Throws<InvalidOperationException>(() => db.Shipments
-            .GroupJoin(db.Rates, s => s.Id, r => r.Zone, (s, g) => new { s.Id, Sum = g.Sum(r => r.Price) })
-            .ToList());
     }
 
     private (List<Shipment> Shipments, List<Rate> Rates, List<Slot> Slots) Materialize()

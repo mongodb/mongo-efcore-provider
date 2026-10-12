@@ -313,6 +313,13 @@ public sealed class BsonSerializerFactory
             ? GetCollectionSerializer(navigation.ClrType, GetEntitySerializer(navigation.TargetEntityType))
             : GetEntitySerializer(navigation.TargetEntityType);
 
+    /// <summary>
+    /// The serializer of a <see cref="List{T}"/> of <paramref name="entityType"/> entities, for an array a navigation-less
+    /// <c>$lookup</c> produces (<see cref="GetNavigationSerializer"/> needs a navigation to derive the collection type from).
+    /// </summary>
+    internal IBsonSerializer GetEntityListSerializer(IEntityType entityType)
+        => GetCollectionSerializer(typeof(List<>).MakeGenericType(entityType.ClrType), GetEntitySerializer(entityType));
+
     private static IBsonSerializer GetCollectionSerializer(Type type, IBsonSerializer childSerializer)
     {
         var memoryType = type.TryGetItemType(typeof(Memory<>));

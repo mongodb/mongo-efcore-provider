@@ -136,10 +136,11 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         _pendingLookups = pendingLookups ?? Array.Empty<LookupExpression>();
         _innerSources = innerSources ?? new Dictionary<IEntityType, Expression>();
 
-        // This bridge peels a join to a flat $lookup + $unwind and drops the join's inner source, and with it any filter on it (M22). A lookup
-        // with an InnerPredicate can only be honored by the native renderer, so refuse rather than return unfiltered rows. Reached from
-        // explicit DriverLinq and from a Native-mode fallback after a late native decline.
-        if (_pendingLookups.FirstOrDefault(l => l.HasInnerPredicate) is { } filteredJoinLookup)
+        // This bridge peels a join back to a flat $lookup + $unwind and drops the join's inner source, and with it
+        // any filter on that source (M22). A lookup that carries one (LookupExpression.InnerPredicate) can only be
+        // honored by the native renderer, so refuse here rather than return unfiltered rows. Reached from explicit
+        // DriverLinq mode and from a Native-mode fallback after the native path declined late.
+        if (_pendingLookups.FirstOrDefault(l => l.HasInnerPredicate && !l.IsCorrelatedArraySource) is { } filteredJoinLookup)
         {
             throw new NativeTranslation.NativeTranslationNotSupportedException(
                 $"The join onto '{filteredJoinLookup.TargetEntityType.DisplayName()}' filters its inner side, which the "
@@ -149,7 +150,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
         // A projected list or first element of another collection (`c.Orders.OrderBy(..).ToList()`) is read from an array only the native
         // reader materializes; here the lookup would be a plain $lookup nothing reads, so the list would come back empty.
-        if (_pendingLookups.FirstOrDefault(l => l.IsNativeOnlyArray) is { } nativeOnlyArray)
+        if (_pendingLookups.FirstOrDefault(l => l.ElementLeafAliases.Count > 0 || l.HasElementStages) is { } nativeOnlyArray)
         {
             throw new NativeTranslation.NativeTranslationNotSupportedException(
                 $"The projected collection of '{nativeOnlyArray.TargetEntityType.DisplayName()}' entities is only supported by the "
@@ -163,6 +164,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// <summary>Translates a projected query (anonymous types with entity members).</summary>
     public Expression TranslateProjected(Expression? efQueryExpression)
     {
+        if (efQueryExpression != null)
+            StageBridgeOwnedLookups(efQueryExpression);
+
         GuardAgainstMultiBranchNavigationCount(efQueryExpression);
 
         if (efQueryExpression == null)
@@ -205,6 +209,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         ResultCardinality resultCardinality,
         bool guardUnstrippableForceUnwindJoin = true)
     {
+        if (efQueryExpression != null)
+            StageBridgeOwnedLookups(efQueryExpression);
+
         GuardAgainstMultiBranchNavigationCount(efQueryExpression);
 
         if (efQueryExpression == null) // No LINQ methods, e.g. Direct ToList() against DbSet
@@ -802,6 +809,13 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return sizeRewrite;
         }
 
+        // The other terminal operators (and a predicated Count) over the same correlation: Sum, Min, Max, Average, Any, All, Count(pred).
+        if (TryRewriteReferencedCollectionOperator(node, out var referencedOperatorRewrite))
+        {
+            return referencedOperatorRewrite;
+        }
+
+        // Bare embedded-collection Count (`b.Posts.Count`); see TryRewriteEmbeddedCollectionNavigationCount.
         if (TryRewriteEmbeddedCollectionNavigationCount(node, out var embeddedCountRewrite))
         {
             return embeddedCountRewrite;
@@ -940,7 +954,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// </summary>
     private void GuardAgainstMultiBranchNavigationCount(Expression? efQueryExpression)
     {
-        if (efQueryExpression == null || !_pendingLookups.Any(l => l.InjectAfterRoot))
+        if (efQueryExpression == null
+            || !(_pendingLookups.Any(l => l.InjectAfterRoot || l.IsBridgeReadableArray) || _bridgeOwnedLookups.Count > 0))
         {
             return;
         }
@@ -997,10 +1012,27 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 {
                     HasMultiBranchNavigationCount = true;
                 }
+
+                // Any other terminal over a referenced collection (Sum, Any, Count(pred), ...) reads a root-level array a `$unionWith`
+                // sub-pipeline cannot see, which the server rejects at run time; fail at translation instead, as it always did.
+                if (node.Arguments.Any(ContainsOtherReferencedTerminal))
+                {
+                    HasMultiBranchNavigationCount = true;
+                }
             }
 
             return base.VisitMethodCall(node);
         }
+
+        private static bool ContainsOtherReferencedTerminal(Expression expression)
+            => ExpressionSearch.Contains(
+                expression,
+                node => node is MethodCallExpression call
+                        && !IsBareQueryableCount(call)
+                        && call.Method.DeclaringType == typeof(Queryable)
+                        && ReferencedCollectionTerminalOperators.Contains(call.Method.Name)
+                        && call.Arguments.Count >= 1
+                        && TryFindCorrelationBase(call.Arguments[0], out _, out _));
 
         private static bool ContainsNavigationCount(Expression expression)
             => ExpressionSearch.Contains(expression, node => node is MethodCallExpression call && IsNavigationCount(call));
@@ -1181,7 +1213,28 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 return rewrite;
         }
 
-        return base.VisitBinary(node);
+        var visited = base.VisitBinary(node);
+
+        // A relational comparison of a nullable aggregate over a referenced collection (`c.Orders.Max(o => (int?)o.Total) < 650`): the
+        // aggregation dialect orders null below every number, so the empty group would match where C# answers false.
+        if (node.NodeType is ExpressionType.LessThan or ExpressionType.LessThanOrEqual or ExpressionType.GreaterThan
+                or ExpressionType.GreaterThanOrEqual
+            && visited is BinaryExpression comparison)
+        {
+            var guarded = (Expression)comparison;
+            foreach (var operand in new[] { comparison.Left, comparison.Right })
+            {
+                if (_nullableReferencedAggregates.Contains(operand.RemoveConvert()))
+                {
+                    guarded = Expression.AndAlso(
+                        Expression.NotEqual(operand, Expression.Constant(null, operand.Type)), guarded);
+                }
+            }
+
+            return guarded;
+        }
+
+        return visited;
     }
 
     // `"a" + x.Dto`, `string.Concat(x.Dto, ...)`: the driver renders the operand as $toString over the stored

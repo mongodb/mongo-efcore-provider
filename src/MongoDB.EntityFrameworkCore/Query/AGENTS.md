@@ -107,8 +107,24 @@ Scope, joins, grouping:
     array. A filter that references the outer entity is a second correlation and declines.
   - **A keyed lookup has no TPH discriminator narrowing** (the navigation constructor does it), so `TryStageKeyedArrayLookup` declines a
     derived target (`BaseType is not null`); without it the count included sibling types' documents.
-  - **The driver-LINQ bridge cannot read these lookups** (it refuses any pending lookup with `HasInnerPredicate` or
-    `IsNativeOnlyArray`), and a bridge count over a keyed array is not supported yet: parity is slice 5.
+  - **The driver-LINQ bridge answers the aggregate, quantifier and count leaves over these arrays itself**
+    (`MongoEFToLinqTranslatingExpressionVisitor.ReferencedCollection.cs`, slice 5), by rewriting the terminal operator and the chain
+    under it (`Where`/`Select`/`OrderBy` between the correlation and the terminal) to the `Enumerable` operators over
+    `Mql.Field(outerDoc, <array alias>, serializer)`, which the driver renders server-side. Only the exact correlation the binder staged
+    for may read an array: a navigation correlation re-verified through `TryMatchCorrelatedCollection`, a navigation-less one through
+    `TryMatchRawKeyCorrelation` and the lookup alias built from it. The bridge reads only PLAIN arrays (`IsBridgeReadableArray`): the
+    binder folds an element filter into the lookup it stages, which the bridge cannot use, so the bridge stages its OWN plain array
+    for every correlation of the query root (`StageBridgeOwnedLookups`) and applies the filter as an `Enumerable.Where`; the
+    filtered native array is then `IsBridgeIgnorable` and not emitted. Emitted right after the root, like a navigation count.
+    - **Never resolve a subquery that correlates with a non-root document.** The pre-scan skips every lambda of a correlated
+      subquery (`c.Orders.Sum(o => o.Details.Sum(..))` correlates the inner one with `o`, so a root-level array would read the wrong
+      rows: it did, silently), a set operation's other operands (`$unionWith` cannot see an array staged after the root), and
+      `_referencedElementLambdaDepth > 0` refuses the rewrite there. A set operation with ANY referenced terminal fails at translation
+      (`MultiBranchNavigationCountFinder`), not at the server.
+    - **A relational comparison of a nullable rewritten aggregate is null-guarded** (`VisitBinary`, `_nullableReferencedAggregates`):
+      the aggregation dialect orders null below every number, so `Max(..) < 650` would match the empty group where C# answers false.
+    - **Element leaves (`ToList`/`FirstOrDefault`) are still native-only**: the bridge refuses them (`ElementLeafAliases`/
+      `HasElementStages`), as does a join-inner predicate (`HasInnerPredicate` without `IsCorrelatedArraySource`).
   - **Element leaves: `ToList` and `FirstOrDefault` of the group** (`c.Orders.Where(..).OrderBy(..).ToList()`, `.FirstOrDefault(pred)`,
     the same off a `GroupJoin` group, `Select(o => o.Total).ToList()`) match `NativeReferencedElementMatcher` (purely structural, called by
     both sides) and stage ONE keyed array lookup, with or without a collection navigation (`TryTranslateReferencedElementLeaf`; the

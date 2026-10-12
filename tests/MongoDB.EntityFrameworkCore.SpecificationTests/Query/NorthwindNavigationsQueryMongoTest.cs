@@ -757,7 +757,8 @@ Orders.
 
     public override async Task Collection_where_nav_prop_all_client(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => AssertQuery(
+        // ShipCity is not a mapped property, so the correlated All cannot be translated: a loud failure, whichever translator reports it.
+        await AssertTranslationFailed(() => AssertQuery(
             async,
             ss => from c in ss.Set<Customer>()
                   orderby c.CustomerID

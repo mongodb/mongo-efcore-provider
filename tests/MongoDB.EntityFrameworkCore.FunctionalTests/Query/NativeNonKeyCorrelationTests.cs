@@ -201,7 +201,7 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
         // is not the navigation's foreign key is now a keyed `$lookup` built from exactly the properties the predicate compares
         // (customers have Code 2/3/1; the orders of customer 1 are 10, 11, 12 and of customer 2 is 20).
         using var db = CreateContext(mode);
-        AssertAnswersExactlyOrDriverLinqRefuses(mode, () => Run(db, "BareCount", key: false), ["1", "0", "3"]);
+        Assert.Equal(["1", "0", "3"], Run(db, "BareCount", key: false));
     }
 
     [Theory]
@@ -213,24 +213,8 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
         // Code is not Id: customer 1 (Code 2) matches order 20, customer 2 (Code 3) matches nothing, customer 3 (Code 1) matches
         // orders 10..12. Binding the navigation instead would answer [1, 2].
         using var db = CreateContext(mode);
-        AssertAnswersExactlyOrDriverLinqRefuses(mode, () => Run(db, "WhereCount", key: false), ["1", "3"]);
-        AssertAnswersExactlyOrDriverLinqRefuses(mode, () => Run(db, "NullableWhereCount", key: false), ["1", "3"]);
-    }
-
-    private static void AssertAnswersExactlyOrDriverLinqRefuses(MongoQueryMode mode, Func<List<string>> run, List<string> expected)
-    {
-        List<string>? actual = null;
-        try
-        {
-            actual = run();
-        }
-        catch (Exception) when (mode == MongoQueryMode.DriverLinq)
-        {
-            // The bridge may refuse a keyed array lookup (never answer wrongly).
-        }
-
-        if (actual is not null)
-            Assert.Equal(expected, actual);
+        Assert.Equal(["1", "3"], Run(db, "WhereCount", key: false));
+        Assert.Equal(["1", "3"], Run(db, "NullableWhereCount", key: false));
     }
 
     [Theory]

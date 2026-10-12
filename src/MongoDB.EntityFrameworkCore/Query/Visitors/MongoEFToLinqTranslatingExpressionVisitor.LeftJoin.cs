@@ -1202,7 +1202,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         // Tail-append every pending $lookup except those flagged InjectAfterRoot (InjectAfterRootLookupStages emits them), and suppress forceUnwind
         // lookups when a surviving native Join already supplies the join (_appendForceUnwindLookups).
         => EmitLookupStages(query,
-            _pendingLookups.Where(l => !IsInjectedEarly(l) && (_appendForceUnwindLookups || !l.ForceUnwind)));
+            _pendingLookups.Where(l => !IsInjectedEarly(l) && !l.IsBridgeIgnorable && (_appendForceUnwindLookups || !l.ForceUnwind)));
 
     /// <summary>
     /// Emit the $lookup stages flagged <see cref="LookupExpression.InjectAfterRoot"/> immediately after the
@@ -1210,7 +1210,8 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// that reads the <c>_lookup_&lt;Nav&gt;</c> array via <c>{ $size: ... }</c>) see the array already present.
     /// </summary>
     private Expression InjectAfterRootLookupStages(Expression query)
-        => EmitLookupStages(query, _pendingLookups.Where(l => l.InjectAfterRoot));
+        => EmitLookupStages(
+            query, _pendingLookups.Where(l => l.InjectAfterRoot || l.IsBridgeReadableArray).Concat(_bridgeOwnedLookups));
 
     /// <summary>
     /// Whether a lookup is emitted below the pipeline tail and so must not be tail-appended: either marked
@@ -1219,7 +1220,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// per-execution state, not written to the shared, cached <see cref="LookupExpression"/>.
     /// </summary>
     private bool IsInjectedEarly(LookupExpression lookup)
-        => lookup.InjectAfterRoot || _injectedEarlyLookups.Contains(lookup);
+        => lookup.InjectAfterRoot || lookup.IsBridgeReadableArray || _injectedEarlyLookups.Contains(lookup);
 
     private Expression EmitLookupStages(Expression query, IEnumerable<LookupExpression> lookups)
     {
