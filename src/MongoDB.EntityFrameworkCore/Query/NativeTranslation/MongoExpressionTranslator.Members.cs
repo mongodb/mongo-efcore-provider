@@ -25,6 +25,7 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;           // QueryableMethods
 using MongoDB.EntityFrameworkCore.Extensions;        // GetDocumentPath(), IsEmbedded()
 using MongoDB.EntityFrameworkCore.Query.Expressions;
+using MongoDB.EntityFrameworkCore.Serializers;       // BsonSerializerFactory
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
@@ -98,6 +99,12 @@ internal sealed partial class MongoExpressionTranslator
                 memberName = name;
                 break;
 
+            // Mql.Field(p, "element", serializer) names the stored ELEMENT, not the CLR property.
+            case MethodCallExpression mqlField
+                when NativeProjectionBinder.IsMqlFieldCall(mqlField)
+                     && mqlField.Arguments is [var mqlReceiver, ConstantExpression { Value: string mqlElementName }, _]:
+                return TryResolveMqlField(mqlField, mqlReceiver, mqlElementName, out property, out fieldPath, out isOuter);
+
             default:
                 return TryResolveOwnedFieldPath(node, out property, out fieldPath, out isOuter);
         }
@@ -125,7 +132,7 @@ internal sealed partial class MongoExpressionTranslator
             return false;
         }
 
-        var scopeType = isOuter ? _outerEntityType! : _entityType;
+        var scopeType = isOuter ? _outerEntityType! : ResolveScopeEntityType(param);
 
         var resolved = scopeType.FindProperty(memberName);
         if (resolved is null)
@@ -141,6 +148,103 @@ internal sealed partial class MongoExpressionTranslator
 
         return true;
     }
+
+    /// Resolves a bare primitive-collection PROPERTY (<c>string[]</c>, <c>List&lt;int&gt;</c>, ...) stored as a BSON array of
+    /// scalars to its document path, for the count/existence forms that already exist for owned collections. Declines a
+    /// converted or non-default-represented collection (a whole-collection converter has no array to <c>$size</c> or
+    /// index), an array of arrays/documents (<c>"path.&lt;n&gt;"</c> would be ambiguous with a field named
+    /// <c>"&lt;n&gt;"</c>), a dictionary, a binary vector, and a string.
+    private bool TryResolvePrimitiveCollectionPath(Expression source, [NotNullWhen(true)] out string? arrayPath, out bool isOuter)
+    {
+        arrayPath = null;
+        if (!TryResolveMember(Unwrap(source), out var property, out var path, out isOuter))
+            return false;
+
+        var elementType = property.ClrType.TryGetEnumerableElementType();
+        if (property.ClrType == typeof(string)
+            || elementType is null
+            || (elementType != typeof(string) && typeof(System.Collections.IEnumerable).IsAssignableFrom(elementType)))
+        {
+            return false;
+        }
+
+        if (!NativeGroupByBinder.HasDefaultKeySerialization(property) || property.GetBinaryVectorDataType() != null)
+            return false;
+
+        var serializer = BsonSerializerFactory.GetPropertySerializationInfo(property).Serializer;
+        if (serializer is not MongoDB.Bson.Serialization.IBsonArraySerializer
+            || serializer is MongoDB.Bson.Serialization.IBsonDictionarySerializer)
+        {
+            return false;
+        }
+
+        arrayPath = path;
+        return true;
+    }
+
+    /// Resolves <c>Mql.Field(p, "element", serializer)</c> to the one top-level property stored under that element name.
+    /// The serializer argument is ignored (a query-parameterized static singleton can't be inspected at compile time), which
+    /// is sound only because a property with a converter or non-default representation declines, as does a CLR-type
+    /// mismatch. The receiver may be wrapped in nav-expansion auto-include layers: an include changes what is
+    /// materialized, not which document is read.
+    private bool TryResolveMqlField(
+        MethodCallExpression mqlField, Expression receiver, string elementName,
+        out IProperty? property, out string? fieldPath, out bool isOuter)
+    {
+        property = null;
+        fieldPath = null;
+        isOuter = false;
+
+        var peeled = receiver.RemoveConvert();
+        while (peeled is IncludeExpression include)
+            peeled = include.EntityExpression.RemoveConvert();
+
+        if (peeled is not ParameterExpression parameter)
+            return false;
+
+        isOuter = _outerParam is not null && ReferenceEquals(parameter, _outerParam);
+
+        // After a Distinct the members are the flattened key parts, never an entity element.
+        if (!isOuter && DistinctAliasScope is not null)
+            return false;
+
+        var scopeType = isOuter ? _outerEntityType! : ResolveScopeEntityType(parameter);
+        var byElement = scopeType.GetProperties()
+            .Where(p => !IsCompositeKeyComponent(p) && p.GetElementName() == elementName)
+            .ToList();
+        if (byElement.Count != 1)
+            return false;
+
+        var resolved = byElement[0];
+        if ((Nullable.GetUnderlyingType(mqlField.Type) ?? mqlField.Type)
+            != (Nullable.GetUnderlyingType(resolved.ClrType) ?? resolved.ClrType)
+            || !NativeGroupByBinder.HasDefaultKeySerialization(resolved))
+        {
+            return false;
+        }
+
+        property = resolved;
+        fieldPath = GetPropertyFieldPath(resolved);
+        if (!isOuter && _innerPrefix is not null)
+            fieldPath = _innerPrefix + "." + fieldPath;
+
+        return true;
+    }
+
+    /// The entity type a member of <paramref name="param"/> resolves against. <c>OfType&lt;TDerived&gt;()</c> narrows the
+    /// lambda parameter to a derived type while this translator stays bound to the root collection type, so a member
+    /// declared only on <c>TDerived</c> is invisible to the root's <c>FindProperty</c>. Resolved by the parameter's own
+    /// type, and only for <see cref="SelfParam"/> (by identity, never by member name: sibling subtypes can share a CLR
+    /// name with different element names). Sound because a derived parameter type only reaches here after OfType, which
+    /// records the discriminator conjunct; <c>Cast&lt;TDerived&gt;</c> declines at the gate. <c>((Derived)e).Member</c>
+    /// is not narrowed (the rows are not) and keeps declining.
+    private IEntityType ResolveScopeEntityType(ParameterExpression param)
+        => _outerParam is null
+           && ReferenceEquals(param, SelfParam)
+           && param.Type != _entityType.ClrType
+           && _entityType.GetDerivedTypes().FirstOrDefault(t => t.ClrType == param.Type) is { } derived
+            ? derived
+            : _entityType;
 
     /// Resolves <paramref name="node"/> via <see cref="TryResolveMember"/> to a field reference, declining an
     /// outer-scoped member (two-scope mode).
@@ -499,6 +603,17 @@ internal sealed partial class MongoExpressionTranslator
             // nullSafe: an unset owned nav is missing, and $expr's $eq doesn't treat missing as null. See
             // MongoElementRefExpression.NullSafe.
             elementRef = new MongoElementRefExpression(navPath, targetType.ClrType, nullSafe: true);
+            return true;
+        }
+
+        // An owned COLLECTION navigation (`p.Children == null`): the stored array is missing, BSON null, empty or
+        // populated. The comparison is against the STORED state (null-safe, so a missing array equals null), not the
+        // materialized one (which normalizes missing/null to []); an empty array is not null.
+        var collectionSource = node is MaterializeCollectionNavigationExpression materialized ? materialized.Subquery : node;
+        if (TryResolveOwnedCollectionPath(UnwrapAsQueryable(collectionSource), out var collectionPath, out _, out var collectionIsOuter)
+            && !collectionIsOuter)
+        {
+            elementRef = new MongoElementRefExpression(collectionPath, node.Type, nullSafe: true);
             return true;
         }
 

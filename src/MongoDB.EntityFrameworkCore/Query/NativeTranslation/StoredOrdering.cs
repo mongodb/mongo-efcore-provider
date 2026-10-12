@@ -79,6 +79,35 @@ internal static class StoredOrdering
         => PreservesClrOrdering(property) || ClassifyNumericConversion(property) == NumericConversion.IntegralNarrowing;
 
     /// <summary>
+    /// Whether the native query-dialect comparison of <paramref name="property"/> against a value gives the CLR answer:
+    /// everything <see cref="PreservesClrOrdering"/> admits, plus an integral narrowing converter, provided the constant
+    /// is then serialized by its CLR type (<see cref="ConstantsSerializeByClrType"/>) so it cannot wrap. The driver-LINQ
+    /// bridge keeps using <see cref="PreservesClrOrdering"/>: it serializes the constant through the converter.
+    /// </summary>
+    internal static bool PreservesClrOrderingForNativeComparison(IProperty property)
+        => PreservesClrOrdering(property) || ClassifyNumericConversion(property) == NumericConversion.IntegralNarrowing;
+
+    /// <summary>
+    /// Whether a comparison constant for <paramref name="property"/> must be serialized by its own CLR type rather than
+    /// through the property's converter: an unchecked narrowing converter wraps an out-of-range constant
+    /// (<c>Big == 3_000_000_000L</c> would match a stored <c>-1294967296</c>), while the server compares an Int64
+    /// constant with the stored Int32 numerically.
+    /// </summary>
+    internal static bool ConstantsSerializeByClrType(IProperty property)
+        => ClassifyNumericConversion(property) == NumericConversion.IntegralNarrowing;
+
+    /// <summary>
+    /// Whether <c>$sum</c>/<c>$avg</c> over <paramref name="property"/>'s stored value gives the CLR answer: the
+    /// property is stored as itself, or through EF's built-in numeric casting converter (including integral
+    /// narrowing: the stored values were written from in-range model values). A <c>BsonRepresentation</c> is
+    /// excluded: its server-side sum comes back as the represented BSON type (<c>Decimal128</c>, string, ...) and is
+    /// not read back as the CLR type.
+    /// </summary>
+    internal static bool PreservesClrValueForNumericReduction(IProperty property)
+        => NativeGroupByBinder.HasDefaultKeySerialization(property)
+           || ClassifyNumericConversion(property) != NumericConversion.None;
+
+    /// <summary>
     /// Whether every property a sort key reads preserves CLR ordering. A bare field is tested with
     /// <see cref="PreservesClrOrderingForAggregateAndSort"/>; a computed key must be default-serialized throughout, as computed values
     /// already are (<see cref="MongoExpressionTranslator.AllFieldsDefaultSerialized"/>).

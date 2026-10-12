@@ -136,6 +136,16 @@ internal sealed partial class MongoExpressionTranslator
                 source = UnwrapAsQueryable(receiver);
                 return true;
 
+            // array.Length: an array's length is the ArrayLength node in an expression tree...
+            case UnaryExpression { NodeType: ExpressionType.ArrayLength, Operand: { } arrayOperand }:
+                source = arrayOperand;
+                return true;
+
+            // ...and a hand-built or EF-rewritten tree may carry the member form. Arrays only: string.Length must not match.
+            case MemberExpression { Member: PropertyInfo { Name: nameof(Array.Length) }, Expression: { Type.IsArray: true } arrayReceiver }:
+                source = arrayReceiver;
+                return true;
+
             // Parameterless Count(source)/LongCount(source): the shape every real EF query arrives in.
             case MethodCallExpression { Arguments.Count: 1 } call
                 when call.Method.Name is nameof(Enumerable.Count) or nameof(Enumerable.LongCount)
@@ -363,9 +373,10 @@ internal sealed partial class MongoExpressionTranslator
     /// <summary>
     /// Recognizes <c>string.StartsWith/EndsWith/Contains(string)</c> or <c>(char)</c>, plus the
     /// <see cref="StringComparison"/> overload for <see cref="StringComparison.Ordinal"/>/
-    /// <see cref="StringComparison.OrdinalIgnoreCase"/> only — the members MongoDB regex can reproduce exactly.
-    /// Culture-sensitive comparisons are left unmatched (the driver-LINQ path silently treats them as ordinal;
-    /// not replicated in a new native path).
+    /// <see cref="StringComparison.OrdinalIgnoreCase"/> — the members MongoDB regex can reproduce exactly — plus
+    /// <see cref="StringComparison.CurrentCulture"/>/<see cref="StringComparison.CurrentCultureIgnoreCase"/>, which the
+    /// driver-LINQ path treats as ordinal and so does this one (accepted divergence). Invariant comparisons are left
+    /// unmatched.
     /// </summary>
     private static bool TryMatchRegexMethod(
         MethodCallExpression call,
@@ -404,10 +415,13 @@ internal sealed partial class MongoExpressionTranslator
 
             case 2 when call.Arguments[0].Type == typeof(string)
                         && call.Arguments[1] is ConstantExpression { Value: StringComparison comparison }:
-                if (comparison is not (StringComparison.Ordinal or StringComparison.OrdinalIgnoreCase))
+                // CurrentCulture[IgnoreCase] is matched ordinally, as driver-LINQ does (D-CULTURE: accepted divergence; wrong
+                // for culture-special data on both paths). Invariant* stays unmatched.
+                if (comparison is not (StringComparison.Ordinal or StringComparison.OrdinalIgnoreCase
+                    or StringComparison.CurrentCulture or StringComparison.CurrentCultureIgnoreCase))
                     return false;
 
-                caseInsensitive = comparison == StringComparison.OrdinalIgnoreCase;
+                caseInsensitive = comparison is StringComparison.OrdinalIgnoreCase or StringComparison.CurrentCultureIgnoreCase;
                 break;
 
             default:

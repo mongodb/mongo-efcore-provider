@@ -135,8 +135,16 @@ internal static class NativeSlotPopulator
         // aren't supported yet.
         var isPostGroupWhere = methodDefinition == QueryableMethods.Where && mongoQ.Select.IsFinalizedKeyedGroupOutput;
 
+        // Likewise OrderBy/ThenBy/Skip/Take after a finalized keyed GroupBy(key).Select(...): they record into PostGroupOps
+        // (after the flatten $project), the sort key resolving against the Select's output aliases. Not over a join
+        // (paging there would need the join-deferral bookkeeping).
+        var isPostGroupOrdering = mongoQ.Select.IsFinalizedKeyedGroupOutput && mongoQ.Joins.Count == 0
+            && (methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.OrderByDescending
+                || methodDefinition == QueryableMethods.ThenBy || methodDefinition == QueryableMethods.ThenByDescending
+                || methodDefinition == QueryableMethods.Skip || methodDefinition == QueryableMethods.Take);
+
         if (mongoQ.Select.HasTerminalOperator && !mongoQ.Select.IsSetOpTerminalOnly
-            && IsSevenSlotOperator(methodDefinition) && !isPostDistinctSlot && !isPostGroupWhere)
+            && IsSevenSlotOperator(methodDefinition) && !isPostDistinctSlot && !isPostGroupWhere && !isPostGroupOrdering)
         {
             mongoQ.Select.MarkNotNativelyRepresentable();
             return;
@@ -160,6 +168,39 @@ internal static class NativeSlotPopulator
         if (mongoQ.Select.HasConfirmedJoinLookup && IsSevenSlotOperator(methodDefinition) && !isPostGroupWhere)
         {
             mongoQ.Select.MarkNotNativelyRepresentable();
+            return;
+        }
+
+        if (isPostGroupOrdering)
+        {
+            if (methodDefinition == QueryableMethods.Skip || methodDefinition == QueryableMethods.Take)
+            {
+                PopulatePagingSlot(
+                    mongoQ, call,
+                    methodDefinition == QueryableMethods.Skip ? mongoQ.Select.AppendSkip : mongoQ.Select.AppendLimit);
+                return;
+            }
+
+            // Only an output alias is a sort key (never an entity member an alias shadows); declines otherwise.
+            var postGroupKeySelector = call.Arguments[1].UnwrapLambdaFromQuote();
+            translator.SelfParam = postGroupKeySelector.Parameters[0];
+            translator.ProjectedAliasScope = new MongoProjectedAliasScope(
+                postGroupKeySelector.Parameters[0], mongoQ.Select.Projection);
+            var postGroupAscending = methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.ThenBy;
+            if (translator.TryTranslateValue(postGroupKeySelector.Body, out var postGroupKey)
+                && postGroupKey is MongoElementRefExpression)
+            {
+                var postGroupOrdering = new MongoOrdering(postGroupKey, postGroupAscending);
+                if (methodDefinition == QueryableMethods.OrderBy || methodDefinition == QueryableMethods.OrderByDescending)
+                    mongoQ.Select.StartOrReplaceSort(postGroupOrdering);
+                else
+                    mongoQ.Select.AppendThenBy(postGroupOrdering);
+            }
+            else
+            {
+                mongoQ.Select.MarkNotNativelyRepresentable();
+            }
+
             return;
         }
 

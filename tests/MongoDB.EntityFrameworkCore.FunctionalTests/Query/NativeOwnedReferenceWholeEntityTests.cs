@@ -803,19 +803,40 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         }
     }
 
-    // A renamed member ("Addr") must decline: the emitted alias must name a real element the driver-LINQ bridge
-    // renders under the same name (see TryTranslateLeaf's alias-must-equal-document-path conjunct).
+    // A renamed member ("Addr") stages the owned element under its own name with a DocumentPath alias override
+    // (member -> element), as an array leaf does, so the alias-addressed shaper and a whole-document fallback read the
+    // same element.
     [Fact]
-    public void Renamed_owned_reference_entity_leaf_falls_back_but_still_reads_correct_values()
+    public void Renamed_owned_reference_entity_leaf_goes_native_and_reads_correct_values()
     {
-        var collection = SeedBlogs(nameof(Renamed_owned_reference_entity_leaf_falls_back_but_still_reads_correct_values));
+        var collection = SeedBlogs(nameof(Renamed_owned_reference_entity_leaf_goes_native_and_reads_correct_values));
+
+        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = CreateContext(collection, mode, BlogModel);
+            var results = db.Entities.AsNoTracking().Select(b => new { Addr = b.Address, b.Title })
+                .OrderBy(r => r.Title).ToList();
+
+            Assert.Equal(2, results.Count);
+            Assert.Equal("NYC", results[0].Addr.City);
+            Assert.Equal("LA", results[1].Addr.City);
+        }
+    }
+
+    // `Address` (a scalar member) shares its name with the element the renamed leaf is staged under: the duplicate alias
+    // declines the whole projection rather than letting the read side rename one of them.
+    [Fact]
+    public void Renamed_owned_reference_entity_leaf_colliding_with_another_alias_declines()
+    {
+        var collection = SeedBlogs(nameof(Renamed_owned_reference_entity_leaf_colliding_with_another_alias_declines));
+
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
         Assert.Throws<NativeTranslationNotSupportedException>(
-            () => nativeOnly.Entities.AsNoTracking().Select(b => new { Addr = b.Address, b.Title }).ToList());
+            () => nativeOnly.Entities.AsNoTracking().Select(b => new { Address = b.Title, Addr = b.Address }).ToList());
 
         using var db = CreateContext(collection, MongoQueryMode.Native, BlogModel);
-        var results = db.Entities.AsNoTracking().Select(b => new { Addr = b.Address, b.Title })
-            .OrderBy(r => r.Title).ToList();
+        var results = db.Entities.AsNoTracking().Select(b => new { Address = b.Title, Addr = b.Address })
+            .OrderBy(r => r.Address).ToList();
 
         Assert.Equal(2, results.Count);
         Assert.Equal("NYC", results[0].Addr.City);

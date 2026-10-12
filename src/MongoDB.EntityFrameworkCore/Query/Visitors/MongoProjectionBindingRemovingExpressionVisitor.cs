@@ -244,6 +244,16 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                     // field. A nullable cast over a Local-kind DateTime still reads with that kind (CreateAliasRead).
                     if (projection.Expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } castLeaf)
                     {
+                        // A relabel cast over a non-default-stored field projected the bare stored field
+                        // (NativeProjectionBinder.IsClientRelabelCast): read it through the property's serializer, then cast.
+                        if (TryResolveFieldAccess(castLeaf.Operand).Property is { } relabelProperty
+                            && NativeProjectionBinder.IsClientRelabelCast(castLeaf, relabelProperty))
+                        {
+                            var storedRead = BsonBinding.CreateGetValueExpression(
+                                DocParameter, projection.Alias, relabelProperty, relabelProperty.ClrType);
+                            return Expression.Convert(storedRead, projectionBindingExpression.Type);
+                        }
+
                         return TryCreateRequiredScalarCastRead(castLeaf, projection.Alias, projectionBindingExpression.Type, out var castRead)
                             ? castRead
                             : CreateAliasRead(projection.Alias, projectionBindingExpression.Type);
@@ -290,6 +300,17 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
                         // type, is read by TryCreateThrowOnMalformedNullAliasRead above
                         // (MongoAggregationExpressionRenderer.ClassifyMalformedFieldRead). Whole-entity routes stay
                         // strict. Computed leaves never reach here (they are aliased reads above).
+                        // A dotted alias is a document path (a dotted scalar beside an array leaf takes its path as its alias,
+                        // NativeProjectionBinder's sibling sweep): walk it segment by segment through the property's
+                        // serializer. Reads whole documents and the $project's nested output alike.
+                        if (projection.Alias.Contains('.'))
+                        {
+                            return BsonBinding.CreateGetPropertyValueAtPath(
+                                    DocParameter, projection.Alias.Split('.'), fieldAccess.Property,
+                                    projectionBindingExpression.Type)
+                                .ConvertIfRequired(projectionBindingExpression.Type);
+                        }
+
                         var valueExpression = (_queryExpression.Select.Route == NativeRoute.Projection
                                                || _queryExpression.Select is { Route: NativeRoute.GroupBy, IsDistinct: true, IsGroupBy: false }
                                                && NativeGroupByBinder.HasDefaultKeySerialization(fieldAccess.Property))

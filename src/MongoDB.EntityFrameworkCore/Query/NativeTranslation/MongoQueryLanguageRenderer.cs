@@ -55,6 +55,10 @@ internal sealed class MongoQueryLanguageRenderer
             MongoLookupNullCheckExpression lookupNullCheck => RenderLookupNullCheck(lookupNullCheck),
             MongoNumericTypeBracketExpression bracket => RenderNumericTypeBracket(bracket),
             MongoInExpression inExpr => RenderIn(inExpr, placeholders),
+            MongoFieldPresenceExpression presence when IsQueryDialectPresence(presence) => RenderFieldPresence(presence),
+            MongoDictionaryContainsKeyExpression containsKey
+                => new BsonDocument(containsKey.Path, new BsonDocument("$exists", !containsKey.Negated)),
+            MongoCompositeKeyInExpression compositeKeyIn => RenderCompositeKeyIn(compositeKeyIn, placeholders),
             MongoArrayContainsExpression arrayContains => RenderArrayContains(arrayContains, placeholders),
             // Shares IsQueryDialectRegex with IsQueryDialectRenderable; anything else falls to $expr/$regexMatch.
             MongoRegexExpression regex when IsQueryDialectRegex(regex)
@@ -105,20 +109,23 @@ internal sealed class MongoQueryLanguageRenderer
     // Shared with MongoExpressionNegator, which must decline any comparison this rejects (no query-dialect
     // complement exists).
     internal static bool IsQueryNativeComparison(MongoBinaryExpression b)
-        => b.Left is MongoFieldExpression && b.Right is MongoConstantExpression or MongoParameterExpression;
+        => b.Left is MongoFieldExpression or MongoDictionaryEntryExpression
+           && b.Right is MongoConstantExpression or MongoParameterExpression;
 
     private BsonDocument RenderAsExpr(MongoExpression node, PlaceholderTable placeholders)
         => new BsonDocument("$expr", MongoAggregationExpressionRenderer.Render(node, placeholders));
 
     private BsonDocument RenderComparison(MongoBinaryExpression binary, PlaceholderTable placeholders)
     {
-        // MongoExpressionTranslator always places the MongoFieldExpression on the Left
+        // MongoExpressionTranslator always places the MongoFieldExpression (or dictionary entry) on the Left
         // with the operator already mirrored when necessary (see TranslateComparison).
-        if (binary.Left is not MongoFieldExpression field)
-            throw new NativeTranslationNotSupportedException(
-                $"Expected MongoFieldExpression on the left side of a comparison; got '{binary.Left.GetType().Name}'.");
-
-        var elementName = field.ElementName;
+        var elementName = binary.Left switch
+        {
+            MongoFieldExpression field => field.ElementName,
+            MongoDictionaryEntryExpression entry => entry.Path,
+            _ => throw new NativeTranslationNotSupportedException(
+                $"Expected MongoFieldExpression on the left side of a comparison; got '{binary.Left.GetType().Name}'.")
+        };
         var value = MongoValueRenderer.RenderValue(binary.Right, placeholders);
 
         var op = binary.Operator switch
@@ -137,6 +144,34 @@ internal sealed class MongoQueryLanguageRenderer
             ? new BsonDocument(elementName, value)
             : new BsonDocument(elementName, new BsonDocument(op, value));
     }
+
+    // { path: { $exists: b } } for presence; { path: null } / { path: { $ne: null } } for null-or-missing. The null forms also
+    // match an array that CONTAINS null, so over a path that may hold an array they have no exact query-dialect form and
+    // render through $expr instead (IsQueryDialectPresence).
+    private static bool IsQueryDialectPresence(MongoFieldPresenceExpression presence)
+        => !(presence.TestsNull && presence.PathMayBeArray);
+
+    private static BsonDocument RenderFieldPresence(MongoFieldPresenceExpression presence)
+        => presence.Kind switch
+        {
+            MongoFieldPresence.Exists => new BsonDocument(presence.Path, new BsonDocument("$exists", true)),
+            MongoFieldPresence.Missing => new BsonDocument(presence.Path, new BsonDocument("$exists", false)),
+            MongoFieldPresence.NullOrMissing => new BsonDocument(presence.Path, BsonNull.Value),
+            _ => new BsonDocument(presence.Path, new BsonDocument("$ne", BsonNull.Value))
+        };
+
+    // { $or: [ { "_id.K1": v1, "_id.K2": v2 }, ... ] } ($nor when negated); a parameter list is built per execution.
+    private static BsonDocument RenderCompositeKeyIn(MongoCompositeKeyInExpression compositeKeyIn, PlaceholderTable placeholders)
+        => new(
+            compositeKeyIn.Negated ? "$nor" : "$or",
+            compositeKeyIn.Values switch
+            {
+                MongoConstantExpression { Value: System.Collections.IEnumerable items }
+                    => CompositeKeyClauses.Build(items, compositeKeyIn.KeyProperties),
+                MongoParameterExpression parameter
+                    => placeholders.CreateCompositeKeyArrayPlaceholder(parameter.Name, compositeKeyIn.KeyProperties),
+                _ => throw new NativeTranslationNotSupportedException("Unsupported composite-key $in values node.")
+            });
 
     /// <summary>
     /// Renders a reference-Include null check as <c>{ alias: null }</c> / <c>{ alias: { $ne: null } }</c> on the
@@ -386,6 +421,9 @@ internal sealed class MongoQueryLanguageRenderer
             MongoUnaryExpression { Operator: MongoUnaryOperator.Not, Operand: MongoBinaryExpression cmp }
                 => IsQueryNativeComparison(cmp),
             MongoFieldExpression => true,
+            MongoDictionaryContainsKeyExpression => true,
+            MongoFieldPresenceExpression presence => IsQueryDialectPresence(presence),
+            MongoCompositeKeyInExpression { Values: MongoConstantExpression or MongoParameterExpression } => true,
             // { field: { $type: "number" } }. Only produced beside an $expr sibling (so its AndAlso answers false),
             // but true on its own merits.
             MongoNumericTypeBracketExpression => true,

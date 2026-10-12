@@ -77,6 +77,9 @@ internal static class MongoFieldPrefixRewriter
             // Required: an owned SelectMany's inner filter can contain a count
             // (SelectMany(b => b.Posts.Where(p => p.Comments.Count > 1), …)).
             MongoSizeExpression s => new MongoSizeExpression(prefix + "." + s.FieldName, s.Type, s.NullSafe),
+            MongoDictionaryEntryExpression d => new MongoDictionaryEntryExpression(d.DictionaryProperty, prefix + "." + d.Path, d.Type),
+            MongoFieldPresenceExpression p => new MongoFieldPresenceExpression(prefix + "." + p.Path, p.Kind, p.PathMayBeArray),
+            MongoDictionaryContainsKeyExpression k => new MongoDictionaryContainsKeyExpression(prefix + "." + k.Path, k.Negated),
             // Array path only; the element predicate is relative to the $filter variable.
             MongoFilteredSizeExpression f => new MongoFilteredSizeExpression(prefix + "." + f.ArrayPath, f.ElementPredicate, f.Type),
             MongoConvertExpression c => new MongoConvertExpression(Rewrite(c.Operand, prefix), c.Type),

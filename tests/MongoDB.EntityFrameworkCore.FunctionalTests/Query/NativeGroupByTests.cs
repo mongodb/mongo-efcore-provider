@@ -2530,21 +2530,19 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     }
 
     [Fact]
-    public void GroupBy_Select_then_Skip_0_take_0_unaffected_by_pending_paging_carveout()
+    public void GroupBy_Select_then_Skip_0_take_0_pages_the_grouped_output()
     {
-        // Paging after the terminal Select isn't native for a genuine GroupBy (the PostGroupOps carve-out is for
-        // projected Distinct only — see NativeSlotPopulator's isPostDistinctSlot), so this falls back.
-        var seed = SeedOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
-            nameof(GroupBy_Select_then_Skip_0_take_0_unaffected_by_pending_paging_carveout));
-
-        Assert.Throws<NativeTranslationNotSupportedException>(() =>
-            db.Entities
-                .GroupBy(o => o.Country)
+        // Paging after the terminal Select lowers into PostGroupOps; `Take(0)` is the always-false $match rewrite.
+        var result = NativeModeAssert.NativeAndParity(mode => RunOrders(mode,
+            nameof(GroupBy_Select_then_Skip_0_take_0_pages_the_grouped_output),
+            q => q.GroupBy(o => o.Country)
                 .Select(g => new { g.Key, Total = g.Count() })
                 .Skip(0)
                 .Take(0)
-                .ToArray());
+                .AsEnumerable()
+                .Select(x => x.Key).ToList()));
+
+        Assert.Empty(result);
     }
 
     // Nested-construction GroupBy projection members (e.g. `Container = new LastInChain { Name = "x", Value =
@@ -3365,11 +3363,11 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     }
 
     [Fact]
-    public void Post_group_order_by_declines_cleanly()
+    public void Post_group_order_by_sorts_by_the_output_aliases()
     {
-        // Only Where is admitted after a keyed GroupBy(key).Select(...); OrderBy/ThenBy/Skip/Take/Distinct over the
-        // grouped output are a separate follow-up.
-        var result = NativeModeAssert.DeclinesCleanly(mode => RunOrders(mode, nameof(Post_group_order_by_declines_cleanly),
+        // OrderBy/ThenBy over a keyed GroupBy(key).Select(...) resolve against the Select's output aliases and lower into
+        // PostGroupOps (a computed key, or an entity member an alias shadows, still declines).
+        var result = NativeModeAssert.NativeAndParity(mode => RunOrders(mode, nameof(Post_group_order_by_sorts_by_the_output_aliases),
             q => q.GroupBy(o => o.Country)
                 .Select(g => new { Land = g.Key, N = g.Count() })
                 .OrderBy(x => x.N).ThenBy(x => x.Land)

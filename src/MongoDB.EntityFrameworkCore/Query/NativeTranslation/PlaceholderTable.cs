@@ -48,7 +48,8 @@ internal sealed class PlaceholderTable
         MongoRegexKind? RegexKind,
         IProperty? EntityMemberProperty,
         int? ArrayElementIndex,
-        bool RegexCaseInsensitive);
+        bool RegexCaseInsensitive,
+        IReadOnlyList<IProperty>? CompositeKeyProperties = null);
 
     private readonly List<Entry> _entries = [];
 
@@ -116,6 +117,17 @@ internal sealed class PlaceholderTable
     public BsonValue CreateEntityKeyArrayPlaceholder(string parameterName, IProperty entityMemberProperty, IBsonSerializer elementSerializer)
     {
         return Add(new Entry(parameterName, elementSerializer, true, null, entityMemberProperty, null, false));
+    }
+
+    /// <summary>
+    /// Appends a placeholder for a composite-key entity-list <c>Contains</c>: at
+    /// <see cref="MongoPipelineFactory.Build(IReadOnlyDictionary{string, object})"/> time the entity list is turned into
+    /// the <c>$or</c>/<c>$nor</c> clause array by <see cref="CompositeKeyClauses.Build"/>, so the template doesn't depend
+    /// on the list's length.
+    /// </summary>
+    public BsonValue CreateCompositeKeyArrayPlaceholder(string parameterName, IReadOnlyList<IProperty> keyProperties)
+    {
+        return Add(new Entry(parameterName, null, true, null, null, null, false, keyProperties));
     }
 
     /// <summary>

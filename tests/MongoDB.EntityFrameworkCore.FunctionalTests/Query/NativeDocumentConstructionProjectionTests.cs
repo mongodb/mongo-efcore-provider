@@ -245,31 +245,31 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         }
     }
 
-    // A computed member inside the construction declines the whole leaf: NativeOnly throws, Native silently
-    // falls back and still reads correct values.
+    // A computed member inside the construction means it is not a sub-document leaf: it is flattened into the enclosing
+    // projection (FlattenNestedConstructions), each member a leaf under its own name, and read back member by member.
+    // The values are checked in every mode (BookCopy.Id maps to "_id" in the driver's class map; reading per member
+    // by alias must not depend on that).
     [Fact]
-    public void Document_construction_leaf_with_computed_member_falls_back_but_still_reads_correct_values()
+    public void Document_construction_leaf_with_computed_member_is_flattened_and_reads_correct_values()
     {
-        var collection = SeedBooks(nameof(Document_construction_leaf_with_computed_member_falls_back_but_still_reads_correct_values));
+        var collection = SeedBooks(nameof(Document_construction_leaf_with_computed_member_is_flattened_and_reads_correct_values));
 
-        using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly))
+        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
         {
-            Assert.Throws<NativeTranslationNotSupportedException>(() => nativeOnly.Entities.AsNoTracking()
+            using var db = CreateContext(collection, mode);
+            var results = db.Entities.AsNoTracking()
                 .Select(b => new { Copy = new BookCopy { Id = b.Id, Title = b.Title, Author = b.Title.Length.ToString() } })
-                .ToList());
+                .OrderBy(r => r.Copy.Title)
+                .ToList();
+
+            Assert.Equal(2, results.Count);
+            Assert.Equal("Alpha", results[0].Copy.Title);
+            Assert.Equal("5", results[0].Copy.Author);
+            Assert.NotEqual(default, results[0].Copy.Id);
+            Assert.Equal("Beta", results[1].Copy.Title);
+            Assert.Equal("4", results[1].Copy.Author);
+            Assert.NotEqual(default, results[1].Copy.Id);
         }
-
-        using var db = CreateContext(collection, MongoQueryMode.Native);
-        var results = db.Entities.AsNoTracking()
-            .Select(b => new { Copy = new BookCopy { Id = b.Id, Title = b.Title, Author = b.Title.Length.ToString() } })
-            .OrderBy(r => r.Copy.Title)
-            .ToList();
-
-        Assert.Equal(2, results.Count);
-        Assert.Equal("Alpha", results[0].Copy.Title);
-        Assert.Equal("5", results[0].Copy.Author);
-        Assert.Equal("Beta", results[1].Copy.Title);
-        Assert.Equal("4", results[1].Copy.Author);
     }
 
     // ════════════════════════════════════════════════════════════════════════════════════════════

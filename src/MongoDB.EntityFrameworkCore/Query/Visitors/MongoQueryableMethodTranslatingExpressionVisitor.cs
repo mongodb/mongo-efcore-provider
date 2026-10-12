@@ -348,6 +348,9 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     protected override ShapedQueryExpression TranslateSelect(ShapedQueryExpression source, LambdaExpression selector)
     {
+        // The selector the native projection binder sees: Tuple.Create(..) normalized to a construction. Equal to `selector`
+        // unless that rewrite applies and native admits it (see the native projection branch below).
+        var nativeSelector = selector;
         // Handle .Select(p => p) no-op/pass-thru
         if (selector.Body == selector.Parameters[0])
         {
@@ -607,14 +610,25 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // A bare scalar/computed body over a single-level join scope, e.g. `ti => ti.Inner.City` (what EF's null-check
         // removal leaves of `nav != null ? nav.Member : null`). Tried after the whole-entity and conditional arms.
         //
-        // Restricted to Levels.Count == 1; lifting that for chains is unvalidated.
-        else if (IsSingleEligibleNativeJoinScope(mongoQueryExpression, out _)
-                 && mongoQueryExpression.Select.JoinScope is { Levels.Count: 1 }
+        // A chain (Levels.Count >= 2) re-roots the leaf onto the one scope it resolves to, by hop chain and never by CLR
+        // type, exactly as the wrapped-projection arm does (NativeJoinScopeProjectionBinder); a leaf spanning scopes declines.
+        else if (mongoQueryExpression.Select.JoinScope is { } bareValueScope
+                 // Over a chain, paging or ordering recorded before/after/between joins may be placed past a row-dropping or
+                 // row-multiplying join (and the stage-position pins of Ef373InterleavedPagingTests expect the fallback layout): decline.
+                 && (bareValueScope.Levels.Count == 1
+                     || (!mongoQueryExpression.Select.HasPaging && !mongoQueryExpression.Select.HasOrdering
+                         && !mongoQueryExpression.Select.HasPagingRecordedBeforeAnyJoin
+                         && !mongoQueryExpression.Select.HasPagingRecordedAfterAJoin
+                         && mongoQueryExpression.Select.PostLookupPagingOps.Count == 0))
+                 && IsSingleEligibleNativeJoinScope(mongoQueryExpression, out _)
                  && mongoQueryExpression.Select.Projection.Count == 0
                  && selector.Body is not ConditionalExpression
                  && !selector.Body.TryGetProjectionMembers(out _)
-                 && NativeJoinScopeTranslator.TryTranslateValue(
-                     mongoQueryExpression.Select.JoinScope, selector.Parameters[0], selector.Body, out var bareValueLeaf)
+                 && (bareValueScope.Levels.Count == 1
+                     ? NativeJoinScopeTranslator.TryTranslateValue(
+                         bareValueScope, selector.Parameters[0], selector.Body, out var bareValueLeaf)
+                     : NativeJoinScopeTranslator.TryTranslateSingleScope(
+                         bareValueScope, selector.Parameters[0], selector.Body, valueMode: true, out bareValueLeaf))
                  // Read back whole by alias; see NativeProjectionBinder.IsMisreadWholeValueLeaf.
                  && !NativeProjectionBinder.IsMisreadWholeValueLeaf(bareValueLeaf!)
                  // A non-nullable Length/IndexOf over an unmatched (or null) inner string: throw on null, or decline
@@ -664,7 +678,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 mongoQueryExpression.Select.MarkNotNativelyRepresentable();
             }
             // Native $project pushdown for an anonymous/DTO projection whose leaves the binder accepts.
-            else if (!NativeProjectionBinder.TryPopulateNativeProjection(mongoQueryExpression, selector))
+            // Tuple.Create(a, b, ..) is a static call, not a construction: normalize it to `new Tuple<..>(a, b, ..)` for the
+            // positional-ctor arm. The original selector is kept for the fallback when native declines.
+            else if (!NativeProjectionBinder.TryPopulateNativeProjection(
+                         mongoQueryExpression, nativeSelector = NativeProjectionBinder.NormalizeTupleFactory(selector)))
             {
                 mongoQueryExpression.Select.MarkNotNativelyRepresentable();
             }
@@ -672,10 +689,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // MongoSelectDefinition.HasPositionalCtorProjectionShaper), unless it holds a client case mapping the
             // mixed reader can bind per argument (see DeclinePositionalCtorCaseMappingForMemberBinding).
             else if (mongoQueryExpression.Select.HasPositionalCtorProjectionShaper
-                     && !DeclinePositionalCtorCaseMappingForMemberBinding(mongoQueryExpression, selector, source.ShaperExpression))
+                     && !DeclinePositionalCtorCaseMappingForMemberBinding(mongoQueryExpression, nativeSelector, source.ShaperExpression))
             {
                 return source.UpdateShaperExpression(
-                    BuildPositionalCtorProjectionShaper(mongoQueryExpression, selector.Body));
+                    BuildPositionalCtorProjectionShaper(mongoQueryExpression, nativeSelector.Body));
             }
             // A wrapped client-method call over a single-level join scope (e.g. Include(e => e.Manager) with
             // `ti => ti.Inner != null ? "..." + ClientMethod(ti.Outer) : ""`) needs the same confirm/register step as the
@@ -1454,14 +1471,28 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             {
                 if (thenNav.IsEmbedded())
                 {
-                    // Owned auto-include: lives in the same document (EF-368). Reject if anything non-embedded
-                    // is nested past it; either way this level's ThenInclude chain ends here.
-                    if (HasNonEmbeddedThenInclude(thenInclude))
+                    // Owned auto-include: lives in the same document (EF-368). With nothing non-embedded nested past
+                    // it, this level's ThenInclude chain ends here.
+                    if (!HasNonEmbeddedThenInclude(thenInclude))
+                    {
+                        break;
+                    }
+
+                    // A reference Include declared on the owned type (Include(Buyer).ThenInclude(Address).ThenInclude(Region)):
+                    // the Region $lookup reads its key through the owned hop, which the confirm step verifies on the
+                    // registered lookup's localField. Exactly one such reference, behind single-reference owned hops.
+                    IncludeExpression? behindOwned = null;
+                    if (!TryFindReferenceBehindOwned(thenInclude, thenNav.DeclaringEntityType, ref behindOwned)
+                        || behindOwned is null)
                     {
                         return false;
                     }
 
-                    break;
+                    referenceLevels.Add(behindOwned);
+                    transitiveLevels.Add(behindOwned);
+                    thenIncludeLevel = behindOwned;
+                    thenIncludeTargetType = ((INavigation)behindOwned.Navigation!).TargetEntityType;
+                    continue;
                 }
 
                 if (thenInclude.EntityExpression is IncludeExpression
@@ -1527,12 +1558,14 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         List<IncludeExpression> chain,
         HashSet<IncludeExpression> transitiveLevels)
     {
-        // Joins.Count must equal chain.Count exactly. Not InnerCollections.Count, which is keyed by entity type
-        // and collapses same-target siblings. This also declines a user Join plus a downstream Include (one
-        // recognized level, two joins).
+        // Joins are counted, not InnerCollections (keyed by entity type, so it collapses same-target siblings). A join
+        // beyond the chain's levels is admitted only as a FILTER join (TryAdmitFilterJoins): a user Join plus a
+        // downstream Include otherwise declines.
+        var extraJoins = mongoQueryExpression.Joins.Count - chain.Count;
         if (mongoQueryExpression.Select.HasTerminalOperator                // composed after a terminal
             || mongoQueryExpression.Select.SawNonBareJoinInner             // a filtered/non-bare-scan inner, any join
-            || mongoQueryExpression.Joins.Count != chain.Count)
+            || extraJoins < 0
+            || (extraJoins > 0 && !TryAdmitFilterJoins(mongoQueryExpression, chain, extraJoins)))
         {
             return false;
         }
@@ -1567,6 +1600,18 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 {
                     return false;
                 }
+
+                // A reference declared on an owned type (Include(Buyer).ThenInclude(Address).ThenInclude(Region)): the
+                // lookup must read its key through exactly that owned path under the parent's alias.
+                if (navigation.DeclaringEntityType.IsOwned()
+                    && !OwnedHopLocalFieldMatches(chain, navigation, existing))
+                {
+                    return false;
+                }
+            }
+            else if (navigation.DeclaringEntityType.IsOwned())
+            {
+                return false; // an owned hop always follows a prior join, so its lookup is already registered
             }
             else
             {
@@ -1598,12 +1643,134 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             mongoQueryExpression.AddLookup(lookup);
         }
 
-        for (var i = 0; i < chain.Count; i++)
+        // Candidates equal Joins.Count, so confirm every join; a filter join no earlier arm confirmed is confirmed here.
+        var toConfirm = mongoQueryExpression.Joins.Count - mongoQueryExpression.Select.ConfirmedReferenceIncludeCount;
+        for (var i = 0; i < toConfirm; i++)
         {
             mongoQueryExpression.Select.MarkReferenceIncludeConfirmed();
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Whether the joins beyond a reference-Include chain's own levels are FILTER joins that may precede the Include:
+    /// a Where that read a join's Inner (<c>l.Order.Name != "O2"</c>) left its predicate, and any paging/Distinct recorded
+    /// after it, in <c>PostJoinOps</c>, lowered after every <c>$lookup</c>. The Include's join is a left-outer reference
+    /// (row-preserving), so that equals paging before it. The filter join was either confirmed by an earlier arm (a
+    /// <c>Select(ti =&gt; ti.Outer)</c>) or is read by a native post-join predicate. Every filter join must be a
+    /// resolved, flattened, eligible reference join.
+    /// </summary>
+    private static bool TryAdmitFilterJoins(MongoQueryExpression query, List<IncludeExpression> chain, int extraJoins)
+    {
+        var select = query.Select;
+        var alreadyConfirmed = select.ConfirmedReferenceIncludeCount;
+        if (alreadyConfirmed != extraJoins && !(alreadyConfirmed == 0 && select.JoinInnerAccessConfirmed))
+        {
+            return false;
+        }
+
+        // Every join no Include level backs (matched by navigation, once each) must be a reference join.
+        var remaining = chain.Select(include => (INavigation)include.Navigation!).ToList();
+        foreach (var join in query.Joins)
+        {
+            if (join.Navigation is { } navigation && remaining.Remove(navigation))
+            {
+                continue;
+            }
+
+            if (join.Lookup is not { ForceUnwind: true }
+                || join.Navigation is not { IsCollection: false }
+                || !join.IsNativelyEligible)
+            {
+                return false;
+            }
+        }
+
+        // Paging recorded after a join but still in PipelineOps lowers BEFORE every $lookup.
+        return !(select.HasPaging && select.HasPagingRecordedAfterAJoin && !query.AreAllJoinsRowCountPreserving());
+    }
+
+    /// <summary>
+    /// Whether <paramref name="lookup"/> (the registered <c>$lookup</c> of <paramref name="navigation"/>, declared on an
+    /// owned type) reads its foreign key at <c>&lt;parent alias&gt;.&lt;owned path&gt;.&lt;fk element&gt;</c>: the parent is the one
+    /// chain level that targets the owned path's root owner, and every owned hop between is a single reference.
+    /// </summary>
+    private static bool OwnedHopLocalFieldMatches(
+        List<IncludeExpression> chain, INavigation navigation, LookupExpression lookup)
+    {
+        var segments = new List<string>();
+        var type = navigation.DeclaringEntityType;
+        while (type.IsOwned())
+        {
+            var ownership = type.FindOwnership();
+            if (ownership is null
+                || ownership.PrincipalToDependent is not { IsCollection: false }
+                || type.GetContainingElementName() is not { } segment)
+            {
+                return false;
+            }
+
+            segments.Insert(0, segment);
+            type = ownership.PrincipalEntityType;
+        }
+
+        var parents = chain
+            .Select(include => (INavigation)include.Navigation!)
+            .Where(parent => parent.TargetEntityType == type)
+            .ToList();
+        if (parents.Count != 1)
+        {
+            return false; // ambiguous: sibling includes of the same target type
+        }
+
+        var expected = $"{LookupExpression.GetLookupAlias(parents[0])}.{string.Join('.', segments)}."
+                       + LookupExpression.GetFieldPath(navigation.ForeignKey.Properties[0]);
+        return lookup.LocalField == expected;
+    }
+
+    /// <summary>
+    /// Finds the one non-embedded reference <see cref="IncludeExpression"/> behind a chain of embedded single-reference
+    /// (owned) hops, searching both axes (EF nests the owned sibling that holds the reference on either). Returns
+    /// <see langword="false"/> to decline the whole chain: a second non-embedded include, a collection (owned or not) behind
+    /// the hop, or a non-embedded include that is not declared on an owned type. <paramref name="owner"/> is the type
+    /// that declares the embedded navigations being examined.
+    /// </summary>
+    private static bool TryFindReferenceBehindOwned(Expression expression, IEntityType owner, ref IncludeExpression? found)
+    {
+        if (expression is not IncludeExpression include)
+        {
+            return true;
+        }
+
+        if (include.Navigation is not INavigation navigation)
+        {
+            return false;
+        }
+
+        if (navigation.IsEmbedded())
+        {
+            // A $lookup key read through an array has no element-level correlation; only a plain owned auto-include
+            // (nothing non-embedded under it) may be a collection.
+            if (navigation.IsCollection)
+            {
+                return !HasNonEmbeddedThenInclude(include);
+            }
+
+            // The same owner's sibling auto-includes, then the owned type's own includes one hop down.
+            return TryFindReferenceBehindOwned(include.EntityExpression, owner, ref found)
+                   && TryFindReferenceBehindOwned(include.NavigationExpression, navigation.TargetEntityType, ref found);
+        }
+
+        // A non-embedded include is admitted only as a reference declared on an owned type, and only one of them; the
+        // owner's sibling auto-includes that follow it on the entity axis are walked with the same rule.
+        if (navigation.IsCollection || found is not null || !owner.IsOwned() || navigation.DeclaringEntityType != owner)
+        {
+            return false;
+        }
+
+        found = include;
+        return TryFindReferenceBehindOwned(include.EntityExpression, owner, ref found);
     }
 
     /// <summary>
@@ -1998,7 +2165,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                     return source.UpdateShaperExpression(entityShaperExpression.WithType(resultEntityType));
                 }
 
-                if (TryBuildDiscriminatorPredicate(resultEntityType, out var predicate))
+                if (MongoDiscriminatorPredicate.TryBuild(resultEntityType, includeDerived: true, negated: false, out var predicate))
                 {
                     mongoQueryExpression.Select.AddPredicateConjunct(predicate);
                 }
@@ -2012,40 +2179,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         }
 
         return null;
-    }
-
-    /// <summary>
-    /// Builds the native <c>OfType&lt;TDerived&gt;()</c> discriminator conjunct: <c>$eq</c> for a single value,
-    /// <c>$in</c> for a type with derived types. Returns <see langword="false"/> for a non-TPH type.
-    /// </summary>
-    private static bool TryBuildDiscriminatorPredicate(IEntityType targetType, out MongoExpression predicate)
-    {
-        predicate = null!;
-        var discriminatorProperty = targetType.FindDiscriminatorProperty();
-        if (discriminatorProperty is null)
-        {
-            // A non-TPH OfType has no native form; see
-            // NativeOfTypeTests.Non_TPH_OfType_falls_back_gracefully_and_works_across_modes.
-            return false;
-        }
-
-        // Values go through the discriminator property's serializer (converter/BsonRepresentation), as the write path and
-        // MongoEFDiscriminator do. Unlike a grouping key (NativeGroupByBinder.HasDefaultKeySerialization) there is no
-        // flattened-_id readback, so represented discriminators need not be rejected.
-        var elementName = discriminatorProperty.GetElementName();
-        var values = targetType.GetDerivedTypes().Prepend(targetType)
-            .Select(t => t.GetDiscriminatorValue())
-            .ToArray();
-        if (values.Length == 0)
-            return false;
-
-        var field = new MongoFieldExpression(discriminatorProperty, elementName);
-        predicate = values.Length == 1
-            ? new MongoBinaryExpression(MongoBinaryOperator.Equal, field,
-                new MongoConstantExpression(values[0], forSerialization: discriminatorProperty))
-            : new MongoInExpression(field,
-                new MongoConstantExpression(values, forSerialization: discriminatorProperty), negated: false);
-        return true;
     }
 
     /// <summary>
@@ -3295,7 +3428,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         while (unwrappedFoldedExpression is IncludeExpression includeToUnwrap)
         {
             includeWrappers.Add(includeToUnwrap);
-            if (includeToUnwrap.Navigation is not { IsCollection: true }
+            if (includeToUnwrap.Navigation is not { IsCollection: true } && !IsEmbeddedNavigation(includeToUnwrap.Navigation)
                 && !IsRebindableEntityShaper(includeToUnwrap.NavigationExpression))
             {
                 allIncludesRebindable = false;
@@ -3316,7 +3449,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
             for (var i = includeWrappers.Count - 1; i >= 0; i--)
             {
-                var navigationExpression = includeWrappers[i].Navigation is { IsCollection: true }
+                var navigationExpression = includeWrappers[i].Navigation is { IsCollection: true } || IsEmbeddedNavigation(includeWrappers[i].Navigation)
                     ? includeWrappers[i].NavigationExpression
                     : RebindEntityShaper(
                         mongoQueryExpression, (StructuralTypeShaperExpression)includeWrappers[i].NavigationExpression, alias: null);
@@ -3324,6 +3457,19 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             }
 
             return projectionBindingExpressionVisitor.VisitIncludeExpression(mongoQueryExpression, (IncludeExpression)rebound);
+        }
+
+        // A construction whose members are all whole-entity shapers (`o1 = new { o2 }`): the binder staged each level whole
+        // and gave the wrapper no projection, so rebind each member's shaper by index (alias null: dedup onto the level's
+        // entry, the same instance a sibling `o1.o2` leaf reads).
+        if (foldedExpression is not null
+            && foldedExpression.TryGetProjectionMembers(out var wrapperMembers)
+            && wrapperMembers.Count > 0
+            && wrapperMembers.All(m => IsRebindableEntityShaper(m.Value)))
+        {
+            return foldedExpression.RebuildProjectionMembers(
+                wrapperMembers.Select(m => RebindEntityShaper(
+                    mongoQueryExpression, (StructuralTypeShaperExpression)m.Value, alias: null)).ToArray());
         }
 
         // A nested wrapped leaf from a join scope was already staged by NativeJoinScopeProjectionBinder.TryBindProjection
@@ -3353,6 +3499,10 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         bound = null;
         return false;
     }
+
+    // An embedded (owned) Include keeps its NavigationExpression as is: its data lives in the leaf's own document.
+    private static bool IsEmbeddedNavigation(INavigationBase? navigation)
+        => navigation is INavigation { } navigationWithOwnership && navigationWithOwnership.IsEmbedded();
 
     // Whether BindResultMember can rebind this folded expression by index: a whole-entity
     // StructuralTypeShaperExpression reading a ProjectionBindingExpression.

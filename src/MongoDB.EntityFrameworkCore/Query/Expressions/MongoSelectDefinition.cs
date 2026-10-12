@@ -1210,6 +1210,9 @@ internal sealed class MongoSelectDefinition
     internal void MarkReferenceIncludeConfirmed()
         => _confirmedReferenceIncludes++;
 
+    /// <summary>How many candidate joins an earlier arm or Include level has confirmed so far.</summary>
+    internal int ConfirmedReferenceIncludeCount => _confirmedReferenceIncludes;
+
     /// <summary>
     /// A candidate join no trailing Include confirmed; the query must fall back. Uses <c>!=</c> so more
     /// confirmations than candidates (a broken invariant) also fails closed.

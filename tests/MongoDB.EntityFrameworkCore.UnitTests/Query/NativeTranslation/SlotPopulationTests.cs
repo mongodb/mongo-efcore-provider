@@ -404,17 +404,20 @@ public class SlotPopulationTests
         Assert.True(mongoQuery.Select.HasArrayProjectionLeaf);
     }
 
-    // Renamed-alias control: `new { Addr = c.Address, c.Age }` must decline, because the late-fallback leg needs
-    // the alias to name a real element the driver-LINQ bridge renders under the same name (see TryTranslateLeaf).
+    // Renamed-alias: `new { Addr = c.Address, c.Age }` stages the owned element under its own name ("Address") and maps
+    // the member to it with a DocumentPath alias override, so the alias-addressed shaper and a whole-document late
+    // fallback read the same element.
     [Fact]
-    public void Renamed_owned_reference_entity_leaf_declines()
+    public void Renamed_owned_reference_entity_leaf_is_staged_under_the_element_name()
     {
         var mongoQuery = TranslateToMongoQuery<CustomerWithOwnedAddress>(
             q => q.Select(c => new { Addr = c.Address, c.Age }),
             mb => mb.Entity<CustomerWithOwnedAddress>().OwnsOne(c => c.Address));
 
-        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
-        Assert.Empty(mongoQuery.Select.Projection);
+        Assert.Equal(NativeRoute.Projection, mongoQuery.Select.Route);
+        Assert.Contains(mongoQuery.Select.Projection, p => p.Alias == "Address");
+        Assert.Contains(mongoQuery.Select.Projection, p => p.Alias == "Age");
+        Assert.Equal("Address", mongoQuery.Select.ResolveProjectionAlias("Addr"));
     }
 
     // A non-embedded owned type lives in its own collection, so admitting it would emit `"Address": "$Address"`
@@ -653,16 +656,16 @@ public class SlotPopulationTests
         Assert.IsType<MongoBinaryExpression>(mongoQuery.Select.Projection[1].Expression);
     }
 
-    // A member that isn't a plain top-level field (`c.Name.Length`) declines the whole leaf — this is a minimal
-    // widening, not a general nested-projection engine.
+    // A nested construction with a member that isn't a plain top-level field (`c.Name.Length`) is not a sub-document leaf:
+    // it is flattened into the enclosing projection (FlattenNestedConstructions), each member a leaf under its own name.
     [Fact]
-    public void Document_construction_leaf_with_computed_member_declines_to_fallback()
+    public void Document_construction_leaf_with_computed_member_is_flattened()
     {
         var mongoQuery = TranslateToMongoQuery<Customer>(
             q => q.Select(c => new { Copy = new CustomerDto { Id = c.Id, Name = c.Name, Age = c.Name.Length } }));
 
-        Assert.Equal(NativeRoute.Fallback, mongoQuery.Select.Route);
-        Assert.Empty(mongoQuery.Select.Projection);
+        Assert.Equal(NativeRoute.Projection, mongoQuery.Select.Route);
+        Assert.Equal(["Id", "Name", "Age"], mongoQuery.Select.Projection.Select(p => p.Alias));
     }
 
 

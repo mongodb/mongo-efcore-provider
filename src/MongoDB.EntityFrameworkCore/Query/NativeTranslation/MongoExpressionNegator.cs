@@ -65,6 +65,9 @@ internal static class MongoExpressionNegator
         flipped = node switch
         {
             MongoInExpression e => new MongoInExpression(e.Field, e.Values, !e.Negated),
+            MongoDictionaryContainsKeyExpression e => new MongoDictionaryContainsKeyExpression(e.Path, !e.Negated),
+            MongoFieldPresenceExpression e => e.Negate(),
+            MongoCompositeKeyInExpression e => new MongoCompositeKeyInExpression(e.KeyProperties, e.Values, !e.Negated),
             MongoComputedInExpression e => new MongoComputedInExpression(e.Needle, e.Values, !e.Negated),
             MongoArrayContainsExpression e => new MongoArrayContainsExpression(e.Field, e.Value, !e.Negated),
             MongoRegexExpression e => new MongoRegexExpression(e.Field, e.Kind, e.Term, !e.Negated, e.CaseInsensitive, e.PatternOptions),

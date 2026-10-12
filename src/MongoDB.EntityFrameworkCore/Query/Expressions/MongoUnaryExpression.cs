@@ -29,10 +29,11 @@ internal sealed class MongoUnaryExpression : MongoExpression
     /// </summary>
     /// <param name="op">The unary operator.</param>
     /// <param name="operand">The operand expression.</param>
-    public MongoUnaryExpression(MongoUnaryOperator op, MongoExpression operand)
+    public MongoUnaryExpression(MongoUnaryOperator op, MongoExpression operand, Type? resultType = null)
     {
         Operator = op;
         Operand = operand;
+        _resultType = resultType;
     }
 
     /// <summary>The unary operator.</summary>
@@ -43,7 +44,9 @@ internal sealed class MongoUnaryExpression : MongoExpression
 
     /// <inheritdoc />
     public override Type Type
-        => typeof(bool);
+        => Operator == MongoUnaryOperator.BitNot ? _resultType ?? typeof(int) : typeof(bool);
+
+    private readonly Type? _resultType;
 
     /// <summary>
     /// Returns a new <see cref="MongoUnaryExpression"/> if the operand changed;
@@ -52,7 +55,7 @@ internal sealed class MongoUnaryExpression : MongoExpression
     public MongoUnaryExpression Update(MongoExpression operand)
         => ReferenceEquals(operand, Operand)
             ? this
-            : new MongoUnaryExpression(Operator, operand);
+            : new MongoUnaryExpression(Operator, operand, _resultType);
 
     /// <inheritdoc />
     protected override Expression VisitChildren(ExpressionVisitor visitor)

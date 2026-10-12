@@ -154,6 +154,10 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             throw new NotSupportedException($" Unhandled expression node type '{nameof(shapedQueryExpression.QueryExpression)}'");
         }
 
+        // A non-deterministic call (Random.Next, Guid.NewGuid, EF.Functions.Random) would be evaluated once and baked
+        // into the pipeline; refuse in every mode, before the native/fallback decision.
+        NonDeterministicCalls.ThrowIfAnyNonDeterministic(mongoQueryExpression.CapturedExpression);
+
         // HardDecline: the driver-LINQ fallback would return silently wrong data, so throw under Native/NativeOnly.
         // Explicit DriverLinq remains the user's opt-in.
         var mode = ((MongoQueryCompilationContext)QueryCompilationContext).QueryMode;
@@ -656,6 +660,9 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
             && nativeFactory != null
             && shapedQueryExpression.ResultCardinality == ResultCardinality.Enumerable
             && StreamingEligibility.IsEligible(rootEntityType)
+            // A bare join-INNER entity leaf (`Clients.Select(c => c.Company)`) materializes the joined entity, not the root, so
+            // the root-typed streaming rewriter has no locals for it: DOM shaper.
+            && !mongoQueryExpression.Select.HasBareJoinInnerEntityLeaf
             && AllPendingLookupsAreStreamable(mongoQueryExpression);
 
         var shaperBody = shapedQueryExpression.ShaperExpression;

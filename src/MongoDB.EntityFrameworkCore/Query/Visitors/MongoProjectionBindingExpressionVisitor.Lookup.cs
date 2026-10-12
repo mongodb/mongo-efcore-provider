@@ -568,7 +568,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             ExtractNestedIncludePipeline(nestedInclude.NavigationExpression, nestedLookup, nestedNav.TargetEntityType);
 
             parentLookup.PipelineStages.Add(BuildLookupDocument(nestedLookup));
-            // PipelineKind is write-once: don't overwrite an earlier FallbackOnly (TPH-narrowed target) or
+            // PipelineKind is write-once: don't overwrite an earlier DiscriminatorNarrowed (TPH-narrowed target) or
             // FilteredInclude claim.
             if (parentLookup.PipelineKind == LookupPipelineKind.None)
             {
@@ -750,7 +750,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         {
             lookup.PipelineStages.AddRange(stages);
 
-            // Don't overwrite a FallbackOnly set by the constructor (TPH-narrowed target with its own $match):
+            // Don't overwrite a DiscriminatorNarrowed set by the constructor (TPH-narrowed target with its own $match):
             // that combination isn't validated for the native FilteredInclude path.
             if (lookup.PipelineKind == LookupPipelineKind.None)
             {

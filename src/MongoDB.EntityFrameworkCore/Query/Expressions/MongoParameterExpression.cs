@@ -42,10 +42,12 @@ internal sealed class MongoParameterExpression : MongoExpression
     /// </param>
     /// <param name="valueType">See <see cref="ValueType"/>.</param>
     /// <param name="runtimeEvaluator">See <see cref="RuntimeEvaluator"/>.</param>
+    /// <param name="explicitSerializer">See <see cref="ExplicitSerializer"/>.</param>
     public MongoParameterExpression(
         string name, IProperty? forSerialization, bool extractFromEntityValue = false, int? arrayElementIndex = null,
         Type? rawElementType = null, bool extractEntityKeyFromArrayElements = false, Type? valueType = null,
-        Func<IReadOnlyDictionary<string, object?>, object?>? runtimeEvaluator = null)
+        Func<IReadOnlyDictionary<string, object?>, object?>? runtimeEvaluator = null,
+        MongoDB.Bson.Serialization.IBsonSerializer? explicitSerializer = null)
     {
         Name = name;
         ForSerialization = forSerialization;
@@ -55,6 +57,7 @@ internal sealed class MongoParameterExpression : MongoExpression
         ExtractEntityKeyFromArrayElements = extractEntityKeyFromArrayElements;
         ValueType = valueType;
         RuntimeEvaluator = runtimeEvaluator;
+        ExplicitSerializer = explicitSerializer;
     }
 
     /// <summary>The parameter name.</summary>
@@ -98,6 +101,12 @@ internal sealed class MongoParameterExpression : MongoExpression
     /// holding a clock member (<see cref="RuntimeClock"/>), which must never be baked into the cached template.
     /// </summary>
     public Func<IReadOnlyDictionary<string, object?>, object?>? RuntimeEvaluator { get; }
+
+    /// <summary>
+    /// The serializer that renders the bound value, for a value that belongs to no <see cref="IProperty"/> (a dictionary
+    /// entry, which its dictionary's value serializer writes). Takes precedence over <see cref="ForSerialization"/>.
+    /// </summary>
+    public MongoDB.Bson.Serialization.IBsonSerializer? ExplicitSerializer { get; }
 
     /// <inheritdoc />
     /// <remarks>

@@ -260,13 +260,13 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         Assert.Equal(Run(driver), Run(native));
     }
 
-    // A renamed alias (`P = b.Posts`, alias "P" vs. element "Posts") is declined — see
-    // NativeProjectionBinder.IsNativeArrayProjectionLeaf. The shaper is alias-addressed, but the fallback hands it
-    // an un-projected whole document, so admitting this shape made DriverLinq silently return zero elements.
+    // A renamed alias (`P = b.Posts`, alias "P" vs. element "Posts") stages the array under its document path with an
+    // alias override (member -> path), so the alias-addressed shaper and a whole-document fallback read the same path. It
+    // used to be declined because admitting it without the override made DriverLinq silently return zero elements.
     [Fact]
-    public void Renamed_array_alias_is_declined_and_returns_correct_data_in_every_mode()
+    public void Renamed_array_alias_goes_native_and_returns_correct_data_in_every_mode()
     {
-        var collection = SeedKeyed(nameof(Renamed_array_alias_is_declined_and_returns_correct_data_in_every_mode));
+        var collection = SeedKeyed(nameof(Renamed_array_alias_goes_native_and_returns_correct_data_in_every_mode));
 
         static List<(string Title, int Count)> Run(SingleEntityDbContext<Blog> db)
             => db.Entities.AsNoTracking().OrderBy(b => b.Title)
@@ -277,14 +277,12 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
 
         // Both fallback-capable modes must agree with the seeded truth; DriverLinq is the leg that silently
         // returned zeros.
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             Assert.Equal(new[] {0, 1, 2}, Run(db).Select(r => r.Count));
         }
 
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
-        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly));
     }
 
     // An array leaf under a nested owner (reached through an owned reference) goes native. The full surface
@@ -349,45 +347,75 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
         // RenderProject emits an explicit `_id : 0` suppression UNLESS the projection itself emits _id.
         Assert.DoesNotContain("\"_id\" : 0", mql);
     }
-
-    // An element with an eager-loaded navigation of its own (nested owned collection or reference) is declined by
-    // the native array-leaf branch; Native and DriverLinq return correct rows via the fallback, NativeOnly throws.
-    // (The fallback used to throw ArgumentException in every mode — EF-360 — because the element's auto-include
-    // subquery was rebuilt as IEnumerable<T> rather than the navigation's declared List<T>.)
-    // Only eager-loaded navigations decline; a lazy inverse owner navigation is admitted — see
-    // Array_leaf_whose_element_has_only_a_lazy_inverse_owner_navigation_goes_native.
+    // An element that owns a further collection (Post.Comments): the native array leaf wraps the element shaper in an
+    // IncludeExpression per eager embedded navigation, so the nested collection is populated in every mode.
     [Fact]
-    public void Element_with_its_own_navigation_is_declined_but_the_fallback_returns_correct_rows()
+    public void Element_with_its_own_owned_collection_goes_native_and_returns_correct_rows()
     {
-        var collection = SeedNested(nameof(Element_with_its_own_navigation_is_declined_but_the_fallback_returns_correct_rows));
+        var collection = SeedNested(nameof(Element_with_its_own_owned_collection_goes_native_and_returns_correct_rows));
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly})
+        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContext(collection, NestedModel, mode);
 
-            // Premise: a nested owned navigation is eager-loaded, which is what keeps this shape declined.
+            // Premise: a nested owned navigation is eager-loaded and embedded, which is what the shaper includes.
             var elementNavigations = db.Model.FindEntityType(typeof(NestedBlog))!
                 .FindNavigation(nameof(NestedBlog.Posts))!.TargetEntityType.GetNavigations().ToList();
             Assert.Equal([nameof(NestedPost.Comments)], elementNavigations.Select(n => n.Name));
             Assert.All(elementNavigations, n => Assert.True(n.IsEagerLoaded));
 
-            var query = () => db.Set<NestedBlog>().AsNoTracking()
+            var rows = db.Set<NestedBlog>().AsNoTracking()
                 .OrderBy(b => b.Title)
                 .Select(b => new {b.Title, b.Posts})
                 .ToList();
 
-            if (mode == MongoQueryMode.NativeOnly)
-            {
-                // The array leaf is not admitted, so the whole projection declines; NativeOnly has no fallback.
-                Assert.Throws<NativeTranslationNotSupportedException>(() => query());
-                continue;
-            }
-
-            var rows = query();
-
             Assert.Equal(["a_empty", "b_two"], rows.Select(r => r.Title).ToArray());
             Assert.Empty(rows[0].Posts);
             Assert.Equal(new[] { "h1", "h2" }, rows[1].Posts.Select(p => p.Heading).ToArray());
+        }
+    }
+
+    // Every state of the nested array at both levels: missing / null / empty / populated. The oracle is the whole-entity
+    // read (the doc-path route), so a nested collection the alias read forgot to populate shows up as empty.
+    [Fact]
+    public void Nested_owned_collection_in_an_array_leaf_element_equals_the_whole_entity_oracle()
+    {
+        var name = UniqueCollectionName(nameof(Nested_owned_collection_in_an_array_leaf_element_equals_the_whole_entity_oracle));
+        var raw = database.MongoDatabase.GetCollection<BsonDocument>(name);
+        BsonDocument Comment(string text) => new() {{"Text", text}};
+        raw.InsertMany(
+        [
+            NestedBlogRow("a_posts_missing"),
+            new BsonDocument {{"_id", ObjectId.GenerateNewId()}, {"Title", "b_posts_null"}, {"Posts", BsonNull.Value}},
+            NestedBlogRow(
+                "c_mixed",
+                new BsonDocument {{"Heading", "comments_missing"}},
+                new BsonDocument {{"Heading", "comments_null"}, {"Comments", BsonNull.Value}},
+                new BsonDocument {{"Heading", "comments_empty"}, {"Comments", new BsonArray()}},
+                new BsonDocument {{"Heading", "comments_two"}, {"Comments", new BsonArray {Comment("x"), Comment("y")}}})
+        ]);
+        var collection = database.MongoDatabase.GetCollection<NestedBlog>(name);
+
+        static List<string> Summarize(string title, IEnumerable<NestedPost> posts)
+            => [title, .. posts.Select(p => $"{p.Heading}=[{string.Join("|", p.Comments.Select(c => c.Text))}]")];
+
+        using var oracleDb = CreateContext(collection, NestedModel, MongoQueryMode.Native);
+        var expected = oracleDb.Set<NestedBlog>().AsNoTracking().OrderBy(b => b.Title).ToList()
+            .Select(b => Summarize(b.Title, b.Posts)).ToList();
+
+        Assert.Equal(
+            ["c_mixed", "comments_missing=[]", "comments_null=[]", "comments_empty=[]", "comments_two=[x|y]"],
+            expected[2]);
+
+        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        {
+            using var db = CreateContext(collection, NestedModel, mode);
+            var actual = db.Set<NestedBlog>().AsNoTracking().OrderBy(b => b.Title)
+                .Select(b => new {b.Title, b.Posts})
+                .ToList()
+                .Select(r => Summarize(r.Title, r.Posts)).ToList();
+
+            Assert.Equal(expected, actual);
         }
     }
 
@@ -507,9 +535,9 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
     // EF.Property with a renamed alias is declined like `Mine = b.Posts`: the admissibility rule checks the alias
     // regardless of how the member access is spelled.
     [Fact]
-    public void EF_Property_spelling_with_a_renamed_alias_declines_and_returns_correct_data_in_every_mode()
+    public void EF_Property_spelling_with_a_renamed_alias_goes_native_and_returns_correct_data_in_every_mode()
     {
-        var collection = SeedKeyed(nameof(EF_Property_spelling_with_a_renamed_alias_declines_and_returns_correct_data_in_every_mode));
+        var collection = SeedKeyed(nameof(EF_Property_spelling_with_a_renamed_alias_goes_native_and_returns_correct_data_in_every_mode));
 
         // Contents, not just counts, on both legs: a decline could return the right count with the wrong elements.
         static List<(string Title, int Count, string Headings)> Run(SingleEntityDbContext<Blog> db)
@@ -519,7 +547,7 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
                 .Select(r => (r.Title, r.P.Count, string.Join("|", r.P.Select(p => p.Heading ?? "<null>"))))
                 .ToList();
 
-        foreach (var mode in new[] {MongoQueryMode.Native, MongoQueryMode.DriverLinq})
+        foreach (var mode in new[] {MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq})
         {
             using var db = CreateContext(collection, KeyedModel, mode);
             var actual = Run(db);
@@ -527,8 +555,6 @@ public class NativeArrayProjectionTests(TemporaryDatabaseFixture database) : ICl
             Assert.Equal(new[] {"", "h1", "h2|h3"}, actual.Select(r => r.Headings));
         }
 
-        using var nativeOnly = CreateContext(collection, KeyedModel, MongoQueryMode.NativeOnly);
-        Assert.Throws<NativeTranslationNotSupportedException>(() => Run(nativeOnly));
     }
 
     // Two array leaves in one projection, with distinct values per array so a swapped-alias bug is caught.

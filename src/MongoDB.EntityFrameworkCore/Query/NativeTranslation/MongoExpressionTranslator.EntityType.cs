@@ -28,8 +28,8 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <remarks>
 /// EF Core has no provider-agnostic rewrite for <see cref="object.GetType"/> comparisons (cf. relational's
 /// <c>ProcessGetType</c>). With no base or derived types, <c>GetType()</c> always equals the entity's CLR type, so
-/// the comparison folds to a constant. TPH hierarchies would need a discriminator predicate (as
-/// <c>TryBuildDiscriminatorPredicate</c> does for <c>OfType&lt;T&gt;</c>) and decline.
+/// the comparison folds to a constant. A TPH hierarchy takes the discriminator test of
+/// <see cref="MongoDiscriminatorPredicate"/>, shared with <c>OfType&lt;T&gt;()</c>.
 /// <para>
 /// This avoids EF-202 for the non-hierarchy shape: driver-LINQ narrows on discriminator presence rather than the
 /// comparison type, so <c>GetType() == typeof(Unrelated)</c> wrongly matches every row.
@@ -66,9 +66,9 @@ internal sealed partial class MongoExpressionTranslator
             return false;
         }
 
-        // Hierarchy types need a discriminator predicate, not a constant; decline.
+        // A hierarchy needs a discriminator predicate, not a constant.
         if (_entityType.IsInHierarchy())
-            return false;
+            return TryTranslateHierarchyTypeTest(comparisonType, exact: true, negated: !isEqual, out result);
 
         var matches = _entityType.ClrType == comparisonType;
         result = new MongoConstantExpression(matches == isEqual, forSerialization: null);

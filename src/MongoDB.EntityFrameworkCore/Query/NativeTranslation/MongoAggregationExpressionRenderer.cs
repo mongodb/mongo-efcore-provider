@@ -80,6 +80,7 @@ internal static class MongoAggregationExpressionRenderer
                 => new BsonDocument("$isNumber", Render(bracket.Field, placeholders, elementVariable)),
             MongoBinaryExpression binary => RenderBinary(binary, placeholders, elementVariable),
             MongoSizeExpression size => RenderSize(size, elementVariable),
+            MongoFieldPresenceExpression presence => RenderFieldPresence(presence, elementVariable),
             // Array-expression $avg/$max/$min/$sum over an $addToSet output, not a $group accumulator.
             MongoArrayReduceExpression arrayReduce
                 => new BsonDocument(arrayReduce.OperatorName, FieldRef(arrayReduce.FieldName, elementVariable)),
@@ -195,6 +196,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoBinaryExpression binary
                 => IsRenderableOperator(binary.Operator) && CanRender(binary.Left) && CanRender(binary.Right),
             MongoSizeExpression => true,
+            MongoFieldPresenceExpression => true,
             MongoFilteredSizeExpression filtered => CanRender(filtered.ElementPredicate),
             MongoInExpression inExpr => MongoValueRenderer.IsRenderableInValues(inExpr.Values),
             MongoComputedInExpression computedIn
@@ -204,6 +206,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoUnaryExpression { Operator: MongoUnaryOperator.Not } unary
                 => CanRender(unary.Operand)
                     && !MongoExpressionTranslator.IsUnsafeTruthinessRoot(unary.Operand, out _),
+            MongoUnaryExpression { Operator: MongoUnaryOperator.BitNot } bitNot => CanRender(bitNot.Operand),
             MongoConvertExpression convert
                 => MongoConvertExpression.ToOperatorFor(convert.Type) is not null && CanRender(convert.Operand),
             MongoConditionalExpression conditional
@@ -276,7 +279,10 @@ internal static class MongoAggregationExpressionRenderer
             or MongoBinaryOperator.Multiply
             or MongoBinaryOperator.Divide
             or MongoBinaryOperator.IntegerDivide
-            or MongoBinaryOperator.Modulo;
+            or MongoBinaryOperator.Modulo
+            or MongoBinaryOperator.BitAnd
+            or MongoBinaryOperator.BitOr
+            or MongoBinaryOperator.BitXor;
 
     // Inside a $filter/$map the element is bound to a variable, so its fields are "$$<var>.<path>".
     private static BsonValue FieldRef(string path, string? elementVariable)
@@ -583,6 +589,21 @@ internal static class MongoAggregationExpressionRenderer
                 IfNull(FieldRef(size.FieldName, elementVariable), new BsonArray()))
             : new BsonDocument("$size", FieldRef(size.FieldName, elementVariable));
 
+    // Presence by $type, which tells a missing element ("missing") from a null one ("null"); a bare comparison to null
+    // can't, since the aggregation dialect orders and equates them differently.
+    private static BsonValue RenderFieldPresence(MongoFieldPresenceExpression presence, string? elementVariable)
+    {
+        var type = new BsonDocument("$type", FieldRef(presence.Path, elementVariable));
+        var nullOrMissing = new BsonDocument("$in", new BsonArray { type, new BsonArray { "null", "missing" } });
+        return presence.Kind switch
+        {
+            MongoFieldPresence.Exists => new BsonDocument("$ne", new BsonArray { type, "missing" }),
+            MongoFieldPresence.Missing => new BsonDocument("$eq", new BsonArray { type, "missing" }),
+            MongoFieldPresence.NullOrMissing => nullOrMissing,
+            _ => new BsonDocument("$not", new BsonArray { nullOrMissing })
+        };
+    }
+
     private static BsonValue RenderFilteredSize(
         MongoFilteredSizeExpression node, PlaceholderTable placeholders, string? elementVariable)
     {
@@ -780,6 +801,9 @@ internal static class MongoAggregationExpressionRenderer
     // Aggregation-dialect Not: { $not: [ <expr> ] }, for any operand CanRender admits (always inside $expr).
     private static BsonValue RenderUnary(MongoUnaryExpression unary, PlaceholderTable placeholders, string? elementVariable)
     {
+        if (unary.Operator == MongoUnaryOperator.BitNot)
+            return new BsonDocument("$bitNot", Render(unary.Operand, placeholders, elementVariable));
+
         if (unary.Operator != MongoUnaryOperator.Not)
             throw new NativeTranslationNotSupportedException($"Unsupported unary operator '{unary.Operator}'.");
 
@@ -834,6 +858,9 @@ internal static class MongoAggregationExpressionRenderer
             MongoBinaryOperator.Multiply => "$multiply",
             MongoBinaryOperator.Divide => "$divide",
             MongoBinaryOperator.Modulo => "$mod",
+            MongoBinaryOperator.BitAnd => "$bitAnd",
+            MongoBinaryOperator.BitOr => "$bitOr",
+            MongoBinaryOperator.BitXor => "$bitXor",
             _ => throw new NativeTranslationNotSupportedException(
                 $"Unsupported aggregation operator '{binary.Operator}'.")
         };

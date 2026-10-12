@@ -24,6 +24,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure; // IsEFPropertyMethod()
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Query;           // QueryableMethods
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using MongoDB.EntityFrameworkCore.Extensions;        // GetDocumentPath(), IsEmbedded()
 using MongoDB.EntityFrameworkCore.Query.Expressions;
 
@@ -174,6 +175,31 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
+    /// Resolves a bare stored field (nullable/widening converts peeled) that <c>Sum</c>/<c>Min</c>/<c>Max</c>/<c>Average</c>
+    /// can reduce server-side although it is value-converted or non-default-represented, where
+    /// <see cref="TryTranslateValue"/> declines. The reduction reads the STORED value, so the property must preserve
+    /// the CLR answer (<see cref="StoredOrdering"/>); Min/Max results are read back through the property's serializer
+    /// (<c>NativeAggregateReadBack</c>).
+    /// </summary>
+    public bool TryTranslateStoredAggregateField(
+        Expression body, MongoAggregateOperator op, [NotNullWhen(true)] out MongoFieldExpression? field)
+    {
+        field = null;
+        if (!TryResolveInnerField(UnwrapOrderPreserving(body), out var candidate))
+            return false;
+
+        var property = candidate.Property;
+        var admitted = op is MongoAggregateOperator.Sum or MongoAggregateOperator.Average
+            ? IsNumericType(property.ClrType) && StoredOrdering.PreservesClrValueForNumericReduction(property)
+            : StoredOrdering.PreservesClrOrderingForAggregateAndSort(property);
+        if (!admitted)
+            return false;
+
+        field = candidate;
+        return true;
+    }
+
+    /// <summary>
     /// Translates a computed string receiver for <c>StartsWith</c>/<c>EndsWith</c>/<c>Contains</c>, or returns
     /// <see langword="null"/>. The result is never a bare field or element ref (those resolve earlier), so the
     /// regex it feeds always renders via <c>$expr</c>/<c>$regexMatch</c> (see
@@ -217,6 +243,11 @@ internal sealed partial class MongoExpressionTranslator
         else if (TryTranslateDateTimeMember(receiver, out var nestedDateTimeExpr))
         {
             receiverExpr = nestedDateTimeExpr;
+        }
+        else if (receiverType == typeof(DateTime) && TryTranslateDateAdd(receiver, allowNumericWidening: false, out var dateAddExpr))
+        {
+            // x.When.AddYears(-1).Year: a part of a computed instant (a DateTimeOffset receiver still needs a field).
+            receiverExpr = dateAddExpr;
         }
         else
         {
@@ -277,15 +308,15 @@ internal sealed partial class MongoExpressionTranslator
     /// default stored form. The projection reader reads it through
     /// <c>BsonSerializerFactory.TimeOfDayMillisecondsSerializer</c>, and every operator that reads the projected alias
     /// afterwards must recognise it (<see cref="MongoDatePartExpression.IsTimeOfDay"/>: <see cref="AllFieldsDefaultSerialized"/>,
-    /// the projected Distinct, set-op operand matching) or decline (see <see cref="MongoDatePart"/>). Declines a <c>DateTimeOffset</c> receiver, a computed receiver, a
-    /// non-default-serialized field, and a <c>HasDateTimeKind(Local)</c> field, whose server-side time of day is the
+    /// the projected Distinct, set-op operand matching) or decline (see <see cref="MongoDatePart"/>). A <c>DateTimeOffset</c> receiver yields its local time of day. Declines
+    /// a computed receiver, a non-default-serialized field, and a <c>HasDateTimeKind(Local)</c> field, whose server-side time of day is the
     /// UTC one where C# answers the local one (EF-459).
     /// </remarks>
     public bool TryTranslateTimeOfDayLeaf(Expression leaf, [NotNullWhen(true)] out MongoExpression? result)
     {
         result = null;
         if (leaf is not MemberExpression { Member.Name: nameof(DateTime.TimeOfDay), Expression: { } receiver }
-            || receiver.Type != typeof(DateTime)
+            || (receiver.Type != typeof(DateTime) && receiver.Type != typeof(DateTimeOffset))
             || !TryResolveInnerField(receiver, out var field)
             || field.Property.GetDateTimeKind() == DateTimeKind.Local)
         {
@@ -295,7 +326,9 @@ internal sealed partial class MongoExpressionTranslator
         if (!AllFieldsDefaultSerialized(field))
             return false;
 
-        result = new MongoDatePartExpression(field, MongoDatePart.TimeOfDay);
+        // A DateTimeOffset's time of day is that of its stored local (offset) time, as for its other date parts.
+        MongoExpression operand = receiver.Type == typeof(DateTimeOffset) ? new MongoDateTimeOffsetLocalExpression(field) : field;
+        result = new MongoDatePartExpression(operand, MongoDatePart.TimeOfDay);
         return true;
     }
 
@@ -338,9 +371,7 @@ internal sealed partial class MongoExpressionTranslator
         result = null;
 
         if (node is not MethodCallExpression { Object: { } receiver } call
-            || call.Arguments.Count != 1
-            || (call.Method.DeclaringType != typeof(DateTime) && call.Method.DeclaringType != typeof(DateTimeOffset))
-            || !DateAddUnitsByMethodName.TryGetValue(call.Method.Name, out var unit))
+            || !TryGetDateAddShape(call, out var unit, out var constantAmount))
         {
             return false;
         }
@@ -360,7 +391,7 @@ internal sealed partial class MongoExpressionTranslator
             && NativeDateTimeKindReadBack.ReferencesKindSensitiveProperty(startDate))
             return false;
 
-        var amount = TranslateOperand(call.Arguments[0], allowNumericWidening: true);
+        var amount = constantAmount ?? TranslateOperand(call.Arguments[0], allowNumericWidening: true);
         if (amount is null)
             return false;
 
@@ -440,12 +471,38 @@ internal sealed partial class MongoExpressionTranslator
     /// leaf registration and this translator gate on the same method set.
     /// </summary>
     public static bool IsDateAddMethod(MethodCallExpression call)
-        => (call.Method.DeclaringType == typeof(DateTime) || call.Method.DeclaringType == typeof(DateTimeOffset))
-            && call.Arguments.Count == 1
-            && DateAddUnitsByMethodName.ContainsKey(call.Method.Name);
+        => TryGetDateAddShape(call, out _, out _);
 
-    // The AddXxx overloads that map 1:1 onto a $dateAdd unit (see MongoDateAddUnit for why AddTicks/Add(TimeSpan)
-    // are absent). DateTime and DateTimeOffset declare identically-named members.
+    // The one recogniser behind both the emit side and IsDateAddMethod, so they cannot disagree. AddTicks is admitted
+    // only with a constant that is a whole number of milliseconds: BSON dates are millisecond-precise and $dateAdd
+    // rejects a fractional amount, so sub-millisecond and non-constant ticks decline.
+    private static bool TryGetDateAddShape(MethodCallExpression call, out MongoDateAddUnit unit, out MongoExpression? constantAmount)
+    {
+        unit = default;
+        constantAmount = null;
+        if ((call.Method.DeclaringType != typeof(DateTime) && call.Method.DeclaringType != typeof(DateTimeOffset))
+            || call.Arguments.Count != 1)
+        {
+            return false;
+        }
+
+        if (DateAddUnitsByMethodName.TryGetValue(call.Method.Name, out unit))
+            return true;
+
+        if (call.Method.Name == nameof(DateTime.AddTicks)
+            && Unwrap(call.Arguments[0]) is ConstantExpression { Value: long ticks }
+            && ticks % TimeSpan.TicksPerMillisecond == 0)
+        {
+            unit = MongoDateAddUnit.Millisecond;
+            constantAmount = new MongoConstantExpression((double)(ticks / TimeSpan.TicksPerMillisecond), forSerialization: null);
+            return true;
+        }
+
+        return false;
+    }
+
+    // The AddXxx overloads that map 1:1 onto a $dateAdd unit (AddTicks is handled by TryGetDateAddShape; Add(TimeSpan)
+    // is absent, see MongoDateAddUnit). DateTime and DateTimeOffset declare identically-named members.
     private static readonly Dictionary<string, MongoDateAddUnit> DateAddUnitsByMethodName = new()
     {
         [nameof(DateTime.AddYears)] = MongoDateAddUnit.Year,
@@ -683,6 +740,13 @@ internal sealed partial class MongoExpressionTranslator
 
             // --- Comparison binary operators ---
 
+            // An owned entity against a captured/constructed value of its type (`p.Home == x`, `l == x` in an element
+            // scope): a per-property conjunction. See MongoExpressionTranslator.OwnedEquality.cs.
+            case BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } ownedEq
+                when TryTranslateOwnedEntityEquality(
+                    ownedEq.Left, ownedEq.Right, ownedEq.NodeType == ExpressionType.NotEqual, out var ownedEquality):
+                return ownedEquality;
+
             // Root-entity structural equality (`c == local`, `c == null`); must precede the ordinary comparison
             // dispatch, which has no coverage for it.
             case BinaryExpression { NodeType: ExpressionType.Equal or ExpressionType.NotEqual } eq
@@ -783,11 +847,12 @@ internal sealed partial class MongoExpressionTranslator
             {
                 var leftArg = staticEqualsCall.Arguments[0].RemoveObjectConvert();
                 var rightArg = staticEqualsCall.Arguments[1].RemoveObjectConvert();
-                if (leftArg.Type != rightArg.Type)
+                // Nullability alone doesn't make the pair mismatched: Equals(DateTime?, DateTime) is a lifted ==.
+                var leftUnderlying = leftArg.Type.UnwrapNullableType();
+                var rightUnderlying = rightArg.Type.UnwrapNullableType();
+                if (leftUnderlying != rightUnderlying)
                 {
-                    return ExpressionExtensionMethods.AreMismatchedExactEqualityTypes(
-                        leftArg.Type.UnwrapNullableType(),
-                        rightArg.Type.UnwrapNullableType())
+                    return ExpressionExtensionMethods.AreMismatchedExactEqualityTypes(leftUnderlying, rightUnderlying)
                         ? new MongoConstantExpression(false, forSerialization: null)
                         : null;
                 }
@@ -887,6 +952,9 @@ internal sealed partial class MongoExpressionTranslator
             // --- Entity-list membership: customers.Contains(c) ---
             // Must precede the general membership arm, which requires a member-access item. See
             // MongoExpressionTranslator.EntityEquality.cs.
+            case MethodCallExpression ownedContainsCall when TryTranslateOwnedCollectionContains(ownedContainsCall, out var ownedContains):
+                return ownedContains;
+
             case MethodCallExpression entityContainsCall when TryTranslateEntityListContains(entityContainsCall, out var entityListContains):
                 return entityListContains;
 
@@ -1043,13 +1111,41 @@ internal sealed partial class MongoExpressionTranslator
             case MethodCallExpression regexIsMatchCall when TryTranslateRegexIsMatch(regexIsMatchCall, out var regexIsMatchResult):
                 return regexIsMatchResult;
 
+            // --- Mql.Exists / Mql.IsMissing / Mql.IsNullOrMissing over a stored element ---
+
+            case MethodCallExpression { Method.DeclaringType: var mqlDeclaring } presenceCall
+                when mqlDeclaring == typeof(MongoDB.Driver.Mql)
+                     && TryTranslateFieldPresence(presenceCall, out var fieldPresence):
+                return fieldPresence;
+
+            // --- d.Dict.ContainsKey("key") over a string-keyed dictionary property ---
+
+            case MethodCallExpression { Method.Name: "ContainsKey" } containsKeyCall
+                when TryTranslateDictionaryContainsKey(containsKeyCall, out var containsKeyResult):
+                return containsKeyResult;
+
             // --- Quantifiers over an owned (embedded) collection: source.Any() / Any(pred) / All(pred) ---
 
             case MethodCallExpression call
                 when TryMatchQuantifierMethod(call, out var quantifier, out var quantifierSource, out var elementLambda):
             {
                 if (!TryResolveOwnedCollectionPath(Unwrap(quantifierSource), out var arrayPath, out var elementType, out var sourceIsOuter))
+                {
+                    // A bare Any() over a primitive collection property is the same "count >= 1" node as the owned form.
+                    // Any(pred)/All(pred) over a primitive collection stay declined.
+                    if (elementLambda is null
+                        && quantifier == MongoQuantifierKind.Any
+                        && TryResolvePrimitiveCollectionPath(quantifierSource, out var primitiveAnyPath, out var primitiveAnyOuter)
+                        && !primitiveAnyOuter)
+                    {
+                        return new MongoBinaryExpression(
+                            MongoBinaryOperator.GreaterThanOrEqual,
+                            new MongoSizeExpression(primitiveAnyPath, typeof(int), nullSafe: true),
+                            new MongoConstantExpression(1, forSerialization: null));
+                    }
+
                     return null; // not an owned-collection source rooted at the query parameter
+                }
 
                 if (sourceIsOuter)
                     return null; // a quantifier over an outer-scoped collection isn't supported
@@ -1096,6 +1192,7 @@ internal sealed partial class MongoExpressionTranslator
 
                 // An element-scoped translator yields element-relative paths, as $elemMatch requires (mirror of
                 // NativeSelectManyBinder.TryBuildOwnedInnerFilter, which then prefixes them).
+                elementTranslator.ElementParam = elementLambda.Parameters[0];
                 if (!elementTranslator.TryTranslate(elementLambda.Body, out var translated))
                     return null;
 
@@ -1295,6 +1392,23 @@ internal sealed partial class MongoExpressionTranslator
 
             var rootRef = new MongoElementRefExpression(MongoElementRefExpression.WholeRootDocumentPath, _entityType.ClrType);
             return new MongoBinaryExpression(selfOp.Value, rootRef, rootRef);
+        }
+
+        // --- A string-keyed dictionary entry against a value (`d.Dict["key"] == v`) ---
+        if (TryTranslateDictionaryEntryComparison(left, right, nodeType, out var dictionaryComparison))
+            return dictionaryComparison;
+
+        // --- `x.P.ToString() == value` over a property stored as the string ToString() would produce ---
+        if (nodeType is ExpressionType.Equal or ExpressionType.NotEqual
+            && TryTranslateStoredToStringComparison(leftUnwrapped, rightUnwrapped, nodeType) is { } toStringComparison)
+        {
+            return toStringComparison;
+        }
+
+        if (nodeType is ExpressionType.Equal or ExpressionType.NotEqual
+            && TryTranslateStoredToStringComparison(rightUnwrapped, leftUnwrapped, nodeType) is { } mirroredToStringComparison)
+        {
+            return mirroredToStringComparison;
         }
 
         // A bare flattened alias (`.Select(g => g.Sum(o => o.OrderID)).All(v => v >= 0)`) and a named one
@@ -1512,7 +1626,7 @@ internal sealed partial class MongoExpressionTranslator
     // Query-native member-vs-value arm of TranslateComparisonCore; see StoredOrdering. The field-to-field/$expr arm is
     // stricter (AllFieldsDefaultSerialized).
     private static bool ComparisonPreservesClrOrdering(ExpressionType nodeType, IProperty property)
-        => !IsRelationalComparison(nodeType) || StoredOrdering.PreservesClrOrdering(property);
+        => !IsRelationalComparison(nodeType) || StoredOrdering.PreservesClrOrderingForNativeComparison(property);
 
     // The four type-bracketed operators. Equality is absent: $eq/$ne partition every value, including null/missing.
     private static bool IsRelationalComparison(ExpressionType nodeType)
@@ -1534,9 +1648,49 @@ internal sealed partial class MongoExpressionTranslator
         IProperty property, Type? toleratedWideningTarget, bool isIdentityLikeConvert)
         => isIdentityLikeConvert
             ? property
-            : toleratedWideningTarget is not null && NativeGroupByBinder.HasDefaultKeySerialization(property)
+            : (toleratedWideningTarget is not null && NativeGroupByBinder.HasDefaultKeySerialization(property))
+              || StoredOrdering.ConstantsSerializeByClrType(property)
                 ? null
                 : property;
+
+    /// <summary>
+    /// <c>x.P.ToString() ==/!= value</c> where <c>P</c> is stored as the string its <c>ToString()</c> produces: a
+    /// non-nullable property with EF's built-in <c>GuidToStringConverter</c>, <c>NumberToStringConverter&lt;T&gt;</c> or
+    /// <c>EnumToStringConverter&lt;T&gt;</c> and no <c>BsonRepresentation</c>. The comparison is then the stored string
+    /// against the string value, with no conversion either side. A floating-point number is formatted by the
+    /// converter with the invariant culture, where <c>ToString()</c> uses the current one; the stored form is what the
+    /// driver compared too, so the culture is not replicated (as for ordinal string comparisons).
+    /// </summary>
+    private MongoBinaryExpression? TryTranslateStoredToStringComparison(Expression call, Expression value, ExpressionType nodeType)
+    {
+        if (call is not MethodCallExpression { Method.Name: nameof(ToString), Object: { } receiver, Arguments.Count: 0 }
+            || value.Type != typeof(string)
+            || !IsSimpleValue(value)
+            || !TryResolveMember(Unwrap(receiver), out var property, out var path, out var isOuter)
+            || isOuter
+            || property.ClrType.IsNullableValueType()
+            || property.GetBsonRepresentation() != null)
+        {
+            return null;
+        }
+
+        var converter = property.GetValueConverter() ?? property.GetTypeMapping().Converter;
+        if (converter is null || converter.ProviderClrType != typeof(string))
+            return null;
+
+        var converterType = converter.GetType();
+        var isBuiltInToString = converterType == typeof(GuidToStringConverter)
+            || (converterType.IsGenericType
+                && converterType.GetGenericTypeDefinition() is var definition
+                && (definition == typeof(NumberToStringConverter<>) || definition == typeof(EnumToStringConverter<>)));
+        if (!isBuiltInToString)
+            return null;
+
+        var operand = TranslateValue(value, forSerialization: null);
+        return operand is null
+            ? null
+            : new MongoBinaryExpression(MapComparisonOperator(nodeType)!.Value, new MongoFieldExpression(property, path), operand);
+    }
 
     // A bare constant or query parameter (including a constant-index `args[0]` into a parameter array), or a closed
     // clock subtree evaluated per execution (RuntimeClock.IsRuntimeEvaluable, the predicate TranslateValue's
@@ -1547,6 +1701,24 @@ internal sealed partial class MongoExpressionTranslator
            || NativeQueryParameter.TryGetQueryParameterName(node, out _)
            || NativeQueryParameter.TryGetParameterArrayElementIndex(node, out _, out _)
            || RuntimeClock.IsRuntimeEvaluable(node);
+
+    /// <summary>int/long (or nullable): the integer types whose C# bitwise result matches the server's. short/byte promote to
+    /// int through a Convert; uint/ulong are excluded (the server's results are signed).</summary>
+    internal static bool IsBitwiseInteger(Type type)
+        => type.UnwrapNullableType() == typeof(int) || type.UnwrapNullableType() == typeof(long);
+
+    /// <summary>Maps an integer <c>&amp;</c>/<c>|</c>/<c>^</c> to its bitwise operator; kept apart from
+    /// <see cref="MapArithmeticOperator"/>, which other binders share.</summary>
+    internal static MongoBinaryOperator? MapBitwiseOperator(BinaryExpression node)
+        => IsBitwiseInteger(node.Type) && IsBitwiseInteger(node.Left.Type) && IsBitwiseInteger(node.Right.Type)
+            ? node.NodeType switch
+            {
+                ExpressionType.And => MongoBinaryOperator.BitAnd,
+                ExpressionType.Or => MongoBinaryOperator.BitOr,
+                ExpressionType.ExclusiveOr => MongoBinaryOperator.BitXor,
+                _ => null
+            }
+            : null;
 
     internal static MongoBinaryOperator? MapComparisonOperator(ExpressionType nodeType)
         => nodeType switch
@@ -1786,6 +1958,15 @@ internal sealed partial class MongoExpressionTranslator
         // by reference only, so every non-root single-scope translator must be built after an identity guard
         // (ReferencesEnclosingScope / NativeSelectManyBinder.ReferencesParameter); otherwise a shared property
         // name could retarget an enclosing member to the inner scope (wrong rows).
+        // The same count over a primitive collection property (string[] / List<int>), unfiltered only.
+        if (TryMatchCountExpression(node, out var primitiveCountSource, out var primitiveCountPredicate)
+            && primitiveCountPredicate is null
+            && TryResolvePrimitiveCollectionPath(primitiveCountSource, out var primitiveCountPath, out var primitiveCountOuter)
+            && !primitiveCountOuter)
+        {
+            return new MongoSizeExpression(primitiveCountPath, node.Type, nullSafe: true);
+        }
+
         if (TryMatchCountExpression(node, out var countSource, out var countPredicate)
             && TryResolveOwnedCollectionPath(countSource, out var arrayPath, out var countElementType, out var countSourceIsOuter)
             && !countSourceIsOuter) // same out-of-scope note as the quantifier arm above
@@ -1824,6 +2005,29 @@ internal sealed partial class MongoExpressionTranslator
                 return null;
 
             return new MongoBinaryExpression(arithOp, left, right);
+        }
+
+        // Integer & | ^ and ~ (int/long, nullable too): $bitAnd/$bitOr/$bitXor/$bitNot, which null-propagate like the lifted C# operators.
+        // Ahead of the generic bool `Not`/`&`/`|` hand-offs below, which assume a boolean predicate.
+        if (node is BinaryExpression bitwise && MapBitwiseOperator(bitwise) is { } bitwiseOp)
+        {
+            var left = TranslateOperand(bitwise.Left, allowNumericWidening);
+            if (left is null)
+                return null;
+
+            var right = TranslateOperand(bitwise.Right, allowNumericWidening);
+            if (right is null)
+                return null;
+
+            return new MongoBinaryExpression(bitwiseOp, left, right);
+        }
+
+        if (node is UnaryExpression { NodeType: ExpressionType.Not } bitwiseNot && IsBitwiseInteger(bitwiseNot.Type))
+        {
+            var complemented = TranslateOperand(bitwiseNot.Operand, allowNumericWidening);
+            return complemented is null
+                ? null
+                : new MongoUnaryExpression(MongoUnaryOperator.BitNot, complemented, bitwiseNot.Type);
         }
 
         // Unary minus → $subtract:[0, x], matching the driver's shape. Numeric only, so e.g. TimeSpan negation

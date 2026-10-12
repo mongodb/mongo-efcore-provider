@@ -770,9 +770,24 @@ internal static class NativeGroupByBinder
         // serialization, so a value-converted member falls back rather than aggregating the raw stored value. EF
         // inlines a GroupBy(key, elementSelector)'s element selector into this lambda, so no separate handling is
         // needed.
-        if (call.Arguments[1].UnwrapLambdaFromQuote() is not { } selector
-            || !scope.Translator.TryTranslateValue(selector.Body, out var operand))
+        if (call.Arguments[1].UnwrapLambdaFromQuote() is not { } selector)
+            return false;
+
+        // An accumulator over the grouping key itself (`g.Max(e => g.Key)`, `g.Sum(e => g.Key.A)`): the key part's raw
+        // per-document expression, never "_id" (circular inside the $group that produces it). Constant within the
+        // group, so the reducer yields the key; left-outer join levels decline, as for accumulator conditions.
+        MongoExpression? operand;
+        if (TryResolveKeyReferenceAsRawExpression(selector.Body, selector.Body, scope, out var keyOperand))
+        {
+            if (scope.Translator.HasLeftOuterJoinLevel)
+                return false;
+
+            operand = keyOperand;
+        }
+        else if (!scope.Translator.TryTranslateValue(selector.Body, out operand))
+        {
             return false; // untranslatable selector shape (e.g. a correlated method call) — fall back
+        }
 
         if (ReducesPossiblyUnmatchedJoinSideToDefault(op, call.Method.ReturnType, selector.Body, operand, scope.Translator))
             return false;

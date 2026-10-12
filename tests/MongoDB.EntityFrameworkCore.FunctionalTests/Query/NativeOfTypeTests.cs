@@ -171,40 +171,34 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
     }
 
     [Fact]
-    public void OfType_composed_with_Distinct_on_derived_members_falls_back_under_native_only()
+    public void OfType_composed_with_Distinct_on_derived_members_goes_native()
     {
         var mapping = GetMapping(MappingMode.RealProperty);
         var collection = database.CreateCollection<BaseEntity>();
         SetupTestData(Make(collection, MongoQueryMode.Native, mapping));
 
-        // Sequence 1 and 2 share ("Customer 1", "123 Main St"), so Distinct is observable (3 pairs overall).
-        // Falls back because Name/ShippingAddress are Customer-only and the translator resolves members against
-        // the root entity type (BaseEntity), not the OfType-narrowed type.
-        using (var db = Make(collection, MongoQueryMode.NativeOnly, mapping))
+        // Sequence 1 and 2 share ("Customer 1", "123 Main St"), so Distinct is observable (3 pairs overall). Name and
+        // ShippingAddress are Customer-only: they resolve against the OfType-narrowed parameter type, not the root.
+        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
         {
-            Assert.Throws<NativeTranslationNotSupportedException>(() =>
-                db.Entities.OfType<Customer>().Select(x => new { x.Name, x.ShippingAddress }).Distinct().ToList());
+            using var db = Make(collection, mode, mapping);
+            var result = db.Entities.OfType<Customer>()
+                .Select(x => new { x.Name, x.ShippingAddress })
+                .Distinct()
+                .AsEnumerable()
+                .OrderBy(r => r.Name)
+                .ToList();
+
+            Assert.Equal(
+                new[] { ("Customer 1", "123 Main St"), ("Customer 2", "123 Main St"), ("SubCustomer 1", "3.5 Inch Dr.") },
+                result.Select(r => (r.Name, r.ShippingAddress)).ToArray());
         }
-
-        // Native == DriverLinq: with the fallback, results are still correct and deduped.
-        using var nativeDb = Make(collection, MongoQueryMode.Native, mapping);
-        var result = nativeDb.Entities.OfType<Customer>()
-            .Select(x => new { x.Name, x.ShippingAddress })
-            .Distinct()
-            .AsEnumerable()
-            .OrderBy(r => r.Name)
-            .ToList();
-
-        Assert.Equal(
-            new[] { ("Customer 1", "123 Main St"), ("Customer 2", "123 Main St"), ("SubCustomer 1", "3.5 Inch Dr.") },
-            result.Select(r => (r.Name, r.ShippingAddress)).ToArray());
     }
 
     [Fact]
     public void OfType_composed_with_Distinct_on_base_declared_member_goes_native()
     {
-        // Companion to the test above: a BaseEntity-declared member through the same composition goes native,
-        // so the fallback there is the derived-member gap, not OfType + Distinct itself.
+        // Companion to the test above: a BaseEntity-declared member through the same composition.
         var mapping = GetMapping(MappingMode.RealProperty);
         var collection = database.CreateCollection<BaseEntity>();
         SetupTestData(Make(collection, MongoQueryMode.Native, mapping));

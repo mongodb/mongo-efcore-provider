@@ -2216,6 +2216,13 @@ Customers.{ "$match" : { "$expr" : { "$eq" : ["$_id", { "$concat" : [{ "$ifNull"
         await AssertTranslationFailed(() =>
             base.Where_bitwise_xor(async));
 
+        // A refused query logs no MQL when driver-LINQ is not attempted.
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql();
+            return;
+        }
+
         AssertMql(
             """
             Customers.

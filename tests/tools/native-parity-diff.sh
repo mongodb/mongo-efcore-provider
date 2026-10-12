@@ -14,6 +14,13 @@ out="$(mkdir -p "$2" && cd "$2" && pwd)"
 mkdir -p "$out/trx"
 # Remove stale results so a crashed run cannot be masked by older files.
 rm -f "$out/trx/$v-"*.trx "$out/$v-"*-regress.txt "$out/$v-"*-improve.txt "$out/$v-"*-missing.txt
+# Windows installs of Python usually provide only "python" (and "py"), not "python3". Override with PYTHON=<cmd>.
+py="${PYTHON:-}"
+if [ -z "$py" ]; then
+  for c in python3 python py; do command -v "$c" >/dev/null 2>&1 && { py="$c"; break; }; done
+fi
+[ -n "$py" ] || { echo "No Python interpreter found (tried python3, python, py); set PYTHON=<cmd>." >&2; exit 2; }
+export PYTHONUTF8=1
 cd "$(dirname "$0")/../.."
 unset MONGODB_URI ATLAS_URI
 # The NativeOnly alias would override MONGODB_EF_QUERY_MODE for the DriverLinq leg (the resolver now throws on that
@@ -28,4 +35,4 @@ for m in DriverLinq NativeOnly; do
   done
 done
 wait || true
-python3 "tests/tools/native-parity-diff.py" "$out" "$v" ${gate[@]+"${gate[@]}"}
+"$py" "tests/tools/native-parity-diff.py" "$out" "$v" ${gate[@]+"${gate[@]}"}

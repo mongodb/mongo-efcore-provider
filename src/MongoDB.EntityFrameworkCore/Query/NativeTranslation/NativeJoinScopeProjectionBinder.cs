@@ -124,7 +124,10 @@ internal static class NativeJoinScopeProjectionBinder
             var referenceIncludeLevels = new List<MongoJoinScopeLevel>();
             while (unwrappedLeafBody is IncludeExpression include)
             {
-                if (include.Navigation is not { IsCollection: true })
+                // A collection or an embedded (owned) Include needs nothing staged beyond the whole document: its data lives
+                // in the leaf's own document.
+                if (include.Navigation is not { IsCollection: true }
+                    && !(include.Navigation is INavigation ownedNavigation && ownedNavigation.IsEmbedded()))
                 {
                     if (TryResolveReferenceIncludeLevel(mongoQ, scope, rootParam, include, out var referenceLevel))
                     {
@@ -163,6 +166,25 @@ internal static class NativeJoinScopeProjectionBinder
                 foreach (var referenceLevel in referenceIncludeLevels)
                 {
                     if (!TryStageInnerLevel(referenceLevel, staged, seenAliases))
+                    {
+                        return false;
+                    }
+                }
+
+                continue;
+            }
+
+            // A construction whose members are ALL whole-entity Inner leaves (`o1 = new { o2 = ti.Inner }`, an inner
+            // `select new { o2 }`): the wrapper has no projection of its own; each member's level is staged whole (shared,
+            // per level, with a sibling `o1.o2` leaf), and BindResultMember rebinds each member's shaper by index.
+            // The root (index 0) and Include-wrapped members decline, keeping the alias rules above.
+            if (leafBody.TryGetProjectionMembers(out var wrapperMembers)
+                && wrapperMembers.Count > 0
+                && TryResolveEntityWrapperLevels(scope, rootParam, wrapperMembers, out var wrapperLevels))
+            {
+                foreach (var wrapperLevel in wrapperLevels)
+                {
+                    if (!TryStageInnerLevel(wrapperLevel, staged, seenAliases))
                     {
                         return false;
                     }
@@ -357,6 +379,32 @@ internal static class NativeJoinScopeProjectionBinder
 
         return staged[existingIndex].Expression is MongoElementRefExpression existingRef
                && existingRef.Path == level.InnerPrefix;
+    }
+
+    /// <summary>
+    /// Whether every member of a construction is a bare whole-entity Inner leaf of some level (index &gt;= 1, no Include),
+    /// yielding those levels in member order.
+    /// </summary>
+    private static bool TryResolveEntityWrapperLevels(
+        MongoJoinScope scope, ParameterExpression rootParam, IReadOnlyList<(string MemberName, Expression Value)> members,
+        [NotNullWhen(true)] out List<MongoJoinScopeLevel>? levels)
+    {
+        levels = [];
+        foreach (var (_, value) in members)
+        {
+            if (!MongoTransparentScopeResolver.TryResolveScopeDepth(
+                    value, rootParam, MongoTransparentScopeResolver.TransparentIdentifierHops,
+                    sourceCount: scope.Levels.Count, out var index)
+                || index == 0)
+            {
+                levels = null;
+                return false;
+            }
+
+            levels.Add(scope.Levels[index - 1]);
+        }
+
+        return true;
     }
 
     /// <summary>

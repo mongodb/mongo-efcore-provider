@@ -823,14 +823,14 @@ public class NativeOwnedCollectionCountTests(TemporaryDatabaseFixture database) 
     }
 
     [Fact]
-    public void A_primitive_collection_Count_declines_and_falls_back_to_correct_rows()
+    public void A_primitive_collection_Count_goes_native()
     {
-        // TryResolveOwnedCollectionPath requires an embedded collection navigation; Tags is a primitive-collection
-        // property. Deferred until primitive collections get Any/All/Count together.
-        var collection = Seed(nameof(A_primitive_collection_Count_declines_and_falls_back_to_correct_rows),
+        // Tags is a primitive-collection property, not an owned navigation: TryResolvePrimitiveCollectionPath sizes it
+        // like an owned collection (a missing array counts as empty).
+        var collection = Seed(nameof(A_primitive_collection_Count_goes_native),
             RowWithTags("notags"), RowWithTags("twotags", "a", "b"));
 
-        var titles = AssertDeclinesCleanly(collection, q => q.Where(b => b.Tags.Count > 1));
+        var titles = AssertNativeAndParity(collection, q => q.Where(b => b.Tags.Count > 1));
 
         Assert.Equal(new[] { "twotags" }, titles);
     }

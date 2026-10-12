@@ -16,6 +16,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
+using Microsoft.EntityFrameworkCore.Infrastructure; // IsEFPropertyMethod()
 
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
@@ -108,6 +109,26 @@ internal static class MongoTransparentScopeResolver
             }
 
             return base.VisitMember(node);
+        }
+
+        // EF.Property(<bare scope access>, "Shadow"): the receiver is the scope itself (`ti.Outer.Inner`), not a member of
+        // one, so VisitMember never sees it and the root parameter would survive the rewrite (declining the leaf). Re-root
+        // the receiver onto the scope's synthetic parameter exactly as a member access on it is.
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (node.Method.IsEFPropertyMethod()
+                && node.Arguments is [var receiver, ConstantExpression { Value: string } propertyName]
+                && receiver.RemoveConvert() is MemberExpression bareScope
+                && TryResolveScopeDepth(bareScope, rootParam, hopNames, sourceCount, out var scope)
+                && node.Method.GetParameters()[0].ParameterType.IsAssignableFrom(scopeParams[scope].Type))
+            {
+                if (ResolvedScope is { } prior && prior != scope)
+                    CrossScope = true;
+                ResolvedScope = scope;
+                return Expression.Call(node.Method, scopeParams[scope], propertyName);
+            }
+
+            return base.VisitMethodCall(node);
         }
     }
 }

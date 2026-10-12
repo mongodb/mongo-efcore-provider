@@ -42,17 +42,28 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     : IClassFixture<TemporaryDatabaseFixture>
 {
     [Fact]
-    public void User_join_is_not_admitted_by_the_candidate_join_signal()
+    public void User_join_projecting_both_whole_entities_goes_native_with_inner_join_results()
     {
-        // A user join with no Include: the candidate-join signal alone must not make this native. The
-        // selector must be a shape no confirming arm claims — the bare `(o, b) => o` is confirmed (see the next
-        // test), but `new { o, b }` has whole-entity leaves, which NativeJoinScopeProjectionBinder declines,
-        // so HasUnconfirmedCandidateJoin still forces Fallback.
-        using var db = CreateContext(MongoQueryMode.NativeOnly,
-            nameof(User_join_is_not_admitted_by_the_candidate_join_signal));
+        // `new { o, b }` has whole-entity Outer and Inner leaves, which the join-scope binder stages whole; the inner
+        // $unwind reproduces inner-join semantics (O3's dangling BuyerId drops it). A user join with no confirming
+        // projection would still fall back (HasUnconfirmedCandidateJoin).
+        using var nativeOnlyDb = CreateContext(MongoQueryMode.NativeOnly,
+            nameof(User_join_projecting_both_whole_entities_goes_native_with_inner_join_results) + "_NativeOnly");
+        var nativeResults = nativeOnlyDb.Orders
+            .Join(nativeOnlyDb.Buyers, o => o.BuyerId, b => b.Id, (o, b) => new { o, b })
+            .ToList();
 
-        Assert.Throws<NativeTranslationNotSupportedException>(() =>
-            db.Orders.Join(db.Buyers, o => o.BuyerId, b => b.Id, (o, b) => new { o, b }).ToList());
+        using var driverDb = CreateContext(MongoQueryMode.DriverLinq,
+            nameof(User_join_projecting_both_whole_entities_goes_native_with_inner_join_results) + "_DriverLinq");
+        var driverResults = driverDb.Orders
+            .Join(driverDb.Buyers, o => o.BuyerId, b => b.Id, (o, b) => new { o, b })
+            .ToList();
+
+        Assert.Equal(3, nativeResults.Count);
+        Assert.Equal(driverResults.Count, nativeResults.Count);
+        Assert.Equal(
+            driverResults.Select(r => (r.o.Total, r.b.Name)).OrderBy(t => t),
+            nativeResults.Select(r => (r.o.Total, r.b.Name)).OrderBy(t => t));
     }
 
     [Fact]
@@ -119,20 +130,18 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void A_real_ThenInclude_nested_underneath_an_embedded_hop_still_declines()
+    public void A_real_ThenInclude_nested_underneath_an_embedded_hop_goes_native()
     {
-        // A real nav (Region) ThenIncluded under an owned one (Address) must decline loudly, not silently drop
-        // Region. The extra join EF injects for Region turns the Buyer IncludeExpression's EntityExpression into
-        // a double hop (ti.Outer.Outer), so IsSingleLevelReferenceIncludeSelector rejects it before
-        // HasNonEmbeddedThenInclude is reached — this is a decline tripwire, not coverage of that method.
-        //
-        // Exception type not pinned: EF10 declines in the projection binder; EF8/EF9 fail earlier inside EF
-        // Core's translator with InvalidOperationException. Unsupported-shape exception types aren't contract.
+        // A real nav (Region) ThenIncluded under an owned one (Address) is a reference declared on an owned type, reached
+        // through a single-reference owned hop: the Region $lookup reads its key at "_lookup_Buyer.Address.RegionId",
+        // which the confirm step verifies (OwnedHopLocalFieldMatches). NativeOnly succeeding is the "went native" signal.
         using var db = CreateContext(MongoQueryMode.NativeOnly,
-            nameof(A_real_ThenInclude_nested_underneath_an_embedded_hop_still_declines));
+            nameof(A_real_ThenInclude_nested_underneath_an_embedded_hop_goes_native));
 
-        Assert.ThrowsAny<Exception>(
-            () => db.Orders.Include(o => o.Buyer).ThenInclude(b => b.Address).ThenInclude(a => a.Region).ToList());
+        var orders = db.Orders.Include(o => o.Buyer).ThenInclude(b => b.Address).ThenInclude(a => a.Region).ToList();
+
+        Assert.NotEmpty(orders);
+        Assert.All(orders, o => Assert.Equal("Midwest", o.Buyer.Address.Region?.Name));
     }
 
     [Fact]

@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System;
 using System.Linq.Expressions;
 using MongoDB.EntityFrameworkCore.Extensions; // IsInHierarchy()
 using MongoDB.EntityFrameworkCore.Query.Expressions;
@@ -24,8 +25,8 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// </summary>
 /// <remarks>
 /// Sibling of <c>MongoExpressionTranslator.EntityType.cs</c>. With no base or derived types the root can only be
-/// exactly that CLR type, so <c>root is T</c> folds to a constant. TPH hierarchies would need a discriminator
-/// predicate (as <c>TryBuildDiscriminatorPredicate</c> does for <c>OfType&lt;T&gt;</c>) and decline.
+/// exactly that CLR type, so <c>root is T</c> folds to a constant. A TPH hierarchy takes the discriminator test of
+/// <see cref="MongoDiscriminatorPredicate"/>, shared with <c>OfType&lt;T&gt;()</c>.
 /// </remarks>
 internal sealed partial class MongoExpressionTranslator
 {
@@ -41,12 +42,48 @@ internal sealed partial class MongoExpressionTranslator
         if (!IsSelfParamTheEntity(Unwrap(typeBinary.Expression)))
             return false;
 
-        // Hierarchy types need a discriminator predicate, not a constant; decline.
+        // A hierarchy needs a discriminator predicate, not a constant.
         if (_entityType.IsInHierarchy())
-            return false;
+            return TryTranslateHierarchyTypeTest(typeBinary.TypeOperand, exact: false, negated: false, out result);
 
         var matches = typeBinary.TypeOperand.IsAssignableFrom(_entityType.ClrType);
         result = new MongoConstantExpression(matches, forSerialization: null);
         return true;
+    }
+
+    /// <summary>
+    /// <c>root is T</c> (<paramref name="exact"/> false: <c>T</c> and its subtypes) or <c>root.GetType() ==/!= typeof(T)</c>
+    /// (<paramref name="exact"/> true) over a TPH hierarchy, as a discriminator test shared with <c>OfType&lt;T&gt;()</c>
+    /// (<see cref="MongoDiscriminatorPredicate"/>).
+    /// </summary>
+    private bool TryTranslateHierarchyTypeTest(Type operand, bool exact, bool negated, out MongoExpression? result)
+    {
+        result = null;
+
+        // Root-level, one-scope only: an element ($filter/$map) or flattened Distinct scope reads a different document,
+        // and the discriminator field path is the document root's.
+        if (_outerParam is not null || _innerPrefix is not null || DistinctAliasScope is not null)
+            return false;
+
+        // Every row is _entityType or a subtype, so a supertype operand (object, an unmapped CLR base) is always true.
+        if (!exact && operand.IsAssignableFrom(_entityType.ClrType))
+        {
+            result = new MongoConstantExpression(true, forSerialization: null);
+            return true;
+        }
+
+        var operandType = _entityType.Model.FindEntityType(operand);
+        if (operandType is null || !ReferenceEquals(operandType.GetRootType(), _entityType.GetRootType()))
+        {
+            // Rows are always some mapped member of this hierarchy, so GetType() == typeof(NotInHierarchy) is false. For
+            // `is`, a non-entity operand (an interface some subtype implements) can't be decided here: decline.
+            if (!exact)
+                return false;
+
+            result = new MongoConstantExpression(negated, forSerialization: null);
+            return true;
+        }
+
+        return MongoDiscriminatorPredicate.TryBuild(operandType, includeDerived: !exact, negated, out result);
     }
 }

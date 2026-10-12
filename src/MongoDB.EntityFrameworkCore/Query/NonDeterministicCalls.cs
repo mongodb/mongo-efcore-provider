@@ -15,6 +15,7 @@
 
 using System;
 using System.Linq.Expressions;
+using Microsoft.EntityFrameworkCore;
 
 namespace MongoDB.EntityFrameworkCore.Query;
 
@@ -41,6 +42,12 @@ internal static class NonDeterministicCalls
             return method.Name.StartsWith("Next", StringComparison.Ordinal);
         }
 
+        // EF.Functions.Random() has no per-row client evaluation: the call would run once, at translation.
+        if (declaring == typeof(DbFunctionsExtensions))
+        {
+            return method.IsStatic && method.Name == nameof(DbFunctionsExtensions.Random);
+        }
+
         return declaring == typeof(Guid) && method.IsStatic
             && (method.Name == nameof(Guid.NewGuid) || method.Name == "CreateVersion7");
     }
@@ -53,15 +60,37 @@ internal static class NonDeterministicCalls
         return finder.Found;
     }
 
+    /// <summary>
+    /// Throws for the first non-deterministic call anywhere in <paramref name="tree"/>. Run once per query, before the
+    /// native/fallback decision, so every mode refuses alike: the translator runs speculatively under several binders
+    /// and would otherwise see the call only on whichever path it reaches.
+    /// </summary>
+    public static void ThrowIfAnyNonDeterministic(Expression? tree)
+    {
+        if (tree is null)
+        {
+            return;
+        }
+
+        var finder = new Finder();
+        finder.Visit(tree);
+        if (finder.First is { } call)
+        {
+            ThrowIfNonDeterministic(call);
+        }
+    }
+
     private sealed class Finder : ExpressionVisitor
     {
-        public bool Found { get; private set; }
+        public MethodCallExpression? First { get; private set; }
+
+        public bool Found => First is not null;
 
         protected override Expression VisitMethodCall(MethodCallExpression node)
         {
             if (IsNonDeterministic(node))
             {
-                Found = true;
+                First ??= node;
                 return node;
             }
 

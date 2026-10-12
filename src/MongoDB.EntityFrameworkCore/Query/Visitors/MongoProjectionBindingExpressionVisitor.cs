@@ -326,6 +326,15 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                     VisitThroughConversions(dateTimeOffsetToString.Object!), dateTimeOffsetToString.Method,
                     dateTimeOffsetToString.Arguments.Select(a => Visit(a)!));
 
+            // DateTime.ToString(...) as a native projected leaf: the binder staged only the receiver, so re-apply the call
+            // client-side over it (D-TOSTRING). Only on the Projection route; the driver-LINQ fallback still sees the original call.
+            case MethodCallExpression dateTimeToString
+                when _queryExpression.Select.Route == NativeRoute.Projection
+                     && NativeProjectionBinder.IsDateTimeToString(dateTimeToString):
+                return Expression.Call(
+                    VisitThroughConversions(dateTimeToString.Object!), dateTimeToString.Method,
+                    dateTimeToString.Arguments.Select(a => Visit(a)!));
+
             // A computed string/math/predicate leaf (`x.S.Substring(1, 2)`, `x.S.Contains("a")`, `!x.S.Contains("a")`,
             // `x.S == null`) that the native $project computes whole. Bind it as usual (receiver to the alias, the
             // call re-applied client-side), so the mixed shaper and driver-LINQ push-down analysis keep working in
@@ -719,7 +728,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 }
 
             case MaterializeCollectionNavigationExpression materializeCollectionNavigationExpression:
-                if (TryBindNativeArrayProjection(materializeCollectionNavigationExpression, out var arrayShaper))
+                if (TryBindNativeArrayProjection(materializeCollectionNavigationExpression.Navigation as INavigation, out var arrayShaper))
                 {
                     return arrayShaper;
                 }
@@ -890,6 +899,30 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         if (TryBindProjectedCollectionNavigation(methodCallExpression, out var boundCollection))
         {
             return boundCollection;
+        }
+
+        // An element Select over an owned collection staged as that collection's whole array
+        // (NativeProjectionBinder.TryMatchOwnedArraySelectLeaf, the emit side's predicate): bind the array as a
+        // collection shaper and re-apply the Select over the materialized owned entities, so each member is read
+        // through its owned property's serializer. Not native (mixed/fallback shapes): falls through unchanged.
+        if (_queryExpression.Select.Route == NativeRoute.Projection
+            && NativeProjectionBinder.TryMatchOwnedArraySelectLeaf(
+                methodCallExpression, _queryExpression.CollectionExpression.EntityType,
+                out var selectedNavigation, out _, out var elementSelector)
+            && TryBindNativeArrayProjection(selectedNavigation, out var selectedArrayShaper))
+        {
+            var elementType = elementSelector.Parameters[0].Type;
+            var resultType = elementSelector.ReturnType;
+            var elements = Expression.Convert(selectedArrayShaper, typeof(IEnumerable<>).MakeGenericType(elementType));
+            return Expression.Call(
+                typeof(Enumerable).GetMethods()
+                    .Single(m => m.Name == nameof(Enumerable.ToList)).MakeGenericMethod(resultType),
+                Expression.Call(
+                    typeof(Enumerable).GetMethods()
+                        .Single(m => m.Name == nameof(Enumerable.Select) && m.GetParameters()[1].ParameterType.GetGenericArguments().Length == 2)
+                        .MakeGenericMethod(elementType, resultType),
+                    elements,
+                    elementSelector));
         }
 
         // A projected cross-collection collection-navigation Count (e.g. select new { ..., c.Orders.Count }).
@@ -1486,7 +1519,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// </para>
     /// </remarks>
     private bool TryBindNativeArrayProjection(
-        MaterializeCollectionNavigationExpression materializeCollectionNavigationExpression,
+        INavigation candidateNavigation,
         out Expression arrayShaper)
     {
         arrayShaper = null;
@@ -1499,29 +1532,57 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
         if (_queryExpression.Select.Route != NativeRoute.Projection
             || !NativeProjectionBinder.IsNativeArrayProjectionLeaf(
-                materializeCollectionNavigationExpression.Navigation as INavigation,
+                candidateNavigation,
                 _queryExpression.CollectionExpression.EntityType,
                 arrayAlias))
         {
             return false;
         }
 
-        var navigation = (INavigation)materializeCollectionNavigationExpression.Navigation!;
+        var navigation = candidateNavigation;
         var aliasedArray = new ArrayAliasProjectionExpression(
             navigation,
             new RootReferenceExpression(navigation.DeclaringEntityType));
 
         _projectionMapping[arrayProjectionMember] = aliasedArray;
 
-        var innerShaper = CreateNullableEntityShaper(navigation.TargetEntityType, aliasedArray.InnerProjection);
+        var innerShaper = CreateElementShaperWithOwnedIncludes(navigation.TargetEntityType, aliasedArray.InnerProjection);
 
         arrayShaper = new CollectionShaperExpression(
             new ProjectionBindingExpression(_queryExpression, arrayProjectionMember, aliasedArray.Type),
             innerShaper,
             navigation,
-            innerShaper.StructuralType.ClrType);
+            navigation.TargetEntityType.ClrType);
 
         return true;
+    }
+
+    /// <summary>
+    /// The shaper for one element of an alias-addressed owned array: the element's own shaper, wrapped in an
+    /// <see cref="IncludeExpression"/> per eager-loaded embedded navigation (recursively), as EF's nav-expansion builds
+    /// it for a whole owned entity. Without them a nested owned collection would never be populated. The admission rule
+    /// (<see cref="NativeProjectionBinder.IsNativeArrayProjectionLeaf"/>) guarantees every eager navigation is embedded.
+    /// </summary>
+    private static Expression CreateElementShaperWithOwnedIncludes(IEntityType elementType, EntityProjectionExpression elementProjection)
+    {
+        Expression shaper = CreateNullableEntityShaper(elementType, elementProjection);
+        foreach (var nested in elementType.GetNavigations().Where(n => n.IsEagerLoaded && n.IsEmbedded()))
+        {
+            Expression nestedShaper = elementProjection.BindNavigation(nested) switch
+            {
+                ObjectArrayProjectionExpression array => new CollectionShaperExpression(
+                    array,
+                    CreateElementShaperWithOwnedIncludes(nested.TargetEntityType, array.InnerProjection),
+                    nested,
+                    nested.TargetEntityType.ClrType),
+                EntityProjectionExpression reference => CreateElementShaperWithOwnedIncludes(nested.TargetEntityType, reference),
+                _ => throw new InvalidOperationException($"Unable to bind owned navigation '{nested.Name}' of '{elementType.DisplayName()}'.")
+            };
+
+            shaper = new IncludeExpression(shaper, nestedShaper, nested);
+        }
+
+        return shaper;
     }
 
     /// <summary>

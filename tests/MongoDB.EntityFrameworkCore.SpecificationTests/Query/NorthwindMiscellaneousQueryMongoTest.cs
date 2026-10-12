@@ -2476,17 +2476,23 @@ Orders.{ "$lookup" : { "from" : "Customers", "localField" : "CustomerID", "forei
 
         AssertMql(
             """
-            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitNot" : "$_id" }, -10249] } } }
+            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitNot" : "$_id" }, { "$literal" : -10249 }] } } }
             """);
     }
 
     public override async Task Where_bitwise_binary_and(bool async)
     {
+        // Native renders the integer & as $bitAnd inside $expr (server 6.3+); driver-LINQ answered { $bitsAllSet }.
+        if (!TestServer.SupportsBitwiseOperators)
+        {
+            return;
+        }
+
         await base.Where_bitwise_binary_and(async);
 
         AssertMql(
             """
-            Orders.{ "$match" : { "_id" : { "$bitsAllSet" : 10248 } } }
+            Orders.{ "$match" : { "$expr" : { "$eq" : [{ "$bitAnd" : ["$_id", 10248] }, 10248] } } }
             """);
     }
 
@@ -2661,7 +2667,16 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Ship
     }
 
     public override async Task Select_expression_other_to_string(bool async)
-        => await base.Select_expression_other_to_string(async);
+    {
+        await base.Select_expression_other_to_string(async);
+
+        // D-TOSTRING: only the receiver is projected (under the member alias); DateTime.ToString() is evaluated client-side (.NET formatting, not the
+        // driver's ISO $toString).
+        AssertMql(
+            """
+            Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "ShipName" : "$OrderDate", "_id" : 0 } }
+            """);
+    }
 
     public override async Task Select_expression_date_add_year(bool async)
     {
@@ -4377,6 +4392,16 @@ Employees.{ "$project" : { "Title" : "$Title", "_id" : 0 } }
 
     public override async Task Perform_identity_resolution_reuses_same_instances_across_joins(bool async, bool useAsTracking)
     {
+        // Fails: the inner side (a filtered Orders scan with its own Include) is not a bare collection scan, so no native
+        // join scope exists and driver-LINQ answers it, DROPPING the inner Where (wrong rows on main). Native support
+        // would have to match that bug or diverge from main, so NativeOnly refuses it and the default keeps main's answer.
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
+                () => base.Perform_identity_resolution_reuses_same_instances_across_joins(async, useAsTracking));
+            return;
+        }
+
         await base.Perform_identity_resolution_reuses_same_instances_across_joins(async, useAsTracking);
         AssertMql(
             """
@@ -4477,22 +4502,11 @@ Customers.{ "$sort" : { "_id" : -1, "Country" : -1 } }, { "$project" : { "City" 
 
     public override async Task Select_expression_datetime_add_ticks(bool async)
     {
-        // Native-only mode rejects the shape outright; the driver-LINQ fallback computes it (the member is bound whole,
-        // so the shaper reads the computed value once rather than re-applying AddTicks over it).
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(
-                () => base.Select_expression_datetime_add_ticks(async));
-            AssertMql();
-        }
-        else
-        {
-            await base.Select_expression_datetime_add_ticks(async);
-            AssertMql(
-                """
+        await base.Select_expression_datetime_add_ticks(async);
+        AssertMql(
+            """
 Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "OrderDate" : { "$dateAdd" : { "startDate" : "$OrderDate", "unit" : "millisecond", "amount" : 1.0 } }, "_id" : 0 } }
 """);
-        }
     }
 
     public override async Task Where_subquery_expression_same_parametername(bool async)
@@ -4642,14 +4656,6 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
 #if EF8 || EF9
     public override async Task Random_next_is_not_funcletized_1(bool async)
     {
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            // Native declines Random.Next, which is EF-conformant (relational/Cosmos AssertTranslationFailed);
-            // driver-LINQ passes only by funcletizing Random once at translation time. EF-322
-            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Random_next_is_not_funcletized_1(async));
-            return;
-        }
-
         // EF-255: Random.Next has no per-row server-side equivalent; the driver would fold it into one constant,
         // so the provider throws instead of returning silently wrong rows.
         await Assert.ThrowsAsync<InvalidOperationException>(() => base.Random_next_is_not_funcletized_1(async));
@@ -4657,14 +4663,6 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
 
     public override async Task Random_next_is_not_funcletized_2(bool async)
     {
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            // Native declines Random.Next, which is EF-conformant (relational/Cosmos AssertTranslationFailed);
-            // driver-LINQ passes only by funcletizing Random once at translation time. EF-322
-            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Random_next_is_not_funcletized_2(async));
-            return;
-        }
-
         // EF-255: Random.Next has no per-row server-side equivalent; the driver would fold it into one constant,
         // so the provider throws instead of returning silently wrong rows.
         await Assert.ThrowsAsync<InvalidOperationException>(() => base.Random_next_is_not_funcletized_2(async));
@@ -4672,14 +4670,6 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
 
     public override async Task Random_next_is_not_funcletized_3(bool async)
     {
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            // Native declines Random.Next, which is EF-conformant (relational/Cosmos AssertTranslationFailed);
-            // driver-LINQ passes only by funcletizing Random once at translation time. EF-322
-            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Random_next_is_not_funcletized_3(async));
-            return;
-        }
-
         // EF-255: Random.Next has no per-row server-side equivalent; the driver would fold it into one constant,
         // so the provider throws instead of returning silently wrong rows.
         await Assert.ThrowsAsync<InvalidOperationException>(() => base.Random_next_is_not_funcletized_3(async));
@@ -4687,14 +4677,6 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
 
     public override async Task Random_next_is_not_funcletized_4(bool async)
     {
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            // Native declines Random.Next, which is EF-conformant (relational/Cosmos AssertTranslationFailed);
-            // driver-LINQ passes only by funcletizing Random once at translation time. EF-322
-            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Random_next_is_not_funcletized_4(async));
-            return;
-        }
-
         // EF-255: Random.Next has no per-row server-side equivalent; the driver would fold it into one constant,
         // so the provider throws instead of returning silently wrong rows.
         await Assert.ThrowsAsync<InvalidOperationException>(() => base.Random_next_is_not_funcletized_4(async));
@@ -4702,14 +4684,6 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
 
     public override async Task Random_next_is_not_funcletized_5(bool async)
     {
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            // Native declines Random.Next, which is EF-conformant (relational/Cosmos AssertTranslationFailed);
-            // driver-LINQ passes only by funcletizing Random once at translation time. EF-322
-            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Random_next_is_not_funcletized_5(async));
-            return;
-        }
-
         // EF-255: Random.Next has no per-row server-side equivalent; the driver would fold it into one constant,
         // so the provider throws instead of returning silently wrong rows.
         await Assert.ThrowsAsync<InvalidOperationException>(() => base.Random_next_is_not_funcletized_5(async));
@@ -4717,14 +4691,6 @@ Customers.{ "$sort" : { "_id" : 1, "Country" : 1 } }, { "$project" : { "City" : 
 
     public override async Task Random_next_is_not_funcletized_6(bool async)
     {
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            // Native declines Random.Next, which is EF-conformant (relational/Cosmos AssertTranslationFailed);
-            // driver-LINQ passes only by funcletizing Random once at translation time. EF-322
-            await MongoSpecTestHelpers.AssertNativeTranslationFailedAsync(() => base.Random_next_is_not_funcletized_6(async));
-            return;
-        }
-
         // EF-255: Random.Next has no per-row server-side equivalent; the driver would fold it into one constant,
         // so the provider throws instead of returning silently wrong rows.
         await Assert.ThrowsAsync<InvalidOperationException>(() => base.Random_next_is_not_funcletized_6(async));

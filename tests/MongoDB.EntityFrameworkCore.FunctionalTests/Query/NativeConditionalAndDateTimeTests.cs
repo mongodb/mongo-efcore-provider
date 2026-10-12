@@ -417,14 +417,18 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
     }
 
     [Fact]
-    public void DateTimeOffset_TimeOfDay_projection_still_declines()
+    public void DateTimeOffset_TimeOfDay_projection_goes_native_and_matches_the_driver()
     {
-        var collection = Seed(nameof(DateTimeOffset_TimeOfDay_projection_still_declines));
-        using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
+        var collection = Seed(nameof(DateTimeOffset_TimeOfDay_projection_goes_native_and_matches_the_driver));
 
-        Assert.Throws<NativeTranslationNotSupportedException>(
-            () => db.Entities.AsNoTracking().Where(x => x.OccurredOffset != null)
-                .Select(x => x.OccurredOffset!.Value.TimeOfDay).ToList());
+        var result = NativeModeAssert.NativeAndParity(mode =>
+        {
+            using var db = CreateContext(collection, mode);
+            return db.Entities.AsNoTracking().Where(x => x.OccurredOffset != null)
+                .Select(x => x.OccurredOffset!.Value.TimeOfDay).ToList().OrderBy(t => t).ToList();
+        });
+
+        Assert.NotEmpty(result);
     }
 
     // Every reader shape the leaf can land in must read the milliseconds, not the generic TimeSpan serializer's ticks.
@@ -443,13 +447,14 @@ public class NativeConditionalAndDateTimeTests(TemporaryDatabaseFixture database
         Assert.Equal(TimeRows.OrderBy(r => r.Label).Select(r => (r.Label, r.When.TimeOfDay)).ToList(), result);
     }
 
-    // A computed leaf inside a nested anonymous construction isn't native; the fallback must still read it right.
+    // A TimeOfDay leaf inside a nested anonymous construction is flattened into the enclosing projection and read back
+    // through the milliseconds serializer, matching the driver.
     [Fact]
-    public void TimeOfDay_in_a_nested_construction_declines()
+    public void TimeOfDay_in_a_nested_construction_goes_native_and_matches_the_driver()
     {
-        var collection = SeedTimeRows(nameof(TimeOfDay_in_a_nested_construction_declines));
+        var collection = SeedTimeRows(nameof(TimeOfDay_in_a_nested_construction_goes_native_and_matches_the_driver));
 
-        var result = NativeModeAssert.DeclinesCleanly(mode =>
+        var result = NativeModeAssert.NativeAndParity(mode =>
         {
             using var db = CreateTimeContext(collection, mode);
             return db.Entities.AsNoTracking().OrderBy(x => x.Label).Select(x => new { x.Label, Inner = new { T = x.When.TimeOfDay } })

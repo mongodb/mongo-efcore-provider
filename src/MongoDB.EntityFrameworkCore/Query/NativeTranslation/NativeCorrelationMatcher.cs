@@ -232,7 +232,7 @@ internal static class NativeCorrelationMatcher
     /// <paramref name="pendingLookups"/>, or reuses an existing lookup at the same alias, staged or already pending on
     /// the query, if it is the same kind; <paramref name="stagedLookup"/> is whichever backs the leaf. A lookup that
     /// isn't a plain native collection lookup (TPH-derived target: discriminator <c>$match</c> staged,
-    /// <see cref="LookupPipelineKind.FallbackOnly"/>) declines, as does a collision with a different kind (e.g. a
+    /// <see cref="LookupPipelineKind.DiscriminatorNarrowed"/>) declines, as does a collision with a different kind (e.g. a
     /// filtered Include, or a <see cref="LookupPipelineKind.CorrelatedReducer"/> lookup, which unwinds to one
     /// document): reading it would silently read the wrong shape.
     /// </summary>

@@ -65,7 +65,16 @@ internal enum MongoBinaryOperator
     /// </remarks>
     IntegerDivide,
 
-    Modulo
+    Modulo,
+
+    /// <summary>Integer <c>&amp;</c> (<c>$bitAnd</c>).</summary>
+    BitAnd,
+
+    /// <summary>Integer <c>|</c> (<c>$bitOr</c>).</summary>
+    BitOr,
+
+    /// <summary>Integer <c>^</c> (<c>$bitXor</c>).</summary>
+    BitXor
 }
 
 /// <summary>
@@ -73,5 +82,8 @@ internal enum MongoBinaryOperator
 /// </summary>
 internal enum MongoUnaryOperator
 {
-    Not
+    Not,
+
+    /// <summary>Integer bitwise complement (<c>~x</c>, <c>$bitNot</c>); typed as the operand's integer type.</summary>
+    BitNot
 }

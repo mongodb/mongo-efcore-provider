@@ -19,12 +19,13 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using MongoDB.Bson;
 using MongoDB.EntityFrameworkCore.Extensions;
+using MongoDB.EntityFrameworkCore.Serializers;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
 /// Why a lookup carries a non-empty <see cref="LookupExpression.PipelineStages"/> sub-pipeline; each reason has a
-/// different native-eligibility answer. <see cref="FallbackOnly"/>: TPH discriminator narrowing, fallback-only
+/// different native-eligibility answer. <see cref="DiscriminatorNarrowed"/>: TPH discriminator narrowing, native for a collection Include
 /// (see <c>MongoSelectLowerer.AppendLookupStages</c>). <see cref="FilteredInclude"/> and
 /// <see cref="NestedInclude"/> (filtered Include; collection-then-collection/reference <c>ThenInclude</c>): the
 /// <c>let</c>+<c>pipeline</c> shape of <see cref="LookupExpression.ToLookupStageDocument"/>, native-eligible.
@@ -35,7 +36,7 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 internal enum LookupPipelineKind
 {
     None,
-    FallbackOnly,
+    DiscriminatorNarrowed,
     FilteredInclude,
     NestedInclude,
     CorrelatedReducer
@@ -79,13 +80,16 @@ internal sealed class LookupExpression
         if (targetEntityType.FindDiscriminatorProperty() is { } discriminatorProperty
             && targetEntityType != targetEntityType.GetRootType())
         {
+            // Serialized through the discriminator property (converter/BsonRepresentation), as the write path does; an
+            // abstract type's null value would also match a document with no discriminator element, so it is dropped.
             var discriminatorValues = new BsonArray(
-                targetEntityType.GetDerivedTypes().Prepend(targetEntityType)
-                    .Select(d => BsonValue.Create(d.GetDiscriminatorValue())));
+                new MongoEFDiscriminator(targetEntityType)
+                    .GetDiscriminatorsForTypeAndSubTypes(targetEntityType.ClrType)
+                    .Where(v => v is not BsonNull));
 
             PipelineStages.Add(new BsonDocument("$match",
                 new BsonDocument(discriminatorProperty.GetElementName(), new BsonDocument("$in", discriminatorValues))));
-            PipelineKind = LookupPipelineKind.FallbackOnly;
+            PipelineKind = LookupPipelineKind.DiscriminatorNarrowed;
         }
     }
 
@@ -216,7 +220,7 @@ internal sealed class LookupExpression
     /// <summary>See <see cref="LookupPipelineKind"/>.</summary>
     /// <remarks>
     /// Write exactly once, at registration (not <see langword="init"/> because the fallback visitor stamps it after
-    /// construction). An object-initializer assignment would overwrite the <see cref="LookupPipelineKind.FallbackOnly"/>
+    /// construction). An object-initializer assignment would overwrite the <see cref="LookupPipelineKind.DiscriminatorNarrowed"/>
     /// the constructor's TPH branch sets, leaving its discriminator <c>$match</c> unaccounted for.
     /// </remarks>
     public LookupPipelineKind PipelineKind { get; internal set; } = LookupPipelineKind.None;

@@ -54,6 +54,9 @@ internal static class MongoValueRenderer
                 if (parameter.RuntimeEvaluator is { } evaluator)
                     placeholders.RegisterRuntimeEvaluator(parameter.Name, evaluator);
 
+                if (parameter.ExplicitSerializer is { } explicitSerializer)
+                    return placeholders.CreatePlaceholder(parameter.Name, explicitSerializer);
+
                 if (parameter.ArrayElementIndex is int elementIndex)
                     return placeholders.CreateArrayElementPlaceholder(
                         parameter.Name,

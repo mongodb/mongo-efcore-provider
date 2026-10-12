@@ -470,13 +470,14 @@ internal sealed class MongoSelectLowerer
                 stages.Add(new MongoUnwindStage(lookup, lookup.PreserveNullAndEmptyArrays));
             }
             else if (lookup.IsNativeCollectionLookup
-                     // A renamed lookup must still be non-ForceUnwind and not FallbackOnly, or a TPH-derived
+                     // A renamed lookup must still be non-ForceUnwind and not DiscriminatorNarrowed, or a TPH-derived
                      // collection Include target that collided with a join would render natively and leak
                      // sibling-subtype rows.
                      || (lookup.RenamedToAvoidJoinCollision && !lookup.ForceUnwind
                          && lookup.PipelineKind is LookupPipelineKind.None or LookupPipelineKind.NestedInclude or LookupPipelineKind.FilteredInclude)
                      || (lookup.Navigation is { IsCollection: true } pipelinedNav
                          && lookup.PipelineKind is LookupPipelineKind.NestedInclude or LookupPipelineKind.FilteredInclude
+                             or LookupPipelineKind.DiscriminatorNarrowed
                          && !lookup.ForceUnwind
                          && lookup.As == LookupExpression.GetLookupAlias(pipelinedNav))
                      || lookup.IsTransitiveCollectionLookup)
@@ -484,7 +485,7 @@ internal sealed class MongoSelectLowerer
                 // Collection Include: the joined documents stay an array under _lookup_<Nav> (no $unwind),
                 // read back by the DOM collection materializer.
                 //
-                // The pipelined disjunct admits nested ThenInclude and filtered Include sub-pipelines. It's
+                // The pipelined disjunct admits nested ThenInclude, filtered Include and TPH discriminator-narrowed sub-pipelines. It's
                 // keyed on PipelineKind, not HasPipeline, so a CorrelatedReducer lookup (also a collection
                 // nav) reaches its own branch below instead of being mis-rendered with no $unwind.
                 //

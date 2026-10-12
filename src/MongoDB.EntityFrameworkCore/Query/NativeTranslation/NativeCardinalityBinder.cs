@@ -300,8 +300,17 @@ internal static class NativeCardinalityBinder
             }
             // TryTranslateValue accepts member access, widening/nullable Converts and numeric arithmetic, and
             // rejects anything not exactly value-preserving — required by Sum/Average and sufficient for Min/Max.
-            else if (selector is null || !translator.TryTranslateValue(selector.Body, out operand))
-                return false; // untranslatable selector shape (e.g. a correlated method call) — fall back
+            else if (selector is null)
+                return false;
+            else if (!translator.TryTranslateValue(selector.Body, out operand))
+            {
+                // A value-converted / represented field TryTranslateValue declines still reduces correctly when its
+                // stored value preserves the CLR answer.
+                if (!translator.TryTranslateStoredAggregateField(selector.Body, op, out var storedField))
+                    return false; // untranslatable selector shape (e.g. a correlated method call) — fall back
+
+                operand = storedField;
+            }
 
             // Min/Max reduce the stored value, so an operand whose server ordering differs from the CLR one (a default
             // string-stored TimeSpan sorts lexicographically) declines. NativeAggregateReadBack owns the predicate.

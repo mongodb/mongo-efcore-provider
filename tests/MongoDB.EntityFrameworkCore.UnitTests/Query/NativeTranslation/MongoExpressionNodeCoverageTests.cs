@@ -137,6 +137,10 @@ public class MongoExpressionNodeCoverageTests
             new MongoBinaryExpression(MongoBinaryOperator.Equal, rankField, rankConstant),
             new MongoUnaryExpression(MongoUnaryOperator.Not, flagField),
             new MongoSizeExpression("Tags", typeof(int)),
+            new MongoDictionaryEntryExpression(tags, "Tags.k", typeof(string)),
+            new MongoDictionaryContainsKeyExpression("Tags.k", negated: false),
+            new MongoCompositeKeyInExpression([rank, flag], new MongoParameterExpression("p0", null), negated: false),
+            new MongoFieldPresenceExpression("Tags", MongoFieldPresence.NullOrMissing, pathMayBeArray: false),
             new MongoFilteredSizeExpression("Tags", flagField, typeof(int)),
             new MongoInExpression(rankField, new MongoConstantExpression(new[] { 1, 2 }, rank), negated: false),
             new MongoValueListExpression([new MongoParameterExpression("p0", rank), rankConstant]),
@@ -638,6 +642,46 @@ public class MongoExpressionNodeCoverageTests
         ["MongoSizeExpression|PrefixRewriter.Rewrite"] = "rendered",
         ["MongoSizeExpression|QL.IsQueryDialectRenderable"] = "false",
         ["MongoSizeExpression|QL.Render"] = "rendered",
+        // A dictionary entry / ContainsKey exist only in the query dialect: the aggregation dialect deliberately has no
+        // arm (a bare $lt over a possibly-missing key answers true in $expr), so a dictionary comparison inside an
+        // $expr-only context falls back (NativeOnly: declines) rather than rendering.
+        ["MongoDictionaryContainsKeyExpression|Agg.CanRender"] = "false",
+        ["MongoDictionaryContainsKeyExpression|Agg.Render"] = "declined",
+        ["MongoDictionaryContainsKeyExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoDictionaryContainsKeyExpression|AllFieldsDefaultSerialized(converted)"] = "true",
+        ["MongoDictionaryContainsKeyExpression|Negator.TryNegate"] = "true",
+        ["MongoDictionaryContainsKeyExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoDictionaryContainsKeyExpression|QL.IsQueryDialectRenderable"] = "true",
+        ["MongoDictionaryContainsKeyExpression|QL.Render"] = "rendered",
+        ["MongoDictionaryEntryExpression|Agg.CanRender"] = "false",
+        ["MongoDictionaryEntryExpression|Agg.Render"] = "declined",
+        ["MongoDictionaryEntryExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoDictionaryEntryExpression|AllFieldsDefaultSerialized(converted)"] = "true",
+        ["MongoDictionaryEntryExpression|Negator.TryNegate"] = "false",
+        ["MongoDictionaryEntryExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoDictionaryEntryExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoDictionaryEntryExpression|QL.Render"] = "declined",
+        // A composite-key Contains is root-level (_id.<Key>) query dialect only. The prefix rewriter declines it on purpose:
+        // an element scope would read the wrong document.
+        ["MongoCompositeKeyInExpression|Agg.CanRender"] = "false",
+        ["MongoCompositeKeyInExpression|Agg.Render"] = "declined",
+        ["MongoCompositeKeyInExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoCompositeKeyInExpression|AllFieldsDefaultSerialized(converted)"] = "true",
+        ["MongoCompositeKeyInExpression|Negator.TryNegate"] = "true",
+        ["MongoCompositeKeyInExpression|PrefixRewriter.Rewrite"] = "declined",
+        ["MongoCompositeKeyInExpression|QL.IsQueryDialectRenderable"] = "true",
+        ["MongoCompositeKeyInExpression|QL.Render"] = "rendered",
+        // Presence renders in both dialects ($exists / null in the query dialect, $type in the aggregation dialect). The
+        // sample is a scalar null-kind; over a path that may hold an array the null-kinds are not query-dialect renderable
+        // ({f: null} also matches an array CONTAINING null) and render through $expr instead.
+        ["MongoFieldPresenceExpression|Agg.CanRender"] = "true",
+        ["MongoFieldPresenceExpression|Agg.Render"] = "rendered",
+        ["MongoFieldPresenceExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoFieldPresenceExpression|AllFieldsDefaultSerialized(converted)"] = "true",
+        ["MongoFieldPresenceExpression|Negator.TryNegate"] = "true",
+        ["MongoFieldPresenceExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoFieldPresenceExpression|QL.IsQueryDialectRenderable"] = "true",
+        ["MongoFieldPresenceExpression|QL.Render"] = "rendered",
 
         // Produces an integer value, not a predicate: no query-dialect form, no negator arm.
         ["MongoStringIndexOfExpression|Agg.CanRender"] = "true",

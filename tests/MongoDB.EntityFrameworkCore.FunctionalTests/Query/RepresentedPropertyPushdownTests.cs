@@ -667,7 +667,7 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
 
     private static readonly Dictionary<string, Func<IQueryable<Narrow>, object>> NarrowQueries = new()
     {
-        // Refused.
+        // Refused (the Dec_* shapes always; the Big_* range shapes only by driver-LINQ, native serializes the constant by its CLR type).
         ["Big_gt_3e9"] = q => q.Where(e => e.Big > 3_000_000_000L).OrderBy(e => e.Seq).Select(e => e.Seq).ToList(),
         ["Big_lt_5e9"] = q => q.Where(e => e.Big < 5_000_000_000L).OrderBy(e => e.Seq).Select(e => e.Seq).ToList(),
         ["Dec_ge_1_5"] = q => q.Where(e => e.Dec >= 1.5m).OrderBy(e => e.Seq).Select(e => e.Seq).ToList(),
@@ -731,19 +731,13 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
         }
 
         var ex = Record.Exception(Run);
-        var refused = query.StartsWith("Dec", StringComparison.Ordinal) || query is "Big_gt_3e9" or "Big_lt_5e9";
+        // A relational comparison of the narrowing long-as-int converter against a CLR constant is native (D-EF337: the
+        // constant is serialized by its CLR type, so it cannot wrap); only the driver-LINQ bridge refuses it.
+        var refused = query.StartsWith("Dec", StringComparison.Ordinal)
+                      || (query is "Big_gt_3e9" or "Big_lt_5e9" && mode == MongoQueryMode.DriverLinq);
         if (!refused)
         {
-            if (ex is not null)
-            {
-                // Native aggregates read back through a generic serializer, so they decline cleanly under NativeOnly.
-                Assert.True(
-                    mode == MongoQueryMode.NativeOnly && ex is NativeTranslationNotSupportedException
-                    && query is "Big_Sum" or "Big_Max" or "Big_Average",
-                    $"'{query}' threw under {mode}: {ex}");
-                return;
-            }
-
+            Assert.True(ex is null, $"'{query}' threw under {mode}: {ex}");
             Assert.Equal(oracle, Run());
             return;
         }

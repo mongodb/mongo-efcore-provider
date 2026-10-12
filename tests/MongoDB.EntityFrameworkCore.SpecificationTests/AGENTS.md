@@ -76,6 +76,9 @@ dotnet test tests/MongoDB.EntityFrameworkCore.SpecificationTests/MongoDB.EntityF
 twice (4 parallel `dotnet test` processes, each with its own Atlas-local container) — once with
 `MONGODB_EF_QUERY_MODE=DriverLinq` and once with `NativeOnly` — then runs `native-parity-diff.py` over the TRX files.
 It needs a prior build of `Debug <ver>` (`--no-build`) and unsets `MONGODB_URI`/`ATLAS_URI`/`MONGODB_EF_NATIVE_ONLY`.
+On Windows run it from **Git Bash**, not PowerShell: there `bash` resolves to WSL (`system32\bash.exe`), which can't see
+the Windows `dotnet`/Docker. The script picks the first of `python3`, `python`, `py` (override with `PYTHON=<cmd>`) and
+sets `PYTHONUTF8=1`.
 It exits nonzero on a missing TRX, a test missing from one mode, or an unexpected outcome; with `--gate` (passed to
 the Python script as `--fail-on-regress`, or set `NATIVE_PARITY_FAIL_ON_REGRESS=1`) it also exits nonzero when any
 regress entry exists.

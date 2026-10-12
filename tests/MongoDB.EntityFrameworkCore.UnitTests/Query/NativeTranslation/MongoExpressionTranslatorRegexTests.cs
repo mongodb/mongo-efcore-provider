@@ -115,8 +115,27 @@ public class MongoExpressionTranslatorRegexTests
     }
 
     [Theory]
-    [InlineData(StringComparison.CurrentCulture)]
-    [InlineData(StringComparison.CurrentCultureIgnoreCase)]
+    [InlineData(StringComparison.CurrentCulture, false)]
+    [InlineData(StringComparison.CurrentCultureIgnoreCase, true)]
+    public void StringComparison_current_culture_is_matched_ordinally_as_driver_LINQ_does(
+        StringComparison comparison, bool expectedCaseInsensitive)
+    {
+        // D-CULTURE: accepted divergence; wrong for culture-special data on both paths.
+        var translator = BuildTranslator();
+        foreach (var method in new[] { nameof(string.StartsWith), nameof(string.EndsWith), nameof(string.Contains) })
+        {
+            var call = Expression.Call(
+                Expression.Property(Expression.Parameter(typeof(Entity), "e"), nameof(Entity.Text)),
+                typeof(string).GetMethod(method, [typeof(string), typeof(StringComparison)])!,
+                Expression.Constant("Se"),
+                Expression.Constant(comparison));
+
+            Assert.True(translator.TryTranslate(call, out var result));
+            Assert.Equal(expectedCaseInsensitive, Assert.IsType<MongoRegexExpression>(result).CaseInsensitive);
+        }
+    }
+
+    [Theory]
     [InlineData(StringComparison.InvariantCulture)]
     [InlineData(StringComparison.InvariantCultureIgnoreCase)]
     public void Contains_with_StringComparison_culture_based_declines(StringComparison comparison)
@@ -133,8 +152,6 @@ public class MongoExpressionTranslatorRegexTests
     }
 
     [Theory]
-    [InlineData(StringComparison.CurrentCulture)]
-    [InlineData(StringComparison.CurrentCultureIgnoreCase)]
     [InlineData(StringComparison.InvariantCulture)]
     [InlineData(StringComparison.InvariantCultureIgnoreCase)]
     public void StartsWith_with_StringComparison_culture_based_declines(StringComparison comparison)
@@ -151,8 +168,6 @@ public class MongoExpressionTranslatorRegexTests
     }
 
     [Theory]
-    [InlineData(StringComparison.CurrentCulture)]
-    [InlineData(StringComparison.CurrentCultureIgnoreCase)]
     [InlineData(StringComparison.InvariantCulture)]
     [InlineData(StringComparison.InvariantCultureIgnoreCase)]
     public void EndsWith_with_StringComparison_culture_based_declines(StringComparison comparison)

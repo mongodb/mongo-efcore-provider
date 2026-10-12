@@ -73,6 +73,20 @@ Scope, joins, grouping:
   renames itself (`existingIncompatibleLookup`), keeping later joins' `localField`s and Inner filters valid. Renames use
   `MongoQueryExpression.GetUnusedLookupAlias`. A join level the binding would take as the Include's intermediate
   (a lookup satisfying `LookupExpression.IsCollectionIncludeIntermediateFor(root type)`) declines: the binding nests by type, not alias.
+- **Bare join-scope leaves.** A bare scalar leaf over a chain re-roots onto the ONE scope its hop chain names
+  (`TryTranslateSingleScope`), never by CLR type; it declines when paging, ordering or a deferred paging snapshot exists
+  (the lowerer places a chain's paging after every `$lookup`; `Ef373InterleavedPagingTests` pins it). `EF.Property(<bare
+  scope>, "Shadow")` is re-rooted by `ScopeRerootingVisitor.VisitMethodCall`. A bare INNER entity leaf
+  (`HasBareJoinInnerEntityLeaf`) never streams: the streaming rewriter is typed by the root entity, not the joined one.
+  A construction whose members are ALL whole-entity inner leaves (`o1 = new { o2 }`) stages each level whole and gives the
+  wrapper no projection; `BindResultMember` rebinds each member's shaper with `alias: null` so a sibling `o1.o2` leaf is
+  the same instance. An embedded (owned) Include around a join leaf needs nothing staged (its data is in the whole
+  document); only a cross-collection reference Include resolves a level.
+- **Filter joins before a reference Include** (`TryAdmitFilterJoins`): joins beyond the Include chain's own levels are
+  admitted when every one is a resolved, flattened, eligible reference join and the Where that created them left its
+  predicate (and any paging/Distinct after it) in `PostJoinOps`, lowered after every `$lookup`. That equals paging before
+  the Include's left-outer (row-preserving) join; a REQUIRED navigation's inner join can drop rows the page counted and
+  stays declined (`NativeFilterJoinBeforeIncludeTests`). Confirmations must equal `Joins.Count`.
 - **Navigation-less joins** are native iff `RebindInnerShaperToOuterQuery`'s raw-key branch resolved both keys
   (`JoinInfo.Lookup != null`); a navigation resolved to the wrong target is rebuilt by it, a non-simple key
   declines (`JoinLookupImplementsKeySelectors`). Composite-PK components live at `_id.<Name>`
@@ -89,8 +103,11 @@ Scope, joins, grouping:
   (`MongoGroupElementTranslator.PropagatesMissingAsNull`). A finalized grouping or Distinct takes precedence over a
   confirmed join's inner access.
 - **Post-group operators resolve by the Select's output alias** (`MongoProjectedAliasScope`), never key-part name
-  or entity property; only `Where` is native. A `$push` list (`g.Select(e => e.X).ToList()`) is null-safe for
-  nullable/reference elements; entity elements decline.
+  or entity property. `Where`, `OrderBy`/`ThenBy` (a bare alias key only; a computed key declines) and `Skip`/`Take`
+  are native, all in `PostGroupOps` after the flatten `$project`; over a join they decline. An accumulator whose operand
+  is the key itself (`g.Max(e => g.Key)`) reads the key part's raw per-document expression, never `_id`
+  (`TryResolveKeyReferenceAsRawExpression`; left-outer joins decline). A `$push` list (`g.Select(e => e.X).ToList()`) is
+  null-safe for nullable/reference elements; entity elements decline.
 - **Set ops form a tree; each `Union`'s dedup belongs to its own link**, never hoisted or flattened
   (`A.Concat(B.Union(C))` differs from a left chain). Ops recorded between links go to `TrailingOps`, then move to
   the new link's `PrecedingOps` (`AppendSetOperation`). `Intersect`/`Except` never nest.
@@ -251,8 +268,52 @@ Shapers and projections:
   initializer down, and the index-based shaper can't be read off whole documents.
 - **A `NativeComputedLeafExpression` is read whole only by the native alias reader**; every other shaper visitor
   must use its `ClientExpression`.
+- **An element `Select` over a root-declared owned collection** (`Ws = e.Kids.Select(k => k.W).ToList()`) is staged as
+  that collection's whole array under its document path (`NativeProjectionBinder.TryMatchOwnedArraySelectLeaf`, the one
+  predicate both sides call), sharing the projection of a sibling bare `e.Kids` (`TryStageLeaf` dedupes an identical array
+  leaf); the shaper re-applies the `Select` over the materialized owned entities, so each member is read through its
+  owned property's serializer. The lambda must be self-contained (`IsSelfContainedLambda`: no query-root or parameter
+  reference, no `EF.Property`); the read side sees the receiver as the root's `StructuralTypeShaperExpression`, the emit
+  side as the selector parameter. A lambda reading the outer entity crashes shaper build in every mode (pre-existing).
+- **`Mql.Field(p, "element", serializer)` resolves like a mapped field** (`TryResolveMqlField`, the one resolver for Where,
+  OrderBy, Select, aggregate selectors): by STORED element name, to the one top-level property stored there, for the
+  selector parameter (nav-expansion auto-include layers peeled). The serializer argument is ignored (a query-parameterized
+  static singleton can't be inspected at compile time), so a converter/non-default representation or a CLR-type mismatch
+  declines.
+- **A nested construction that is not all plain top-level fields is flattened** into the enclosing projection
+  (`FlattenNestedConstructions`, depth-capped): each member becomes a leaf aliased by its LAST name. An all-plain nest
+  stays a sub-document leaf. The read side is unchanged; two members sharing a last name at different levels collide in
+  `seenAliases` and decline (the read side would rename one).
+- **`Tuple.Create(a, b, ..)` (2-7 args, top level)** is normalized to `new Tuple<..>(a, b, ..)` before the native binder
+  (`NormalizeTupleFactory`) so the positional-ctor arm handles it; the original selector is kept for the fallback.
+- **A whole owned-reference entity leaf under any member name** (`Car = p.parkingCar`) is staged under its element name with
+  a `DocumentPath` alias override, as an array leaf is.
+- **`Mql.Exists`/`IsMissing`/`IsNullOrMissing`** are `MongoFieldPresenceExpression` (query dialect `$exists` / `null`;
+  aggregation dialect `$type`). Presence is a storage fact, so a converted target is fine. A null-kind over a path that may
+  hold an array is NOT query-dialect renderable (`{f: null}` also matches an array CONTAINING null): it renders through
+  `$expr`, and inside `$elemMatch` declines. Driver-LINQ gets that case wrong.
 - **Mixed-projection alias agreement.** An array/owned-nav projection leaf's alias must equal the navigation's
-  document path, or a fallback silently returns an empty collection (`NativeArrayProjectionTests`).
+  document path, or a fallback silently returns an empty collection (`NativeArrayProjectionTests`). A member NAMED
+  differently (`P = b.Posts`, or an element renamed with `HasElementName`) takes the path as its alias plus a
+  `DocumentPath` alias override (member -> path), so the alias-addressed shaper and a whole-document fallback read one path.
+  The same rule gives a dotted scalar beside an array leaf (`new { b.Home.City, b.Home.Notes }`) its path as alias; the
+  read walks a dotted alias segment by segment through the property's serializer (`CreateGetPropertyValueAtPath`), and a
+  path that equals/prefixes/extends another alias declines (`ProjectionPathsCollide`).
+- **An owned array leaf's element may own further embedded navigations** (`IsNativeArrayProjectionLeaf`:
+  `EagerNavigationsAreAllEmbedded`, recursively): the alias-addressed element shaper is wrapped in an `IncludeExpression`
+  per eager embedded navigation (`CreateElementShaperWithOwnedIncludes`), without which a nested owned collection would
+  silently read empty. A cross-collection eager navigation on the element still declines.
+- **Owned collection `== null`/`!= null` compares the STORED array** (missing and BSON null are null, `[]` is not; an
+  `$ifNull`-safe element ref), never the materialized one, which normalizes missing/null to `[]`: a test oracle over
+  materialized entities is wrong there.
+- **Owned-entity equality** (`p.Home == x`, `Visits.Contains(x)`, `Visits.Any(v => v == x)`) is a per-property conjunction
+  over every CLR-mapped non-shadow property (driver-LINQ's rewrite), not a whole-sub-document match; `ElementParam`
+  (not `SelfParam`, which enables root-entity arms that are wrong inside `$elemMatch`) marks the element operand. A
+  parameter comparand over all-nullable properties, owned == owned, TPH-owned and outer-scoped operands decline.
+- **A reference Include declared on an owned type** (`Include(Buyer).ThenInclude(Address).ThenInclude(Region)`) is admitted
+  by `TryWalkIncludeChain` (`TryFindReferenceBehindOwned`: one reference, single-reference owned hops only), and
+  `TryConfirmReferenceIncludeChain` requires the registered lookup's `localField` to be exactly
+  `<parent alias>.<owned path>.<fk element>` (`OwnedHopLocalFieldMatches`); behind an owned COLLECTION it declines.
 - **`ProjectionMapping` keys must match exactly** what the shaper expects; `CapturedExpression` is set once at the
   tail of `VisitMethodCall` (mid-chain truncates the query).
 
@@ -270,7 +331,45 @@ Shapers and projections:
 - **`MethodInfo` reference equality** needs canonical constants (`QueryableMethods`, `EnumerableMethods`).
 - **Paging:** MongoDB rejects `{$limit: 0}`, so `Build` rewrites it to an always-false `$match`; negative values
   throw. Normalization covers top level and `$unionWith`, not `$lookup` sub-pipelines.
-- **TPH `$lookup` to a derived type must narrow by discriminator** (done in `LookupExpression`'s constructor).
+- **One discriminator test for `OfType<T>`, `x is T` and `x.GetType() ==/!= typeof(T)`** (`MongoDiscriminatorPredicate.TryBuild`):
+  values go through the discriminator property's serializer (converter/`BsonRepresentation`), and an abstract type
+  contributes no value (its `null` in `$in` would match a document with no discriminator element). A `GetType()` test
+  against a type outside the hierarchy folds to false (EF-202: driver-LINQ answers every row). Root-level, one-scope only.
+  A member declared only on `TDerived` resolves by the lambda parameter's own type after `OfType<TDerived>`, for
+  `SelfParam` by identity only (`ResolveScopeEntityType`); `((Derived)e).Member` is not narrowed and keeps declining.
+- **TPH `$lookup` to a derived type must narrow by discriminator** (done in `LookupExpression`'s constructor, the same
+  serialized, non-abstract values). The kind is `LookupPipelineKind.DiscriminatorNarrowed` (write-once: a later filtered
+  or nested include does not overwrite it); it is native for a top-level collection Include only. A reference
+  navigation, a renamed-to-avoid-collision lookup and the correlated reducers still decline.
+- **Primitive collections, dictionaries and composite-key `Contains` are query-dialect only.**
+  - `Any()`/`Count()`/`Count`/`Length` over a primitive-collection PROPERTY (`string[]`, `List<int>`) reuse the owned size
+    forms (`TryResolvePrimitiveCollectionPath`: scalar elements, default storage, array serializer, not a dictionary or
+    vector); a missing/null array counts as empty. `Any(pred)`/`All(pred)` over one stay declined.
+  - A string-keyed dictionary entry is the sub-field `<dict>.<key>` (`MongoDictionaryEntryExpression`, serialized by the
+    dictionary serializer's VALUE serializer, hence `MongoParameterExpression.ExplicitSerializer`); `ContainsKey` is
+    `$exists` (`MongoDictionaryContainsKeyExpression`). Only a constant, dotted-path-addressable key (not empty, no `.`,
+    no leading `$`, no NUL); relational operators only over int/long/short/byte/double/string entries. The aggregation
+    dialect deliberately has no arm: a bare `$lt` over a possibly-missing key answers true there.
+  - `entities.Contains(e)` over a composite key is a per-entity `$or` of `_id.<Key>` conjunctions
+    (`MongoCompositeKeyInExpression`), never an order-sensitive `_id: {$in: [docs]}`; a parameter list is built per
+    execution (`CompositeKeyClauses`, shared with the compile-time render) so one plan serves any length. An empty list
+    emits one always-false clause (`$or: []`/`$nor: []` are server errors). The prefix rewriter declines it.
+- **Spec scalar functions.**
+  - Integer `&`/`|`/`^`/`~` over int/long (and nullable) are `$bitAnd`/`$bitOr`/`$bitXor`/`$bitNot` inside `$expr` (server
+    6.3+; null-propagating like the lifted C# operators). `MapBitwiseOperator` is separate from `MapArithmeticOperator`
+    (shared with `SelectMany`). A bitwise Select/GroupBy LEAF is deliberately not admitted (fail closed), and boolean `^`
+    still declines. `MongoUnaryExpression.Type` is the operand's type for `BitNot`, `bool` otherwise.
+  - `StartsWith/EndsWith/Contains(x, CurrentCulture[IgnoreCase])` match ORDINALLY, as driver-LINQ does (D-CULTURE: accepted
+    divergence, wrong for culture-special data on both paths); Invariant* stays declined.
+  - `DateTime.ToString([fmt])` is never rendered: a plain projected leaf stages only the receiver and the shaper re-applies
+    the call (D-TOSTRING; `NativeProjectionBinder.IsDateTimeToString`, `PeelCaseMapping(includeDateTimeToString)`, read side
+    only on `NativeRoute.Projection`). Driver-LINQ pushes down an ISO `$toString` and ignores the format (wrong on main).
+  - `string.Compare(x, x.ToUpper())` stays declined (`$toUpper` is ASCII-only: D-TOUPPER).
+  - An owned reference leaf wrapped in embedded-only `IncludeExpression`s (its own nested owned navigations) is matched
+    through them (`PeelEmbeddedIncludes`); a cross-collection include is not peeled and declines.
+  - A closed inline array as the source of `Enumerable.Where(...).Contains(x)` is evaluated per execution, with query-
+    parameter elements read from the query context (`LocalCollectionFilterFoldingVisitor`), so clock elements/predicates
+    are never baked into the cached plan.
 - **EF query cache** keys on tree shape; changing output for a previously translatable tree invalidates user
   caches.
 - Visitor signatures differ across EF8/EF9/EF10; guard with `#if`.

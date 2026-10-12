@@ -1370,19 +1370,17 @@ public class MongoExpressionTranslatorTests
     }
 
     [Fact]
-    public void StartsWith_with_string_comparison_current_culture_overload_reports_not_translatable()
+    public void StartsWith_with_string_comparison_current_culture_overload_translates_ordinally()
     {
-        // Culture-sensitive comparisons have no $regularExpression equivalent, so this declines. (The driver-LINQ
-        // fallback runs them with ordinal semantics — a driver-side risk — rather than this translator
-        // mistranslating them.)
+        // CurrentCulture is matched ordinally, as the driver-LINQ path does (D-CULTURE: accepted divergence).
         var entityType = GetEntityType<Customer>();
         var translator = NewTranslator(entityType);
         Expression<Func<Customer, bool>> predicate = c => c.Name.StartsWith("A", StringComparison.CurrentCulture);
 
         var translated = translator.TryTranslate(predicate.Body, out var result);
 
-        Assert.False(translated);
-        Assert.Null(result);
+        Assert.True(translated);
+        Assert.IsType<MongoRegexExpression>(result);
     }
 
     [Theory]
@@ -2802,9 +2800,15 @@ public class MongoExpressionTranslatorTests
     }
 
     [Fact]
-    public void A_primitive_collection_Count_declines()
-        // TryResolveOwnedCollectionPath requires an embedded collection NAVIGATION; Tags is a property.
-        => Assert.Null(TryTranslateBlogPredicate(b => b.Tags.Count > 2));
+    public void A_primitive_collection_Count_translates_to_a_null_safe_size()
+    {
+        // Tags is a primitive-collection PROPERTY, not an owned navigation: TryResolvePrimitiveCollectionPath resolves it.
+        var comparison = Assert.IsType<MongoBinaryExpression>(TryTranslateBlogPredicate(b => b.Tags.Count > 2));
+
+        var size = Assert.IsType<MongoSizeExpression>(comparison.Left);
+        Assert.Equal("Tags", size.FieldName);
+        Assert.True(size.NullSafe);
+    }
 
     [Fact]
     public void An_outer_scoped_owned_navigation_null_equality_declines_in_a_two_scope_element_translator()

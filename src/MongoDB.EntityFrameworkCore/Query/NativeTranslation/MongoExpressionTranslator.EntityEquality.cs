@@ -210,8 +210,8 @@ internal sealed partial class MongoExpressionTranslator
     /// Null elements pass through into <c>$in</c> (as Cosmos does); they can never match a real row.
     /// </summary>
     /// <remarks>
-    /// Single-property, non-shadow keys only; a composite key would need a tuple <c>$in</c> that
-    /// <see cref="MongoInExpression"/> can't express, so it declines.
+    /// Non-shadow keys only. A composite key takes a per-entity <c>$or</c> of key-path conjunctions
+    /// (<see cref="MongoCompositeKeyInExpression"/>), since <see cref="MongoInExpression"/> has no tuple form.
     /// </remarks>
     internal bool TryTranslateEntityListContains(MethodCallExpression call, [NotNullWhen(true)] out MongoExpression? result)
     {
@@ -226,8 +226,19 @@ internal sealed partial class MongoExpressionTranslator
             return false;
 
         var primaryKey = _entityType.FindPrimaryKey();
-        if (primaryKey is null || primaryKey.Properties.Count != 1)
-            return false; // composite key: no multi-field $in
+        if (primaryKey is null || primaryKey.Properties.Any(p => p.IsShadowProperty()))
+            return false;
+
+        // Composite key: no multi-field $in, so a per-entity conjunction of key paths ($or), built per execution.
+        if (primaryKey.Properties.Count > 1)
+        {
+            var entityValues = TranslateEntityListValues(collection);
+            if (entityValues is null)
+                return false;
+
+            result = new MongoCompositeKeyInExpression(primaryKey.Properties, entityValues, negated: false);
+            return true;
+        }
 
         var keyProperty = primaryKey.Properties[0];
         if (keyProperty.IsShadowProperty())
@@ -240,6 +251,29 @@ internal sealed partial class MongoExpressionTranslator
         result = new MongoInExpression(
             new MongoFieldExpression(keyProperty, GetPropertyFieldPath(keyProperty)), valuesNode, negated: false);
         return true;
+    }
+
+    /// <summary>
+    /// The collection side of a composite-key <see cref="TryTranslateEntityListContains"/>: the entity instances as a
+    /// constant, or the entity-list parameter (the clauses are built from it per execution).
+    /// </summary>
+    internal static MongoExpression? TranslateEntityListValues(Expression collectionExpr)
+    {
+        var unwrapped = Unwrap(collectionExpr);
+        if (unwrapped is ConstantExpression { Value: System.Collections.IEnumerable } constant)
+            return new MongoConstantExpression(constant.Value, forSerialization: null);
+
+        // EF8 hands an inline `new[] { a, b }.Contains(e)` over as a NewArrayInit of constants (EF9+ folds it to a constant).
+        if (unwrapped is NewArrayExpression { NodeType: ExpressionType.NewArrayInit } newArray
+            && newArray.Expressions.All(e => Unwrap(e) is ConstantExpression))
+        {
+            return new MongoConstantExpression(
+                newArray.Expressions.Select(e => ((ConstantExpression)Unwrap(e)).Value).ToList(), forSerialization: null);
+        }
+
+        return NativeQueryParameter.TryGetQueryParameterName(unwrapped, out var name)
+            ? new MongoParameterExpression(name, forSerialization: null)
+            : null;
     }
 
     /// <summary>

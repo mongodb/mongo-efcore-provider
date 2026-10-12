@@ -53,7 +53,7 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
         });
     }
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.DriverLinq)]
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
     public void Random_in_predicate_throws_rather_than_being_evaluated_once(MongoQueryMode mode)
     {
         using var db = CreateContext(mode, $"rp_{mode}");
@@ -62,7 +62,16 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
         Assert.Contains("Next", ex.Message);
     }
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.DriverLinq)]
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
+    public void EF_Functions_Random_in_predicate_throws(MongoQueryMode mode)
+    {
+        using var db = CreateContext(mode, $"rf_{mode}");
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => db.Entities.Where(o => EF.Functions.Random() < 1.0).ToList());
+        Assert.Contains("Random", ex.Message);
+    }
+
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
     public void Random_compared_to_column_in_predicate_throws(MongoQueryMode mode)
     {
         using var db = CreateContext(mode, $"rc_{mode}");
@@ -70,7 +79,7 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
             () => db.Entities.Where(o => o.Foo > Random.Shared.Next()).ToList());
     }
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.DriverLinq)]
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
     public void Random_in_ordering_throws(MongoQueryMode mode)
     {
         using var db = CreateContext(mode, $"ro_{mode}");
@@ -78,7 +87,7 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
             () => db.Entities.OrderBy(o => o.Foo + Random.Shared.Next()).ToList());
     }
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.DriverLinq)]
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
     public void Guid_NewGuid_in_predicate_throws(MongoQueryMode mode)
     {
         using var db = CreateContext(mode, $"gp_{mode}");
@@ -88,7 +97,7 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
 
     // EF leaves Guid.NewGuid() in the tree, so a closed DateTime receiver of a native $dateAdd that contains one reaches
     // MongoExpressionTranslator.TryEvaluateClosedSubtree, which would otherwise evaluate it once at translation time.
-    // The native path must decline (NativeOnly throws) and the driver-LINQ bridge then throws.
+    // The central non-deterministic-call scan refuses it in every mode, before the native/fallback decision.
     [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.DriverLinq), InlineData(MongoQueryMode.NativeOnly)]
     public void Guid_NewGuid_in_closed_date_add_receiver_throws(MongoQueryMode mode)
     {
@@ -99,14 +108,7 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
                         > o.Created)
             .ToList();
 
-        if (mode == MongoQueryMode.NativeOnly)
-        {
-            Assert.Throws<MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException>(query);
-        }
-        else
-        {
-            Assert.Contains("Guid.NewGuid", Assert.Throws<InvalidOperationException>(query).Message);
-        }
+        Assert.Contains("Guid.NewGuid", Assert.Throws<InvalidOperationException>(query).Message);
     }
 
     [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
@@ -338,19 +340,12 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
             .Where(r => new[] { 1, 2, 3 }.Where(x => Guid.NewGuid() != Guid.Empty).Contains(r.Foo))
             .ToList();
 
-        if (mode == MongoQueryMode.NativeOnly)
-        {
-            Assert.Throws<MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException>(query);
-        }
-        else
-        {
-            Assert.Contains("Guid.NewGuid", Assert.Throws<InvalidOperationException>(query).Message);
-        }
+        Assert.Contains("Guid.NewGuid", Assert.Throws<InvalidOperationException>(query).Message);
     }
 
     // Pinned: before EF-255 a Random call in a projection was also evaluated once and returned the same value for every
     // row (the driver folds it into a constant), so it was never a working per-row client evaluation. It now fails loudly.
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.DriverLinq)]
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
     public void Random_in_projection_throws_rather_than_repeating_one_value(MongoQueryMode mode)
     {
         using var db = CreateContext(mode, $"rj_{mode}");
@@ -358,7 +353,7 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
             () => db.Entities.Select(o => new { o.Foo, R = Random.Shared.Next() }).ToList());
     }
 
-    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.DriverLinq)]
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
     public void Random_evaluated_client_side_before_the_query_works(MongoQueryMode mode)
     {
         using var db = CreateContext(mode, $"rv_{mode}");

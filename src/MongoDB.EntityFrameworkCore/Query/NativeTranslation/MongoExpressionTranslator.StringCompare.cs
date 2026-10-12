@@ -33,13 +33,14 @@ internal sealed partial class MongoExpressionTranslator
         result = null;
         var op = comparison.NodeType;
         Expression callSide = comparison.Left, constantSide = comparison.Right;
-        if (!IsStringCompareCall(callSide, out _, out _))
+        if (!IsCompareCall(callSide, out _, out _, out _))
         {
             (callSide, constantSide) = (comparison.Right, comparison.Left);
             op = Mirror(op);
         }
 
-        if (!IsStringCompareCall(callSide, out var a, out var b) || Unwrap(constantSide) is not ConstantExpression { Value: int k })
+        if (!IsCompareCall(callSide, out var a, out var b, out var isString)
+            || Unwrap(constantSide) is not ConstantExpression { Value: int k })
             return false;
 
         bool? constantFold = (k, op) switch
@@ -70,11 +71,15 @@ internal sealed partial class MongoExpressionTranslator
             _ => null
         };
 
-        if (relational is { } relOp && IsFoldSafe(a, b))
+        if (relational is { } relOp && (!isString || IsFoldSafe(a, b)))
         {
             result = TranslateComparisonCore(a, b, relOp);
             return result is not null;
         }
+
+        // $cmp orders BSON values by type then value; only the string case is known to match the CLR ordering.
+        if (!isString)
+            return false;
 
         var left = TranslateOperand(a);
         var right = left is null ? null : TranslateOperand(b);
@@ -87,23 +92,33 @@ internal sealed partial class MongoExpressionTranslator
         return true;
     }
 
-    private static bool IsStringCompareCall(Expression node, out Expression a, out Expression b)
+    private static bool IsCompareCall(Expression node, out Expression a, out Expression b, out bool isString)
     {
         a = b = null!;
+        isString = false;
         switch (Unwrap(node))
         {
             case MethodCallExpression { Method.Name: nameof(string.CompareTo), Object: { Type: var t } obj, Arguments: [var arg] }
-                when t == typeof(string) && arg.Type == typeof(string):
+                when IsOrderedCompareType(t) && arg.Type == t:
                 (a, b) = (obj, arg);
+                isString = t == typeof(string);
                 return true;
             case MethodCallExpression { Method.Name: nameof(string.Compare), Object: null, Arguments: [var x, var y] } call
-                when call.Method.DeclaringType == typeof(string):
+                when IsOrderedCompareType(call.Method.DeclaringType) && x.Type == call.Method.DeclaringType && y.Type == x.Type:
                 (a, b) = (x, y);
+                isString = x.Type == typeof(string);
                 return true;
             default:
                 return false;
         }
     }
+
+    // Types whose BSON order equals the CLR order. Excludes unsigned (BSON has no unsigned types), enums, Guid
+    // (binary order) and TimeSpan.
+    private static bool IsOrderedCompareType(Type? type)
+        => type == typeof(string) || type == typeof(int) || type == typeof(long) || type == typeof(short)
+           || type == typeof(byte) || type == typeof(sbyte) || type == typeof(double) || type == typeof(float)
+           || type == typeof(decimal) || type == typeof(DateTime);
 
     // A relational fold renders as query-dialect { f: { $op: "c" } }, which never matches a null field; .NET orders
     // null first. So fold only when neither side can be null, and the receiver is default-serialized (a folded

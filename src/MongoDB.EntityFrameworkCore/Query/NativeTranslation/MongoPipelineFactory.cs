@@ -675,7 +675,8 @@ internal sealed class MongoPipelineFactory
         int index,
         IReadOnlyDictionary<string, object?> parameterValues)
     {
-        var (name, serializer, isArray, regexKind, entityMemberProperty, arrayElementIndex, regexCaseInsensitive) = _placeholders.Entries[index];
+        var (name, serializer, isArray, regexKind, entityMemberProperty, arrayElementIndex, regexCaseInsensitive, compositeKeys) =
+            _placeholders.Entries[index];
 
         // Coerces to the serializer's ValueType (which differs from the property ClrType the compile-time path
         // uses when a value converter is present) and serializes via the shared path used for constants.
@@ -686,6 +687,10 @@ internal sealed class MongoPipelineFactory
             throw new InvalidOperationException(
                 $"MongoPipelineFactory.Build: parameter '{name}' (placeholder index {index}) "
                 + "is not present in parameterValues. This is a bug in the query compilation pipeline.");
+
+        // Composite-key entity-list Contains: the value is the entity list; build the per-entity key conjunctions.
+        if (compositeKeys is not null)
+            return CompositeKeyClauses.Build((System.Collections.IEnumerable)(rawValue ?? Array.Empty<object>()), compositeKeys);
 
         // Entity-list Contains (`customers.Contains(c)`): the value is an array of entities; extract each key.
         // Null elements stay BSON null (see MongoExpressionTranslator.TryTranslateEntityListContains). Must

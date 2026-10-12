@@ -104,6 +104,8 @@ internal static class NativeProjectionBinder
         // (memberName, alias) overrides for wrapped-body leaves whose alias differs from the member name, plus
         // owned-nav-entity leaves; registered in the commit block.
         var namedAliasOverrides = new List<(string MemberName, string Alias)>();
+        // Set only by the wrapped-body arm, whose projection aliases are the member names (a positional arm's are synthetic).
+        var isWrappedBody = false;
         // Set once the multi-argument ctor-only-DTO arm has translated every argument; committed to
         // HasPositionalCtorProjectionShaper in the commit block.
         var hasPositionalCtorProjection = false;
@@ -131,10 +133,11 @@ internal static class NativeProjectionBinder
             case NewExpression or MemberInitExpression
                 when selector.Body.TryGetProjectionMembers(
                     out var wrappedMembers, rowIndependentConstructorArgumentsOver: selector.Parameters[0]):
+                isWrappedBody = true;
                 hasClientEvaluatedLeaf |= selector.Body is MemberInitExpression { NewExpression.Arguments.Count: > 0 };
-                foreach (var (memberName, member) in wrappedMembers)
+                foreach (var (memberName, member) in FlattenNestedConstructions(translator, wrappedMembers))
                 {
-                    var memberValue = PeelCaseMapping(member);
+                    var memberValue = PeelCaseMapping(member, includeDateTimeToString: true);
                     hasCaseMappingLeaf |= !ReferenceEquals(memberValue, member);
                     var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], memberValue, memberName);
                     if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, out var throwsOnNull, allowWholeRootEntityLeaf: true))
@@ -363,7 +366,7 @@ internal static class NativeProjectionBinder
         // strip works.
         bool TryBindAsBareProjection(Expression bareLikeExpr, string provisionalAlias, bool allowWholeRootEntityLeafForThis)
         {
-            var peeled = PeelCaseMapping(bareLikeExpr);
+            var peeled = PeelCaseMapping(bareLikeExpr, includeDateTimeToString: true);
             hasCaseMappingLeaf |= !ReferenceEquals(peeled, bareLikeExpr);
             bareLikeExpr = peeled;
             if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], bareLikeExpr, provisionalAlias,
@@ -401,6 +404,10 @@ internal static class NativeProjectionBinder
             return true;
         }
 
+        bool IsOwnedArrayLeafValue(Expression leafValue)
+            => leafValue is MaterializeCollectionNavigationExpression
+               || TryMatchOwnedArraySelectLeaf(leafValue, mongoQ.CollectionExpression.EntityType, out _, out _, out _);
+
         // Claims the alias (false on a case-insensitive collision) and stages one leaf, keeping leafIsArray and
         // leafIsOwnedNavEntity index-aligned with projections and folding the leaf into the has*Leaf flags.
         bool TryStageLeaf(
@@ -409,7 +416,16 @@ internal static class NativeProjectionBinder
         {
             if (!seenAliases.Add(alias))
             {
-                return false;
+                // Two array leaves over the same owned collection (`new { b.Posts, Titles = b.Posts.Select(...) }`) read
+                // one stored array; the second shares the first's projection (and registers its own alias override).
+                // Only owned arrays: a projected reference-collection list (`_lookup_<Nav>`) also sets isArrayLeaf, and
+                // two of those must keep declining.
+                return isArrayLeaf
+                       && IsOwnedArrayLeafValue(value)
+                       && leaf is MongoElementRefExpression sharedArray
+                       && projections.Exists(p => p.Alias == alias && p.Expression is MongoElementRefExpression existing
+                                                  && existing.Path == sharedArray.Path
+                                                  && p.Source is { } existingValue && IsOwnedArrayLeafValue(existingValue));
             }
 
             projections.Add(new MongoProjection(alias, leaf, value, throwsOnNull));
@@ -467,9 +483,28 @@ internal static class NativeProjectionBinder
         {
             for (var i = 0; i < projections.Count; i++)
             {
-                if (!leafIsArray[i] && !leafIsOwnedNavEntity[i]
-                    && !IsWholeDocumentReadableLeaf(projections[i].Expression))
-                    return false;
+                if (leafIsArray[i] || leafIsOwnedNavEntity[i] || IsWholeDocumentReadableLeaf(projections[i].Expression))
+                    continue;
+
+                // A dotted scalar of a wrapped body (`new { b.Home.City, b.Home.Notes }`) takes its document path as its
+                // alias, so a whole-document late fallback reads the same path the $project wrote: the same alias ==
+                // document-path invariant the array leaf already keeps. The read side walks a dotted alias segment by
+                // segment through the property's serializer. Declines when the path collides with another alias.
+                if (isWrappedBody
+                    && projections[i].Expression is MongoFieldExpression { ElementName: var documentPath } dottedField
+                    && documentPath.Contains('.')
+                    && !string.Equals(projections[i].Alias, documentPath, StringComparison.OrdinalIgnoreCase)
+                    && !ProjectionPathsCollide(projections, i, documentPath))
+                {
+                    var memberAlias = projections[i].Alias;
+                    seenAliases.Remove(memberAlias);
+                    seenAliases.Add(documentPath);
+                    projections[i] = projections[i] with { Alias = documentPath };
+                    namedAliasOverrides.Add((memberAlias, documentPath));
+                    continue;
+                }
+
+                return false;
             }
         }
 
@@ -682,8 +717,9 @@ internal static class NativeProjectionBinder
     }
 
     /// <summary>
-    /// A plain top-level, default-serialized scalar field read (<c>x.Name</c> or <c>EF.Property</c>): the member rule
-    /// of a constructed sub-entity leaf (<see cref="TryGetDocumentConstructionLeaf"/>) and of a row read inside a
+    /// A plain top-level scalar field read (<c>x.Name</c> or <c>EF.Property</c>) of any storage, since both readers go
+    /// through the property's serializer: the member rule of a constructed sub-entity leaf
+    /// (<see cref="TryGetDocumentConstructionLeaf"/>) and of a row read inside a
     /// client-evaluated ternary's branch (<see cref="TryCollectClientConditionalBranches"/>). Such a read resolves off a
     /// whole document by its property too, so a late fallback's mixed reader reads it correctly.
     /// </summary>
@@ -691,8 +727,54 @@ internal static class NativeProjectionBinder
         MongoExpressionTranslator translator, Expression value, [NotNullWhen(true)] out MongoFieldExpression? field)
     {
         return TryTranslatePlainField(translator, value, out field)
-               && !field.ElementName.Contains('.')
-               && NativeGroupByBinder.HasDefaultKeySerialization(field.Property);
+               && !field.ElementName.Contains('.');
+    }
+
+    /// <summary>
+    /// Whether <paramref name="path"/> equals, prefixes or extends any other projection's alias: MongoDB rejects a
+    /// <c>$project</c> that names a path and one of its sub-paths ("path collision").
+    /// </summary>
+    private static bool ProjectionPathsCollide(List<MongoProjection> projections, int self, string path)
+    {
+        for (var i = 0; i < projections.Count; i++)
+        {
+            if (i == self)
+                continue;
+
+            var other = projections[i].Alias;
+            if (string.Equals(other, path, StringComparison.OrdinalIgnoreCase)
+                || other.StartsWith(path + ".", StringComparison.OrdinalIgnoreCase)
+                || path.StartsWith(other + ".", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="cast"/> only relabels the CLR type of a non-default-stored value that is read through
+    /// <paramref name="property"/>'s serializer (<c>(long)p.IntStoredAsString</c>, <c>(int?)p.IntStoredAsString</c>): a
+    /// nullable lift or a widening numeric cast. Such a leaf projects the bare stored field and both readers apply the
+    /// property's serializer first and the cast second, so the cast never sees the stored form. Shared by the emit side
+    /// and the shaper's read side (<c>MongoProjectionBindingRemovingExpressionVisitor</c>), which must agree. A
+    /// narrowing cast, or a property with a value converter, is not a relabel (the cast operator would have to run
+    /// server-side, over the stored form) and declines.
+    /// </summary>
+    internal static bool IsClientRelabelCast(UnaryExpression cast, IProperty property)
+    {
+        if (cast.NodeType is not (ExpressionType.Convert or ExpressionType.ConvertChecked)
+            || property.GetValueConverter() != null
+            || property.GetTypeMapping().Converter != null
+            || NativeGroupByBinder.HasDefaultKeySerialization(property))
+        {
+            return false;
+        }
+
+        var from = cast.Operand.Type.UnwrapNullableType();
+        var to = cast.Type.UnwrapNullableType();
+        return from == to || MongoExpressionTranslator.IsWideningNumericConvert(from, to);
     }
 
     /// <summary>
@@ -705,7 +787,8 @@ internal static class NativeProjectionBinder
     {
         field = null;
         return (expression is MemberExpression
-                || (expression is MethodCallExpression efPropertyCall && efPropertyCall.Method.IsEFPropertyMethod()))
+                || (expression is MethodCallExpression fieldCall
+                    && (fieldCall.Method.IsEFPropertyMethod() || IsMqlFieldCall(fieldCall))))
                && translator.TryTranslateField(expression, out field);
     }
 
@@ -768,13 +851,28 @@ internal static class NativeProjectionBinder
     /// in the shaper (see <c>MongoProjectionBindingExpressionVisitor.Visit</c>, and for a positional-ctor projection
     /// <c>MongoQueryableMethodTranslatingExpressionVisitor.BindPositionalCtorProjectionMember</c>).
     /// </summary>
-    internal static Expression PeelCaseMapping(Expression leafExpression)
+    /// <param name="leafExpression">The leaf to peel.</param>
+    /// <param name="includeDateTimeToString">
+    /// Also peels <see cref="IsDateTimeToString"/> (plain-<c>Select</c> callers only: their read side re-applies it).
+    /// </param>
+    internal static Expression PeelCaseMapping(Expression leafExpression, bool includeDateTimeToString = false)
     {
-        while (leafExpression is MethodCallExpression call && IsCaseMappingCall(call))
+        while (leafExpression is MethodCallExpression call
+               && (IsCaseMappingCall(call) || includeDateTimeToString && IsDateTimeToString(call)))
             leafExpression = call.Object!;
 
         return leafExpression;
     }
+
+    /// <summary>
+    /// True for <c>ToString()</c> / <c>ToString("format")</c> on a <see cref="DateTime"/> (or nullable). No server form matches
+    /// .NET's culture-sensitive output (driver-LINQ pushes down an ISO <c>$toString</c>, wrong on main), so a projected leaf
+    /// stages only the receiver and the call is re-applied client-side, as for <c>DateTimeOffset.ToString</c> (D-TOSTRING).
+    /// </summary>
+    internal static bool IsDateTimeToString(MethodCallExpression call)
+        => call is { Method.Name: nameof(ToString), Object: { } receiver }
+           && receiver.Type.UnwrapNullableType() == typeof(DateTime)
+           && call.Arguments is [] or [ConstantExpression { Value: string }];
 
     /// <summary>
     /// True for a numeric computed leaf the server evaluates whole: <c>-x</c> (<see cref="ExpressionType.Negate"/> or
@@ -952,6 +1050,54 @@ internal static class NativeProjectionBinder
     }
 
     /// <summary>
+    /// Rewrites a selector body of the form <c>Tuple.Create(a, b, ..)</c> (up to seven arguments) to the construction
+    /// <c>new Tuple&lt;..&gt;(a, b, ..)</c>, which the positional-constructor projection arm already handles. Any other
+    /// selector is returned unchanged. Top-level only: a nested <c>Tuple.Create</c> stays and declines.
+    /// </summary>
+    internal static LambdaExpression NormalizeTupleFactory(LambdaExpression selector)
+        => selector.Body is MethodCallExpression
+           {
+               Method: { IsStatic: true, Name: "Create", DeclaringType: var declaring },
+               Arguments: { Count: > 1 and <= 7 } arguments
+           } call
+           && declaring == typeof(Tuple)
+           && call.Type.GetConstructors() is [var constructor]
+           && constructor.GetParameters().Length == arguments.Count
+            ? Expression.Lambda(Expression.New(constructor, arguments), selector.Parameters)
+            : selector;
+
+    /// <summary>
+    /// Replaces a nested construction that <see cref="TryGetDocumentConstructionLeaf"/> rejects (a computed member, a
+    /// whole-entity member, a deeper nest) by its own members, recursively, so each becomes a leaf of the enclosing
+    /// projection. An all-plain nest stays a sub-document leaf.
+    /// </summary>
+    /// <remarks>
+    /// No read-side change: the shaper walks the nested <c>new</c> entering each member and the alias is the LAST member
+    /// name, so flattening is purely an emit-side regrouping. Two members that share a last name at different levels
+    /// collide in <c>seenAliases</c>, which declines the whole projection (the read side would otherwise rename one).
+    /// A <c>MemberInit</c> with constructor arguments is not flattened (<c>TryGetProjectionMembers</c> declines it).
+    /// </remarks>
+    private static IReadOnlyList<(string MemberName, Expression Value)> FlattenNestedConstructions(
+        MongoExpressionTranslator translator, IReadOnlyList<(string MemberName, Expression Value)> members, int depth = 0)
+    {
+        var flat = new List<(string, Expression)>(members.Count);
+        foreach (var (name, value) in members)
+        {
+            if (depth < 8
+                && value.TryGetProjectionMembers(out var nested)
+                && !TryGetDocumentConstructionLeaf(translator, value, out _))
+            {
+                flat.AddRange(FlattenNestedConstructions(translator, nested, depth + 1));
+                continue;
+            }
+
+            flat.Add((name, value));
+        }
+
+        return flat;
+    }
+
+    /// <summary>
     /// Translates a single projection leaf (field, owned collection/reference, count, computed expression, ...);
     /// returns <see langword="false"/> when it is not natively representable.
     /// </summary>
@@ -1027,14 +1173,6 @@ internal static class NativeProjectionBinder
             : leafExpression;
         if (TryTranslatePlainField(translator, plainFieldCandidate, out var field))
         {
-            // A non-default-serialized dotted (owned single-ref) leaf must decline: the DOM shaper's field-access
-            // resolver is single-hop, can't find the property's serializer, and would silently return the raw stored
-            // value.
-            if (!NativeGroupByBinder.HasDefaultKeySerialization(field.Property) && field.ElementName.Contains('.'))
-            {
-                result = null!;
-                return false;
-            }
 
             result = field;
             return true;
@@ -1071,7 +1209,7 @@ internal static class NativeProjectionBinder
         // decline) strips the projection and hands the shaper whole documents, which only have an element named `alias`
         // if the member wasn't renamed (`new { Addr = b.Address }` would silently read nothing).
         if (allowWholeRootEntityLeaf
-            && TryGetOwnedReferenceNavigationLeaf(mongoQ, outerParameter, leafExpression, out var ownedNav)
+            && TryGetOwnedReferenceNavigationLeaf(mongoQ, outerParameter, PeelEmbeddedIncludes(leafExpression), out var ownedNav)
             && ownedNav.TargetEntityType.GetContainingElementName() is { } ownedNavElementName
             && alias == ownedNavElementName)
         {
@@ -1105,9 +1243,23 @@ internal static class NativeProjectionBinder
         if (leafExpression is MaterializeCollectionNavigationExpression materializeCollection
             && IsNativeArrayProjectionLeaf(
                 materializeCollection.Navigation as INavigation, mongoQ.CollectionExpression.EntityType, alias)
-            && translator.TryTranslateOwnedCollectionArray(materializeCollection.Subquery, out var arrayRef))
+            && translator.TryTranslateOwnedCollectionArray(PeelOwnedIncludeSelect(materializeCollection.Subquery), out var arrayRef))
         {
             result = arrayRef;
+            isArrayLeaf = true;
+            return true;
+        }
+
+        // Element Select over an owned collection — `new { b.Posts, Titles = b.Posts.Select(p => p.Title).ToList() }`:
+        // the whole array is staged (under the same alias as a bare `b.Posts`, which this leaf then shares) and the
+        // shaper re-applies the Select over the materialized owned entities (TryMatchOwnedArraySelectLeaf).
+        if (allowWholeRootEntityLeaf
+            && TryMatchOwnedArraySelectLeaf(
+                leafExpression, mongoQ.CollectionExpression.EntityType, out var selectedArray, out var selectedArraySource, out _)
+            && IsNativeArrayProjectionLeaf(selectedArray, mongoQ.CollectionExpression.EntityType, alias)
+            && translator.TryTranslateOwnedCollectionArray(selectedArraySource, out var selectedArrayRef))
+        {
+            result = selectedArrayRef;
             isArrayLeaf = true;
             return true;
         }
@@ -1133,6 +1285,18 @@ internal static class NativeProjectionBinder
             return true;
         }
 
+        // A comparison of a projected reference-collection Count against an integer constant
+        // (`c.Orders.Count > 0`, EF8's `Any()` spelling): the same $lookup size, compared. A $lookup field is always an
+        // array, so the size can't abort on a missing one. Count on the left only; an operand-swapped comparison declines.
+        if (leafExpression is BinaryExpression { Left: MethodCallExpression countCall, Right: ConstantExpression { Value: int or long } countBound } countComparison
+            && MongoExpressionTranslator.MapComparisonOperator(countComparison.NodeType) is { } countOperator
+            && TryTranslateProjectedCollectionCount(
+                mongoQ, outerParameter, countCall, pendingLookups, pendingBareCountStamps, out var comparedSize))
+        {
+            result = new MongoBinaryExpression(countOperator, comparedSize!, new MongoConstantExpression(countBound.Value, null));
+            return true;
+        }
+
         // Projected reference-collection-nav list — `Orders = c.Orders.ToList()`. The read side comes from
         // MongoProjectionBindingExpressionVisitor.TryBindProjectedCollectionNavigation in every mode; this arm only
         // keeps Route native and retains the $lookup field under its alias. Wrapped bodies only. Reuses isArrayLeaf
@@ -1144,6 +1308,16 @@ internal static class NativeProjectionBinder
         {
             result = new MongoElementRefExpression(alias, listNavigation.TargetEntityType.ClrType);
             isArrayLeaf = true;
+            return true;
+        }
+
+        // A relabel cast over a non-default-stored field: project the bare stored field; the shaper reads it through the
+        // property's serializer and applies the cast (IsClientRelabelCast, shared with the read side).
+        if (leafExpression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } relabelCast
+            && IsPlainTopLevelFieldRead(translator, relabelCast.Operand, out var relabelField)
+            && IsClientRelabelCast(relabelCast, relabelField.Property))
+        {
+            result = relabelField;
             return true;
         }
 
@@ -1421,9 +1595,12 @@ internal static class NativeProjectionBinder
     /// IBsonSerializer&lt;TField&gt;)</c>, resolved by reflection since the driver has no canonical constant; matched
     /// by definition, never by name.
     /// </summary>
-    private static readonly MethodInfo MqlFieldMethodInfo =
+    internal static readonly MethodInfo MqlFieldMethodInfo =
         typeof(Mql).GetMethods(BindingFlags.Public | BindingFlags.Static)
             .Single(m => m.Name == nameof(Mql.Field) && m.GetParameters().Length == 3);
+
+    internal static bool IsMqlFieldCall(MethodCallExpression call)
+        => call.Method.IsGenericMethod && call.Method.GetGenericMethodDefinition() == MqlFieldMethodInfo;
 
     /// <summary>
     /// The single admissibility rule for an owned entity-collection array projection leaf, shared by the emit side
@@ -1444,7 +1621,7 @@ internal static class NativeProjectionBinder
     /// collection under <c>DriverLinq</c>.
     /// </para>
     /// <para>
-    /// The element type must also have no eager-loaded navigation of its own (i.e. no nested owned navigation): EF's
+    /// The element type's eager-loaded navigations must all be embedded (nested owned navigations, recursively); EF's
     /// auto-include for it makes shaper build fail in every <see cref="Infrastructure.MongoQueryMode"/> (a separate
     /// defect). Lazy navigations such as a <c>WithOwner</c> back-reference are fine. See
     /// <c>NativeArrayProjectionTests.Element_with_its_own_navigation_is_declined_and_still_fails_identically_in_every_mode</c>.
@@ -1464,9 +1641,157 @@ internal static class NativeProjectionBinder
            // (BsonBinding.TryGetValueAtPath).
            && TryGetRootRelativeArrayPath(navigation, rootEntityType, out var arrayPath)
            && alias == arrayPath
-           // Eager-loaded navigations on the element crash shaper build (see remarks); non-eager ones are fine, as in
-           // IsWholeElementRepresentable's Reference arm.
-           && !navigation.TargetEntityType.GetNavigations().Any(n => n.IsEagerLoaded);
+           // Every eager-loaded navigation of the element (recursively) must be embedded: the shaper wraps an
+           // IncludeExpression per owned navigation (CreateElementShaperWithOwnedIncludes), whereas a cross-collection one
+           // would need a $lookup. Non-eager navigations (a WithOwner back-reference) are fine.
+           && EagerNavigationsAreAllEmbedded(navigation.TargetEntityType);
+
+    /// <summary>
+    /// For an owned collection whose elements own further navigations, EF's nav-expansion wraps the source as
+    /// <c>AsQueryable(EF.Property(b, "Posts")).Select(o =&gt; IncludeExpression(...))</c>; the array itself is the unwrapped
+    /// source. Anything else is returned unchanged.
+    /// </summary>
+    private static Expression PeelOwnedIncludeSelect(Expression subquery)
+        => subquery is MethodCallExpression
+           {
+               Method: { Name: nameof(Queryable.Select), DeclaringType: var declaring },
+               Arguments: [var source, var selector]
+           }
+           && declaring == typeof(Queryable)
+           && (selector is UnaryExpression { NodeType: ExpressionType.Quote } quote ? quote.Operand : selector)
+               is LambdaExpression { Body: IncludeExpression }
+            ? source
+            : subquery;
+
+    /// <summary>
+    /// Nav-expansion wraps an owned entity that owns further navigations in one <see cref="IncludeExpression"/> per eager
+    /// embedded navigation. They carry no cross-collection work (their data is in the leaf's own document), so the
+    /// owned-reference leaf is matched through them; a cross-collection include is left in place and declines the match.
+    /// </summary>
+    private static Expression PeelEmbeddedIncludes(Expression leafExpression)
+    {
+        while (leafExpression is IncludeExpression { Navigation: INavigation navigation } include && navigation.IsEmbedded())
+            leafExpression = include.EntityExpression;
+
+        return leafExpression;
+    }
+
+    private static bool EagerNavigationsAreAllEmbedded(IEntityType elementType)
+        => elementType.GetNavigations()
+            .Where(n => n.IsEagerLoaded)
+            .All(n => n.IsEmbedded() && EagerNavigationsAreAllEmbedded(n.TargetEntityType));
+
+    /// <summary>
+    /// Recognizes an element <c>Select</c> over a root-declared owned collection —
+    /// <c>ToList(Select(AsQueryable(EF.Property(root, "Nav")), o =&gt; ...))</c> (<c>Lngs = e.Secondary.Select(l =&gt; new
+    /// { l.Lng }).ToList()</c>) — and yields the navigation, the <c>AsQueryable</c> call (the array source) and the
+    /// element lambda.
+    /// </summary>
+    /// <remarks>
+    /// The leaf is staged as the whole owned array under its document path (the same array leaf as a bare
+    /// <c>e.Secondary</c>), and the shaper re-applies the <c>Select</c> over the materialized owned entities, so every
+    /// element member is read through its owned property's serializer. Shared by the emit side and
+    /// <c>MongoProjectionBindingExpressionVisitor</c>, which must agree. The lambda must be closed over its own
+    /// parameter: a reference to the query root would be evaluated client-side, off the shaper's array.
+    /// </remarks>
+    internal static bool TryMatchOwnedArraySelectLeaf(
+        Expression leaf,
+        IEntityType rootEntityType,
+        [NotNullWhen(true)] out INavigation? navigation,
+        [NotNullWhen(true)] out MethodCallExpression? arraySource,
+        [NotNullWhen(true)] out LambdaExpression? elementSelector)
+    {
+        navigation = null;
+        arraySource = null;
+        elementSelector = null;
+
+        if (leaf is not MethodCallExpression
+            {
+                Method: { Name: nameof(Enumerable.ToList), DeclaringType: var toListType },
+                Arguments: [MethodCallExpression { Method: { Name: nameof(Queryable.Select), DeclaringType: var selectType, IsGenericMethod: true } selectMethod, Arguments: [MethodCallExpression asQueryable, var selectorArgument] }]
+            }
+            || toListType != typeof(Enumerable)
+            || selectType != typeof(Queryable)
+            || selectMethod.GetGenericArguments().Length != 2
+            || asQueryable is not { Method: { Name: nameof(Queryable.AsQueryable), DeclaringType: var asQueryableType }, Arguments: [var source] }
+            || asQueryableType != typeof(Queryable)
+            || (selectorArgument is UnaryExpression { NodeType: ExpressionType.Quote } quote ? quote.Operand : selectorArgument)
+                is not LambdaExpression { Parameters.Count: 1 } lambda
+            || source is not MethodCallExpression { Arguments: [var receiver, ConstantExpression { Value: string navigationName }] } propertyCall
+            || !propertyCall.Method.IsEFPropertyMethod()
+            // The emit side sees the selector parameter; the read side sees it already bound to the root's shaper.
+            || receiver.RemoveConvert() is not (ParameterExpression or StructuralTypeShaperExpression)
+            || (receiver.RemoveConvert() is StructuralTypeShaperExpression { StructuralType: var boundType }
+                && !ReferenceEquals(boundType, rootEntityType))
+            || rootEntityType.FindNavigation(navigationName) is not { } found
+            || !IsSelfContainedLambda(lambda))
+        {
+            return false;
+        }
+
+        navigation = found;
+        arraySource = asQueryable;
+        elementSelector = lambda;
+        return true;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="lambda"/> can be compiled and run on its own over materialized owned entities: no
+    /// parameter other than its own (a query parameter or the query root would not exist there), and no
+    /// <c>EF.Property</c> call, which throws outside a query.
+    /// </summary>
+    private static bool IsSelfContainedLambda(LambdaExpression lambda)
+    {
+        var checker = new SelfContainedChecker();
+        checker.Visit(lambda);
+        return checker.IsSelfContained;
+    }
+
+    private sealed class SelfContainedChecker : ExpressionVisitor
+    {
+        private readonly HashSet<ParameterExpression> _declared = [];
+
+        public bool IsSelfContained { get; private set; } = true;
+
+        protected override Expression VisitLambda<T>(Expression<T> node)
+        {
+            foreach (var parameter in node.Parameters)
+                _declared.Add(parameter);
+
+            return base.VisitLambda(node);
+        }
+
+        protected override Expression VisitBlock(BlockExpression node)
+        {
+            foreach (var variable in node.Variables)
+                _declared.Add(variable);
+
+            return base.VisitBlock(node);
+        }
+
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            if (!_declared.Contains(node))
+                IsSelfContained = false;
+
+            return node;
+        }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (node.Method.IsEFPropertyMethod())
+                IsSelfContained = false;
+
+            return base.VisitMethodCall(node);
+        }
+
+        protected override Expression VisitExtension(Expression node)
+        {
+            // An EF shaper/extension node is not runnable outside the query.
+            IsSelfContained = false;
+            return node;
+        }
+    }
 
     /// <summary>
     /// The root-relative document path of an owned collection navigation's stored array — the dotted join of
@@ -1532,10 +1857,24 @@ internal static class NativeProjectionBinder
     {
         if (leafExpression is MaterializeCollectionNavigationExpression materializeCollection
             && materializeCollection.Navigation is INavigation ownedNavigation
-            && memberName == ownedNavigation.TargetEntityType.GetContainingElementName()
             && TryGetRootRelativeArrayPath(ownedNavigation, mongoQ.CollectionExpression.EntityType, out var path))
         {
             return path;
+        }
+
+        // A whole owned-reference entity leaf (`Car = p.parkingCar`) is read from its own element whatever the member is
+        // named: the alias is the element name and a DocumentPath override maps the member to it, as for an array leaf.
+        if (TryGetOwnedReferenceNavigationLeaf(mongoQ, outerParameter, leafExpression, out var ownedReference)
+            && ownedReference.TargetEntityType.GetContainingElementName() is { } ownedReferenceElement)
+        {
+            return ownedReferenceElement;
+        }
+
+        // An element Select over an owned collection stages that collection's array, so it takes the array's path.
+        if (TryMatchOwnedArraySelectLeaf(leafExpression, mongoQ.CollectionExpression.EntityType, out var selectedNavigation, out _, out _)
+            && TryGetRootRelativeArrayPath(selectedNavigation, mongoQ.CollectionExpression.EntityType, out var selectedPath))
+        {
+            return selectedPath;
         }
 
         // A projected reference-collection-nav list (`Orders = c.Orders.ToList()`) is read back by
@@ -1875,6 +2214,16 @@ internal static class NativeProjectionBinder
                 when IsFallbackSafeBareSizeLeaf(leaf, selector, pendingLookups):
                 break;
 
+            // Gate 1a2: a comparison of a reference-collection size (a $lookup output, always an array, so the fallback's bare
+            // $size cannot abort) against a constant: `c.Orders.Count > 0`.
+            case MongoBinaryExpression
+                {
+                    IsComparison: true, Left: MongoSizeExpression lookupCountSize, Right: MongoConstantExpression
+                }
+                when pendingLookups.Exists(l => l.As == lookupCountSize.FieldName)
+                     && MongoAggregationExpressionRenderer.CanRender(leaf):
+                break;
+
             // Gate 1b: arithmetic/cast/concat. The subtree check matters: `b.Posts.Count * 2` has an arithmetic top
             // node, and the rewrite doesn't reach a nested count.
             case MongoConvertExpression
@@ -2192,7 +2541,7 @@ internal static class NativeProjectionBinder
     /// placeholder substitution, so a parameter would reach the server as a sentinel. Checked by
     /// <see cref="IsConstantOnlyPredicate"/> and by asserting the <see cref="PlaceholderTable"/> stayed empty.</item>
     /// <item>A TPH-derived target (the lookup constructor would add a discriminator <c>$match</c> and
-    /// <see cref="LookupPipelineKind.FallbackOnly"/>, which the initializer would silently overwrite).</item>
+    /// <see cref="LookupPipelineKind.DiscriminatorNarrowed"/>, which the initializer would silently overwrite).</item>
     /// <item>Two-hop chains and non-scalar reduced members (they arrive with a <c>Queryable.Join</c>),
     /// owned collections (not an <see cref="EntityQueryRootExpression"/>), and whole-element reductions (no inner
     /// <c>Select</c>).</item>
@@ -2348,7 +2697,7 @@ internal static class NativeProjectionBinder
         // The matcher resolves only a navigation targeting the Where's root entity type.
         var targetEntityType = navigation.TargetEntityType;
 
-        // TPH-derived target: the LookupExpression constructor would add a discriminator $match (FallbackOnly).
+        // TPH-derived target: the LookupExpression constructor would add a discriminator $match (DiscriminatorNarrowed).
         if (targetEntityType.FindDiscriminatorProperty() is not null
             && targetEntityType != targetEntityType.GetRootType())
         {
@@ -2384,7 +2733,7 @@ internal static class NativeProjectionBinder
 
         var lookup = new LookupExpression(navigation) { PipelineKind = LookupPipelineKind.CorrelatedReducer };
 
-        // Fail closed structurally: the initializer above silently overwrites a constructor-chosen FallbackOnly kind
+        // Fail closed structurally: the initializer above silently overwrites a constructor-chosen DiscriminatorNarrowed kind
         // (e.g. the TPH discriminator $match), which would leave an unaccounted stage ahead of ours. The TPH gate
         // covers today's case; this doesn't depend on ordering.
         if (lookup.PipelineStages.Count > 0)

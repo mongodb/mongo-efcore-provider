@@ -200,6 +200,20 @@ Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : 
         await AssertTranslationFailed(() =>
             AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.StartsWith("M", StringComparison.InvariantCultureIgnoreCase))));
 
+        // The two Invariant refusals log MQL only when driver-LINQ attempts them (not under NativeOnly).
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql(
+                """
+Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^Qu", "options" : "s" } } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "^m", "options" : "is" } } } }
+""");
+            return;
+        }
+
         AssertMql(
             """
 Customers.{ "$match" : { "CompanyName" : { "$regularExpression" : { "pattern" : "^Qu", "options" : "s" } } } }
@@ -304,6 +318,20 @@ Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : 
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
         await AssertTranslationFailed(() =>
             AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.EndsWith("M", StringComparison.InvariantCultureIgnoreCase))));
+
+        // The two Invariant refusals log MQL only when driver-LINQ attempts them (not under NativeOnly).
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql(
+                """
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "e$", "options" : "s" } } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "m$", "options" : "is" } } } }
+""");
+            return;
+        }
 
         AssertMql(
             """
@@ -590,6 +618,21 @@ Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : [{ "$ifNull" : ["$_id",
 
     public override async Task String_Compare_nested(bool async)
     {
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            // string.Compare(x, x.ToUpper()) needs $toUpper, which is never emitted natively (ASCII-only; D-TOUPPER), so those two
+            // sub-queries are refused; the others run natively.
+            await AssertQuery(async, ss => ss.Set<Customer>().Where(c => string.Compare(c.CustomerID, "M" + c.CustomerID) == 0), assertEmpty: true);
+            await AssertTranslationFailed(() => AssertQuery(
+                async, ss => ss.Set<Customer>().Where(c => 0 != string.Compare(c.CustomerID, c.CustomerID.ToUpper()))));
+            await AssertQuery(async, ss => ss.Set<Customer>().Where(c => string.Compare(c.CustomerID, "ALFKI".Replace("ALF", c.CustomerID)) > 0), assertEmpty: true);
+            await AssertQuery(async, ss => ss.Set<Customer>().Where(c => string.Compare(c.CustomerID, "M" + c.CustomerID) <= 0));
+            await AssertTranslationFailed(() => AssertQuery(
+                async, ss => ss.Set<Customer>().Where(c => 1 == string.Compare(c.CustomerID, c.CustomerID.ToUpper()))));
+            await AssertQuery(async, ss => ss.Set<Customer>().Where(c => string.Compare(c.CustomerID, "ALFKI".Replace("ALF", c.CustomerID)) == -1));
+            return;
+        }
+
         await base.String_Compare_nested(async);
 
         AssertMql(
@@ -742,6 +785,20 @@ Customers.{ "$match" : { "$expr" : { "$gt" : [{ "$cmp" : [{ "$ifNull" : ["$_id",
 
     public override async Task String_Compare_to_nested(bool async)
     {
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            // See String_Compare_nested: the two ToUpper sub-queries are refused (D-TOUPPER).
+            await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.CustomerID.CompareTo("M" + c.CustomerID) != 0));
+            await AssertTranslationFailed(() => AssertQuery(
+                async, ss => ss.Set<Customer>().Where(c => 0 == c.CustomerID.CompareTo(c.CustomerID.ToUpper()))));
+            await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.CustomerID.CompareTo("AROUT".Replace("OUT", c.CustomerID)) > 0));
+            await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.CustomerID.CompareTo("M" + c.CustomerID) <= 0));
+            await AssertTranslationFailed(() => AssertQuery(
+                async, ss => ss.Set<Customer>().Where(c => 1 == c.CustomerID.CompareTo(c.CustomerID.ToUpper()))));
+            await AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.CustomerID.CompareTo("AROUT".Replace("OUT", c.CustomerID)) == -1));
+            return;
+        }
+
         await base.String_Compare_to_nested(async);
 
         AssertMql(
@@ -2240,6 +2297,20 @@ Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : 
         // Fails: StartsWith/Contains/EndsWith Ordinal/OrdinalIgnoreCase issue EF-243
         await AssertTranslationFailed(() =>
             AssertQuery(async, ss => ss.Set<Customer>().Where(c => c.ContactName.Contains("M", StringComparison.InvariantCultureIgnoreCase))));
+
+        // The two Invariant refusals log MQL only when driver-LINQ attempts them (not under NativeOnly).
+        if (MongoSpecTestHelpers.IsNativeOnly)
+        {
+            AssertMql(
+                """
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "M", "options" : "s" } } } }
+""",
+                //
+                """
+Customers.{ "$match" : { "ContactName" : { "$regularExpression" : { "pattern" : "m", "options" : "is" } } } }
+""");
+            return;
+        }
 
         AssertMql(
             """
