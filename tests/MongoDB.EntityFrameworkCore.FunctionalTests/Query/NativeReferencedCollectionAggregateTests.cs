@@ -159,6 +159,45 @@ public class NativeReferencedCollectionAggregateTests(TemporaryDatabaseFixture d
             z => z.Id + ":" + z.N + ":" + z.S,
             ["A1:3:630", "A2:1:700", "B1:1:30", "C0:0:0"]);
 
+    // ---- a computed selector: arithmetic over the element's own numeric properties. Orders (Id, Total): A1 (1, 10) (2, 20) (3, 600),
+    // A2 (4, 700), B1 (5, 30), C0 none.
+
+    [Fact]
+    public void Sum_of_a_product_is_zero_for_the_empty_group()
+        => Assert3(db => db.Set<Cust>().Select(c => new { c.Id, V = c.Orders.Sum(o => o.Total * 2) }), z => z.Id + ":" + z.V,
+            ["A1:1260", "A2:1400", "B1:60", "C0:0"]);
+
+    [Fact]
+    public void Sum_of_a_sum_of_two_properties()
+        => Assert3(db => db.Set<Cust>().Select(c => new { c.Id, V = c.Orders.Sum(o => o.Total + o.Id) }), z => z.Id + ":" + z.V,
+            ["A1:636", "A2:704", "B1:35", "C0:0"]);
+
+    [Fact]
+    public void Sum_of_an_integer_division_truncates_each_element()
+        // 10/7 + 20/7 + 600/7 = 1 + 2 + 85, not (630 / 7) = 90: C# divides integers one element at a time.
+        => Assert3(db => db.Set<Cust>().Select(c => new { c.Id, V = c.Orders.Sum(o => o.Total / 7) }), z => z.Id + ":" + z.V,
+            ["A1:88", "A2:100", "B1:4", "C0:0"]);
+
+    [Fact]
+    public void Max_of_a_computed_nullable_selector_is_null_for_the_empty_group()
+        => Assert3(db => db.Set<Cust>().Select(c => new { c.Id, V = c.Orders.Max(o => (int?)(o.Total * 2)) }), z => z.Id + ":" + z.V,
+            ["A1:1200", "A2:1400", "B1:60", "C0:"]);
+
+    [Fact]
+    public void Average_of_a_computed_nullable_selector_is_null_for_the_empty_group()
+        => Assert3(db => db.Set<Cust>().Select(c => new { c.Id, V = c.Orders.Average(o => (double?)(o.Total * 2)) }), z => z.Id + ":" + z.V,
+            ["A1:840", "A2:1400", "B1:60", "C0:"]);
+
+    [Fact]
+    public void Min_of_a_computed_selector_over_a_widened_double()
+        => Assert3(db => db.Set<Cust>().Select(c => new { c.Id, V = c.Orders.Min(o => (double?)o.Total / 4) }), z => z.Id + ":" + z.V,
+            ["A1:2.5", "A2:175", "B1:7.5", "C0:"]);
+
+    [Fact]
+    public void A_computed_selector_beside_a_property_selector_in_one_projection()
+        => Assert3(db => db.Set<Cust>().Select(c => new { c.Id, A = c.Orders.Sum(o => o.Total), B = c.Orders.Sum(o => o.Total * 2) }),
+            z => z.Id + ":" + z.A + ":" + z.B, ["A1:630:1260", "A2:700:1400", "B1:30:60", "C0:0:0"]);
+
     [Fact]
     public void Min_over_a_non_nullable_selector_throws_for_the_empty_group()
     {
@@ -169,6 +208,40 @@ public class NativeReferencedCollectionAggregateTests(TemporaryDatabaseFixture d
             using var db = Create(names, mode);
             Assert.ThrowsAny<InvalidOperationException>(
                 () => db.Set<Cust>().Select(c => new { c.Id, V = c.Orders.Min(o => o.Total) }).AsEnumerable().ToList());
+        }
+    }
+
+    [Fact]
+    public void Sum_of_a_computed_selector_with_a_captured_factor_is_read_per_execution()
+    {
+        var names = Seed();
+        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        {
+            using var db = Create(names, mode);
+            NativeModeAssert.TwiceWithDifferentValues(
+                v => SumTimes(db, (int)v!), 2, ["A1:1260", "A2:1400", "B1:60", "C0:0"], 3, ["A1:1890", "A2:2100", "B1:90", "C0:0"]);
+        }
+    }
+
+    private static List<string> SumTimes(Ctx db, int factor)
+        => db.Set<Cust>().Select(c => new { c.Id, V = c.Orders.Sum(o => o.Total * factor) })
+            .AsEnumerable().Select(z => z.Id + ":" + z.V).OrderBy(s => s).ToList();
+
+    [Fact]
+    public void A_selector_that_is_not_plain_arithmetic_is_never_read_as_something_else()
+    {
+        // A conditional is not arithmetic over the element: it must refuse (or answer exactly), never fall back to a property read.
+        var names = Seed();
+        using var db = Create(names, MongoQueryMode.NativeOnly);
+
+        var exception = Record.Exception(() => db.Set<Cust>().Select(c => new { c.Id, V = c.Orders.Sum(o => o.Total > 15 ? 1 : 0) })
+            .AsEnumerable().Select(z => z.Id + ":" + z.V).OrderBy(s => s).ToList());
+
+        if (exception is null)
+        {
+            Assert.Equal(["A1:2", "A2:1", "B1:1", "C0:0"],
+                db.Set<Cust>().Select(c => new { c.Id, V = c.Orders.Sum(o => o.Total > 15 ? 1 : 0) })
+                    .AsEnumerable().Select(z => z.Id + ":" + z.V).OrderBy(s => s).ToList());
         }
     }
 

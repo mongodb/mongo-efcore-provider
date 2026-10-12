@@ -151,6 +151,15 @@ public class NativeReferencedCollectionPredicateTests(TemporaryDatabaseFixture d
     public void Where_two_quantifiers_combined()
         => Assert3(db => SortedIds(db.Set<Cust>().Where(c => c.Orders.Any(o => o.Total > 100) && c.Orders.Count > 1)), ["A1"]);
 
+    [Fact]
+    public void Where_a_computed_Sum_compared()
+        => Assert3(db => SortedIds(db.Set<Cust>().Where(c => c.Orders.Sum(o => o.Total * 2) > 1300)), ["A2"]);
+
+    [Fact]
+    public void OrderBy_a_computed_Sum_then_key()
+        => Assert3(db => Ids(db.Set<Cust>().OrderByDescending(c => c.Orders.Sum(o => o.Total + o.Id)).ThenBy(c => c.Id)),
+            ["A2", "A1", "B1", "C0"]);
+
     private static List<string> CountAbove(Ctx db, int cutoff)
         => SortedIds(db.Set<Cust>().Where(c => c.Orders.Count(o => o.Total > cutoff) > 0));
 
