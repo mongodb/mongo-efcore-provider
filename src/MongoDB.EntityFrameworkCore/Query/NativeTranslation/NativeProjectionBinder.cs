@@ -2039,7 +2039,8 @@ internal static class NativeProjectionBinder
         List<LookupExpression> pendingBareCountStamps,
         [NotNullWhen(true)] out LookupExpression? staged,
         IReadOnlyList<(string Field, int Direction)>? elementSort = null,
-        int? elementLimit = null)
+        int? elementLimit = null,
+        int? elementSkip = null)
     {
         staged = null;
         elementSort ??= [];
@@ -2052,7 +2053,7 @@ internal static class NativeProjectionBinder
         var aliasSuffix = "";
 
         // An element sort or limit changes what the array holds, so it too needs its own alias.
-        var hasElementStages = elementSort.Count > 0 || elementLimit is not null;
+        var hasElementStages = elementSort.Count > 0 || elementLimit is not null || elementSkip is not null;
 
         if (filters.Count > 0 || hasElementStages)
         {
@@ -2075,14 +2076,16 @@ internal static class NativeProjectionBinder
                             && l.As.StartsWith(baseAlias + "_f", StringComparison.Ordinal))
                 .ToList();
             var same = existing.FirstOrDefault(
-                l => SameFilters(l.ElementFilters, filters) && l.ElementSort.SequenceEqual(elementSort) && l.ElementLimit == elementLimit);
+                l => SameFilters(l.ElementFilters, filters) && l.ElementSort.SequenceEqual(elementSort) && l.ElementLimit == elementLimit
+                     && l.ElementSkip == elementSkip);
             aliasSuffix = same is not null
                 ? same.As[baseAlias.Length..]
                 : "_f" + (existing.Select(l => l.As).Distinct().Count() + 1);
         }
 
         var keyed = NativeCorrelationMatcher.BuildCorrelatedArrayLookup(
-            targetEntityType, outerProperty, innerProperty, guarded, filters, filterPredicate, aliasSuffix, elementSort, elementLimit);
+            targetEntityType, outerProperty, innerProperty, guarded, filters, filterPredicate, aliasSuffix, elementSort, elementLimit,
+            elementSkip);
         if (!NativeCorrelationMatcher.TryStageNativeCollectionLookup(mongoQ, keyed, pendingLookups, out staged))
             return false;
 
@@ -2098,12 +2101,29 @@ internal static class NativeProjectionBinder
 
             for (var i = 0; i < left.Count; i++)
             {
-                if (!ExpressionEqualityComparer.Instance.Equals(left[i], right[i]))
+                if (!SameFilter(left[i], right[i]))
                     return false;
             }
 
             return true;
         }
+
+        // The same filter written twice is two lambdas whose parameters are different instances (`o0 => o0.Q < 10`, `o1 => o1.Q < 10`),
+        // which the structural comparer tells apart: rename the second's parameter to the first's before comparing.
+        static bool SameFilter(LambdaExpression left, LambdaExpression right)
+        {
+            if (left.Parameters.Count != 1 || right.Parameters.Count != 1 || left.Parameters[0].Type != right.Parameters[0].Type)
+                return ExpressionEqualityComparer.Instance.Equals(left, right);
+
+            var renamed = Expression.Lambda(
+                new ParameterRenamer(right.Parameters[0], left.Parameters[0]).Visit(right.Body)!, left.Parameters);
+            return ExpressionEqualityComparer.Instance.Equals(left, renamed);
+        }
+    }
+
+    private sealed class ParameterRenamer(ParameterExpression from, ParameterExpression to) : ExpressionVisitor
+    {
+        protected override Expression VisitParameter(ParameterExpression node) => ReferenceEquals(node, from) ? to : node;
     }
 
     private static bool ReferencesParameter(Expression expression, ParameterExpression parameter)
@@ -2193,7 +2213,7 @@ internal static class NativeProjectionBinder
 
         if (!TryStageKeyedArrayLookup(
                 mongoQ, outerParameter, target, outerProperty, innerProperty, guarded, shape.Filters.ToList(),
-                pendingLookups, pendingBareCountStamps, out var staged, sort, shape.IsFirst ? 1 : null))
+                pendingLookups, pendingBareCountStamps, out var staged, sort, shape.IsFirst ? 1 : shape.Take, shape.Skip))
         {
             return false;
         }

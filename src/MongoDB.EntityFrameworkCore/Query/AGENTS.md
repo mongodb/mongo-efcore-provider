@@ -131,8 +131,11 @@ Scope, joins, grouping:
     correlation is `TryMatchRawKeyCorrelation`, never the navigation). Element filters ride in `InnerPredicate` (placeholder-rendered,
     so parameters are per execution); the ordering and the `FirstOrDefault` limit are `LookupExpression.ElementSort`/`ElementLimit`,
     typed fields rendered by `RenderLookup` after the filter, NOT `PipelineStages` (`HasPipeline` would make the lookup non-native). A
-    filter moved ahead of the ordering is equivalent; `Skip`/`Take`, a second `OrderBy`, and a sort key that is not a plain default-stored
-    scalar whose stored order is the CLR order decline. A distinct (filters, sort, limit) gets its own `_fN` alias.
+    filter moved ahead of the ordering is equivalent. Constant `Skip`/`Take` are `ElementSkip`/`ElementLimit` (`$skip` then `$limit`,
+    after the sort); they must be the OUTERMOST operators, because a `Where` written after them filters the page, not the group, so
+    moving it into the lookup would be wrong: it declines. `Take` on a `FirstOrDefault`, a non-positive `Take`, a second `OrderBy` and a sort key that is
+    not a plain default-stored scalar whose stored order is the CLR order also decline. A distinct (filters, sort, skip, limit) gets
+    its own `_fN` alias.
     - **The read side finds the lookup by the member's alias, never by re-deriving it**: the binder records the alias on the lookup
       (`ElementLeafAliases`) only at its commit point, and `TryBindReferencedElementLeaf` binds only a leaf that finds itself there
       (native route only). The shaper is a `CollectionShaperExpression` with NO navigation over an `ArrayAliasProjectionExpression`, so

@@ -264,11 +264,14 @@ internal sealed class LookupExpression
     /// </summary>
     public int? ElementLimit { get; init; }
 
+    /// <summary>The number of leading elements a keyed array lookup drops (<c>Skip</c>), applied after <see cref="ElementSort"/>.</summary>
+    public int? ElementSkip { get; init; }
+
     /// <summary>
     /// Whether the sub-pipeline sorts or limits the array. Like <see cref="HasInnerPredicate"/>, only the native renderer honors it, so
     /// a non-native consumer must not read such an array as the whole group.
     /// </summary>
-    public bool HasElementStages => ElementSort.Count > 0 || ElementLimit is not null;
+    public bool HasElementStages => ElementSort.Count > 0 || ElementLimit is not null || ElementSkip is not null;
 
     /// <summary>
     /// The projection aliases of the element leaves (<c>Os = c.Orders.OrderBy(..).ToList()</c>) this array backs; the read side

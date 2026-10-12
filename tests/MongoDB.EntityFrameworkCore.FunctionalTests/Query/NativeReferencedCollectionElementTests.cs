@@ -190,6 +190,48 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
                 (c, g) => new { c.Id, Os = g.Where(o => o.Total > 15).OrderBy(o => o.Id).ToList() }),
             z => z.Id + ":" + Ids(z.Os), ["A1:2,3", "A2:4", "B1:5", "C0:"]);
 
+    // ---- constant paging after the ordering
+
+    [Fact]
+    public void Navigation_ToList_with_Take()
+        => Assert3(true, db => db.Set<Cust>().Select(c => new { c.Id, Os = c.Orders.OrderBy(o => o.Id).Take(2).ToList() }),
+            z => z.Id + ":" + Ids(z.Os), ["A1:1,2", "A2:4", "B1:5", "C0:"]);
+
+    [Fact]
+    public void Navigation_ToList_with_Skip_and_Take()
+        => Assert3(true, db => db.Set<Cust>().Select(c => new { c.Id, Os = c.Orders.OrderBy(o => o.Id).Skip(1).Take(1).ToList() }),
+            z => z.Id + ":" + Ids(z.Os), ["A1:2", "A2:", "B1:", "C0:"]);
+
+    [Fact]
+    public void Navigation_ToList_with_a_filter_before_the_paging()
+        => Assert3(true, db => db.Set<Cust>().Select(c => new { c.Id, Os = c.Orders.Where(o => o.Total > 15).OrderBy(o => o.Id).Skip(1).ToList() }),
+            z => z.Id + ":" + Ids(z.Os), ["A1:3", "A2:", "B1:", "C0:"]);
+
+    [Fact]
+    public void Navigation_FirstOrDefault_after_Skip()
+        => Assert3(true, db => db.Set<Cust>().Select(c => new { c.Id, F = c.Orders.OrderBy(o => o.Id).Skip(1).FirstOrDefault() }),
+            z => z.Id + ":" + Id(z.F), ["A1:2", "A2:null", "B1:null", "C0:null"]);
+
+    [Fact]
+    public void GroupJoin_ToList_with_Take()
+        => Assert3(false,
+            db => db.Set<Cust>().GroupJoin(db.Set<Ord>(), c => c.Id, o => o.CustId,
+                (c, g) => new { c.Id, Os = g.OrderByDescending(o => o.Id).Take(2).ToList() }),
+            z => z.Id + ":" + Ids(z.Os), ["A1:3,2", "A2:4", "B1:5", "C0:"]);
+
+    [Fact]
+    public void A_filter_after_the_Take_filters_the_page_and_is_not_moved_into_the_lookup()
+    {
+        // The page is the group's first two orders (1:10, 2:20 for A1); the filter then keeps the one above 15. Applying the filter before
+        // the page would answer A1:2,3 instead. The shape is declined, so native-only fails loudly rather than answering either.
+        var names = Seed();
+        using var db = Create(names, MongoQueryMode.NativeOnly, withNavigation: true);
+
+        Assert.ThrowsAny<Exception>(() => db.Set<Cust>()
+            .Select(c => new { c.Id, Os = c.Orders.OrderBy(o => o.Id).Take(2).Where(o => o.Total > 15).ToList() })
+            .AsEnumerable().ToList());
+    }
+
     // ---- per-execution parameters
 
     private static List<string> FirstAbove(Ctx db, int cutoff)

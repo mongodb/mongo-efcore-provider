@@ -443,6 +443,9 @@ internal sealed class MongoPipelineFactory
                 stages.Add(new BsonDocument("$sort", sort));
             }
 
+            if (lookup.ElementSkip is { } skip)
+                stages.Add(new BsonDocument("$skip", skip));
+
             if (lookup.ElementLimit is { } limit)
                 stages.Add(new BsonDocument("$limit", limit));
 

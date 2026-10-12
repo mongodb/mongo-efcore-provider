@@ -48,6 +48,12 @@ internal sealed class ReferencedElementShape
     /// Only a <c>ToList</c> carries one: a scalar <c>FirstOrDefault().Member</c> is the correlated-reducer leaf.
     /// </summary>
     public LambdaExpression? Selector { get; init; }
+
+    /// <summary>The constant <c>Skip</c> applied after the ordering, or <see langword="null"/>.</summary>
+    public int? Skip { get; init; }
+
+    /// <summary>The constant <c>Take</c> applied after the skip (a <c>ToList</c> only), or <see langword="null"/>.</summary>
+    public int? Take { get; init; }
 }
 
 /// <summary>
@@ -104,6 +110,20 @@ internal static class NativeReferencedElementMatcher
             if (selectLambda.Body != selectLambda.Parameters[0])
                 selector = selectLambda;
         }
+
+        // Constant paging, outermost: `OrderBy(..).Skip(1).Take(2).ToList()`. A Where above it would filter the page, not the group, and is
+        // declined by the loop below (it meets Skip/Take where it expects a filter or an ordering).
+        int? take = null;
+        int? skip = null;
+        if (!isFirst && TryPeelConstantPaging(ref source, nameof(Queryable.Take), out var takeCount))
+            take = takeCount;
+
+        if (TryPeelConstantPaging(ref source, nameof(Queryable.Skip), out var skipCount))
+            skip = skipCount;
+
+        // Take(n) keeps a positive count ($limit: 0 is a server error); a negative Skip throws in LINQ.
+        if (take is <= 0 || skip is < 0)
+            return false;
 
         var wheres = new List<LambdaExpression>();
         var sorts = new List<(LambdaExpression Key, bool Ascending)>();
@@ -174,8 +194,30 @@ internal static class NativeReferencedElementMatcher
             Correlation = wheres[0],
             Filters = wheres.Skip(1).ToList(),
             Sorts = sorts,
-            Selector = selector
+            Selector = selector,
+            Skip = skip,
+            Take = take
         };
         return true;
+    }
+
+    private static bool TryPeelConstantPaging(ref Expression source, string methodName, out int count)
+    {
+        count = 0;
+
+        if (source is MethodCallExpression
+            {
+                Method: { DeclaringType: var declaring } method,
+                Arguments: [var inner, ConstantExpression { Value: int constant }]
+            }
+            && declaring == typeof(Queryable)
+            && method.Name == methodName)
+        {
+            source = inner;
+            count = constant;
+            return true;
+        }
+
+        return false;
     }
 }

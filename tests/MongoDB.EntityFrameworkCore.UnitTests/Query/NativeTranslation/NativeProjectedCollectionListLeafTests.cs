@@ -180,6 +180,94 @@ public class NativeProjectedCollectionListLeafTests
         Assert.Equal(["Orders"], lookup.ElementLeafAliases);
     }
 
+    // ---- element leaves: constant paging, filters and the declines around them (slice 4 and the gaps after it)
+
+    [Fact]
+    public void Take_after_the_ordering_is_a_limit_on_the_lookup()
+    {
+        var mongoQ = BindAccepted(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderBy(o => o.Id).Take(2).ToList() }));
+
+        var lookup = Assert.Single(mongoQ.GetPendingLookups());
+        Assert.Equal(2, lookup.ElementLimit);
+        Assert.Null(lookup.ElementSkip);
+        Assert.Equal(1, Assert.Single(lookup.ElementSort).Direction);
+    }
+
+    [Fact]
+    public void Skip_then_Take_are_a_skip_and_a_limit_on_the_lookup()
+    {
+        var mongoQ = BindAccepted(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderByDescending(o => o.Id).Skip(1).Take(2).ToList() }));
+
+        var lookup = Assert.Single(mongoQ.GetPendingLookups());
+        Assert.Equal(1, lookup.ElementSkip);
+        Assert.Equal(2, lookup.ElementLimit);
+        Assert.Equal(-1, Assert.Single(lookup.ElementSort).Direction);
+    }
+
+    [Fact]
+    public void FirstOrDefault_after_Skip_is_a_skip_and_a_limit_of_one()
+    {
+        var mongoQ = BindAccepted(q => q.Select(c => new { c.Name, First = c.Orders.OrderBy(o => o.Id).Skip(1).FirstOrDefault() }));
+
+        var lookup = Assert.Single(mongoQ.GetPendingLookups());
+        Assert.Equal(1, lookup.ElementSkip);
+        Assert.Equal(1, lookup.ElementLimit);
+    }
+
+    [Fact]
+    public void A_Where_after_the_Take_declines_because_it_filters_the_page_not_the_group()
+        => AssertDeclined(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderBy(o => o.Id).Take(2).Where(o => o.Id > 0).ToList() }));
+
+    [Fact]
+    public void A_Where_after_the_Skip_declines()
+        => AssertDeclined(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderBy(o => o.Id).Skip(1).Where(o => o.Id > 0).ToList() }));
+
+    [Fact]
+    public void Take_zero_declines_because_a_zero_limit_is_a_server_error()
+        => AssertDeclined(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderBy(o => o.Id).Take(0).ToList() }));
+
+    [Fact]
+    public void Take_before_FirstOrDefault_declines()
+        => AssertDeclined(q => q.Select(c => new { c.Name, First = c.Orders.OrderBy(o => o.Id).Take(2).FirstOrDefault() }));
+
+    [Fact]
+    public void A_second_OrderBy_declines_because_it_would_re_sort_from_scratch()
+        => AssertDeclined(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderBy(o => o.Id).OrderBy(o => o.CustomerId).ToList() }));
+
+    [Fact]
+    public void The_same_filter_written_twice_shares_one_array()
+    {
+        // Two lambdas with different parameter instances (`o => o.Id > 0` twice): compared up to parameter renaming, they are one filter.
+        var mongoQ = BindAccepted(q => q.Select(c => new
+        {
+            First = c.Orders.Where(o => o.Id > 0).OrderBy(o => o.Id).ToList(),
+            Second = c.Orders.Where(o => o.Id > 0).OrderBy(o => o.Id).Select(o => o.Id).ToList()
+        }));
+
+        var lookup = Assert.Single(mongoQ.GetPendingLookups());
+        Assert.Equal(["First", "Second"], lookup.ElementLeafAliases.Order().ToArray());
+    }
+
+    [Fact]
+    public void Different_filters_over_the_same_correlation_get_their_own_arrays()
+    {
+        var mongoQ = BindAccepted(q => q.Select(c => new
+        {
+            Big = c.Orders.Where(o => o.Id > 100).OrderBy(o => o.Id).ToList(),
+            Small = c.Orders.Where(o => o.Id < 100).OrderBy(o => o.Id).ToList()
+        }));
+
+        Assert.Equal(2, mongoQ.GetPendingLookups().Select(l => l.As).Distinct().Count());
+    }
+
+    [Fact]
+    public void An_element_leaf_makes_the_projection_ineligible_as_a_set_operand()
+    {
+        var mongoQ = BindAccepted(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderBy(o => o.Id).ToList() }));
+
+        Assert.True(mongoQ.Select.HasArrayProjectionLeaf);
+    }
+
     [Fact]
     public void Composes_with_a_plain_scalar_sibling_leaf()
     {

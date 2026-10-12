@@ -3692,17 +3692,10 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$lookup" : { "from" : "C
     {
         await base.Let_subquery_with_multiple_occurrences(async);
 
-#if EF8 || EF9
         AssertMql(
             """
 Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "pipeline" : [{ "$match" : { "Quantity" : { "$lt" : 10 } } }], "as" : "_lookup_OrderDetail__id_OrderID__id_f1" } }, { "$match" : { "_lookup_OrderDetail__id_OrderID__id_f1.0" : { "$exists" : true } } }, { "$project" : { "Count" : { "$size" : { "$ifNull" : ["$_lookup_OrderDetail__id_OrderID__id_f1", []] } }, "_id" : 0 } }
 """);
-#else
-        AssertMql(
-            """
-Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "pipeline" : [{ "$match" : { "Quantity" : { "$lt" : 10 } } }], "as" : "_lookup_OrderDetail__id_OrderID__id_f1" } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "pipeline" : [{ "$match" : { "Quantity" : { "$lt" : 10 } } }], "as" : "_lookup_OrderDetail__id_OrderID__id_f2" } }, { "$match" : { "_lookup_OrderDetail__id_OrderID__id_f1.0" : { "$exists" : true } } }, { "$project" : { "Count" : { "$size" : { "$ifNull" : ["$_lookup_OrderDetail__id_OrderID__id_f2", []] } }, "_id" : 0 } }
-""");
-#endif
     }
 
     public override async Task Let_entity_equality_to_null(bool async)

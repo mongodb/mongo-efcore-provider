@@ -1512,7 +1512,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             l => l.IsCorrelatedArraySource
                  && l.TargetEntityType == targetType
                  && l.ElementLeafAliases.Contains(arrayAlias)
-                 && (l.ElementLimit == 1) == shape.IsFirst);
+                 && l.ElementLimit == (shape.IsFirst ? 1 : shape.Take)
+                 && l.ElementSkip == shape.Skip);
         if (lookup is null)
             return false;
 

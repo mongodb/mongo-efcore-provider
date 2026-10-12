@@ -202,3 +202,41 @@ for the gate and the null guard.
    `SelectMany(DefaultIfEmpty)`; add a refusal if it can be reached otherwise).
 3. Prototype slice 1 for `Sum` and `Any` over the navigation model to confirm the owned-collection translators accept a
    lookup-alias array path unchanged.
+
+## Status and deviations (2026-10-12)
+
+| # | Slice | Status |
+|---|---|---|
+| 0 | Strict correlation matcher | Done |
+| 1 | Projected aggregates and quantifiers | Done |
+| 2 | Predicate and ordering positions | Done |
+| 3 | Navigation-less correlation + null-key guard | Done |
+| 4 | Element leaves: `FirstOrDefault`, `ToList` | Done (native), with constant `Skip`/`Take` |
+| 5 | Bridge parity | Done for aggregates, quantifiers, counts, predicates and orderings; element leaves still refuse |
+| 6 | Spec pins | Done for every pin that can flip; composite anonymous-key `GroupJoin` pins stay (composite keys decline) |
+
+Where the build differs from the design above:
+
+* **Element filters ride in the lookup, not in a `$filter` after it.** The design said a filter must never be a `$match` inside the lookup
+  because `LookupExpression.PipelineStages` is baked BSON. Slice 3 solved that differently: the filter is `LookupExpression.InnerPredicate`,
+  translated once and rendered through the placeholder table at pipeline-build time, so a parameter is still read per execution, and the
+  array that comes back holds only the matching elements. The ordering and the `FirstOrDefault` limit are typed `ElementSort`/
+  `ElementLimit` (plus `ElementSkip`) on the lookup, not `PipelineStages`, which would make it a non-native lookup.
+* **Element leaves use the keyed array for navigation and navigation-less correlations alike.** The correlation is the strict
+  `TryMatchRawKeyCorrelation`, never the navigation, so `c.Orders.OrderBy(..).ToList()` and the same off a `GroupJoin` group are one code path.
+  The materializing shaper has no navigation (a plain list), so a filtered list is never fixed up into the principal's own collection.
+* **The bridge reads PLAIN arrays only and stages its own.** Because the binder folds a filter into the lookup it stages, the bridge cannot
+  use that array; it stages an unfiltered keyed array for each correlation of the query root and applies the filter as an `Enumerable.Where`
+  over it (`StageBridgeOwnedLookups`). A subquery that correlates with a non-root document, and any set-operation operand other than the first,
+  are never resolved there (they would read the wrong rows, or fail at the server).
+* **A relational comparison of a nullable aggregate is null-guarded in the bridge**, because the aggregation dialect orders null below every
+  number and the empty group would otherwise match `Max(..) < n`.
+
+Still open:
+
+* Element leaves (`ToList`/`FirstOrDefault`) in the bridge: they refuse (`IsNativeOnlyArray`). Answering them needs the non-native shaper to
+  read a filtered, ordered array, which `TryBindProjectedCollectionNavigation` supports only for a plain `Include`-shaped list.
+* Composite anonymous keys (`GroupJoin(.., c => new { c.A, c.B }, ..)` with an aggregate) decline.
+* A parameterized `Skip`/`Take` (a captured variable) declines: the element stages are constants.
+* Each element leaf with a distinct (filter, ordering, paging) stages its own array, even when an aggregate over the same group reads a plain
+  one. Deriving them from one array with `$filter`/`$sortArray`/`$slice` would save the extra `$lookup`s.
