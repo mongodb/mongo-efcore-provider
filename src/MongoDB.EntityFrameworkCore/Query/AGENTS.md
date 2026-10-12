@@ -118,6 +118,42 @@ Scope, joins, grouping:
     Only a REQUIRED dependent-side reference defers it (dangling data is the sole way it drops a row: the accepted
     divergence). Deferring paging past a dropping join pages the joined rows, not the outer rows
     (`NativeJoinFilteredInnerTests.Take_before_*`). Paging written AFTER the join is correctly applied to the joined rows.
+- **Aggregates and quantifiers over a referenced (cross-document) collection** (`c.Orders.Any(..)`, `.All(..)`, `.Count(pred)`,
+  `.Sum/Min/Max/Average(o => o.Prop)`, also what EF makes of a `GroupJoin` with an aggregate) are projection leaves over the not-unwound
+  `$lookup` array `_lookup_<Nav>`. `MongoExpressionTranslator.ReferencedCollectionResolver` (set only on the projection binder's
+  root translator, `NativeProjectionBinder.ResolveReferencedCollection`) maps the strict FK correlation
+  (`NativeCorrelationMatcher`, never a target-type guess) to that array and stages the lookup; `TryResolveOwnedCollectionPath` then
+  serves the existing `Count`/filtered-count arms unchanged. Any/All have no value-position translation (the predicate arm renders
+  `$elemMatch`, query dialect only), so a projected `Any(pred)` is `Count(pred) >= 1` and `All(pred)` is `Count(not pred) == 0` (the
+  aggregation dialect's `$not` is the exact complement; true for the empty group). `Sum/Min/Max/Average` of one numeric element
+  property use `MongoArrayReduceExpression` over the path through the array (`{ $sum: "$_lookup_Orders.Total" }`). An empty group:
+  `$sum` is 0; `$min/$max/$avg` are null, which `WalkNullBehindNonNullableType` reads strictly for a non-nullable result (throws like
+  LINQ). The read side (`MongoProjectionBindingExpressionVisitor`) only binds the whole call as one member once the native binder accepted
+  the projection (`Route == Projection`); the native binder is the single gatekeeper. Owned collections keep their existing behavior
+  (no `Sum/Min/Max/Average`, no value-position `Any/All`). `FirstOrDefault`/`ToList` elements and driver-LINQ bridge parity are later
+  slices of the design.
+  - **A correlation with no collection navigation** (`db.Orders.Where(o => c.Key != null && c.Key == o.Fk)`, what EF makes of a
+    `GroupJoin` + aggregate on arbitrary keys) is a keyed array lookup (`LookupExpression.IsCorrelatedArraySource`, not unwound), built
+    from exactly the two properties the predicate compares (`NativeCorrelationMatcher.TryMatchRawKeyCorrelation`; exactly one such
+    `Where` in the chain, the rest are element filters). Null semantics: `$lookup` matches a null/missing local key to null/missing
+    foreign values, which is C# `==` for an unguarded subquery, so that stays the plain form; a guarded outer key (`c.Key != null &&`)
+    means a null key matches NOTHING, which only the `let`/`pipeline` form (`ExcludesNullLocalKey`) expresses.
+    Element filters ride in the sub-pipeline (`InnerPredicate`, placeholder-rendered like a filtered join inner); each distinct filter
+    set (structural `ExpressionEqualityComparer`) gets its own alias suffix `_fN`, so different filters or parameters never share an
+    array. A filter that references the outer entity is a second correlation and declines.
+  - **A keyed lookup has no TPH discriminator narrowing** (the navigation constructor does it), so `TryStageKeyedArrayLookup` declines a
+    derived target (`BaseType is not null`); without it the count included sibling types' documents.
+  - **The driver-LINQ bridge cannot read these lookups** (it refuses any pending lookup with `HasInnerPredicate`), and a bridge
+    count over a keyed array is not supported yet: parity is slice 5.
+  - **`Where` and `OrderBy`/`ThenBy` keys** use the same resolver through `NativeReferencedCollectionBinder` (tried after
+    `NativeReferenceCollectionCountPredicateBinder`, and after the sort arms, in `NativeSlotPopulator`). A `Where` translates in
+    predicate mode, so `Any(pred)`/`All(pred)` are `$elemMatch` over `_lookup_<Nav>` (query dialect) and a count/sum comparison is
+    `$expr`; a sort key translates in value mode and is a computed `__sort` key. Accept on "the resolver resolved a source", never on "it
+    staged a new lookup": an earlier `Where`/`OrderBy` may already have registered the same lookup, so nothing new is staged. The commit
+    stages nothing until the whole predicate/key translated, then `AddLookup`s, relocates a trailing sort
+    (`DeferTrailingSortPastConfirmedJoin`: one logical ordering must stay one `$sort`, the post-lookup key must not become primary) and
+    flips to `PostJoinOps` (`MarkReferenceCollectionCountPredicateConfirmed`). Ops recorded earlier stay ahead of the lookup, so
+    `Take(n).Where(Any(..))` pages first. A join scope or terminal operator declines (the flip has no place in that lowering).
 - **Navigation-less joins** are native iff `RebindInnerShaperToOuterQuery`'s raw-key branch resolved both keys
   (`JoinInfo.Lookup != null`); a navigation resolved to the wrong target is rebuilt by it, a non-simple key
   declines (`JoinLookupImplementsKeySelectors`). Composite-PK components live at `_id.<Name>`

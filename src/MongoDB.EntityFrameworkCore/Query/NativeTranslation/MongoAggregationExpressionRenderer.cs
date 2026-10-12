@@ -196,6 +196,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoBinaryExpression binary
                 => IsRenderableOperator(binary.Operator) && CanRender(binary.Left) && CanRender(binary.Right),
             MongoSizeExpression => true,
+            MongoArrayReduceExpression => true,
             MongoFieldPresenceExpression => true,
             MongoFilteredSizeExpression filtered => CanRender(filtered.ElementPredicate),
             MongoInExpression inExpr => MongoValueRenderer.IsRenderableInValues(inExpr.Values),
@@ -1034,6 +1035,9 @@ internal static class MongoAggregationExpressionRenderer
                 => new(MayBeNullUnlessProven(indexOf.Haystack, nonNull) || MayBeNullUnlessProven(indexOf.Needle, nonNull), false),
             // An upstream alias (a Distinct's flattened key, a bare Select's `_v`, a set-op operand) the emit side
             // flagged MongoProjection.ThrowsOnNull: the same possibly-null value, read by reference.
+            // $min/$max/$avg over an empty array answer null, with nothing between it and the leaf to absorb it, so a non-nullable
+            // result throws on read like LINQ's Min/Max/Average over an empty sequence. $sum of an empty array is 0, never null.
+            MongoArrayReduceExpression { OperatorName: "$min" or "$max" or "$avg" } => new(true, false),
             MongoElementRefExpression { ThrowsOnNull: true } => new(true, false),
             MongoBinaryExpression { IsArithmetic: true } arithmetic
                 => WalkNullBehindNonNullableType(arithmetic.Left, nonNull, dateParts, missingFields)

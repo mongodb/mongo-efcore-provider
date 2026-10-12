@@ -84,7 +84,13 @@ Products.{ "$match" : { "$expr" : { "$not" : [{ "$cond" : { "if" : { "$gte" : ["
 
     public override async Task Where_as_queryable_expression(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Where_as_queryable_expression(async));
+        // The aggregate or quantifier over the navigation collection reads a `$lookup` array; the base test checks the rows.
+        await base.Where_as_queryable_expression(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "_lookup_Orders" : { "$elemMatch" : { "CustomerID" : "ALFKI" } } } }
+""");
     }
 
     public override async Task<string> Where_simple_closure(bool async)

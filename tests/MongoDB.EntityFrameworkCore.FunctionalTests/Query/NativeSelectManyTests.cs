@@ -2463,20 +2463,26 @@ public class NativeSelectManyTests(TemporaryDatabaseFixture database) : IClassFi
         }
     }
 
-    [Fact]
-    public void Filtered_reference_collection_count_still_falls_back()
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    public void Filtered_reference_collection_count_goes_native(MongoQueryMode mode)
     {
-        // Not a SelectMany: a projected filtered Count (c.Refs.Count(pred)). Both the native Count binder and the
-        // fallback TryBindProjectedCollectionNavigationCount require a predicate-free Count, so this fails with
-        // InvalidOperationException in every mode (cf. QueryModeGateIncludeTests.Projected_collection_Count_with_
-        // predicate_still_falls_back). Pins that the SelectMany filter mechanism doesn't leak into the Count binder.
-        using var db = CreateRefContext(MongoQueryMode.Native,
-            nameof(Filtered_reference_collection_count_still_falls_back), out _, out _);
+        // Not a SelectMany: a projected filtered Count (c.Refs.Count(pred)) over a referenced collection, now a `$size` of a
+        // `$filter` over the `$lookup` array (design: 2026-10-08-native-referenced-collection-aggregates-design.md, slice 1).
+        // It used to fail with InvalidOperationException in every mode.
+        using var db = CreateRefContext(mode, nameof(Filtered_reference_collection_count_goes_native) + mode,
+            out var owners, out var items);
 
-        Assert.Throws<InvalidOperationException>(() =>
+        var expected = owners.OrderBy(o => o.Name)
+            .Select(o => $"{o.Name}:{items.Count(i => i.OwnerId == o.Id && i.Tag != "Widget")}").ToList();
+        Assert.Equal(["Alice:1", "Bob:0", "Carol:1", "Dave:2"], expected);
+
+        Assert.Equal(
+            expected,
             db.Owners
                 .Select(o => new { o.Name, N = o.Refs.Count(r => r.Tag != "Widget") })
-                .AsEnumerable().OrderBy(x => x.Name).ToList());
+                .AsEnumerable().OrderBy(x => x.Name).Select(x => $"{x.Name}:{x.N}").ToList());
     }
 
     // `r.Tag.ToUpper()` is a MethodCallExpression, so NativeProjectionBinder.IsArithmeticLeafShape declines it. (String `+` goes native

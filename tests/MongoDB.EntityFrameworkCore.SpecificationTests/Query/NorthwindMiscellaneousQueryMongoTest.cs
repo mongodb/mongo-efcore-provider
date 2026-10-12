@@ -1049,7 +1049,13 @@ Employees.{ "$set" : { "__sort0" : { "$subtract" : ["$_id", "$_id"] } } }, { "$s
 
     public override async Task OrderBy_any(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.OrderBy_any(async));
+        // The aggregate or quantifier over the navigation collection reads a `$lookup` array; the base test checks the rows.
+        await base.OrderBy_any(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$set" : { "__sort0" : { "$gte" : [{ "$size" : { "$filter" : { "input" : { "$ifNull" : ["$_lookup_Orders", []] }, "as" : "e", "cond" : { "$gt" : ["$$e._id", 11000] } } } }, 1] } } }, { "$sort" : { "__sort0" : 1, "_id" : 1 } }, { "$unset" : ["__sort0"] }
+""");
     }
 
     public override async Task Skip(bool async)
@@ -1364,7 +1370,13 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$limit" : 2 }, { "$project" : { "City"
 
     public override async Task Any_with_multiple_conditions_still_uses_exists(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Any_with_multiple_conditions_still_uses_exists(async));
+        // The aggregate or quantifier over the navigation collection reads a `$lookup` array; the base test checks the rows.
+        await base.Any_with_multiple_conditions_still_uses_exists(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "City" : "London", "_lookup_Orders" : { "$elemMatch" : { "EmployeeID" : 1 } } } }
+""");
     }
 
 #if EF9
@@ -1541,7 +1553,13 @@ Customers.{ "$match" : { "_id" : "ALFKI" } }, { "$lookup" : { "from" : "Orders",
 
     public override async Task Where_Join_Any(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Where_Join_Any(async));
+        // The aggregate or quantifier over the navigation collection reads a `$lookup` array; the base test checks the rows.
+        await base.Where_Join_Any(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } }, "_lookup_Orders" : { "$elemMatch" : { "OrderDate" : { "$date" : "1998-01-15T00:00:00Z" } } } } }
+""");
     }
 
     public override async Task Where_Join_Exists(bool async)
@@ -3520,7 +3538,13 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "o
 
     public override async Task Comparing_collection_navigation_to_null(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Comparing_collection_navigation_to_null(async));
+        // The aggregate or quantifier over the navigation collection reads a `$lookup` array; the base test checks the rows.
+        await base.Comparing_collection_navigation_to_null(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "$expr" : { "$eq" : [{ "$ifNull" : ["$_lookup_Orders", null] }, null] } } }, { "$project" : { "_id" : "$_id" } }
+""");
     }
 
     public override async Task Comparing_collection_navigation_to_null_complex(bool async)
@@ -3669,11 +3693,19 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$lookup" : { "from" : "C
 
     public override async Task Let_subquery_with_multiple_occurrences(bool async)
     {
-        // Fails: Cross-document navigation access issue EF-216
-        await AssertTranslationFailed(() => base.Let_subquery_with_multiple_occurrences(async));
+        await base.Let_subquery_with_multiple_occurrences(async);
 
+#if EF8 || EF9
         AssertMql(
-        );
+            """
+Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "pipeline" : [{ "$match" : { "Quantity" : { "$lt" : 10 } } }], "as" : "_lookup_OrderDetail__id_OrderID__id_f1" } }, { "$match" : { "_lookup_OrderDetail__id_OrderID__id_f1.0" : { "$exists" : true } } }, { "$project" : { "Count" : { "$size" : { "$ifNull" : ["$_lookup_OrderDetail__id_OrderID__id_f1", []] } }, "_id" : 0 } }
+""");
+#else
+        AssertMql(
+            """
+Orders.{ "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "pipeline" : [{ "$match" : { "Quantity" : { "$lt" : 10 } } }], "as" : "_lookup_OrderDetail__id_OrderID__id_f1" } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "pipeline" : [{ "$match" : { "Quantity" : { "$lt" : 10 } } }], "as" : "_lookup_OrderDetail__id_OrderID__id_f2" } }, { "$match" : { "_lookup_OrderDetail__id_OrderID__id_f1.0" : { "$exists" : true } } }, { "$project" : { "Count" : { "$size" : { "$ifNull" : ["$_lookup_OrderDetail__id_OrderID__id_f2", []] } }, "_id" : 0 } }
+""");
+#endif
     }
 
     public override async Task Let_entity_equality_to_null(bool async)
@@ -4247,7 +4279,9 @@ Customers.{ "$sort" : { "_id" : 1 } }, { "$project" : { "ContactName" : "$Contac
         await Assert.ThrowsAsync<InvalidOperationException>(() => base.Max_on_empty_sequence_throws(async));
 
         AssertMql(
-        );
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$project" : { "Max" : { "$max" : "$_lookup_Orders._id" }, "_id" : 0 } }
+""");
     }
 
     public override async Task OrderBy_Join(bool async)
@@ -4496,28 +4530,16 @@ Orders.{ "$match" : { "OrderDate" : { "$ne" : null } } }, { "$project" : { "Orde
 
     public override async Task Where_subquery_expression_same_parametername(bool async)
     {
-        // Fails: Navigations issue EF-216
-        await AssertTranslationFailed(() =>
-            base.Where_subquery_expression_same_parametername(async));
+        await base.Where_subquery_expression_same_parametername(async);
 
-        if (MongoSpecTestHelpers.IsNativeOnly)
-        {
-            AssertMql(
-                """
+        AssertMql(
+            """
 Orders.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }
+""",
+            //
+            """
+Orders.{ "$lookup" : { "from" : "Orders", "localField" : "CustomerID", "foreignField" : "CustomerID", "pipeline" : [{ "$match" : { "_id" : 10248 } }], "as" : "_lookup_Order_CustomerID_CustomerID_f1" } }, { "$match" : { "_lookup_Order_CustomerID_CustomerID_f1.0" : { "$exists" : true } } }
 """);
-        }
-        else
-        {
-            AssertMql(
-    """
-            Orders.{ "$sort" : { "_id" : 1 } }, { "$limit" : 1 }
-            """,
-    //
-    """
-            Orders.
-            """);
-        }
     }
 
     public override async Task Cast_results_to_object(bool async)

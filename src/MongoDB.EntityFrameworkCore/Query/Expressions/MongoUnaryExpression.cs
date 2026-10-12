@@ -29,6 +29,7 @@ internal sealed class MongoUnaryExpression : MongoExpression
     /// </summary>
     /// <param name="op">The unary operator.</param>
     /// <param name="operand">The operand expression.</param>
+    /// <param name="resultType">The result type, or <see langword="null"/> to use the default for <paramref name="op"/>.</param>
     public MongoUnaryExpression(MongoUnaryOperator op, MongoExpression operand, Type? resultType = null)
     {
         Operator = op;

@@ -41,7 +41,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// Canonical <c>main</c> (dec7e26f, EF8/EF9/EF10, built and run) throws <see cref="InvalidOperationException"/> for
 /// every shape in <see cref="DecliningShapes"/>, key-correlated or not ("could not be translated" for the
 /// <c>SelectMany</c> and reducer shapes, "Unsupported cross-DbSet query" for the count predicates), and returns the
-/// key-correlated counts for the bare projected count in both spellings (M35).
+/// key-correlated counts for the bare projected count in both spellings (M35, fixed here: the non-key spelling is now refused).
 /// </para>
 /// </remarks>
 [XUnitCollection("QueryTests")]
@@ -120,8 +120,8 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
     /// </summary>
     public static TheoryData<string> DecliningShapes =>
     [
-        "SelectMany", "SelectManyReversed", "SelectManyConjunct", "FirstOrDefault", "WhereCount", "Nested",
-        "NullableSelectMany", "NullableFirstOrDefault", "NullableWhereCount", "NoteGuardFirstOrDefault",
+        "SelectMany", "SelectManyReversed", "SelectManyConjunct", "FirstOrDefault", "Nested",
+        "NullableSelectMany", "NullableFirstOrDefault", "NoteGuardFirstOrDefault",
         "NoteGuardWhereCount"
     ];
 
@@ -198,20 +198,47 @@ public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)
         Assert.Equal(["1", "2"], Run(db, "NullableWhereCount", key: true));
     }
 
-    [Fact]
-    public void Bare_projected_non_key_count_declines_natively_and_falls_back_to_main_behavior()
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Bare_projected_non_key_count_counts_by_the_written_correlation(MongoQueryMode mode)
     {
-        using (var db = CreateContext(MongoQueryMode.NativeOnly))
+        // M35, finished. Main bound the single collection navigation whatever the correlation compared, so this returned the
+        // key-correlated counts [3, 1, 0] where the correct answer is [1, 0, 3]. An earlier slice made it refuse; a correlation that
+        // is not the navigation's foreign key is now a keyed `$lookup` built from exactly the properties the predicate compares
+        // (customers have Code 2/3/1; the orders of customer 1 are 10, 11, 12 and of customer 2 is 20).
+        using var db = CreateContext(mode);
+        AssertAnswersExactlyOrDriverLinqRefuses(mode, () => Run(db, "BareCount", key: false), ["1", "0", "3"]);
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Non_key_correlated_count_predicate_answers_from_the_written_correlation(MongoQueryMode mode)
+    {
+        // Code is not Id: customer 1 (Code 2) matches order 20, customer 2 (Code 3) matches nothing, customer 3 (Code 1) matches
+        // orders 10..12. Binding the navigation instead would answer [1, 2].
+        using var db = CreateContext(mode);
+        AssertAnswersExactlyOrDriverLinqRefuses(mode, () => Run(db, "WhereCount", key: false), ["1", "3"]);
+        AssertAnswersExactlyOrDriverLinqRefuses(mode, () => Run(db, "NullableWhereCount", key: false), ["1", "3"]);
+    }
+
+    private static void AssertAnswersExactlyOrDriverLinqRefuses(MongoQueryMode mode, Func<List<string>> run, List<string> expected)
+    {
+        List<string>? actual = null;
+        try
         {
-            Assert.Throws<NativeTranslationNotSupportedException>(() => Run(db, "BareCount", key: false));
+            actual = run();
+        }
+        catch (Exception) when (mode == MongoQueryMode.DriverLinq)
+        {
+            // The bridge may refuse a keyed array lookup (never answer wrongly).
         }
 
-        // M35: main and DriverLinq return the key-correlated counts [3, 1, 0] (correct: [1, 0, 3]). Parity with main,
-        // not correctness; flip this when M35 is fixed on main.
-        using var native = CreateContext(MongoQueryMode.Native);
-        using var driver = CreateContext(MongoQueryMode.DriverLinq);
-        Assert.Equal(["3", "1", "0"], Run(driver, "BareCount", key: false));
-        Assert.Equal(Run(driver, "BareCount", key: false), Run(native, "BareCount", key: false));
+        if (actual is not null)
+            Assert.Equal(expected, actual);
     }
 
     [Theory]

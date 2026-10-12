@@ -34,12 +34,14 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 internal static class NativeCorrelationMatcher
 {
     /// <summary>
-    /// Matches <paramref name="whereBody"/> as a correlation of <paramref name="outerParameter"/>'s key with a
+    /// Matches <paramref name="whereBody"/> as a correlation of <paramref name="outerRoot"/>'s key with a
     /// dependent FK and resolves the single collection navigation (embedded iff <paramref name="requireEmbedded"/>)
     /// whose target and single-property FK match. Declines on no match, an ambiguous match, or any extra conjunct.
     /// </summary>
     /// <remarks>
-    /// The outer operand must be a direct property of <paramref name="outerParameter"/> that resolves, by
+    /// <paramref name="outerRoot"/> is the expression the outer entity is read through, matched by reference: the
+    /// query's lambda parameter when the outer is still a parameter, or the entity shaper once the binder has substituted it.
+    /// The outer operand must be a direct property of <paramref name="outerRoot"/> that resolves, by
     /// <see cref="IProperty"/> identity, to the navigation's principal key (either operand order). Binding the
     /// navigation emits <c>$lookup {localField: principalKey, foreignField: fk}</c>, so a correlation on any other
     /// outer member (<c>o.CustomerId == c.Code</c>) would silently read the key-correlated rows. A null guard is
@@ -49,25 +51,14 @@ internal static class NativeCorrelationMatcher
     internal static bool TryMatchCorrelatedCollection(
         Expression whereBody,
         IEntityType outerEntityType,
-        ParameterExpression outerParameter,
+        Expression outerRoot,
         IEntityType targetEntityType,
         bool requireEmbedded,
         out INavigation navigation)
     {
         navigation = null!;
 
-        if (!TryGetCorrelationEqualitySides(whereBody, out var side1, out var side2, out var nullGuarded))
-            return false;
-
-        var side1Root = GetRootParameter(side1);
-        var side2Root = GetRootParameter(side2);
-
-        Expression dependentSide;
-        if (ReferenceEquals(side2Root, outerParameter) && side1Root != null && !ReferenceEquals(side1Root, outerParameter))
-            dependentSide = side1;
-        else if (ReferenceEquals(side1Root, outerParameter) && side2Root != null && !ReferenceEquals(side2Root, outerParameter))
-            dependentSide = side2;
-        else
+        if (!TryResolveCorrelationSides(whereBody, outerRoot, out var dependentSide, out var outerSideExpression, out var nullGuarded))
             return false;
 
         var dependentPropertyName = dependentSide.TryGetSimplePropertyName();
@@ -86,9 +77,9 @@ internal static class NativeCorrelationMatcher
             return false;
 
         var principalKeyProperty = candidates[0].ForeignKey.PrincipalKey.Properties[0];
-        var outerSide = ReferenceEquals(dependentSide, side1) ? side2 : side1;
-        if (!IsOuterProperty(outerSide, outerParameter, outerEntityType, principalKeyProperty)
-            || (nullGuarded != null && !IsOuterProperty(nullGuarded, outerParameter, outerEntityType, principalKeyProperty)))
+        var outerSide = outerSideExpression;
+        if (!IsOuterProperty(outerSide, outerRoot, outerEntityType, principalKeyProperty)
+            || (nullGuarded != null && !IsOuterProperty(nullGuarded, outerRoot, outerEntityType, principalKeyProperty)))
         {
             return false;
         }
@@ -98,14 +89,151 @@ internal static class NativeCorrelationMatcher
     }
 
     /// <summary>
-    /// Whether <paramref name="expression"/> is a direct property access on <paramref name="outerParameter"/>
+    /// Splits a correlation predicate into its dependent side (read off the subquery's own lambda parameter), its outer side (read
+    /// off <paramref name="outerRoot"/>) and the optional null-guarded operand. Structural only; the callers decide what the two
+    /// sides must resolve to.
+    /// </summary>
+    private static bool TryResolveCorrelationSides(
+        Expression whereBody,
+        Expression outerRoot,
+        [NotNullWhen(true)] out Expression? dependentSide,
+        [NotNullWhen(true)] out Expression? outerSide,
+        out Expression? nullGuarded)
+    {
+        dependentSide = outerSide = null;
+
+        if (!TryGetCorrelationEqualitySides(whereBody, out var side1, out var side2, out nullGuarded))
+            return false;
+
+        var side1Root = GetRootExpression(side1);
+        var side2Root = GetRootExpression(side2);
+
+        if (ReferenceEquals(side2Root, outerRoot) && side1Root is ParameterExpression && !ReferenceEquals(side1Root, outerRoot))
+        {
+            dependentSide = side1;
+            outerSide = side2;
+            return true;
+        }
+
+        if (ReferenceEquals(side1Root, outerRoot) && side2Root is ParameterExpression && !ReferenceEquals(side2Root, outerRoot))
+        {
+            dependentSide = side2;
+            outerSide = side1;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Matches <paramref name="whereBody"/> as an equality between one scalar property of the subquery's entity and one scalar
+    /// property of the outer entity, where neither is a collection navigation's foreign key (or the model has no such navigation).
+    /// The shape is the same as the navigation correlation: either operand order and an optional <c>outerKey != null</c> guard
+    /// on that same outer property, no other conjunct.
+    /// </summary>
+    /// <param name="whereBody">The subquery's <c>Where</c> predicate body.</param>
+    /// <param name="outerEntityType">The entity type of the outer query.</param>
+    /// <param name="outerRoot">The expression the outer entity is read through, matched by reference.</param>
+    /// <param name="targetEntityType">The entity type of the subquery.</param>
+    /// <param name="outerProperty">The outer entity's compared property.</param>
+    /// <param name="innerProperty">The subquery entity's compared property.</param>
+    /// <param name="guarded">Whether the predicate carries the null guard (EF's <c>GroupJoin</c> rewrite does; an explicit subquery does not).</param>
+    /// <remarks>
+    /// The two properties must compare in the database as they do in C#: a scalar CLR type each, stored alike (same
+    /// representation and converter), no collection. Anything else declines, so the keyed <c>$lookup</c> built from them cannot
+    /// answer differently from the LINQ the author wrote.
+    /// </remarks>
+    internal static bool TryMatchRawKeyCorrelation(
+        Expression whereBody,
+        IEntityType outerEntityType,
+        Expression outerRoot,
+        IEntityType targetEntityType,
+        [NotNullWhen(true)] out IProperty? outerProperty,
+        [NotNullWhen(true)] out IProperty? innerProperty,
+        out bool guarded)
+    {
+        outerProperty = innerProperty = null;
+        guarded = false;
+
+        if (!TryResolveCorrelationSides(whereBody, outerRoot, out var dependentSide, out var outerSide, out var nullGuarded))
+            return false;
+
+        if (!dependentSide.RemoveConvert().TryGetMemberOrEFProperty(out var dependentReceiver, out var dependentName)
+            || dependentReceiver.RemoveConvert() is not ParameterExpression
+            || targetEntityType.FindProperty(dependentName) is not { } dependent
+            || !outerSide.RemoveConvert().TryGetMemberOrEFProperty(out var outerReceiver, out var outerName)
+            || !ReferenceEquals(outerReceiver.RemoveConvert(), outerRoot)
+            || outerEntityType.FindProperty(outerName) is not { } outer)
+        {
+            return false;
+        }
+
+        if (nullGuarded != null && !IsOuterProperty(nullGuarded, outerRoot, outerEntityType, outer))
+            return false;
+
+        if (!IsScalarKey(outer) || !IsScalarKey(dependent) || !StoredSerialization.StoredAlike(outer, dependent))
+            return false;
+
+        outerProperty = outer;
+        innerProperty = dependent;
+        guarded = nullGuarded != null;
+        return true;
+
+        static bool IsScalarKey(IProperty property)
+        {
+            var underlying = Nullable.GetUnderlyingType(property.ClrType) ?? property.ClrType;
+            return (underlying.IsValueType || underlying == typeof(string)) && !property.IsPrimitiveCollection;
+        }
+    }
+
+    /// <summary>
+    /// Builds the keyed, not-unwound <c>$lookup</c> behind a correlated subquery matched by <see cref="TryMatchRawKeyCorrelation"/>.
+    /// The alias encodes the target, both key paths and whether a null local key is excluded, so two subqueries over the same
+    /// collection with different keys never share an array and identical ones deduplicate.
+    /// </summary>
+    internal static LookupExpression BuildCorrelatedArrayLookup(
+        IEntityType targetEntityType, IProperty outerProperty, IProperty innerProperty, bool guarded,
+        IReadOnlyList<LambdaExpression>? filters = null, MongoExpression? filterPredicate = null, string aliasSuffix = "")
+    {
+        var localField = LookupExpression.GetFieldPath(outerProperty);
+        var foreignField = LookupExpression.GetFieldPath(innerProperty);
+
+        // A null outer key matches nothing only when EF guarded the predicate AND the key can be null; a non-nullable key can't be
+        // null, so the plain (indexable) form is exact there.
+        var excludesNull = guarded && outerProperty.IsNullable;
+
+        var alias = LookupExpression.LookupAliasPrefix
+                    + targetEntityType.ShortName() + "_" + foreignField.Replace('.', '_') + "_" + localField.Replace('.', '_')
+                    + (excludesNull ? "_nn" : "") + aliasSuffix;
+
+        var lookup = new LookupExpression(
+            targetEntityType, targetEntityType.GetCollectionName(), localField, foreignField, alias, forceUnwind: false)
+        {
+            IsCorrelatedArraySource = true,
+            ExcludesNullLocalKey = excludesNull,
+            ElementFilters = filters ?? []
+        };
+
+        // Uncorrelated filters ride inside the lookup's sub-pipeline, rendered at pipeline-build time through the placeholder table
+        // (LookupPipelineKind.FilteredJoinInner), so a parameter in a filter is read per execution.
+        if (filterPredicate is not null)
+        {
+            lookup.InnerPredicate = filterPredicate;
+            lookup.PipelineKind = LookupPipelineKind.FilteredJoinInner;
+        }
+
+        return lookup;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="expression"/> is a direct property access on <paramref name="outerRoot"/>
     /// (member or <c>EF.Property</c>, <c>Convert</c>-wrapped or not) resolving to exactly
     /// <paramref name="property"/>. Nested members (<c>c.Address.Code</c>) never match.
     /// </summary>
     private static bool IsOuterProperty(
-        Expression expression, ParameterExpression outerParameter, IEntityType outerEntityType, IProperty property)
+        Expression expression, Expression outerRoot, IEntityType outerEntityType, IProperty property)
         => expression.RemoveConvert().TryGetMemberOrEFProperty(out var receiver, out var name)
-           && ReferenceEquals(receiver.RemoveConvert(), outerParameter)
+           && ReferenceEquals(receiver.RemoveConvert(), outerRoot)
            && ReferenceEquals(outerEntityType.FindProperty(name), property);
 
     /// <summary>
@@ -203,6 +331,41 @@ internal static class NativeCorrelationMatcher
         root = null;
         predicate = null;
         return false;
+    }
+
+    /// <summary>
+    /// Matches a chain of <c>Queryable.Where</c> calls over a query root, innermost first
+    /// (<c>Orders.Where(filter).Where(correlation)</c>): what nav-expansion makes of <c>GroupJoin(Orders.Where(filter), ...)</c> or of a
+    /// filtered collection access. Structural only: which one is the correlation is the caller's decision.
+    /// </summary>
+    internal static bool TryMatchRootWhereChain(
+        Expression expression,
+        [NotNullWhen(true)] out EntityQueryRootExpression? root,
+        [NotNullWhen(true)] out List<LambdaExpression>? wheres)
+    {
+        root = null;
+        wheres = null;
+
+        var chain = new List<LambdaExpression>();
+        var current = expression;
+        while (current is MethodCallExpression
+               {
+                   Method: { Name: nameof(Queryable.Where), DeclaringType: var declaringType },
+                   Arguments: [var source, var predicateArgument]
+               }
+               && declaringType == typeof(Queryable)
+               && predicateArgument.UnwrapLambdaFromQuote() is { Parameters.Count: 1 } lambda)
+        {
+            chain.Insert(0, lambda);
+            current = source;
+        }
+
+        if (chain.Count == 0 || current is not EntityQueryRootExpression rootExpression)
+            return false;
+
+        root = rootExpression;
+        wheres = chain;
+        return true;
     }
 
     /// <summary>
@@ -311,9 +474,16 @@ internal static class NativeCorrelationMatcher
     private static bool TryGetNullGuardedOperand(Expression node, [NotNullWhen(true)] out Expression? guarded)
     {
         guarded = null;
-        if (node.RemoveConvert() is BinaryExpression { NodeType: ExpressionType.NotEqual } bin)
+        var stripped = node.RemoveConvert();
+        if (stripped is BinaryExpression { NodeType: ExpressionType.NotEqual } bin)
         {
             guarded = IsNullConstant(bin.Right) ? bin.Left : IsNullConstant(bin.Left) ? bin.Right : null;
+        }
+        else if (stripped is UnaryExpression { NodeType: ExpressionType.Not, Operand: var negated }
+                 && TryExtractEqualitySides(negated, out var left, out var right))
+        {
+            // The spelling EF Core's GroupJoin rewrite emits for a nullable outer key: !(key == null), as !object.Equals(key, null).
+            guarded = IsNullConstant(right) ? left : IsNullConstant(left) ? right : null;
         }
 
         return guarded != null;
@@ -322,14 +492,18 @@ internal static class NativeCorrelationMatcher
     internal static bool IsNullConstant(Expression node)
         => node.RemoveConvert() is ConstantExpression { Value: null };
 
-    private static ParameterExpression? GetRootParameter(Expression expression)
+    /// <summary>
+    /// The expression a property read hangs off: the receiver of a member access or <c>EF.Property</c> (one hop, after
+    /// stripping conversions), or the expression itself when it is a parameter; otherwise <see langword="null"/>.
+    /// </summary>
+    private static Expression? GetRootExpression(Expression expression)
     {
         var stripped = expression.RemoveConvert();
         return stripped switch
         {
-            MemberExpression { Expression: { } inner } => inner.RemoveConvert() as ParameterExpression,
+            MemberExpression { Expression: { } inner } => inner.RemoveConvert(),
             MethodCallExpression call when call.Method.IsEFPropertyMethod() && call.Arguments.Count == 2
-                => call.Arguments[0].RemoveConvert() as ParameterExpression,
+                => call.Arguments[0].RemoveConvert(),
             ParameterExpression parameter => parameter,
             _ => null
         };

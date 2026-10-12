@@ -85,18 +85,24 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
         Assert.Equal("Carol", result[0].Name);
     }
 
-    // A genuinely user-filtered `Where(pred).Count()` must decline, not be matched as a bare count. Nav-expansion
-    // ANDs the FK correlation with the user's filter, and TryGetCorrelationEqualitySides only recognizes the bare
-    // FK equality.
-    [Fact]
-    public void Genuinely_filtered_Where_Count_still_declines_cleanly_under_NativeOnly()
+    // A genuinely user-filtered `Where(pred).Count()` is not a bare count: the filter must apply, so the count is over the
+    // filtered array (`o.Orders.Count(pred)`), never the unfiltered one. Checked against the in-memory oracle.
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    public void Genuinely_filtered_Where_Count_is_native_and_applies_the_filter(MongoQueryMode mode)
     {
         var seed = SeedOwnersAndOrders();
-        using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
-            nameof(Genuinely_filtered_Where_Count_still_declines_cleanly_under_NativeOnly));
+        using var db = CreateContext(seed, mode, nameof(Genuinely_filtered_Where_Count_is_native_and_applies_the_filter) + mode);
 
-        Assert.Throws<MongoDB.EntityFrameworkCore.Query.NativeTranslation.NativeTranslationNotSupportedException>(
-            () => db.Owners.Where(o => o.Orders.Where(ord => ord.Total > 15m).Count() > 0).ToList());
+        var names = db.Owners.Where(o => o.Orders.Where(ord => ord.Total > 15m).Count() > 0)
+            .Select(o => o.Name).OrderBy(n => n).ToList();
+        var oracle = seed.Owners
+            .Where(o => seed.Orders.Where(ord => ord.OwnerId == o.Id && ord.Total > 15m).Count() > 0)
+            .Select(o => o.Name).OrderBy(n => n).ToList();
+
+        Assert.Equal(oracle, names);
+        Assert.Equal(["Alice", "Bob"], names);
     }
 
     // Baseline differential across zero/one/many related rows, with no other operator composed.

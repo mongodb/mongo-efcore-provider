@@ -529,21 +529,28 @@ public class NativeCorrelatedReducerLeafTests
         }));
 
     /// <summary>
-    /// Reducer then <c>Count</c> over the same navigation: both want the same alias with incompatible shapes
-    /// (unwound single document vs. array for <c>$size</c>), and <c>AddLookup</c> keeps the first — a server
-    /// error or a silent empty read. Declines the projection.
+    /// Reducer then <c>Count</c> over the same navigation: the reducer's unwound single-document lookup and the count's array
+    /// lookup want incompatible shapes under one alias, so the count is staged as its own keyed array lookup
+    /// (<c>IsCorrelatedArraySource</c>) under a distinct alias, and neither leaf reads the other's shape.
     /// </summary>
     [Fact]
-    public void Reducer_leaf_then_count_leaf_over_the_same_navigation_decline()
-        => AssertDeclined(q => q.Select(a => new
+    public void Reducer_leaf_then_count_leaf_over_the_same_navigation_use_distinct_lookups()
+    {
+        var mongoQ = BindAccepted(q => q.Select(a => new
         {
             a.Id,
             M = a.IdentificationMethods.FirstOrDefault()!.Method,
             N = a.IdentificationMethods.Count
         }));
 
+        var leaf = Assert.Single(mongoQ.CorrelatedReducerLeaves);
+        Assert.Equal("_lookup_IdentificationMethods", leaf.Lookup.As);
+        var array = Assert.Single(mongoQ.GetPendingLookups(), l => l.IsCorrelatedArraySource);
+        Assert.NotEqual(leaf.Lookup.As, array.As);
+    }
+
     /// <summary>
-    /// Mirror of <see cref="Reducer_leaf_then_count_leaf_over_the_same_navigation_decline"/>: a different
+    /// Mirror of <see cref="Reducer_leaf_then_count_leaf_over_the_same_navigation_use_distinct_lookups"/>: a different
     /// registration site sees the collision.
     /// </summary>
     [Fact]

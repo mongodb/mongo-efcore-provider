@@ -769,11 +769,13 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
     public override async Task Sum_on_float_column_in_subquery(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Sum_on_float_column_in_subquery(async));
+        // The aggregate over the navigation collection is a `$lookup` array reduction; the base test checks the rows.
+        await base.Sum_on_float_column_in_subquery(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "OrderID" : "$_id", "Sum" : { "$sum" : "$_lookup_OrderDetails.Discount" }, "_id" : 0 } }
+""");
     }
 
     public override async Task Average_with_no_arg(bool async)
@@ -894,20 +896,24 @@ OrderDetails.{ "$match" : { "_id.ProductID" : 1 } }, { "$group" : { "_id" : null
 
     public override async Task Average_on_float_column_in_subquery(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Average_on_float_column_in_subquery(async));
+        // The aggregate over the navigation collection is a `$lookup` array reduction; the base test checks the rows.
+        await base.Average_on_float_column_in_subquery(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "OrderID" : "$_id", "Sum" : { "$avg" : "$_lookup_OrderDetails.Discount" }, "_id" : 0 } }
+""");
     }
 
     public override async Task Average_on_float_column_in_subquery_with_cast(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Average_on_float_column_in_subquery_with_cast(async));
+        // The aggregate over the navigation collection is a `$lookup` array reduction; the base test checks the rows.
+        await base.Average_on_float_column_in_subquery_with_cast(async);
 
         AssertMql(
-        );
+            """
+Orders.{ "$match" : { "_id" : { "$lt" : 10300 } } }, { "$lookup" : { "from" : "OrderDetails", "localField" : "_id", "foreignField" : "_id.OrderID", "as" : "_lookup_OrderDetails" } }, { "$project" : { "OrderID" : "$_id", "Sum" : { "$avg" : "$_lookup_OrderDetails.Discount" }, "_id" : 0 } }
+""");
     }
 
     public override async Task Min_with_no_arg(bool async)
@@ -2184,11 +2190,13 @@ Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$strLenCP" 
 
     public override async Task Average_on_nav_subquery_in_projection(bool async)
     {
-        // Fails: Subquery selection EF-X001
-        await AssertTranslationFailed(() => base.Average_on_nav_subquery_in_projection(async));
+        // The aggregate over the navigation collection is a `$lookup` array reduction; the base test checks the rows.
+        await base.Average_on_nav_subquery_in_projection(async);
 
         AssertMql(
-        );
+            """
+Customers.{ "$sort" : { "_id" : 1 } }, { "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$project" : { "Ave" : { "$avg" : "$_lookup_Orders._id" }, "_id" : 0 } }
+""");
     }
 
     public override async Task Count_after_client_projection(bool async)
@@ -2213,7 +2221,13 @@ Customers.{ "$project" : { "_v" : { "$cond" : { "if" : { "$eq" : [{ "$strLenCP" 
 
     public override async Task Not_Any_false(bool async)
     {
-        await AssertNoMultiCollectionQuerySupport(() => base.Not_Any_false(async));
+        // The aggregate or quantifier over the navigation collection reads a `$lookup` array; the base test checks the rows.
+        await base.Not_Any_false(async);
+
+        AssertMql(
+            """
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$match" : { "_lookup_Orders" : { "$not" : { "$elemMatch" : { "_id" : { "$type" : -1 } } } } } }, { "$project" : { "_id" : "$_id" } }
+""");
     }
 
     public override async Task Contains_inside_aggregate_function_with_GroupBy(bool async)

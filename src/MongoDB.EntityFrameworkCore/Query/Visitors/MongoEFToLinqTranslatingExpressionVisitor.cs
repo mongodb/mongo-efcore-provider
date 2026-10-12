@@ -1097,6 +1097,25 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return false;
         }
 
+        // The lookup is matched by target type above, which says nothing about THIS predicate: only the exact FK correlation
+        // of the lookup's own navigation may read its array. Any other Count(Where(...)) over that type (a user filter, a
+        // correlation on a different key) is left alone, not answered with the foreign-key rows. Re-verified here rather than
+        // trusted to the binder that staged the lookup, because a lookup staged for one subquery must not serve another.
+        var outerParameter = outerReference.RemoveConvert();
+        while (outerParameter is MemberExpression { Expression: { } outerReceiver })
+        {
+            outerParameter = outerReceiver.RemoveConvert();
+        }
+
+        if (outerParameter is not ParameterExpression
+            || !NativeTranslation.NativeCorrelationMatcher.TryMatchCorrelatedCollection(
+                predicate.Body, navigation.DeclaringEntityType, outerParameter, targetEntityType, requireEmbedded: false,
+                out var matchedNavigation)
+            || matchedNavigation != navigation)
+        {
+            return false;
+        }
+
         var visitedOuter = Visit(outerReference)!;
 
         // Mql.Field<TOuter, TNav>(outerDoc, "_lookup_<Nav>", navSerializer) reads the looked-up array.

@@ -108,6 +108,92 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
+    /// Matches <c>Sum</c>/<c>Min</c>/<c>Max</c>/<c>Average</c> with an element selector over a collection, yielding the MQL array
+    /// operator, the source (any <c>AsQueryable()</c> stripped) and the selector lambda.
+    /// </summary>
+    private static bool TryMatchElementAggregateMethod(
+        MethodCallExpression call,
+        [NotNullWhen(true)] out string? mqlOperator,
+        [NotNullWhen(true)] out Expression? source,
+        [NotNullWhen(true)] out LambdaExpression? selector)
+    {
+        source = null;
+        selector = null;
+        mqlOperator = call.Method.Name switch
+        {
+            nameof(Enumerable.Sum) => "$sum",
+            nameof(Enumerable.Min) => "$min",
+            nameof(Enumerable.Max) => "$max",
+            nameof(Enumerable.Average) => "$avg",
+            _ => null
+        };
+
+        if (mqlOperator is null
+            || (call.Method.DeclaringType != typeof(Enumerable) && call.Method.DeclaringType != typeof(Queryable))
+            || call.Arguments.Count != 2)
+        {
+            return false;
+        }
+
+        var argument = call.Arguments[1];
+        if (argument is UnaryExpression { NodeType: ExpressionType.Quote } quote)
+            argument = quote.Operand;
+
+        if (argument is not LambdaExpression { Parameters.Count: 1 } lambda)
+            return false;
+
+        source = UnwrapAsQueryable(call.Arguments[0]);
+        selector = lambda;
+        return true;
+    }
+
+    /// <summary>
+    /// <c>Sum</c>/<c>Min</c>/<c>Max</c>/<c>Average</c> of one numeric element property over a referenced collection, as the
+    /// array operator over the path through the looked-up array (<c>{ $sum: "$_lookup_Orders.Total" }</c>). An empty array gives
+    /// <c>0</c> for <c>$sum</c> and <c>null</c> for the others, which is LINQ's answer for a nullable result; a non-nullable
+    /// <c>Min</c>/<c>Max</c>/<c>Average</c> over an empty group reads that <c>null</c> back strictly and throws, as LINQ does.
+    /// </summary>
+    /// <remarks>
+    /// Only the referenced-collection resolver feeds this arm: owned collections keep their existing (declined) behavior. The
+    /// selector must be one numeric property of the element (conversions to a wider or nullable numeric type peeled), stored as
+    /// itself, so the server's reduction is the CLR one (<see cref="StoredOrdering"/>).
+    /// </remarks>
+    private MongoExpression? TranslateReferencedArrayAggregate(
+        MethodCallExpression call, string mqlOperator, Expression source, LambdaExpression selector)
+    {
+        if (ReferencedCollectionResolver?.Invoke(Unwrap(source)) is not { } referenced)
+            return null;
+
+        var body = selector.Body;
+        while (body is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } conversion)
+            body = conversion.Operand;
+
+        if (!body.TryGetMemberOrEFProperty(out var receiver, out var name)
+            || !ReferenceEquals(receiver.RemoveConvert(), selector.Parameters[0])
+            || referenced.ElementType.FindProperty(name) is not { } property
+            || property.IsShadowProperty())
+        {
+            return null;
+        }
+
+        var underlying = Nullable.GetUnderlyingType(property.ClrType) ?? property.ClrType;
+        if (underlying != typeof(int) && underlying != typeof(long) && underlying != typeof(double)
+            && underlying != typeof(decimal) && underlying != typeof(float))
+        {
+            return null;
+        }
+
+        var preserved = mqlOperator is "$sum" or "$avg"
+            ? StoredOrdering.PreservesClrValueForNumericReduction(property)
+            : StoredOrdering.PreservesClrOrderingForAggregateAndSort(property);
+        if (!preserved || (property.GetValueConverter() is not null && !NativeGroupByBinder.HasDefaultKeySerialization(property)))
+            return null;
+
+        return new MongoArrayReduceExpression(
+            mqlOperator, $"{referenced.ArrayPath}.{LookupExpression.GetFieldPath(property)}", call.Type);
+    }
+
+    /// <summary>
     /// Matches an element count over a collection (<c>.Count</c> property, <c>Count()</c>/<c>LongCount()</c>, or
     /// <c>Count(pred)</c>/<c>LongCount(pred)</c>), yielding the source with any <c>AsQueryable()</c> stripped and
     /// the predicate lambda (<see langword="null"/> if none).

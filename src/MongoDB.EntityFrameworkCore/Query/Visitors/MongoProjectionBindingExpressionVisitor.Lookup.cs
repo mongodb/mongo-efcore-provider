@@ -112,7 +112,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             return false;
         }
 
-        var navigation = ResolveCollectionNavigation(outerEntityType, targetEntityType, whereCall.Arguments[1].UnwrapLambdaFromQuote());
+        var navigation = ResolveCollectionNavigation(outerShaper, outerEntityType, targetEntityType, whereCall.Arguments[1].UnwrapLambdaFromQuote());
         if (navigation == null)
         {
             return false;
@@ -244,7 +244,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             return false;
         }
 
-        var navigation = ResolveCollectionNavigation(outerEntityType, targetEntityType, whereCall.Arguments[1].UnwrapLambdaFromQuote());
+        var navigation = ResolveCollectionNavigation(outerShaper, outerEntityType, targetEntityType, whereCall.Arguments[1].UnwrapLambdaFromQuote());
         if (navigation == null)
         {
             return false;
@@ -261,6 +261,25 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         result = BindWholeLeaf(methodCallExpression);
         return true;
     }
+
+    /// <summary>
+    /// Whether <paramref name="call"/> is a quantifier or aggregate (<c>Any</c>/<c>All</c>/<c>Count</c>/<c>LongCount</c>/<c>Sum</c>/
+    /// <c>Min</c>/<c>Max</c>/<c>Average</c>) over <c>Queryable.Where(DbSet&lt;Target&gt;(), predicate)</c>: the lowering of an
+    /// operator applied to a cross-collection collection navigation. Structural only; whether the correlation is the navigation's
+    /// foreign key is decided by the native binder (<c>NativeProjectionBinder.ResolveReferencedCollection</c>), which must have
+    /// accepted the projection before this is consulted.
+    /// </summary>
+    private static bool IsReferencedCollectionAggregateLeaf(MethodCallExpression call)
+        => call.Method.DeclaringType == typeof(Queryable)
+           && call.Method.Name is nameof(Queryable.Any) or nameof(Queryable.All) or nameof(Queryable.Count)
+               or nameof(Queryable.LongCount) or nameof(Queryable.Sum) or nameof(Queryable.Min) or nameof(Queryable.Max)
+               or nameof(Queryable.Average)
+           && call.Arguments is [MethodCallExpression
+           {
+               Method: { Name: nameof(Queryable.Where), DeclaringType: var whereDeclaring },
+               Arguments: [EntityQueryRootExpression, _]
+           }, ..]
+           && whereDeclaring == typeof(Queryable);
 
     /// <summary>
     /// Unwrap a (possibly quoted) lambda selector, returning its body and single parameter.
@@ -334,86 +353,27 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
     /// <summary>
     /// Resolve the collection navigation off <paramref name="outerEntityType"/> whose target is
-    /// <paramref name="targetEntityType"/>. The target entity type alone is ambiguous when more than one
-    /// collection navigation points at it — two foreign keys between the same pair of types, or a
-    /// self-reference. In that case we disambiguate using the dependent-side foreign-key properties the
-    /// correlation predicate (the FK-equality lambda) actually compares against,
-    /// matching the navigation whose <see cref="IForeignKey.Properties"/> are exactly those. Returns
-    /// <see langword="null"/> when nothing matches, or when the match cannot be resolved unambiguously, in
-    /// which case the caller declines the $lookup fast-path rather than guessing.
+    /// <paramref name="targetEntityType"/> AND whose foreign-key correlation <paramref name="correlationPredicate"/> is. Returns
+    /// <see langword="null"/> unless the predicate is exactly that correlation, in which case the caller declines the
+    /// <c>$lookup</c> fast-path rather than guess.
     /// </summary>
+    /// <remarks>
+    /// The target entity type alone is not enough, even when a single collection navigation points at it: binding the
+    /// navigation emits <c>$lookup {localField: principalKey, foreignField: fk}</c>, so any other predicate
+    /// (<c>Orders.Where(o =&gt; o.Total &gt; 5).Count()</c>, a <c>GroupJoin</c> on <c>Name == Tag</c>, a correlation on a
+    /// non-key outer member) would silently answer with the foreign-key rows. This is the same strict match the native binders
+    /// use (<see cref="NativeTranslation.NativeCorrelationMatcher.TryMatchCorrelatedCollection"/>), with the outer entity read
+    /// through <paramref name="outerShaper"/>, the shaper the binder has substituted for the lambda parameter.
+    /// </remarks>
     internal static INavigation ResolveCollectionNavigation(
+        StructuralTypeShaperExpression outerShaper,
         IEntityType outerEntityType,
         IEntityType targetEntityType,
         LambdaExpression correlationPredicate)
-    {
-        var candidates = outerEntityType.GetNavigations()
-            .Where(n => n.IsCollection && !n.IsEmbedded() && n.TargetEntityType == targetEntityType)
-            .ToList();
-
-        if (candidates.Count <= 1)
-        {
-            return candidates.Count == 1 ? candidates[0] : null;
-        }
-
-        // Ambiguous by target type: select the navigation whose foreign-key properties are exactly the
-        // dependent-side properties the correlation predicate compares against.
-        var dependentKeyNames = CollectDependentPropertyNames(correlationPredicate);
-        if (dependentKeyNames.Count == 0)
-        {
-            return null;
-        }
-
-        var byForeignKey = candidates
-            .Where(n => n.ForeignKey.Properties.All(p => dependentKeyNames.Contains(p.Name)))
-            .ToList();
-
-        return byForeignKey.Count == 1 ? byForeignKey[0] : null;
-    }
-
-    /// <summary>
-    /// Collect the names of properties accessed on the predicate's own lambda parameter(s) — the dependent
-    /// side of an FK-correlation predicate. Member access (<c>o.CustomerId</c>) and
-    /// <c>EF.Property(o, "CustomerId")</c> forms are both recognised; outer-shaper references (the principal
-    /// key side) are ignored because they are not rooted at a lambda parameter.
-    /// </summary>
-    internal static HashSet<string> CollectDependentPropertyNames(LambdaExpression predicate)
-    {
-        var names = new HashSet<string>(StringComparer.Ordinal);
-        new DependentPropertyNameCollector(predicate.Parameters, names).Visit(predicate.Body);
-        return names;
-    }
-
-    private sealed class DependentPropertyNameCollector(
-        IReadOnlyList<ParameterExpression> parameters,
-        HashSet<string> names) : ExpressionVisitor
-    {
-        protected override Expression VisitMember(MemberExpression node)
-        {
-            if (RootsAtParameter(node.Expression))
-            {
-                names.Add(node.Member.Name);
-            }
-
-            return base.VisitMember(node);
-        }
-
-        protected override Expression VisitMethodCall(MethodCallExpression node)
-        {
-            if (node.Method.IsEFPropertyMethod()
-                && node.Arguments.Count == 2
-                && node.Arguments[1] is ConstantExpression { Value: string propertyName }
-                && RootsAtParameter(node.Arguments[0]))
-            {
-                names.Add(propertyName);
-            }
-
-            return base.VisitMethodCall(node);
-        }
-
-        private bool RootsAtParameter(Expression expression)
-            => expression.RemoveConvert() is ParameterExpression p && parameters.Contains(p);
-    }
+        => NativeTranslation.NativeCorrelationMatcher.TryMatchCorrelatedCollection(
+            correlationPredicate.Body, outerEntityType, outerShaper, targetEntityType, requireEmbedded: false, out var navigation)
+            ? navigation
+            : null;
 
     /// <summary>
     /// Wrap an element shaper with nested ThenInclude collection includes extracted from the selector lambda

@@ -88,6 +88,26 @@ internal sealed partial class MongoExpressionTranslator
     internal ParameterExpression? SelfParam { get; set; }
 
     /// <summary>
+    /// A staged referenced collection: the document-relative path of its (not unwound) <c>$lookup</c> output array and the
+    /// entity type of the elements it holds.
+    /// </summary>
+    internal readonly record struct ReferencedCollectionSource(string ArrayPath, IEntityType ElementType);
+
+    /// <summary>
+    /// Resolves a correlated subquery over another collection (<c>Queryable.Where(DbSet&lt;Order&gt;(), corr)</c>) to the array a
+    /// staged <c>$lookup</c> produces, or <see langword="null"/> when it is not exactly the foreign-key correlation of a
+    /// collection navigation. Set only by the projection binder, on its root translator; null everywhere else, so every other
+    /// translator behaves as before.
+    /// </summary>
+    /// <remarks>
+    /// The quantifier, <c>Count</c> and filtered-count arms that serve owned collections consume the result through
+    /// <see cref="TryResolveOwnedCollectionPath"/>, so a referenced collection needs no second copy of their logic. The
+    /// resolver stages the lookup into the binder's pending lists, which are committed only if the whole projection is accepted
+    /// and deduplicate by alias, so resolving the same source twice is harmless.
+    /// </remarks>
+    internal Func<Expression, ReferencedCollectionSource?>? ReferencedCollectionResolver { get; set; }
+
+    /// <summary>
     /// When set, a single-hop member access on <see cref="SelfParam"/> resolves against these grouping key parts
     /// (a projected <c>Distinct()</c>'s output schema) instead of the entity type. Needed because a Distinct
     /// member name can coincide with an unrelated entity property (<c>Select(o => new { Country = o.City })</c>),
@@ -1988,6 +2008,54 @@ internal sealed partial class MongoExpressionTranslator
             // predicate throw NativeTranslationNotSupportedException at render time, which TryBuildPipeline turns into
             // a driver-LINQ fallback. No alias hazard: a computed count leaf registers no alias override.
             return new MongoFilteredSizeExpression(arrayPath, elementPredicate, node.Type);
+        }
+
+        // Sum/Min/Max/Average of one element property over a referenced collection (binder-provided resolver): the array operator
+        // over the path through the looked-up array.
+        if (node is MethodCallExpression aggregateValueCall
+            && ReferencedCollectionResolver is not null
+            && TryMatchElementAggregateMethod(aggregateValueCall, out var aggregateOperator, out var aggregateSource, out var aggregateSelector))
+        {
+            return TranslateReferencedArrayAggregate(aggregateValueCall, aggregateOperator, aggregateSource, aggregateSelector);
+        }
+
+        // Any()/Any(pred)/All(pred) over a referenced collection as a projected VALUE. The predicate translator's quantifier arm
+        // renders $elemMatch, which only the query dialect has, so a projection expresses them as counts the aggregation dialect
+        // does render: Any() is size >= 1, Any(pred) is Count(pred) >= 1, and All(pred) is Count(not pred) == 0 (true for the empty
+        // group, as LINQ). Referenced collections only; owned collections keep their existing behavior.
+        if (node is MethodCallExpression { Method.Name: nameof(Enumerable.Any) or nameof(Enumerable.All) } quantifierValueCall
+            && ReferencedCollectionResolver is not null
+            && TryMatchQuantifierMethod(quantifierValueCall, out var valueQuantifier, out var valueQuantifierSource, out var valueQuantifierLambda)
+            && TryResolveOwnedCollectionPath(valueQuantifierSource, out var valueQuantifierPath, out var valueQuantifierElementType, out var valueQuantifierOuter)
+            && !valueQuantifierOuter)
+        {
+            if (valueQuantifierLambda is null)
+            {
+                return new MongoBinaryExpression(
+                    MongoBinaryOperator.GreaterThanOrEqual,
+                    new MongoSizeExpression(valueQuantifierPath, typeof(int), nullSafe: true),
+                    new MongoConstantExpression(1, forSerialization: null));
+            }
+
+            if (!TryCreateElementPredicateTranslator(valueQuantifierLambda, valueQuantifierElementType, out var valueQuantifierTranslator, out _)
+                || !valueQuantifierTranslator.TryTranslate(valueQuantifierLambda.Body, out var valueQuantifierPredicate))
+            {
+                return null;
+            }
+
+            var isAny = valueQuantifier == MongoQuantifierKind.Any;
+            var counted = isAny
+                ? valueQuantifierPredicate
+                : new MongoUnaryExpression(MongoUnaryOperator.Not, valueQuantifierPredicate);
+
+            // The aggregation dialect's boolean operators answer true/false for any operand, so Not is the exact complement.
+            if (!MongoAggregationExpressionRenderer.CanRender(counted))
+                return null;
+
+            return new MongoBinaryExpression(
+                isAny ? MongoBinaryOperator.GreaterThanOrEqual : MongoBinaryOperator.Equal,
+                new MongoFilteredSizeExpression(valueQuantifierPath, counted, typeof(int)),
+                new MongoConstantExpression(isAny ? 1 : 0, forSerialization: null));
         }
 
         // String + is concatenation, not arithmetic; $add rejects strings, so use $concat.

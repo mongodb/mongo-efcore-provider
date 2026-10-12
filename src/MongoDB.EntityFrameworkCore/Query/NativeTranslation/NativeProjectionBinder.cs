@@ -76,6 +76,10 @@ internal static class NativeProjectionBinder
         // Lookups a projected reference-collection Count leaf needs stamped IsBareCountSizeSource; staged for the same
         // reason (see NativeCorrelationMatcher.TryBuildReferenceCollectionCountLookup).
         var pendingBareCountStamps = new List<LookupExpression>();
+        // A correlated subquery over another collection (`c.Orders.Any(...)`, `.Sum(...)`) resolves to its staged `$lookup` array, so
+        // the quantifier / count / aggregate arms that serve owned collections serve it too. Staged, not applied, as above.
+        translator.ReferencedCollectionResolver = source => ResolveReferencedCollection(
+            mongoQ, selector.Parameters[0], source, pendingLookups, pendingBareCountStamps);
         // AddToProjection disambiguates aliases case-insensitively, so two members differing only by case would make
         // the DOM shaper read a disambiguated alias the native $project never emits (a silently dropped value). Decline
         // instead.
@@ -1371,7 +1375,7 @@ internal static class NativeProjectionBinder
             // A ternary over constructions its type's class map reads differently; see
             // HasMisreadDocumentConstructionBranch.
             && !IsMisreadWholeValueLeaf(value)
-            && (value is MongoSizeExpression or MongoFilteredSizeExpression or MongoConvertExpression
+            && (value is MongoSizeExpression or MongoFilteredSizeExpression or MongoArrayReduceExpression or MongoConvertExpression
                     or MongoConditionalExpression or MongoDatePartExpression or MongoDateTimeOffsetLocalExpression
                     or MongoElementRefExpression or MongoDateAddExpression or MongoCoalesceExpression
                     or MongoMathExpression or MongoTrimExpression or MongoSubstringExpression or MongoReplaceExpression
@@ -2403,6 +2407,160 @@ internal static class NativeProjectionBinder
     /// extra conjunct (<c>c.Orders.Where(o =&gt; o.Amount &gt; 5).Count()</c>) nests the pair deeper, so the match
     /// fails and the projection falls back rather than emitting a wrong count.
     /// </remarks>
+    /// <summary>
+    /// Resolves <paramref name="source"/> to a staged referenced-collection array when it is exactly the foreign-key
+    /// correlation of a collection navigation off the query root (<see cref="NativeCorrelationMatcher"/>), else
+    /// <see langword="null"/>. Stages the <c>$lookup</c> (not unwound) into <paramref name="pendingLookups"/> and marks it a
+    /// whole-array source, so a later filtered or paged Include of the same navigation is rerouted instead of merged into it.
+    /// </summary>
+    internal static MongoExpressionTranslator.ReferencedCollectionSource? ResolveReferencedCollection(
+        MongoQueryExpression mongoQ,
+        ParameterExpression outerParameter,
+        Expression source,
+        List<LookupExpression> pendingLookups,
+        List<LookupExpression> pendingBareCountStamps)
+    {
+        // The foreign-key correlation of a collection navigation: the navigation's own lookup.
+        if (NativeCorrelationMatcher.TryMatchCorrelatedRootWhere(mongoQ, outerParameter, source, out var navigation)
+            && NativeCorrelationMatcher.TryBuildReferenceCollectionCountLookup(
+                mongoQ, navigation, pendingLookups, typeof(int), out var lookupToStamp, out _))
+        {
+            if (lookupToStamp is not null && !pendingBareCountStamps.Contains(lookupToStamp))
+                pendingBareCountStamps.Add(lookupToStamp);
+
+            return new MongoExpressionTranslator.ReferencedCollectionSource(
+                LookupExpression.GetLookupAlias(navigation), navigation.TargetEntityType);
+        }
+
+        // Any other equality between two scalar properties (a GroupJoin on arbitrary keys, or a model with no navigation): a keyed
+        // array lookup built from exactly the properties the predicate compares.
+        // The subquery may carry uncorrelated filters ahead of or after the correlation (`GroupJoin(Orders.Where(f), ...)`,
+        // `Orders.Where(corr).Where(f)`): exactly one Where of the chain is the correlation, and the rest are element filters
+        // applied inside the lookup.
+        if (NativeCorrelationMatcher.TryMatchRootWhereChain(source, out var root, out var wheres))
+        {
+            var correlated = new List<int>();
+            for (var i = 0; i < wheres.Count; i++)
+            {
+                if (NativeCorrelationMatcher.TryMatchRawKeyCorrelation(
+                        wheres[i].Body, mongoQ.CollectionExpression.EntityType, outerParameter, root.EntityType, out _, out _, out _))
+                {
+                    correlated.Add(i);
+                }
+            }
+
+            if (correlated.Count == 1
+                && NativeCorrelationMatcher.TryMatchRawKeyCorrelation(
+                    wheres[correlated[0]].Body, mongoQ.CollectionExpression.EntityType, outerParameter, root.EntityType,
+                    out var outerProperty, out var innerProperty, out var guarded)
+                && TryStageKeyedArrayLookup(
+                    mongoQ, outerParameter, root.EntityType, outerProperty, innerProperty, guarded,
+                    wheres.Where((_, i) => i != correlated[0]).ToList(), pendingLookups, pendingBareCountStamps, out var stagedKeyed))
+            {
+                return new MongoExpressionTranslator.ReferencedCollectionSource(stagedKeyed.As, root.EntityType);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Stages the keyed array lookup for a navigation-less correlation, with the subquery's uncorrelated <paramref name="filters"/>
+    /// applied inside it. Declines a filter that references the outer entity (it is a second correlation), or that does not
+    /// translate. Each distinct filter set gets its own alias (<c>_f1</c>, <c>_f2</c>, ...), compared structurally so the same
+    /// filters share one array and different filters, or different parameters, never do.
+    /// </summary>
+    private static bool TryStageKeyedArrayLookup(
+        MongoQueryExpression mongoQ,
+        ParameterExpression outerParameter,
+        IEntityType targetEntityType,
+        IProperty outerProperty,
+        IProperty innerProperty,
+        bool guarded,
+        List<LambdaExpression> filters,
+        List<LookupExpression> pendingLookups,
+        List<LookupExpression> pendingBareCountStamps,
+        [NotNullWhen(true)] out LookupExpression? staged)
+    {
+        staged = null;
+
+        // A TPH-derived target needs the lookup narrowed by discriminator, as the navigation lookup's constructor does; a keyed lookup
+        // has no such stage and would count sibling-type documents. Declined, like the navigation path declines a derived target.
+        if (targetEntityType.BaseType is not null)
+            return false;
+
+        MongoExpression? filterPredicate = null;
+        var aliasSuffix = "";
+
+        if (filters.Count > 0)
+        {
+            foreach (var filter in filters)
+            {
+                if (ReferencesParameter(filter, outerParameter)
+                    || !new MongoExpressionTranslator(targetEntityType, filter.Parameters[0]).TryTranslate(filter.Body, out var translated))
+                {
+                    return false;
+                }
+
+                filterPredicate = filterPredicate is null
+                    ? translated
+                    : new MongoBinaryExpression(MongoBinaryOperator.AndAlso, filterPredicate, translated);
+            }
+
+            var baseAlias = NativeCorrelationMatcher.BuildCorrelatedArrayLookup(targetEntityType, outerProperty, innerProperty, guarded).As;
+            var existing = pendingLookups.Concat(mongoQ.GetPendingLookups())
+                .Where(l => l.IsCorrelatedArraySource && l.ElementFilters.Count > 0
+                            && l.As.StartsWith(baseAlias + "_f", StringComparison.Ordinal))
+                .ToList();
+            var same = existing.FirstOrDefault(l => SameFilters(l.ElementFilters, filters));
+            aliasSuffix = same is not null
+                ? same.As[baseAlias.Length..]
+                : "_f" + (existing.Select(l => l.As).Distinct().Count() + 1);
+        }
+
+        var keyed = NativeCorrelationMatcher.BuildCorrelatedArrayLookup(
+            targetEntityType, outerProperty, innerProperty, guarded, filters, filterPredicate, aliasSuffix);
+        if (!NativeCorrelationMatcher.TryStageNativeCollectionLookup(mongoQ, keyed, pendingLookups, out staged))
+            return false;
+
+        if (!pendingBareCountStamps.Contains(staged))
+            pendingBareCountStamps.Add(staged);
+
+        return true;
+
+        static bool SameFilters(IReadOnlyList<LambdaExpression> left, IReadOnlyList<LambdaExpression> right)
+        {
+            if (left.Count != right.Count)
+                return false;
+
+            for (var i = 0; i < left.Count; i++)
+            {
+                if (!ExpressionEqualityComparer.Instance.Equals(left[i], right[i]))
+                    return false;
+            }
+
+            return true;
+        }
+    }
+
+    private static bool ReferencesParameter(Expression expression, ParameterExpression parameter)
+    {
+        var finder = new ParameterReferenceFinder(parameter);
+        finder.Visit(expression);
+        return finder.Found;
+    }
+
+    private sealed class ParameterReferenceFinder(ParameterExpression parameter) : ExpressionVisitor
+    {
+        public bool Found { get; private set; }
+
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            Found |= ReferenceEquals(node, parameter);
+            return node;
+        }
+    }
+
     private static bool TryTranslateProjectedCollectionCount(
         MongoQueryExpression mongoQ,
         ParameterExpression outerParameter,

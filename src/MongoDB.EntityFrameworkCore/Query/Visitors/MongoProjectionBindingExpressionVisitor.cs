@@ -952,6 +952,17 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             return BindWholeLeaf(methodCallExpression);
         }
 
+        // An aggregate or quantifier over a cross-collection collection navigation (`c.Orders.Any(...)`, `.Sum(o => o.Total)`,
+        // `.Count(pred)`), which nav-expansion lowers to the operator over Queryable.Where(DbSet<Target>(), joinPredicate). The
+        // native binder is authoritative: it accepted this leaf (only then is Route == Projection), strictly matched the foreign-key
+        // correlation and already committed the `$lookup`, so the read side only binds the call as one member. Anything it declined
+        // never reaches here and keeps failing translation, as before.
+        if (_queryExpression.Select.Route == NativeRoute.Projection
+            && IsReferencedCollectionAggregateLeaf(methodCallExpression))
+        {
+            return BindWholeLeaf(methodCallExpression);
+        }
+
         if (methodCallExpression.TryGetEFPropertyArguments(out var source, out var memberName))
         {
             var visitedSource = Visit(source);

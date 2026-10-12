@@ -415,7 +415,9 @@ public class MongoExpressionNodeCoverageTests
         // Aggregation-only (over a synthetic $group alias), so no negator arm and QL.Render falls through to
         // $expr. Agg.Render has an arm but Agg.CanRender does not. FieldName has no backing IProperty, so both
         // serialization columns read true.
-        ["MongoArrayReduceExpression|Agg.CanRender"] = "false",
+        // Deliberate (EF-322, referenced-collection aggregates): CanRender now answers true so a projected Sum/Min/Max/Average over a
+        // looked-up array is admitted; Render has always rendered it ({ $sum: "$<path>" }), so the two now agree.
+        ["MongoArrayReduceExpression|Agg.CanRender"] = "true",
         ["MongoArrayReduceExpression|Agg.Render"] = "rendered",
         ["MongoArrayReduceExpression|AllFieldsDefaultSerialized"] = "true",
         ["MongoArrayReduceExpression|AllFieldsDefaultSerialized(converted)"] = "true",

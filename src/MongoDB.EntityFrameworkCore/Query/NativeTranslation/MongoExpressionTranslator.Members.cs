@@ -664,6 +664,15 @@ internal sealed partial class MongoExpressionTranslator
         arrayPath = null;
         elementType = null;
 
+        // A correlated subquery over another collection, staged as a $lookup array at the document root (binder-provided).
+        if (ReferencedCollectionResolver?.Invoke(source) is { } referenced)
+        {
+            arrayPath = referenced.ArrayPath;
+            elementType = referenced.ElementType;
+            isOuter = false;
+            return true;
+        }
+
         // EF-446: a non-outer root is scoped to this translator's entity type rather than declined, mirroring
         // TryResolveMember. A plain nested quantifier over the element's own collection can then sit inside an
         // already-correlated quantifier (`b.Posts.Any(p => p.Comments.Any(c => c.Title == b.Title))`); an array

@@ -326,6 +326,14 @@ internal static class NativeSlotPopulator
             {
                 mongoQ.Select.AddPredicateConjunct(countPredicateNode);
             }
+            // Any other aggregate or quantifier over a reference-collection navigation (`c.Orders.Any(o => ...)`,
+            // `c.Orders.Sum(o => o.Total) > 100`): the predicate translates over the staged `$lookup` array. Commits the lookup and
+            // flips to PostJoinOps before the conjunct is recorded, as the count arm above does.
+            else if (NativeReferencedCollectionBinder.TryTranslatePredicate(
+                         mongoQ, predicate.Parameters[0], predicate.Body, out var referencedPredicateNode))
+            {
+                mongoQ.Select.AddPredicateConjunct(referencedPredicateNode);
+            }
             else
                 mongoQ.Select.MarkNotNativelyRepresentable();
         }
@@ -618,6 +626,11 @@ internal static class NativeSlotPopulator
                  && TryTranslateSortKeyExpression(translator, ctorExpr.Arguments[argIndex], out var ctorSortKey)
                  && StoredOrdering.SortKeyPreservesClrOrdering(ctorSortKey))
             record(new MongoOrdering(ctorSortKey, ascending));
+        // A key reading an aggregate over a reference-collection navigation (`OrderBy(c => c.Orders.Count)`): a computed key over the
+        // staged `$lookup` array, so the sort runs after the lookup (the trailing sort of the chain is relocated with it).
+        else if (NativeReferencedCollectionBinder.TryTranslateSortKey(
+                     mongoQ, keySelector.Parameters[0], keySelector.Body, out var referencedSortKey))
+            record(new MongoOrdering(referencedSortKey, ascending));
         else
             mongoQ.Select.MarkNotNativelyRepresentable();
     }

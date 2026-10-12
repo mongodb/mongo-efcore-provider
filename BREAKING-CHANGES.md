@@ -4,6 +4,24 @@ Please note that this provider **does not follow traditional semantic versioning
 
 In order to evolve the provider as we introduce new features, we will be using the minor version number for breaking and significant changes to our EF Core provider. Please bear this in mind when upgrading to newer versions of the MongoDB EF Core Provider and ensure you read the release notes and this document for the latest in breaking change information.
 
+### A correlated subquery count that is not the navigation's foreign key is no longer answered with the foreign-key count
+
+#### Old behavior
+
+A subquery such as `db.Orders.Where(o => o.CustomerId == c.Code).Count()` (or the one EF Core makes of a `GroupJoin` with `g.Count()`) inside a `Select`, projected over a type that has a single collection navigation to the subquery's entity type, was bound to that navigation **whatever the subquery's predicate compared**. It returned the count of orders joined by the navigation's foreign key (`CustomerId == Id`) instead of the count the query asked for: wrong rows, with no error. A `GroupJoin` keyed on `Name == Tag`, a subquery with an unrelated filter, and a correlation on a non-key outer member were all affected.
+
+#### New behavior
+
+Only a subquery whose predicate is exactly the navigation's foreign-key correlation (either operand order, with EF's null guard on the key) binds to the navigation. Any other shape throws `InvalidOperationException` ("The LINQ expression 'DbSet<...>()' could not be translated") in every query mode.
+
+#### Why
+
+The previous result was wrong, not merely different. Refusing is the safe behavior until such correlations are supported (see `docs/superpowers/specs/2026-10-08-native-referenced-collection-aggregates-design.md`).
+
+#### Mitigations
+
+Query through the navigation (`c.Orders.Count`) when the correlation is the foreign key. For another correlation, use an explicit `Join` and count after it, or evaluate on the client.
+
 ### Querying a derived entity type now returns only that type
 
 #### Old behavior

@@ -602,21 +602,35 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
         spy.AssertExecutedMqlContains("\"$and\"");
     }
 
-    // The genuine blocker of the EF-436 spec tests GroupJoin_aggregate_anonymous_key_selectors(2/_one_argument) is the
-    // g.Sum(...) over the GroupJoin grouping (a correlated reducer), not the key: it fails in every mode even with a
-    // simple key. Pinned so a future fix of that gap is noticed.
+    // g.Sum(...) over a GroupJoin grouping is a native aggregate over the keyed array lookup (slice 3 of the referenced-collection
+    // aggregates design); a missing/null outer key matches nothing, as the rewrite's `outerKey != null` guard says.
     [Theory]
-    [MemberData(nameof(AllModes))]
-    public void GroupJoin_with_Sum_over_the_grouping_still_fails_in_every_mode_regardless_of_key(MongoQueryMode mode)
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    public void GroupJoin_with_Sum_over_the_grouping_matches_the_in_memory_oracle(MongoQueryMode mode)
     {
+        var (shipments, rates, _) = Materialize();
         using var db = CreateContext(mode, out _);
+
+        var actual = db.Shipments
+            .GroupJoin(db.Rates, s => s.Id, r => r.Zone, (s, g) => new { s.Id, Sum = g.Sum(r => r.Price) })
+            .OrderBy(x => x.Id).ToList();
+        var expected = shipments
+            .GroupJoin(rates, s => s.Id, r => r.Zone, (s, g) => new { s.Id, Sum = g.Sum(r => r.Price) })
+            .OrderBy(x => x.Id).ToList();
+
+        Assert.Equal(expected, actual);
+        Assert.Contains(actual, x => x.Sum > 0);
+    }
+
+    // Driver-LINQ cannot translate the rewritten correlated subquery (bridge parity is a later slice); pinned so a fix is noticed.
+    [Fact]
+    public void GroupJoin_with_Sum_over_the_grouping_still_fails_under_DriverLinq()
+    {
+        using var db = CreateContext(MongoQueryMode.DriverLinq, out _);
 
         Assert.Throws<InvalidOperationException>(() => db.Shipments
             .GroupJoin(db.Rates, s => s.Id, r => r.Zone, (s, g) => new { s.Id, Sum = g.Sum(r => r.Price) })
-            .ToList());
-        Assert.Throws<InvalidOperationException>(() => db.Shipments
-            .GroupJoin(db.Rates, s => new { s.Region, s.Zone }, r => new { r.Region, r.Zone },
-                (s, g) => new { s.Id, Sum = g.Sum(r => r.Price) })
             .ToList());
     }
 

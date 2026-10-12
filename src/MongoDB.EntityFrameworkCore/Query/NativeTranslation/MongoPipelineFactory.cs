@@ -432,7 +432,23 @@ internal sealed class MongoPipelineFactory
             // A composite-key lookup renders in the let/$expr form; TranslateJoinCore never attaches a predicate to one.
             System.Diagnostics.Debug.Assert(lookup.CompositeKey == null, "An inner predicate is never carried by a composite-key lookup.");
 
-            var pipeline = new BsonArray { new BsonDocument("$match", renderer.Render(innerPredicate, placeholders)) };
+            var filter = new BsonDocument("$match", renderer.Render(innerPredicate, placeholders));
+
+            // A null local key that must match nothing needs the let form; the filter then follows the key match.
+            if (lookup.ExcludesNullLocalKey)
+            {
+                var nullExcluding = new BsonArray { new BsonDocument("$match", new BsonDocument("$expr", lookup.NullExcludingMatch())), filter };
+                nullExcluding.AddRange(lookup.PipelineStages);
+                return new BsonDocument("$lookup", new BsonDocument
+                {
+                    { "from", lookup.From },
+                    { "let", lookup.NullExcludingLet() },
+                    { "pipeline", nullExcluding },
+                    { "as", lookup.As }
+                });
+            }
+
+            var pipeline = new BsonArray { filter };
             pipeline.AddRange(lookup.PipelineStages);
             return new BsonDocument("$lookup", new BsonDocument
             {

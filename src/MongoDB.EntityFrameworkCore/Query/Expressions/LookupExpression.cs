@@ -252,7 +252,45 @@ internal sealed class LookupExpression
 
     /// <summary>Whether this lookup is for a single reference (not a collection). A navigation-less
     /// lookup (<see cref="Navigation"/> is <see langword="null"/>) is always treated as a reference.</summary>
-    public bool IsReference => Navigation is not { IsCollection: true };
+    public bool IsReference => Navigation is not { IsCollection: true } && !IsCorrelatedArraySource;
+
+    /// <summary>
+    /// Whether this lookup is the array behind a correlated subquery over another collection that is NOT a collection navigation
+    /// (<c>Orders.Where(o =&gt; o.CustId == c.Id)</c> in a model with no <c>Customer.Orders</c>, or a correlation on properties that
+    /// are not the foreign key): a keyed, not-unwound <c>$lookup</c> whose output array the aggregate / quantifier arms read.
+    /// </summary>
+    /// <remarks>
+    /// Never a reference, although <see cref="Navigation"/> is <see langword="null"/>: the lowerer must not unwind it and the
+    /// streaming reader must not read it as an entity. Never <see cref="InjectAfterRoot"/>, so the driver-LINQ bridge's
+    /// navigation-count rewrite (which assumes a navigation) cannot pick it up; the bridge refuses such a query instead.
+    /// </remarks>
+    public bool IsCorrelatedArraySource { get; init; }
+
+    /// <summary>
+    /// Whether a null (or missing) local key must match nothing. EF's <c>GroupJoin</c> rewrite guards the subquery with
+    /// <c>outerKey != null &amp;&amp;</c>, but <c>$lookup</c> matches a null/missing <c>localField</c> to null/missing foreign values, so
+    /// the pipeline form with an explicit non-null condition is used (see <see cref="ToLookupStageDocument"/>).
+    /// </summary>
+    public bool ExcludesNullLocalKey { get; init; }
+
+    /// <summary>
+    /// The uncorrelated filters (<c>Where</c> lambdas over the subquery's element) a keyed array lookup applies inside its
+    /// sub-pipeline, as written; their translation is <see cref="InnerPredicate"/>. Kept so two subqueries over the same keys with the
+    /// same filters share one array while different filters (or different parameters) get their own alias.
+    /// </summary>
+    public IReadOnlyList<System.Linq.Expressions.LambdaExpression> ElementFilters { get; init; } = [];
+
+    /// <summary>The <c>let</c> of the null-excluding form: the local key, null-normalized so a missing field reads as null.</summary>
+    internal BsonDocument NullExcludingLet()
+        => new("k", new BsonDocument("$ifNull", new BsonArray { $"${LocalField}", BsonNull.Value }));
+
+    /// <summary>The match of the null-excluding form: the local key is non-null AND equals the foreign field.</summary>
+    internal BsonDocument NullExcludingMatch()
+        => new("$and", new BsonArray
+        {
+            new BsonDocument("$ne", new BsonArray { "$$k", BsonNull.Value }),
+            new BsonDocument("$eq", new BsonArray { $"${ForeignField}", "$$k" })
+        });
 
     /// <summary>
     /// Whether the collection-Include binding (<c>MongoProjectionBindingExpressionVisitor</c>, flat multi-lookup mode)
@@ -313,6 +351,12 @@ internal sealed class LookupExpression
     {
         get
         {
+            // A keyed array lookup behind a correlated subquery has no navigation to derive its alias from.
+            if (IsCorrelatedArraySource)
+            {
+                return !HasPipeline && !ForceUnwind;
+            }
+
             if (Navigation is not { IsCollection: true } navigation)
             {
                 return false;
@@ -373,6 +417,13 @@ internal sealed class LookupExpression
         if (CompositeKey != null)
         {
             return CompositeKeyLookupStageDocument(CompositeKey);
+        }
+
+        // A null or missing local key must match nothing: bind it null-normalized and require it non-null in the match, which
+        // the plain localField/foreignField form cannot express (it matches null/missing to null/missing).
+        if (ExcludesNullLocalKey)
+        {
+            return PipelineLookupStage(NullExcludingLet(), NullExcludingMatch());
         }
 
         if (!HasPipeline)

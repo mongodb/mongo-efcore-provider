@@ -530,21 +530,31 @@ public class QueryModeGateIncludeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void Projected_collection_Count_with_predicate_still_falls_back()
+    public void Projected_collection_Count_with_predicate_goes_native()
     {
         var customersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateProjCountCustomers3") + Guid.NewGuid().ToString("N")[..8];
         var ordersName = TemporaryDatabaseFixtureBase.CreateCollectionName("GateProjCountOrders3") + Guid.NewGuid().ToString("N")[..8];
 
+        var customerId = ObjectId.GenerateNewId();
+        database.MongoDatabase.GetCollection<BsonDocument>(customersName).InsertOne(
+            new BsonDocument { { "_id", customerId }, { "name", "Alice" } });
+        database.MongoDatabase.GetCollection<BsonDocument>(ordersName).InsertMany([
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "desc", "Order 1" }, { "cust_id", customerId } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "desc", "" }, { "cust_id", customerId } },
+            new BsonDocument { { "_id", ObjectId.GenerateNewId() }, { "desc", "Order 3" }, { "cust_id", customerId } },
+        ]);
+
         var logs = new List<string>();
         using var db = new OrderCustomerDbContext(database, ordersName, customersName, logs, MongoQueryMode.NativeOnly);
 
-        // c.Orders.Count(o => ...) is a correlated Count-with-predicate, which NativeProjectionBinder doesn't
-        // recognize and the fallback doesn't support either, so it throws InvalidOperationException in every
-        // mode rather than emitting a wrong native $size.
-        Assert.Throws<InvalidOperationException>(
-            () => db.Customers
-                .Select(c => new { c._id, OrderCount = c.Orders.Count(o => o.OrderDescription != "") })
-                .ToList());
+        // c.Orders.Count(o => ...) is a correlated Count-with-predicate: a `$size` of a `$filter` over the `$lookup` array (it
+        // used to throw InvalidOperationException in every mode). NativeOnly proves it is native; the empty description
+        // is the one order the predicate excludes.
+        var counts = db.Customers
+            .Select(c => new { c._id, OrderCount = c.Orders.Count(o => o.OrderDescription != "") })
+            .ToList();
+
+        Assert.Equal(2, Assert.Single(counts).OrderCount);
     }
 }
 #endif
