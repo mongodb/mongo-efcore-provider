@@ -146,6 +146,8 @@ public class MongoExpressionNodeCoverageTests
             new MongoArrayContainsExpression(
                 new MongoFieldExpression(tags, "Tags"), new MongoConstantExpression("a", null), negated: false),
             new MongoArrayReduceExpression("$avg", "Total", typeof(double)),
+            new MongoMappedArrayReduceExpression(
+                "$sum", "Posts", new MongoBinaryExpression(MongoBinaryOperator.Multiply, rankField, rankConstant), typeof(int)),
             new MongoRegexExpression(
                 headingField, MongoRegexKind.StartsWith, new MongoConstantExpression("a", heading), negated: false),
             new MongoElemMatchExpression("Posts", flagField, negated: false),
@@ -701,6 +703,14 @@ public class MongoExpressionNodeCoverageTests
 
         // Math/MathF operators over raw BSON; no query-dialect form (QL.Render's default arm wraps in $expr), no
         // negator arm.
+        ["MongoMappedArrayReduceExpression|Agg.CanRender"] = "true",
+        ["MongoMappedArrayReduceExpression|Agg.Render"] = "rendered",
+        ["MongoMappedArrayReduceExpression|AllFieldsDefaultSerialized"] = "true",
+        ["MongoMappedArrayReduceExpression|AllFieldsDefaultSerialized(converted)"] = "false",
+        ["MongoMappedArrayReduceExpression|Negator.TryNegate"] = "false",
+        ["MongoMappedArrayReduceExpression|PrefixRewriter.Rewrite"] = "rendered",
+        ["MongoMappedArrayReduceExpression|QL.IsQueryDialectRenderable"] = "false",
+        ["MongoMappedArrayReduceExpression|QL.Render"] = "rendered",
         ["MongoMathExpression|Agg.CanRender"] = "true",
         ["MongoMathExpression|Agg.Render"] = "rendered",
         ["MongoMathExpression|AllFieldsDefaultSerialized"] = "true",

@@ -78,6 +78,9 @@ internal static class MongoFieldPrefixRewriter
             MongoDictionaryContainsKeyExpression k => new MongoDictionaryContainsKeyExpression(prefix + "." + k.Path, k.Negated),
             // Array path only; the element predicate is relative to the $filter variable.
             MongoFilteredSizeExpression f => new MongoFilteredSizeExpression(prefix + "." + f.ArrayPath, f.ElementPredicate, f.Type),
+            // Array path only; the element expression is relative to the $map variable.
+            MongoMappedArrayReduceExpression m => new MongoMappedArrayReduceExpression(
+                m.OperatorName, prefix + "." + m.ArrayPath, m.ElementExpression, m.Type),
             MongoConvertExpression c => new MongoConvertExpression(Rewrite(c.Operand, prefix), c.Type),
             MongoNumericTypeBracketExpression b => new MongoNumericTypeBracketExpression(
                 (MongoFieldExpression)Rewrite(b.Field, prefix)),

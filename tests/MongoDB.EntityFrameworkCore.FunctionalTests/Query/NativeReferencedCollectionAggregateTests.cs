@@ -186,7 +186,7 @@ public class NativeReferencedCollectionAggregateTests(TemporaryDatabaseFixture d
     [Fact]
     public void Average_of_a_computed_nullable_selector_is_null_for_the_empty_group()
         => Assert3(db => db.Set<Cust>().Select(c => new { c.Id, V = c.Orders.Average(o => (double?)(o.Total * 2)) }), z => z.Id + ":" + z.V,
-            ["A1:840", "A2:1400", "B1:60", "C0:"]);
+            ["A1:420", "A2:1400", "B1:60", "C0:"]);
 
     [Fact]
     public void Min_of_a_computed_selector_over_a_widened_double()

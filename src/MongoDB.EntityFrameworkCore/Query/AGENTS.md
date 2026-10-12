@@ -89,6 +89,13 @@ Scope, joins, grouping:
   like LINQ). The read side binds the whole call only once the native binder accepted the projection
   (`Route == Projection`). Owned collections keep their existing behavior (no `Sum/Min/Max/Average`, no value-position
   `Any/All`). Element leaves and the driver-LINQ bridge are below.
+  - **A computed selector** (`Sum(o => o.Price * o.Qty)`) is `MongoMappedArrayReduceExpression`: the reduction of a per-element `$map`
+    (`TranslateReferencedComputedAggregate`), where `MongoArrayReduceExpression` reduces the path through the array to one property.
+    Only arithmetic over the element's own default-stored numeric properties, constants and query parameters, and numeric casts of them
+    (`IsNumericArithmeticOverElement`); anything else (a string `Length`, a conditional, a date part) declines, because a null or missing
+    operand would be read as 0 where LINQ throws. Integer division follows the result type, so it truncates per element as C# does; the
+    driver-LINQ bridge cannot answer that one (the driver turns `int / int` into a fractional `$divide` and fails on truncation), so it
+    fails loudly there.
   - **A correlation with no collection navigation** (`o => c.Key != null && c.Key == o.Fk`) is a keyed array lookup
     (`IsCorrelatedArraySource`, `NativeCorrelationMatcher.TryMatchRawKeyCorrelation`; exactly one such `Where`, the rest
     are element filters). `$lookup` matches a null/missing local key to null/missing foreign values (C# `==` for an

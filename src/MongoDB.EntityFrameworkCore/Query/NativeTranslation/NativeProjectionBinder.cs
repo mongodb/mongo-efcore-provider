@@ -1159,7 +1159,8 @@ internal static class NativeProjectionBinder
         if (translator.TryTranslateValue(leafExpression, out var value)
             // A ternary over constructions its type's class map reads differently (HasMisreadDocumentConstructionBranch).
             && !IsMisreadWholeValueLeaf(value)
-            && (value is MongoSizeExpression or MongoFilteredSizeExpression or MongoArrayReduceExpression or MongoConvertExpression
+            && (value is MongoSizeExpression or MongoFilteredSizeExpression or MongoArrayReduceExpression or MongoMappedArrayReduceExpression
+                    or MongoConvertExpression
                     or MongoConditionalExpression or MongoDatePartExpression or MongoDateTimeOffsetLocalExpression
                     or MongoElementRefExpression or MongoDateAddExpression or MongoCoalesceExpression
                     or MongoMathExpression or MongoTrimExpression or MongoSubstringExpression or MongoReplaceExpression

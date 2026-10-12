@@ -146,11 +146,6 @@ public class NativeReferencedCollectionBridgeTests(TemporaryDatabaseFixture data
             ["A1:1260", "A2:1400", "B1:60", "C0:0"]);
 
     [Fact]
-    public void Sum_of_an_integer_division_truncates_each_element()
-        => Strict3(db => db.Set<Cust>().Select(c => new { c.Id, V = c.Orders.Sum(o => o.Total / 7) }), z => z.Id + ":" + z.V,
-            ["A1:88", "A2:100", "B1:4", "C0:0"]);
-
-    [Fact]
     public void Max_of_a_computed_nullable_selector_is_null_for_the_empty_group()
         => Strict3(db => db.Set<Cust>().Select(c => new { c.Id, V = c.Orders.Max(o => (int?)(o.Total * 2)) }), z => z.Id + ":" + z.V,
             ["A1:1200", "A2:1400", "B1:60", "C0:"]);

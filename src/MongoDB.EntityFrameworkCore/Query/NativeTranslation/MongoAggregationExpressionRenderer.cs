@@ -74,6 +74,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoArrayReduceExpression arrayReduce
                 => new BsonDocument(arrayReduce.OperatorName, FieldRef(arrayReduce.FieldName, elementVariable)),
             MongoFilteredSizeExpression filtered => RenderFilteredSize(filtered, placeholders, elementVariable),
+            MongoMappedArrayReduceExpression mappedReduce => RenderMappedArrayReduce(mappedReduce, placeholders, elementVariable),
             MongoInExpression inExpr => RenderIn(inExpr, placeholders, elementVariable),
             MongoComputedInExpression computedIn => RenderComputedIn(computedIn, placeholders, elementVariable),
             MongoUnaryExpression unary => RenderUnary(unary, placeholders, elementVariable),
@@ -176,6 +177,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoArrayReduceExpression => true,
             MongoFieldPresenceExpression => true,
             MongoFilteredSizeExpression filtered => CanRender(filtered.ElementPredicate),
+            MongoMappedArrayReduceExpression mappedReduce => CanRender(mappedReduce.ElementExpression),
             MongoInExpression inExpr => MongoValueRenderer.IsRenderableInValues(inExpr.Values),
             MongoComputedInExpression computedIn
                 => CanRender(computedIn.Needle) && MongoValueRenderer.IsRenderableInValues(computedIn.Values),
@@ -570,6 +572,20 @@ internal static class MongoAggregationExpressionRenderer
             }));
     }
 
+    private static BsonValue RenderMappedArrayReduce(
+        MongoMappedArrayReduceExpression node, PlaceholderTable placeholders, string? elementVariable)
+    {
+        var variable = NestedElementVariable(elementVariable);
+
+        return new BsonDocument(node.OperatorName, new BsonDocument("$map", new BsonDocument
+        {
+            // $map over a missing or null array is a server error; [] reduces to 0 ($sum) or null, as LINQ answers.
+            { "input", IfNull(FieldRef(node.ArrayPath, elementVariable), new BsonArray()) },
+            { "as", variable },
+            { "in", Render(node.ElementExpression, placeholders, variable) }
+        }));
+    }
+
     private static BsonValue RenderQuantifier(
         MongoQuantifierExpression node, PlaceholderTable placeholders, string? elementVariable)
     {
@@ -933,6 +949,7 @@ internal static class MongoAggregationExpressionRenderer
             // on read like LINQ's Min/Max/Average over an empty sequence. $sum of an empty array is 0.
             // ElementRef: an upstream alias the emit side flagged MongoProjection.ThrowsOnNull.
             MongoArrayReduceExpression { OperatorName: "$min" or "$max" or "$avg" } => new(true, false),
+            MongoMappedArrayReduceExpression { OperatorName: "$min" or "$max" or "$avg" } => new(true, false),
             MongoElementRefExpression { ThrowsOnNull: true } => new(true, false),
             MongoBinaryExpression { IsArithmetic: true } arithmetic
                 => WalkNullBehindNonNullableType(arithmetic.Left, nonNull, dateParts, missingFields)

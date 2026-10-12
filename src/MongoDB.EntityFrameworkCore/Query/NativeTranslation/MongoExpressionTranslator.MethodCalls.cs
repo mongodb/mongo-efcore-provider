@@ -154,7 +154,7 @@ internal sealed partial class MongoExpressionTranslator
             || referenced.ElementType.FindProperty(name) is not { } property
             || property.IsShadowProperty())
         {
-            return null;
+            return TranslateReferencedComputedAggregate(call, mqlOperator, referenced, selector);
         }
 
         var underlying = Nullable.GetUnderlyingType(property.ClrType) ?? property.ClrType;
@@ -172,6 +172,65 @@ internal sealed partial class MongoExpressionTranslator
 
         return new MongoArrayReduceExpression(
             mqlOperator, $"{referenced.ArrayPath}.{LookupExpression.GetFieldPath(property)}", call.Type);
+    }
+
+    /// <summary>
+    /// <c>Sum</c>/<c>Min</c>/<c>Max</c>/<c>Average</c> of ARITHMETIC over the element (<c>c.Orders.Sum(o =&gt; o.Price * o.Qty)</c>), as the
+    /// reduction of a per-element <c>$map</c> over the looked-up array (<see cref="MongoMappedArrayReduceExpression"/>).
+    /// </summary>
+    /// <remarks>
+    /// Only numeric arithmetic over the element's own default-stored numeric properties, constants and query parameters (and numeric casts
+    /// of them): anything else (a string <c>Length</c>, a conditional, a date part, a member of another entity) declines, because the
+    /// native read of a null or missing operand differs from LINQ's and these are exactly the cases where it would be read as 0. Division
+    /// follows the result type (<c>MapArithmeticOperator</c>): integer division truncates per element, as C# does.
+    /// </remarks>
+    private MongoExpression? TranslateReferencedComputedAggregate(
+        MethodCallExpression call, string mqlOperator, ReferencedCollectionSource referenced, LambdaExpression selector)
+    {
+        var underlying = Nullable.GetUnderlyingType(call.Type) ?? call.Type;
+        if (underlying != typeof(int) && underlying != typeof(long) && underlying != typeof(double)
+            && underlying != typeof(decimal) && underlying != typeof(float))
+        {
+            return null;
+        }
+
+        var elementTranslator = new MongoExpressionTranslator(referenced.ElementType, selector.Parameters[0]);
+        if (!elementTranslator.TryTranslateValue(selector.Body, out var element)
+            || element is not (MongoBinaryExpression { IsArithmetic: true } or MongoConvertExpression or MongoUnaryExpression)
+            || !IsNumericArithmeticOverElement(element, mqlOperator is "$sum" or "$avg"))
+        {
+            return null;
+        }
+
+        return new MongoMappedArrayReduceExpression(mqlOperator, referenced.ArrayPath, element, call.Type);
+    }
+
+    private static bool IsNumericArithmeticOverElement(MongoExpression expression, bool numericReduction)
+        => expression switch
+        {
+            MongoFieldExpression field
+                => !field.Property.IsShadowProperty()
+                   && IsNumericClrType(field.Property.ClrType)
+                   && NativeGroupByBinder.HasDefaultKeySerialization(field.Property)
+                   && (numericReduction
+                       ? StoredOrdering.PreservesClrValueForNumericReduction(field.Property)
+                       : StoredOrdering.PreservesClrOrderingForAggregateAndSort(field.Property)),
+            // A parameter carries no static type here (no property supplies its serialization context), but it is an operand of numeric
+            // arithmetic, which the translator builds only from numeric operands.
+            MongoParameterExpression => true,
+            MongoConstantExpression => IsNumericClrType(expression.Type),
+            MongoBinaryExpression { IsArithmetic: true } binary
+                => IsNumericArithmeticOverElement(binary.Left, numericReduction) && IsNumericArithmeticOverElement(binary.Right, numericReduction),
+            MongoConvertExpression convert
+                => IsNumericClrType(convert.Type) && IsNumericArithmeticOverElement(convert.Operand, numericReduction),
+            _ => false
+        };
+
+    private static bool IsNumericClrType(Type type)
+    {
+        var underlying = Nullable.GetUnderlyingType(type) ?? type;
+        return underlying == typeof(int) || underlying == typeof(long) || underlying == typeof(double)
+               || underlying == typeof(decimal) || underlying == typeof(float);
     }
 
     /// <summary>

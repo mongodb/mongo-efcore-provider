@@ -549,6 +549,7 @@ internal sealed partial class MongoExpressionTranslator
             // which errors for a non-string stored representation.
             MongoRegexExpression regex => AllFieldsDefaultSerialized(regex.Field) && AllFieldsDefaultSerialized(regex.Term),
             MongoTupleExpression tuple => tuple.Elements.All(AllFieldsDefaultSerialized),
+            MongoMappedArrayReduceExpression mappedReduce => AllFieldsDefaultSerialized(mappedReduce.ElementExpression),
             // No arm needed (catch-all): MongoInExpression serializes candidates through the field's own serializer,
             // so it compares like-for-like; MongoSizeExpression has no property serialization; and
             // MongoArrayContainsExpression's Value is pre-rendered via the element serializer, with whole-collection
