@@ -1,3 +1,6 @@
+> **Referenced-collection aggregates (EF-322c):** the current handoff for that thread is
+> `docs/superpowers/handoffs/2026-10-12-referenced-collection-followups.md`. What follows is a 2026-09-25 handoff for a different thread.
+
 # Handoff — 2026-09-25 session end
 
 **Branch:** `EF-322-Native-LINQ-rebased`, HEAD `0b0a7a6d`, working tree clean except the untracked docs
