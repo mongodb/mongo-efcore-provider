@@ -77,8 +77,6 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     private static string Mql(List<string> logs)
         => Assert.Single(logs, l => l.Contains("Executed MQL query"));
 
-    // ── 1. Field-to-field equality (c.Age == c.Score) ──────────────────────────────────────────────
-
     [Fact]
     public void NativeOnly_field_to_field_equality_succeeds_with_expected_mql()
     {
@@ -106,8 +104,6 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
 
         Assert.Equal(driverNames, nativeNames);
     }
-
-    // ── 2. Arithmetic operands: +, -, * (c.Age OP c.Score > threshold) ────────────────────────────
 
     [Fact]
     public void NativeOnly_add_operand_succeeds_with_expected_mql()
@@ -172,7 +168,6 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         Assert.Equal(driverMul, nativeMul);
     }
 
-    // ── 3. Integer division/modulo: danger zone for truncation/sign divergence ────────────────────
     //
     // Modulo: driver-LINQ and native both emit raw $mod (no C# dividend-sign emulation), so they agree even where
     // both diverge from in-memory C#.
@@ -285,7 +280,6 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         Assert.Equal(["Carol"], nativeMod); // confirms $mod's non-C#-matching sign for -7 % 2 is exercised
     }
 
-    // ── 4. Numeric-cast operand ───────────────────────────────────────────────────────────────────
     //
     // A type-changing cast to int/long/double/decimal renders as an explicit MongoConvertExpression ($toX) in both
     // the bare field-to-field and arithmetic positions. Driver-LINQ renders $toDouble for the former and drops the
@@ -331,13 +325,11 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
 
         var results = db.Entities.Where(c => (double)c.Age + c.Score > 5).OrderBy(c => c.Name).ToList();
 
-        // Alice: 7+2=9>5 true; Bob: 20+20=40>5 true; Carol: -7+2=-5, not >5.
         Assert.Equal(["Alice", "Bob"], results.Select(c => c.Name).ToArray());
 
         var mql = Mql(logs);
         Assert.Contains("$expr", mql);
         Assert.Contains("$add", mql);
-        // Pin $toDouble, not just $add/$expr.
         Assert.Contains("$toDouble", mql);
     }
 
@@ -354,7 +346,6 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         Assert.Equal(driverNames, nativeNames);
     }
 
-    // ── 5. Negated comparisons: !(comparison) ──────────────────────────────────────────────────────
     //
     // EF doesn't normalize away !(a>b)/!(a==b)/etc., so all six operators are reachable from user code; each
     // renders via RenderUnary's $not-wrapped-comparison arm.
@@ -427,7 +418,6 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Negated_conjunction_predicate_goes_native_via_query_dialect_de_morgan()
     {
-        // Only Alice satisfies (Age > 5 && Name == "Alice"), so the negation gives a genuine two-to-one split.
         var (collection, logs) = SeedCustomers(nameof(Negated_conjunction_predicate_goes_native_via_query_dialect_de_morgan));
         using var nativeOnly = CreateContext(collection, logs, MongoQueryMode.NativeOnly);
 
@@ -446,7 +436,6 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         Assert.Equal(["Bob", "Carol"], nativeNames); // Alice is the only row excluded
     }
 
-    // ── Null guard on the lower side of an $expr relational comparison ─────────────────────────────
     //
     // The aggregation dialect orders null and missing below every value, so a bare $lt with a null left side (or $gt
     // with a null right side) is true; C# lifted semantics make it false. MongoAggregationExpressionRenderer adds
@@ -533,7 +522,6 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Negated_nullable_field_to_field_comparison_is_the_exact_complement()
     {
-        // C#: !(null < 5) is true, so everything but Low.
         AssertNullGuardedWhere(
             nameof(Negated_nullable_field_to_field_comparison_is_the_exact_complement),
             c => !(c.Rank < c.Limit), ["High", "Missing", "Null"], ["High"]);
@@ -542,7 +530,6 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Nullable_arithmetic_lower_side_excludes_null_and_missing()
     {
-        // Rank + 1 is null when Rank is: C# null < 5 is false.
         var mql = AssertNullGuardedWhere(
             nameof(Nullable_arithmetic_lower_side_excludes_null_and_missing),
             c => c.Rank + 1 < 5, ["Low"], ["Low", "Missing", "Null"]);
@@ -575,11 +562,9 @@ public class NativeExprComparisonTests(TemporaryDatabaseFixture database)
         Assert.Equal(["High:0", "Low:1", "Missing:0", "Null:0"], Run(MongoQueryMode.NativeOnly, out var nativeMql));
         Assert.Contains("""{ "$and" : [{ "$gt" : ["$Rank", null] }, { "$lt" : ["$Rank", 5] }] }""", nativeMql);
 
-        // Driver-LINQ's bare $lt answers 1 for Null and Missing.
         Assert.Equal(["High:0", "Low:1", "Missing:1", "Null:1"], Run(MongoQueryMode.DriverLinq, out _));
     }
 
-    // ── Composite group key with a possibly-missing part ────────────────────────────────────────────
     //
     // $group omits a missing sub-key from a composite _id, so "$_id.Rank" reads as missing, not null, and $expr's
     // $eq: [missing, null] is false. C# puts both the null and the missing row under Rank == null. Seed groups by

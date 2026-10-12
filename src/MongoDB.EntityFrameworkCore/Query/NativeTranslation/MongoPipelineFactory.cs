@@ -31,11 +31,9 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <see cref="Build(in MongoNativeBuildContext)"/>.
 /// </summary>
 /// <remarks>
-/// Constants are baked inline; parameters become sentinels in a shared <see cref="PlaceholderTable"/> that Build
-/// substitutes in a cloned template. A slot whose BSON shape (not just values) depends on runtime state is
-/// deferred to a builder run at Build time; its output goes through the same substitution pass. Deferred slots
-/// require <see cref="Build(in MongoNativeBuildContext)"/>; the values-only overload throws rather than emit a
-/// pipeline with a hole.
+/// Constants are baked inline; parameters become sentinels in a shared <see cref="PlaceholderTable"/> that Build substitutes in a
+/// cloned template. A slot whose BSON shape depends on runtime state is deferred to a builder run at Build time (same
+/// substitution pass); deferred slots require <see cref="Build(in MongoNativeBuildContext)"/>, and the values-only overload throws.
 /// </remarks>
 internal sealed class MongoPipelineFactory
 {
@@ -59,9 +57,8 @@ internal sealed class MongoPipelineFactory
     }
 
     /// <summary>
-    /// One template slot: a <see cref="BsonDocument"/> rendered at <see cref="Create"/> time, or a builder
-    /// deferred to <see cref="Build(in MongoNativeBuildContext)"/> for a stage whose key set depends on runtime
-    /// state.
+    /// One template slot: a <see cref="BsonDocument"/> rendered at <see cref="Create"/> time, or a builder deferred to
+    /// <see cref="Build(in MongoNativeBuildContext)"/> for a stage whose key set depends on runtime state.
     /// </summary>
     internal readonly struct StageSlot
     {
@@ -87,9 +84,7 @@ internal sealed class MongoPipelineFactory
         internal BsonDocument Build(in MongoNativeBuildContext context) => _builder!(context);
     }
 
-    /// <summary>
-    /// Renders <paramref name="stages"/> into a template sharing one <see cref="PlaceholderTable"/>.
-    /// </summary>
+    /// <summary>Renders <paramref name="stages"/> into a template sharing one <see cref="PlaceholderTable"/>.</summary>
     public static MongoPipelineFactory Create(
         IReadOnlyList<MongoPipelineStage> stages,
         MongoQueryLanguageRenderer renderer)
@@ -182,7 +177,6 @@ internal sealed class MongoPipelineFactory
             MongoAddFieldsStage addFields => RenderAddFields(addFields, placeholders),
             MongoUnsetStage unset => RenderUnset(unset),
             MongoCountStage count => new BsonDocument("$count", count.OutputField),
-            // The $vectorSearch score companion: a fixed document, not deferred.
             MongoVectorSearchScoreStage => new BsonDocument("$addFields",
                 new BsonDocument(MongoVectorSearchScoreStage.ScoreField,
                     new BsonDocument("$meta", "vectorSearchScore"))),
@@ -198,14 +192,13 @@ internal sealed class MongoPipelineFactory
         };
 
     /// <summary>
-    /// Builds the deferred slot for <c>$vectorSearch</c>: the pre-filter is rendered now into the shared
-    /// placeholder table; the rest is built per execution.
+    /// Builds the deferred slot for <c>$vectorSearch</c>: the pre-filter is rendered now into the shared placeholder table;
+    /// the rest is built per execution.
     /// </summary>
     /// <remarks>
-    /// Deferred because the presence of <c>exact</c>/<c>numCandidates</c> and the index depend on runtime
-    /// <c>VectorQueryOptions</c>. The driver's stage builder is reused so <c>numCandidates</c> is derived from
-    /// <c>limit</c> exactly as on the driver-LINQ path. The pre-filter is deep-cloned per execution because
-    /// substitution rewrites sentinels in place.
+    /// Deferred because <c>exact</c>/<c>numCandidates</c> and the index depend on runtime <c>VectorQueryOptions</c>. The driver's
+    /// stage builder is reused so <c>numCandidates</c> derives from <c>limit</c> as on the driver-LINQ path. The pre-filter is
+    /// deep-cloned per execution because substitution rewrites sentinels in place.
     /// </remarks>
     private static Func<MongoNativeBuildContext, BsonDocument> CreateVectorSearchBuilder(
         MongoVectorSearch search,
@@ -392,11 +385,10 @@ internal sealed class MongoPipelineFactory
         return new BsonDocument("$group", group);
     }
 
-    // A composite _id omits a sub-key whose value is missing, so every later read of "_id.<Name>" (HAVING, the
-    // flatten $project, projection ternaries) would see missing rather than null: $expr's $eq: [missing, null] is
-    // false, and a missing and a null part would form two groups where C# forms one. $ifNull: [part, null] normalizes
-    // missing to null once, here, for every part that may be null. A single-part _id needs no wrapping: $group
-    // already groups a missing scalar _id as null. Each part is $literal-wrapped as in RenderKeyedGroup.
+    // A composite _id omits a sub-key whose value is missing, so later reads of "_id.<Name>" (HAVING, flatten $project, projection
+    // ternaries) would see missing, not null: $eq: [missing, null] is false and a missing and a null part would form two groups
+    // where C# forms one. $ifNull: [part, null] normalizes once, here, for every part that may be null. A single-part _id needs
+    // no wrapping ($group already groups a missing scalar _id as null). Each part is $literal-wrapped as in RenderKeyedGroup.
     private static BsonValue RenderCompositeKeyPart(MongoExpression fieldRef, PlaceholderTable placeholders)
     {
         var rendered = MongoAggregationExpressionRenderer.RenderBranch(fieldRef, placeholders);
@@ -422,11 +414,10 @@ internal sealed class MongoPipelineFactory
         MongoQueryLanguageRenderer renderer,
         PlaceholderTable placeholders)
     {
-        // A join whose inner side was filtered: the predicate is relative to the joined document, which is exactly the
-        // scope inside the sub-pipeline. Rendered here, not stored as BSON on the lookup, so a parameter or clock
-        // value goes through the placeholder table and is read per execution instead of frozen into the cached
-        // plan. Stages nested by an inner-side collection Include follow the filter, so they see only the rows that
-        // passed it. Same indexable localField/foreignField + pipeline form as CorrelatedReducer.
+        // A join whose inner side was filtered: the predicate is relative to the joined document, i.e. the scope inside the
+        // sub-pipeline. Rendered here, not stored as BSON on the lookup, so a parameter or clock value goes through the placeholder
+        // table and is read per execution instead of frozen into the cached plan. Stages nested by an inner-side collection Include
+        // follow the filter. Same indexable localField/foreignField + pipeline form as CorrelatedReducer.
         if (lookup.InnerPredicate is { } innerPredicate)
         {
             // A composite-key lookup renders in the let/$expr form; TranslateJoinCore never attaches a predicate to one.
@@ -506,10 +497,9 @@ internal sealed class MongoPipelineFactory
         }
     }
 
-    // Intersect/Except as a source-tagging pipeline over the same collection (so $$ROOT equality is
-    // well-defined): dedup and tag each side (_a first, _b second), union, regroup by full document, then
-    // $match (Intersect: _a && _b; Except: _a && !_b). _a/_b sit beside _doc, so they can't collide with
-    // entity fields.
+    // Intersect/Except as a source-tagging pipeline over the same collection (so $$ROOT equality is well-defined): dedup and tag
+    // each side (_a first, _b second), union, regroup by full document, then $match (Intersect: _a && _b; Except: _a && !_b).
+    // _a/_b sit beside _doc, so they can't collide with entity fields.
     private static IEnumerable<BsonDocument> RenderSetDifference(
         MongoSetDifferenceStage stage,
         MongoQueryLanguageRenderer renderer,
@@ -523,7 +513,6 @@ internal sealed class MongoPipelineFactory
             { "_b", new BsonDocument("$literal", b) }
         });
 
-        // Outer (first operand) side: dedup + tag as _a.
         yield return GroupByRootStage();
         yield return Tag(a: true, b: false);
 
@@ -548,11 +537,9 @@ internal sealed class MongoPipelineFactory
             { "_b", new BsonDocument("$max", "$_b") }
         });
 
-        // Discriminate. Intersect: in both (_b true). Except: in the first only (_b false).
         var keepInB = stage.Kind == MongoSetOperationKind.Intersect;
         yield return new BsonDocument("$match", new BsonDocument { { "_a", true }, { "_b", keepInB } });
 
-        // Restore the plain document (the re-unify $group put _doc under _id).
         yield return ReplaceRootWithIdStage();
     }
 
@@ -568,9 +555,7 @@ internal sealed class MongoPipelineFactory
     /// Clones the template and substitutes every placeholder sentinel with its serialized runtime value.
     /// </summary>
     /// <param name="parameterValues">Must contain every parameter recorded in <see cref="_placeholders"/>.</param>
-    /// <exception cref="InvalidOperationException">
-    /// A parameter is missing, or the template has a deferred slot (use <see cref="Build(in MongoNativeBuildContext)"/>).
-    /// </exception>
+    /// <exception cref="InvalidOperationException">A parameter is missing, or the template has a deferred slot (use <see cref="Build(in MongoNativeBuildContext)"/>).</exception>
     public BsonDocument[] Build(IReadOnlyDictionary<string, object?> parameterValues)
     {
         if (_hasDeferredSlot)
@@ -600,7 +585,6 @@ internal sealed class MongoPipelineFactory
     public BsonDocument[] Build(in MongoNativeBuildContext context)
     {
         // Runtime-computed values (a closed clock subtree) are evaluated per Build, never baked into the template.
-        // Deferred slots see the same wrapped values.
         var parameterValues = RuntimeParameterValues.Wrap(context.ParameterValues, _placeholders.RuntimeEvaluators);
         var buildContext = context with { ParameterValues = parameterValues };
         var result = new BsonDocument[_template.Count];

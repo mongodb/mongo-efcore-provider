@@ -36,7 +36,6 @@ public class NorthwindMiscellaneousQueryMongoTest
         : base(fixture)
     {
         ClearLog();
-        // Fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]
@@ -2991,8 +2990,6 @@ Employees.{ "$lookup" : { "from" : "Employees", "localField" : "_id", "foreignFi
         await AssertQuery(
             async,
             ss => ss.Set<Order>().Where(e => dates.Contains(e.OrderDate!.Value.Date)));
-
-        //await base.Contains_with_DateTime_Date(async);
 
         AssertMql(
             """

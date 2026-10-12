@@ -34,13 +34,11 @@ internal enum MongoMathFunction
 }
 
 /// <summary>
-/// A <c>Math</c>/<c>MathF</c> function call, rendered exclusively in the aggregation-expression dialect (no
-/// query-dialect form — a numeric function over a field can never be a <c>$match</c> key-value shape).
+/// A <c>Math</c>/<c>MathF</c> function call, rendered only in the aggregation-expression dialect.
 /// </summary>
 /// <remarks>
-/// One node type discriminated by <see cref="Function"/>: every function has the same shape (1–2 operands, one
-/// operator out), so per-function types would differ only in a rendered string. <see cref="Type"/> is passed in
-/// (<c>call.Method.ReturnType</c>) because many functions change CLR type (e.g. <c>Math.Sign(double) : int</c>).
+/// One node type discriminated by <see cref="Function"/>: every function has the same shape. <see cref="Type"/> is
+/// passed in because many functions change CLR type (e.g. <c>Math.Sign(double) : int</c>).
 /// </remarks>
 internal sealed class MongoMathExpression(
     MongoMathFunction function, IReadOnlyList<MongoExpression> operands, Type type)
@@ -48,10 +46,7 @@ internal sealed class MongoMathExpression(
 {
     public MongoMathFunction Function { get; } = function;
 
-    /// <summary>
-    /// The translated arguments: one for unary functions, two for <c>Pow</c>/<c>Atan2</c>/<c>Max</c>/<c>Min</c>,
-    /// <c>RoundDigits</c> and <c>LogNewBase</c>.
-    /// </summary>
+    /// <summary>The translated arguments: one for unary functions, two for <c>Pow</c>/<c>Atan2</c>/<c>Max</c>/<c>Min</c>/<c>RoundDigits</c>/<c>LogNewBase</c>.</summary>
     public IReadOnlyList<MongoExpression> Operands { get; } = operands;
 
     /// <inheritdoc />

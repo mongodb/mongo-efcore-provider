@@ -32,7 +32,6 @@ public class NorthwindAggregateOperatorsQueryMongoTest
         : base(fixture)
     {
         ClearLog();
-        //Fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]

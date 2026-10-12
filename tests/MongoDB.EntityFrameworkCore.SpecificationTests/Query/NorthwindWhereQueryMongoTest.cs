@@ -31,7 +31,6 @@ public class NorthwindWhereQueryMongoTest : NorthwindWhereQueryTestBase<Northwin
         : base(fixture)
     {
         ClearLog();
-        //Fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]

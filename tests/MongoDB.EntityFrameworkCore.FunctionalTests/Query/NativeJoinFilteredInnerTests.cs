@@ -29,14 +29,9 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// A join whose inner side carries its own <c>Where</c> (design:
-/// <c>docs/superpowers/specs/2026-10-08-native-join-filtered-inner-reference-include-design.md</c>).
-/// <para>
-/// Hand-computed expectations over raw seeds, because the driver-LINQ oracle is wrong or absent for this shape
-/// (M22): with an <c>Include</c> it silently drops the inner filter; without one it throws. The explicit
-/// <see cref="MongoQueryMode.DriverLinq"/> leg therefore asserts a LOUD failure, never rows: no non-native path may
-/// return unfiltered rows for a filtered join inner.
-/// </para>
+/// A join whose inner side carries its own <c>Where</c>. Expectations are hand-computed over raw seeds, because the
+/// driver-LINQ oracle is wrong or absent here: with an <c>Include</c> it silently drops the inner filter, without one it
+/// throws. The explicit <see cref="MongoQueryMode.DriverLinq"/> leg therefore asserts a LOUD failure, never rows.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -205,7 +200,7 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
                    select new { c, o }).AsNoTrackingWithIdentityResolution().AsEnumerable()
                 .Select(x => $"{x.c.Id}:{x.o.Id}:{x.o.Cust?.Name}:same={ReferenceEquals(x.c, x.o.Cust)}").OrderBy(s => s).ToList(),
             // The spec shape (Perform_identity_resolution_reuses_same_instances_across_joins): orders 3 and 4 are
-            // filtered out. Driver-LINQ returns them (M22), so its leg must refuse rather than answer.
+            // filtered out. Driver-LINQ returns them, so its leg must refuse rather than answer.
             ["A1:1:Alpha1:same=True", "A1:2:Alpha1:same=True"]);
 
     [Fact]
@@ -241,7 +236,7 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
         var names = Seed();
 
         // One context, one lambda: the second run hits the compiled-query cache, so a baked value would repeat the
-        // first run's rows (Review Focus #2).
+        // first run's rows.
         using var db = Create(names, mode);
         NativeModeAssert.TwiceWithDifferentValues(
             v => ParameterizedQuery(db, (int?)v), 25, ["A1:1", "A1:2"], 500, ["A1:1", "A1:2", "B1:5"]);
@@ -285,7 +280,6 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
             }
             catch (NativeTranslationNotSupportedException) when (mode == MongoQueryMode.NativeOnly)
             {
-                // A clean decline is acceptable.
             }
         }
     }
@@ -310,7 +304,6 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
             }
             catch (NativeTranslationNotSupportedException) when (mode == MongoQueryMode.NativeOnly)
             {
-                // A clean decline is acceptable.
             }
         }
     }
@@ -340,7 +333,6 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
             }
             catch (NativeTranslationNotSupportedException) when (mode == MongoQueryMode.NativeOnly)
             {
-                // A clean decline is acceptable.
             }
         }
     }
@@ -355,7 +347,6 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
                    select new { c, o }).AsNoTracking().AsEnumerable()
                 .Select(x => $"{x.c.Id}:{x.o.Id}:{string.Join(",", x.o.Lines.Select(l => l.Sku).OrderBy(k => k))}")
                 .OrderBy(s => s).ToList(),
-            // Order 3 (s3) is filtered out; order 1 keeps s1 and s2.
             ["A1:1:s1,s2", "A1:2:", "B1:5:"]);
 
     // Shapes the carried filter does NOT cover. Each must decline in NativeOnly and may never answer with unfiltered rows
@@ -367,7 +358,6 @@ public class NativeJoinFilteredInnerTests(TemporaryDatabaseFixture database) : I
             db => (from c in db.Set<Cust>()
                    join o in db.Set<Ord>().Where(o => o.Total < 500) on new { c.Id, Nm = c.Name } equals new { Id = o.CustId, Nm = o.Tag }
                    select new { c, o }).AsNoTracking().AsEnumerable().Select(x => $"{x.c.Id}:{x.o.Id}").OrderBy(s => s).ToList(),
-            // Orders 1 and 3 match the key; order 3 (Total 600) is filtered out.
             ["A1:1"]);
 
     // A TPH-derived entity set (Set<Dog>()) must be narrowed by discriminator wherever it appears. Animals: Dogs Rex, Zed,

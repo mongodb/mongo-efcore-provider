@@ -22,19 +22,13 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// (<c>e.Manager != null</c>) or absent (<c>e.Manager == null</c>), post-<c>$unwind</c>.
 /// </summary>
 /// <remarks>
-/// Not a <see cref="MongoFieldExpression"/>: <see cref="LookupAlias"/> names a synthetic top-level field
-/// (<c>_lookup_&lt;Navigation&gt;</c>) that <c>$lookup</c>+<c>$unwind</c> (<c>preserveNullAndEmptyArrays: true</c>)
-/// fills with the joined sub-document or <see langword="null"/>; it is not a stored property. Renders in the query
-/// dialect (Where) and the aggregation dialect (Select-side conditional test).
-/// <para>
-/// Produced by <c>NativeJoinScopeTranslator.TryMatchInnerNullCheck</c> / <c>TryMatchScopeNullCheck</c> for exactly
-/// <c>ti.Inner == null</c>/<c>!= null</c>. Never nested under <c>Not</c>, a quantifier, or <c>$elemMatch</c>, so
-/// <c>MongoExpressionNegator</c> and <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c> fail closed on it.
-/// </para>
+/// Not a <see cref="MongoFieldExpression"/>: <see cref="LookupAlias"/> names a synthetic field filled by
+/// <c>$lookup</c>+<c>$unwind</c> (<c>preserveNullAndEmptyArrays: true</c>), not a stored property. Renders in both
+/// dialects. Produced only for exactly <c>ti.Inner == null</c>/<c>!= null</c> and never nested under <c>Not</c>, a
+/// quantifier, or <c>$elemMatch</c>, so the negator and <c>IsQueryDialectRenderable</c> fail closed on it.
 /// </remarks>
 internal sealed class MongoLookupNullCheckExpression(string lookupAlias, bool isNotNull) : MongoExpression
 {
-    /// <summary>The <c>$lookup</c>'s own <c>as</c> alias (e.g. <c>_lookup_Manager</c>).</summary>
     public string LookupAlias { get; } = lookupAlias;
 
     /// <summary><see langword="true"/> for <c>!= null</c>, <see langword="false"/> for <c>== null</c>.</summary>

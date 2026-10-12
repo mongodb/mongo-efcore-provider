@@ -27,26 +27,22 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// Recognizes EF Core's FK correlation predicate (a <c>Where</c> over an
-/// <see cref="Microsoft.EntityFrameworkCore.Query.EntityQueryRootExpression"/> comparing an outer key to a
-/// dependent FK) and resolves it to the single matching collection navigation off the outer entity.
+/// Recognizes EF Core's FK correlation predicate (a <c>Where</c> over an <see cref="Microsoft.EntityFrameworkCore.Query.EntityQueryRootExpression"/>
+/// comparing an outer key to a dependent FK) and resolves it to the single matching collection navigation off the outer entity.
 /// </summary>
 internal static class NativeCorrelationMatcher
 {
     /// <summary>
-    /// Matches <paramref name="whereBody"/> as a correlation of <paramref name="outerRoot"/>'s key with a
-    /// dependent FK and resolves the single collection navigation (embedded iff <paramref name="requireEmbedded"/>)
-    /// whose target and single-property FK match. Declines on no match, an ambiguous match, or any extra conjunct.
+    /// Matches <paramref name="whereBody"/> as a correlation of <paramref name="outerRoot"/>'s key with a dependent FK and resolves
+    /// the single collection navigation (embedded iff <paramref name="requireEmbedded"/>) whose target and single-property FK match.
+    /// Declines on no match, an ambiguous match, or any extra conjunct.
     /// </summary>
     /// <remarks>
-    /// <paramref name="outerRoot"/> is the expression the outer entity is read through, matched by reference: the
-    /// query's lambda parameter when the outer is still a parameter, or the entity shaper once the binder has substituted it.
-    /// The outer operand must be a direct property of <paramref name="outerRoot"/> that resolves, by
-    /// <see cref="IProperty"/> identity, to the navigation's principal key (either operand order). Binding the
-    /// navigation emits <c>$lookup {localField: principalKey, foreignField: fk}</c>, so a correlation on any other
-    /// outer member (<c>o.CustomerId == c.Code</c>) would silently read the key-correlated rows. A null guard is
-    /// admitted only on that same outer key, as EF Core's nav-expansion emits it; a guard on any other member is a
-    /// user filter the bound navigation would drop.
+    /// <paramref name="outerRoot"/> is matched by reference: the query's lambda parameter, or the entity shaper once the binder has
+    /// substituted it. The outer operand must resolve, by <see cref="IProperty"/> identity, to the navigation's principal key (either
+    /// operand order): binding emits <c>$lookup {localField: principalKey, foreignField: fk}</c>, so a correlation on any other outer
+    /// member would silently read the key-correlated rows. A null guard is admitted only on that same key, as EF's nav-expansion
+    /// emits it; a guard on another member is a user filter the bound navigation would drop.
     /// </remarks>
     internal static bool TryMatchCorrelatedCollection(
         Expression whereBody,
@@ -89,9 +85,8 @@ internal static class NativeCorrelationMatcher
     }
 
     /// <summary>
-    /// Splits a correlation predicate into its dependent side (read off the subquery's own lambda parameter), its outer side (read
-    /// off <paramref name="outerRoot"/>) and the optional null-guarded operand. Structural only; the callers decide what the two
-    /// sides must resolve to.
+    /// Splits a correlation predicate into its dependent side (off the subquery's own lambda parameter), outer side (off
+    /// <paramref name="outerRoot"/>) and optional null-guarded operand. Structural only; callers decide what the sides must resolve to.
     /// </summary>
     private static bool TryResolveCorrelationSides(
         Expression whereBody,
@@ -126,22 +121,20 @@ internal static class NativeCorrelationMatcher
     }
 
     /// <summary>
-    /// Matches <paramref name="whereBody"/> as an equality between one scalar property of the subquery's entity and one scalar
-    /// property of the outer entity, where neither is a collection navigation's foreign key (or the model has no such navigation).
-    /// The shape is the same as the navigation correlation: either operand order and an optional <c>outerKey != null</c> guard
-    /// on that same outer property, no other conjunct.
+    /// Matches <paramref name="whereBody"/> as an equality between one scalar property of the subquery's entity and one of the outer
+    /// entity, neither a collection navigation's foreign key (or the model has none): same shape as the navigation correlation
+    /// (either operand order, optional <c>outerKey != null</c> guard on that same property, no other conjunct).
     /// </summary>
-    /// <param name="whereBody">The subquery's <c>Where</c> predicate body.</param>
-    /// <param name="outerEntityType">The entity type of the outer query.</param>
-    /// <param name="outerRoot">The expression the outer entity is read through, matched by reference.</param>
-    /// <param name="targetEntityType">The entity type of the subquery.</param>
-    /// <param name="outerProperty">The outer entity's compared property.</param>
-    /// <param name="innerProperty">The subquery entity's compared property.</param>
+    /// <param name="whereBody">The predicate body.</param>
+    /// <param name="outerEntityType">The outer entity type.</param>
+    /// <param name="outerRoot">The expression the outer entity is rooted on.</param>
+    /// <param name="targetEntityType">The subquery's entity type.</param>
+    /// <param name="outerProperty">The matched outer property.</param>
+    /// <param name="innerProperty">The matched subquery property.</param>
     /// <param name="guarded">Whether the predicate carries the null guard (EF's <c>GroupJoin</c> rewrite does; an explicit subquery does not).</param>
     /// <remarks>
-    /// The two properties must compare in the database as they do in C#: a scalar CLR type each, stored alike (same
-    /// representation and converter), no collection. Anything else declines, so the keyed <c>$lookup</c> built from them cannot
-    /// answer differently from the LINQ the author wrote.
+    /// The properties must compare in the database as in C#: a scalar CLR type each, stored alike, no collection; otherwise declines,
+    /// so the keyed <c>$lookup</c> cannot answer differently from the LINQ the author wrote.
     /// </remarks>
     internal static bool TryMatchRawKeyCorrelation(
         Expression whereBody,
@@ -187,9 +180,8 @@ internal static class NativeCorrelationMatcher
     }
 
     /// <summary>
-    /// Builds the keyed, not-unwound <c>$lookup</c> behind a correlated subquery matched by <see cref="TryMatchRawKeyCorrelation"/>.
-    /// The alias encodes the target, both key paths and whether a null local key is excluded, so two subqueries over the same
-    /// collection with different keys never share an array and identical ones deduplicate.
+    /// Builds the keyed, not-unwound <c>$lookup</c> for a subquery matched by <see cref="TryMatchRawKeyCorrelation"/>. The alias
+    /// encodes target, both key paths and null-key exclusion, so different keys never share an array and identical ones deduplicate.
     /// </summary>
     internal static LookupExpression BuildCorrelatedArrayLookup(
         IEntityType targetEntityType, IProperty outerProperty, IProperty innerProperty, bool guarded,
@@ -198,8 +190,7 @@ internal static class NativeCorrelationMatcher
         var localField = LookupExpression.GetFieldPath(outerProperty);
         var foreignField = LookupExpression.GetFieldPath(innerProperty);
 
-        // A null outer key matches nothing only when EF guarded the predicate AND the key can be null; a non-nullable key can't be
-        // null, so the plain (indexable) form is exact there.
+        // A null outer key matches nothing only when EF guarded the predicate AND the key can be null; otherwise the plain (indexable) form is exact.
         var excludesNull = guarded && outerProperty.IsNullable;
 
         var alias = LookupExpression.LookupAliasPrefix
@@ -214,8 +205,7 @@ internal static class NativeCorrelationMatcher
             ElementFilters = filters ?? []
         };
 
-        // Uncorrelated filters ride inside the lookup's sub-pipeline, rendered at pipeline-build time through the placeholder table
-        // (LookupPipelineKind.FilteredJoinInner), so a parameter in a filter is read per execution.
+        // Uncorrelated filters ride inside the lookup's sub-pipeline (LookupPipelineKind.FilteredJoinInner), so a parameter in one is read per execution.
         if (filterPredicate is not null)
         {
             lookup.InnerPredicate = filterPredicate;
@@ -225,11 +215,7 @@ internal static class NativeCorrelationMatcher
         return lookup;
     }
 
-    /// <summary>
-    /// Whether <paramref name="expression"/> is a direct property access on <paramref name="outerRoot"/>
-    /// (member or <c>EF.Property</c>, <c>Convert</c>-wrapped or not) resolving to exactly
-    /// <paramref name="property"/>. Nested members (<c>c.Address.Code</c>) never match.
-    /// </summary>
+    /// <summary>Whether <paramref name="expression"/> is a direct (not nested) property access on <paramref name="outerRoot"/> resolving to exactly <paramref name="property"/>.</summary>
     private static bool IsOuterProperty(
         Expression expression, Expression outerRoot, IEntityType outerEntityType, IProperty property)
         => expression.RemoveConvert().TryGetMemberOrEFProperty(out var receiver, out var name)
@@ -237,11 +223,9 @@ internal static class NativeCorrelationMatcher
            && ReferenceEquals(outerEntityType.FindProperty(name), property);
 
     /// <summary>
-    /// Extracts the compared sides of a bare equality, or of an equality guarded by exactly one null check
-    /// (<c>k != null &amp;&amp; equality</c>, either order; EF Core emits this for a nullable outer key), returning
-    /// the guarded operand in <paramref name="nullGuarded"/> for the caller to check it is the compared outer key.
-    /// Any other conjunct declines, so a user-filtered count (<c>c.Orders.Where(pred).Count()</c>) isn't mistaken
-    /// for a plain FK correlation.
+    /// Extracts the sides of a bare equality, or one guarded by exactly one null check (<c>k != null &amp;&amp; equality</c>, either
+    /// order, as EF emits for a nullable outer key), returning the guarded operand in <paramref name="nullGuarded"/>. Any other
+    /// conjunct declines, so a user-filtered count isn't mistaken for a plain FK correlation.
     /// </summary>
     private static bool TryGetCorrelationEqualitySides(
         Expression body, out Expression left, out Expression right, out Expression? nullGuarded)
@@ -268,8 +252,8 @@ internal static class NativeCorrelationMatcher
     }
 
     /// <summary>
-    /// Extracts the two sides of an equality in the spellings EF Core's nav-expansion produces: <c>==</c>,
-    /// static <c>object.Equals(x, y)</c>, and instance <c>x.Equals(y)</c>. Also used by <c>NativeSelectManyBinder</c>.
+    /// Extracts the two sides of an equality in the spellings EF's nav-expansion produces: <c>==</c>, static <c>object.Equals(x, y)</c>
+    /// and instance <c>x.Equals(y)</c>. Also used by <c>NativeSelectManyBinder</c>.
     /// </summary>
     internal static bool TryExtractEqualitySides(Expression node, out Expression left, out Expression right)
     {
@@ -306,9 +290,8 @@ internal static class NativeCorrelationMatcher
     }
 
     /// <summary>
-    /// Matches the correlated subquery EF Core's nav-expansion leaves of a reference-collection navigation,
-    /// <c>Queryable.Where(EntityQueryRootExpression&lt;Target&gt;, predicate)</c> with a single-parameter predicate.
-    /// Structural only: the predicate isn't checked to be an FK correlation.
+    /// Matches the correlated subquery nav-expansion leaves of a reference-collection navigation: <c>Queryable.Where(EntityQueryRootExpression&lt;Target&gt;, predicate)</c>
+    /// with a single-parameter predicate. Structural only: the predicate isn't checked to be an FK correlation.
     /// </summary>
     internal static bool TryMatchRootWhere(
         Expression expression,
@@ -334,9 +317,8 @@ internal static class NativeCorrelationMatcher
     }
 
     /// <summary>
-    /// Matches a chain of <c>Queryable.Where</c> calls over a query root, innermost first
-    /// (<c>Orders.Where(filter).Where(correlation)</c>): what nav-expansion makes of <c>GroupJoin(Orders.Where(filter), ...)</c> or of a
-    /// filtered collection access. Structural only: which one is the correlation is the caller's decision.
+    /// Matches a chain of <c>Queryable.Where</c> calls over a query root, innermost first (<c>Orders.Where(filter).Where(correlation)</c>).
+    /// Structural only: which one is the correlation is the caller's decision.
     /// </summary>
     internal static bool TryMatchRootWhereChain(
         Expression expression,
@@ -369,12 +351,10 @@ internal static class NativeCorrelationMatcher
     }
 
     /// <summary>
-    /// Matches <see cref="TryMatchRootWhere"/>'s <c>Queryable.Where(root, correlationPredicate)</c> as the FK
-    /// correlation of <paramref name="outerParameter"/> (the query's root entity) with a non-embedded collection
-    /// navigation, and resolves that navigation. This is the shape nav-expansion wraps around a reference-collection
-    /// <c>Count</c>/<c>LongCount</c> (see <see cref="MongoExpressionTranslator.TryMatchCountExpression"/>), list
-    /// (<c>c.Orders.ToList()</c>) or reducer (<c>c.Orders.FirstOrDefault()</c>). Shared by
-    /// <see cref="NativeProjectionBinder"/> and <see cref="NativeReferenceCollectionCountPredicateBinder"/>.
+    /// Matches <see cref="TryMatchRootWhere"/>'s <c>Where(root, correlationPredicate)</c> as the FK correlation of
+    /// <paramref name="outerParameter"/> with a non-embedded collection navigation and resolves it: the shape nav-expansion wraps
+    /// around a reference-collection <c>Count</c> (see <see cref="MongoExpressionTranslator.TryMatchCountExpression"/>), list or
+    /// reducer. Shared by <see cref="NativeProjectionBinder"/> and <see cref="NativeReferenceCollectionCountPredicateBinder"/>.
     /// </summary>
     internal static bool TryMatchCorrelatedRootWhere(
         MongoQueryExpression mongoQ,
@@ -391,13 +371,11 @@ internal static class NativeCorrelationMatcher
     }
 
     /// <summary>
-    /// Stages <paramref name="lookup"/> (a reference-collection <c>$lookup</c> a projection leaf needs) into
-    /// <paramref name="pendingLookups"/>, or reuses an existing lookup at the same alias, staged or already pending on
-    /// the query, if it is the same kind; <paramref name="stagedLookup"/> is whichever backs the leaf. A lookup that
-    /// isn't a plain native collection lookup (TPH-derived target: discriminator <c>$match</c> staged,
-    /// <see cref="LookupPipelineKind.DiscriminatorNarrowed"/>) declines, as does a collision with a different kind (e.g. a
-    /// filtered Include, or a <see cref="LookupPipelineKind.CorrelatedReducer"/> lookup, which unwinds to one
-    /// document): reading it would silently read the wrong shape.
+    /// Stages <paramref name="lookup"/> into <paramref name="pendingLookups"/>, or reuses an existing lookup at the same alias (staged
+    /// or pending on the query) of the same kind; <paramref name="stagedLookup"/> is whichever backs the leaf. Declines a lookup that
+    /// isn't a plain native collection lookup (TPH-derived target, <see cref="LookupPipelineKind.DiscriminatorNarrowed"/>) and a
+    /// collision with a different kind (filtered Include, or a <see cref="LookupPipelineKind.CorrelatedReducer"/> lookup, which
+    /// unwinds to one document): reading it would silently read the wrong shape.
     /// </summary>
     internal static bool TryStageNativeCollectionLookup(
         MongoQueryExpression mongoQ,
@@ -428,26 +406,21 @@ internal static class NativeCorrelationMatcher
         return true;
     }
 
-    /// <summary>
-    /// The lookup at <paramref name="alias"/> already staged in <paramref name="pendingLookups"/> or pending on
-    /// <paramref name="mongoQ"/> (staged first), or <see langword="null"/>.
-    /// </summary>
+    /// <summary>The lookup at <paramref name="alias"/> staged in <paramref name="pendingLookups"/> or pending on <paramref name="mongoQ"/> (staged first), or <see langword="null"/>.</summary>
     internal static LookupExpression? FindStagedOrPendingLookup(
         MongoQueryExpression mongoQ, List<LookupExpression> pendingLookups, string alias)
         => pendingLookups.FirstOrDefault(l => l.As == alias)
            ?? mongoQ.GetPendingLookups().FirstOrDefault(l => l.As == alias);
 
     /// <summary>
-    /// Builds (or reuses) the <c>$lookup</c> a reference-collection <c>Count</c> needs and stages it into
-    /// <paramref name="pendingLookups"/> via <see cref="TryStageNativeCollectionLookup"/>; colliding with a
-    /// <see cref="LookupPipelineKind.CorrelatedReducer"/> lookup declines rather than emit a <c>$size</c> over the
-    /// wrong shape.
+    /// Builds (or reuses) the <c>$lookup</c> a reference-collection <c>Count</c> needs and stages it via
+    /// <see cref="TryStageNativeCollectionLookup"/>; colliding with a <see cref="LookupPipelineKind.CorrelatedReducer"/> lookup
+    /// declines rather than emit a <c>$size</c> over the wrong shape.
     /// </summary>
     /// <remarks>
-    /// The backing lookup must be stamped <see cref="LookupExpression.IsBareCountSizeSource"/> so a later paged
-    /// Include for the same navigation is rerouted instead of merged into it (see that property). This method
-    /// doesn't stamp it — a later caller gate may still decline, and recognizers must not mutate then decline —
-    /// so it returns <paramref name="lookupToStamp"/> for the caller to stamp at its commit point.
+    /// The backing lookup must be stamped <see cref="LookupExpression.IsBareCountSizeSource"/> so a later paged Include for the same
+    /// navigation is rerouted instead of merged. Not stamped here (recognizers must not mutate then decline): it returns
+    /// <paramref name="lookupToStamp"/> for the caller to stamp at its commit point.
     /// </remarks>
     internal static bool TryBuildReferenceCollectionCountLookup(
         MongoQueryExpression mongoQ,
@@ -482,7 +455,7 @@ internal static class NativeCorrelationMatcher
         else if (stripped is UnaryExpression { NodeType: ExpressionType.Not, Operand: var negated }
                  && TryExtractEqualitySides(negated, out var left, out var right))
         {
-            // The spelling EF Core's GroupJoin rewrite emits for a nullable outer key: !(key == null), as !object.Equals(key, null).
+            // The spelling EF's GroupJoin rewrite emits for a nullable outer key: !(key == null), as !object.Equals(key, null).
             guarded = IsNullConstant(right) ? left : IsNullConstant(left) ? right : null;
         }
 
@@ -492,10 +465,7 @@ internal static class NativeCorrelationMatcher
     internal static bool IsNullConstant(Expression node)
         => node.RemoveConvert() is ConstantExpression { Value: null };
 
-    /// <summary>
-    /// The expression a property read hangs off: the receiver of a member access or <c>EF.Property</c> (one hop, after
-    /// stripping conversions), or the expression itself when it is a parameter; otherwise <see langword="null"/>.
-    /// </summary>
+    /// <summary>The receiver of a member access or <c>EF.Property</c> (one hop, after stripping conversions), or the expression itself if a parameter; otherwise <see langword="null"/>.</summary>
     private static Expression? GetRootExpression(Expression expression)
     {
         var stripped = expression.RemoveConvert();

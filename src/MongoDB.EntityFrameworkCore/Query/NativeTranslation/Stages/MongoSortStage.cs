@@ -19,21 +19,14 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 /// <summary>
-/// Represents a <c>$sort</c> aggregation stage that orders documents by one or more keys.
+/// A <c>$sort</c> stage.
 /// </summary>
 internal sealed class MongoSortStage : MongoPipelineStage
 {
-    /// <summary>
-    /// Initializes a new instance of the <see cref="MongoSortStage"/> class.
-    /// </summary>
-    /// <param name="orderings">The orderings that specify the sort keys and directions.</param>
     public MongoSortStage(IReadOnlyList<MongoOrdering> orderings)
     {
         Orderings = orderings;
     }
 
-    /// <summary>
-    /// Gets the orderings that specify the sort keys and directions.
-    /// </summary>
     public IReadOnlyList<MongoOrdering> Orderings { get; }
 }

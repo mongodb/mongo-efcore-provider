@@ -20,8 +20,4 @@ Storage/Query; the sensitive-data setting is EF's.
   NRE on first fire.
 - **`EventData` must snapshot values**, not hold mutable references (e.g. an `IUpdateEntry`).
 - Logger extension methods follow: `ShouldLog(...)` → log; `NeedsEventData(...)` → build and dispatch.
-
-## Testing
-
-No `Diagnostics/` test folder. Assert events via `TestMqlLoggerFactory` or a `TestLoggerFactory` filtered by
-`MongoEventId.<name>`.
+- Tests assert events via `TestMqlLoggerFactory` or a `TestLoggerFactory` filtered by `MongoEventId.<name>`.

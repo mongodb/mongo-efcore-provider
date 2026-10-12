@@ -60,8 +60,8 @@ internal enum MongoBinaryOperator
     /// <c>double</c>, which would compare wrongly and fail to deserialize into an integral member.
     /// </summary>
     /// <remarks>
-    /// Chosen at translate time from the division node's CLR type, not at render time from the operands: widening
-    /// <c>Convert</c>s (<c>(double)a / b</c>) are unwrapped by then, so the operands would look integral.
+    /// Chosen at translate time from the node's CLR type: by render time widening <c>Convert</c>s
+    /// (<c>(double)a / b</c>) are unwrapped, so the operands would look integral.
     /// </remarks>
     IntegerDivide,
 

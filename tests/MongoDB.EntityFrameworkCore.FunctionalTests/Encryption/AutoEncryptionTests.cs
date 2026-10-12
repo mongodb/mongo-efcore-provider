@@ -59,12 +59,10 @@ public class AutoEncryptionTests(TemporaryDatabaseFixture database)
     [MemberData(nameof(CryptProviderAndEncryptionModeData))]
     public void Encrypted_data_can_not_be_read_with_wrong_master_key(CryptProvider cryptProvider, EncryptionMode encryptionMode)
     {
-        // Setup data with a master key
         var collection = _database.CreateCollection<Patient>(values: [cryptProvider, encryptionMode]);
         var collectionNamespace = collection.CollectionNamespace;
         SetupEncryptedTestData(cryptProvider, collectionNamespace.CollectionName, encryptionMode);
 
-        // Create a second MongoDB encrypted client with a different (wrong) master key
         var kmsWrongMaster = CreateKmsProvidersWithLocalMasterKey(CreateMasterKey());
         var schemaMap = encryptionMode == EncryptionMode.ClientSideFieldLevelEncryption
             ? CreateSchemaMap(collectionNamespace.CollectionName)
@@ -91,10 +89,8 @@ public class AutoEncryptionTests(TemporaryDatabaseFixture database)
         var encryptedCollection =
             SetupEncryptedTestData(cryptProvider, collection.CollectionNamespace.CollectionName, encryptionMode);
 
-        // Test driver load
         Assert.Equal("145014000", encryptedCollection.AsQueryable().First().SSN);
 
-        // Test EF load & save
         {
             using var db = SingleEntityDbContext.Create(encryptedCollection);
             var patient = db.Entities.First();
@@ -103,11 +99,9 @@ public class AutoEncryptionTests(TemporaryDatabaseFixture database)
             db.SaveChanges();
         }
 
-        // Ensure saved data is correct via Driver & EF
         Assert.Equal("O-", encryptedCollection.AsQueryable().First().BloodType);
         Assert.Equal("O-", SingleEntityDbContext.Create(encryptedCollection).Entities.First().BloodType);
 
-        // EF Query
         {
             using var db = SingleEntityDbContext.Create(encryptedCollection);
             var patient = db.Entities.First(p => p.SSN == "145014000");
@@ -141,7 +135,6 @@ public class AutoEncryptionTests(TemporaryDatabaseFixture database)
         string collectionName,
         EncryptionMode encryptionMode)
     {
-        // Create the schema map and an encrypted client
         var schemaMap = encryptionMode == EncryptionMode.ClientSideFieldLevelEncryption
             ? CreateSchemaMap(collectionName)
             : null;
@@ -151,7 +144,6 @@ public class AutoEncryptionTests(TemporaryDatabaseFixture database)
         var encryptedClient =
             CreateEncryptedClient(KeyVaultNamespace, KmsProviders, cryptProvider, schemaMap, encryptedFieldsMap);
 
-        // Insert test data using the driver
         var collection = encryptedClient.GetDatabase(_database.MongoDatabase.DatabaseNamespace.DatabaseName)
             .GetCollection<Patient>(collectionName);
 

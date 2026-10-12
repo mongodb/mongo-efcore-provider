@@ -54,7 +54,6 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
 
         using var db = Make(collection, MongoQueryMode.NativeOnly, mapping);
 
-        // Intermediate type: the predicate is an $in over the {Customer, SubCustomer} subtree.
         var result = db.Entities.OfType<Customer>().ToList();
 
         Assert.Equal(4, result.Count); // 3 Customer rows + 1 SubCustomer row from SetupTestData.
@@ -74,7 +73,6 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
 
         using var db = Make(collection, MongoQueryMode.NativeOnly, mapping);
 
-        // Leaf type: the predicate is a single-value $eq.
         var result = db.Entities.OfType<SubCustomer>().ToList();
 
         Assert.Single(result);
@@ -163,7 +161,6 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
             Assert.Equal(4, nativeIds.Count);
         }
 
-        // Succeeding under NativeOnly (rather than throwing) is the "went native" signal.
         using var nativeOnlyDb = Make(collection, MongoQueryMode.NativeOnly, model);
         var result = nativeOnlyDb.Entities.OfType<Customer>().ToList();
         Assert.Equal(4, result.Count);
@@ -272,7 +269,6 @@ public class NativeOfTypeTests(TemporaryDatabaseFixture database) : IClassFixtur
             Assert.Equal("Cat 1", cats[0].Name);
         }
 
-        // NativeOnly also succeeds for this shape.
         using (var nativeOnlyDb = MakeAnimalContext(collection, MongoQueryMode.NativeOnly, NoDiscriminatorModel))
         {
             var cats = RunOfTypeQuery(nativeOnlyDb);

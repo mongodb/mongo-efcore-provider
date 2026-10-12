@@ -49,7 +49,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // FunctionalTests has no AssertMql, so MQL is captured through SpyLoggerProvider.
     private static SingleEntityDbContext<T> CreateContextWithLogging<T>(
         IMongoCollection<T> collection, MongoQueryMode mode, Action<ModelBuilder>? modelBuilderAction,
         out SpyLoggerProvider spyLogger)
@@ -72,10 +71,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
 
     private string UniqueCollectionName(string name)
         => TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8];
-
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Goes native: owned single-reference whole-entity query
-    // ════════════════════════════════════════════════════════════════════════════════════════════
 
     private class Blog
     {
@@ -116,7 +111,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         var collection = SeedBlogs(nameof(Owned_single_reference_whole_entity_goes_native));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
 
-        // Under NativeOnly a fallback throws, so success proves the owned auto-include went native.
         var results = db.Entities.AsNoTracking().ToList();
 
         Assert.Equal(2, results.Count);
@@ -149,10 +143,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         Assert.Equal("LA", results[1].Address.City);
     }
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Guard: the admit stays narrow — non-owned reference still falls back
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-
     private class BlogWithTags
     {
         public ObjectId Id { get; set; }
@@ -181,7 +171,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogWithTagsModel);
 
-        // Success under NativeOnly proves the owned-collection auto-include went native.
         var blog = Assert.Single(db.Entities.AsNoTracking().ToList());
         Assert.Equal("Alpha", blog.Title);
         Assert.Equal(["a", "b"], blog.Tags.Select(t => t.Name));
@@ -250,10 +239,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         Assert.Equal("Ada", kept.Customer.FullName);
     }
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Reducer spot-check: Single/First over an owned-ref whole entity (routes DOM via $limit)
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-
     [Fact]
     public void Owned_single_reference_whole_entity_Single_returns_correct_entity()
     {
@@ -277,12 +262,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         Assert.Equal("Alpha", blog.Title);
         Assert.Equal("NYC", blog.Address.City);
     }
-
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Parity (Native == DriverLinq) and edge cases for owned single-reference whole-entity queries
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-
-    // ── (1) Present owned sub-document: Native == DriverLinq ──────────────────────────────────────
 
     [Fact]
     public void Present_owned_reference_matches_driver_linq()
@@ -309,8 +288,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
             Assert.Equal(d.Address.Zip, n.Address.Zip);
         }
     }
-
-    // ── (2) Absent / null owned sub-document (optional owned reference not set) ───────────────────
 
     private class BlogOptionalAddress
     {
@@ -349,8 +326,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         List<BlogOptionalAddress> native;
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogOptionalAddressModel))
         {
-            // NativeOnly: proves the optional-owned-ref shape genuinely goes native rather than
-            // silently falling back when the sub-document happens to be absent.
             native = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
         }
 
@@ -371,8 +346,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         Assert.Null(native.Single(b => b.Title == "NoAddr").Address);
         Assert.NotNull(native.Single(b => b.Title == "WithAddr").Address);
     }
-
-    // ── (2b) Explicit BSON null for the owned-reference element (vs. key-absent above) ─────────────
 
     [Fact]
     public void Explicit_null_owned_reference_yields_null_matching_driver_linq()
@@ -398,7 +371,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         List<BlogOptionalAddress> native;
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogOptionalAddressModel))
         {
-            // Success under NativeOnly is the routing proof.
             native = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
         }
 
@@ -420,8 +392,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         Assert.Null(native.Single(b => b.Title == "NullAddr").Address);
         Assert.NotNull(native.Single(b => b.Title == "WithAddr").Address);
     }
-
-    // ── (3) Required owned reference missing: both modes throw the same exception type ────────────
 
     private class BlogRequiredAddress
     {
@@ -459,12 +429,9 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         Assert.Equal(driverEx.GetType(), nativeEx.GetType());
         Assert.Equal(driverEx.Message, nativeEx.Message);
 
-        // And it must go native, not fall back.
         using var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, BlogRequiredAddressModel);
         Assert.Throws<InvalidOperationException>(() => nativeOnly.Entities.AsNoTracking().ToList());
     }
-
-    // ── (4) Nested owned reference (Root → A → B): deep-value parity, succeeds under NativeOnly ───
 
     private class BlogNested
     {
@@ -528,7 +495,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         List<BlogNested> native;
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogNestedModel))
         {
-            // Success under NativeOnly proves the admit predicate unwraps nested IncludeExpression layers.
             native = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
         }
 
@@ -541,8 +507,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
             Assert.Equal(d.Address.Geo.Lng, n.Address.Geo.Lng);
         }
     }
-
-    // ── (5) Shared-type owned reference: same owned CLR type used by two navigations ───────────────
 
     private class BlogTwoAddresses
     {
@@ -591,8 +555,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         Assert.Equal(driver.WorkAddress.Zip, native.WorkAddress.Zip);
     }
 
-    // ── (6) Tracked query (default tracking): entities tracked; mutate + SaveChanges round-trips ───
-
     [Fact]
     public void Tracked_owned_reference_query_tracks_entities_and_round_trips_mutation()
     {
@@ -600,7 +562,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
 
         using (var db = CreateContext(collection, MongoQueryMode.Native, BlogModel))
         {
-            // Default (tracked) query — no AsNoTracking.
             var results = db.Entities.OrderBy(b => b.Title).ToList();
 
             Assert.Equal(2, results.Count);
@@ -618,7 +579,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         }
     }
 
-    // ── (7) Streamed-vs-DOM equality: the flat owned-ref shape genuinely streams (NativeOnly ───────
     //       succeeds) AND returns entities identical to the driver-LINQ oracle.
 
     [Fact]
@@ -632,7 +592,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
             driver = db.Entities.AsNoTracking().OrderBy(b => b.Title).ToList();
         }
 
-        // NativeOnly with no reducer forces the one-pass streaming materializer; success proves it streams.
         List<Blog> native;
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel))
         {
@@ -647,11 +606,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
             Assert.Equal(driver[i].Address.Zip, native[i].Address.Zip);
         }
     }
-
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Mixed owned-ref + owned-collection goes native (routing proof; Native==DriverLinq parity is in
-    //  NativeMaterializerOnePassTests.Owned_reference_and_owned_collection_materialize_correct_nested_values)
-    // ════════════════════════════════════════════════════════════════════════════════════════════
 
     private class BlogMixed
     {
@@ -688,10 +642,7 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         Assert.Equal(["a"], blog.Tags.Select(t => t.Name));
     }
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Owned single-reference navigation entity leaf inside a projection (Select(b => new { b.Address, b.Title })).
-    //  See NativeProjectionBinder.TryGetOwnedReferenceNavigationLeaf / TryTranslateLeaf.
-    // ════════════════════════════════════════════════════════════════════════════════════════════
+    // Owned reference entity leaf inside a projection (see TryGetOwnedReferenceNavigationLeaf).
 
     [Fact]
     public void Owned_reference_entity_leaf_beside_field_leaf_goes_native_and_reads_correct_values()
@@ -699,7 +650,6 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         var collection = SeedBlogs(nameof(Owned_reference_entity_leaf_beside_field_leaf_goes_native_and_reads_correct_values));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly, BlogModel);
 
-        // Success under NativeOnly is the routing proof.
         var results = db.Entities.AsNoTracking()
             .Select(b => new { b.Address, b.Title })
             .OrderBy(r => r.Title)
@@ -886,18 +836,10 @@ public class NativeOwnedReferenceWholeEntityTests(TemporaryDatabaseFixture datab
         Assert.Equal(9, result.Total);
     }
 
-    // ── Owned-reference leaf in an anonymous type under Distinct / set ops ─────────────────────────────
-    //
-    // A nav-entity-leaf projection's _id would leak into a set operation's or projected Distinct's comparison/dedup
-    // key, like the owned-array leaf's, so it sets HasArrayProjectionLeaf and declines natively as a set-op operand or
-    // Distinct source (pinned at unit level by
-    // SlotPopulationTests.Owned_reference_entity_leaf_projection_sets_HasArrayProjectionLeaf_for_the_set_op_gate).
-    //
-    // Nav-expansion appends an identity re-projection (e => new { e.Title,
-    // e.Address }) after the Distinct/set op to re-apply the owned auto-include, and re-binding the already-bound
-    // shaper threw InvalidCastException / "ProjectionBindingExpression could not be translated". On the driver-LINQ
-    // path the projecting Select can't be stripped, so the driver returns projected documents without the owner _id
-    // the owned shadow key reads; under NoTracking that key is unobservable and reads as a placeholder.
+    // A nav-entity-leaf projection's owner _id would leak into a set operation's or projected Distinct's dedup key, so it
+    // sets HasArrayProjectionLeaf and declines natively there. Nav-expansion appends an identity re-projection after the
+    // Distinct/set op; on the driver-LINQ path it can't be stripped, so the driver returns documents without the owner
+    // _id and, under NoTracking, the owned shadow key reads as a placeholder.
 
     public static TheoryData<MongoQueryMode> FallbackModes()
         => new() { MongoQueryMode.Native, MongoQueryMode.DriverLinq };

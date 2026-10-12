@@ -84,7 +84,6 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
             .Join(driverDb.Buyers, o => o.BuyerId, b => b.Id, (o, b) => o)
             .ToList();
 
-        // Each context seeds its own collection with fresh ObjectIds, so compare by count and Total, not identity.
         Assert.Equal(driverResults.Count, nativeResults.Count);
         Assert.Equal(3, nativeResults.Count);
         Assert.Equal(
@@ -100,7 +99,6 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
 
         var results = db.Orders.Include(o => o.Buyer).ToList();
 
-        // O3's buyer is dangling and the navigation is required, so the inner $unwind drops it: 3 of 4 remain.
         Assert.Equal(3, results.Count);
         Assert.All(results, o => Assert.NotNull(o.Buyer));
 
@@ -235,12 +233,10 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     [Fact]
     public void Reference_ThenInclude_chain_goes_native_with_correct_data()
     {
-        // A 2-hop reference ThenInclude chain.
         using var nativeOnly = CreateContext(MongoQueryMode.NativeOnly,
             nameof(Reference_ThenInclude_chain_goes_native_with_correct_data) + "_NativeOnly");
         var nativeOnlyResults = nativeOnly.Lines.Include(l => l.Order).ThenInclude(o => o.Buyer).ToList();
 
-        // The dangling-Order line is dropped; every surviving line's Order has a valid Buyer.
         Assert.All(nativeOnlyResults, l => Assert.NotNull(l.Order));
         Assert.All(nativeOnlyResults, l => Assert.NotNull(l.Order.Buyer));
 
@@ -274,7 +270,6 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         var driverResults = driverDb.Orders.Include(o => o.Buyer).ThenInclude(b => b.Address).ThenInclude(a => a.Region)
             .ToList();
 
-        // O3's buyer is dangling (required FK), so 3 of the 4 seeded orders survive the Buyer unwind.
         Assert.Equal(3, nativeResults.Count);
         Assert.Equal(3, driverResults.Count);
         Assert.All(nativeResults, o => Assert.Equal("Midwest", o.Buyer.Address.Region?.Name));
@@ -372,7 +367,6 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         var nativeRows = build(native).Cast<object>().ToList();
         var driverRows = build(driverLinq).Cast<object>().ToList();
 
-        // Each context seeds fresh ObjectIds, so compare sorted canonical values rather than identities.
         var nativeCanonical = nativeRows.Select(Canonicalize).OrderBy(x => x, StringComparer.Ordinal).ToList();
         var driverCanonical = driverRows.Select(Canonicalize).OrderBy(x => x, StringComparer.Ordinal).ToList();
 
@@ -381,7 +375,6 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
         Assert.NotEmpty(nativeCanonical); // guard against a vacuous pass from two empty result sets
     }
 
-    // See the HasNoDriverLinqParityOracle branch above.
     private static bool HasNoDriverLinqParityOracle(string description)
         => description is "same-target sibling Includes" or "user join with downstream Include";
 
@@ -694,7 +687,6 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     {
         using var db = UnidirectionalContext(out var spyLogger);
 
-        // Gate 1: StreamingEligibility.IsEligible(root).
         var rootEntityType = db.Model.FindEntityType(typeof(UniOrder))!;
         Assert.True(
             StreamingEligibility.IsEligible(rootEntityType),
@@ -702,7 +694,6 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
             "collection navigation back to UniOrder) or this test does not exercise the streaming " +
             "materializer's LookupReferencePlan at all.");
 
-        // Gate 2, eager-load fact: the looked-up entity must have no eager-loaded navigation.
         var targetEntityType = db.Model.FindEntityType(typeof(UniCustomer))!;
         Assert.False(
             targetEntityType.GetNavigations().Any(n => n.IsEagerLoaded),
@@ -731,7 +722,6 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
     {
         using var db = UnidirectionalContextWithEagerLoadedTarget();
 
-        // Gate 1 (IsEligible) is satisfied - an owned reference is itself streaming-eligible.
         var rootEntityType = db.Model.FindEntityType(typeof(UniOrderWithEagerTarget))!;
         Assert.True(
             StreamingEligibility.IsEligible(rootEntityType),
@@ -745,7 +735,6 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
             "UniCustomerWithAddress's owned Address must be eager-loaded, or this model no longer " +
             "exercises AllPendingLookupsAreStreamable's second, IsEligible-blind condition.");
 
-        // Native via the DOM shaper, not streaming; rows are still correct.
         var orders = db.UniOrdersWithEagerTarget.Include(o => o.UniCustomerWithAddress).ToList();
 
         Assert.NotEmpty(orders);
@@ -816,7 +805,6 @@ public class NativeReferenceIncludeTests(TemporaryDatabaseFixture database)
             .Join(driverDb.Buyers, o => o.BuyerId, b => b.Id, (o, b) => o.Id)
             .ToList();
 
-        // Separately-seeded contexts: compare by row count only.
         Assert.Equal(driverResults.Count, nativeResults.Count);
         Assert.Equal(3, nativeResults.Count); // 4 orders seeded, 1 dangling buyer, inner Join drops it.
     }

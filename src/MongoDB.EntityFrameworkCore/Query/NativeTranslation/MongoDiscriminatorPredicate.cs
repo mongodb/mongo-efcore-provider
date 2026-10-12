@@ -23,20 +23,17 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// The one discriminator test shared by <c>OfType&lt;T&gt;()</c>, <c>x is T</c> and <c>x.GetType() ==/!= typeof(T)</c>
-/// over a TPH hierarchy.
+/// The discriminator test shared by <c>OfType&lt;T&gt;()</c>, <c>x is T</c> and <c>x.GetType() ==/!= typeof(T)</c>
+/// over a TPH hierarchy. Values go through the discriminator property's serializer (converter/<c>BsonRepresentation</c>),
+/// as the write path does. An abstract type has no discriminator value and contributes nothing, or
+/// <c>$in: [null, ...]</c> would also match a document with no discriminator element.
 /// </summary>
-/// <remarks>
-/// Values go through the discriminator property's serializer (converter/<c>BsonRepresentation</c>), as the write path and
-/// <c>MongoEFDiscriminator</c> do. An abstract type has no discriminator value (<c>null</c>): it contributes nothing, or
-/// <c>$in: [null, ...]</c> would also match a document with no discriminator element at all.
-/// </remarks>
 internal static class MongoDiscriminatorPredicate
 {
     /// <summary>
-    /// Builds the discriminator test for <paramref name="target"/> (and its derived types when
-    /// <paramref name="includeDerived"/>); <see langword="false"/> for a type outside any TPH hierarchy. With no concrete
-    /// type in scope the test is the constant <paramref name="negated"/> (nothing matches, so the complement matches all).
+    /// Builds the discriminator test for <paramref name="target"/> (and derived types when
+    /// <paramref name="includeDerived"/>); <see langword="false"/> outside a TPH hierarchy. With no concrete type in
+    /// scope the test is the constant <paramref name="negated"/>.
     /// </summary>
     internal static bool TryBuild(
         IEntityType target, bool includeDerived, bool negated, [NotNullWhen(true)] out MongoExpression? predicate)

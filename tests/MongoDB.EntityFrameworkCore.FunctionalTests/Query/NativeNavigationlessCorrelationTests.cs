@@ -29,19 +29,11 @@ using MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
-/// A correlated subquery over another collection whose correlation is NOT a collection navigation's foreign key: a
-/// <c>GroupJoin</c> or an explicit subquery on arbitrary properties, or any correlation when the model has no collection
-/// navigation at all (design: <c>docs/superpowers/specs/2026-10-08-native-referenced-collection-aggregates-design.md</c>, slice 3).
-/// Hand-computed over raw seeds.
-/// <para>
-/// The null-key rules are the point. EF's <c>GroupJoin</c> rewrite guards the subquery with <c>outerKey != null &amp;&amp;</c>, so an
-/// outer row with a null key matches nothing; an explicit subquery has no guard, so C# null semantics apply and null equals null.
-/// <c>$lookup</c> itself matches a null or missing local key to null or missing foreign values, which is only the second rule.
-/// </para>
-/// <para>
-/// <see cref="MongoQueryMode.NativeOnly"/> and <see cref="MongoQueryMode.Native"/> must answer exactly. The explicit
-/// <see cref="MongoQueryMode.DriverLinq"/> leg may answer correctly or refuse loudly, never answer wrongly.
-/// </para>
+/// A correlated subquery over another collection whose correlation is NOT a collection navigation's foreign key (a
+/// <c>GroupJoin</c> or explicit subquery on arbitrary properties, or a model with no collection navigation). Hand-computed
+/// over raw seeds. The null-key rules are the point: EF's <c>GroupJoin</c> rewrite guards with <c>outerKey != null</c>, so a null
+/// key matches nothing; an explicit subquery has no guard, so null equals null. <c>$lookup</c> matches null/missing to
+/// null/missing, which is only the second rule. The DriverLinq leg may answer correctly or refuse, never answer wrongly.
 /// </summary>
 [XUnitCollection("QueryTests")]
 public class NativeNavigationlessCorrelationTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -173,8 +165,6 @@ public class NativeNavigationlessCorrelationTests(TemporaryDatabaseFixture datab
 
     private static List<string> Rows<T>(IEnumerable<T> rows, Func<T, string> format) => rows.Select(format).OrderBy(s => s).ToList();
 
-    // ---- a model with no collection navigation: every correlation is key-based ----
-
     [Fact]
     public void GroupJoin_Count_on_the_foreign_key_without_a_navigation()
         => Assert3(false,
@@ -210,19 +200,14 @@ public class NativeNavigationlessCorrelationTests(TemporaryDatabaseFixture datab
             db => db.Set<Cust>().OrderBy(c => db.Set<Ord>().Where(o => o.CustId == c.Id).Sum(o => o.Total)).ThenBy(c => c.Id).AsEnumerable().Select(c => c.Id).ToList(),
             ["C0", "B1", "A1", "A2"]);
 
-    // ---- correlation on properties that are not the foreign key, with and without a navigation ----
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void GroupJoin_on_non_key_properties_counts_by_the_written_keys(bool withNavigation)
-        // Name == Tag: only A1's name matches a Tag (orders 1 and 3). With a navigation present this used to be answered with the
-        // foreign-key counts (M35), then refused; it now answers.
+        // Name == Tag: only A1's name matches a Tag (orders 1 and 3).
         => Assert3(withNavigation,
             db => Rows(db.Set<Cust>().GroupJoin(db.Set<Ord>(), c => c.Name, o => o.Tag, (c, g) => new { c.Id, N = g.Count() }).AsEnumerable(), z => z.Id + ":" + z.N),
             ["A1:2", "A2:0", "B1:0", "C0:0"]);
-
-    // ---- null keys ----
 
     [Fact]
     public void GroupJoin_null_outer_key_matches_nothing()
@@ -252,8 +237,6 @@ public class NativeNavigationlessCorrelationTests(TemporaryDatabaseFixture datab
             }).AsEnumerable(), z => z.Id + ":" + z.Big + ":" + z.Small),
             ["A1:1:2", "A2:1:0", "B1:0:1", "C0:0:0"]);
 
-    // ---- a TPH-derived target ----
-
     [Fact]
     public void Count_over_a_navigation_to_a_derived_type_counts_only_that_type()
     {
@@ -278,8 +261,6 @@ public class NativeNavigationlessCorrelationTests(TemporaryDatabaseFixture datab
                 Assert.Equal(["A1:2", "B1:1"], rows);
         }
     }
-
-    // ---- a predicate on the group ----
 
     private static List<string> CountAbove(Ctx db, int cutoff)
         => Rows(db.Set<Cust>().GroupJoin(db.Set<Ord>().Where(o => o.Total > cutoff), c => c.Id, o => o.CustId, (c, g) => new { c.Id, N = g.Count() }).AsEnumerable(),

@@ -25,17 +25,9 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
 /// <summary>
 /// Why a lookup carries a non-empty <see cref="LookupExpression.PipelineStages"/> sub-pipeline; each reason has a
-/// different native-eligibility answer. <see cref="DiscriminatorNarrowed"/>: TPH discriminator narrowing, native for a collection Include
-/// (see <c>MongoSelectLowerer.AppendLookupStages</c>). <see cref="FilteredInclude"/> and
-/// <see cref="NestedInclude"/> (filtered Include; collection-then-collection/reference <c>ThenInclude</c>): the
-/// <c>let</c>+<c>pipeline</c> shape of <see cref="LookupExpression.ToLookupStageDocument"/>, native-eligible.
-/// <see cref="CorrelatedReducer"/>: reference-collection-nav First/FirstOrDefault projection leaf, rendered via
-/// the localField/foreignField+pipeline shape (<c>MongoPipelineFactory.RenderLookup</c>) since it has a real
-/// equality FK.
-/// <see cref="FilteredJoinInner"/>: an explicit join whose inner side is a filtered collection scan; the filter is
-/// <see cref="LookupExpression.InnerPredicate"/> and renders in the same localField/foreignField+pipeline shape, but
-/// through the placeholder table so a parameter is read per execution. No non-native consumer can honor it, so such a
-/// lookup must never reach the driver-LINQ bridge (see <see cref="LookupExpression.HasInnerPredicate"/>).
+/// different native-eligibility answer. <see cref="FilteredJoinInner"/> filters via
+/// <see cref="LookupExpression.InnerPredicate"/>, rendered through the placeholder table; no non-native consumer can
+/// honor it, so it must never reach the driver-LINQ bridge (see <see cref="LookupExpression.HasInnerPredicate"/>).
 /// </summary>
 internal enum LookupPipelineKind
 {
@@ -48,14 +40,13 @@ internal enum LookupPipelineKind
 }
 
 /// <summary>
-/// Represents the pending data needed to build a <c>$lookup</c> aggregation stage for including
-/// a cross-collection navigation property. This is a data holder, not a pipeline stage itself —
-/// the lowerer/pipeline factory render it into the actual <c>$lookup</c>/<c>$unwind</c> stage documents.
+/// The pending data for a <c>$lookup</c> stage (cross-collection navigation or join hop); the lowerer/pipeline
+/// factory render it into the actual <c>$lookup</c>/<c>$unwind</c> documents.
 /// </summary>
 internal sealed class LookupExpression
 {
     /// <summary>Creates a <see cref="LookupExpression"/> for the given navigation.</summary>
-    /// <param name="navigation">The navigation that requires a <c>$lookup</c>.</param>
+    /// <param name="navigation">The navigation the lookup traverses.</param>
     /// <param name="forceUnwind">Force <c>$unwind</c> even for collection navigations (explicit Join).</param>
     public LookupExpression(INavigation navigation, bool forceUnwind = false)
     {
@@ -80,13 +71,12 @@ internal sealed class LookupExpression
         As = GetLookupAlias(navigation);
         TargetEntityType = navigation.TargetEntityType;
 
-        // TPH: sibling subtypes can share the same FK value space, so FK equality alone would also
-        // match sibling-type documents; narrow by discriminator to just this type and its derived types.
+        // TPH: sibling subtypes can share the FK value space, so FK equality alone would match sibling-type documents.
         if (targetEntityType.FindDiscriminatorProperty() is { } discriminatorProperty
             && targetEntityType != targetEntityType.GetRootType())
         {
-            // Serialized through the discriminator property (converter/BsonRepresentation), as the write path does; an
-            // abstract type's null value would also match a document with no discriminator element, so it is dropped.
+            // Serialized through the discriminator property as the write path does; an abstract type's null value
+            // would match a document with no discriminator element, so it is dropped.
             var discriminatorValues = new BsonArray(
                 new MongoEFDiscriminator(targetEntityType)
                     .GetDiscriminatorsForTypeAndSubTypes(targetEntityType.ClrType)
@@ -113,10 +103,8 @@ internal sealed class LookupExpression
     }
 
     /// <summary>
-    /// Creates a <see cref="LookupExpression"/> for a navigation-less Join hop whose key is an anonymous type of two or
-    /// more properties (<c>new { a.X, a.Y } equals new { b.X, b.Y }</c>). Rendered as <c>let</c> + <c>pipeline</c>
-    /// matching every pair (see <see cref="ToLookupStageDocument"/>); <see cref="LocalField"/>/<see cref="ForeignField"/>
-    /// report the first pair.
+    /// Creates a <see cref="LookupExpression"/> for a navigation-less Join hop keyed on an anonymous type of two or
+    /// more properties; <see cref="LocalField"/>/<see cref="ForeignField"/> report the first pair.
     /// </summary>
     public LookupExpression(
         IEntityType targetEntityType, string collectionName, IReadOnlyList<LookupKeyPair> compositeKey, string alias,
@@ -131,16 +119,13 @@ internal sealed class LookupExpression
     /// The <c>_lookup_&lt;NavigationName&gt;</c> field a <c>$lookup</c> writes to and the shaper reads back from;
     /// centralized so write and read sites can't drift.
     /// </summary>
-    /// <param name="navigation">The navigation the lookup supports.</param>
-    /// <returns>The alias field name.</returns>
     public static string GetLookupAlias(IReadOnlyNavigationBase navigation)
         => $"{LookupAliasPrefix}{navigation.Name}";
 
     /// <summary>The prefix of the synthetic <c>$lookup</c> alias field (see <see cref="GetLookupAlias"/>).</summary>
     public const string LookupAliasPrefix = "_lookup_";
 
-    /// <summary>The navigation this lookup supports, or <see langword="null"/> for a bare key-equality
-    /// Join hop with no corresponding model navigation (see EF-377).</summary>
+    /// <summary>The navigation this lookup supports, or <see langword="null"/> for a navigation-less Join hop (EF-377).</summary>
     public INavigation? Navigation { get; }
 
     /// <summary>The entity type this lookup produces documents for. Unlike <see cref="Navigation"/>, always available.</summary>
@@ -153,11 +138,7 @@ internal sealed class LookupExpression
     /// <remarks>
     /// Re-prefixing (a transitive hop, the driver-LeftJoin <c>_outer</c>/<c>_inner</c> shape) throws for a
     /// <see cref="CompositeKey"/> lookup: only the first pair would move, silently joining the rest on the wrong
-    /// fields. Its local paths are built fully prefixed instead. Every re-prefix site
-    /// (<c>MongoProjectionBindingExpressionVisitor</c>'s collection-Include path,
-    /// <c>MongoQueryableMethodTranslatingExpressionVisitor.BuildNavigationJoinLookup</c> and
-    /// <c>NativeSelectManyBinder.TryBindNestedReferenceNavUnwind</c>) re-prefixes a lookup it has just built from an
-    /// <see cref="INavigation"/>, never a composite-key one, so the throw is unreachable today and guards future callers.
+    /// fields. Today's re-prefix sites only touch navigation-built lookups, so the throw guards future callers.
     /// </remarks>
     public string LocalField
     {
@@ -197,15 +178,13 @@ internal sealed class LookupExpression
 
     /// <summary>The full field path for a property, accounting for composite keys stored under <c>_id</c>.</summary>
     /// <remarks>
-    /// <c>internal</c> so <c>JoinLookupImplementsKeySelectors</c> compares against the same composite-key-aware
-    /// path <see cref="ForeignField"/>/<see cref="LocalField"/> were built from; a plain <c>GetElementName()</c>
-    /// disagrees for a component of a multi-property key.
+    /// Shared with <c>JoinLookupImplementsKeySelectors</c>: a plain <c>GetElementName()</c> disagrees for a
+    /// component of a multi-property key.
     /// </remarks>
     internal static string GetFieldPath(IReadOnlyProperty property)
     {
         var elementName = property.GetElementName();
 
-        // Composite-key components are stored nested under _id (e.g. _id.OrderID).
         if (property.IsPrimaryKey()
             && property.DeclaringType is IEntityType entityType
             && entityType.FindPrimaryKey()?.Properties.Count > 1)
@@ -216,10 +195,7 @@ internal sealed class LookupExpression
         return elementName;
     }
 
-    /// <summary>
-    /// Stages applied inside the <c>$lookup</c> for filtered Includes (OrderBy, Skip, Take). When non-empty the
-    /// pipeline form of <c>$lookup</c> is used instead of localField/foreignField.
-    /// </summary>
+    /// <summary>Stages applied inside the <c>$lookup</c>; when non-empty the pipeline form is used.</summary>
     public List<BsonDocument> PipelineStages { get; } = [];
 
     /// <summary>
@@ -227,64 +203,59 @@ internal sealed class LookupExpression
     /// joined document, or <see langword="null"/>.
     /// </summary>
     /// <remarks>
-    /// Not baked into <see cref="PipelineStages"/>: those are rendered once, with no per-execution placeholder
-    /// substitution, so a parameter would be frozen into the cached plan. It is rendered at pipeline-build time
-    /// instead (<c>MongoPipelineFactory.RenderLookup</c>). Written once, by <c>TranslateJoinCore</c>.
+    /// Not baked into <see cref="PipelineStages"/>: those have no per-execution placeholder substitution, so a
+    /// parameter would be frozen into the cached plan. Rendered by <c>MongoPipelineFactory.RenderLookup</c>.
     /// </remarks>
     public MongoExpression? InnerPredicate { get; internal set; }
 
     /// <summary>
-    /// Whether this lookup carries a join-inner filter that only the native renderer can honor. The one predicate every
-    /// non-native consumer (the driver-LINQ bridge) must call to refuse, never restate.
+    /// Whether this lookup carries a join-inner filter only the native renderer can honor. Non-native consumers
+    /// (the driver-LINQ bridge) must call this to refuse, never restate it.
     /// </summary>
     public bool HasInnerPredicate => InnerPredicate is not null;
 
     /// <summary>See <see cref="LookupPipelineKind"/>.</summary>
     /// <remarks>
     /// Write exactly once, at registration (not <see langword="init"/> because the fallback visitor stamps it after
-    /// construction). An object-initializer assignment would overwrite the <see cref="LookupPipelineKind.DiscriminatorNarrowed"/>
-    /// the constructor's TPH branch sets, leaving its discriminator <c>$match</c> unaccounted for.
+    /// construction); an initializer would overwrite the <see cref="LookupPipelineKind.DiscriminatorNarrowed"/> the
+    /// constructor's TPH branch sets.
     /// </remarks>
     public LookupPipelineKind PipelineKind { get; internal set; } = LookupPipelineKind.None;
 
     /// <summary>Whether this lookup uses the pipeline form (filtered Include).</summary>
     public bool HasPipeline => PipelineStages.Count > 0;
 
-    /// <summary>Whether this lookup is for a single reference (not a collection). A navigation-less
-    /// lookup (<see cref="Navigation"/> is <see langword="null"/>) is always treated as a reference.</summary>
+    /// <summary>Whether this lookup is a single reference; a navigation-less lookup is always a reference.</summary>
     public bool IsReference => Navigation is not { IsCollection: true } && !IsCorrelatedArraySource;
 
     /// <summary>
-    /// Whether this lookup is the array behind a correlated subquery over another collection that is NOT a collection navigation
-    /// (<c>Orders.Where(o =&gt; o.CustId == c.Id)</c> in a model with no <c>Customer.Orders</c>, or a correlation on properties that
-    /// are not the foreign key): a keyed, not-unwound <c>$lookup</c> whose output array the aggregate / quantifier arms read.
+    /// Whether this lookup is the array behind a correlated subquery that is NOT a collection navigation: a keyed,
+    /// not-unwound <c>$lookup</c> whose output array the aggregate / quantifier arms read.
     /// </summary>
     /// <remarks>
     /// Never a reference, although <see cref="Navigation"/> is <see langword="null"/>: the lowerer must not unwind it and the
     /// streaming reader must not read it as an entity. Never <see cref="InjectAfterRoot"/>, so the driver-LINQ bridge's
-    /// navigation-count rewrite (which assumes a navigation) cannot pick it up; the bridge refuses such a query instead.
+    /// navigation-count rewrite cannot pick it up; the bridge refuses such a query instead.
     /// </remarks>
     public bool IsCorrelatedArraySource { get; init; }
 
     /// <summary>
-    /// Whether a null (or missing) local key must match nothing. EF's <c>GroupJoin</c> rewrite guards the subquery with
-    /// <c>outerKey != null &amp;&amp;</c>, but <c>$lookup</c> matches a null/missing <c>localField</c> to null/missing foreign values, so
-    /// the pipeline form with an explicit non-null condition is used (see <see cref="ToLookupStageDocument"/>).
+    /// Whether a null (or missing) local key must match nothing. <c>$lookup</c> matches a null/missing
+    /// <c>localField</c> to null/missing foreign values, so the pipeline form with an explicit non-null condition is used.
     /// </summary>
     public bool ExcludesNullLocalKey { get; init; }
 
     /// <summary>
-    /// The uncorrelated filters (<c>Where</c> lambdas over the subquery's element) a keyed array lookup applies inside its
-    /// sub-pipeline, as written; their translation is <see cref="InnerPredicate"/>. Kept so two subqueries over the same keys with the
-    /// same filters share one array while different filters (or different parameters) get their own alias.
+    /// The <c>Where</c> lambdas a keyed array lookup applies inside its sub-pipeline (translated into
+    /// <see cref="InnerPredicate"/>). Kept so subqueries with the same filters share one array and different
+    /// filters or parameters get their own alias.
     /// </summary>
     public IReadOnlyList<System.Linq.Expressions.LambdaExpression> ElementFilters { get; init; } = [];
 
-    /// <summary>The <c>let</c> of the null-excluding form: the local key, null-normalized so a missing field reads as null.</summary>
+    /// <summary>The <c>let</c> of the null-excluding form: the local key, null-normalized.</summary>
     internal BsonDocument NullExcludingLet()
         => new("k", new BsonDocument("$ifNull", new BsonArray { $"${LocalField}", BsonNull.Value }));
 
-    /// <summary>The match of the null-excluding form: the local key is non-null AND equals the foreign field.</summary>
     internal BsonDocument NullExcludingMatch()
         => new("$and", new BsonArray
         {
@@ -293,60 +264,45 @@ internal sealed class LookupExpression
         });
 
     /// <summary>
-    /// Whether the collection-Include binding (<c>MongoProjectionBindingExpressionVisitor</c>, flat multi-lookup mode)
-    /// treats this lookup as the intermediate document a collection Include declared on
-    /// <paramref name="declaringType"/> hangs off: an unwound reference (or navigation-less) hop targeting that type,
-    /// matched by type, not alias. Shared with the native collection-Include-over-join gate, which declines when a join
-    /// level would match for the root's own Include (the binding would nest the Include under the join's alias while
-    /// the reader reads it at root).
+    /// Whether the collection-Include binding (flat multi-lookup mode) treats this lookup as the intermediate document
+    /// a collection Include declared on <paramref name="declaringType"/> hangs off: an unwound reference hop targeting
+    /// that type, matched by type, not alias. Shared with the native collection-Include-over-join gate, which declines
+    /// when a join level would match the root's own Include (the binding would nest it under the join's alias while the
+    /// reader reads it at root).
     /// </summary>
     internal bool IsCollectionIncludeIntermediateFor(IReadOnlyEntityType declaringType)
         => IsReference && ForceUnwind && TargetEntityType == declaringType;
 
-    /// <summary>
-    /// A single-level reference Include the native pipeline can emit and the streaming reader can read back:
-    /// a reference nav, no filtered-Include pipeline stages, not a transitive <c>_lookup_</c> local field.
-    /// </summary>
+    /// <summary>A single-level reference Include the native pipeline can emit and the streaming reader can read back.</summary>
     public bool IsStreamableReference
         => IsReference && !HasPipeline && !LocalField.StartsWith(LookupAliasPrefix, System.StringComparison.Ordinal);
 
-    /// <summary>Whether <c>$unwind</c> should be applied after <c>$lookup</c>.</summary>
     public bool ShouldUnwind => IsReference || ForceUnwind;
 
-    /// <summary>Whether <c>$unwind</c> is forced regardless of navigation type.</summary>
     public bool ForceUnwind { get; }
 
     /// <summary>
     /// Set when this collection Include's alias was renamed from <see cref="GetLookupAlias(IReadOnlyNavigationBase)"/>
-    /// to avoid colliding with an incompatible ($unwind-ed or <see cref="IsBareCountSizeSource"/>) lookup, so
-    /// <see cref="NativeTranslation.MongoSelectLowerer.AppendLookupStages"/> treats it as a plain collection Include
-    /// under a different field name.
+    /// to avoid colliding with an incompatible ($unwind-ed or <see cref="IsBareCountSizeSource"/>) lookup; it is
+    /// still a plain collection Include for <see cref="NativeTranslation.MongoSelectLowerer.AppendLookupStages"/>.
     /// </summary>
     public bool RenamedToAvoidJoinCollision { get; set; }
 
     /// <summary>
-    /// Set when a reference-collection-nav <c>Count</c>/<c>LongCount</c>'s <see cref="MongoSizeExpression"/> reads
-    /// this array (via <see cref="NativeTranslation.NativeCorrelationMatcher.TryBuildReferenceCollectionCountLookup"/>),
-    /// so it must remain the navigation's unfiltered array.
+    /// Set when a reference-collection-nav <c>Count</c>'s <see cref="MongoSizeExpression"/> reads this array, so it
+    /// must remain the navigation's unfiltered array.
     /// </summary>
     /// <remarks>
-    /// Registered at <c>Where</c>/projection time, before a later filtered/paged <c>Include</c> of the same navigation
-    /// may register at the same alias. Without this flag, <see cref="MongoQueryExpression.AddLookup"/>'s
-    /// bare-then-pipelined merge would fold the Include's paged array into it, corrupting the count in every
-    /// <see cref="Infrastructure.MongoQueryMode"/>. Instead the Include is renamed (see <see cref="RenamedToAvoidJoinCollision"/>).
+    /// Without it, <see cref="MongoQueryExpression.AddLookup"/>'s bare-then-pipelined merge would fold a later
+    /// filtered/paged <c>Include</c>'s array into this one, corrupting the count in every
+    /// <see cref="Infrastructure.MongoQueryMode"/>. The Include is renamed instead (see <see cref="RenamedToAvoidJoinCollision"/>).
     /// </remarks>
     public bool IsBareCountSizeSource { get; set; }
 
     /// <summary>
-    /// A single-level collection Include the native pipeline can emit as a <c>$lookup</c> array (no
-    /// <c>$unwind</c>), readable by the DOM collection materializer from a root-level
-    /// <c>_lookup_&lt;Nav&gt;</c> field: a collection nav, no filtered-Include pipeline stages, not
-    /// force-unwound, and <see cref="As"/> equal to the plain alias (excludes the driver-LeftJoin and
-    /// flat-nested shapes, which remain fallback-only).
+    /// A single-level collection Include the native pipeline can emit as a not-unwound <c>$lookup</c> array at the plain
+    /// alias; the driver-LeftJoin and flat-nested shapes stay fallback-only.
     /// </summary>
-    /// <remarks>
-    /// A navigation-less lookup (a <c>Join</c> hop) is never a collection Include; <see cref="Navigation"/> is nullable.
-    /// </remarks>
     public bool IsNativeCollectionLookup
     {
         get
@@ -367,11 +323,9 @@ internal sealed class LookupExpression
     }
 
     /// <summary>
-    /// A collection Include reached via <c>ThenInclude</c> off a reference Include (e.g.
-    /// <c>Orders.Include(o =&gt; o.Customer.Orders)</c>): "flat multi-lookup mode" prefixes <see cref="LocalField"/>
-    /// and <see cref="As"/> with the reference lookup's alias (<c>"_lookup_Mid._lookup_Leaves"</c>) so the shaper
-    /// reads the array under the unwound intermediate document. Otherwise like
-    /// <see cref="IsNativeCollectionLookup"/>.
+    /// A collection Include reached via <c>ThenInclude</c> off a reference Include: "flat multi-lookup mode" prefixes
+    /// <see cref="LocalField"/> and <see cref="As"/> with the reference lookup's alias
+    /// (<c>"_lookup_Mid._lookup_Leaves"</c>). Otherwise like <see cref="IsNativeCollectionLookup"/>.
     /// </summary>
     public bool IsTransitiveCollectionLookup
     {
@@ -392,26 +346,18 @@ internal sealed class LookupExpression
     /// Whether the following <c>$unwind</c> uses <c>preserveNullAndEmptyArrays: true</c> (left-outer). Defaults to
     /// <see langword="true"/> for Include; the join path sets it from the LINQ operator.
     /// </summary>
-    /// <remarks>
-    /// <see langword="init"/>-only: compile-time state on an object reused across executions.
-    /// </remarks>
     public bool PreserveNullAndEmptyArrays { get; init; } = true;
 
     /// <summary>
-    /// Whether this <c>$lookup</c> must be injected right after the root source rather than tail-appended, e.g.
-    /// projected collection counts where a later stage reads the array via <c>$size</c>.
+    /// Whether this <c>$lookup</c> must be injected right after the root source rather than tail-appended.
     /// </summary>
     public bool InjectAfterRoot { get; set; }
 
     /// <summary>
-    /// Builds the <c>$lookup</c> stage document for this lookup: the plain <c>localField</c>/<c>foreignField</c>
-    /// form, or — when <see cref="HasPipeline"/> — the pipeline form (<c>let</c> + <c>pipeline</c>, with the FK
-    /// equality as the pipeline's own leading <c>$match</c>, followed by <see cref="PipelineStages"/>).
+    /// Builds the <c>$lookup</c> stage document: the plain <c>localField</c>/<c>foreignField</c> form, or the pipeline
+    /// form (<c>let</c> + <c>pipeline</c>) when <see cref="HasPipeline"/>. Shared by every construction site so they
+    /// can't drift on shape.
     /// </summary>
-    /// <remarks>
-    /// Shared by every <c>$lookup</c> construction site (fallback bridge, nested ThenInclude sub-lookups, native
-    /// pipeline) so they can't drift on shape.
-    /// </remarks>
     public BsonDocument ToLookupStageDocument()
     {
         if (CompositeKey != null)
@@ -419,8 +365,6 @@ internal sealed class LookupExpression
             return CompositeKeyLookupStageDocument(CompositeKey);
         }
 
-        // A null or missing local key must match nothing: bind it null-normalized and require it non-null in the match, which
-        // the plain localField/foreignField form cannot express (it matches null/missing to null/missing).
         if (ExcludesNullLocalKey)
         {
             return PipelineLookupStage(NullExcludingLet(), NullExcludingMatch());
@@ -442,10 +386,6 @@ internal sealed class LookupExpression
             new BsonDocument("$eq", new BsonArray { $"${ForeignField}", "$$localField" }));
     }
 
-    /// <summary>
-    /// The pipeline form of the <c>$lookup</c> stage: <paramref name="let"/>, then a pipeline whose leading
-    /// <c>$match</c> is <c>$expr: <paramref name="matchExpression"/></c>, followed by <see cref="PipelineStages"/>.
-    /// </summary>
     private BsonDocument PipelineLookupStage(BsonValue let, BsonValue matchExpression)
     {
         var pipeline = new BsonArray { new BsonDocument("$match", new BsonDocument("$expr", matchExpression)) };
@@ -463,18 +403,8 @@ internal sealed class LookupExpression
         });
     }
 
-    /// <summary>
-    /// The <c>let</c> + <c>pipeline</c> form for a <see cref="CompositeKey"/>: one variable per local field and a leading
-    /// <c>$match</c> of <c>$expr: { $and: [ { $eq: [ "$&lt;foreign&gt;", "$$k&lt;i&gt;" ] }, ... ] }</c>, then any
-    /// <see cref="PipelineStages"/>.
-    /// </summary>
-    /// <remarks>
-    /// Anonymous-type key equality is member-wise <c>EqualityComparer&lt;T&gt;.Default</c>, so a null part equals a
-    /// null part (EF Core relational compensates for nulls to match). The aggregation <c>$eq</c> answers false for
-    /// null vs missing, so a part that may be null is read through <c>$ifNull: [..., null]</c> on both sides, making
-    /// null and missing one value as they are once materialized. A single-pair key keeps the
-    /// <c>localField</c>/<c>foreignField</c> form, which already matches null to null or missing.
-    /// </remarks>
+    // Anonymous-type key equality is member-wise EqualityComparer<T>.Default, so null equals null. Aggregation $eq
+    // answers false for null vs missing, so a part that may be null is $ifNull-normalized on both sides.
     private BsonDocument CompositeKeyLookupStageDocument(IReadOnlyList<LookupKeyPair> keys)
     {
         var let = new BsonDocument();
@@ -496,18 +426,13 @@ internal sealed class LookupExpression
 
     /// <summary>Builds the <c>$unwind</c> stage document that flattens this lookup's output array.</summary>
     /// <remarks>
-    /// <paramref name="preserveNullAndEmptyArrays"/> is a parameter, not read from
-    /// <see cref="PreserveNullAndEmptyArrays"/>, because callers legitimately differ: the flat-lookup path follows
-    /// the LINQ operator, while an <c>$unwind</c> nested inside a parent collection lookup's sub-pipeline is always
-    /// preserving (otherwise it would drop collection elements, changing the Include's result set).
+    /// <paramref name="preserveNullAndEmptyArrays"/> is a parameter because callers differ: an <c>$unwind</c> nested in
+    /// a parent lookup's sub-pipeline must always preserve, or it would drop collection elements.
     /// </remarks>
     public BsonDocument ToUnwindStageDocument(bool preserveNullAndEmptyArrays)
         => UnwindStageDocument(As, preserveNullAndEmptyArrays);
 
-    /// <summary>
-    /// Builds an <c>$unwind</c> stage document for an arbitrary array path — for the driver-LINQ bridge's
-    /// fixed <c>_inner</c> shape, which has no <see cref="LookupExpression"/> behind it.
-    /// </summary>
+    /// <summary>Builds an <c>$unwind</c> stage for an arbitrary path (the bridge's fixed <c>_inner</c> shape).</summary>
     public static BsonDocument UnwindStageDocument(string path, bool preserveNullAndEmptyArrays)
         => new("$unwind", new BsonDocument
         {

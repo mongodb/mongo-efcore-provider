@@ -223,7 +223,6 @@ public class NativeLocalCollectionContainsTests(TemporaryDatabaseFixture databas
             new Row { Id = ObjectId.GenerateNewId(), Name = "other", T = new DateTime(2500, 1, 1, 0, 0, 0, DateTimeKind.Utc) }
         ]);
 
-        // Only the future element passes `d > UtcNow`, so only the row stored at it matches.
         NativeModeAssert.NativeAndExpected(
             mode =>
             {

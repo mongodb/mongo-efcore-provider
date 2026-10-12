@@ -77,8 +77,6 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
     private static readonly MongoQueryMode[] AllModes =
         [MongoQueryMode.Native, MongoQueryMode.DriverLinq, MongoQueryMode.NativeOnly];
 
-    // ── 1. The ragged matrix, all three modes ─────────────────────────────────────
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -97,18 +95,14 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
 
             Assert.Equal(new[] {"a_populated", "b_empty", "c_missing", "d_null"}, rows.Select(r => r.Title));
 
-            // Element VALUES, not counts and not != null: an alias miss presents as an empty collection.
             Assert.Equal(new[] {"n1", "n2"}, rows[0].Notes.Select(n => n.Text));
             Assert.Equal(new[] {1, 2}, rows[0].Notes.Select(n => n.NoteId));
 
-            // A missing or explicitly-null stored array materializes empty, never null.
             Assert.Empty(rows[1].Notes);
             Assert.Empty(rows[2].Notes);
             Assert.Empty(rows[3].Notes);
         }
     }
-
-    // ── 2. Parameterized Where ────────────────────────────────────────────────────
 
     [Theory]
     [InlineData(false)]
@@ -118,7 +112,6 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
         var collection = Seed(nameof(Owned_hop_array_leaf_behind_a_parameterized_where_reads_correct_values) + shadowKey);
         var model = shadowKey ? ShadowKeyModel : KeyedModel;
 
-        // A captured local, not a constant, so it's a genuine query parameter; all three modes execute natively.
         var prefix = "a_";
 
         foreach (var mode in AllModes)
@@ -135,8 +128,6 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
         }
     }
 
-    // ── 3. The emitted alias ──────────────────────────────────────────────────────
-
     [Fact]
     public void Owned_hop_array_leaf_emits_the_dotted_document_path_alias()
     {
@@ -151,12 +142,9 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
         // dotted alias, which MongoDB renders as nested output, so the shaper's segment walk resolves it identically
         // against a projected document and a whole one.
         Assert.Contains("\"Home.Notes\" : \"$Home.Notes\"", mql);
-        // The owner key rides along for any array leaf, which also suppresses RenderProject's default `_id : 0`.
         Assert.Contains("\"_id\" : \"$_id\"", mql);
         Assert.DoesNotContain("aggregate([])", mql);
     }
-
-    // ── 4. The narrowings that must SURVIVE the widening ──────────────────────────
 
     [Fact]
     public void Renamed_owned_hop_array_alias_goes_native_and_returns_correct_data()
@@ -250,8 +238,6 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
         Assert.Equal(["NYC", "LA", "SF", "DC"], Run(MongoQueryMode.DriverLinq));
     }
 
-    // ── 5. Composition, and the tracking contract ─────────────────────────────────
-
     [Fact]
     public void Owned_hop_array_leaf_composed_with_filter_sort_and_paging_goes_native()
     {
@@ -271,15 +257,11 @@ public class Ef362OwnedHopArrayProjectionTests(TemporaryDatabaseFixture database
         Assert.Equal(new[] {"n1", "n2"}, rows[1].Notes.Select(n => n.Text));
     }
 
-    // ── Fixture ───────────────────────────────────────────────────────────────────
-
     private IMongoCollection<NestedOwnerBlog> Seed(string name)
     {
         var coll = database.MongoDatabase.GetCollection<BsonDocument>(
             TemporaryDatabaseFixtureBase.CreateCollectionName(name) + Guid.NewGuid().ToString("N")[..8]);
 
-        // Home is a required owned reference, so it's present on every row. The four states are the array's:
-        // populated, empty, field missing, field explicitly BSON null.
         coll.InsertMany(
         [
             Row("a_populated", "NYC", new BsonArray([NoteDoc(1, "n1"), NoteDoc(2, "n2")])),

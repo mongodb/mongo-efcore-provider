@@ -33,16 +33,8 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// silently read the key-correlated rows (F11).
 /// </summary>
 /// <remarks>
-/// <para>
 /// <c>Code</c> deliberately differs from <c>Id</c> (and <c>Order.Ref</c> from <c>Order.Id</c>), so a key-bound
 /// result is distinguishable from the correct one. Seeds are raw <see cref="BsonDocument"/> inserts.
-/// </para>
-/// <para>
-/// Canonical <c>main</c> (dec7e26f, EF8/EF9/EF10, built and run) throws <see cref="InvalidOperationException"/> for
-/// every shape in <see cref="DecliningShapes"/>, key-correlated or not ("could not be translated" for the
-/// <c>SelectMany</c> and reducer shapes, "Unsupported cross-DbSet query" for the count predicates), and returns the
-/// key-correlated counts for the bare projected count in both spellings (M35, fixed here: the non-key spelling is now refused).
-/// </para>
 /// </remarks>
 [XUnitCollection("QueryTests")]
 public class NativeNonKeyCorrelationTests(TemporaryDatabaseFixture database)

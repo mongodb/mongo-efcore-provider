@@ -26,8 +26,6 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 /// </summary>
 public class MongoAggregationExpressionRendererTests
 {
-    // --- Entity model used across tests ---
-
     private class Customer
     {
         public MongoDB.Bson.ObjectId Id { get; set; }
@@ -44,9 +42,7 @@ public class MongoAggregationExpressionRendererTests
         return db.Model.FindEntityType(typeof(T))!.FindProperty(propertyName)!;
     }
 
-    // ------------------------------------------------------------------
     // Field-to-field comparison → { $eq: ['$Age', '$Score'] }
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_field_to_field_comparison()
@@ -63,9 +59,7 @@ public class MongoAggregationExpressionRendererTests
         Assert.Equal(BsonValue.Create(BsonDocument.Parse("{ $eq: ['$Age', '$Score'] }")), rendered);
     }
 
-    // ------------------------------------------------------------------
     // Arithmetic operand → { $gt: [ { $add: ['$Age', '$Score'] }, 5 ] }
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_arithmetic_operand()
@@ -84,9 +78,7 @@ public class MongoAggregationExpressionRendererTests
         Assert.Equal(BsonValue.Create(BsonDocument.Parse("{ $gt: [ { $add: ['$Age', '$Score'] }, 5 ] }")), rendered);
     }
 
-    // ------------------------------------------------------------------
     // MongoFilteredSizeExpression rendering
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Filtered_size_renders_as_size_over_filter_with_ifNull()
@@ -150,9 +142,7 @@ public class MongoAggregationExpressionRendererTests
             rendered);
     }
 
-    // ------------------------------------------------------------------
     // Integer division
-    // ------------------------------------------------------------------
 
     [Fact]
     public void IntegerDivide_renders_as_trunc_over_divide()
@@ -191,9 +181,7 @@ public class MongoAggregationExpressionRendererTests
             rendered);
     }
 
-    // ------------------------------------------------------------------
     // MongoInExpression / MongoUnaryExpression aggregation-dialect arms
-    // ------------------------------------------------------------------
 
     [Fact]
     public void CanRender_reports_true_for_MongoInExpression()
@@ -282,9 +270,7 @@ public class MongoAggregationExpressionRendererTests
             () => MongoAggregationExpressionRenderer.Render(node, new PlaceholderTable()));
     }
 
-    // ------------------------------------------------------------------
     // CanRender
-    // ------------------------------------------------------------------
 
     // MemberData rows are boxed as object: a public [Theory] can't expose internal MongoExpression (CS0051).
     // Same idiom as MongoExpressionNegatorTests.
@@ -430,9 +416,7 @@ public class MongoAggregationExpressionRendererTests
         ];
     }
 
-    // ------------------------------------------------------------------
     // MongoConvertExpression — the $toX node
-    // ------------------------------------------------------------------
 
     [Theory]
     [InlineData(typeof(int), "$toInt")]
@@ -484,9 +468,7 @@ public class MongoAggregationExpressionRendererTests
             new MongoConvertExpression(unrenderable, typeof(int))));
     }
 
-    // ------------------------------------------------------------------
     // MongoOuterFieldExpression — always renders at document root
-    // ------------------------------------------------------------------
 
     [Fact]
     public void MongoOuterFieldExpression_renders_at_document_root_with_no_element_variable()
@@ -606,9 +588,7 @@ public class MongoAggregationExpressionRendererTests
         Assert.True(MongoAggregationExpressionRenderer.CanRender(node));
     }
 
-    // ------------------------------------------------------------------
     // MongoRegexExpression with a field Term — $indexOfCP/$strLenCP rendering
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_field_to_field_starts_with_via_indexOfCP()
@@ -657,10 +637,8 @@ public class MongoAggregationExpressionRendererTests
             result.ToJson());
     }
 
-    // ------------------------------------------------------------------
     // MongoRegexExpression with a constant/parameter Term — $regexMatch with the same BSON regex the query dialect
     // uses (Unicode-correct "i", unlike the ASCII-only $toLower fold of the field-term case).
-    // ------------------------------------------------------------------
 
     [Fact]
     public void CanRender_reports_true_for_a_constant_term_regex()
@@ -736,9 +714,7 @@ public class MongoAggregationExpressionRendererTests
             MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable()).ToJson());
     }
 
-    // ------------------------------------------------------------------
     // Equal/NotEqual against null: $eq/$ne don't equate missing with null, so the other side is $ifNull-wrapped.
-    // ------------------------------------------------------------------
 
     [Theory]
     [InlineData(nameof(MongoBinaryOperator.Equal), "$eq")]
@@ -780,11 +756,9 @@ public class MongoAggregationExpressionRendererTests
             MongoAggregationExpressionRenderer.Render(expr, new PlaceholderTable()).ToJson());
     }
 
-    // ------------------------------------------------------------------
     // MongoRegexExpression.Exact — always $regexMatch with a literal BSON regex, never $toLower-folded $eq
     // (see MongoExpressionTranslatorStringEqualsTests / NativeStringCaseInsensitiveMatchTests for why: $toLower
     // is ASCII-only).
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Renders_exact_case_insensitive_constant_term_via_regexMatch()
@@ -824,10 +798,8 @@ public class MongoAggregationExpressionRendererTests
             () => MongoAggregationExpressionRenderer.Render(node, new PlaceholderTable()));
     }
 
-    // ------------------------------------------------------------------
     // MongoRegexExpression.Pattern — Regex.IsMatch(field, constantPattern[, options]) — always $regexMatch with
     // the pattern unescaped/unanchored and options taken verbatim from PatternOptions, never $toLower-folded.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void CanRender_reports_true_for_a_constant_pattern_term()
@@ -947,10 +919,8 @@ public class MongoAggregationExpressionRendererTests
         Assert.Equal("$$REMOVE", rendered.AsString);
     }
 
-    // ------------------------------------------------------------------
     // A "$"-prefixed constant used as a $ifNull/$cond branch must be $literal-wrapped (as RenderProject does at
     // top level); otherwise MongoDB reads it as a field path.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Coalesce_right_branch_dollar_prefixed_constant_is_literal_wrapped()
@@ -1048,10 +1018,8 @@ public class MongoAggregationExpressionRendererTests
             result.ToJson());
     }
 
-    // ------------------------------------------------------------------
     // Every string constant/parameter operand is $literal-wrapped; a "$"-prefixed value would otherwise be read
     // as a field path (e.g. comparing against a "$PasswordHash" search term compares against that field).
-    // ------------------------------------------------------------------
 
     private static MongoExpression TextField() => new MongoFieldExpression(GetProperty<Customer>("Status"), "Text");
 
@@ -1169,10 +1137,8 @@ public class MongoAggregationExpressionRendererTests
             result.ToJson());
     }
 
-    // ------------------------------------------------------------------
     // Null guard on the "less" side of a relational comparison. The aggregation dialect orders null (and missing)
     // below every value; C# lifted semantics make any comparison with a null operand false.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Less_than_over_a_nullable_operand_is_null_guarded()
@@ -1511,8 +1477,6 @@ public class MongoAggregationExpressionRendererTests
         Assert.Equal(guardedLower, equality["$eq"][0]);
         Assert.Equal("\0", projected["$cond"]["then"].AsString);
     }
-
-    // --- Helper methods ---
 
     private static IProperty NameProperty() => GetProperty<Customer>("Age");
 }

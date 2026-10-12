@@ -23,9 +23,6 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 /// </summary>
 internal sealed class MongoProjectStage : MongoPipelineStage
 {
-    /// <summary>
-    /// Creates a <c>$project</c> stage with the given ordered output fields.
-    /// </summary>
     public MongoProjectStage(IReadOnlyList<MongoProjection> projections)
     {
         Projections = projections;

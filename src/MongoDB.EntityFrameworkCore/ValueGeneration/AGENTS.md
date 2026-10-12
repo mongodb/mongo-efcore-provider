@@ -24,8 +24,3 @@ so the change tracker has concrete IDs before `BulkWrite`. Whether a property ge
 
 - Generated values are permanent (`GeneratesTemporaryValues = false`).
 - The selector runs on every insert: no I/O beyond `ObjectId.GenerateNewId()`.
-
-## Testing
-
-`tests/…UnitTests/ValueGeneration/`, `…SpecificationTests/Metadata/Conventions/MongoValueGenerationConventionTests`,
-`…FunctionalTests/ValueGeneration/`; filter `FullyQualifiedName~ValueGeneration`.

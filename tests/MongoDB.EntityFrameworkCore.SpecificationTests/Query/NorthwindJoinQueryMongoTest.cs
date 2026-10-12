@@ -27,7 +27,6 @@ public class NorthwindJoinQueryMongoTest : NorthwindJoinQueryTestBase<NorthwindQ
         : base(fixture)
     {
         ClearLog();
-        //Fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]

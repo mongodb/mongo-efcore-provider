@@ -32,8 +32,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// A correlated subquery over a referenced collection (<c>Orders.Where(o =&gt; ...).Count()</c>, which is what EF Core makes of
 /// a <c>GroupJoin</c> with an aggregate or a collection-navigation access) may bind to the collection navigation's
 /// <c>$lookup</c> ONLY when its predicate is exactly the foreign-key correlation of that navigation. Binding any other
-/// predicate to the navigation silently answers with the foreign-key rows (design:
-/// <c>docs/superpowers/specs/2026-10-08-native-referenced-collection-aggregates-design.md</c>, Phase 0).
+/// predicate to the navigation silently answers with the foreign-key rows.
 /// <para>
 /// Hand-computed expectations over raw seeds. The wrong-rows cases accept a loud refusal in any mode (a shape the provider
 /// does not support must fail, never answer with the wrong rows); the controls must answer correctly.
@@ -113,7 +112,6 @@ public class ReferencedCollectionCorrelationTests(TemporaryDatabaseFixture datab
             }
             catch (NativeTranslationNotSupportedException) when (mode == MongoQueryMode.NativeOnly)
             {
-                // The native path may decline a control; the other modes must still answer.
             }
             catch (Exception) when (!mustNotRefuse)
             {
@@ -127,15 +125,12 @@ public class ReferencedCollectionCorrelationTests(TemporaryDatabaseFixture datab
         }
     }
 
-    // ---- wrong-rows cases: the predicate is NOT the navigation's FK correlation ----
-
     [Fact]
     public void GroupJoin_on_non_key_properties_never_counts_by_the_foreign_key()
         => AssertAnswersOrRefuses(
             db => db.Set<Cust>()
                 .GroupJoin(db.Set<Ord>(), c => c.Name, o => o.Tag, (c, g) => new { c.Id, N = g.Count() })
                 .AsEnumerable().Select(z => z.Id + ":" + z.N).OrderBy(s => s).ToList(),
-            // Only A1's name matches a Tag (orders 1 and 3).
             ["A1:2", "A2:0", "B1:0", "C0:0"], mustNotRefuse: false);
 
     [Fact]
@@ -144,7 +139,6 @@ public class ReferencedCollectionCorrelationTests(TemporaryDatabaseFixture datab
             db => db.Set<Cust>()
                 .Select(c => new { c.Id, N = db.Set<Ord>().Where(o => o.Total > 100).Count() })
                 .AsEnumerable().Select(z => z.Id + ":" + z.N).OrderBy(s => s).ToList(),
-            // Orders 3 and 4 exceed 100, for every customer alike.
             ["A1:2", "A2:2", "B1:2", "C0:2"], mustNotRefuse: false);
 
     [Fact]
@@ -153,7 +147,6 @@ public class ReferencedCollectionCorrelationTests(TemporaryDatabaseFixture datab
             db => db.Set<Cust>()
                 .Select(c => new { c.Id, N = db.Set<Ord>().Where(o => o.CustId == c.Name).Count() })
                 .AsEnumerable().Select(z => z.Id + ":" + z.N).OrderBy(s => s).ToList(),
-            // No order's CustId equals any customer's Name.
             ["A1:0", "A2:0", "B1:0", "C0:0"], mustNotRefuse: false);
 
     [Fact]
@@ -180,8 +173,6 @@ public class ReferencedCollectionCorrelationTests(TemporaryDatabaseFixture datab
                 .Select(c => new { c.Id, L = db.Set<Ord>().Where(o => o.CustId == c.Name).ToList() })
                 .AsEnumerable().Select(z => z.Id + ":" + string.Join(",", z.L.Select(o => o.Id).OrderBy(i => i))).OrderBy(s => s).ToList(),
             ["A1:", "A2:", "B1:", "C0:"], mustNotRefuse: false);
-
-    // ---- controls: genuine FK correlations keep working ----
 
     [Fact]
     public void Navigation_count_is_the_foreign_key_count()

@@ -84,7 +84,6 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
             .Select(c => c.Title)
             .ToList();
 
-        // Order proves the sort key was honored; a fallback would return the same rows.
         Assert.Equal(["a_one", "b_two", "c_three"], titles);
     }
 
@@ -128,8 +127,6 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
         var collection = Seed(nameof(Bare_projection_leaf_behind_a_parameterized_predicate_returns_correct_values));
         var prefix = "a"; // captured local — the mandatory late-decline leg, mirroring test 4 below.
 
-        // Native mode: the parameterized StartsWith forces a late decline to driver-LINQ, proving the bare leaf's
-        // alias survives the fallback too.
         using var db = CreateContext(collection, MongoQueryMode.Native);
 
         var titles = db.Entities.AsNoTracking()
@@ -166,7 +163,6 @@ public class NativeEfPropertyLeafTests(TemporaryDatabaseFixture database) : ICla
             .ToList();
 
         Assert.Single(results);
-        // Nullable leaves first: an alias miss there reads back null rather than throwing.
         Assert.Equal("n2", results[0].Note);
         Assert.Equal(20, results[0].Score);
         Assert.Equal(2, results[0].Rank);

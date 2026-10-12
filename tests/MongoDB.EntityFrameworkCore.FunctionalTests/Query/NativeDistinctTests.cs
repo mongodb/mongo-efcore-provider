@@ -124,8 +124,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Bare_scalar_projection_Distinct_then_OrderBy_with_identity_selector_goes_native()
     {
-        // A bare-scalar Distinct's OrderBy key is the identity (c => c); it resolves against the Distinct's sole
-        // key part.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Bare_scalar_projection_Distinct_then_OrderBy_with_identity_selector_goes_native));
 
@@ -194,9 +192,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Grouped_count_Distinct_then_Where_on_bare_parameter_declines_with_fallback_parity()
     {
-        // Control: pins decline (NativeOnly throws) plus Native/DriverLinq fallback parity for a grouped-aggregate
-        // Distinct with a bare-parameter Where. Counts: US 3, UK 2, FR 1. (It does not itself discriminate the
-        // Accumulators.Count clause, which is defensive parity; see TryResolveFlattenedAlias.)
+        // Control: pins decline plus Native/DriverLinq fallback parity for a grouped-aggregate Distinct with a bare-parameter
+        // Where. Counts: US 3, UK 2, FR 1.
         var seed = SeedOrders();
         var result = NativeModeAssert.DeclinesCleanly(mode =>
         {
@@ -263,9 +260,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void One_member_anonymous_Distinct_then_bare_parameter_consumers_match_driver_linq()
     {
-        // Audit probe for the other bare-parameter resolution sites over a one-member anonymous Distinct:
-        // OrderBy(v => v) (TryResolveDistinctOrderingKey identity arm), Any/Count(predicate) (NativeCardinalityBinder
-        // via the DistinctAliasScope translator), Contains(item). Each must equal driver-LINQ (native or fallback).
+        // Audit probe: every other bare-parameter resolution site over a one-member anonymous Distinct (OrderBy identity,
+        // Any/Count(predicate), Contains) must equal driver-LINQ, native or fallback.
         var seed = SeedOrders();
 
         object Run(MongoQueryMode mode, int which)
@@ -301,7 +297,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Bare_scalar_nullable_Distinct_then_Where_on_bare_parameter_goes_native()
     {
-        // Control: the type guard must not reject a legitimate nullable bare-scalar key (int? field).
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Bare_scalar_nullable_Distinct_then_Where_on_bare_parameter_goes_native));
 
@@ -312,7 +307,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Bare_scalar_enum_Distinct_then_Where_on_bare_parameter_goes_native()
     {
-        // Control: the type guard must not reject a legitimate enum bare-scalar key.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Bare_scalar_enum_Distinct_then_Where_on_bare_parameter_goes_native));
 
@@ -320,7 +314,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         Assert.Equal([OrderStatus.Shipped], result);
     }
 
-    // --- Bare-scalar Distinct over a value-converted property (IsBareValueConvertedDistinctKey) ---
     //
     // The $group dedups the STORED values (as driver-LINQ does) and the shaper reads them back through the property's
     // converter. Comparisons serialize their constant/parameter through the converter; ordering and relational
@@ -374,7 +367,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         entity.Property(o => o.Paid).HasConversion(v => v ? "Y" : "N", v => v == "Y");
     }
 
-    // One EF-seeded collection (so the stored form is the converted one) queried under each mode.
     private Func<MongoQueryMode, List<T>> ConvertedRunner<T>(
         string name, Func<IQueryable<ConvertedOrder>, List<T>> query, Action<ModelBuilder>? configure = null)
     {
@@ -464,9 +456,7 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     private static List<OrderStatus> Sorted(IQueryable<OrderStatus> query) => query.ToList().OrderBy(v => v).ToList();
 
     // EF-337: an order-sensitive operator over a converted Distinct key declines natively, and Native and DriverLinq both
-    // get the driver-LINQ bridge's refusal naming the property; never an answer computed from the stored form. The same
-    // query evaluated in memory over the materialized entities (the client-side workaround the message suggests)
-    // documents the correct answer.
+    // hit the driver-LINQ bridge's refusal naming the property, never an answer computed from the stored form.
     private void AssertStoredOrderingRefusal<T>(
         string name, Func<IQueryable<ConvertedOrder>, List<T>> query, string property, List<T> expected)
     {
@@ -477,8 +467,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         Assert.Equal(expected, ConvertedRunner(name + "_oracle", q => query(q.ToList().AsQueryable()))(MongoQueryMode.Native));
     }
 
-    // For a shape whose driver-LINQ fallback throws: NativeOnly declines, and Native (falling back) throws the same
-    // exception type as DriverLinq rather than answering natively. Returns that exception type.
     private static Type DeclinesToSameFailure<T>(Func<MongoQueryMode, List<T>> run)
     {
         Assert.Throws<NativeTranslationNotSupportedException>(() => run(MongoQueryMode.NativeOnly));
@@ -535,8 +523,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Bare_scalar_value_converted_Distinct_then_OrderBy_is_refused()
     {
-        // Sorting the stored (string) form would give Cancelled, New, Shipped instead of the enum order (EF-337): native
-        // declines and the driver-LINQ fallback refuses, naming the property.
         AssertStoredOrderingRefusal(
             nameof(Bare_scalar_value_converted_Distinct_then_OrderBy_is_refused),
             q => q.Select(o => o.Status).Distinct().OrderBy(v => v).ToList(),
@@ -635,8 +621,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Bare_scalar_bool_to_string_converted_Distinct_goes_native()
     {
-        // Paid is stored as "Y"/"N". Materialization has a driver-LINQ oracle; ordering by the stored form is refused
-        // (EF-337).
         var result = NativeModeAssert.NativeAndParity(ConvertedRunner(
             nameof(Bare_scalar_bool_to_string_converted_Distinct_goes_native),
             q => q.Select(o => o.Paid).Distinct().ToList().OrderBy(v => v).ToList()));
@@ -723,8 +707,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Bare_scalar_value_converted_Distinct_then_arithmetic_predicate_declines_cleanly()
     {
-        // Arithmetic over the stored string can't honour the converter; the existing AllFieldsDefaultSerialized guard
-        // declines it, as it does over the entity field.
         var result = NativeModeAssert.DeclinesCleanly(ConvertedRunner(
             nameof(Bare_scalar_value_converted_Distinct_then_arithmetic_predicate_declines_cleanly),
             q => q.Select(o => o.Year).Distinct().Where(v => v % 2 == 1).ToList()));
@@ -747,8 +729,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Bare_scalar_bson_represented_Distinct_declines_cleanly()
     {
-        // Scope pin: a BsonRepresentation key (no converter) stays on the fallback, bare or wrapped
-        // (Distinct_bson_represented_projection_key_falls_back covers the wrapped form).
         var result = NativeModeAssert.DeclinesCleanly(ConvertedRunner(
             nameof(Bare_scalar_bson_represented_Distinct_declines_cleanly),
             q => q.Select(o => o.Status).Distinct().Where(v => v != OrderStatus.New).ToList().OrderBy(v => v).ToList(),
@@ -798,8 +778,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Bare_scalar_value_converted_enum_Distinct_then_relational_Where_is_refused()
     {
-        // A stored-string comparison ("Shipped" > "New", "Cancelled" < "New") disagrees with the enum order, so it is
-        // refused (EF-337) rather than answered.
         AssertStoredOrderingRefusal(
             nameof(Bare_scalar_value_converted_enum_Distinct_then_relational_Where_is_refused) + "_gt",
             q => q.Select(o => o.Status).Distinct().Where(v => v > OrderStatus.New).ToList(),
@@ -833,7 +811,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         Assert.Equal([3L, 3L, 1L, 2L], run(MongoQueryMode.NativeOnly));
     }
 
-    // --- Projected set ops over value-converted operands (OperandSerializationsMatch) ---
     //
     // Dedup and Intersect/Except compare the STORED values and source1's shaper reads every combined row, so each
     // alias must be stored the same way on both operands: the same property, both default-serialized, or stored alike
@@ -864,7 +841,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Converted_Distinct_Intersect_Except_over_the_same_property_go_native_with_hand_oracle()
     {
-        // Intersect/Except have no driver-LINQ oracle. Year == 2020 rows have Status New only.
         var run = ConvertedRunner<OrderStatus[]>(
             nameof(Converted_Distinct_Intersect_Except_over_the_same_property_go_native_with_hand_oracle),
             q =>
@@ -950,7 +926,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         Assert.Equal([OrderStatus.New, OrderStatus.Shipped, OrderStatus.Cancelled], result);
     }
 
-    // --- One stored-serialization rule (StoredSerialization.StoredAlike) for projected set-op operands ---
     //
     // Two different properties under one alias are compatible iff they're stored identically: equal BsonRepresentation
     // (both none, or equal), equal provider type, and equivalent converters (none, the same instance, or the same type
@@ -993,7 +968,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Intersect_and_Except_over_two_properties_with_the_same_bson_representation_go_native_with_hand_oracle()
     {
-        // Intersect/Except have no driver-LINQ oracle.
         var run = ConvertedRunner<OrderStatus[]>(
             nameof(Intersect_and_Except_over_two_properties_with_the_same_bson_representation_go_native_with_hand_oracle),
             q =>
@@ -1031,7 +1005,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
 
         Assert.Equal([OrderStatus.New, OrderStatus.Shipped, OrderStatus.Cancelled], union);
 
-        // Intersect/Except have no driver-LINQ oracle.
         var run = ConvertedRunner<OrderStatus[]>(
             nameof(Set_ops_over_provider_type_conversion_and_an_explicit_equivalent_converter_go_native) + "I",
             q =>
@@ -1191,10 +1164,8 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     {
         // Converted.Status is stored "Shipped"; Others.Status is stored 1 (plain), "shipped" (lowercase converter) or
         // "Shipped" via a BsonRepresentation (same bytes by coincidence, still declined: a converter on one side and a
-        // representation on the other aren't stored alike). Before OperandSerializationsMatch these went native and dedup'd nothing
-        // (Union: New, New, Shipped, Shipped, Cancelled), intersected to empty, or threw reading 1 as a string, for
-        // bare, bare-Distinct and mixed operands alike. There is no driver-LINQ oracle (cross-DbSet), so Union/Concat
-        // decline and Intersect/Except hard-fail.
+        // representation on the other aren't stored alike). No driver-LINQ oracle (cross-DbSet): Union/Concat decline,
+        // Intersect/Except hard-fail.
         Action<ModelBuilder> configure = otherConfiguration switch
         {
             "plain" => _ => { },
@@ -1260,8 +1231,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Whole_entity_Distinct_goes_native()
     {
-        // Whole-entity Distinct appends a MongoDistinctOp, lowering to the $group{_id:"$$ROOT"}/$replaceRoot dedup
-        // that Union uses. Ids are unique, so this proves routing and rows, not collapsing.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Whole_entity_Distinct_goes_native));
 
@@ -1291,7 +1260,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Whole_entity_Distinct_composes_with_where_orderby_skip_take_goes_native()
     {
-        // Whole-entity Distinct is an ordinary PipelineOps entry, so operators around it need no special-casing.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Whole_entity_Distinct_composes_with_where_orderby_skip_take_goes_native));
 
@@ -1335,8 +1303,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Where_goes_native()
     {
-        // Where after a projected Distinct resolves against the Distinct's flattened alias (DistinctAliasScope), not
-        // the root entity.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Where_goes_native));
 
@@ -1459,7 +1425,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
         Action<ModelBuilder> configure = mb =>
             mb.Entity<Order>().Property(o => o.Status).HasBsonRepresentation(BsonType.String);
 
-        // Seed via EF so the stored representation matches the configured (string) representation.
         using (var seedDb = Make(collection, MongoQueryMode.Native, configure))
         {
             seedDb.Entities.AddRange(SeedOrders());
@@ -1484,7 +1449,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Count_goes_native()
     {
-        // $count follows the $group + flattening $project (and any PostGroupOps). 3 distinct countries.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Count_goes_native));
 
@@ -1512,7 +1476,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Count_with_predicate_goes_native()
     {
-        // Count(pred) resolves against the Distinct's flattened alias, as Where does.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Count_with_predicate_goes_native));
 
@@ -1599,7 +1562,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Count_with_unrelated_computed_predicate_falls_back_under_native_only()
     {
-        // As the Where test above: ToUpper() over Trim() has no native translation.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Count_with_unrelated_computed_predicate_falls_back_under_native_only));
 
@@ -1610,8 +1572,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Count_with_predicate_over_computed_projection_key_goes_native()
     {
-        // A computed Distinct key (Country + City) yields the same 3 combinations as the plain-field tests:
-        // "USNYC", "UKLondon", "FRParis", 2 starting with "U".
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Count_with_predicate_over_computed_projection_key_goes_native));
 
@@ -1785,7 +1745,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Wrapped_projection_Distinct_then_Sum_with_computed_selector_goes_native()
     {
-        // A computed selector resolves via TryTranslateValue within the alias scope. Sum of Year*2 = 16164.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Wrapped_projection_Distinct_then_Sum_with_computed_selector_goes_native));
 
@@ -1845,8 +1804,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Where_then_GroupBy_goes_native()
     {
-        // The Where's $match lands in PostGroupOps between the two $groups; nothing can route there once IsGroupBy
-        // flips true.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Where_then_GroupBy_goes_native));
 
@@ -1915,7 +1872,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
                 .ToArray();
 
         var native = Run(nativeDb);
-        // Grouped by City (NYC/London/Paris), never by the real (always US/UK/FR) Country field.
         Assert.Equal([("London", 1), ("NYC", 2), ("Paris", 1)], native);
         Assert.Equal(Run(driverDb), native);
     }
@@ -1937,7 +1893,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
             .OrderBy(r => r.Key)
             .ToList();
 
-        // Distinct (Country, Year) pairs are unique, so each concatenated key ("US2020" etc.) groups one row.
         Assert.Equal(
             [("FR2021", 1), ("UK2020", 1), ("US2020", 1), ("US2021", 1)],
             result.Select(r => (r.Key, r.Count)).ToArray());
@@ -1946,10 +1901,9 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Select_after_Distinct_is_unsupported_and_never_returns_silent_null_data()
     {
-        // A second Select after a projected Distinct must never go native and return null rows: it bypasses the
-        // IsDistinct guards, and appending its field-ref to the Distinct's Projection would flatten fields gone after
-        // the $group (guarded in TranslateSelect's non-grouped branch). In practice the shaper can't read a prior
-        // anonymous projection's members, so it throws in every mode; the point is Native doesn't diverge.
+        // A second Select after a projected Distinct must never go native: its field-ref would flatten fields gone after the
+        // $group (guarded in TranslateSelect). The shaper can't read the prior anonymous projection, so every mode throws;
+        // the point is Native doesn't diverge.
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native,
@@ -2009,7 +1963,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Where_then_First_goes_native()
     {
-        // The Where's $match and the reducer's $limit both land in PostGroupOps, in arrival order.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Where_then_First_goes_native));
 
@@ -2041,7 +1994,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Take_goes_native_and_dedups()
     {
-        // Take(n) after a Distinct; OrderBy stabilizes which 2 of the 3 countries come back.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Take_goes_native_and_dedups));
 
@@ -2072,7 +2024,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_OrderBy_goes_native_and_dedups()
     {
-        // OrderBy after a Distinct resolves against the flattened alias (TryResolveDistinctOrderingKey).
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(Distinct_then_OrderBy_goes_native_and_dedups));
 
@@ -2157,7 +2108,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void OrderBy_before_Distinct_goes_native_and_dedups()
     {
-        // Ordering the source before the Distinct sorts pre-group documents and doesn't interfere with the $group.
         var seed = SeedOrders();
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(OrderBy_before_Distinct_goes_native_and_dedups));
@@ -2217,7 +2167,6 @@ public class NativeDistinctTests(TemporaryDatabaseFixture database) : IClassFixt
     [Fact]
     public void Distinct_then_Join_throws_under_native_only()
     {
-        // Under NativeOnly the graceful fallback becomes a NativeTranslationNotSupportedException.
         using var db = CreateDistinctJoinContext(MongoQueryMode.NativeOnly,
             nameof(Distinct_then_Join_throws_under_native_only));
 

@@ -27,56 +27,44 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// Populates <see cref="MongoSelectDefinition.Grouping"/> for a <c>GroupBy(key).Select(aggregate)</c> shape,
-/// emitting a native <c>$group</c>. The key is parsed first (<see cref="TryBindGroupKey"/>, stashed on
-/// <see cref="MongoSelectDefinition.PendingGroupKey"/>), then the projection (<see cref="TryBindGroupProjection"/>).
-/// Either returns <see langword="false"/> for a non-native shape, and the caller falls back to driver-LINQ.
+/// Populates <see cref="MongoSelectDefinition.Grouping"/> for a <c>GroupBy(key).Select(aggregate)</c> shape, emitting a native <c>$group</c>. The key is
+/// parsed first (<see cref="TryBindGroupKey"/>, stashed on <see cref="MongoSelectDefinition.PendingGroupKey"/>), then the projection
+/// (<see cref="TryBindGroupProjection"/>). Either returns <see langword="false"/> for a non-native shape.
 /// </summary>
 internal static class NativeGroupByBinder
 {
-    // The reserved element name the grouping key occupies in the emitted $group document.
     private const string GroupIdFieldName = "_id";
 
-    // Join mode (GroupByJoinScope) and PriorGrouping are mutually exclusive: TranslateGroupBy sets the scope only
-    // when there is no finalized prior grouping.
+    // Join mode (GroupByJoinScope) and PriorGrouping are mutually exclusive: TranslateGroupBy sets the scope only when there is no finalized prior grouping.
     private static MongoGroupElementTranslator CreateElementTranslator(MongoQueryExpression mongoQ)
         => new(mongoQ.CollectionExpression.EntityType, mongoQ.Select.GroupByJoinScope, mongoQ.Select.PriorGrouping);
 
-    // What a grouped lambda body binds against: its grouping parameter `g` (resolved by identity), the parsed key
-    // parts that g.Key / g.Key.<Sub> read, and the translator for per-element values. Built once per entry point;
-    // each pending ordering rebinds only GroupingParameter.
+    // What a grouped lambda body binds against: its grouping parameter `g` (by identity), the parsed key parts that g.Key / g.Key.<Sub> read, and the
+    // translator for per-element values. Built once per entry point; each pending ordering rebinds only GroupingParameter.
     private readonly record struct GroupBindingScope(
         ParameterExpression GroupingParameter,
         IReadOnlyList<MongoGroupingKeyPart> KeyParts,
         MongoGroupElementTranslator Translator)
     {
-        // A named (anonymous-type/DTO) key, even with one part; a scalar key has one unnamed part, and a zero-part
-        // (new {}) key is neither. Not MongoGrouping.IsCompositeKey, which differs on zero parts.
+        // A named (anonymous-type/DTO) key, even with one part; a scalar key has one unnamed part, a zero-part (new {}) key is neither. Not MongoGrouping.IsCompositeKey, which differs on zero parts.
         public bool IsComposite
             => KeyParts.Count != 0 && (KeyParts.Count > 1 || KeyParts[0].Name != null);
     }
 
-    // Registers the grouped join chain's $lookup(s) once the grouping has fully bound. Deferred to here, the commit
-    // point, so a decline leaves the join an unconfirmed candidate (Route stays Fallback) and the driver-LINQ
-    // fallback keeps its unconfirmed document shape. Skipped when an earlier operator already forced a fallback, for
-    // the same reason.
+    // Registers the grouped join chain's $lookup(s) once the grouping has fully bound: deferred to the commit point so a decline leaves the join an unconfirmed
+    // candidate (Route stays Fallback) and the driver-LINQ fallback keeps its unconfirmed document shape. Skipped when an earlier operator already forced a fallback.
     private static void ConfirmGroupByJoinScope(MongoQueryExpression mongoQ)
     {
         if (mongoQ.Select.GroupByJoinScope is { } scope && !mongoQ.Select.HasUnsupportedOperator)
             NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQ, scope);
     }
 
-    /// <summary>
-    /// Parses the <c>GroupBy</c> key selector into <see cref="MongoSelectDefinition.PendingGroupKey"/>: a scalar
-    /// (unnamed) key, or a composite anonymous-type/DTO key whose parts carry member names. Returns
-    /// <see langword="false"/> and leaves the pending state unset for an untranslatable key.
-    /// </summary>
+    /// <summary>Parses the <c>GroupBy</c> key selector into <see cref="MongoSelectDefinition.PendingGroupKey"/>: a scalar (unnamed) key, or a composite anonymous-type/DTO key whose parts carry member names. <see langword="false"/> (pending state unset) for an untranslatable key.</summary>
     internal static bool TryBindGroupKey(MongoQueryExpression mongoQ, LambdaExpression keySelector)
     {
         var select = mongoQ.Select;
 
-        // A GroupBy over a prior finalized grouping (Select.PriorGrouping) resolves its key against that stage's
-        // flattened output alias, never the entity (see MongoExpressionTranslator.DistinctAliasScope); the
+        // A GroupBy over a prior finalized grouping resolves its key against that stage's flattened output alias, never the entity (DistinctAliasScope); the
         // PriorGrouping handling lives in the MongoGroupElementTranslator constructor.
         var translator = CreateElementTranslator(mongoQ);
 
@@ -84,9 +72,8 @@ internal static class NativeGroupByBinder
 
         switch (keySelector.Body)
         {
-            // A zero-argument new{} groups every row into one group. Match on Arguments.Count, not Members:
-            // Members is null for every non-anonymous constructor call too, so matching on it would collapse a real
-            // constructor-based key (new OrderKey(o.Country, o.Year)) into one group.
+            // A zero-argument new{} groups every row into one group. Match on Arguments.Count, not Members (null for every non-anonymous constructor too, which would
+            // collapse a real constructor-based key `new OrderKey(o.Country, o.Year)` into one group).
             case NewExpression { Arguments.Count: 0 }:
                 break;
 
@@ -100,13 +87,10 @@ internal static class NativeGroupByBinder
 
                 break;
 
-            // A MemberInitExpression DTO key. Each binding must be a plain MemberAssignment (a nested
-            // MemberMemberBinding/MemberListBinding has no single value), and the ctor must take no arguments (a ctor
-            // plus initializer has no key-part naming convention); otherwise the whole key declines.
+            // A MemberInitExpression DTO key: each binding must be a plain MemberAssignment and the ctor must take no arguments (no key-part naming convention otherwise).
             case MemberInitExpression { NewExpression.Arguments.Count: 0 } memberInit:
-                // Parts are named by CLR member (TryGetKeyMemberPath matches g.Key.<Sub> by CLR name), but g.Key is
-                // read back through the DTO's class map, which uses element names. Decline unless every element name
-                // equals its member name, or readback throws FormatException.
+                // Parts are named by CLR member (TryGetKeyMemberPath matches g.Key.<Sub> by CLR name), but g.Key is read back through the DTO's class map, which uses element
+                // names: decline unless every element name equals its member name, or readback throws FormatException.
                 var dtoClassMap = global::MongoDB.Bson.Serialization.BsonClassMap.LookupClassMap(memberInit.NewExpression.Type);
                 foreach (var binding in memberInit.Bindings)
                 {
@@ -117,7 +101,6 @@ internal static class NativeGroupByBinder
                     if (memberMap is null || memberMap.ElementName != assignment.Member.Name)
                         return false;
 
-                    // Value-converted/non-default-represented members decline inside TryBindKeyPartValue.
                     if (!TryBindKeyPartValue(assignment.Expression, translator, out var memberPartValue))
                         return false;
                     parts.Add(new MongoGroupingKeyPart(assignment.Member.Name, memberPartValue));
@@ -125,8 +108,7 @@ internal static class NativeGroupByBinder
 
                 break;
 
-            // A bare member, EF.Property call, computed expression, constant, or parameter. A multi-argument
-            // constructor key (Members == null) also lands here and declines in TryBindKeyPartValue.
+            // A bare member, EF.Property call, computed expression, constant or parameter; a multi-argument constructor key (Members == null) also lands here and declines.
             default:
                 if (!TryBindKeyPartValue(keySelector.Body, translator, out var scalarValue))
                     return false;
@@ -139,15 +121,10 @@ internal static class NativeGroupByBinder
     }
 
     /// <summary>
-    /// Translates one GroupBy key (or composite key part) via <see
-    /// cref="MongoGroupElementTranslator.TryTranslateValue"/>, adding the stricter checks a key needs.
+    /// Translates one GroupBy key (or composite key part) via <see cref="MongoGroupElementTranslator.TryTranslateValue"/> plus stricter checks. Rejects a
+    /// <see cref="MongoDocumentConstructionExpression"/> (a single unnamed part the shaper can't read back into the DTO: <c>FormatException</c>) and probes
+    /// <see cref="NativeSlotPopulator.TryProbeBareValueRenders"/>, since a translatable value can still throw at build time (a captured <see cref="Guid"/> parameter).
     /// </summary>
-    /// <remarks>
-    /// Rejects a <see cref="MongoDocumentConstructionExpression"/>: it binds as a single unnamed key part that the
-    /// shaper can't read back into the DTO's members (a <c>FormatException</c> at materialization). Also probes
-    /// renderability via <see cref="NativeSlotPopulator.TryProbeBareValueRenders"/>, since a translatable value
-    /// can still throw at pipeline-build time (e.g. a captured <see cref="Guid"/> parameter).
-    /// </remarks>
     private static bool TryBindKeyPartValue(
         Expression body, MongoGroupElementTranslator translator, [NotNullWhen(true)] out MongoExpression? result)
     {
@@ -169,14 +146,11 @@ internal static class NativeGroupByBinder
         if (!NativeSlotPopulator.TryProbeBareValueRenders(translated, NativeSlotPopulator.UnwrapBoxingToObjectType(body)))
             return false;
 
-        // An unmatched outer row of a left join has no value for the inner side, so its _id part is missing/null,
-        // read back as default(T) for a non-nullable key (Owners.GroupJoin(Orders).DefaultIfEmpty() grouped by
-        // o.Total: an order-less owner silently becomes a 0 group, or merges with a real one). Decline; a nullable
-        // spelling ((decimal?)o.Total) groups it under a null key and stays native. A key containing a condition over
-        // that side (o.Total < 15 ? "cheap" : "dear") declines too: the unmatched value is missing but its CLR type is
-        // non-nullable, so the aggregation renderer's null guard (MayBeNull) can't see it and $expr's null ordering
-        // would decide the condition. A nullable/reference key computed by an operator that doesn't propagate the
-        // missing value ((decimal?)Math.Max(o.Total, 7m): $max answers 7 where EF answers null) declines too.
+        // An unmatched outer row of a left join has no value for the inner side, so its _id part is missing/null, read back as default(T) for a non-nullable key
+        // (an order-less owner silently becomes a 0 group, or merges with a real one). Decline; a nullable spelling ((decimal?)o.Total) groups it under null and stays
+        // native. A key containing a condition over that side declines too: the value is missing but its CLR type non-nullable, so the renderer's null guard
+        // (MayBeNull) can't see it and $expr's null ordering would decide the condition. Likewise a key computed by an operator that doesn't propagate the missing
+        // value ((decimal?)Math.Max(o.Total, 7m): $max answers 7 where EF answers null).
         if ((IsNonNullableValueType(NativeSlotPopulator.UnwrapBoxingToObjectType(body)) || ConditionFinder.Contains(body))
             && translator.MayReadAnUnmatchedJoinSide(body))
             return false;
@@ -184,10 +158,9 @@ internal static class NativeGroupByBinder
         if (translator.MayMiscomputeAnUnmatchedJoinSide(body, translated))
             return false;
 
-        // A nullable key over that side ((decimal?)o.Total) keeps its CLR type only in the LINQ tree: the translated
-        // field is the non-nullable Total, which MayBeNull can't see is missing for an unmatched row. Read it null-safe
-        // so the $group normalizes missing to null like any other nullable part (see
-        // MongoPipelineFactory.RenderCompositeKeyPart); otherwise "_id.<Name>" is missing and `g.Key.T == null` is false.
+        // A nullable key over that side ((decimal?)o.Total) keeps its CLR type only in the LINQ tree: the translated field is the non-nullable Total, which MayBeNull
+        // can't see is missing for an unmatched row. Read it null-safe so the $group normalizes missing to null (MongoPipelineFactory.RenderCompositeKeyPart);
+        // otherwise "_id.<Name>" is missing and `g.Key.T == null` is false.
         if (!MongoAggregationExpressionRenderer.MayBeNull(translated) && translator.MayReadAnUnmatchedJoinSide(body))
         {
             translated = translated is MongoFieldExpression field
@@ -199,31 +172,20 @@ internal static class NativeGroupByBinder
         return true;
     }
 
-    // The key is read back from _id through a generic CLR-type serializer (no backing IProperty), which only
-    // reproduces the value for default/identity serialization. A value converter or non-default
-    // BsonRepresentation would throw or return the raw stored value, diverging from driver-LINQ, so such keys
-    // fall back. Accumulator operands are held to the same rule (TryTranslateValue, and TryBindDistinctAccumulator's
-    // field check): $sum/$max reduce the stored form. Also used by TranslateOfType's discriminator guard, and as the
-    // strict half of StoredOrdering.PreservesClrOrdering (EF-337).
+    // The key is read back from _id through a generic CLR-type serializer (no backing IProperty), which only reproduces default/identity serialization; a value
+    // converter or non-default BsonRepresentation would throw or return the raw stored value, so such keys fall back. Accumulator operands are held to the same
+    // rule ($sum/$max reduce the stored form). Also used by TranslateOfType's discriminator guard and as the strict half of StoredOrdering.PreservesClrOrdering (EF-337).
     internal static bool HasDefaultKeySerialization(IProperty property)
         => property.GetValueConverter() == null
            && property.GetTypeMapping().Converter == null
            && property.GetBsonRepresentation() == null;
 
     /// <summary>
-    /// Parses the <c>Select</c> result selector against the pending key, finalizing
-    /// <see cref="MongoSelectDefinition.Grouping"/>. Each member (or the bare body) must be a key access
-    /// (<c>g.Key</c> / <c>g.Key.&lt;Sub&gt;</c>), a supported aggregate (<c>Count</c>/<c>LongCount</c>/<c>Sum</c>/
-    /// <c>Min</c>/<c>Max</c>/<c>Average</c> over a translatable value), or a supported computed/nested shape. A
-    /// wrapped key-only projection is admitted as a "distinct keys" <c>$group</c>; a bare key access (a plain
-    /// Distinct) and a zero-accumulator projection with an ordering aggregate decline.
+    /// Parses the <c>Select</c> result selector against the pending key, finalizing <see cref="MongoSelectDefinition.Grouping"/>. Each member (or the bare body)
+    /// must be a key access (<c>g.Key</c> / <c>g.Key.&lt;Sub&gt;</c>), a supported aggregate over a translatable value, or a supported computed/nested shape. A wrapped
+    /// key-only projection is admitted as a "distinct keys" <c>$group</c>; a bare key access (a plain Distinct) and a zero-accumulator projection with an ordering
+    /// aggregate decline. <paramref name="bareLeafAlias"/> is <see cref="NativeProjectionBinder.SyntheticBareProjectionAlias"/> when the body was bare, else <see langword="null"/>.
     /// </summary>
-    /// <param name="mongoQ">The query whose <see cref="MongoSelectDefinition"/> is being populated.</param>
-    /// <param name="resultSelector">The <c>Select</c> result selector lambda over the grouping.</param>
-    /// <param name="bareLeafAlias">
-    /// On success, <see cref="NativeProjectionBinder.SyntheticBareProjectionAlias"/> when the body was bare (so the
-    /// caller builds a single-member shaper); <see langword="null"/> for a wrapped projection.
-    /// </param>
     internal static bool TryBindGroupProjection(
         MongoQueryExpression mongoQ, LambdaExpression resultSelector, out string? bareLeafAlias)
     {
@@ -232,14 +194,12 @@ internal static class NativeGroupByBinder
         if (select.PendingGroupKey is not { } keyParts)
             return false;
 
-        // A HAVING Where between GroupBy and this Select (see TryBindGroupWherePredicate): its accumulator is folded
-        // in below and its comparison becomes GroupHavingPredicate, a $match after $group. Cleared immediately so no
-        // stale state survives a later decline.
+        // A HAVING Where between GroupBy and this Select (TryBindGroupWherePredicate): its accumulator is folded in below and its comparison becomes
+        // GroupHavingPredicate, a $match after $group. Cleared immediately so no stale state survives a later decline.
         var havingPredicate = select.PendingGroupPredicate;
         select.PendingGroupPredicate = null;
 
-        // A bare result selector (e.g. .Select(g => g.Sum(o => o.OrderID))) has no member name, so it's projected
-        // under the reserved `_v` alias, which the driver also uses, so a late fallback writes the element the shaper
+        // A bare result selector has no member name, so it is projected under the reserved `_v` alias (also the driver's), so a late fallback writes what the shaper
         // reads. bareLeafAlias is set only once every guard below has admitted the body.
         var isBareBody = !resultSelector.Body.TryGetProjectionMembers(out var bindings, allowPositionalConstructorArguments: true);
         if (isBareBody)
@@ -247,13 +207,11 @@ internal static class NativeGroupByBinder
             bindings = [(NativeProjectionBinder.SyntheticBareProjectionAlias, resultSelector.Body)];
         }
 
-        // Accumulator operands over a prior grouping resolve against its flattened alias, as in TryBindGroupKey;
-        // the PriorGrouping handling lives in the MongoGroupElementTranslator constructor.
+        // Accumulator operands over a prior grouping resolve against its flattened alias, as in TryBindGroupKey (handled in the MongoGroupElementTranslator constructor).
         var scope = new GroupBindingScope(resultSelector.Parameters[0], keyParts, CreateElementTranslator(mongoQ));
 
-        // Resolve OrderBy/ThenBy on the ungrouped GroupBy result (the pending-ordering carve-out) first, so an
-        // ordering aggregate the Select doesn't project still gets its own accumulator. Always a fresh field, even if
-        // the Select projects the same aggregate (redundant but harmless).
+        // Resolve OrderBy/ThenBy on the ungrouped GroupBy result (the pending-ordering carve-out) first, so an ordering aggregate the Select doesn't project still gets
+        // its own accumulator (always a fresh field, even if the Select projects the same aggregate).
         var orderAccumulators = new List<MongoGroupAccumulator>();
         var resolvedOrderings = new List<MongoOrdering>();
         if (select.PendingGroupOrderings is { } pendingOrderings)
@@ -264,9 +222,8 @@ internal static class NativeGroupByBinder
                 var orderScope = scope with { GroupingParameter = keySelector.Parameters[0] };
                 var body = keySelector.Body;
 
-                // allowWholeKeyRead: false — ordering by a whole composite key declines: the anonymous key type isn't
-                // comparable in LINQ-to-Objects, and a $sort on the "_id" sub-document would compare by BSON field
-                // order.
+                // allowWholeKeyRead: false: ordering by a whole composite key declines (the anonymous key type isn't comparable in LINQ-to-Objects, and a $sort on the "_id"
+                // sub-document would compare by BSON field order).
                 if (TryGetKeyMemberPath(body, orderScope, out var keyPath, allowWholeKeyRead: false))
                 {
                     if (keyPath == null)
@@ -286,8 +243,7 @@ internal static class NativeGroupByBinder
             }
         }
 
-        // Each result member maps to a top-level output alias: key members read "_id" / "_id.<Name>", accumulators
-        // their own field. Emitted as a trailing $project after $group so the shaper never reads a nested _id.
+        // Each result member maps to a top-level output alias (key members read "_id" / "_id.<Name>", accumulators their own field), emitted as a trailing $project after $group so the shaper never reads a nested _id.
         var accumulators = new List<MongoGroupAccumulator>();
         var flatten = new List<MongoProjection>();
         var isBareBodyKeyMember = false;
@@ -295,8 +251,7 @@ internal static class NativeGroupByBinder
         var nestedAccumulatorCounter = 0;
         foreach (var (memberName, projectedValue) in bindings)
         {
-            // A client case mapping (`g.Key.ToUpper()`) stages only its receiver; the shaper re-applies the call
-            // (MongoQueryableMethodTranslatingExpressionVisitor.BindGroupMember), since $toUpper/$toLower are ASCII-only.
+            // A client case mapping (`g.Key.ToUpper()`) stages only its receiver; the shaper re-applies the call (BindGroupMember), since $toUpper/$toLower are ASCII-only.
             var valueExpr = PeelResultMemberCaseMapping(projectedValue);
             hasCaseMappedMember |= !ReferenceEquals(valueExpr, projectedValue);
 
@@ -310,9 +265,7 @@ internal static class NativeGroupByBinder
                 isBareBodyKeyMember = true;
         }
 
-        // A zero-accumulator wrapped key-only projection is a valid "distinct keys" $group. Decline a bare g.Key (a
-        // plain Distinct) and a combination with an ordering aggregate accumulator; a key-resolved
-        // ordering is fine.
+        // A zero-accumulator wrapped key-only projection is a valid "distinct keys" $group; decline a bare g.Key (a plain Distinct) and a combination with an ordering aggregate accumulator.
         if (accumulators.Count == 0 && (isBareBodyKeyMember || orderAccumulators.Count > 0))
             return false;
 
@@ -336,16 +289,10 @@ internal static class NativeGroupByBinder
     }
 
     /// <summary>
-    /// The value a grouped result member (or bare result body) stages when it projects a client case mapping
-    /// (<c>g.Key.ToUpper()</c>, <c>g.Max(x =&gt; x.S).ToLower()</c>, also under a <c>Convert</c>): the mapping's receiver,
-    /// whose raw value the <c>$group</c> output holds while the shaper re-applies the .NET call. Otherwise
-    /// <paramref name="value"/> itself.
+    /// The value a grouped result member (or bare body) stages when it projects a client case mapping (<c>g.Key.ToUpper()</c>, also under a <c>Convert</c>): the
+    /// mapping's receiver, whose raw value the <c>$group</c> output holds while the shaper re-applies the .NET call; otherwise <paramref name="value"/>. Driver-LINQ
+    /// would compute it with the ASCII-only, null-as-<c>""</c> <c>$toUpper</c>/<c>$toLower</c>, so <see cref="ContainsCaseMappingCall"/> declines it.
     /// </summary>
-    /// <remarks>
-    /// The one predicate for a case-mapped grouped result: <see cref="TryBindGroupProjection"/> stages the receiver,
-    /// the result shaper re-applies the call over it. Driver-LINQ execution, which would compute it with the ASCII-only,
-    /// null-as-<c>""</c> <c>$toUpper</c>/<c>$toLower</c>, is declined by <see cref="ContainsCaseMappingCall"/>.
-    /// </remarks>
     internal static Expression PeelResultMemberCaseMapping(Expression value)
         => value is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert
            && PeelResultMemberCaseMapping(convert.Operand) is var receiver
@@ -353,12 +300,7 @@ internal static class NativeGroupByBinder
             ? receiver
             : NativeProjectionBinder.PeelCaseMapping(value);
 
-    /// <summary>
-    /// True when <paramref name="expression"/> holds a case-mapping call (<see cref="NativeProjectionBinder.IsCaseMappingCall"/>)
-    /// anywhere, the predicate <see cref="PeelResultMemberCaseMapping"/> peels by. Driver-LINQ would compute such a call
-    /// with the ASCII-only, null-as-<c>""</c> <c>$toUpper</c>/<c>$toLower</c>; the shaped-query compiler declines a
-    /// grouped query holding one rather than run it there.
-    /// </summary>
+    /// <summary>True when <paramref name="expression"/> holds a case-mapping call (<see cref="NativeProjectionBinder.IsCaseMappingCall"/>) anywhere; the shaped-query compiler declines a grouped query holding one rather than run it on driver-LINQ (ASCII-only, null-as-<c>""</c> <c>$toUpper</c>/<c>$toLower</c>).</summary>
     internal static bool ContainsCaseMappingCall(Expression expression)
     {
         var finder = new CaseMappingCallFinder();
@@ -384,17 +326,14 @@ internal static class NativeGroupByBinder
             return base.VisitMethodCall(node);
         }
 
-        // Query roots and other provider nodes carry no case mapping of their own, and not all can visit children.
+        // Query roots and other provider nodes carry no case mapping, and not all can visit children.
         protected override Expression VisitExtension(Expression node)
             => node;
     }
 
-    // The flattening read of a key member. A whole composite g.Key ("_id" over named parts) is normally lifted as one
-    // sub-document and read back through the key type's class map, whose DateTime members ignore a configured
-    // DateTimeKind. When a key part is kind-sensitive (NativeDateTimeKindReadBack), it is rebuilt member by member as a
-    // document construction instead, so each part reads back through the kind-aware construction-member reader. If the
-    // key type's shape can't be rebuilt, the class-map read stays and NativeDateTimeKindReadBack.HasUnreproducibleReadBack
-    // declines it. Otherwise the whole-key read (and its MQL) is unchanged.
+    // The flattening read of a key member. A whole composite g.Key is normally lifted as one sub-document and read through the key type's class map, whose DateTime
+    // members ignore a configured DateTimeKind. When a key part is kind-sensitive (NativeDateTimeKindReadBack) it is rebuilt member by member as a document
+    // construction so each part reads through the kind-aware reader; if the shape can't be rebuilt the class-map read stays and HasUnreproducibleReadBack declines it.
     private static MongoExpression ReadKeyMember(MongoSelectDefinition select, string keyPath, Type type, GroupBindingScope scope)
     {
         var keyParts = scope.KeyParts;
@@ -410,10 +349,9 @@ internal static class NativeGroupByBinder
         return new MongoDocumentConstructionExpression(shape, members);
     }
 
-    // Rebuilds the construction shape of a composite key type from its part names: an anonymous type (one constructor
-    // whose parameters are the parts, in order) or a DTO (a parameterless constructor plus one settable member per
-    // part). Only the constructor and member infos are consumed (MongoProjectionBindingRemovingExpressionVisitor
-    // .BuildDocumentConstructionExpression); the argument/binding values are placeholders.
+    // Rebuilds the construction shape of a composite key type from its part names: an anonymous type (one constructor whose parameters are the parts) or a DTO
+    // (parameterless constructor plus one settable member per part). Only the constructor/member infos are consumed (BuildDocumentConstructionExpression); the
+    // argument/binding values are placeholders.
     private static bool TryBuildKeyShape(
         Type keyType, IReadOnlyList<MongoGroupingKeyPart> keyParts, [NotNullWhen(true)] out Expression? shape,
         [NotNullWhen(true)] out Type[]? memberTypes)
@@ -465,8 +403,7 @@ internal static class NativeGroupByBinder
         return true;
     }
 
-    // Classifies a value as a grouping-key access, yielding the group-output path it reads. `path` is null for a
-    // whole composite key when `allowWholeKeyRead` is false. Returns false for a non-key value (an accumulator).
+    // Classifies a value as a grouping-key access, yielding the group-output path it reads (null for a whole composite key when `allowWholeKeyRead` is false); false for a non-key value.
     private static bool TryGetKeyMemberPath(
         Expression expr,
         GroupBindingScope scope,
@@ -479,15 +416,13 @@ internal static class NativeGroupByBinder
         if (expr is not MemberExpression member)
             return false;
 
-        // g.Key: read "_id" wholesale. For a composite key that sub-document's fields already match the key type's
-        // member names, so the generic readback materializes it; a zero-part key's "_id" is the empty document.
+        // g.Key: read "_id" wholesale (a composite key's sub-document fields already match the key type's member names; a zero-part key's "_id" is the empty document).
         if (member.Member.Name == "Key" && member.Expression == scope.GroupingParameter)
         {
             path = scope.IsComposite && !allowWholeKeyRead ? null : "_id";
             return true;
         }
 
-        // g.Key.<Sub> — a composite sub-member whose name matches a parsed key part.
         if (member.Expression is MemberExpression { Member.Name: "Key" } inner
             && inner.Expression == scope.GroupingParameter)
         {
@@ -504,12 +439,10 @@ internal static class NativeGroupByBinder
         return false;
     }
 
-    // One grouped result member's value (a top-level member, or a member of a nested construction), tried in order
-    // as: a key read ("_id" / "_id.<Name>", isKeyRead); an accumulator ($group field `accumulatorOutputField`, added
-    // to `accumulators`); a nested construction; a computed value (ternary, coalesce) combining g.Key leaves with
-    // constants. A null `accumulatorOutputField` takes the next synthetic `_nestedAgg<N>` name, consumed only once
-    // the value isn't a key read. A ternary/coalesce over constructions is read back whole by alias; see
-    // NativeProjectionBinder.IsMisreadWholeValueLeaf.
+    // One grouped result member's value, tried in order as: a key read ("_id" / "_id.<Name>", isKeyRead); an accumulator (field `accumulatorOutputField`, added to
+    // `accumulators`); a nested construction; a computed value (ternary, coalesce) combining g.Key leaves with constants. A null `accumulatorOutputField` takes the next
+    // synthetic `_nestedAgg<N>` name, consumed only once the value isn't a key read. A ternary/coalesce over constructions is read back whole by alias
+    // (NativeProjectionBinder.IsMisreadWholeValueLeaf).
     private static bool TryBindGroupMemberValue(
         Expression value,
         string? accumulatorOutputField,
@@ -553,14 +486,10 @@ internal static class NativeGroupByBinder
                && !NativeProjectionBinder.IsMisreadWholeValueLeaf(result);
     }
 
-    // A nested construction as a member value (e.g. `Container = new LastInChain { Name = "x", Value = g.Sum(...) }`).
-    // Each member goes through the same key/accumulator/computed dispatch as the outer loop (TryBindGroupMemberValue),
-    // recursing for deeper nesting. Accumulators can only run in $group, so each gets its own top-level $group field
-    // in the shared `accumulators` list; `nestedAccumulatorCounter` keeps synthetic names distinct (a user member
-    // literally named `_nestedAgg1` fails loudly with a duplicate-element error, not silently).
-    //
-    // A decline here marks the whole query Fallback (Route checks _hasUnsupportedOperator first), and the GroupBy
-    // route never uses the mixed reader, so grouping is always all-native or all-fallback.
+    // A nested construction as a member value: each member goes through the same key/accumulator/computed dispatch (TryBindGroupMemberValue), recursing for deeper
+    // nesting. Accumulators can only run in $group, so each gets its own top-level field in the shared `accumulators` list; `nestedAccumulatorCounter` keeps synthetic
+    // names distinct (a user member literally named `_nestedAgg1` fails loudly with a duplicate-element error). A decline marks the whole query Fallback, and the
+    // GroupBy route never uses the mixed reader, so grouping is always all-native or all-fallback.
     private static bool TryBindNestedGroupProjectionConstruction(
         Expression expr,
         GroupBindingScope scope,
@@ -590,9 +519,8 @@ internal static class NativeGroupByBinder
         return true;
     }
 
-    // Translates a computed member value (ternary, coalesce) whose leaves are g.Key/g.Key.Sub accesses or
-    // ordinary values. Runs in the flattening $project after $group, so a key leaf reads "_id"[.Sub] (unlike
-    // TryTranslateAccumulatorCondition, which runs inside $group).
+    // Translates a computed member value (ternary, coalesce) whose leaves are g.Key accesses or ordinary values. Runs in the flattening $project after $group, so a key
+    // leaf reads "_id"[.Sub] (unlike TryTranslateAccumulatorCondition, which runs inside $group).
     private static bool TryTranslateGroupProjectionExpression(
         Expression expr,
         GroupBindingScope scope,
@@ -601,7 +529,6 @@ internal static class NativeGroupByBinder
         result = null;
         expr = Unwrap(expr);
 
-        // A bare g.Key / g.Key.Sub leaf.
         if (TryGetKeyMemberPath(expr, scope, out var keyPath))
         {
             if (keyPath == null)
@@ -611,7 +538,7 @@ internal static class NativeGroupByBinder
             return true;
         }
 
-        // A ternary: every part recurses, so branches may be nested conditionals, coalesces, keys or values.
+        // A ternary: every part recurses (nested conditionals, coalesces, keys, values).
         if (expr is ConditionalExpression conditional)
         {
             if (!TryTranslateGroupProjectionConditionOrValue(conditional.Test, scope, out var test)
@@ -623,7 +550,7 @@ internal static class NativeGroupByBinder
             return true;
         }
 
-        // `left ?? right`: both recurse (a ?? b ?? c is right-associative).
+        // `left ?? right`: both recurse.
         if (expr is BinaryExpression { NodeType: ExpressionType.Coalesce } coalesce)
         {
             if (!TryTranslateGroupProjectionExpression(coalesce.Left, scope, out var left)
@@ -634,16 +561,14 @@ internal static class NativeGroupByBinder
             return true;
         }
 
-        // An ordinary value must not reference `g` at all: the ordinary translator knows nothing about the grouping
-        // and could mis-resolve a same-named member against the wrong type.
+        // An ordinary value must not reference `g`: the ordinary translator knows nothing about the grouping and could mis-resolve a same-named member.
         if (expr.ReferencesParameter(scope.GroupingParameter))
             return false;
 
         return scope.Translator.TryTranslateValue(expr, out result);
     }
 
-    // The ternary test (e.g. `g.Key == null`): a key-vs-constant comparison, with the key read via the
-    // post-$group "_id"[.Sub] path.
+    // The ternary test (`g.Key == null`): a key-vs-constant comparison, the key read via the post-$group "_id"[.Sub] path.
     private static bool TryTranslateGroupProjectionConditionOrValue(
         Expression expr,
         GroupBindingScope scope,
@@ -680,12 +605,10 @@ internal static class NativeGroupByBinder
             }
         }
 
-        // Not a key comparison: an ordinary leaf/ternary/coalesce value.
         return TryTranslateGroupProjectionExpression(expr, scope, out result);
     }
 
-    // The matched key part's serialization property (a value-converted key like Guid needs it; BsonValue.Create
-    // throws). Null when there's no single backing property (whole composite or zero-part key).
+    // The matched key part's serialization property (a value-converted key like Guid needs it; BsonValue.Create throws); null for a whole composite or zero-part key.
     private static IProperty? ResolveKeyMemberSerializationProperty(string keyPath, GroupBindingScope scope)
     {
         if (keyPath == "_id")
@@ -695,8 +618,7 @@ internal static class NativeGroupByBinder
         return (matchedPart.FieldRef as MongoFieldExpression)?.Property;
     }
 
-    // A zero-part key's g.Key ("_id") has no serialization property, so a comparison against anything but a
-    // null literal would reach BsonValue.Create, which throws for non-BSON-mappable types. Decline instead.
+    // A zero-part key's g.Key ("_id") has no serialization property, so a comparison against anything but a null literal would reach BsonValue.Create, which throws. Decline.
     private static bool IsSafeZeroPartKeyComparison(string keyPath, GroupBindingScope scope, Expression otherOperand)
     {
         if (keyPath != "_id" || scope.KeyParts.Count != 0)
@@ -705,10 +627,8 @@ internal static class NativeGroupByBinder
         return Unwrap(otherOperand) is ConstantExpression { Value: null };
     }
 
-    // g.Count()/g.LongCount() → $sum: 1; g.Sum/Average/Min/Max(x => ...) over a translatable value → the operator
-    // plus translated operand. The aggregate's source must be the grouping parameter itself: binding a correlated
-    // subquery (e.g. Customers.Where(c => c.CustomerID == g.Key).Count()) as a $group accumulator would silently
-    // return the group's row count.
+    // g.Count()/g.LongCount() -> $sum: 1; g.Sum/Average/Min/Max(x => ...) -> the operator over the translated operand. The aggregate's source must be the grouping
+    // parameter itself: binding a correlated subquery (`Customers.Where(c => c.CustomerID == g.Key).Count()`) as an accumulator would silently return the group's row count.
     private static bool TryBindAccumulator(
         Expression expr,
         string outputField,
@@ -719,8 +639,7 @@ internal static class NativeGroupByBinder
         accumulator = null;
         flattenRead = null;
 
-        // "_id" already holds the key, so an accumulator output named "_id" would duplicate it and throw at pipeline
-        // build. Decline (a key member aliased "_id" is handled as a key member and doesn't reach here).
+        // "_id" already holds the key, so an accumulator output named "_id" would duplicate it and throw at build; decline (a key member aliased "_id" doesn't reach here).
         if (outputField == GroupIdFieldName)
             return false;
 
@@ -731,8 +650,7 @@ internal static class NativeGroupByBinder
         if (TryBindDistinctAccumulator(call, outputField, scope, out accumulator, out flattenRead))
             return true;
 
-        // A selector-less aggregate over a key+elementSelector GroupBy arrives as `g.Select(elementSelector).Sum()`;
-        // bind as an ordinary $sum/$avg/$min/$max over the selected field.
+        // A selector-less aggregate over a key+elementSelector GroupBy arrives as `g.Select(elementSelector).Sum()`: an ordinary accumulator over the selected field.
         if (TryBindElementSelectedAccumulator(call, outputField, scope, out accumulator, out flattenRead))
             return true;
 
@@ -742,8 +660,7 @@ internal static class NativeGroupByBinder
         if (call.Arguments.Count == 0 || !IsGroupingSource(call.Arguments[0], scope.GroupingParameter))
             return false;
 
-        // g.Count()/g.LongCount() → $sum: 1. EF lowers to the Queryable form over g.AsQueryable(); the Enumerable
-        // form is accepted too.
+        // g.Count()/g.LongCount() -> $sum: 1 (EF lowers to the Queryable form over g.AsQueryable(); the Enumerable form is accepted too).
         if (IsCountWithoutPredicate(call.Method) && call.Arguments.Count == 1)
         {
             accumulator = new MongoGroupAccumulator(outputField, "$sum", null);
@@ -751,7 +668,6 @@ internal static class NativeGroupByBinder
             return true;
         }
 
-        // g.Count(pred) → $sum: {$cond: [pred, 1, 0]}.
         if (call.Arguments.Count == 2 && MongoExpressionTranslator.IsCanonicalCountWithPredicate(call.Method)
             && call.Arguments[1].UnwrapLambdaFromQuote() is { } countPred
             && TryTranslateAccumulatorCondition(countPred.Body, scope, out _, out var countCond))
@@ -761,21 +677,17 @@ internal static class NativeGroupByBinder
             return true;
         }
 
-        // Sum / Average / Min / Max with a selector — g.Sum(x => x.Field) etc.
         var op = MapSelectorAccumulatorOperator(call.Method);
         if (op is null || call.Arguments.Count != 2)
             return false;
 
-        // Any translatable selector value (member, constant, cast, arithmetic). TryTranslateValue requires default
-        // serialization, so a value-converted member falls back rather than aggregating the raw stored value. EF
-        // inlines a GroupBy(key, elementSelector)'s element selector into this lambda, so no separate handling is
-        // needed.
+        // Any translatable selector value; TryTranslateValue requires default serialization, so a value-converted member falls back rather than aggregating the raw stored value.
+        // EF inlines a GroupBy(key, elementSelector)'s element selector into this lambda.
         if (call.Arguments[1].UnwrapLambdaFromQuote() is not { } selector)
             return false;
 
-        // An accumulator over the grouping key itself (`g.Max(e => g.Key)`, `g.Sum(e => g.Key.A)`): the key part's raw
-        // per-document expression, never "_id" (circular inside the $group that produces it). Constant within the
-        // group, so the reducer yields the key; left-outer join levels decline, as for accumulator conditions.
+        // An accumulator over the grouping key itself (`g.Max(e => g.Key)`): the key part's raw per-document expression, never "_id" (circular inside the $group that
+        // produces it). Constant within the group; left-outer join levels decline, as for accumulator conditions.
         MongoExpression? operand;
         if (TryResolveKeyReferenceAsRawExpression(selector.Body, selector.Body, scope, out var keyOperand))
         {
@@ -798,39 +710,21 @@ internal static class NativeGroupByBinder
     }
 
     /// <summary>
-    /// A list projection member, <c>g.Select(e =&gt; e.X).ToList()</c> / <c>.ToArray()</c> (EF's form is
-    /// <c>Enumerable.ToList(Queryable.Select(g.AsQueryable(), selector))</c>), bound as a <c>$push</c> accumulator
-    /// read back as the method's <c>List&lt;T&gt;</c>/<c>T[]</c>. Only called for projection members: a list isn't a
-    /// sort key or a HAVING operand.
+    /// A list projection member, <c>g.Select(e =&gt; e.X).ToList()</c> / <c>.ToArray()</c> (EF: <c>Enumerable.ToList(Queryable.Select(g.AsQueryable(), selector))</c>), bound
+    /// as a <c>$push</c> accumulator read back as <c>List&lt;T&gt;</c>/<c>T[]</c>. Projection members only: a list isn't a sort key or HAVING operand.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// Element order inside the list is the <c>$group</c>'s input order, which is unspecified without a prior sort
-    /// (as for driver-LINQ's own <c>$push</c>). Accepted: a caller needing an order sorts the list.
-    /// </para>
-    /// <para>
-    /// Declines:
+    /// Element order is the <c>$group</c>'s input order, unspecified without a prior sort (as for driver-LINQ's own <c>$push</c>). Declines:
     /// <list type="bullet">
-    /// <item>A non-scalar element type (a whole entity, <c>g.Select(e =&gt; e)</c>, an owned or anonymous type): pushing
-    /// entities would need per-element materialization and tracking. <c>g.ToList()</c> itself never reaches here (its
-    /// source is <c>g</c>, not a <c>Select</c>). Today <see cref="MongoGroupElementTranslator.TryTranslateValue"/> also
-    /// rejects every entity-typed operand, so this gate is the explicit statement of the rule rather than the only
-    /// wall.</item>
-    /// <item>An untranslatable selector, including a value-converted or non-default-represented property:
-    /// <see cref="MongoGroupElementTranslator.TryTranslateValue"/> requires default serialization, which the list's
-    /// generic CLR readback depends on.</item>
-    /// <item>A <c>DateTime</c> element that isn't a plain field with no configured <c>DateTimeKind</c> (see the
-    /// inline comment).</item>
-    /// <item>A non-nullable element (or one containing a condition) that may read an unmatched left-outer join side:
-    /// its value is missing, so there is no correct element to push.</item>
+    /// <item>A non-scalar element type (whole entity, owned or anonymous type): pushing entities would need per-element materialization and tracking. Today
+    /// <see cref="MongoGroupElementTranslator.TryTranslateValue"/> also rejects entity-typed operands, so this gate is the explicit statement of the rule.</item>
+    /// <item>An untranslatable selector, including a value-converted or non-default-represented property (the list's generic CLR readback needs default serialization).</item>
+    /// <item>A <c>DateTime</c> element that isn't a plain field with no configured <c>DateTimeKind</c> (see the inline comment).</item>
+    /// <item>A non-nullable element (or one containing a condition) that may read an unmatched left-outer join side: its value is missing, so there is no correct element to push.</item>
     /// </list>
-    /// </para>
-    /// <para>
-    /// A bare <c>$push</c> skips an element whose value is missing (measured: <c>{$push: "$F"}</c> over F = 1, null,
-    /// missing is <c>[1, null]</c>), while C# yields <c>null</c> for both. A nullable or reference-typed element is
-    /// therefore read null-safe (<c>$ifNull: [operand, null]</c>), decided from the LINQ element type: over a left
+    /// A bare <c>$push</c> skips an element whose value is missing (measured: <c>{$push: "$F"}</c> over F = 1, null, missing is <c>[1, null]</c>), while C# yields
+    /// <c>null</c> for both, so a nullable or reference-typed element is read null-safe (<c>$ifNull: [operand, null]</c>), decided from the LINQ element type: over a left
     /// join, <c>(decimal?)x.Total</c> translates to the non-nullable <c>Total</c> field, missing for an unmatched row.
-    /// </para>
     /// </remarks>
     private static bool TryBindPushAccumulator(
         Expression expr,
@@ -866,9 +760,8 @@ internal static class NativeGroupByBinder
         if (!scope.Translator.TryTranslateValue(selector.Body, out var operand))
             return false;
 
-        // The list's generic DateTime readback is the serializer of a property with no configured DateTimeKind. A
-        // HasDateTimeKind property reads back differently (Local silently became Utc), and a computed date has no
-        // property to ask, so a DateTime element must be a plain field with the default kind.
+        // The list's generic DateTime readback is the serializer of a property with no configured DateTimeKind; a HasDateTimeKind property reads back differently (Local
+        // silently became Utc) and a computed date has no property to ask, so a DateTime element must be a plain default-kind field.
         if ((Nullable.GetUnderlyingType(elementType) ?? elementType) == typeof(DateTime)
             && !(operand is MongoFieldExpression dateField && dateField.Property.GetDateTimeKind() == DateTimeKind.Unspecified))
             return false;
@@ -881,12 +774,10 @@ internal static class NativeGroupByBinder
         if (MongoAggregationExpressionRenderer.ReadsNullAsDefault(elementType, operand))
             return false;
 
-        // An unmatched element must push EF's null, not e.g. Math.Max's other operand.
         if (scope.Translator.MayMiscomputeAnUnmatchedJoinSide(selector.Body, operand))
             return false;
 
-        // A non-nullable element keeps the bare operand, so a missing value (a malformed document) is skipped, the
-        // same as driver-LINQ's $push.
+        // A non-nullable element keeps the bare operand, so a missing value (malformed document) is skipped, as in driver-LINQ's $push.
         if (!IsNonNullableValueType(elementType))
         {
             operand = operand switch
@@ -902,9 +793,8 @@ internal static class NativeGroupByBinder
         return true;
     }
 
-    // Scalar element types whose generic CLR serializer (BsonSerializerFactory.CreateTypeSerializer, used to read the
-    // pushed list back) reproduces a default-serialized property's stored form. Anything else, notably an entity or
-    // other class/struct element, declines.
+    // Scalar element types whose generic CLR serializer (BsonSerializerFactory.CreateTypeSerializer, used to read the pushed list back) reproduces a default-serialized
+    // property's stored form; anything else (entity, other class/struct) declines.
     private static bool IsPushableScalarElementType(Type type)
     {
         type = Nullable.GetUnderlyingType(type) ?? type;
@@ -914,15 +804,12 @@ internal static class NativeGroupByBinder
                || type.IsEnum;
     }
 
-    // Over a left join, an unmatched outer row (Owners.GroupJoin(Orders).DefaultIfEmpty() grouped by owner, for an
-    // order-less owner) has no value for the inner side. Declines an accumulator operand reading that side when:
-    // - it's $min/$max/$avg with a non-nullable result: an all-unmatched group reduces to null, read back as default(T)
-    //   (a plausible, wrong 0), while LINQ throws and the driver fails to deserialize (as TryBindFilteredAccumulator
-    //   does for an all-removed group); $sum's 0 matches EF;
-    // - it contains a condition (g.Sum(x => x.Total < 15 ? 1 : 0)): $expr orders null below every value, so
-    //   `null < 15` is true where EF's null semantics make it false. Structural, not per operator;
-    // - it's computed by an operator that doesn't propagate the missing value (g.Sum(x => (decimal?)Math.Max(x.Total, 7m)):
-    //   $max answers 7 for the unmatched element, where EF's element value is null). See
+    // Over a left join, an unmatched outer row has no value for the inner side. Declines an accumulator operand reading that side when:
+    // - it's $min/$max/$avg with a non-nullable result: an all-unmatched group reduces to null, read back as default(T) (a plausible, wrong 0) while LINQ throws
+    //   (as TryBindFilteredAccumulator does for an all-removed group); $sum's 0 matches EF;
+    // - it contains a condition (g.Sum(x => x.Total < 15 ? 1 : 0)): $expr orders null below every value, so `null < 15` is true where EF's null semantics make it
+    //   false. Structural, not per operator;
+    // - it's computed by an operator that doesn't propagate the missing value ((decimal?)Math.Max(x.Total, 7m): $max answers 7, EF null). See
     //   MongoGroupElementTranslator.MayMiscomputeAnUnmatchedJoinSide.
     private static bool ReducesPossiblyUnmatchedJoinSideToDefault(
         string op, Type resultType, Expression operandBody, MongoExpression operand, MongoGroupElementTranslator translator)
@@ -930,9 +817,8 @@ internal static class NativeGroupByBinder
                 || ConditionFinder.Contains(operandBody))
                && translator.MayReadAnUnmatchedJoinSide(operandBody))
            || translator.MayMiscomputeAnUnmatchedJoinSide(operandBody, operand)
-           // Not only over a join: a non-nullable $min/$max/$avg of a Length/IndexOf over a possibly-null string
-           // reduces an all-null group to null, read back as 0 (MayBeNullBehindNonNullableType). $sum skips a null
-           // as EF's SUM does.
+           // Not only over a join: a non-nullable $min/$max/$avg of a Length/IndexOf over a possibly-null string reduces an all-null group to null, read back as 0
+           // (MayBeNullBehindNonNullableType). $sum skips a null as EF does.
            || (op is "$min" or "$max" or "$avg" && MongoAggregationExpressionRenderer.ReadsNullAsDefault(resultType, operand));
 
     // Finds a condition (ternary, comparison, logical operator or negation) anywhere in an operand.
@@ -965,10 +851,9 @@ internal static class NativeGroupByBinder
         }
     }
 
-    // Resolves g.Key / g.Key.Sub inside an accumulator's condition/operand to the key part's raw per-document
-    // expression, never "_id": accumulators run in the same $group that produces _id, so "_id" would be circular.
-    // (The HAVING comparison in TryBindGroupSideOperand runs in a later $match and does use "_id".)
-    // otherOperand is the comparand: a zero-part key only resolves against a literal null (see below).
+    // Resolves g.Key / g.Key.Sub inside an accumulator's condition/operand to the key part's raw per-document expression, never "_id" (accumulators run in the same
+    // $group that produces _id, so it would be circular; the HAVING comparison in TryBindGroupSideOperand runs later and does use "_id"). otherOperand is the
+    // comparand: a zero-part key only resolves against a literal null.
     private static bool TryResolveKeyReferenceAsRawExpression(
         Expression expr,
         Expression otherOperand,
@@ -988,10 +873,8 @@ internal static class NativeGroupByBinder
 
             if (scope.KeyParts.Count == 0)
             {
-                // A zero-part (empty new{}) key is the constant empty document _id: {}, so its raw expression is
-                // an empty {} literal (never null). Only a literal-null comparand is safe: anything else has no
-                // backing property to serialize through (BsonValue.Create throws), so decline, as
-                // IsSafeZeroPartKeyComparison does for HAVING.
+                // A zero-part (empty new{}) key is the constant empty document _id: {}, so its raw expression is an empty {} literal. Only a literal-null comparand is safe (anything
+                // else has no backing property to serialize through), as IsSafeZeroPartKeyComparison does for HAVING.
                 if (!IsSafeZeroPartKeyComparison("_id", scope, otherOperand))
                     return false;
 
@@ -1018,10 +901,8 @@ internal static class NativeGroupByBinder
         return false;
     }
 
-    // A key-only accumulator condition reads the key part's raw per-row value, not "_id" (see
-    // TryResolveKeyReferenceAsRawExpression), so it misses the $group's missing-to-null normalization
-    // (MongoPipelineFactory.RenderCompositeKeyPart). A field that may be null is read null-safe ($ifNull) instead, so
-    // a missing value compares as the null C# sees; the relational null guard then treats it as null.
+    // A key-only accumulator condition reads the key part's raw per-row value, not "_id", so it misses the $group's missing-to-null normalization
+    // (MongoPipelineFactory.RenderCompositeKeyPart). A field that may be null is read null-safe ($ifNull) so a missing value compares as the null C# sees.
     private static MongoExpression NullSafeKeyRead(MongoExpression rawKey)
         => rawKey is MongoFieldExpression { NullSafe: false } field && MongoAggregationExpressionRenderer.MayBeNull(field)
             ? new MongoFieldExpression(field.Property, field.ElementName, nullSafe: true)
@@ -1030,12 +911,7 @@ internal static class NativeGroupByBinder
     // A null read back for a non-nullable value type must not be silently defaulted.
     private static bool IsNonNullableValueType(Type type) => type.IsValueType && Nullable.GetUnderlyingType(type) is null;
 
-    /// <summary>
-    /// Translates a per-element accumulator condition (<c>g.Count(pred)</c>, <c>g.Where(pred).Op(...)</c>). Handles
-    /// a <c>g.Key</c>/<c>g.Key.Sub</c>-vs-constant comparison (via <see cref="TryResolveKeyReferenceAsRawExpression"/>;
-    /// constant within a group) or an ordinary per-element predicate. A condition mixing both declines rather than
-    /// translating half of it.
-    /// </summary>
+    /// <summary>Translates a per-element accumulator condition (<c>g.Count(pred)</c>, <c>g.Where(pred).Op(...)</c>): a <c>g.Key</c>/<c>g.Key.Sub</c>-vs-constant comparison (constant within a group) or an ordinary per-element predicate. A condition mixing both declines.</summary>
     private static bool TryTranslateAccumulatorCondition(
         Expression predicateBody,
         GroupBindingScope scope,
@@ -1048,10 +924,8 @@ internal static class NativeGroupByBinder
         if (Unwrap(predicateBody) is BinaryExpression bin
             && MongoExpressionTranslator.MapComparisonOperator(bin.NodeType) is { } op)
         {
-            // A key-only comparison reads the key part's raw per-row value, which over a left join may be an
-            // unmatched inner side's missing value ($expr orders null below every value; see the per-element arm
-            // below). The raw key expression no longer says which scope it came from, so a key-only comparison
-            // declines whenever the grouped join has a left-outer level.
+            // A key-only comparison reads the key part's raw per-row value, which over a left join may be an unmatched inner side's missing value ($expr orders null below
+            // every value; see the per-element arm below). The raw expression no longer says which scope it came from, so it declines whenever the grouped join has a left-outer level.
             if (TryResolveKeyReferenceAsRawExpression(bin.Left, bin.Right, scope, out var leftKey)
                 && TryTranslateComparisonConstant(bin.Right, (leftKey as MongoFieldExpression)?.Property, out var rightConst))
             {
@@ -1075,18 +949,15 @@ internal static class NativeGroupByBinder
             }
         }
 
-        // Any other reference to `g` (e.g. a mixed `e.Amount > 5 && g.Key == "x"`) declines: the ordinary translator
-        // resolves members by name against the entity, so `g.Key` could silently bind to an entity "Key" property.
+        // Any other reference to `g` (e.g. `e.Amount > 5 && g.Key == "x"`) declines: the ordinary translator resolves members by name against the entity, so `g.Key` could bind to an entity "Key" property.
         if (predicateBody.ReferencesParameter(scope.GroupingParameter))
             return false;
 
-        // An ordinary per-element predicate (e.g. e.Amount < 100).
         if (!scope.Translator.TryTranslate(predicateBody, out result))
             return false;
 
-        // A condition that may read an unmatched left-outer join side: for an unmatched row EF's null semantics make
-        // `x.Total < 15` false, but $expr orders null below every value, so the $cond counts the row. Declined
-        // structurally for every condition over that side, not per operator.
+        // A condition that may read an unmatched left-outer join side: EF's null semantics make `x.Total < 15` false for an unmatched row, but $expr orders null below
+        // every value, so the $cond counts it. Declined structurally for every condition over that side.
         if (scope.Translator.MayReadAnUnmatchedJoinSide(predicateBody))
         {
             result = null;
@@ -1096,8 +967,7 @@ internal static class NativeGroupByBinder
         return true;
     }
 
-    // Resolves the optional hop before g.Select(selector).Distinct().<Op>(): none, g.Distinct() (a no-op here,
-    // so no condition), or g.Where(pred) (a translated condition). Queryable and Enumerable forms both accepted.
+    // Resolves the optional hop before g.Select(selector).Distinct().<Op>(): none, g.Distinct() (no-op, no condition), or g.Where(pred) (a translated condition); Queryable and Enumerable forms.
     private static bool TryResolveOptionalAccumulatorSourceCondition(
         Expression source,
         GroupBindingScope scope,
@@ -1134,12 +1004,7 @@ internal static class NativeGroupByBinder
         return false;
     }
 
-    /// <summary>
-    /// <c>g.Select(e =&gt; e.Field).Distinct().&lt;Op&gt;()</c>: aggregates the group's distinct values. Binds a
-    /// <c>$addToSet</c> accumulator and reduces the array in the flattening <c>$project</c> via
-    /// <see cref="MongoSizeExpression"/> (Count/LongCount) or <see cref="MongoArrayReduceExpression"/>. Accepts
-    /// Queryable and Enumerable forms and an optional leading <c>Where</c>/<c>Distinct</c> hop.
-    /// </summary>
+    /// <summary><c>g.Select(e =&gt; e.Field).Distinct().&lt;Op&gt;()</c>: binds a <c>$addToSet</c> accumulator reduced in the flattening <c>$project</c> via <see cref="MongoSizeExpression"/> (Count/LongCount) or <see cref="MongoArrayReduceExpression"/>. Accepts an optional leading <c>Where</c>/<c>Distinct</c> hop.</summary>
     private static bool TryBindDistinctAccumulator(
         MethodCallExpression call,
         string outputField,
@@ -1153,9 +1018,8 @@ internal static class NativeGroupByBinder
         if (call.Arguments.Count != 1)
             return false;
 
-        // Average/Sum's selector-less overloads aren't generic, so match by name + declaring type (Arguments.Count
-        // == 1 already excludes the with-selector overloads). Queryable is EF's normalized form; Enumerable comes
-        // from hand-written lambdas.
+        // Average/Sum's selector-less overloads aren't generic, so match by name + declaring type (Arguments.Count == 1 excludes the selector overloads). Queryable is EF's
+        // normalized form; Enumerable comes from hand-written lambdas.
         var declaringOk = call.Method.DeclaringType == typeof(Queryable) || call.Method.DeclaringType == typeof(Enumerable);
         var isSize = declaringOk && call.Method.Name is nameof(Queryable.Count) or nameof(Queryable.LongCount);
         var reduceOp = !declaringOk || isSize ? null
@@ -1171,7 +1035,6 @@ internal static class NativeGroupByBinder
         if (!isSize && reduceOp is null)
             return false;
 
-        // The source must be g.Select(selector).Distinct(), with the Select over g or one Where/Distinct hop.
         if (Unwrap(call.Arguments[0]) is not MethodCallExpression
             {
                 Method: { Name: nameof(Queryable.Distinct), DeclaringType: var distinctDeclaring },
@@ -1191,9 +1054,8 @@ internal static class NativeGroupByBinder
                 out var isKeyOnlyElementCondition, out var elementCondition))
             return false;
 
-        // Plain member access only; a computed selector falls back. A reducer runs on the stored form, so its operand
-        // must be default-serialized like every other accumulator operand (EF-337); a distinct count needs only
-        // injective serialization, which every serializer is.
+        // Plain member access only; a computed selector falls back. A reducer runs on the stored form, so its operand must be default-serialized (EF-337); a distinct
+        // count needs only injective serialization, which every serializer is.
         if (selectCall.Arguments[1].UnwrapLambdaFromQuote() is not { Body: MemberExpression } selector
             || !scope.Translator.TryTranslateField(selector.Body, out var selectorField)
             || (!isSize && !HasDefaultKeySerialization(selectorField.Property)))
@@ -1201,8 +1063,7 @@ internal static class NativeGroupByBinder
 
         MongoExpression operand = selectorField;
 
-        // A Where hop wraps the operand in $cond with "$$REMOVE" as else, so non-matching elements add nothing to
-        // the set.
+        // A Where hop wraps the operand in $cond with "$$REMOVE" as else, so non-matching elements add nothing to the set.
         if (elementCondition is not null)
         {
             if (FilterMayEmptyNonNullableReduction(isKeyOnlyElementCondition, reduceOp, call.Method.ReturnType))
@@ -1219,12 +1080,7 @@ internal static class NativeGroupByBinder
         return true;
     }
 
-    /// <summary>
-    /// A selector-less <c>Sum()</c>/<c>Average()</c>/<c>Min()</c>/<c>Max()</c> over a <c>GroupBy(key,
-    /// elementSelector)</c>, e.g. <c>.GroupBy(o =&gt; 2, o =&gt; o.OrderID).Select(g =&gt; g.Sum())</c>. With no
-    /// lambda to inline into, EF re-expresses it as <c>g.AsQueryable().Select(elementSelector).Sum()</c>. Binds an
-    /// ordinary accumulator over the selected value (no dedup).
-    /// </summary>
+    /// <summary>A selector-less <c>Sum()</c>/<c>Average()</c>/<c>Min()</c>/<c>Max()</c> over <c>GroupBy(key, elementSelector)</c>: with no lambda to inline into, EF re-expresses it as <c>g.AsQueryable().Select(elementSelector).Sum()</c>; bound as an ordinary accumulator over the selected value.</summary>
     private static bool TryBindElementSelectedAccumulator(
         MethodCallExpression call,
         string outputField,
@@ -1238,7 +1094,7 @@ internal static class NativeGroupByBinder
         if (call.Arguments.Count != 1)
             return false;
 
-        // Count/LongCount are excluded: EF doesn't wrap them in a Select since they don't need element values.
+        // Count/LongCount are excluded: EF doesn't wrap them in a Select.
         var reduceOp = QueryableMethods.IsAverageWithoutSelector(call.Method) ? "$avg"
             : call.Method.IsGenericMethod && call.Method.GetGenericMethodDefinition() == QueryableMethods.MinWithoutSelector ? "$min"
             : call.Method.IsGenericMethod && call.Method.GetGenericMethodDefinition() == QueryableMethods.MaxWithoutSelector ? "$max"
@@ -1248,7 +1104,6 @@ internal static class NativeGroupByBinder
         if (reduceOp is null)
             return false;
 
-        // The source must be g.Select(elementSelector) directly (the Distinct form is TryBindDistinctAccumulator's).
         if (Unwrap(call.Arguments[0]) is not MethodCallExpression { Method.IsGenericMethod: true } selectCall
             || selectCall.Method.GetGenericMethodDefinition() != QueryableMethods.Select
             || selectCall.Arguments.Count != 2
@@ -1267,10 +1122,7 @@ internal static class NativeGroupByBinder
         return true;
     }
 
-    /// <summary>
-    /// <c>g.Where(pred).Sum/Min/Max/Average(selector)</c>, reducing to
-    /// <c>{"$&lt;op&gt;": {"$cond": [pred, operand, "$$REMOVE"]}}</c> so non-matching elements contribute nothing.
-    /// </summary>
+    /// <summary><c>g.Where(pred).Sum/Min/Max/Average(selector)</c>, reducing to <c>{"$&lt;op&gt;": {"$cond": [pred, operand, "$$REMOVE"]}}</c> so non-matching elements contribute nothing.</summary>
     private static bool TryBindFilteredAccumulator(
         MethodCallExpression call,
         string outputField,
@@ -1281,8 +1133,7 @@ internal static class NativeGroupByBinder
         accumulator = null;
         flattenRead = null;
 
-        // g.Where(pred).Count()/LongCount() (one argument, so checked before the Arguments.Count != 2 gate) →
-        // $sum: {$cond: [pred, 1, 0]}, same as g.Count(pred).
+        // g.Where(pred).Count()/LongCount() (one argument, so checked before the Arguments.Count != 2 gate) -> $sum: {$cond: [pred, 1, 0]}, same as g.Count(pred).
         if (call.Arguments.Count == 1
             && IsCountWithoutPredicate(call.Method)
             && Unwrap(call.Arguments[0]) is MethodCallExpression
@@ -1308,7 +1159,6 @@ internal static class NativeGroupByBinder
         if (op is null)
             return false;
 
-        // The source must be g.Where(pred) (Queryable or Enumerable form).
         if (Unwrap(call.Arguments[0]) is not MethodCallExpression
             {
                 Method: { Name: nameof(Queryable.Where), DeclaringType: var whereDeclaring },
@@ -1340,7 +1190,6 @@ internal static class NativeGroupByBinder
         return true;
     }
 
-    // g.Count()/g.LongCount() with no predicate, Queryable or Enumerable form.
     private static bool IsCountWithoutPredicate(System.Reflection.MethodInfo method)
     {
         var definition = method.IsGenericMethod ? method.GetGenericMethodDefinition() : null;
@@ -1350,8 +1199,7 @@ internal static class NativeGroupByBinder
                || definition == QueryableMethods.LongCountWithoutPredicate;
     }
 
-    // The $group operator of a Sum/Average/Min/Max-with-selector call (Enumerable or Queryable form); null for any
-    // other method.
+    // The $group operator of a Sum/Average/Min/Max-with-selector call; null for any other method.
     private static string? MapSelectorAccumulatorOperator(System.Reflection.MethodInfo method)
     {
         var definition = method.IsGenericMethod ? method.GetGenericMethodDefinition() : null;
@@ -1362,19 +1210,16 @@ internal static class NativeGroupByBinder
             : null;
     }
 
-    // g.Count(pred) / g.Where(pred).Count() → $sum: {$cond: [pred, 1, 0]}.
     private static MongoGroupAccumulator CountWhereAccumulator(string outputField, MongoExpression condition)
         => new(outputField, "$sum",
             new MongoConditionalExpression(condition, new MongoConstantExpression(1, null), new MongoConstantExpression(0, null)));
 
-    // If every element fails a per-element filter, $min/$max/$avg reduce to null, read back as default(T) for a
-    // non-nullable result, while LINQ throws for an empty sequence; such a reduction declines. $sum's 0 is correct. A
-    // key-only condition is uniform across the group, so it's exempt.
+    // If every element fails a per-element filter, $min/$max/$avg reduce to null, read back as default(T) for a non-nullable result while LINQ throws: such a reduction
+    // declines ($sum's 0 is correct). A key-only condition is uniform across the group, so it's exempt.
     private static bool FilterMayEmptyNonNullableReduction(bool isKeyOnlyCondition, string? op, Type resultType)
         => !isKeyOnlyCondition && op is "$min" or "$max" or "$avg" && IsNonNullableValueType(resultType);
 
-    // True when `source` is the grouping parameter `g`, after unwrapping converts and one AsQueryable/AsEnumerable
-    // (EF emits Queryable.Count(g.AsQueryable()); the Enumerable form passes g directly).
+    // True when `source` is the grouping parameter `g`, after unwrapping converts and one AsQueryable/AsEnumerable.
     private static bool IsGroupingSource(Expression source, ParameterExpression groupingParameter)
     {
         source = Unwrap(source);
@@ -1388,21 +1233,15 @@ internal static class NativeGroupByBinder
         return source == groupingParameter;
     }
 
-    // Strip Convert/ConvertChecked wrappers (an `object`-typed member boxes its value).
     private static Expression Unwrap(Expression e)
         => e.RemoveConvert();
 
     /// <summary>
-    /// Binds <c>Count</c>/<c>LongCount</c>/<c>Any</c>/<c>All</c> applied directly to a bare <c>GroupBy(key)</c>,
-    /// e.g. <c>GroupBy(o =&gt; o.CustomerID).Count()</c> or <c>.Any(g =&gt; g.Count() &gt; 1)</c>. Finalizes the
-    /// grouping and cardinality atomically via <see cref="MongoSelectDefinition.SetGroupedTerminalAggregate"/>.
-    /// Called from <see cref="NativeCardinalityBinder.TryBindAggregate"/> before its post-terminal guard, which
-    /// would otherwise always decline (bare <c>GroupBy</c> sets <see cref="MongoSelectDefinition.IsGroupBy"/>).
+    /// Binds <c>Count</c>/<c>LongCount</c>/<c>Any</c>/<c>All</c> applied directly to a bare <c>GroupBy(key)</c> (<c>GroupBy(o =&gt; o.CustomerID).Count()</c>, <c>.Any(g =&gt; g.Count() &gt; 1)</c>),
+    /// finalizing grouping and cardinality atomically (<see cref="MongoSelectDefinition.SetGroupedTerminalAggregate"/>). Called from
+    /// <see cref="NativeCardinalityBinder.TryBindAggregate"/> before its post-terminal guard, which would otherwise always decline.
     /// </summary>
-    /// <remarks>
-    /// Only no predicate, or a single comparison of one group-level aggregate or key against a constant/parameter.
-    /// Compound predicates decline, which keeps the <c>All</c> negation exact.
-    /// </remarks>
+    /// <remarks>Only no predicate, or a single comparison of one group-level aggregate or key against a constant/parameter; compound predicates decline, keeping the <c>All</c> negation exact.</remarks>
     internal static bool TryBindGroupTerminalAggregate(
         MongoQueryExpression mongoQ, MongoAggregateOperator op, LambdaExpression? predicate, Type resultType)
     {
@@ -1410,8 +1249,7 @@ internal static class NativeGroupByBinder
         if (select.PendingGroupKey is not { } keyParts || select.Grouping != null)
             return false;
 
-        // Recorded paging (e.g. GroupBy(key).Skip(1).Count()) declines: this path has no stage to apply it, so it
-        // would aggregate over every group.
+        // Recorded paging (GroupBy(key).Skip(1).Count()) declines: this path has no stage to apply it, so it would aggregate over every group.
         if (select.PendingGroupPaging != null)
             return false;
 
@@ -1419,10 +1257,8 @@ internal static class NativeGroupByBinder
                 or MongoAggregateOperator.Any or MongoAggregateOperator.All))
             return false;
 
-        // select.PriorGrouping can be non-null here (a nested GroupBy(key1).Select(...).GroupBy(key2).Count() ends
-        // its outer GroupBy as a bare terminal aggregate, never a Select), but this site deliberately doesn't set
-        // DistinctAliasScope: pass priorGrouping: null (not CreateElementTranslator). GroupByJoinScope is only set
-        // when there is no prior grouping, so passing it here can't combine the two.
+        // select.PriorGrouping can be non-null here (a nested GroupBy(key1).Select(...).GroupBy(key2).Count() ends its outer GroupBy as a bare terminal aggregate), but this
+        // site deliberately doesn't set DistinctAliasScope: pass priorGrouping: null (not CreateElementTranslator). GroupByJoinScope is only set when there is no prior grouping.
         var translator = new MongoGroupElementTranslator(
             mongoQ.CollectionExpression.EntityType, mongoQ.Select.GroupByJoinScope, priorGrouping: null);
         var accumulators = new List<MongoGroupAccumulator>();
@@ -1432,8 +1268,7 @@ internal static class NativeGroupByBinder
 
         if (predicate != null)
         {
-            // All(pred) always arrives with its predicate; Count(pred)/Any(pred) are usually rewritten to
-            // Where(pred).Count()/.Any(), but not always, so handle both.
+            // All(pred) always arrives with its predicate; Count(pred)/Any(pred) are usually rewritten to Where(pred).Count()/.Any() but not always, so handle both.
             if (!TryBindGroupPredicateComparison(
                     predicate.Body, new GroupBindingScope(predicate.Parameters[0], keyParts, translator),
                     out accumulator, out comparisonNode))
@@ -1441,20 +1276,17 @@ internal static class NativeGroupByBinder
         }
         else if (op is MongoAggregateOperator.All)
         {
-            // All() has no parameterless overload; declined defensively.
             return false;
         }
         else if (select.PendingGroupPredicate is { } pending)
         {
-            // Count(pred)/Any(pred) normalized to Where(pred).X(): consume the comparison the Where stashed
-            // (TryBindGroupWherePredicate).
+            // Count(pred)/Any(pred) normalized to Where(pred).X(): consume the comparison the Where stashed (TryBindGroupWherePredicate).
             (accumulator, comparisonNode) = pending;
         }
 
         select.PendingGroupPredicate = null; // one-shot: consumed above, or never set for a bare terminal.
 
-        // Gate on comparisonNode, not accumulator: a key-only comparison (g.Key == "ALFKI") has no accumulator but
-        // still needs its $match, or the filter would be silently dropped.
+        // Gate on comparisonNode, not accumulator: a key-only comparison (g.Key == "ALFKI") has no accumulator but still needs its $match, or the filter would be dropped.
         if (comparisonNode != null)
         {
             if (accumulator != null)
@@ -1462,9 +1294,8 @@ internal static class NativeGroupByBinder
 
             if (op is MongoAggregateOperator.All)
             {
-                // All(pred) ≡ no group fails pred: match the exact complement; any surviving group means All is false.
-                // Not MongoExpressionNegator.TryNegate: it gates on IsQueryDialectRenderable, which this $expr-only
-                // element-ref comparison never satisfies. Negate directly with the same $eq/$ne-invert, $not-wrap rule.
+                // All(pred) = no group fails pred: match the exact complement. Not MongoExpressionNegator.TryNegate (gates on IsQueryDialectRenderable, which this $expr-only
+                // comparison never satisfies); negate directly with the same $eq/$ne-invert, $not-wrap rule.
                 if (!TryNegateGroupComparison(comparisonNode, out var negated))
                     return false;
                 matchPredicate = negated;
@@ -1483,22 +1314,15 @@ internal static class NativeGroupByBinder
         return true;
     }
 
-    /// <summary>
-    /// Recognizes a <c>Where</c> directly on a bare <c>GroupBy(key)</c> (EF's normalization of
-    /// <c>Any(pred)</c>/<c>Count(pred)</c> to <c>Where(pred).Any()</c>/<c>.Count()</c>; the parameter is an
-    /// <c>IGrouping</c>) and stashes the comparison on <see cref="MongoSelectDefinition.PendingGroupPredicate"/> for
-    /// <see cref="TryBindGroupTerminalAggregate"/>. Called from <see cref="NativeSlotPopulator.PopulateNativeSlots"/>
-    /// before the general Where arm, which would resolve members against the entity type.
-    /// </summary>
+    /// <summary>Recognizes a <c>Where</c> directly on a bare <c>GroupBy(key)</c> (EF's normalization of <c>Any(pred)</c>/<c>Count(pred)</c>; the parameter is an <c>IGrouping</c>) and stashes the comparison on <see cref="MongoSelectDefinition.PendingGroupPredicate"/> for <see cref="TryBindGroupTerminalAggregate"/>. Called before the general Where arm, which would resolve members against the entity type.</summary>
     internal static bool TryBindGroupWherePredicate(MongoQueryExpression mongoQ, LambdaExpression predicate)
     {
         var select = mongoQ.Select;
         if (select.PendingGroupKey is not { } keyParts)
             return false;
 
-        // select.PriorGrouping can be non-null here for the same nested-GroupBy reason as
-        // TryBindGroupTerminalAggregate; pass priorGrouping: null. Only stages the predicate: the join is confirmed
-        // by the TryBindGroupTerminalAggregate/TryBindGroupProjection that consumes it.
+        // select.PriorGrouping can be non-null here for the same nested-GroupBy reason as TryBindGroupTerminalAggregate; pass priorGrouping: null. Only stages the predicate: the
+        // join is confirmed by the TryBindGroupTerminalAggregate/TryBindGroupProjection that consumes it.
         var translator = new MongoGroupElementTranslator(
             mongoQ.CollectionExpression.EntityType, mongoQ.Select.GroupByJoinScope, priorGrouping: null);
 
@@ -1511,9 +1335,8 @@ internal static class NativeGroupByBinder
         return true;
     }
 
-    // Recognizes `body` as a single comparison of a group-level operand (a key access, or an accumulator bound to
-    // "__agg0") against a constant/parameter, in either order. The accumulator is null for a key comparison; the
-    // group-level operand is normalized to the left.
+    // Recognizes `body` as a single comparison of a group-level operand (a key access, or an accumulator bound to "__agg0") against a constant/parameter, in either order;
+    // the accumulator is null for a key comparison and the group-level operand is normalized to the left.
     private static bool TryBindGroupPredicateComparison(
         Expression body,
         GroupBindingScope scope,
@@ -1553,10 +1376,8 @@ internal static class NativeGroupByBinder
         return false;
     }
 
-    // One side of a group predicate comparison: a key access (reads "_id"[.Name], no accumulator) or an
-    // accumulator bound to "__agg0". A key match also returns the key part's IProperty so the caller serializes
-    // the other operand through it (BsonValue.Create throws for e.g. Guid); key parts already passed
-    // HasDefaultKeySerialization at bind time.
+    // One side of a group predicate comparison: a key access (reads "_id"[.Name], no accumulator) or an accumulator bound to "__agg0". A key match also returns the
+    // key part's IProperty so the caller serializes the other operand through it (BsonValue.Create throws for e.g. Guid); key parts already passed HasDefaultKeySerialization.
     private static bool TryBindGroupSideOperand(
         Expression side,
         GroupBindingScope scope,
@@ -1571,14 +1392,12 @@ internal static class NativeGroupByBinder
         matchedKeyPath = null;
         reference = null;
 
-        // allowWholeKeyRead: false — a whole composite key comparison (g.Key == new {...}) declines: there's no
-        // single property to serialize the anonymous constant against.
+        // allowWholeKeyRead: false: a whole composite key comparison (g.Key == new {...}) declines (no single property to serialize the anonymous constant against).
         if (TryGetKeyMemberPath(side, scope, out var keyPath, allowWholeKeyRead: false))
         {
             if (keyPath == null)
                 return false; // bare g.Key over a composite key — no single field to compare
 
-            // The scalar key's, or a composite key's matched part's, property (a zero-part key has none).
             keySerializationProperty = ResolveKeyMemberSerializationProperty(keyPath, scope);
 
             matchedKeyPath = keyPath;
@@ -1596,15 +1415,13 @@ internal static class NativeGroupByBinder
         return false;
     }
 
-    // The non-accumulator side of a group comparison: a literal or query parameter. `forSerialization` is the
-    // other side's key property, if any (see TryBindGroupSideOperand).
+    // The non-accumulator side of a group comparison: a literal or query parameter; `forSerialization` is the other side's key property, if any.
     private static bool TryTranslateComparisonConstant(
         Expression expr, IProperty? forSerialization, [NotNullWhen(true)] out MongoExpression? result)
     {
         expr = Unwrap(expr);
 
-        // A null literal renders as BSON null directly: the key property may be non-nullable (a nullable-cast key,
-        // `(decimal?)o.Total`), and its serializer throws on null.
+        // A null literal renders as BSON null directly: the key property may be non-nullable (a nullable-cast key `(decimal?)o.Total`), and its serializer throws on null.
         if (expr is ConstantExpression { Value: null })
             forSerialization = null;
 
@@ -1612,17 +1429,13 @@ internal static class NativeGroupByBinder
         return result != null;
     }
 
-    // The comparison `constant OP accumulator` is equivalent to `accumulator OP' constant` for the flipped
-    // relational operator OP' (equality/inequality are already symmetric). Callers have already matched one of the
-    // six comparison node types.
+    // `constant OP accumulator` equals `accumulator OP' constant` for the flipped relational operator (equality is symmetric); callers matched one of the six comparison node types.
     private static MongoBinaryOperator MirroredComparisonOperator(ExpressionType nodeType)
         => MongoExpressionTranslator.MapComparisonOperator(MongoExpressionTranslator.Mirror(nodeType))
            ?? throw new ArgumentOutOfRangeException(nameof(nodeType));
 
-    // Negates a group comparison (from TryBindGroupPredicateComparison, or the post-GroupBy All(pred) comparison
-    // NativeCardinalityBinder.TryBindAggregate passes). These are $expr-only, so MongoExpressionNegator.TryNegate
-    // (gated on IsQueryDialectRenderable) can't be used; apply its comparison rule: invert $eq/$ne, $not-wrap the
-    // relational operators.
+    // Negates a group comparison (from TryBindGroupPredicateComparison or NativeCardinalityBinder.TryBindAggregate's post-GroupBy All(pred)). These are $expr-only, so
+    // MongoExpressionNegator.TryNegate (gated on IsQueryDialectRenderable) can't be used; apply its rule: invert $eq/$ne, $not-wrap relational operators.
     internal static bool TryNegateGroupComparison(MongoExpression node, [NotNullWhen(true)] out MongoExpression? negated)
     {
         negated = null;
@@ -1631,34 +1444,26 @@ internal static class NativeGroupByBinder
     }
 
     /// <summary>
-    /// <c>Distinct(projection)</c>: converts the terminal <c>Select</c>'s projection into a key-only grouping and a
-    /// flatten reading each value back from <c>_id</c>. Returns <see langword="false"/> if there's no native
-    /// projection or a field key isn't default-serialized (generic <c>_id</c> readback would diverge), unless it is a
-    /// bare value-converted key (<see cref="IsBareValueConvertedDistinctKey"/>).
+    /// <c>Distinct(projection)</c>: converts the terminal <c>Select</c>'s projection into a key-only grouping plus a flatten reading each value back from <c>_id</c>.
+    /// <see langword="false"/> without a native projection or when a field key isn't default-serialized, unless a bare value-converted key (<see cref="IsBareValueConvertedDistinctKey"/>).
     /// </summary>
     internal static bool TryBindDistinctFromProjection(MongoQueryExpression mongoQ)
     {
         var select = mongoQ.Select;
-        // A string-sequence leaf (AsEnumerable/ToList/ToArray over a string) pushes down the raw string and applies
-        // the .NET call in the shaper, so a $group would dedupe the underlying strings, not the projected values.
+        // A string-sequence leaf pushes down the raw string and applies the .NET call in the shaper, so a $group would dedupe the underlying strings, not the projected values.
         if (select.HasStringSequenceProjectionLeaf)
             return false;
 
-        // An owned-array or owned-reference entity leaf forces the owner _id into the projected document (see
-        // NativeProjectionBinder), so a $group over it would dedup by owner identity rather than projected value.
-        // Same reason IsPlainProjectedSelect declines it as a set-op operand; the driver-LINQ fallback dedups by value.
+        // An owned-array or owned-reference entity leaf forces the owner _id into the projected document (NativeProjectionBinder), so a $group would dedup by owner identity;
+        // same reason IsPlainProjectedSelect declines it as a set-op operand.
         if (select.HasArrayProjectionLeaf)
             return false;
 
         // Declines:
-        // - A projected SelectMany (UnwindSource set): the lowerer's UnwindSource branch runs first and returns
-        //   early, silently dropping the $group and reading never-grouped "_id.<alias>" fields as nulls.
-        // - A projected-operand set op (OperandsProjected): Projection is operand-1's own, emitted before the set-op
-        //   stage, so converting it would corrupt that operand. Keep this narrow: a whole-entity set op's trailing
-        //   projection (e.g. Union(A,B).Select(p).Distinct()) converts safely.
-        // A bare projection is admitted: ApplyProjection's alias override also fires when IsDistinct is set, so the
-        // alias survives the Route flip. Source-side paging/ordering in PipelineOps is
-        // emitted before the $group, so it restricts the right input rows.
+        // - A projected SelectMany (UnwindSource set): the lowerer's UnwindSource branch returns early, silently dropping the $group and reading never-grouped "_id.<alias>" as nulls.
+        // - A projected-operand set op (OperandsProjected): Projection is operand-1's own, emitted before the set-op stage, so converting it would corrupt that operand. Keep
+        //   narrow: a whole-entity set op's trailing projection (Union(A,B).Select(p).Distinct()) converts safely.
+        // A bare projection is admitted (ApplyProjection's alias override also fires when IsDistinct is set). Source-side paging/ordering in PipelineOps is emitted before the $group.
         if (select.Projection.Count == 0 || select.Grouping != null || select.Cardinality != null
             || select.UnwindSource != null || select.SetOperation is { OperandsProjected: true })
             return false;
@@ -1667,27 +1472,20 @@ internal static class NativeGroupByBinder
         var flatten = new List<MongoProjection>();
         foreach (var projection in select.Projection)
         {
-            // A bare field needs the default-serialization guard (or is a bare converted key, see
-            // IsBareValueConvertedDistinctKey); a computed key part has no IProperty, so no converter can apply and it
-            // reads back from "_id.<alias>" like any computed projection member.
+            // A bare field needs the default-serialization guard (or is a bare converted key); a computed key part has no IProperty, so no converter applies.
             if (projection.Expression is MongoFieldExpression field && !HasDefaultKeySerialization(field.Property)
                 && !IsBareValueConvertedDistinctKey(select, field))
                 return false;
 
-            // A TimeOfDay leaf's milliseconds would be flattened back from "_id.<alias>" as a plain element reference,
-            // which the read side and every operator over the Distinct would take as a default-serialized TimeSpan.
+            // A TimeOfDay leaf's milliseconds would be flattened back from "_id.<alias>" as a plain element reference, taken by the read side and every operator over the Distinct as a default-serialized TimeSpan.
             if (MongoDatePartExpression.IsTimeOfDay(projection.Expression))
                 return false;
 
-            // A computed key over a non-nullable field (`x.Rank + 1`) is null when a document omits the field; the flatten
-            // is read strictly like the leaf itself (read side only: ThrowsOnMalformedNull flags nothing downstream).
-            // One that selects the field itself (`x.Rank > 1 ? -1 : x.Rank`, DefaultOnMalformedMissing) is MISSING
-            // there instead: the key part carries a missing marker (MarksMissing; a lone `$group` `_id` sub-key would
-            // answer null for MISSING) and the flatten restores MISSING from it, so a missing and a null value are two
-            // groups and read 0 and throw, as driver-LINQ (grouping on the projected document) did.
-            // A bare stored field (`x.Rank`, `(int)x.Score`, `(long)x.Rank`) classifies the same way against the type it is
-            // read back as (the selector's, recorded as Source): its key would otherwise merge a MISSING and a null value
-            // into one null group read as 0, where driver-LINQ read 0 and threw.
+            // A computed key over a non-nullable field (`x.Rank + 1`) is null when a document omits the field; the flatten is read strictly like the leaf itself (read side only:
+            // ThrowsOnMalformedNull flags nothing downstream). One that selects the field itself (`x.Rank > 1 ? -1 : x.Rank`, DefaultOnMalformedMissing) is MISSING there instead:
+            // the key part carries a missing marker (MarksMissing; a lone `$group` `_id` sub-key would answer null for MISSING) and the flatten restores MISSING from it, so missing
+            // and null are two groups and read 0 and throw, as driver-LINQ did. A bare stored field (`x.Rank`, `(int)x.Score`) classifies the same way against the type it is read
+            // back as (the selector's, recorded as Source), else its key would merge MISSING and null into one null group read as 0.
             var malformedRead = projection.ThrowsOnMalformedNull
                 ? NonNullableValueRead.ThrowOnMalformedNull
                 : projection.Expression is MongoFieldExpression or MongoOuterFieldExpression
@@ -1696,8 +1494,7 @@ internal static class NativeGroupByBinder
                     : MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(projection.Expression.Type, projection.Expression);
             var marksMissing = malformedRead == NonNullableValueRead.DefaultOnMalformedMissing || projection.DefaultsOnMalformedMissing;
 
-            // ThrowsOnNull carries over to both: the deduped value is the same possibly-null value, read back from
-            // "_id.<alias>" by the flatten, and by operators over the Distinct through the key part (DistinctAliasScope).
+            // ThrowsOnNull carries over: the deduped value is the same possibly-null value, read back from "_id.<alias>" by the flatten and by operators over the Distinct (DistinctAliasScope).
             keyParts.Add(new MongoGroupingKeyPart(projection.Alias, projection.Expression, projection.ThrowsOnNull, marksMissing));
             var keyRef = new MongoElementRefExpression("_id." + projection.Alias, projection.Expression.Type);
             flatten.Add(new MongoProjection(projection.Alias,
@@ -1715,9 +1512,8 @@ internal static class NativeGroupByBinder
 
         select.ClearProjections();
         select.Grouping = new MongoGrouping(keyParts, []);
-        // IsDistinct (not IsGroupBy) so the post-group guards keyed on IsGroupBy || IsDistinct apply, while
-        // Distinct+Join stays a graceful fallback (GroupBy+Join hard-declines: driver-LINQ returns empty joins). See
-        // MongoSelectDefinition.IsDistinct and TranslateJoinCore.
+        // IsDistinct (not IsGroupBy) so the post-group guards keyed on IsGroupBy || IsDistinct apply, while Distinct+Join stays a graceful fallback (GroupBy+Join
+        // hard-declines: driver-LINQ returns empty joins). See MongoSelectDefinition.IsDistinct and TranslateJoinCore.
         select.IsDistinct = true;
         foreach (var f in flatten)
             select.AddProjection(f);
@@ -1725,41 +1521,26 @@ internal static class NativeGroupByBinder
     }
 
     /// <summary>
-    /// Whether <paramref name="field"/>, a non-default-serialized key part of a projected <c>Distinct()</c>, can still
-    /// go native: the projection is a bare field (<c>Select(o =&gt; o.Status).Distinct()</c>, not a wrapper such as
-    /// <c>new { o.Status }</c>) and the property has a value converter but no <c>BsonRepresentation</c>.
+    /// Whether <paramref name="field"/>, a non-default-serialized key part of a projected <c>Distinct()</c>, can still go native: the projection is a bare field
+    /// (<c>Select(o =&gt; o.Status).Distinct()</c>, not a wrapper such as <c>new { o.Status }</c>) and the property has a value converter but no <c>BsonRepresentation</c>.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// The <c>$group</c> dedups the stored (provider) values, exactly as driver-LINQ's Distinct does. The distinct value
-    /// is flattened back under the bare projection's alias, and the shaper reads it through the property's own
-    /// serializer (its <c>ProjectionMapping</c> leaf is still the <c>o.Status</c> member, resolved by
-    /// <c>TryResolveFieldAccess</c>), so the converter applies. Downstream the sole key part stays a
-    /// <see cref="MongoFieldExpression"/> over the property (see <c>MongoExpressionTranslator.TryResolveMember</c>'s
-    /// bare-parameter arm), so comparisons serialize their constant/parameter through the converter, and ordering and
-    /// relational comparisons act on the stored value, as they do for the same property in an ordinary native
-    /// <c>Where</c>/<c>OrderBy</c> and on driver-LINQ. Operators that can't honour a converter decline through their
-    /// existing guards (<c>MongoExpressionTranslator.AllFieldsDefaultSerialized</c>; the selector-less aggregates in
-    /// <see cref="TryBindDistinctTerminalAggregate"/>).
-    /// </para>
-    /// <para>
-    /// Both remaining conjuncts limit scope rather than fix a known wrong result: a wrapper projection
-    /// (<c>new { o.Status }</c>, whose member-level post-Distinct consumers haven't been audited for converters) and a
+    /// The <c>$group</c> dedups the stored (provider) values, as driver-LINQ's Distinct does; the value is flattened back under the bare projection's alias and read through
+    /// the property's own serializer (its <c>ProjectionMapping</c> leaf is still the <c>o.Status</c> member, resolved by <c>TryResolveFieldAccess</c>), so the converter applies.
+    /// Downstream the sole key part stays a <see cref="MongoFieldExpression"/> over the property (<c>MongoExpressionTranslator.TryResolveMember</c>'s bare-parameter arm), so
+    /// comparisons serialize through the converter and ordering/relational comparisons act on the stored value, as in an ordinary native <c>Where</c>/<c>OrderBy</c>. Operators
+    /// that can't honour a converter decline through existing guards (<c>AllFieldsDefaultSerialized</c>; the selector-less aggregates in <see cref="TryBindDistinctTerminalAggregate"/>).
+    /// The other conjuncts limit scope rather than fix a known wrong result: a wrapper projection (member-level post-Distinct consumers unaudited for converters) and a
     /// <c>BsonRepresentation</c> key stay on the fallback.
-    /// </para>
     /// </remarks>
     private static bool IsBareValueConvertedDistinctKey(MongoSelectDefinition select, MongoFieldExpression field)
         => select.IsBareProjection && field.Property.GetBsonRepresentation() == null;
 
     /// <summary>
-    /// Resolves an <c>OrderBy</c>/<c>ThenBy</c> key after a projected <c>Distinct()</c> against the Distinct's key
-    /// part aliases, not the entity: <c>Select(o => new { Country = o.City }).Distinct()</c> names a member
-    /// "Country" sourced from <c>City</c>, so resolving by entity property name would silently sort by the wrong
-    /// field. Accepts only the identity selector (bare-scalar Distinct) or a single-hop member on the selector's
-    /// own parameter (by identity) naming a key part; field-backed parts resolve as a field, computed ones as a
-    /// <see cref="MongoElementRefExpression"/> on their alias. Anything else declines, so
-    /// <c>NativeSlotPopulator.PopulateSortSlot</c> falls through to the
-    /// <see cref="MongoExpressionTranslator.DistinctAliasScope"/>-scoped translator (needed for computed keys).
+    /// Resolves an <c>OrderBy</c>/<c>ThenBy</c> key after a projected <c>Distinct()</c> against the Distinct's key part aliases, not the entity:
+    /// <c>Select(o => new { Country = o.City }).Distinct()</c> names a member "Country" sourced from <c>City</c>, so resolving by entity property name would sort by the wrong
+    /// field. Accepts only the identity selector or a single-hop member on the selector's own parameter naming a key part (field-backed as a field, computed as a
+    /// <see cref="MongoElementRefExpression"/> on its alias); anything else declines so <c>PopulateSortSlot</c> falls through to the <see cref="MongoExpressionTranslator.DistinctAliasScope"/>-scoped translator.
     /// </summary>
     internal static bool TryResolveDistinctOrderingKey(
         MongoGrouping grouping, ParameterExpression selfParam, Expression keySelectorBody,
@@ -1797,14 +1578,9 @@ internal static class NativeGroupByBinder
     }
 
     /// <summary>
-    /// A selector-less Sum/Min/Max/Average directly on a bare-scalar projected <c>Distinct()</c>, e.g.
-    /// <c>Select(o => o.OrderID).Distinct().Max()</c>. The operand is the degenerate group's sole key part's
-    /// flattened alias.
+    /// A selector-less Sum/Min/Max/Average directly on a bare-scalar projected <c>Distinct()</c> (<c>Select(o => o.OrderID).Distinct().Max()</c>); the operand is the degenerate
+    /// group's sole key part's flattened alias. <c>Count()</c>/<c>LongCount()</c> are excluded: they're also reachable over multi-member projected Distincts, which stay on fallback.
     /// </summary>
-    /// <remarks>
-    /// <c>Count()</c>/<c>LongCount()</c> are excluded: they're also reachable over multi-member projected Distincts,
-    /// which stay on the fallback path.
-    /// </remarks>
     internal static bool TryBindDistinctTerminalAggregate(
         MongoQueryExpression mongoQ, MongoAggregateOperator op, LambdaExpression? selector, Type resultType)
     {
@@ -1820,20 +1596,17 @@ internal static class NativeGroupByBinder
         if (keyPart.Name == null)
             return false; // no flattened alias to read back (not reachable via TryBindDistinctFromProjection today)
 
-        // A selector would reduce some other value than the one Distinct flattened; decline.
         if (selector != null)
             return false;
 
-        // A value-converted key (admitted by IsBareValueConvertedDistinctKey) would reduce the stored values and read
-        // the result back through a generic CLR serializer: Max over an enum stored as a string throws, Average over an
-        // int stored as a string answers 0. The ungrouped Select(o => o.X).Max() declines the same operand.
+        // A value-converted key (admitted by IsBareValueConvertedDistinctKey) would reduce the stored values and read the result back through a generic CLR serializer: Max over an
+        // enum stored as a string throws, Average over an int stored as a string answers 0. The ungrouped Select(o => o.X).Max() declines the same operand.
         if (keyPart.FieldRef is MongoFieldExpression keyField && !HasDefaultKeySerialization(keyField.Property))
             return false;
 
         var operand = new MongoElementRefExpression(keyPart.Name, keyPart.FieldRef.Type, throwsOnNull: keyPart.ThrowsOnNull);
 
-        // A non-nullable Min/Max/Average over a null-propagated key reduces an all-null input to null, read back as 0
-        // where EF throws; as in NativeCardinalityBinder.TryBindAggregate. Sum skips a null, as EF's SUM does.
+        // A non-nullable Min/Max/Average over a null-propagated key reduces an all-null input to null, read back as 0 where EF throws (as in TryBindAggregate); Sum skips a null.
         if (op is not MongoAggregateOperator.Sum && MongoAggregationExpressionRenderer.ReadsNullAsDefault(resultType, operand))
             return false;
 

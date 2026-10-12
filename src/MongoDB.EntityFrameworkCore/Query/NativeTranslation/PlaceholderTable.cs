@@ -28,19 +28,14 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// </summary>
 internal sealed class PlaceholderTable
 {
-    /// <summary>
-    /// The key of a placeholder sentinel document, <c>{ __mongoef_param__: &lt;index&gt; }</c>.
-    /// </summary>
+    /// <summary>The key of a placeholder sentinel document, <c>{ __mongoef_param__: &lt;index&gt; }</c>.</summary>
     /// <remarks>
-    /// Must never start with <c>'$'</c>: <see cref="MongoQueryLanguageRenderer.RenderUnary"/>'s <c>!(x == value)</c>
-    /// arm treats a <see cref="BsonDocument"/> whose first key starts with <c>'$'</c> as an operator document, and a
-    /// sentinel must be treated as a bare value.
+    /// Must never start with <c>'$'</c>: <see cref="MongoQueryLanguageRenderer.RenderUnary"/>'s <c>!(x == value)</c> arm treats a
+    /// document whose first key starts with <c>'$'</c> as an operator document, and a sentinel must be a bare value.
     /// </remarks>
     internal const string SentinelKey = "__mongoef_param__";
 
-    /// <summary>
-    /// One recorded parameter site: what <c>MongoPipelineFactory.Build</c> needs to substitute its value per execution.
-    /// </summary>
+    /// <summary>One recorded parameter site, substituted per execution by <c>MongoPipelineFactory.Build</c>.</summary>
     internal readonly record struct Entry(
         string Name,
         IBsonSerializer? Serializer,
@@ -53,66 +48,50 @@ internal sealed class PlaceholderTable
 
     private readonly List<Entry> _entries = [];
 
-    /// <summary>
-    /// A read-only view of all accumulated placeholder entries, in insertion order.
-    /// </summary>
+    /// <summary>All accumulated placeholder entries, in insertion order.</summary>
     public IReadOnlyList<Entry> Entries => _entries;
 
     private Dictionary<string, Func<IReadOnlyDictionary<string, object?>, object?>>? _runtimeEvaluators;
 
     /// <summary>
-    /// Evaluators for runtime-computed parameters (<see cref="Expressions.MongoParameterExpression.RuntimeEvaluator"/>),
-    /// keyed by parameter name; <see langword="null"/> when there are none.
-    /// <see cref="MongoPipelineFactory"/> evaluates each once per Build, before substitution.
+    /// Evaluators for runtime-computed parameters (<see cref="Expressions.MongoParameterExpression.RuntimeEvaluator"/>) by parameter
+    /// name, or <see langword="null"/>; <see cref="MongoPipelineFactory"/> runs each once per Build, before substitution.
     /// </summary>
     public IReadOnlyDictionary<string, Func<IReadOnlyDictionary<string, object?>, object?>>? RuntimeEvaluators
         => _runtimeEvaluators;
 
-    /// <summary>
-    /// Records the evaluator computing <paramref name="parameterName"/>'s value per execution. Idempotent: the same
-    /// parameter node may be rendered more than once (e.g. by a trial render).
-    /// </summary>
+    /// <summary>Records the evaluator for <paramref name="parameterName"/>. Idempotent: a parameter node may be rendered more than once (trial render).</summary>
     public void RegisterRuntimeEvaluator(string parameterName, Func<IReadOnlyDictionary<string, object?>, object?> evaluator)
         => (_runtimeEvaluators ??= new Dictionary<string, Func<IReadOnlyDictionary<string, object?>, object?>>())[parameterName]
             = evaluator;
 
     /// <summary>
-    /// Appends a value placeholder and returns its sentinel.
+    /// Appends a value placeholder and returns its sentinel. <paramref name="serializer"/> is <see langword="null"/> for
+    /// property-less primitives (Skip/Take counts), serialized via <c>BsonValue.Create</c>.
     /// </summary>
-    /// <param name="parameterName">The EF query-parameter name (e.g. <c>__p_0</c>).</param>
-    /// <param name="serializer">
-    /// The value's serializer, or <see langword="null"/> for property-less primitives (e.g. Skip/Take counts)
-    /// serialized via <c>BsonValue.Create</c>.
-    /// </param>
-    /// <returns>A sentinel <c>{ __mongoef_param__: &lt;index&gt; }</c>, the index into <see cref="Entries"/>.</returns>
     public BsonValue CreatePlaceholder(string parameterName, IBsonSerializer? serializer)
     {
         return Add(new Entry(parameterName, serializer, false, null, null, null, false));
     }
 
     /// <summary>
-    /// Appends a placeholder whose parameter is a whole entity (the <c>local</c> in <c>c == local</c>); at
-    /// <see cref="MongoPipelineFactory.Build(IReadOnlyDictionary{string, object})"/> time the key is read from it via
-    /// <paramref name="entityMemberProperty"/>'s getter before serializing.
+    /// Appends a placeholder for a whole-entity parameter (the <c>local</c> in <c>c == local</c>); at Build time the key is read
+    /// from it via <paramref name="entityMemberProperty"/>'s getter before serializing.
     /// </summary>
     public BsonValue CreateEntityMemberPlaceholder(string parameterName, IProperty entityMemberProperty, IBsonSerializer serializer)
     {
         return Add(new Entry(parameterName, serializer, false, null, entityMemberProperty, null, false));
     }
 
-    /// <summary>
-    /// Appends a placeholder for a parameterized collection (e.g. the values of <c>$in</c>/<c>$nin</c>);
-    /// <paramref name="elementSerializer"/> serializes each element.
-    /// </summary>
+    /// <summary>Appends a placeholder for a parameterized collection (<c>$in</c>/<c>$nin</c> values); <paramref name="elementSerializer"/> serializes each element.</summary>
     public BsonValue CreateArrayPlaceholder(string parameterName, IBsonSerializer elementSerializer)
     {
         return Add(new Entry(parameterName, elementSerializer, true, null, null, null, false));
     }
 
     /// <summary>
-    /// Per-element analog of <see cref="CreateEntityMemberPlaceholder"/> for an entity-list <c>Contains</c>
-    /// (<c>customers.Contains(c)</c>): the key is extracted from each non-null entity; null elements pass through as
-    /// BSON null.
+    /// Per-element analog of <see cref="CreateEntityMemberPlaceholder"/> for an entity-list <c>Contains</c>: the key is taken
+    /// from each non-null entity; null elements pass through as BSON null.
     /// </summary>
     public BsonValue CreateEntityKeyArrayPlaceholder(string parameterName, IProperty entityMemberProperty, IBsonSerializer elementSerializer)
     {
@@ -120,40 +99,30 @@ internal sealed class PlaceholderTable
     }
 
     /// <summary>
-    /// Appends a placeholder for a composite-key entity-list <c>Contains</c>: at
-    /// <see cref="MongoPipelineFactory.Build(IReadOnlyDictionary{string, object})"/> time the entity list is turned into
-    /// the <c>$or</c>/<c>$nor</c> clause array by <see cref="CompositeKeyClauses.Build"/>, so the template doesn't depend
-    /// on the list's length.
+    /// Appends a placeholder for a composite-key entity-list <c>Contains</c>; at Build time <see cref="CompositeKeyClauses.Build"/>
+    /// turns the list into the <c>$or</c>/<c>$nor</c> clause array, so the template doesn't depend on the list's length.
     /// </summary>
     public BsonValue CreateCompositeKeyArrayPlaceholder(string parameterName, IReadOnlyList<IProperty> keyProperties)
     {
         return Add(new Entry(parameterName, null, true, null, null, null, false, keyProperties));
     }
 
-    /// <summary>
-    /// Appends a placeholder that extracts one element, at a constant index, from an array parameter (e.g.
-    /// <c>args[0]</c> in a compiled query taking <c>args</c>), per execution, before serializing.
-    /// </summary>
+    /// <summary>Appends a placeholder extracting one element, at a constant index, from an array parameter (<c>args[0]</c>) per execution.</summary>
     public BsonValue CreateArrayElementPlaceholder(string parameterName, int elementIndex, IBsonSerializer? serializer)
     {
         return Add(new Entry(parameterName, serializer, false, null, null, elementIndex, false));
     }
 
     /// <summary>
-    /// Appends a placeholder for a parameterized <c>StartsWith</c>/<c>EndsWith</c>/<c>Contains</c> term. At
-    /// <see cref="MongoPipelineFactory.Build(IReadOnlyDictionary{string, object})"/> time the string is escaped and
-    /// anchored via <see cref="MongoRegexPatternBuilder.BuildPattern"/> into a <see cref="BsonRegularExpression"/>,
-    /// as <see cref="MongoQueryLanguageRenderer.RenderRegex"/> does for a constant term.
+    /// Appends a placeholder for a parameterized <c>StartsWith</c>/<c>EndsWith</c>/<c>Contains</c> term; at Build time the string
+    /// is escaped and anchored via <see cref="MongoRegexPatternBuilder.BuildPattern"/> into a <see cref="BsonRegularExpression"/>,
+    /// as <see cref="MongoQueryLanguageRenderer.RenderRegex"/> does for a constant. <paramref name="caseInsensitive"/> emits options <c>"is"</c> instead of <c>"s"</c>.
     /// </summary>
-    /// <param name="parameterName">The EF query-parameter name.</param>
-    /// <param name="kind">Whether the term is a <c>StartsWith</c>/<c>EndsWith</c>/<c>Contains</c> test.</param>
-    /// <param name="caseInsensitive">Emit options <c>"is"</c> instead of <c>"s"</c>.</param>
     public BsonValue CreateRegexPlaceholder(string parameterName, MongoRegexKind kind, bool caseInsensitive = false)
     {
         return Add(new Entry(parameterName, null, false, kind, null, null, caseInsensitive));
     }
 
-    // Records the entry and returns its sentinel, whose index is the entry's position in Entries.
     private BsonValue Add(Entry entry)
     {
         var index = _entries.Count;
@@ -161,18 +130,7 @@ internal sealed class PlaceholderTable
         return new BsonDocument(SentinelKey, new BsonInt32(index));
     }
 
-    /// <summary>
-    /// Determines whether <paramref name="value"/> is a placeholder sentinel, and if so
-    /// extracts the zero-based <paramref name="index"/> it encodes.
-    /// </summary>
-    /// <param name="value">The <see cref="BsonValue"/> to inspect.</param>
-    /// <param name="index">
-    /// When this method returns <see langword="true"/>, the zero-based placeholder index.
-    /// </param>
-    /// <returns>
-    /// <see langword="true"/> if <paramref name="value"/> is a sentinel document produced
-    /// by <see cref="CreatePlaceholder"/>; otherwise <see langword="false"/>.
-    /// </returns>
+    /// <summary>Whether <paramref name="value"/> is a sentinel produced by <see cref="CreatePlaceholder"/>; if so, its zero-based <paramref name="index"/>.</summary>
     public static bool TryGetPlaceholderIndex(BsonValue value, out int index)
     {
         index = 0;

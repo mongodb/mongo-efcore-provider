@@ -26,15 +26,13 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// <c>$match</c> wrapper), wrapping only subtrees with no query-dialect form in <c>$expr</c>.
 /// </summary>
 /// <remarks>
-/// Pure BSON emission: all parity guards were applied by <see cref="MongoExpressionTranslator"/>. Constants are
-/// serialized inline via the node's <see cref="IProperty"/>; parameters become <see cref="PlaceholderTable"/>
-/// sentinels substituted per execution by <c>MongoPipelineFactory.Build</c>.
+/// Pure BSON emission: all parity guards were applied by <see cref="MongoExpressionTranslator"/>. Parameters become
+/// <see cref="PlaceholderTable"/> sentinels substituted per execution by <c>MongoPipelineFactory.Build</c>.
 /// </remarks>
 internal sealed class MongoQueryLanguageRenderer
 {
     /// <summary>
-    /// Renders a bool-typed <paramref name="predicate"/> to a <c>$match</c> filter body, recording parameter
-    /// sites in <paramref name="placeholders"/>.
+    /// Renders a bool-typed <paramref name="predicate"/> to a <c>$match</c> filter body.
     /// </summary>
     public BsonValue Render(MongoExpression predicate, PlaceholderTable placeholders)
         => RenderNode(predicate, placeholders);
@@ -64,8 +62,8 @@ internal sealed class MongoQueryLanguageRenderer
             MongoRegexExpression regex when IsQueryDialectRegex(regex)
                 => RenderRegex(regex, placeholders),
             MongoElemMatchExpression elemMatch => RenderElemMatch(elemMatch, placeholders),
-            // Literal bool root: `true` is an empty (match-all) body; `false` uses the impossible-$type idiom
-            // (as MongoPipelineFactory's $limit:0 rewrite does), which unlike $expr: false is legal in $elemMatch.
+            // Literal bool root: `true` is match-all; `false` uses the impossible-$type idiom (as the $limit:0 rewrite
+            // does), since $expr: false is illegal in $elemMatch.
             MongoConstantExpression { Value: bool boolValue } => boolValue
                 ? new BsonDocument()
                 : AlwaysFalseFilter(),
@@ -73,24 +71,19 @@ internal sealed class MongoQueryLanguageRenderer
         };
 
     /// <summary>
-    /// The always-false filter body <c>{ _id: { $type: -1 } }</c> (an impossible <c>$type</c>). Legal anywhere a
-    /// query-dialect filter is, including inside <c>$elemMatch</c> where <c>$expr: false</c> is not.
+    /// The always-false filter <c>{ _id: { $type: -1 } }</c>; legal inside <c>$elemMatch</c>, where <c>$expr: false</c> is not.
     /// </summary>
     internal static BsonDocument AlwaysFalseFilter()
         => new("_id", new BsonDocument("$type", -1));
 
     /// <summary>
-    /// Whether a <see cref="MongoRegexExpression"/> has the query-dialect <c>{ path: /re/ }</c> form. The single
-    /// predicate behind both <see cref="RenderNode"/>'s regex arm and <see cref="IsQueryDialectRenderable"/>, so
-    /// the two cannot drift. Requires:
+    /// Whether a <see cref="MongoRegexExpression"/> has the query-dialect <c>{ path: /re/ }</c> form; shared by
+    /// <see cref="RenderNode"/> and <see cref="IsQueryDialectRenderable"/> so they cannot drift. Requires:
     /// <list type="bullet">
-    /// <item>a literal term (constant string or parameter): <c>$regularExpression</c> needs a literal pattern, so a
-    /// field-to-field term goes to <c>$expr</c>;</item>
+    /// <item>a literal term (constant string or parameter), since <c>$regularExpression</c> needs a literal pattern;</item>
     /// <item>a <see cref="MongoFieldExpression"/> or <see cref="MongoElementRefExpression"/> receiver: a computed
-    /// receiver (<c>(c.A + "").Contains("1")</c>) has no document path, and <c>{ path: /re/ }</c> over a bogus path
-    /// silently matches nothing;</item>
-    /// <item>not <see cref="MongoRegexKind.IsMatch"/>: its Field is the pattern, not the tested value, so
-    /// <see cref="RenderRegex"/> would be backwards.</item>
+    /// receiver has no document path, and <c>{ path: /re/ }</c> over a bogus path silently matches nothing;</item>
+    /// <item>not <see cref="MongoRegexKind.IsMatch"/>, whose Field is the pattern, not the tested value.</item>
     /// </list>
     /// </summary>
     internal static bool IsQueryDialectRegex(MongoRegexExpression regex)
@@ -100,14 +93,11 @@ internal sealed class MongoQueryLanguageRenderer
             Field: MongoFieldExpression or MongoElementRefExpression,
             Term: MongoConstantExpression { Value: string } or MongoParameterExpression
         }
-        // A Pattern with a parameter/field pattern (EF-247) needs $regexMatch: $regularExpression requires a literal.
+        // A Pattern with a parameter/field pattern (EF-247) needs $regexMatch.
         && (regex.Kind != MongoRegexKind.Pattern || regex.Term is MongoConstantExpression);
 
-    // Query-native classification: bare field on the left, constant/parameter on the right. Field-to-field
-    // and arithmetic operands have no query-dialect form and go to $expr.
-
-    // Shared with MongoExpressionNegator, which must decline any comparison this rejects (no query-dialect
-    // complement exists).
+    // Bare field on the left, constant/parameter on the right; anything else goes to $expr. Shared with
+    // MongoExpressionNegator, which must decline any comparison this rejects.
     internal static bool IsQueryNativeComparison(MongoBinaryExpression b)
         => b.Left is MongoFieldExpression or MongoDictionaryEntryExpression
            && b.Right is MongoConstantExpression or MongoParameterExpression;
@@ -117,8 +107,7 @@ internal sealed class MongoQueryLanguageRenderer
 
     private BsonDocument RenderComparison(MongoBinaryExpression binary, PlaceholderTable placeholders)
     {
-        // MongoExpressionTranslator always places the MongoFieldExpression (or dictionary entry) on the Left
-        // with the operator already mirrored when necessary (see TranslateComparison).
+        // The translator always puts the field (or dictionary entry) on the Left, mirroring the operator if needed.
         var elementName = binary.Left switch
         {
             MongoFieldExpression field => field.ElementName,
@@ -145,9 +134,8 @@ internal sealed class MongoQueryLanguageRenderer
             : new BsonDocument(elementName, new BsonDocument(op, value));
     }
 
-    // { path: { $exists: b } } for presence; { path: null } / { path: { $ne: null } } for null-or-missing. The null forms also
-    // match an array that CONTAINS null, so over a path that may hold an array they have no exact query-dialect form and
-    // render through $expr instead (IsQueryDialectPresence).
+    // The null forms ({ path: null } / { path: { $ne: null } }) also match an array that CONTAINS null, so over a path
+    // that may hold an array they render through $expr instead.
     private static bool IsQueryDialectPresence(MongoFieldPresenceExpression presence)
         => !(presence.TestsNull && presence.PathMayBeArray);
 
@@ -173,18 +161,12 @@ internal sealed class MongoQueryLanguageRenderer
                 _ => throw new NativeTranslationNotSupportedException("Unsupported composite-key $in values node.")
             });
 
-    /// <summary>
-    /// Renders a reference-Include null check as <c>{ alias: null }</c> / <c>{ alias: { $ne: null } }</c> on the
-    /// <c>$lookup</c> alias; correct because <c>preserveNullAndEmptyArrays</c> leaves an explicit null on no match.
-    /// </summary>
+    // Correct because preserveNullAndEmptyArrays leaves an explicit null on the $lookup alias when nothing matches.
     private static BsonDocument RenderLookupNullCheck(MongoLookupNullCheckExpression node)
         => node.IsNotNull
             ? new BsonDocument(node.LookupAlias, new BsonDocument("$ne", BsonNull.Value))
             : new BsonDocument(node.LookupAlias, BsonNull.Value);
 
-    /// <summary>
-    /// Renders <c>{ field: { $type: "number" } }</c>; see <see cref="MongoNumericTypeBracketExpression"/>.
-    /// </summary>
     private static BsonDocument RenderNumericTypeBracket(MongoNumericTypeBracketExpression bracket)
         => new BsonDocument(bracket.Field.ElementName, new BsonDocument("$type", "number"));
 
@@ -194,16 +176,14 @@ internal sealed class MongoQueryLanguageRenderer
             throw new NativeTranslationNotSupportedException(
                 $"Unsupported unary operator '{unary.Operator}'.");
 
-        // !<query-native comparison> → { field: { $not: { <op>: value } } }. $not is the exact complement,
-        // including missing/null fields, which is why the negator $not-wraps relational operators instead of
-        // inverting them.
+        // $not is the exact complement including missing/null, which is why the negator $not-wraps relational
+        // operators instead of inverting them.
         if (unary.Operand is MongoBinaryExpression comparison && IsQueryNativeComparison(comparison))
         {
             var element = RenderComparison(comparison, placeholders).GetElement(0);
 
-            // Equal renders as a bare value (including the non-'$' parameter sentinel — see
-            // PlaceholderTable.SentinelKey), which must be wrapped in $eq: { $not: <bareValue> } is a server
-            // error, reachable via !(x.A == 1).
+            // Equal renders as a bare value (including the non-'$' parameter sentinel, see
+            // PlaceholderTable.SentinelKey), which must be wrapped in $eq: { $not: <bareValue> } is a server error.
             var body = element.Value is BsonDocument candidate
                 && candidate.ElementCount > 0
                 && candidate.GetElement(0).Name.StartsWith('$')
@@ -215,10 +195,9 @@ internal sealed class MongoQueryLanguageRenderer
 
         if (unary.Operand is not MongoFieldExpression field)
         {
-            // No query-dialect form (field-to-field, arithmetic, $in, ...): delegate to $expr, since RenderNode
-            // matches Not explicitly and it never reaches the catch-all. CanRender is called on the operand, not
-            // the Not, so its truthiness guard must be repeated here: a non-default-serialized bool would
-            // otherwise be truthiness-tested and answer wrongly.
+            // No query-dialect form: delegate to $expr (RenderNode matches Not explicitly, so it never reaches the
+            // catch-all). CanRender checks the operand, not the Not, so the truthiness guard is repeated here: a
+            // non-default-serialized bool would otherwise be truthiness-tested wrongly.
             if (MongoAggregationExpressionRenderer.CanRender(unary.Operand)
                 && !MongoExpressionTranslator.IsUnsafeTruthinessRoot(unary.Operand, out _))
             {
@@ -231,7 +210,7 @@ internal sealed class MongoQueryLanguageRenderer
                 + "or a subtree the aggregation-expression renderer can express.");
         }
 
-        // !boolProperty → { field: { $ne: true } }; matches driver-LINQ and missing/null-field semantics.
+        // !boolProperty -> { field: { $ne: true } }; matches driver-LINQ and missing/null-field semantics.
         var trueValue = MongoValueRenderer.RenderValue(
             new MongoConstantExpression(true, field.Property), placeholders);
         return new BsonDocument(field.ElementName, new BsonDocument("$ne", trueValue));
@@ -251,10 +230,8 @@ internal sealed class MongoQueryLanguageRenderer
         return new BsonDocument(inExpr.Field.ElementName, new BsonDocument(op, array));
     }
 
-    /// <summary>
-    /// Renders <c>arrayField.Contains(value)</c> as the implicit element match <c>{ field: value }</c>; negation
-    /// uses <c>$ne</c>, the exact complement including missing/null.
-    /// </summary>
+    // arrayField.Contains(value) is the implicit element match { field: value }; negation uses $ne, the exact
+    // complement including missing/null.
     private BsonDocument RenderArrayContains(MongoArrayContainsExpression contains, PlaceholderTable placeholders)
     {
         var value = MongoValueRenderer.RenderValue(contains.Value, placeholders);
@@ -263,11 +240,8 @@ internal sealed class MongoQueryLanguageRenderer
             : new BsonDocument(contains.Field.ElementName, value);
     }
 
-    /// <summary>
-    /// Renders a <see cref="MongoRegexExpression"/> to <c>{ field: /pattern/s }</c> (negated via <c>$not</c>),
-    /// matching driver-LINQ. A constant term is baked into the pattern now; a parameter becomes a regex
-    /// placeholder (<see cref="PlaceholderTable.CreateRegexPlaceholder"/>) resolved per execution.
-    /// </summary>
+    // { field: /pattern/s } (negated via $not), matching driver-LINQ. A parameter term becomes a regex placeholder
+    // resolved per execution.
     private BsonDocument RenderRegex(MongoRegexExpression regex, PlaceholderTable placeholders)
     {
         BsonValue body;
@@ -301,11 +275,8 @@ internal sealed class MongoQueryLanguageRenderer
             : new BsonDocument(fieldPath, body);
     }
 
-    /// <summary>
-    /// The path <see cref="RenderRegex"/> matches: a field's element name, or a
-    /// <see cref="MongoElementRefExpression"/> path (a projected <c>Distinct()</c>'s computed alias). Any other
-    /// shape is an invariant violation, not a shape to decline.
-    /// </summary>
+    // A field's element name, or a MongoElementRefExpression path (a projected Distinct()'s computed alias). Any other
+    // shape is an invariant violation, not a shape to decline.
     private static string GetRegexFieldPath(MongoExpression field)
         => field switch
         {
@@ -315,11 +286,8 @@ internal sealed class MongoQueryLanguageRenderer
                 $"Unsupported regex field expression: {field.GetType().Name}.")
         };
 
-    /// <summary>
-    /// Renders <c>{ path: { $elemMatch: child } }</c> (negated via <c>$not</c>). Child field names stay
-    /// element-relative, and all conditions merge into one document so they hold for the same element. The
-    /// translator gates construction on <see cref="IsQueryDialectRenderable"/>, since <c>$expr</c> is illegal here.
-    /// </summary>
+    // { path: { $elemMatch: child } } (negated via $not). Child field names stay element-relative. The translator
+    // gates construction on IsQueryDialectRenderable, since $expr is illegal here.
     private BsonDocument RenderElemMatch(MongoElemMatchExpression elemMatch, PlaceholderTable placeholders)
     {
         var body = new BsonDocument(
@@ -332,14 +300,12 @@ internal sealed class MongoQueryLanguageRenderer
 
     /// <summary>
     /// Renders an array-count comparison against an integer constant as an array-index existence test, or
-    /// returns <see langword="null"/> (parameterized, degenerate, or non-integral threshold) so it falls to
-    /// <c>$expr</c>, which is still correct, just unindexed.
+    /// <see langword="null"/> (parameterized, degenerate or non-integral threshold) to fall to <c>$expr</c>.
     /// </summary>
     /// <remarks>
-    /// <c>{"path.k": {$exists: true}}</c> holds iff the array has more than <c>k</c> elements; <c>==</c>/<c>!=</c>
-    /// combine two such tests. Not query-dialect <c>$size</c>: it is unindexable and <c>{$size: 0}</c> misses a
-    /// missing/null array, where LINQ <c>Count == 0</c> is true. <see cref="IsQueryDialectRenderable"/> calls
-    /// this method so the classifier and renderer cannot drift.
+    /// <c>{"path.k": {$exists: true}}</c> holds iff the array has more than <c>k</c> elements. Not <c>$size</c>: it is
+    /// unindexable and <c>{$size: 0}</c> misses a missing/null array, where LINQ <c>Count == 0</c> is true.
+    /// <see cref="IsQueryDialectRenderable"/> calls this method so classifier and renderer cannot drift.
     /// </remarks>
     private static BsonDocument? TryRenderSizeComparison(MongoBinaryExpression binary)
     {
@@ -350,18 +316,16 @@ internal sealed class MongoQueryLanguageRenderer
             return null;
         }
 
-        // MoreThan(k) ⇔ count >= k + 1;  AtMost(k) ⇔ count <= k.
+        // MoreThan(k) <=> count >= k + 1;  AtMost(k) <=> count <= k.
         return binary.Operator switch
         {
             MongoBinaryOperator.GreaterThan when n >= 0 => MoreThan(size.FieldName, n),
             MongoBinaryOperator.GreaterThanOrEqual when n >= 1 => MoreThan(size.FieldName, n - 1),
             MongoBinaryOperator.LessThan when n >= 1 => AtMost(size.FieldName, n - 1),
             MongoBinaryOperator.LessThanOrEqual when n >= 0 => AtMost(size.FieldName, n),
-            // C == 0 needs only the upper bound; C == n (n >= 1) is "more than n-1 AND at most n".
             MongoBinaryOperator.Equal when n == 0 => AtMost(size.FieldName, 0),
             MongoBinaryOperator.Equal when n >= 1
                 => CombineAnd(MoreThan(size.FieldName, n - 1), AtMost(size.FieldName, n)),
-            // C != 0 needs only the lower bound; C != n (n >= 1) is "at most n-1 OR more than n".
             MongoBinaryOperator.NotEqual when n == 0 => MoreThan(size.FieldName, 0),
             MongoBinaryOperator.NotEqual when n >= 1
                 => CombineOr(AtMost(size.FieldName, n - 1), MoreThan(size.FieldName, n)),
@@ -375,8 +339,7 @@ internal sealed class MongoQueryLanguageRenderer
     private static BsonDocument AtMost(string arrayPath, int index)
         => new($"{arrayPath}.{index}", new BsonDocument("$exists", false));
 
-    // An array index is a path segment, so only integral in-range thresholds qualify. Floating-point (even 2.0)
-    // is rejected; $expr handles it without a rounding decision.
+    // An array index is a path segment, so only integral in-range thresholds qualify (not even 2.0).
     private static bool TryGetIntegerThreshold(object raw, out int value)
     {
         switch (raw)
@@ -392,16 +355,12 @@ internal sealed class MongoQueryLanguageRenderer
         }
     }
 
-    // Query-dialect renderability — must stay in sync with RenderNode
-
     /// <summary>
-    /// Whether <see cref="RenderNode"/> renders <paramref name="node"/> without falling to <c>$expr</c> or
-    /// throwing.
+    /// Whether <see cref="RenderNode"/> renders <paramref name="node"/> without falling to <c>$expr</c> or throwing.
     /// </summary>
     /// <remarks>
-    /// A correctness gate for <c>$elemMatch</c> children: <c>$expr</c> there is a server error, so admitting a
-    /// node that <see cref="RenderNode"/> sends to <c>$expr</c> makes the query throw at execution instead of
-    /// falling back. Change this and <see cref="RenderNode"/> together.
+    /// A correctness gate for <c>$elemMatch</c> children: admitting a node <see cref="RenderNode"/> sends to
+    /// <c>$expr</c> makes the query throw at execution instead of falling back. Change both together.
     /// </remarks>
     public static bool IsQueryDialectRenderable(MongoExpression node)
         => node switch
@@ -410,12 +369,10 @@ internal sealed class MongoQueryLanguageRenderer
                 => IsQueryDialectRenderable(a.Left) && IsQueryDialectRenderable(a.Right),
             MongoBinaryExpression { Operator: MongoBinaryOperator.OrElse } o
                 => IsQueryDialectRenderable(o.Left) && IsQueryDialectRenderable(o.Right),
-            // Delegates to the renderer so the two cannot drift; a parameterized threshold answers false.
             MongoBinaryExpression sizeComparison when TryRenderSizeComparison(sizeComparison) is not null
                 => true,
             MongoBinaryExpression comparison => IsQueryNativeComparison(comparison),
-            // Only Not over a bare field or a query-native comparison has a query-dialect form. RenderUnary also
-            // renders other operands, but via $expr, so they must not be admitted (pinned by
+            // RenderUnary also renders other Not operands, but via $expr, so they must not be admitted (pinned by
             // MongoQueryLanguageRendererTests).
             MongoUnaryExpression { Operator: MongoUnaryOperator.Not, Operand: MongoFieldExpression } => true,
             MongoUnaryExpression { Operator: MongoUnaryOperator.Not, Operand: MongoBinaryExpression cmp }
@@ -424,10 +381,9 @@ internal sealed class MongoQueryLanguageRenderer
             MongoDictionaryContainsKeyExpression => true,
             MongoFieldPresenceExpression presence => IsQueryDialectPresence(presence),
             MongoCompositeKeyInExpression { Values: MongoConstantExpression or MongoParameterExpression } => true,
-            // { field: { $type: "number" } }. Only produced beside an $expr sibling (so its AndAlso answers false),
-            // but true on its own merits.
+            // Only produced beside an $expr sibling (so its AndAlso answers false), but true on its own merits.
             MongoNumericTypeBracketExpression => true,
-            // No query-dialect form; listed explicitly rather than left to the catch-all.
+            // No query-dialect form; listed explicitly so a new node type is a conscious choice.
             MongoConvertExpression => false,
             MongoConditionalExpression => false,
             MongoCoalesceExpression => false,
@@ -444,20 +400,17 @@ internal sealed class MongoQueryLanguageRenderer
             MongoDateTimeOffsetLocalExpression => false,
             MongoOuterFieldExpression => false,
             MongoQuantifierExpression => false,
-            // The value shapes RenderInValues accepts; it throws on any other.
             MongoInExpression inExpr => MongoValueRenderer.IsRenderableInValues(inExpr.Values),
-            // The translator only builds this with an already-renderable Value.
             MongoArrayContainsExpression => true,
             MongoRegexExpression regex => IsQueryDialectRegex(regex),
             MongoElemMatchExpression elemMatch => IsQueryDialectRenderable(elemMatch.ElementPredicate),
-            // Literal bool root has a query-dialect form (see RenderNode).
             MongoConstantExpression { Value: bool } => true,
             _ => false
         };
 
     /// <summary>
-    /// ANDs two filter documents, merging into one document when keys are distinct non-operators (or same-field
-    /// operator documents merge without overlap); otherwise emits a flattened <c>$and</c> array.
+    /// ANDs two filter documents into one when keys are distinct non-operators (or same-field operator documents
+    /// don't overlap); otherwise a flattened <c>$and</c> array.
     /// </summary>
     private static BsonDocument CombineAnd(BsonDocument left, BsonDocument right)
     {
@@ -468,7 +421,6 @@ internal sealed class MongoQueryLanguageRenderer
         var merged = new BsonDocument();
         foreach (var clause in clauses)
         {
-            // A clause is mergeable only if it is a single-field document whose key is not an operator.
             if (clause.ElementCount != 1 || clause.GetElement(0).Name.StartsWith('$'))
                 return new BsonDocument("$and", new BsonArray(clauses));
 
@@ -479,8 +431,7 @@ internal sealed class MongoQueryLanguageRenderer
                 continue;
             }
 
-            // Same field appears twice (e.g. x > a && x < b). Merge the operator sub-documents when
-            // possible: { x: { $gt: a, $lt: b } }. Fall back to $and on conflict or non-operator values.
+            // Same field twice (x > a && x < b): merge to { x: { $gt: a, $lt: b } } when possible, else $and.
             if (TryMergeOperatorDocs(merged[element.Name], element.Value, out var combined))
                 merged[element.Name] = combined;
             else
@@ -503,7 +454,7 @@ internal sealed class MongoQueryLanguageRenderer
         foreach (var op in ad)
         {
             if (result.Contains(op.Name))
-                return false; // overlapping operator (e.g. two $gt) cannot merge
+                return false;
             result.Add(op);
         }
 
@@ -541,9 +492,7 @@ internal sealed class MongoQueryLanguageRenderer
         }
     }
 
-    /// <summary>
-    /// ORs two filter documents into a flat <c>$or</c> array, matching driver-LINQ rendering.
-    /// </summary>
+    // Flat $or array, matching driver-LINQ rendering.
     private static BsonDocument CombineOr(BsonDocument left, BsonDocument right)
     {
         var clauses = new BsonArray();

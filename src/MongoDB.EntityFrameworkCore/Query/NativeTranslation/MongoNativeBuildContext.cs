@@ -21,20 +21,14 @@ using MongoDB.EntityFrameworkCore.Serializers;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// The per-execution state a native pipeline needs while it is being built, handed to
-/// <see cref="MongoPipelineFactory.Build(in MongoNativeBuildContext)"/>.
+/// Per-execution state handed to <see cref="MongoPipelineFactory.Build(in MongoNativeBuildContext)"/>; needed by
+/// <em>deferred</em> stage slots, whose BSON shape depends on runtime state. <see cref="ParameterValues"/> is already
+/// bridged across EF versions by the caller, so no version-conditional code is needed here.
 /// </summary>
-/// <remarks>
-/// Needed by <em>deferred</em> stage slots, whose BSON shape (not just parameter values) depends on runtime
-/// state. <see cref="ParameterValues"/> is already bridged across EF versions by the caller, so no
-/// version-conditional code is needed here or in <see cref="MongoPipelineFactory"/>.
-/// </remarks>
-/// <param name="ParameterValues">The named parameter values for this execution.</param>
-/// <param name="SerializerFactory">The serializer factory for this <c>DbContext</c>.</param>
+/// <param name="ParameterValues">The query parameter values.</param>
+/// <param name="SerializerFactory">Creates serializers for properties and types.</param>
 /// <param name="QueryLogger">For deferred slots that raise a diagnostic (e.g. a missing vector index).</param>
-/// <param name="AdditionalState">
-/// Handed to <c>MongoExecutableQuery.AdditionalState</c>; deferred slots may record entries for the executor.
-/// </param>
+/// <param name="AdditionalState">Handed to <c>MongoExecutableQuery.AdditionalState</c>; deferred slots may record entries for the executor.</param>
 internal readonly record struct MongoNativeBuildContext(
     IReadOnlyDictionary<string, object?> ParameterValues,
     BsonSerializerFactory SerializerFactory,

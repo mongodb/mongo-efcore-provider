@@ -35,9 +35,8 @@ internal enum MongoSetOperationKind
 }
 
 /// <summary>
-/// A terminal set operation attached to the outer <see cref="MongoSelectDefinition"/>. The second operand is its own
-/// <see cref="MongoSelectDefinition"/>, rendered as a nested pipeline against <see cref="OperandCollectionName"/>,
-/// either whole-entity or projected (see <see cref="OperandsProjected"/>).
+/// A terminal set operation attached to the outer <see cref="MongoSelectDefinition"/>; the second operand is its own
+/// select, rendered as a nested pipeline against <see cref="OperandCollectionName"/>.
 /// </summary>
 internal sealed class MongoSetOperation
 {
@@ -58,27 +57,22 @@ internal sealed class MongoSetOperation
 
     /// <summary>
     /// The operand's own entity type, which may differ from the outer root for a projected-operand set op. The
-    /// lowerer's synthetic <c>$set</c> sort-field allocator must reserve this type's top-level element names too, or a
-    /// computed sort on the operand silently clobbers one of its mapped elements.
+    /// lowerer's synthetic <c>$set</c> sort-field allocator must reserve its element names too, or a computed sort on
+    /// the operand clobbers a mapped element.
     /// </summary>
     public IEntityType OperandEntityType { get; }
 
     /// <summary>
     /// <c>true</c> when both operands were projected selects when the set op was attached, so each operand's
-    /// <c>$project</c> is emitted before the combine (see <c>MongoSelectLowerer.Lower</c>). <c>false</c> for a
-    /// whole-entity set op or a projection composed after it, where <c>$project</c> follows the combine.
+    /// <c>$project</c> precedes the combine; <c>false</c> for a whole-entity set op or a projection composed after it.
     /// </summary>
     public bool OperandsProjected { get; }
 
     /// <summary>
-    /// Outer-select filter/sort/page ops recorded between the previous link and this one (e.g. the
-    /// <c>OrderBy</c>/<c>Take</c> in <c>A.Union(B).OrderBy(..).Take(1).Union(C)</c>), emitted just before this link's
-    /// stage so they apply to the result combined so far. Empty for the first link.
+    /// Outer-select ops recorded between the previous link and this one (the <c>OrderBy</c>/<c>Take</c> in
+    /// <c>A.Union(B).OrderBy(..).Take(1).Union(C)</c>), emitted just before this link's stage. Written only by
+    /// <see cref="MongoSelectDefinition.AppendSetOperation"/>, so <c>TrailingOps</c> always means "after the last link".
     /// </summary>
-    /// <remarks>
-    /// Written only by <see cref="MongoSelectDefinition.AppendSetOperation"/>, which moves accumulated
-    /// <c>TrailingOps</c> here, so <c>TrailingOps</c> always means "after the last link".
-    /// </remarks>
     public IReadOnlyList<MongoSelectOp> PrecedingOps { get; private set; } = [];
 
     internal void SetPrecedingOps(IReadOnlyList<MongoSelectOp> precedingOps)

@@ -151,7 +151,6 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
         => storage is Storage.Int64Representation or Storage.DoubleRepresentation or Storage.Decimal128Representation
             or Storage.CastingConverterToLong or Storage.CastingConverterToDouble;
 
-    // Queries whose server-side answer depends on the stored ordering or arithmetic.
     private static readonly Dictionary<string, Func<IQueryable<Item>, object>> OrderSensitiveQueries = new()
     {
         ["Sum"] = q => q.Sum(e => e.Price),
@@ -183,7 +182,7 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
         ["Distinct_then_OrderBy"] = q => q.Select(e => e.Price).Distinct().OrderBy(p => p).ToList(),
         ["Select_scalar_then_Max"] = q => q.Select(e => new { e.Price }).Max(a => a.Price),
 
-        // Computed keys/operands (fix round 1, I-1): the property is reached through ??, ?:, negation, a projected
+        // Computed keys/operands: the property is reached through ??, ?:, negation, a projected
         // computed member, g.Key, or a set operation.
         ["OrderBy_coalesce"] = q => q.OrderBy(e => e.NPrice ?? 0).Select(e => e.Seq).ToList(),
         ["Where_coalesce_gt"] = q => q.Where(e => (e.NPrice ?? 0) > 50).OrderBy(e => e.Seq).Select(e => e.Seq).ToList(),
@@ -203,7 +202,7 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
         ["GroupBy_result_selector_Max"] = q => q.GroupBy(e => e.Price, (k, g) => k).Max(),
         ["GroupBy_result_selector_group_Max"] = q => q.GroupBy(e => e.Seq, (k, g) => g.Max(e => e.Price)).Max(),
 
-        // Fix round 2 adversarial: method calls, arithmetic and nullable accessors over the property.
+        // Method calls, arithmetic and nullable accessors over the property.
         ["Where_Math_Abs_gt"] = q => q.Where(e => Math.Abs(e.Price) > 50).OrderBy(e => e.Seq).Select(e => e.Seq).ToList(),
         ["Where_divided_gt"] = q => q.Where(e => e.Price / 2.0 > 25).OrderBy(e => e.Seq).Select(e => e.Seq).ToList(),
         ["OrderBy_ToString"] = q => q.OrderBy(e => e.Price.ToString()).ThenBy(e => e.Seq).Select(e => e.Seq).ToList(),
@@ -261,7 +260,6 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
         var ex = Record.Exception(run);
         if (ex is null)
         {
-            // Correct or loud: a silent wrong answer is the bug.
             Assert.Equal(oracle, Normalize(run()));
         }
 
@@ -404,7 +402,6 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── string <-> ObjectId and enum representations ─────────────────────────────────────────────────────────
     //
     // A string stored as an ObjectId (the canonical [BsonRepresentation(BsonType.ObjectId)] string Id) and an ObjectId
     // stored as its hex string are allow-listed: EF writes lowercase fixed-width hex, which sorts (ordinally and under
@@ -518,7 +515,6 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
         var refused = storage == EnumStorage.EnumAsString && query.Contains("enum", StringComparison.Ordinal);
         if (refused)
         {
-            // Correct or loud, pinned to the decline.
             if (ex is null)
             {
                 Assert.Equal(oracle, Run());
@@ -578,7 +574,6 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── Owned collection element property ───────────────────────────────────────────────────────────────────
     //
     // An element-scoped comparison (`o.Lines.Any(l => l.Price > 50)`) runs on the stored element field too.
 
@@ -646,11 +641,9 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
             Assert.Contains("Line.Price'", Assert.IsType<NotSupportedException>(ex).Message);
         }
 
-        // Equality over the same element property keeps working.
         Assert.Equal([2], db.Entities.AsNoTracking().Where(o => o.Lines.Any(l => l.Price == 10)).Select(o => o.Seq).ToList());
     }
 
-    // ── Narrowing casting converters (fix round 1, I-2) ─────────────────────────────────────────────────────
     //
     // `long` stored as `int` (integral narrowing): sort and aggregates read stored values exactly and stay supported,
     // but a relational comparison against a constant outside the int range would wrap the constant (3_000_000_000L ->
@@ -681,7 +674,6 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
         ["Big_Max"] = q => q.Max(e => e.Big),
         ["Big_Average"] = q => q.Average(e => e.Big),
 
-        // Equality keeps working for the integral case.
         ["Big_equal"] = q => q.Where(e => e.Big == 2L).Select(e => e.Seq).ToList()
     };
 
@@ -758,7 +750,6 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
         }
     }
 
-    // ── Identity representations (fix round 1, M-2) ────────────────────────────────────────────────────────
     //
     // A BsonRepresentation equal to the type's default BSON type stores the default form, so it isn't refused.
 
@@ -807,8 +798,6 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
         Assert.Equal([2], db.Entities.AsNoTracking().Where(e => e.Count > 50).Select(e => e.Seq).ToList());
         Assert.Equal([2], db.Entities.AsNoTracking().Where(e => e.When < baseDate.AddDays(1.5)).Select(e => e.Seq).ToList());
     }
-
-    // ── Fix round 2: members read off a stored value, converted-bool truthiness, primitive collections ────────
 
     public enum St
     {
@@ -951,7 +940,6 @@ public class RepresentedPropertyPushdownTests(TemporaryDatabaseFixture database)
             seed.SaveChanges();
         }
 
-        // Premise: the stored forms really differ from the CLR values.
         var raw = collection.Database.GetCollection<BsonDocument>(collection.CollectionNamespace.CollectionName)
             .Find(Builders<BsonDocument>.Filter.Eq("Seq", 1)).Single();
         Assert.Equal("pfx-abcdef", raw["Name"].AsString);

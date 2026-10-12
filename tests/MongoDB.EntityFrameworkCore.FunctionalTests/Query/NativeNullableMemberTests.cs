@@ -34,15 +34,9 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// <see cref="MongoQueryMode.NativeOnly"/>, not MQL shape.
 /// </summary>
 /// <remarks>
-/// <para>
-/// The oracle is <c>Native == DriverLinq</c>, not in-memory LINQ: in-memory LINQ throws for <c>x.Score.Value</c>
-/// when <c>Score</c> is null, but a server-side <c>$match</c>/<c>$sort</c> doesn't (a documented divergence; see
-/// <c>Query/AGENTS.md</c>). <see cref="Parity_with_driver_linq_over_the_ragged_fixture"/> is the main gate.
-/// </para>
-/// <para>
-/// Every nullable property has three states — a value, explicit BSON <c>null</c>, and a missing element — and
-/// <c>!HasValue</c> must select both absent states.
-/// </para>
+/// The oracle is <c>Native == DriverLinq</c>, not in-memory LINQ, which throws for <c>x.Score.Value</c> on a null
+/// <c>Score</c> where a server-side <c>$match</c>/<c>$sort</c> doesn't (see <c>Query/AGENTS.md</c>). Every nullable
+/// property has three states (value, BSON null, missing); <c>!HasValue</c> must select both absent ones.
 /// </remarks>
 [XUnitCollection("QueryTests")]
 public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : IClassFixture<TemporaryDatabaseFixture>
@@ -67,8 +61,6 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
         public int? Converted { get; set; }
     }
 
-    // ── 1. Predicate position ──────────────────────────────────────────────────────
-
     [Fact]
     public void Value_in_a_predicate_goes_native()
     {
@@ -76,8 +68,6 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // Relational comparisons are type-bracketed server-side: null and missing never match $gt, so the ragged
-        // rows are absent (as with driver-LINQ), rather than the in-memory InvalidOperationException.
         Assert.Equal(
             ["r1_ten"],
             db.Entities.AsNoTracking().Where(x => x.Score!.Value > 5).OrderBy(x => x.Title)
@@ -90,7 +80,6 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
             db.Entities.AsNoTracking().Where(x => x.Score!.Value < 5).OrderBy(x => x.Title)
                 .Select(x => x.Title).ToList());
 
-        // The $not wrap is the exact complement, so the ragged rows reappear here.
         Assert.Equal(
             ["r2_null", "r3_missing", "r4_three"],
             db.Entities.AsNoTracking().Where(x => !(x.Score!.Value > 5)).OrderBy(x => x.Title)
@@ -101,7 +90,6 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
             db.Entities.AsNoTracking().Where(x => x.Score!.Value == 10).OrderBy(x => x.Title)
                 .Select(x => x.Title).ToList());
 
-        // The idiomatic guarded spelling, and its disjunctive mirror.
         Assert.Equal(
             ["r1_ten"],
             db.Entities.AsNoTracking().Where(x => x.Score.HasValue && x.Score.Value > 5).OrderBy(x => x.Title)
@@ -112,14 +100,11 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
             db.Entities.AsNoTracking().Where(x => !x.Score.HasValue || x.Score!.Value > 5).OrderBy(x => x.Title)
                 .Select(x => x.Title).ToList());
 
-        // Whole-entity result, so routing isn't confounded by the bare-projection path.
         Assert.Equal(
             ["r1_ten"],
             db.Entities.AsNoTracking().Where(x => x.Score!.Value > 5).OrderBy(x => x.Title)
                 .ToList().Select(x => x.Title).ToList());
     }
-
-    // ── 2. Sort-key position ───────────────────────────────────────────────────────
 
     [Fact]
     public void Value_in_a_sort_key_goes_native()
@@ -128,14 +113,11 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
 
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // BSON sorts null (and missing) before numbers, so the ragged rows lead and tie; ThenBy breaks the tie.
         Assert.Equal(
             ["r2_null", "r3_missing", "r4_three", "r1_ten"],
             db.Entities.AsNoTracking().OrderBy(x => x.Score!.Value).ThenBy(x => x.Title)
                 .Select(x => x.Title).ToList());
     }
-
-    // ── 3. Projection position ─────────────────────────────────────────────────────
 
     [Fact]
     public void Value_in_a_projection_goes_native()
@@ -144,14 +126,12 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
 
         using (var db = CreateContext(collection, MongoQueryMode.NativeOnly))
         {
-            // Well-formed rows only.
             Assert.Equal(
                 ["r1_ten=10", "r4_three=3"],
                 db.Entities.AsNoTracking().Where(x => x.Rank <= 2).OrderBy(x => x.Title)
                     .Select(x => new {x.Title, V = x.Score!.Value})
                     .ToList().Select(a => $"{a.Title}={a.V}").ToList());
 
-            // Bare spelling; its $project alias is the leaf's document path, "Score".
             Assert.Equal(
                 [3, 10],
                 db.Entities.AsNoTracking().Where(x => x.Rank <= 2).OrderBy(x => x.Score!.Value)
@@ -181,8 +161,6 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
         }
     }
 
-    // ── 4. HasValue / !HasValue ────────────────────────────────────────────────────
-
     [Fact]
     public void HasValue_and_negated_HasValue_go_native()
     {
@@ -197,17 +175,13 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
 
         Assert.Equal(["r1_ten", "r4_three"], withValue);
 
-        // !HasValue must select both explicit null and missing; $eq/$ne partition every BSON value including
-        // missing, so the negation renders as $not over $ne.
         Assert.Equal(["r2_null", "r3_missing"], withoutValue);
 
-        // Every row must be in exactly one result set, which only holds if both absent states are handled.
         var all = db.Entities.AsNoTracking().OrderBy(x => x.Title).Select(x => x.Title).ToList();
         Assert.Equal(4, all.Count);
         Assert.Empty(withValue.Intersect(withoutValue));
         Assert.Equal(all, withValue.Concat(withoutValue).OrderBy(t => t, StringComparer.Ordinal).ToList());
 
-        // Whole-entity spelling, so routing isn't confounded by the bare projection.
         Assert.Equal(
             ["r2_null", "r3_missing"],
             db.Entities.AsNoTracking().Where(x => !x.Score.HasValue).OrderBy(x => x.Title)
@@ -225,13 +199,10 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
             .OrderBy(x => x.Title).Select(x => x.Title).ToList();
         Assert.Equal(["r2_null", "r3_missing"], titles);
 
-        // Stage-shape pin: the filter must be the complement form that selects missing as well as null.
         var mql = spy.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery)!;
         Assert.Contains("\"$not\"", mql);
         Assert.Contains("\"$ne\" : null", mql);
     }
-
-    // ── 5. The real gate: parity with driver-LINQ over every ragged state ──────────
 
     [Fact]
     public void Parity_with_driver_linq_over_the_ragged_fixture()
@@ -267,8 +238,6 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
         AssertParity(collection, db => db.Entities.AsNoTracking()
             .Where(x => x.Flag!.Value).OrderBy(x => x.Title).Select(x => x.Title).ToList());
     }
-
-    // ── 6. The mandatory late-decline leg ──────────────────────────────────────────
 
     [Fact]
     public void Parameterized_where_leg()
@@ -312,8 +281,6 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
                 .OrderBy(x => x.Title).Select(x => x.Title).ToList());
     }
 
-    // ── 7. Tripwires ───────────────────────────────────────────────────────────────
-
     [Fact]
     public void Convert_wrapped_nullable_target_projection_leaf_now_goes_native_too()
     {
@@ -349,13 +316,10 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
                     .Select(x => new {x.Title, H = x.Score.HasValue}).ToList());
         }
 
-        // Both take the fallback, so they agree.
         AssertParity(collection, db => db.Entities.AsNoTracking().OrderBy(x => x.Title)
             .Select(x => new {x.Title, H = x.Score.HasValue})
             .ToList().Select(a => $"{a.Title}={a.H}").ToList());
     }
-
-    // ── 8. A value-converted `.Value` projection leaf reads through the converter ──
 
     /// <summary>
     /// Both the read side (<c>MongoProjectionBindingRemovingExpressionVisitor.TryResolveFieldAccess</c>) and the
@@ -381,8 +345,6 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
             db.Entities.AsNoTracking().OrderBy(x => x.Title)
                 .Select(x => x.Converted!.Value).ToList());
     }
-
-    // ── 9. A non-nullable computed leaf over a null/missing nullable operand throws ──
 
     public static TheoryData<string> NullableOperandShapes => new() { "add", "mul", "div", "abs", "cond" };
 
@@ -452,7 +414,6 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
             using var db = CreateContext(collection, mode);
             var q = db.Entities.AsNoTracking().OrderBy(x => x.Title);
             Assert.Equal([11, 1, 1, 4], q.Select(x => (x.Score ?? 0) + 1).ToList());
-            // Well-formed rows only: the flag changes nothing for a value that is present.
             Assert.Equal([11, 4], q.Where(x => x.Rank <= 2).Select(x => x.Score!.Value + 1).ToList());
         }
 
@@ -486,7 +447,6 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Distinct_over_a_flagged_computed_leaf_stays_native_and_throws_on_null));
 
-        // Well-formed rows only.
         Assert.Equal(
             [4, 11],
             NativeModeAssert.NativeAndParity(mode =>
@@ -512,7 +472,6 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Max_over_a_bare_Value_leaf_stays_native));
 
-        // Well-formed rows only.
         Assert.Equal(
             [10],
             NativeModeAssert.NativeAndParity(mode =>
@@ -529,7 +488,6 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
     {
         var collection = SeedRagged(nameof(Max_over_a_flagged_computed_leaf_declines_cleanly));
 
-        // Well-formed rows only, so the fallback returns a value to compare.
         Assert.Equal(
             [11],
             NativeModeAssert.DeclinesCleanly(mode =>
@@ -538,8 +496,6 @@ public class NativeNullableMemberTests(TemporaryDatabaseFixture database) : ICla
                 return new List<int> {db.Entities.AsNoTracking().Where(x => x.Rank <= 2).Select(x => x.Score!.Value + 1).Max()};
             }));
     }
-
-    // ── Helpers ────────────────────────────────────────────────────────────────────
 
     // Runs the query under Native and DriverLinq and asserts equal results. Both legs must return: comparing
     // only the fact of throwing would pass for two unrelated failures, and exception types can legitimately

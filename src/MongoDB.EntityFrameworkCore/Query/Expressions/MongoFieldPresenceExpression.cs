@@ -52,16 +52,13 @@ internal sealed class MongoFieldPresenceExpression : MongoExpression
         PathMayBeArray = pathMayBeArray;
     }
 
-    /// <summary>The element's dotted document path.</summary>
     public string Path { get; }
 
-    /// <summary>What is tested.</summary>
     public MongoFieldPresence Kind { get; }
 
     /// <summary>Whether the element may hold an array (a primitive collection or an owned collection).</summary>
     public bool PathMayBeArray { get; }
 
-    /// <summary>Whether the kind tests for null as well as absence.</summary>
     public bool TestsNull => Kind is MongoFieldPresence.NullOrMissing or MongoFieldPresence.NotNullOrMissing;
 
     /// <summary>The exact logical complement.</summary>

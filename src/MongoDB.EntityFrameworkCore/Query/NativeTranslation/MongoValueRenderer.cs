@@ -26,9 +26,8 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
 /// Renders a <see cref="MongoConstantExpression"/> or <see cref="MongoParameterExpression"/> to a
-/// <see cref="BsonValue"/>, and an <c>$in</c> haystack to a <see cref="BsonArray"/>. Shared by <see cref="MongoQueryLanguageRenderer"/> and
-/// <see cref="MongoAggregationExpressionRenderer"/> so a constant and a parameter of the same value emit identical
-/// BSON and serializer failures are handled uniformly.
+/// <see cref="BsonValue"/>, and an <c>$in</c> haystack to a <see cref="BsonArray"/>. Shared by both renderers so a
+/// constant and a parameter of the same value emit identical BSON.
 /// </summary>
 internal static class MongoValueRenderer
 {
@@ -49,8 +48,7 @@ internal static class MongoValueRenderer
                     : ToBsonValue(constant.ForSerialization, constant.Value);
 
             case MongoParameterExpression parameter:
-                // A runtime-evaluated value (a closed clock subtree) is computed per Build, then serialized like any
-                // other parameter below.
+                // A closed clock subtree is computed per Build, then serialized like any other parameter.
                 if (parameter.RuntimeEvaluator is { } evaluator)
                     placeholders.RegisterRuntimeEvaluator(parameter.Name, evaluator);
 
@@ -105,15 +103,13 @@ internal static class MongoValueRenderer
             }
             case MongoParameterExpression parameter:
             {
-                // No backing property: only for a computed needle (TranslateInValuesRaw), so use a default
-                // serializer for RawElementType.
+                // No backing property: only for a computed needle (TranslateInValuesRaw).
                 var elementSerializer = parameter.ForSerialization is not null
                     ? BsonSerializerFactory.GetPropertySerializationInfo(parameter.ForSerialization).Serializer
                     : parameter.RawElementType is { } rawElementType
                         ? typeof(ITuple).IsAssignableFrom(rawElementType)
-                            // The driver's own Tuple/ValueTuple serializers write one BSON array per tuple, matching how
-                            // a MongoTupleExpression needle renders; BsonSerializerFactory.CreateTypeSerializer would fall
-                            // through to a class-map (document) serializer for a tuple type.
+                            // The driver's Tuple serializers write one BSON array per tuple, matching a
+                            // MongoTupleExpression needle; CreateTypeSerializer would give a class-map (document) one.
                             ? BsonSerializer.LookupSerializer(rawElementType)
                             : BsonSerializerFactory.CreateTypeSerializer(rawElementType)
                         : StringSerializer.Instance;

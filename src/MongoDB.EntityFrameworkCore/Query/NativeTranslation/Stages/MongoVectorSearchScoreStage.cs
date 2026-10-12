@@ -16,14 +16,10 @@
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 /// <summary>
-/// The <c>$addFields</c> companion emitted immediately after every <c>$vectorSearch</c>, surfacing the
-/// per-document relevance score as the synthetic <see cref="ScoreField"/> element.
+/// Marker rendered by <c>MongoPipelineFactory</c> to <c>{ "$addFields": { "__score": { "$meta": "vectorSearchScore" } } }</c>,
+/// emitted unconditionally after every <c>$vectorSearch</c> (as the driver-LINQ bridge does, so both paths produce
+/// identical pipelines).
 /// </summary>
-/// <remarks>
-/// A payload-free marker that <c>MongoPipelineFactory</c> renders to
-/// <c>{ "$addFields": { "__score": { "$meta": "vectorSearchScore" } } }</c>, keeping BSON out of the lowerer.
-/// Emitted unconditionally, as the driver-LINQ bridge does, so both paths produce identical pipelines.
-/// </remarks>
 internal sealed class MongoVectorSearchScoreStage : MongoPipelineStage
 {
     /// <summary>

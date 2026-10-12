@@ -160,8 +160,6 @@ public class Ef362ArrayLeafPathTests
         Assert.True(NativeProjectionBinder.IsNativeArrayProjectionLeaf(posts, root, "Posts"));
     }
 
-    // ── The array leaf's sibling sweep keeps a "$$ROOT" leaf out of the strip path ────────
-
     /// <summary>DTO for the whole-root-entity + owned-hop-array selector under test.</summary>
     private class RootAndNotes
     {

@@ -31,25 +31,18 @@ internal static class MongoAggregationExpressionRenderer
     /// <summary>
     /// Renders <paramref name="node"/> to an aggregation-expression <see cref="BsonValue"/>.
     /// </summary>
-    /// <param name="node">The root <see cref="MongoExpression"/> subtree to render.</param>
-    /// <param name="placeholders">
-    /// Receives one entry per <see cref="MongoParameterExpression"/>; its sentinel is embedded in the result.
-    /// </param>
+    /// <param name="node">The expression to render.</param>
+    /// <param name="placeholders">Receives one entry per <see cref="MongoParameterExpression"/>.</param>
     /// <param name="elementVariable">
     /// The <c>$filter</c>/<c>$map</c> <c>as</c> variable in scope, or <see langword="null"/> at the document root.
-    /// When set, field refs render as <c>"$$var.path"</c>, since the element is no longer addressable as
-    /// <c>$path</c>.
+    /// When set, field refs render as <c>"$$var.path"</c>.
     /// </param>
-    /// <returns>
-    /// The aggregation-expression body.
-    /// </returns>
     /// <exception cref="NativeTranslationNotSupportedException">
     /// Thrown for any node type or operator this renderer doesn't handle.
     /// </exception>
     public static BsonValue Render(MongoExpression node, PlaceholderTable placeholders, string? elementVariable = null)
         => node switch
         {
-            // See MongoFieldExpression.NullSafe.
             MongoFieldExpression { NullSafe: true } nullSafeField
                 => IfNull(FieldRef(nullSafeField.ElementName, elementVariable), BsonNull.Value),
             MongoFieldExpression field => FieldRef(field.ElementName, elementVariable),
@@ -59,13 +52,10 @@ internal static class MongoAggregationExpressionRenderer
             MongoElementRefExpression elementRef => FieldRef(elementRef.Path, elementVariable),
             // Always at document root, regardless of elementVariable.
             MongoOuterFieldExpression outer => FieldRef(outer.ElementName, elementVariable: null),
-            // Used for a Select-side join-scope null-check ternary (`ti.Inner != null ? ti.Inner.City : null`;
-            // see NativeJoinScopeProjectionBinder.TryBindConditionalProjection).
-            //
-            // $ifNull-wrapped: after $lookup + $unwind(preserveNullAndEmptyArrays), an unmatched row's alias is
-            // missing, and aggregation $eq/$ne don't equate missing with null, so a bare $ne answers "present"
-            // and the ternary picks the wrong branch — silently wrong data. Always root-level: a $lookup alias
-            // is never inside a $filter/$map element scope.
+            // Join-scope null-check ternary (NativeJoinScopeProjectionBinder.TryBindConditionalProjection).
+            // $ifNull-wrapped: after $lookup + $unwind(preserveNullAndEmptyArrays) an unmatched row's alias is
+            // missing, and aggregation $eq/$ne don't equate missing with null, so a bare $ne would answer "present".
+            // Always root-level: a $lookup alias is never inside a $filter/$map element scope.
             MongoLookupNullCheckExpression lookupNullCheck
                 => new BsonDocument(lookupNullCheck.IsNotNull ? "$ne" : "$eq",
                     new BsonArray
@@ -74,8 +64,7 @@ internal static class MongoAggregationExpressionRenderer
                         BsonNull.Value
                     }),
             MongoConstantExpression or MongoParameterExpression => MongoValueRenderer.RenderValue(node, placeholders),
-            // Aggregation form of the query dialect's { field: { $type: "number" } }; see
-            // MongoNumericTypeBracketExpression. $and short-circuits, so a following $toX never sees a non-number.
+            // $and short-circuits, so a following $toX never sees a non-number.
             MongoNumericTypeBracketExpression bracket
                 => new BsonDocument("$isNumber", Render(bracket.Field, placeholders, elementVariable)),
             MongoBinaryExpression binary => RenderBinary(binary, placeholders, elementVariable),
@@ -116,18 +105,16 @@ internal static class MongoAggregationExpressionRenderer
             MongoDatePartExpression datePart => RenderDatePart(datePart, placeholders, elementVariable),
             MongoDateAddExpression dateAdd => RenderDateAdd(dateAdd, placeholders, elementVariable),
             MongoStringIndexOfExpression indexOf => RenderIndexOf(indexOf, placeholders, elementVariable),
-            // Code points, not UTF-16 code units: a surrogate pair counts as 1, not 2 as in .NET. Same as
-            // driver-LINQ; see MongoExpressionTranslator.TryMatchStringLength. $strLenCP of null/missing is a
-            // server error; EF answers null.
+            // Code points, not UTF-16 code units (a surrogate pair counts as 1), same as driver-LINQ; see
+            // MongoExpressionTranslator.TryMatchStringLength.
             MongoStringLengthExpression length
                 => RenderLength(length, placeholders, elementVariable),
             MongoMathExpression math => RenderMath(math, placeholders, elementVariable),
             MongoTrimExpression trim => RenderTrim(trim, placeholders, elementVariable),
             MongoSubstringExpression substring => RenderSubstring(substring, placeholders, elementVariable),
             // $cmp orders missing below null, where string.Compare(null, null) is 0, so a stored field compared with
-            // an operand that may be null reads missing as null. Unlike $eq/$ne this applies inside a $filter/$map
-            // element scope too. The $eq/$ne exception exists only to agree with driver-LINQ's element-scope equality;
-            // here the wrap changes nothing but a missing-vs-null pair, which .NET (reading both as null) compares as 0.
+            // an operand that may be null reads missing as null. Unlike $eq/$ne this applies inside element scopes too
+            // (that exception only agrees with driver-LINQ's element-scope equality).
             MongoStringCompareExpression cmp
                 => new BsonDocument("$cmp", new BsonArray
                 {
@@ -144,8 +131,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoStringFirstOrLastExpression firstOrLast
                 => RenderStringFirstOrLast(firstOrLast, placeholders, elementVariable, nullForNullSource: false),
             MongoQuantifierExpression quantifier => RenderQuantifier(quantifier, placeholders, elementVariable),
-            // Constructed nested sub-document (`new Book { Id = e.Id, Title = e.Title }`). Members go through
-            // RenderBranch so constants/parameters get $literal-wrapped as at top level; otherwise MongoDB reads a
+            // Members go through RenderBranch so constants/parameters get $literal-wrapped; otherwise MongoDB reads a
             // bare number/bool as an inclusion flag and a "$"-prefixed string as a field path.
             MongoDocumentConstructionExpression construction
                 => new BsonDocument(construction.Members.Select(
@@ -156,11 +142,9 @@ internal static class MongoAggregationExpressionRenderer
                     new BsonArray(concat.Operands.Select(o => ConcatOperandMayBeNull(o)
                         ? IfNull(RenderOperand(o, placeholders, elementVariable), "")
                         : RenderOperand(o, placeholders, elementVariable)))),
-            // Any Term shape: callers are all in aggregation scopes with no $regularExpression alternative
-            // (top-level $match regexes are rendered by MongoQueryLanguageRenderer instead).
+            // Any Term shape: callers are in aggregation scopes with no $regularExpression alternative.
             MongoRegexExpression regex => RenderRegexAsExpr(regex, placeholders, elementVariable),
-            // Constructed-tuple comparison operand: an MQL array of the per-member values. Only ever a top-level
-            // $eq/$ne operand, unlike MongoValueListExpression.
+            // Only ever a top-level $eq/$ne operand, unlike MongoValueListExpression.
             MongoTupleExpression tuple
                 => new BsonArray(tuple.Elements.Select(e => RenderOperand(e, placeholders, elementVariable))),
             _ => throw new NativeTranslationNotSupportedException(
@@ -168,19 +152,13 @@ internal static class MongoAggregationExpressionRenderer
         };
 
     /// <summary>
-    /// Returns whether <see cref="Render"/> would render <paramref name="node"/> without throwing.
+    /// Whether <see cref="Render"/> would render <paramref name="node"/> without throwing; change both together.
     /// </summary>
     /// <remarks>
-    /// Must be changed together with <see cref="Render"/>. Aggregation-dialect counterpart of
-    /// <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>: lets callers decline at translate time instead
-    /// of throwing at render time.
-    /// <para>
-    /// Only consult it where a render-time throw has no fallback (e.g.
-    /// <c>NativeSlotPopulator.TryTranslateComputedSortKey</c>). The filtered-count branch of
-    /// <see cref="MongoExpressionTranslator"/> deliberately doesn't: its render-time throw is caught by
-    /// <c>TryBuildPipeline</c> and falls back to driver-LINQ, whereas a translate-time decline hard-fails in every
-    /// mode.
-    /// </para>
+    /// Only consult it where a render-time throw has no fallback (e.g. <c>NativeSlotPopulator.TryTranslateComputedSortKey</c>).
+    /// The filtered-count branch of <see cref="MongoExpressionTranslator"/> deliberately doesn't: its render-time throw
+    /// is caught by <c>TryBuildPipeline</c> and falls back to driver-LINQ, whereas a translate-time decline hard-fails
+    /// in every mode.
     /// </remarks>
     public static bool CanRender(MongoExpression node)
         => node switch
@@ -188,9 +166,8 @@ internal static class MongoAggregationExpressionRenderer
             MongoFieldExpression or MongoElementRefExpression or MongoOuterFieldExpression or MongoLookupNullCheckExpression => true,
             MongoNumericTypeBracketExpression => true,
             MongoConstantExpression or MongoParameterExpression => true,
-            // $and/$or test a bare operand by truthiness, so a value-converted bool field (e.g. stored as "N",
-            // a truthy string) would render but answer wrong. See CanRenderLogicalOperand; comparison-result
-            // operands are safe.
+            // $and/$or test a bare operand by truthiness, so a value-converted bool field would render but answer
+            // wrong (see CanRenderLogicalOperand).
             MongoBinaryExpression { Operator: MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse } logical
                 => CanRenderLogicalOperand(logical.Left) && CanRenderLogicalOperand(logical.Right),
             MongoBinaryExpression binary
@@ -202,8 +179,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoInExpression inExpr => MongoValueRenderer.IsRenderableInValues(inExpr.Values),
             MongoComputedInExpression computedIn
                 => CanRender(computedIn.Needle) && MongoValueRenderer.IsRenderableInValues(computedIn.Values),
-            // A bare-field operand (MongoFieldExpression or MongoOuterFieldExpression) must be default-serialized,
-            // matching RenderUnary's render-time guard, so CanRender=true means Render answers correctly.
+            // A bare-field operand must be default-serialized, matching RenderUnary's render-time guard.
             MongoUnaryExpression { Operator: MongoUnaryOperator.Not } unary
                 => CanRender(unary.Operand)
                     && !MongoExpressionTranslator.IsUnsafeTruthinessRoot(unary.Operand, out _),
@@ -227,37 +203,29 @@ internal static class MongoAggregationExpressionRenderer
             MongoStringFirstOrLastExpression firstOrLast => CanRender(firstOrLast.Source),
             MongoQuantifierExpression quantifier => CanRender(quantifier.ArrayPath) && CanRender(quantifier.ElementPredicate),
             MongoConcatExpression concat => concat.Operands.All(CanRender),
-            // Relies on RenderRegexAsExpr's switch staying exhaustive for StartsWith/EndsWith/Contains/IsMatch;
-            // a new MongoRegexKind must be added to both. Any Term shape is admitted (see Render's arm). IsMatch's
-            // Term is always a constant string (TryTranslateRegexIsMatch). Like renders only via $regexMatch with a
-            // constant/parameter term (RenderLiteralRegexAsExpr); any other term must decline here rather than
-            // crash in RenderRegexAsExpr.
+            // Relies on RenderRegexAsExpr's switch staying exhaustive; a new MongoRegexKind must be added to both.
+            // Like renders only via $regexMatch with a constant/parameter term (RenderLiteralRegexAsExpr); any other
+            // term must decline here rather than crash there.
             MongoRegexExpression { Kind: MongoRegexKind.Like, Term: not (MongoConstantExpression { Value: string } or MongoParameterExpression) } => false,
-            // The translator only builds Exact with a constant string term (a parameter could be null per
-            // execution); RenderLiteralRegexAsExpr throws for field-to-field, so CanRender must agree.
+            // Exact has only a constant string term (a parameter could be null per execution); field-to-field throws.
             MongoRegexExpression { Kind: MongoRegexKind.Exact } exact
                 => exact.Term is MongoConstantExpression { Value: string },
-            // Pattern (Regex.IsMatch(field, pattern)): the term is a constant string, a string parameter or a string
-            // field (EF-247); $regexMatch accepts all three as "regex". Anything else must decline.
+            // Pattern: a constant string, string parameter or string field term (EF-247); $regexMatch accepts all three.
             MongoRegexExpression { Kind: MongoRegexKind.Pattern } pattern
                 => CanRender(pattern.Field)
                    && (pattern.Term is MongoConstantExpression { Value: string } or MongoParameterExpression or MongoFieldExpression)
                    && CanRender(pattern.Term),
             MongoRegexExpression regex => CanRender(regex.Field) && CanRender(regex.Term),
             MongoTupleExpression tuple => tuple.Elements.All(CanRender),
-            // Constructed nested sub-document (mirrors Render's arm), e.g. a composite anonymous-type needle in
-            // `ids.Contains(new { Id1 = ..., Id2 = ... })`.
             MongoDocumentConstructionExpression construction => construction.Members.All(m => CanRender(m.Value)),
             _ => false
         };
 
     // $and/$or truthiness-test a bare stored operand, so a bare field operand must be default-serialized
-    // (mirrors the Not arm and RenderUnary). Nested AndAlso/OrElse recurse; comparisons, constants and
-    // parameters fall through to CanRender.
+    // (mirrors the Not arm and RenderUnary).
     private static bool CanRenderLogicalOperand(MongoExpression node)
         => node switch
         {
-            // Covers MongoOuterFieldExpression too — an outer-scoped bool has the same truthiness hazard.
             MongoFieldExpression or MongoOuterFieldExpression
                 => !MongoExpressionTranslator.IsUnsafeTruthinessRoot(node, out _),
             MongoBinaryExpression { Operator: MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse } nested
@@ -285,31 +253,24 @@ internal static class MongoAggregationExpressionRenderer
             or MongoBinaryOperator.BitOr
             or MongoBinaryOperator.BitXor;
 
-    // Inside a $filter/$map the element is bound to a variable, so its fields are "$$<var>.<path>".
     private static BsonValue FieldRef(string path, string? elementVariable)
         => elementVariable is null ? "$" + path : "$$" + elementVariable + "." + path;
 
-    // The `as` variable for a $filter/$map nested inside elementVariable's scope. Per-level names ("e", "ee",
-    // "eee") stay distinct without a counter and lowercase-initial, as the server requires of an `as` name.
+    // Per-level names ("e", "ee", ...) stay distinct without a counter and lowercase-initial, as the server requires.
     private static string NestedElementVariable(string? elementVariable)
         => elementVariable is null ? "e" : elementVariable + "e";
 
-    /// <summary>
-    /// <c>{ $ifNull: [ <paramref name="value"/>, <paramref name="replacement"/> ] }</c>.
-    /// </summary>
     internal static BsonDocument IfNull(BsonValue value, BsonValue replacement)
         => new("$ifNull", new BsonArray { value, replacement });
 
     /// <summary>
-    /// <see cref="Render"/>, with a constant/parameter <paramref name="node"/> <c>$literal</c>-wrapped. For every value
-    /// position where a bare value would be misread: a <c>$cond</c>/<c>$ifNull</c> branch, a <c>$project</c>/<c>$set</c>
-    /// field, a <c>$group</c> <c>_id</c> part or accumulator operand.
+    /// <see cref="Render"/>, with a constant/parameter <paramref name="node"/> <c>$literal</c>-wrapped, for every value
+    /// position where a bare value would be misread (<c>$cond</c>/<c>$ifNull</c> branch, <c>$project</c>/<c>$set</c>
+    /// field, <c>$group</c> <c>_id</c> part or accumulator operand).
     /// </summary>
     /// <remarks>
-    /// An unwrapped "$"-prefixed string is read as a field path, so <c>g.Key ?? "$Year"</c> would return null,
-    /// <c>OrderBy(x => "$Label")</c> would silently sort by that field and a "$"-prefixed constant key part would
-    /// group by it (and a "$"-prefixed parameter value could throw). <c>$project</c> also reads a bare number/bool as
-    /// an inclusion/exclusion flag, so <c>Select(x => 0)</c> would abort the aggregate.
+    /// An unwrapped "$"-prefixed string is read as a field path (<c>OrderBy(x => "$Label")</c> would sort by that
+    /// field), and <c>$project</c> reads a bare number/bool as an inclusion flag (<c>Select(x => 0)</c> would abort).
     /// <c>MongoPipelineFactory.SubstituteValue</c> still finds a sentinel inside <c>{ "$literal": &lt;sentinel&gt; }</c>.
     /// </remarks>
     internal static BsonValue RenderBranch(MongoExpression node, PlaceholderTable placeholders, string? elementVariable = null)
@@ -320,9 +281,8 @@ internal static class MongoAggregationExpressionRenderer
             : rendered;
     }
 
-    // An operand position that can hold a string. A constant is wrapped only when its BSON would otherwise be
-    // evaluated as an expression (a string as a field path, an array/document element-wise), so numeric operands
-    // stay bare; a parameter's value is only known per execution, so it is always wrapped.
+    // A constant is wrapped only when its BSON would otherwise be evaluated as an expression (string, array,
+    // document), so numeric operands stay bare; a parameter's value is only known per execution, so always wrapped.
     private static BsonValue RenderOperand(MongoExpression node, PlaceholderTable placeholders, string? elementVariable)
     {
         var rendered = Render(node, placeholders, elementVariable);
@@ -349,7 +309,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoDatePart.DayOfWeek
                 => new BsonDocument("$subtract", new BsonArray { new BsonDocument("$dayOfWeek", operand), 1 }),
             MongoDatePart.Date => new BsonDocument("$dateTrunc", new BsonDocument { { "date", operand }, { "unit", "day" } }),
-            // The driver's shape: milliseconds since midnight (a long; null for a null date), read back through
+            // The driver's shape: milliseconds since midnight, read back through
             // BsonSerializerFactory.TimeOfDayMillisecondsSerializer.
             MongoDatePart.TimeOfDay => new BsonDocument("$dateDiff", new BsonDocument
             {
@@ -414,7 +374,7 @@ internal static class MongoAggregationExpressionRenderer
     }
 
     // MongoDB's default $trim whitespace set differs from char.IsWhiteSpace (e.g. it includes U+0000), so the
-    // zero-arg overload (Chars is null) renders an explicit "chars" with .NET's whitespace set.
+    // zero-arg overload renders an explicit "chars".
     private static BsonValue RenderTrim(MongoTrimExpression node, PlaceholderTable placeholders, string? elementVariable)
     {
         var op = node.Side switch
@@ -435,8 +395,8 @@ internal static class MongoAggregationExpressionRenderer
         return new BsonDocument(op, spec);
     }
 
-    // No length ⇒ "to the end": start subtracted from the source's own code-point length. $strLenCP is a server
-    // error over a null/missing source (aborting the whole query), so it measures { $ifNull: [source, ""] }.
+    // No length means "to the end". $strLenCP is a server error over a null/missing source, so it measures
+    // { $ifNull: [source, ""] }.
     private static BsonValue RenderSubstring(MongoSubstringExpression node, PlaceholderTable placeholders, string? elementVariable)
     {
         var source = RenderBranch(node.Source, placeholders, elementVariable);
@@ -469,26 +429,19 @@ internal static class MongoAggregationExpressionRenderer
         return NullPropagating(new BsonDocument("$indexOfCP", args), (node.Needle, needle));
     }
 
-    // Narrower than MayBeNull for two operand shapes the translator builds that can't be null: $toString of a
-    // non-null constant (a non-string `+` operand), and string.Join's elements, already coalesced to a non-null
-    // constant. Not $toString of a non-nullable field: it may be missing (an unmatched join side), answering null.
+    // Narrower than MayBeNull for two shapes that can't be null: $toString of a non-null constant, and string.Join's
+    // elements already coalesced to a constant. Not $toString of a non-nullable field: it may be missing (an
+    // unmatched join side), answering null.
     private static bool ConcatOperandMayBeNull(MongoExpression operand)
         => operand is not (MongoConvertExpression { Operand: MongoConstantExpression { Value: not null } }
                or MongoCoalesceExpression { Right: MongoConstantExpression { Value: not null } })
            && MayBeNull(operand);
 
-    /// <summary>
-    /// C#/EF null propagation for a member-style string call (<c>s.Substring(0, 1)</c> is null for a null
-    /// <c>s</c>) whose server operator doesn't propagate a null or missing operand: <c>$substrCP</c> answers
-    /// <c>""</c>, <c>$strLenCP</c> and a <c>$indexOfCP</c> needle are server errors. Wraps <paramref name="rendered"/>
-    /// in <c>$cond</c> answering null when any listed operand that <see cref="MayBeNull"/> is null or missing
-    /// (<c>$cond</c> is lazy, so the operator never sees it). Operands that can't be null leave the MQL unchanged.
-    /// </summary>
-    /// <remarks>
-    /// Reuses each operand's rendered value (cloned) rather than rendering it again, so a parameter operand keeps a
-    /// single placeholder-table entry. Operators that already propagate (<c>$trim</c>, <c>$replaceAll</c>,
-    /// <c>$toString</c>, a <c>$indexOfCP</c> haystack) aren't wrapped.
-    /// </remarks>
+    // C#/EF null propagation for a member-style string call (s.Substring(0, 1) is null for a null s) whose server
+    // operator doesn't propagate null/missing: $substrCP answers "", $strLenCP and a $indexOfCP needle are server
+    // errors. Wraps in a lazy $cond answering null when any operand that MayBeNull is null or missing. Operands'
+    // rendered values are cloned, not re-rendered, so a parameter keeps a single placeholder-table entry. $trim,
+    // $replaceAll, $toString and a $indexOfCP haystack already propagate and aren't wrapped.
     private static BsonValue NullPropagating(BsonValue rendered, params (MongoExpression Node, BsonValue Rendered)[] operands)
     {
         var tests = new BsonArray();
@@ -511,11 +464,8 @@ internal static class MongoAggregationExpressionRenderer
             });
     }
 
-    /// <summary>
-    /// Every code point <see cref="char.IsWhiteSpace(char)"/> accepts, used as the explicit <c>$trim</c>
-    /// <c>"chars"</c> for zero-arg <c>Trim()</c>/<c>TrimStart()</c>/<c>TrimEnd()</c>. Built from <c>char</c> values
-    /// because U+2028/U+2029 are line terminators even inside a C# string literal (<c>CS1010</c>).
-    /// </summary>
+    // Every code point char.IsWhiteSpace accepts. Built from char values because U+2028/U+2029 are line terminators
+    // even inside a C# string literal (CS1010).
     private static readonly string DotNetWhitespaceChars = new(
     [
         '\u0009', '\u000A', '\u000B', '\u000C', '\u000D', ' ', '\u0085', ' ', ' ',
@@ -523,19 +473,15 @@ internal static class MongoAggregationExpressionRenderer
         (char)0x2028 /* LINE SEPARATOR */, (char)0x2029 /* PARAGRAPH SEPARATOR */, ' ', ' ', '　'
     ]);
 
-    // Empty-safe char extraction (see MongoStringFirstOrLastExpression): a negative $substrCP start (Last on an
-    // empty string) is a server error, so both kinds gate on strLenCP == 0 via $cond (which short-circuits).
-    // Both branches yield a one-char string — the empty branch is "\0", not Int32 0 — so a comparison against
-    // '\0' never crosses BSON type brackets. Source and its $strLenCP are rendered once and reused.
-    //
-    // nullForNullSource: a comparison operand (see RenderComparisonOperand) answers null for a null/missing source,
-    // as EF's comparison over the null receiver does. Everywhere else (a projected value) a null source behaves like
-    // empty and yields '\0'.
+    // A negative $substrCP start (Last on an empty string) is a server error, so both kinds gate on strLenCP == 0 via
+    // $cond. Both branches yield a one-char string (the empty branch is "\0", not Int32 0) so a comparison against
+    // '\0' never crosses BSON type brackets.
+    // nullForNullSource: a comparison operand answers null for a null/missing source, as EF's comparison over a null
+    // receiver does; elsewhere a null source behaves like empty and yields '\0'.
     private static BsonValue RenderStringFirstOrLast(
         MongoStringFirstOrLastExpression node, PlaceholderTable placeholders, string? elementVariable, bool nullForNullSource)
     {
-        // $strLenCP errors on a null/missing source, so coalesce to "" first; null then behaves like empty
-        // (a comparison operand is null-guarded on top; see nullForNullSource).
+        // $strLenCP errors on a null/missing source, so coalesce to "" first.
         var rawSource = RenderOperand(node.Source, placeholders, elementVariable);
         var source = IfNull(rawSource, "");
         var length = new BsonDocument("$strLenCP", source);
@@ -583,15 +529,14 @@ internal static class MongoAggregationExpressionRenderer
         };
 
     // $size over a missing or null array is a server error, so an embedded path is $ifNull-wrapped (count 0, as
-    // LINQ answers). A $lookup alias is always an array and keeps the plain form. See MongoSizeExpression.
+    // LINQ answers). A $lookup alias is always an array and keeps the plain form.
     private static BsonValue RenderSize(MongoSizeExpression size, string? elementVariable)
         => size.NullSafe
             ? new BsonDocument("$size",
                 IfNull(FieldRef(size.FieldName, elementVariable), new BsonArray()))
             : new BsonDocument("$size", FieldRef(size.FieldName, elementVariable));
 
-    // Presence by $type, which tells a missing element ("missing") from a null one ("null"); a bare comparison to null
-    // can't, since the aggregation dialect orders and equates them differently.
+    // Presence by $type, which tells a missing element from a null one; a bare comparison to null can't.
     private static BsonValue RenderFieldPresence(MongoFieldPresenceExpression presence, string? elementVariable)
     {
         var type = new BsonDocument("$type", FieldRef(presence.Path, elementVariable));
@@ -610,15 +555,15 @@ internal static class MongoAggregationExpressionRenderer
     {
         var variable = NestedElementVariable(elementVariable);
 
-        // $filter's cond is truthiness-tested, and a bare-field predicate (Count(p => b.Flag)) bypasses the
-        // AndAlso/OrElse/Not guards. Checked at render time: a translate-time decline would hard-fail in every
-        // mode, whereas this throw is caught by TryBuildPipeline as a driver-LINQ fallback.
+        // $filter's cond is truthiness-tested, and a bare-field predicate bypasses the AndAlso/OrElse/Not guards.
+        // Checked at render time: a translate-time decline would hard-fail in every mode, whereas this throw is
+        // caught by TryBuildPipeline as a driver-LINQ fallback.
         CheckBooleanRootSerialization(node.ElementPredicate);
 
         return new BsonDocument("$size",
             new BsonDocument("$filter", new BsonDocument
             {
-                // $filter over a missing or null array is a server error; [] yields 0, as LINQ answers.
+                // $filter over a missing or null array is a server error.
                 { "input", IfNull(FieldRef(node.ArrayPath, elementVariable), new BsonArray()) },
                 { "as", variable },
                 { "cond", Render(node.ElementPredicate, placeholders, variable) }
@@ -630,15 +575,13 @@ internal static class MongoAggregationExpressionRenderer
     {
         var variable = NestedElementVariable(elementVariable);
 
-        // $anyElementTrue/$allElementsTrue truthiness-test each "in" result, and a bare-field predicate
-        // (`b.Posts.Any(p => b.Flag)`) passes CanRender unchecked, so a value-converted bool (stored as "False",
-        // truthy) would silently answer wrong for every row. Guard at render time.
+        // $anyElementTrue/$allElementsTrue truthiness-test each "in" result, and a bare-field predicate passes
+        // CanRender unchecked, so a value-converted bool (stored as "False", truthy) would answer wrong. Guard here.
         CheckBooleanRootSerialization(node.ElementPredicate);
 
         var map = new BsonDocument("$map", new BsonDocument
         {
-            // $map over a missing or null array is a server error; over [] $anyElementTrue/$allElementsTrue
-            // answer false/true, matching LINQ Any/All on an empty sequence.
+            // $map over a missing or null array is a server error; [] gives false/true, matching LINQ Any/All.
             { "input", IfNull(Render(node.ArrayPath, placeholders, elementVariable), new BsonArray()) },
             { "as", variable },
             { "in", Render(node.ElementPredicate, placeholders, variable) }
@@ -648,25 +591,20 @@ internal static class MongoAggregationExpressionRenderer
         return new BsonDocument(op, map);
     }
 
-    // Constant/parameter terms render as $regexMatch (RenderLiteralRegexAsExpr). Field-to-field terms, which have
-    // no regex form ($regularExpression needs a literal pattern), mirror the driver's
-    // StartsWithContainsOrEndsWithMethodToAggregationExpressionTranslator.CreateAst, with no $ifNull guarding.
+    // Constant/parameter terms render as $regexMatch (RenderLiteralRegexAsExpr). Field-to-field terms mirror the
+    // driver's StartsWithContainsOrEndsWithMethodToAggregationExpressionTranslator.CreateAst, with no $ifNull guarding.
     private static BsonValue RenderRegexAsExpr(MongoRegexExpression regex, PlaceholderTable placeholders, string? elementVariable)
     {
         var field = Render(regex.Field, placeholders, elementVariable);
 
-        // A constant/parameter term (and Exact always) renders via $regexMatch with the same BSON regex the query
-        // dialect uses, never the $toLower fold below: $toLower only folds ASCII, so an OrdinalIgnoreCase term
-        // would silently miss a non-ASCII match (e.g. "École" vs "école"), whereas the regex "i" option is
-        // Unicode-correct. $regexMatch is false for a null/missing input, matching the query dialect.
+        // Never the $toLower fold below for these: $toLower only folds ASCII, so an OrdinalIgnoreCase term would miss
+        // a non-ASCII match ("École" vs "école"), whereas the regex "i" option is Unicode-correct.
         if (regex.Kind == MongoRegexKind.Exact
             || (regex.Kind is not (MongoRegexKind.IsMatch or MongoRegexKind.Pattern)
                 && regex.Term is MongoConstantExpression { Value: string } or MongoParameterExpression))
             return RenderLiteralRegexAsExpr(regex, field, placeholders);
 
-        // Pattern (Regex.IsMatch(field, constantPattern)): options come from PatternOptions verbatim, never
-        // CaseInsensitive/$toLower — must precede the fold below, which never applies to it (CaseInsensitive is
-        // always false for Pattern) but is handled explicitly for clarity, matching Exact.
+        // Pattern: options come from PatternOptions verbatim, never CaseInsensitive/$toLower.
         if (regex.Kind == MongoRegexKind.Pattern)
         {
             var patternTerm = RenderOperand(regex.Term, placeholders, elementVariable);
@@ -677,9 +615,8 @@ internal static class MongoAggregationExpressionRenderer
 
         var term = RenderOperand(regex.Term, placeholders, elementVariable);
 
-        // $indexOfCP/$strLenCP have no case-insensitive option, so an OrdinalIgnoreCase term folds both
-        // operands through $toLower (ASCII-only; unreachable for field-to-field today, which the translator declines
-        // when case-insensitive). IsMatch is excluded: $regexMatch has its own "options".
+        // $indexOfCP/$strLenCP have no case-insensitive option, so fold both operands through $toLower (ASCII-only;
+        // unreachable today, as the translator declines case-insensitive field-to-field). IsMatch has its own "options".
         if (regex.CaseInsensitive && regex.Kind != MongoRegexKind.IsMatch)
         {
             field = new BsonDocument("$toLower", field);
@@ -693,9 +630,7 @@ internal static class MongoAggregationExpressionRenderer
             MongoRegexKind.Contains
                 => new BsonDocument("$gte", new BsonArray { new BsonDocument("$indexOfCP", new BsonArray { field, term }), 0 }),
             MongoRegexKind.EndsWith => RenderEndsWithAsExpr(field, term),
-            // Regex.IsMatch(constantInput, fieldPattern): roles are swapped (see MongoRegexKind.IsMatch), so
-            // Field feeds $regexMatch's "regex" and Term its "input". $regexMatch accepts a field-valued regex,
-            // which $regularExpression does not.
+            // Roles are swapped (see MongoRegexKind.IsMatch): Field feeds "regex", Term feeds "input".
             MongoRegexKind.IsMatch => new BsonDocument("$regexMatch", new BsonDocument
             {
                 { "input", term },
@@ -708,11 +643,9 @@ internal static class MongoAggregationExpressionRenderer
         return NotIf(regex.Negated, test);
     }
 
-    // $regexMatch with a literal BSON regex: a constant term bakes the pattern now; a parameter becomes a regex
-    // placeholder resolved per execution, matching MongoQueryLanguageRenderer.RenderRegex's constant/parameter
-    // handling (including Like's "is"). A field-to-field Exact term has no query- or expression-dialect form (the
-    // translator never builds one; see MongoExpressionTranslator.StringEquals.cs) and throws rather than silently
-    // folding through $toLower.
+    // Matches MongoQueryLanguageRenderer.RenderRegex's constant/parameter handling (including Like's "is"). A
+    // field-to-field Exact term has no dialect form (the translator never builds one) and throws rather than
+    // silently folding through $toLower.
     private static BsonValue RenderLiteralRegexAsExpr(MongoRegexExpression regex, BsonValue field, PlaceholderTable placeholders)
     {
         var caseInsensitive = regex.Kind == MongoRegexKind.Like || regex.CaseInsensitive;
@@ -731,8 +664,8 @@ internal static class MongoAggregationExpressionRenderer
         return NotIf(regex.Negated, regexMatch);
     }
 
-    // start = strLenCP(field) - strLenCP(term); true iff start >= 0 and indexOfCP(field, term, start) == start.
-    // "start" is bound once via $let, matching the driver's CreateAst output.
+    // True iff start >= 0 and indexOfCP(field, term, start) == start, where start = strLenCP(field) - strLenCP(term),
+    // bound once via $let as the driver's CreateAst does.
     private static BsonValue RenderEndsWithAsExpr(BsonValue field, BsonValue term)
     {
         var start = new BsonDocument("$subtract", new BsonArray
@@ -759,8 +692,7 @@ internal static class MongoAggregationExpressionRenderer
     }
 
     // Throws if node is a bare non-default-serialized bool (e.g. stored as "True"/"False", both truthy) in a position
-    // that tests it by truthiness, which would answer the wrong boolean. The message reads
-    // "Cannot render '<property>' as <position>: ..., and <reason>, which would answer the wrong boolean.".
+    // that tests it by truthiness.
     private static void ThrowIfUnsafeTruthinessRoot(MongoExpression node, string position, string reason)
     {
         if (MongoExpressionTranslator.IsUnsafeTruthinessRoot(node, out var property))
@@ -771,14 +703,13 @@ internal static class MongoAggregationExpressionRenderer
         }
     }
 
-    // Guard for positions that truthiness-test a whole sub-expression ($filter cond, quantifier $map "in"). A
-    // bare-field root reaches neither RenderBinary nor RenderUnary, so these callers must invoke it explicitly;
-    // nested AndAlso/OrElse/Not re-check their own operands.
+    // For positions that truthiness-test a whole sub-expression ($filter cond, quantifier $map "in"). A bare-field
+    // root reaches neither RenderBinary nor RenderUnary, so these callers must invoke it; nested AndAlso/OrElse/Not
+    // re-check their own operands.
     private static void CheckBooleanRootSerialization(MongoExpression node)
         => ThrowIfUnsafeTruthinessRoot(node, "a bare boolean predicate root", "this position is evaluated by truthiness");
 
-    // Aggregation-dialect $in: { $in: [needle, haystack] }. Negated form wraps in $not (an array-form operator,
-    // unlike the query dialect's { field: { $nin: ... } }).
+    // { $in: [needle, haystack] }; negation wraps in $not (the query dialect has $nin, this one doesn't).
     private static BsonValue RenderIn(MongoInExpression inExpr, PlaceholderTable placeholders, string? elementVariable)
     {
         var needle = FieldRef(inExpr.Field.ElementName, elementVariable);
@@ -786,7 +717,7 @@ internal static class MongoAggregationExpressionRenderer
         return NotIf(inExpr.Negated, new BsonDocument("$in", new BsonArray { needle, haystack }));
     }
 
-    // Computed-needle variant of RenderIn: the needle renders through Render (no single field path).
+    // Computed-needle variant of RenderIn.
     private static BsonValue RenderComputedIn(
         MongoComputedInExpression computedIn, PlaceholderTable placeholders, string? elementVariable)
     {
@@ -795,11 +726,9 @@ internal static class MongoAggregationExpressionRenderer
         return NotIf(computedIn.Negated, new BsonDocument("$in", new BsonArray { needle, haystack }));
     }
 
-    // Aggregation-dialect negation of a test: { $not: [ test ] } when negated, else test unchanged.
     private static BsonValue NotIf(bool negated, BsonValue test)
         => negated ? new BsonDocument("$not", new BsonArray { test }) : test;
 
-    // Aggregation-dialect Not: { $not: [ <expr> ] }, for any operand CanRender admits (always inside $expr).
     private static BsonValue RenderUnary(MongoUnaryExpression unary, PlaceholderTable placeholders, string? elementVariable)
     {
         if (unary.Operator == MongoUnaryOperator.BitNot)
@@ -808,14 +737,11 @@ internal static class MongoAggregationExpressionRenderer
         if (unary.Operator != MongoUnaryOperator.Not)
             throw new NativeTranslationNotSupportedException($"Unsupported unary operator '{unary.Operator}'.");
 
-        // $not is truthiness-based, so negating a value-converted bool field directly (e.g. stored as
-        // "True"/"False", both truthy) would answer wrong; refuse to render. Only a bare field (including
-        // MongoOuterFieldExpression) is checked: $not over a comparison result is always correct.
-        //
+        // $not is truthiness-based, so negating a value-converted bool field directly would answer wrong. Only a bare
+        // field is checked: $not over a comparison result is always correct.
         // Render-time rather than translate-time: this is the only gate for a filtered count's element predicate,
         // where a translate-time decline hard-fails in every mode, while this throw is caught by TryBuildPipeline
-        // (driver-LINQ fallback) and surfaces as-is under NativeOnly. Computed sort keys are already declined
-        // earlier by NativeSlotPopulator.TryTranslateComputedSortKey.
+        // (driver-LINQ fallback) and surfaces as-is under NativeOnly.
         ThrowIfUnsafeTruthinessRoot(unary.Operand, "a 'Not' operand", "a raw-field $not evaluates it by truthiness");
 
         return new BsonDocument("$not", new BsonArray { Render(unary.Operand, placeholders, elementVariable) });
@@ -823,8 +749,7 @@ internal static class MongoAggregationExpressionRenderer
 
     private static BsonValue RenderBinary(MongoBinaryExpression binary, PlaceholderTable placeholders, string? elementVariable)
     {
-        // Render-time counterpart of CanRenderLogicalOperand, for callers that skip CanRender (the filtered-count
-        // path; see RenderUnary). Nested AndAlso/OrElse recurse through RenderBinary.
+        // Render-time counterpart of CanRenderLogicalOperand, for callers that skip CanRender (the filtered-count path).
         if (binary.Operator is MongoBinaryOperator.AndAlso or MongoBinaryOperator.OrElse)
         {
             CheckLogicalOperandSerialization(binary.Left);
@@ -832,8 +757,7 @@ internal static class MongoAggregationExpressionRenderer
         }
 
         // C# integer division truncates; $divide yields a double. Without $trunc an integral member fails to
-        // deserialize ("Truncation resulted in data loss") and integral comparisons are off by one. See
-        // MongoBinaryOperator.IntegerDivide for why integral-ness is decided at translate time.
+        // deserialize and integral comparisons are off by one. See MongoBinaryOperator.IntegerDivide.
         if (binary.Operator == MongoBinaryOperator.IntegerDivide)
         {
             return new BsonDocument("$trunc",
@@ -866,7 +790,6 @@ internal static class MongoAggregationExpressionRenderer
                 $"Unsupported aggregation operator '{binary.Operator}'.")
         };
 
-        // A comparison operand can be a string; arithmetic and logical operands never are.
         var left = binary.IsComparison
             ? RenderComparisonOperand(binary.Left, placeholders, elementVariable)
             : Render(binary.Left, placeholders, elementVariable);
@@ -875,7 +798,7 @@ internal static class MongoAggregationExpressionRenderer
             : Render(binary.Right, placeholders, elementVariable);
 
         // Document root only: inside a $filter/$map element scope, missing-vs-null stays distinguished, matching
-        // driver-LINQ (pinned by NativeOwnedCollectionFilteredCountTests.Filtered_count_null_check_diverges_...).
+        // driver-LINQ (pinned by NativeOwnedCollectionFilteredCountTests).
         if (binary.Operator is MongoBinaryOperator.Equal or MongoBinaryOperator.NotEqual && elementVariable is null)
         {
             left = MissingAsNullWhenComparedToNull(binary.Left, binary.Right, left);
@@ -884,13 +807,8 @@ internal static class MongoAggregationExpressionRenderer
 
         var rendered = new BsonDocument(op, new BsonArray { left, right });
 
-        // Relational null-ordering guard (disjoint from the ==/!= missing-as-null rule above). Element-scoped
-        // predicates ($filter cond, quantifier $map "in") are guarded too: the reused operand is already rendered
-        // against the element variable ($$e.<field>), and a missing element field fails `$gt: [missing, null]` just
-        // as a missing document field does.
-        //
-        // The guard reuses the operand's final rendered value (cloned, so the two positions don't share one
-        // instance) rather than rendering it again, so a parameter operand keeps a single placeholder-table entry.
+        // Relational null-ordering guard (see LowerRelationalOperand), also applied in element scopes. Reuses the
+        // operand's rendered value (cloned) rather than re-rendering, so a parameter keeps a single placeholder entry.
         return LowerRelationalOperand(binary) is { } lower && MayBeNull(lower)
             ? new BsonDocument("$and", new BsonArray
             {
@@ -903,20 +821,17 @@ internal static class MongoAggregationExpressionRenderer
             : rendered;
     }
 
-    // A comparison operand that is a string FirstOrDefault()/LastOrDefault() renders null (not '\0') for a
-    // null/missing receiver (see RenderStringFirstOrLast), as C#/EF compare the null: `== '\0'` is false, `!= '\0'`
-    // true, and the relational null guard below makes `<` false. Negation stays exact: $eq/$ne partition the null
-    // form too, and a negated relational comparison $not-wraps the guarded node.
+    // A string FirstOrDefault()/LastOrDefault() comparison operand renders null (not '\0') for a null/missing
+    // receiver, as C#/EF compare the null: `== '\0'` is false, `!= '\0'` true. Negation stays exact.
     private static BsonValue RenderComparisonOperand(
         MongoExpression node, PlaceholderTable placeholders, string? elementVariable)
         => node is MongoStringFirstOrLastExpression firstOrLast
             ? RenderStringFirstOrLast(firstOrLast, placeholders, elementVariable, nullForNullSource: true)
             : RenderOperand(node, placeholders, elementVariable);
 
-    // $eq/$ne don't equate a missing field with null (the query dialect's { field: null } does, and so does .NET,
-    // which reads both as null), so `x.S == null` would be false for a missing S. Wrap a bare stored field in
-    // { $ifNull: [ field, null ] } against a null constant, or a parameter (null only known per execution).
-    // Computed operands already yield null (not missing) for a missing input.
+    // $eq/$ne don't equate a missing field with null (the query dialect and .NET do), so `x.S == null` would be false
+    // for a missing S. Wrap a bare stored field in $ifNull against a null constant or a parameter (null only known
+    // per execution). Computed operands already yield null for a missing input.
     private static BsonValue MissingAsNullWhenComparedToNull(MongoExpression operand, MongoExpression other, BsonValue rendered)
         => other is MongoConstantExpression { Value: null } or MongoParameterExpression
             ? MissingAsNull(operand, rendered)
@@ -932,17 +847,12 @@ internal static class MongoAggregationExpressionRenderer
             ? IfNull(rendered, BsonNull.Value)
             : rendered;
 
-    // The operand on the "less" side of a relational comparison: the Left of </<=, the Right of >/>=. Null for any
-    // other operator.
-    //
-    // The aggregation dialect orders null (and missing) below every value, so `$lt: [null, 5]`, `$lte: [null, null]`,
-    // `$gt: [5, null]` and `$gte: [null, null]` are all true, where C# lifted comparison semantics answer false for
-    // any null operand. Only the less side can make a relational operator wrongly true (a non-null lower side never
-    // orders below a null or missing greater side), so RenderBinary conjoins `$gt: [lower, null]` (true exactly when
-    // the lower operand is neither null nor missing; missing orders below null) whenever that side may be null. Structural here rather than at each
-    // construction site, so every aggregation-dialect comparison (HAVING $match, $cond inside $group, $project
-    // ternaries, $expr fall-through) gets it. Negation stays exact: every negator $not-wraps a relational operator,
-    // and the guard is inside the wrapped node, so the complement of the guarded pair is exactly C#'s !(a < b).
+    // The "less" side of a relational comparison: Left of </<=, Right of >/>=; null for any other operator.
+    // The aggregation dialect orders null/missing below every value, so `$lt: [null, 5]` and `$gte: [null, null]` are
+    // true where C# answers false for any null operand. Only the less side can make the operator wrongly true, so
+    // RenderBinary conjoins `$gt: [lower, null]` when that side may be null. Done here rather than at each
+    // construction site so every aggregation-dialect comparison gets it. Negation stays exact: negators $not-wrap
+    // relational operators and the guard is inside the wrapped node.
     private static MongoExpression? LowerRelationalOperand(MongoBinaryExpression binary)
         => binary.Operator switch
         {
@@ -953,79 +863,65 @@ internal static class MongoAggregationExpressionRenderer
 
     /// <summary>
     /// Whether <paramref name="node"/> may evaluate to null or missing in the aggregation dialect, judged
-    /// conservatively from its CLR type (a nullable value type or a reference type) and from null-propagating
-    /// operators over such an operand. A non-null constant never does; a query parameter always may (its value is
+    /// conservatively from its CLR type and null-propagating operators. A query parameter always may (its value is
     /// only known at execution).
     /// </summary>
     internal static bool MayBeNull(MongoExpression node)
         => node switch
         {
             MongoConstantExpression constant => constant.Value is null,
-            // Rendered as $ifNull: [field, null], so it is null (never missing) when absent.
             MongoFieldExpression { NullSafe: true } or MongoElementRefExpression { NullSafe: true } => true,
-            // A read of an upstream alias holding a null-propagated value behind a non-nullable type.
             MongoElementRefExpression { ThrowsOnNull: true } => true,
             MongoParameterExpression => true,
-            // Arithmetic ($add/$subtract/..., $trunc of $divide) propagates a null operand.
             MongoBinaryExpression { IsArithmetic: true } arithmetic
                 => IsNullableClrType(arithmetic.Type) || MayBeNull(arithmetic.Left) || MayBeNull(arithmetic.Right),
-            // $toX, $year/$month/..., and the math operators all return null for a null input.
             MongoConvertExpression convert => IsNullableClrType(convert.Type) || MayBeNull(convert.Operand),
             MongoDatePartExpression datePart => MayBeNull(datePart.Operand),
             MongoMathExpression math => IsNullableClrType(math.Type) || math.Operands.Any(MayBeNull),
-            // Null-guarded or null-propagating over a possibly-null string (see NullPropagating), so null where
-            // EF answers null.
+            // Null-guarded or null-propagating over a possibly-null string (see NullPropagating).
             MongoStringLengthExpression length => MayBeNull(length.Operand),
             MongoStringIndexOfExpression indexOf => MayBeNull(indexOf.Haystack) || MayBeNull(indexOf.Needle),
-            // Every possibly-null operand is coalesced to "".
             MongoConcatExpression => false,
-            // Only its comparison-operand form is ever null (see RenderComparisonOperand); elsewhere it's '\0'.
+            // Only its comparison-operand form is ever null (see RenderComparisonOperand).
             MongoStringFirstOrLastExpression firstOrLast => MayBeNull(firstOrLast.Source),
             _ => IsNullableClrType(node.Type)
         };
 
     /// <summary>
-    /// <see cref="MayBeNull"/>, except that a query parameter is judged by its CLR type (like
-    /// <see cref="DateAddAmountMayBeNull"/>): a captured non-nullable <c>int</c> is never null, although
-    /// <see cref="MayBeNull"/> counts every parameter as possibly null.
+    /// <see cref="MayBeNull"/>, except that a query parameter is judged by its CLR type (a captured non-nullable
+    /// <c>int</c> is never null).
     /// </summary>
     internal static bool MayBeNullOperand(MongoExpression operand)
         => operand is MongoParameterExpression { ValueType: { } valueType } ? IsNullableClrType(valueType) : MayBeNull(operand);
 
     /// <summary>
-    /// Whether <paramref name="node"/>, whose CLR type is a non-nullable value type, may nonetheless evaluate to null:
-    /// <c>$strLenCP</c>/<c>$indexOfCP</c> over a possibly-null string (null-guarded, see <see cref="NullPropagating"/>),
-    /// directly or through arithmetic, a cast, a math function or a conditional branch. Read back as that non-nullable type, the null would
-    /// silently become <c>default(T)</c> (a <c>0</c> length) where EF throws, so a group key, <c>$min</c>/<c>$max</c>/
-    /// <c>$avg</c> or <c>$push</c> operand declines, and a projection leaf throws on null or declines (see
-    /// <see cref="ClassifyNonNullableValueRead"/>); a nullable cast (<c>(int?)s.Length</c>) reads the null and stays
-    /// native. Filters are unaffected: the relational null guard covers them.
+    /// Whether <paramref name="node"/>, whose CLR type is a non-nullable value type, may nonetheless evaluate to null
+    /// (<c>$strLenCP</c>/<c>$indexOfCP</c> over a possibly-null string, directly or through arithmetic, a cast, a math
+    /// function or a conditional branch). Read back as that type the null would silently become <c>default(T)</c>
+    /// where EF throws, so a group key, <c>$min</c>/<c>$max</c>/<c>$avg</c> or <c>$push</c> operand declines and a
+    /// projection leaf throws or declines (see <see cref="ClassifyNonNullableValueRead"/>).
     /// </summary>
     /// <remarks>
-    /// Doesn't count a date operator over a nullable date (<c>o.OrderDate.Value.Day</c>, <c>.AddDays(1)</c>), or an
-    /// operator over a nullable stored value (<c>x.Score.Value + 1</c>), as null behind the type, unlike
-    /// <see cref="ClassifyNonNullableValueRead"/>: declining those group keys and accumulators would move grouped queries
-    /// that are native today onto the fallback, and a group key has no throw-on-null read yet. Their null still reads
-    /// as <c>0</c> (EF-461).
+    /// Unlike <see cref="ClassifyNonNullableValueRead"/>, doesn't count a date operator over a nullable date or an
+    /// operator over a nullable stored value (<c>x.Score.Value + 1</c>): declining those group keys and accumulators
+    /// would move native grouped queries onto the fallback, and a group key has no throw-on-null read yet. Their null
+    /// still reads as <c>0</c> (EF-461).
     /// </remarks>
     internal static bool MayBeNullBehindNonNullableType(MongoExpression node)
         => WalkNullBehindNonNullableType(node, [], dateParts: false).MayBeNull;
 
-    // What one walk of a value finds about a null behind its non-nullable type: whether it may be null at all
-    // (MayBeNullBehindNonNullableType), and whether an operator between that null and the value may absorb it into a
-    // non-null answer (ClassifyNonNullableValueRead's Decline). One walker answers both so they can't cover different
-    // nodes: a node one saw and the other didn't would classify a hidden Math.Max as ThrowOnNull (a silent wrong value).
+    // Whether a value may be null behind its non-nullable type, and whether an operator between that null and the value
+    // may absorb it into a non-null answer (Decline). One walker answers both so they can't cover different nodes: a
+    // node one saw and the other didn't would classify a hidden Math.Max as ThrowOnNull (a silent wrong value).
     private readonly record struct NullBehindNonNullable(bool MayBeNull, bool MayAbsorb)
     {
         public static NullBehindNonNullable operator |(NullBehindNonNullable a, NullBehindNonNullable b)
             => new(a.MayBeNull || b.MayBeNull, a.MayAbsorb || b.MayAbsorb);
     }
 
-    // nonNull: operands a conditional's test has proven non-null on the branch being inspected
-    // (`s == null ? 0 : s.Length` reads Length only where s isn't null). dateParts: whether a date part over a
-    // nullable date counts (see MayBeNullBehindNonNullableType's remarks). missingFields: whether a non-nullable
-    // property's field counts too, as it would in a malformed document that omits it (projection leaves only; see
-    // NonNullableValueRead.ThrowOnMalformedNull).
+    // nonNull: operands a conditional's test has proven non-null on the branch being inspected. dateParts: whether a
+    // date part over a nullable date counts. missingFields: whether a non-nullable property's field counts too, as in a
+    // malformed document that omits it (projection leaves only; see NonNullableValueRead.ThrowOnMalformedNull).
     private static NullBehindNonNullable WalkNullBehindNonNullableType(
         MongoExpression node, IReadOnlyList<MongoExpression> nonNull, bool dateParts, bool missingFields = false)
         => node switch
@@ -1033,20 +929,18 @@ internal static class MongoAggregationExpressionRenderer
             MongoStringLengthExpression length => new(MayBeNullUnlessProven(length.Operand, nonNull), false),
             MongoStringIndexOfExpression indexOf
                 => new(MayBeNullUnlessProven(indexOf.Haystack, nonNull) || MayBeNullUnlessProven(indexOf.Needle, nonNull), false),
-            // An upstream alias (a Distinct's flattened key, a bare Select's `_v`, a set-op operand) the emit side
-            // flagged MongoProjection.ThrowsOnNull: the same possibly-null value, read by reference.
-            // $min/$max/$avg over an empty array answer null, with nothing between it and the leaf to absorb it, so a non-nullable
-            // result throws on read like LINQ's Min/Max/Average over an empty sequence. $sum of an empty array is 0, never null.
+            // $min/$max/$avg over an empty array answer null with nothing to absorb it, so a non-nullable result throws
+            // on read like LINQ's Min/Max/Average over an empty sequence. $sum of an empty array is 0.
+            // ElementRef: an upstream alias the emit side flagged MongoProjection.ThrowsOnNull.
             MongoArrayReduceExpression { OperatorName: "$min" or "$max" or "$avg" } => new(true, false),
             MongoElementRefExpression { ThrowsOnNull: true } => new(true, false),
             MongoBinaryExpression { IsArithmetic: true } arithmetic
                 => WalkNullBehindNonNullableType(arithmetic.Left, nonNull, dateParts, missingFields)
                    | WalkNullBehindNonNullableType(arithmetic.Right, nonNull, dateParts, missingFields),
             MongoConvertExpression convert => WalkNullBehindNonNullableType(convert.Operand, nonNull, dateParts, missingFields),
-            // Date operators answer null for a null date, which a non-nullable read would take as 0 / 00:00 /
-            // DateTime.MinValue where EF throws: $year/$month/.../$dateTrunc/$dateDiff (`o.OrderDate.Value.Year`), $dateAdd
-            // (`o.OrderDate.Value.AddDays(1)`, also null for a null amount), and a DateTimeOffset's local reconstruction
-            // (`o.Dto.Value.DateTime`, a $dateAdd typed DateTime over the nullable stored offset).
+            // Date operators answer null for a null date, which a non-nullable read would take as 0 / DateTime.MinValue
+            // where EF throws. $dateAdd is also null for a null amount; a DateTimeOffset's local reconstruction is a
+            // $dateAdd over the nullable stored offset.
             MongoDatePartExpression datePart when dateParts
                 => new NullBehindNonNullable(MayBeNullUnlessProven(datePart.Operand, nonNull), false)
                    | WalkNullBehindNonNullableType(datePart.Operand, nonNull, dateParts, missingFields),
@@ -1058,24 +952,20 @@ internal static class MongoAggregationExpressionRenderer
             MongoDateTimeOffsetLocalExpression local when dateParts
                 => new NullBehindNonNullable(MayBeNullUnlessProven(local.Operand, nonNull), false)
                    | WalkNullBehindNonNullableType(local.Operand, nonNull, dateParts, missingFields),
-            // A nullable-typed stored value under a non-nullable operator (`x.Score!.Value + 1`, `Math.Abs(x.Score!.Value)`,
-            // `c ? x.Score!.Value : 0`, with `.Value` peeled to the field): the operator propagates its null, which a
-            // non-nullable read would take as 0 where EF throws. A non-nullable property's field answers false here
-            // (MayBeNull is its CLR type), so `x.A + x.B` is not flagged. Projection leaves only (dateParts, as for the
-            // date operators above): group keys and accumulators are unchanged. A bare field leaf never reaches here
-            // (ClassifyNonNullableValueRead reads it property-aware). With missingFields, a non-nullable property's
-            // field counts too: a document that omits it makes the operator answer null (ThrowOnMalformedNull).
+            // A nullable stored value under a non-nullable operator (`x.Score!.Value + 1`, with `.Value` peeled to the
+            // field): the operator propagates its null, which a non-nullable read would take as 0 where EF throws.
+            // A non-nullable property's field answers false (so `x.A + x.B` is not flagged) unless missingFields.
+            // Projection leaves only (dateParts): group keys and accumulators are unchanged.
             MongoFieldExpression or MongoOuterFieldExpression when dateParts
                 => new NullBehindNonNullable(MayBeNullUnlessProven(node, nonNull, missingFields), false),
             MongoMathExpression math => WalkMath(math, nonNull, dateParts, missingFields),
-            // Either branch may be the value read, each under what the test proves on it: `s == null ? a : b` and
-            // `string.IsNullOrEmpty(s) ? a : b` make s non-null in b; `s != null ? a : b` makes it non-null in a.
+            // Either branch may be the value read, each under what the test proves on it
+            // (`s == null ? a : b` makes s non-null in b).
             MongoConditionalExpression conditional
                 => WalkNullBehindNonNullableType(conditional.IfTrue, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, true)], dateParts, missingFields)
                    | WalkNullBehindNonNullableType(conditional.IfFalse, [.. nonNull, .. ProvenNonNullWhen(conditional.Test, false)], dateParts, missingFields),
-            // `x.Score ?? x.Rank`: $ifNull answers the fallback when the nullable side is null or missing, so a missing
-            // non-nullable fallback field (or an operator over one) is the leaf's malformed-document value. Only with
-            // missingFields: group keys and accumulators are unchanged.
+            // `x.Score ?? x.Rank`: a missing non-nullable fallback field (or an operator over one) is the leaf's
+            // malformed-document value. Only with missingFields: group keys and accumulators are unchanged.
             MongoCoalesceExpression coalesce when missingFields
                 => WalkNullBehindNonNullableType(coalesce.Right, nonNull, dateParts, missingFields),
             _ => default
@@ -1095,12 +985,10 @@ internal static class MongoAggregationExpressionRenderer
             : operands with { MayAbsorb = operands.MayAbsorb || operands.MayBeNull };
     }
 
-    // A primary-key field is never null in a stored document, so its Length/IndexOf is not null behind the non-nullable
-    // type. Only the root document's own key (element "_id", unprefixed): a join's inner-scope field is a prefixed path
-    // ("inner._id"), and under a left-outer join that sub-document is missing for an unmatched row, so it may be null.
-    // Deliberately local to this predicate, not in MayBeNull: MayBeNull also drives the render-time $ifNull guards.
-    // missingFields: a stored field counts as possibly null whatever its property's nullability (a malformed
-    // document may omit it), still excepting the primary key and proven operands.
+    // A primary-key field is never null in a stored document. Only the root document's own key (element "_id",
+    // unprefixed): a join's inner-scope field is a prefixed path, and under a left-outer join that sub-document is
+    // missing for an unmatched row. Deliberately local here, not in MayBeNull, which also drives render-time $ifNull
+    // guards. missingFields: a stored field counts whatever its property's nullability, except the key and proven operands.
     private static bool MayBeNullUnlessProven(
         MongoExpression operand, IReadOnlyList<MongoExpression> nonNull, bool missingFields = false)
         => (MayBeNull(operand) || missingFields && operand is MongoFieldExpression or MongoOuterFieldExpression)
@@ -1108,17 +996,15 @@ internal static class MongoAggregationExpressionRenderer
                  && field.Property.IsPrimaryKey())
            && !nonNull.Any(proven => IsSameStoredValue(proven, operand));
 
-    // A $dateAdd amount bound from a query parameter is judged by the parameter's CLR type: `AddDays(days)` over a
-    // captured non-nullable `days` is never null, although MayBeNull counts every parameter as possibly null (it can't
-    // see the type). A nullable-typed or untyped parameter, and any other amount, keep MayBeNullUnlessProven's answer.
+    // A parameter amount is judged by its CLR type (`AddDays(days)` over a captured non-nullable `days` is never
+    // null), although MayBeNull counts every parameter as possibly null.
     private static bool DateAddAmountMayBeNull(MongoExpression amount, IReadOnlyList<MongoExpression> nonNull)
         => amount is MongoParameterExpression { ValueType: { } valueType }
             ? IsNullableClrType(valueType)
             : MayBeNullUnlessProven(amount, nonNull);
 
-    // The operands that `test` answering `outcome` proves non-null. Structural: only a null comparison of a stored
-    // value, combined through ||/&&/! the way that preserves the proof (a false `a || b` makes both false; a true
-    // `a && b` makes both true).
+    // The operands that `test` answering `outcome` proves non-null: only a null comparison of a stored value, combined
+    // through ||/&&/! the way that preserves the proof (a false `a || b` makes both false; a true `a && b` both true).
     private static IEnumerable<MongoExpression> ProvenNonNullWhen(MongoExpression test, bool outcome)
         => test switch
         {
@@ -1139,7 +1025,6 @@ internal static class MongoAggregationExpressionRenderer
             : comparison.Left is MongoConstantExpression { Value: null } ? comparison.Right
             : null;
 
-    // The same stored value by document path (a field's NullSafe rendering is irrelevant to whether it is null).
     private static bool IsSameStoredValue(MongoExpression a, MongoExpression b)
         => (a, b) switch
         {
@@ -1150,24 +1035,21 @@ internal static class MongoAggregationExpressionRenderer
         };
 
     /// <summary>
-    /// <see cref="MayBeNullBehindNonNullableType(MongoExpression)"/> for a value read back as <paramref name="readType"/>: true only
-    /// when that type is a non-nullable value type.
+    /// <see cref="MayBeNullBehindNonNullableType(MongoExpression)"/>, only when <paramref name="readType"/> is a
+    /// non-nullable value type.
     /// </summary>
     internal static bool ReadsNullAsDefault(Type readType, MongoExpression node)
         => readType.IsValueType && Nullable.GetUnderlyingType(readType) is null && MayBeNullBehindNonNullableType(node);
 
     /// <summary>
     /// How a projection leaf read back as <paramref name="readType"/> handles a null behind the non-nullable type
-    /// (<see cref="ReadsNullAsDefault"/>, and also a date operator over a nullable date: <c>o.OrderDate.Value.Year</c>,
-    /// <c>.Value.TimeOfDay</c>, <c>.Value.AddDays(1)</c>, <c>o.Dto.Value.DateTime</c>, and an operator over a nullable
-    /// stored value: <c>x.Score.Value + 1</c>, <c>Math.Abs(x.Score.Value)</c>, <c>c ? x.Score.Value : 0</c>):
-    /// <see cref="NonNullableValueRead.Plain"/> when there is none, or when the leaf is itself a bare field (read
-    /// through its property's binding);
-    /// <see cref="NonNullableValueRead.ThrowOnNull"/> when every operator between that null and the leaf's value
-    /// propagates it, so reading the leaf as <c>T?</c> and throwing on null is exactly EF's
-    /// "Nullable object must have a value."; <see cref="NonNullableValueRead.Decline"/> when an operator may absorb it
-    /// into a non-null answer where EF throws (<c>Math.Max(s.Length, t.Length)</c>: <c>$max</c>/<c>$min</c> skip a null
-    /// operand, and <c>Math.Sign</c>'s <c>$switch</c> orders it below 0), which no read of the value can detect.
+    /// (<see cref="ReadsNullAsDefault"/>, plus a date operator over a nullable date and an operator over a nullable
+    /// stored value such as <c>x.Score.Value + 1</c>):
+    /// <see cref="NonNullableValueRead.Plain"/> when there is none or the leaf is a bare field (read through its
+    /// property's binding); <see cref="NonNullableValueRead.ThrowOnNull"/> when every operator between that null and the
+    /// value propagates it, so reading as <c>T?</c> and throwing is exactly EF's "Nullable object must have a value.";
+    /// <see cref="NonNullableValueRead.Decline"/> when an operator may absorb it into a non-null answer where EF
+    /// throws (<c>Math.Max</c>: <c>$max</c>/<c>$min</c> skip a null, <c>Math.Sign</c>'s <c>$switch</c> orders it below 0).
     /// </summary>
     /// <remarks>
     /// The one call a projection binder makes for a value leaf; its answer is both the gate and the read side's
@@ -1178,8 +1060,8 @@ internal static class MongoAggregationExpressionRenderer
         if (!readType.IsValueType || Nullable.GetUnderlyingType(readType) is not null)
             return NonNullableValueRead.Plain;
 
-        // A bare property leaf (`x.Score!.Value`) is read through the property's binding, which already handles its
-        // null; flagging it would only make later operators (Distinct, set ops, groups) decline it.
+        // A bare property leaf is read through the property's binding, which already handles its null; flagging it
+        // would only make later operators (Distinct, set ops, groups) decline it.
         if (node is MongoFieldExpression or MongoOuterFieldExpression)
             return NonNullableValueRead.Plain;
 
@@ -1187,15 +1069,14 @@ internal static class MongoAggregationExpressionRenderer
         if (walk.MayBeNull)
             return walk.MayAbsorb ? NonNullableValueRead.Decline : NonNullableValueRead.ThrowOnNull;
 
-        // Never null over well-formed documents, but a computation over a non-nullable property's field answers null
-        // when a malformed document omits it (`x.Rank + 1`). The read side alone reads it strictly; the emit side and
-        // every later operator treat it as Plain (flagging non-nullable fields would decline Distinct/Min/Max/group
-        // keys over every `x.A + x.B`).
+        // A computation over a non-nullable field (`x.Rank + 1`) answers null when a malformed document omits it. The
+        // read side alone reads it strictly; the emit side and later operators treat it as Plain (flagging would
+        // decline Distinct/Min/Max/group keys over every `x.A + x.B`).
         if (!WalkNullBehindNonNullableType(node, [], dateParts: true, missingFields: true).MayBeNull)
             return NonNullableValueRead.Plain;
 
-        // Where the leaf selects the omitted field itself (`x.Rank > 1 ? -1 : x.Rank`), the server answers MISSING rather
-        // than null, which driver-LINQ's deserializer read as default.
+        // Where the leaf selects the omitted field itself (`x.Rank > 1 ? -1 : x.Rank`), the server answers MISSING
+        // rather than null, which driver-LINQ's deserializer read as default.
         return MayAnswerMissing(readType, node) == MissingAnswer.Missing
             ? NonNullableValueRead.DefaultOnMalformedMissing
             : NonNullableValueRead.ThrowOnMalformedNull;
@@ -1203,21 +1084,17 @@ internal static class MongoAggregationExpressionRenderer
 
     /// <summary>
     /// How a bare stored field <paramref name="node"/>, grouped on by a projected Distinct and read back as
-    /// <paramref name="readType"/>, treats a malformed document: <see cref="ClassifyNonNullableValueRead"/> answers
-    /// <see cref="NonNullableValueRead.Plain"/> for a bare field because the Projection route reads it through its
-    /// property (missing reads default, null throws), but a Distinct key is read back from the <c>$group</c> output, where
-    /// a lone key turns MISSING into null. <see cref="NonNullableValueRead.DefaultOnMalformedMissing"/> when read as the
-    /// field's own type (<c>x.Rank</c>, and the identity casts <c>(int)x.Rank</c>, <c>(int)x.Score</c> the driver drops):
-    /// MISSING is driver-LINQ's omitted member (default) and null throws. <see cref="NonNullableValueRead.ThrowOnMalformedNull"/>
-    /// under a widening the translator dropped (<c>(long)x.Rank</c>, <c>(long)x.Score</c>), which the driver renders as
-    /// <c>$toLong</c>, null for both. <see cref="NonNullableValueRead.Plain"/> for a nullable read, a <c>bool</c>
-    /// (<see cref="DriverReadsNullAsDefault"/>), the primary key (never missing), and anything that isn't a bare field. A
-    /// non-default-serialized (value-converted) field is marked too when read as its own type (<c>x.Conv</c> with
-    /// <c>HasConversion&lt;string&gt;()</c>; the flatten is read through the property, so the converter applies:
-    /// MISSING reads default, null throws, as main's converter did); under a dropped widening it stays
-    /// <see cref="NonNullableValueRead.Plain"/>, since a strict read is a generic read the converter would defeat. A marked
-    /// converted key still combines with another marked Distinct of an equivalently stored key, but no longer with a plain
-    /// projected operand (<c>Distinct().Concat(q.Select(x =&gt; x.Conv))</c> declines; plan Task 2.2.11).
+    /// <paramref name="readType"/>, treats a malformed document. <see cref="ClassifyNonNullableValueRead"/> says
+    /// <see cref="NonNullableValueRead.Plain"/> for a bare field, but a Distinct key is read from the <c>$group</c>
+    /// output, where a lone key turns MISSING into null.
+    /// <see cref="NonNullableValueRead.DefaultOnMalformedMissing"/> when read as the field's own type (including identity
+    /// casts the driver drops); <see cref="NonNullableValueRead.ThrowOnMalformedNull"/> under a widening the translator
+    /// dropped (<c>(long)x.Rank</c>), which the driver renders as <c>$toLong</c>;
+    /// <see cref="NonNullableValueRead.Plain"/> for a nullable read, a <c>bool</c> (<see cref="DriverReadsNullAsDefault"/>),
+    /// the primary key and anything that isn't a bare field. A value-converted field is marked too when read as its own
+    /// type (the flatten is read through the property, so the converter applies); under a dropped widening it stays
+    /// <see cref="NonNullableValueRead.Plain"/>, since a strict read is a generic read the converter would defeat. A
+    /// marked converted key no longer combines with a plain projected operand in a set op (it declines).
     /// </summary>
     internal static NonNullableValueRead ClassifyMalformedFieldRead(Type readType, MongoExpression node)
     {
@@ -1240,9 +1117,8 @@ internal static class MongoAggregationExpressionRenderer
     }
 
     /// <summary>
-    /// Whether a marked projected-Distinct key over the non-default-serialized bare field <paramref name="node"/>, read
-    /// back as <paramref name="readType"/>, is read through the field's property (so its value converter applies):
-    /// a non-nullable property read as its own CLR type. The read side
+    /// Whether a marked projected-Distinct key over the value-converted bare field <paramref name="node"/>, read back as
+    /// <paramref name="readType"/>, is read through the field's property (so its converter applies). The read side
     /// (<c>MongoProjectionBindingRemovingExpressionVisitor.TryCreateThrowOnMalformedNullAliasRead</c>) calls this too.
     /// </summary>
     internal static bool ReadsConvertedDistinctKeyThroughProperty(Type readType, MongoExpression node)
@@ -1251,22 +1127,19 @@ internal static class MongoAggregationExpressionRenderer
            && field.Property.ClrType == readType;
 
     /// <summary>
-    /// Whether driver-LINQ's deserializer for a non-nullable <paramref name="readType"/> reads an explicit BSON null as
-    /// <c>default</c> rather than throwing: the driver's <c>BooleanSerializer</c> reads null as <see langword="false"/>
-    /// (every other value serializer throws <c>FormatException</c>). A value of this type that is null or MISSING in a
-    /// malformed document reads <c>default</c> on main either way, so there is nothing to throw for.
+    /// Whether driver-LINQ's deserializer reads an explicit BSON null as <c>default</c> rather than throwing: only the
+    /// driver's <c>BooleanSerializer</c> does (every other value serializer throws <c>FormatException</c>).
     /// </summary>
     internal static bool DriverReadsNullAsDefault(Type readType)
         => readType == typeof(bool);
 
     /// <summary>
     /// Whether a join-scope projection leaf <paramref name="node"/> read back as <paramref name="readType"/> is a bare
-    /// stored scalar of a non-nullable property read as its own type (<c>o.Customer!.Rank</c>, <c>o.Customer!.Flag</c>),
-    /// which the Projection route reads through that property like a root bare leaf (decision D-F10): a MISSING element
-    /// (an unmatched optional reference after <c>$lookup</c>, or a matched document that omits the field) reads
-    /// <c>default</c>, as driver-LINQ's <c>$project</c> push-down did; an explicit null throws, except a <c>bool</c>
-    /// (<see cref="DriverReadsNullAsDefault"/>). The single predicate behind the read
-    /// (<c>MongoProjectionBindingRemovingExpressionVisitor.TryCreateJoinScopeBareScalarRead</c>).
+    /// stored scalar of a non-nullable property read as its own type (<c>o.Customer!.Rank</c>), which the Projection
+    /// route reads through that property like a root bare leaf (D-F10): a MISSING element (an unmatched optional
+    /// reference, or a document omitting the field) reads <c>default</c> as driver-LINQ did; an explicit null throws,
+    /// except a <c>bool</c> (<see cref="DriverReadsNullAsDefault"/>). The single predicate behind
+    /// <c>MongoProjectionBindingRemovingExpressionVisitor.TryCreateJoinScopeBareScalarRead</c>.
     /// </summary>
     internal static bool ReadsJoinScopeBareScalarThroughProperty(Type readType, MongoExpression node)
         => readType.IsValueType
@@ -1275,11 +1148,10 @@ internal static class MongoAggregationExpressionRenderer
            && field.Property.ClrType == readType;
 
     /// <summary>
-    /// <paramref name="classified"/>, a <see cref="ClassifyNonNullableValueRead"/> answer for a value of type
-    /// <paramref name="classifiedType"/> (a projected Distinct's key), for that value read back as
-    /// <paramref name="readType"/>. Read as a wider type (<c>(long)(c ? -1 : x.Rank)</c>, whose widening the translator
-    /// unwrapped where driver-LINQ renders <c>$toLong</c>), a <see cref="NonNullableValueRead.DefaultOnMalformedMissing"/>
-    /// value's MISSING is driver-LINQ's null, so it reads strictly, as <see cref="MayAnswerMissing"/> decides for a leaf.
+    /// <paramref name="classified"/> (for a projected Distinct key of type <paramref name="classifiedType"/>) when
+    /// read back as <paramref name="readType"/>. Read as a wider type (<c>(long)(c ? -1 : x.Rank)</c>, whose widening the
+    /// translator unwrapped where driver-LINQ renders <c>$toLong</c>), a
+    /// <see cref="NonNullableValueRead.DefaultOnMalformedMissing"/> MISSING is driver-LINQ's null, so it reads strictly.
     /// </summary>
     internal static NonNullableValueRead ReclassifyMalformedReadAs(NonNullableValueRead classified, Type classifiedType, Type readType)
         => classified == NonNullableValueRead.DefaultOnMalformedMissing
@@ -1290,44 +1162,38 @@ internal static class MongoAggregationExpressionRenderer
 
     /// <summary>
     /// Whether <paramref name="node"/>, read back as <paramref name="readType"/>, may be MISSING on the server where
-    /// driver-LINQ's rendering of the same value is null: a stored field reached through <c>$cond</c>/<c>$ifNull</c> value
-    /// positions whose type isn't the read type sits under a widening the translator dropped (<c>(long)x.Rank</c>), which
-    /// the driver renders as <c>$toLong</c>. See <see cref="MayAnswerMissing"/>.
+    /// driver-LINQ's rendering is null (a field under a dropped widening; see <see cref="MayAnswerMissing"/>).
     /// </summary>
     internal static bool MayAnswerUnfaithfulMissing(Type readType, MongoExpression node)
         => !IsRootPrimaryKey(node) && MayAnswerMissing(readType.UnwrapNullableType(), node) == MissingAnswer.Unfaithful;
 
-    // The root document's own primary key ("_id", unprefixed): never missing from a stored document.
     private static bool IsRootPrimaryKey(MongoExpression node)
         => node is MongoFieldExpression { NullSafe: false, ElementName: "_id" } key && key.Property.IsPrimaryKey();
 
     private enum MissingAnswer
     {
-        // Never MISSING: an operator or $toX over the field answers null instead.
+        // An operator or $toX over the field answers null instead.
         Never,
 
         // MISSING exactly where driver-LINQ's rendering of the same leaf is.
         Missing,
 
         // MISSING natively where driver-LINQ answers null: under a widening cast the translator unwrapped
-        // (TryTranslateValue) but the driver renders as $toX (`(long)(c ? -1 : x.Rank)`, `c ? x.Big : x.Rank` as long).
+        // (TryTranslateValue) but the driver renders as $toX.
         Unfaithful
     }
 
-    // Whether a value read back as `readType` may be MISSING on the server: a stored field reached through the
-    // value positions of $cond (either branch) and $ifNull (the fallback; the nullable side is replaced when missing).
-    // Any other operator answers null for a missing operand. A field whose type isn't the read type sits under a
-    // widening conversion the translator dropped, which driver-LINQ renders as $toX (answering null), so a native
-    // MISSING there must not read as default. One unfaithful position makes the whole leaf strict: the read can't tell
-    // which branch the server took.
+    // A stored field reached through the value positions of $cond (either branch) and $ifNull (the fallback) may be
+    // MISSING; any other operator answers null for a missing operand. A field whose type isn't the read type sits under
+    // a widening the translator dropped, which driver-LINQ renders as $toX (answering null), so its native MISSING must
+    // not read as default. One unfaithful position makes the whole leaf strict: the read can't tell which branch ran.
     private static MissingAnswer MayAnswerMissing(Type readType, MongoExpression node)
         => node switch
         {
             MongoConditionalExpression conditional
                 => Combine(MayAnswerMissing(readType, conditional.IfTrue), MayAnswerMissing(readType, conditional.IfFalse)),
             MongoCoalesceExpression coalesce => MayAnswerMissing(readType, coalesce.Right),
-            // An enum read as its underlying type is the translator's bare relabel (IsEnumUnderlyingRelabel), which the
-            // driver doesn't render as $toX either.
+            // An enum read as its underlying type is a bare relabel, which the driver doesn't render as $toX either.
             MongoFieldExpression or MongoOuterFieldExpression
                 => node.Type.UnwrapNullableType() == readType
                    || MongoExpressionTranslator.IsEnumUnderlyingRelabel(node.Type, readType)
@@ -1344,7 +1210,6 @@ internal static class MongoAggregationExpressionRenderer
     private static bool IsNullableClrType(Type type)
         => !type.IsValueType || Nullable.GetUnderlyingType(type) is not null;
 
-    // Matches MongoOuterFieldExpression too; see RenderUnary.
     private static void CheckLogicalOperandSerialization(MongoExpression operand)
         => ThrowIfUnsafeTruthinessRoot(
             operand, "a bare logical (&&/||) operand", "$and/$or evaluate operands by truthiness");
@@ -1366,20 +1231,16 @@ internal enum NonNullableValueRead
     Decline,
 
     /// <summary>
-    /// The value is never null over well-formed documents, but a computation over a non-nullable property's field
-    /// (<c>x.Rank + 1</c>, <c>Math.Abs(x.Rank)</c>) answers null when a document omits that field. Emit-side callers
-    /// treat it exactly as <see cref="Plain"/>; only the native <c>Projection</c>-route read side acts on it, reading
-    /// the leaf as <c>T?</c> and throwing EF's "Nullable object must have a value." on null, where driver-LINQ's
-    /// deserializer threw <c>FormatException</c>, rather than reading <c>default(T)</c>.
+    /// Never null over well-formed documents, but a computation over a non-nullable field (<c>x.Rank + 1</c>) answers
+    /// null when a document omits it. Emit-side callers treat it as <see cref="Plain"/>; only the <c>Projection</c>-route
+    /// read side acts on it, reading as <c>T?</c> and throwing EF's "Nullable object must have a value." on null.
     /// </summary>
     ThrowOnMalformedNull,
 
     /// <summary>
     /// As <see cref="ThrowOnMalformedNull"/>, but the leaf may select the omitted field itself (a <c>$cond</c> branch or
-    /// <c>$ifNull</c> fallback: <c>x.Rank > 1 ? -1 : x.Rank</c>, <c>x.Score ?? x.Rank</c>), for which the server answers
-    /// MISSING rather than null, exactly where driver-LINQ's rendering does. The read side reads a missing value as
-    /// <c>default(T)</c>, as driver-LINQ's deserializer did (and as a bare <c>x.Rank</c> does), and throws on null.
-    /// Emit-side callers treat it exactly as <see cref="Plain"/>.
+    /// <c>$ifNull</c> fallback), for which the server answers MISSING rather than null, as driver-LINQ's rendering does.
+    /// The read side reads MISSING as <c>default(T)</c> and throws on null. Emit-side callers treat it as <see cref="Plain"/>.
     /// </summary>
     DefaultOnMalformedMissing
 }

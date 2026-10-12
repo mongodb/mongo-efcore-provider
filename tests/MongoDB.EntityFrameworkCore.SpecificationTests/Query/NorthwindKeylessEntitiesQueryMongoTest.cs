@@ -14,7 +14,6 @@ public class NorthwindKeylessEntitiesQueryMongoTest : NorthwindKeylessEntitiesQu
         : base(fixture)
     {
         ClearLog();
-        //Fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]

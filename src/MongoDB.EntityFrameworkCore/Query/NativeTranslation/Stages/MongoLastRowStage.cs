@@ -16,10 +16,8 @@
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 /// <summary>
-/// <c>{ "$group": { "_id": null, "_last": { "$last": "$$ROOT" } } }</c> — first half of the unordered
-/// Last()/LastOrDefault() pattern, followed by a <see cref="MongoReplaceRootStage"/> reading <c>"$_last"</c>.
-/// Matches the MQL driver-LINQ emits for this shape. A marker type (like <see cref="MongoGroupByRootStage"/>)
-/// because <see cref="MongoGroupStage"/> models a named key plus accumulators, and this stage has neither.
+/// Data-less marker for <c>{ "$group": { "_id": null, "_last": { "$last": "$$ROOT" } } }</c>, the first half of the
+/// unordered Last()/LastOrDefault() pattern; a following <see cref="MongoReplaceRootStage"/> reads <c>"$_last"</c>.
 /// </summary>
 internal sealed class MongoLastRowStage : MongoPipelineStage
 {

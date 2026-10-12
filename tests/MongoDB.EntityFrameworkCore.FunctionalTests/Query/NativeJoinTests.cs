@@ -99,7 +99,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     [Fact]
     public void Genuine_two_sided_join_returns_correct_results_via_fallback()
     {
-        // Mode-independent: whichever path Native picks must match the oracle.
         var seed = SeedOwnersAndOrders();
         using var db = CreateContext(seed, MongoQueryMode.Native,
             nameof(Genuine_two_sided_join_returns_correct_results_via_fallback));
@@ -179,7 +178,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     [Fact]
     public void Chained_join_scalar_leaf_shapes_resolve_correctly_under_NativeOnly()
     {
-        // Three-source chain (Owners -> Orders -> OrderLines) with single-scope scalar leaves goes native.
         var seed = SeedOwnersOrdersAndLines();
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(Chained_join_scalar_leaf_shapes_resolve_correctly_under_NativeOnly));
@@ -246,7 +244,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     [Fact]
     public void Chained_join_Where_terminal_Count_goes_native_under_NativeOnly()
     {
-        // Count() over an eligible chain: the $count arm of TryBindAggregate.
         var seed = SeedOwnersOrdersAndLines();
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(Chained_join_Where_terminal_Count_goes_native_under_NativeOnly));
@@ -263,7 +260,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     [Fact]
     public void Chained_join_scalar_leaf_projection_goes_native_under_NativeOnly()
     {
-        // Every leaf is rooted at one scope: e.o.Name (0), e.r.Total (1), l.Sku (2).
         var seed = SeedOwnersOrdersAndLines();
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(Chained_join_scalar_leaf_projection_goes_native_under_NativeOnly));
@@ -304,7 +300,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             .Skip(1).Take(1)
             .ToList();
 
-        // Row identity checked against an in-memory oracle over the same joins, not just the count.
         var allJoined = seed.Owners
             .Join(seed.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
             .Join(seed.OrderLines, e => e.r.Id, l => l.OrderId, (e, l) => new
@@ -339,7 +334,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             .Skip(1).Take(2)
             .ToList();
 
-        // Membership check against the oracle, so a wrong-row (not just wrong-count) regression is caught.
         var allJoined = seed.Owners
             .Join(seed.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r })
             .Join(seed.OrderLines, e => e.r.Id, l => l.OrderId, (e, l) => new
@@ -370,7 +364,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             .ToList();
 
         Assert.Single(result);
-        // The dangling order must have been dropped by the join before paging.
         Assert.NotEqual(seed.Orders[0].Total, result[0].Total);
     }
 
@@ -410,7 +403,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             .Select(r => new { r.Owner!.Name })
             .ToList();
 
-        // The dangling order is dropped before paging; the returned row is the matched order's owner.
         Assert.Equal([seed.Owners[0].Name], result.Select(x => x.Name));
     }
 
@@ -573,7 +565,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             .OrderBy(x => x.Item1).ThenBy(x => x.Item2)
             .ToList();
 
-        // Alice has two orders, so both joins keyed on her give 2 x 2 = 4 rows.
         var ownerAOrders = seed.Orders.Where(o => o.OwnerId == seed.Owners[0].Id).ToList();
         var expected = (from r in ownerAOrders
                          from r2 in ownerAOrders
@@ -583,8 +574,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
 
         Assert.Equal(expected, results);
 
-        // NativeOnly success is the point: driver-LINQ shares the aliasing in TranslateJoinCore, so results alone
-        // wouldn't distinguish the routes.
         var message = spyLogger.GetLogMessageByEventId(MongoEventId.ExecutedMqlQuery);
         Assert.Contains("_lookup_Orders\"", message);
         Assert.Contains("_lookup_Orders_1\"", message);
@@ -661,7 +650,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(Take_or_Skip_after_a_confirmed_join_pages_the_joined_result_under_NativeOnly));
 
-        // Unordered Take/Skip has no defined row identity, so pin the count plus membership in the joined set.
         var allJoined = seed.Owners
             .Join(seed.Orders, o => o.Id, r => r.OwnerId, (o, r) => new { o.Name, r.Total })
             .ToList();
@@ -681,8 +669,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Single(skipped);
         Assert.All(skipped, row => Assert.Contains(row, allJoined));
 
-        // Cross-check DriverLinq too: native and fallback can diverge (a Where on a confirmed join's Inner side ahead
-        // of hoisted paging).
         using var driverLinq = CreateContext(seed, MongoQueryMode.DriverLinq,
             nameof(Take_or_Skip_after_a_confirmed_join_pages_the_joined_result_under_NativeOnly) + "_driverLinq");
 
@@ -783,7 +769,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             .Where(r => r.Id == targetOrderId)
             .ToList();
 
-        // One Order has that id; matching it against Owner._id instead would return nothing.
         Assert.Equal([targetOrderId], result.Select(r => r.Id));
         Assert.Equal(30m, Assert.Single(result).Total);
     }
@@ -1030,7 +1015,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         var ordersOfOwners = owners.Join(orders, o => o.Id, r => r.OwnerId, (o, r) => new { o, r }).Select(x => x.r);
         var ownersOfOrders = orders.Join(owners, r => r.OwnerId, o => o.Id, (r, o) => new { r, o }).Select(x => x.o);
 
-        // Keys are read client-side, so a null entity where the oracle has a real one fails loudly.
         return shape switch
         {
             "Distinct" => OrderKeys(ordersOfOwners.Distinct()),
@@ -1106,7 +1090,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             _ => throw new ArgumentOutOfRangeException(nameof(shape))
         };
 
-        // Selecting Total client-side throws for a null entity rather than silently comparing nulls.
         return inner.AsEnumerable().Select(r => r.Total).ToList();
     }
 
@@ -1302,7 +1285,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     [Fact]
     public void Genuinely_navigation_less_key_equality_join_goes_native_under_NativeOnly()
     {
-        // Owner and OrderLine have no navigation between them at all.
         var seed = SeedOwnersOrdersAndLines();
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(Genuinely_navigation_less_key_equality_join_goes_native_under_NativeOnly));
@@ -1393,7 +1375,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     [Fact]
     public void Where_after_join_with_a_bare_scalar_select_goes_native()
     {
-        // A bare scalar inner leaf (`Select(x => x.r.Total)`) after a Where goes native via TranslateSelect's bare arm.
         var seed = SeedOwnersAndOrders();
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(Where_after_join_with_a_bare_scalar_select_goes_native));
@@ -1439,7 +1420,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     [Fact]
     public void Bare_whole_outer_entity_select_after_join_goes_native()
     {
-        // Whole-outer spelling: inner-join semantics still apply (order-less owners drop, two-order owners appear twice).
         var seed = SeedOwnersAndOrdersWithUnmatchedRows();
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(Bare_whole_outer_entity_select_after_join_goes_native));
@@ -1463,7 +1443,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     [Fact]
     public void Wrapped_scalar_only_join_projection_goes_native()
     {
-        // AppendLookupStages emits $lookup and $unwind via the IsReference && !HasPipeline branch (same as reference Include).
         var seed = SeedOwnersAndOrders();
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(Wrapped_scalar_only_join_projection_goes_native), out var spyLogger);
@@ -1515,7 +1494,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
     [Fact]
     public void Both_whole_entity_leaves_projection_goes_native_under_NativeOnly()
     {
-        // `new { o, r }` as in the Applied_to_projection/GroupJoin_projection/Select_Navigations spec tests.
         var seed = SeedOwnersAndOrders();
         using var db = CreateContext(seed, MongoQueryMode.NativeOnly,
             nameof(Both_whole_entity_leaves_projection_goes_native_under_NativeOnly));
@@ -1738,7 +1716,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.Equal(2, dottedRows.Count);
         Assert.Equal(2, renamedRows.Count);
 
-        // Both queries go fully native (the parameterized Where renders a $regularExpression).
         Assert.All(
             spyLogger.GetLogMessagesByEventId(MongoEventId.ExecutedMqlQuery),
             mql => Assert.Contains("$regularExpression", mql));
@@ -1762,7 +1739,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             .AsEnumerable().OrderBy(x => x.r.Total)
             .Select(x => (x.r.Total, x.Rank)).ToList();
 
-        // Spelled out: LINQ-to-objects would throw on x.o.Rank for the dangling row (Total 99).
         Assert.Equal([(10m, (int?)7), (99m, null)], nullableRows);
 
         // The non-nullable arm, on both legs, compared to each other.
@@ -1941,7 +1917,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
                 .OrderBy(x => x.Total).ToList();
         }
 
-        // In-memory left join via GroupJoin/SelectMany (Enumerable.LeftJoin is .NET 10-only).
         var expected = seed.Owners
             .GroupJoin(seed.Orders, o => o.Id, r => r.OwnerId, (o, rs) => new { o, rs })
             .SelectMany(x => x.rs.DefaultIfEmpty(), (x, r) => new { x.o, r })
@@ -1987,8 +1962,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         Assert.All(results, x => Assert.Equal(x.o.OwnerId, x.o.Owner!.Id));
     }
 
-    // Renders rows to comparable strings. Queries are AsNoTracking (bar one) because tracking fixup could populate
-    // navigations from other rows, masking a missing Include $lookup.
     private static List<string> RunReferenceIncludeShape(JoinTestDbContext db, string shape)
         => shape switch
         {
@@ -2023,7 +1996,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             _ => throw new ArgumentOutOfRangeException(nameof(shape))
         };
 
-    // In-memory oracle computed from the seed, never from another query mode (which could share the bug).
     private static List<string> ExpectedReferenceIncludeShape(Seed seed, string shape)
     {
         Owner OwnerOf(Order o) => seed.Owners.Single(w => w.Id == o.OwnerId);
@@ -2443,7 +2415,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
             .OrderBy(x => x)
             .ToList();
 
-        // Alice has one Order and Bob none: one row each, with Bob's navigation null.
         Assert.Equal(["Alice", "Bob"], result);
     }
 
@@ -2471,10 +2442,8 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
 
         Assert.Equal(expected, result);
 
-        // The one dangling-FK Order (Total = 99m) has a null Owner.
         Assert.Null(result.Single(x => x.Total == 99m).OwnerName);
 
-        // ...and the matched row still resolves its Owner correctly, so the assertion above isn't vacuous.
         Assert.Equal("Alice", result.Single(x => x.Total == 10m).OwnerName);
     }
 #endif
@@ -2518,7 +2487,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
         using var dbNative = CreateContext(seed, MongoQueryMode.Native,
             nameof(Join_result_matches_in_memory_oracle_including_unmatched_rows) + "_native");
 
-        // Order by a stable key before comparing.
         var nativeModeResult = query(dbNative.Owners, dbNative.Orders).AsEnumerable()
             .OrderBy(x => ((dynamic)x).Name).ThenBy(x => ((dynamic)x).Total)
             .ToList();
@@ -2617,8 +2585,6 @@ public class NativeJoinTests(TemporaryDatabaseFixture database) : IClassFixture<
 
     private static Seed SeedOwnersAndOrders()
     {
-        // Rank non-null: the `.Value` leaf case's oracle would throw on null. Null Rank is covered by
-        // SeedOwnersAndOrdersWithUnmatchedRows.
         var ownerA = new Owner { Id = ObjectId.GenerateNewId(), Name = "Alice", Region = "North", Rank = 7 };
         var ownerB = new Owner { Id = ObjectId.GenerateNewId(), Name = "Bob", Region = "South", Rank = 8 };
         var owners = new[] { ownerA, ownerB };

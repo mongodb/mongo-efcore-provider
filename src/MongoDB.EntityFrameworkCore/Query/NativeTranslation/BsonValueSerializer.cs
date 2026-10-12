@@ -22,22 +22,20 @@ using MongoDB.Bson.Serialization;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// Value serialization shared by the compile-time renderer (<see cref="MongoQueryLanguageRenderer"/>, inline
-/// constants) and the per-execution parameter binder (<see cref="MongoPipelineFactory"/>), so a constant and a
-/// parameter of the same value serialize identically.
+/// Value serialization shared by the renderer (<see cref="MongoQueryLanguageRenderer"/>, constants) and the
+/// parameter binder (<see cref="MongoPipelineFactory"/>), so a constant and a parameter serialize identically.
 /// </summary>
 internal static class BsonValueSerializer
 {
     /// <summary>
-    /// Field name wrapping a bare scalar in a <see cref="BsonDocument"/>; also used by the scalar-aggregate output
-    /// stages (<c>$count</c>/<c>$group</c>) and read back in
-    /// <see cref="Visitors.MongoShapedQueryCompilingExpressionVisitor"/>.
+    /// Field name wrapping a bare scalar in a <see cref="BsonDocument"/>, including scalar-aggregate output stages;
+    /// read back in <see cref="Visitors.MongoShapedQueryCompilingExpressionVisitor"/>.
     /// </summary>
     internal const string ScalarField = "v";
 
     /// <summary>
     /// Coerces a CLR value to <paramref name="target"/> (unwrapping <c>Nullable&lt;T&gt;</c>; enum and numeric
-    /// promotion) because serializers cast hard to their exact type. Returns the value unchanged otherwise.
+    /// promotion), because serializers cast hard to their exact type.
     /// </summary>
     public static object? Coerce(Type target, object? value)
     {
@@ -79,10 +77,9 @@ internal static class BsonValueSerializer
 
     /// <summary>
     /// <see cref="SerializeThroughWriter"/>, except a null value for a serializer of a non-nullable value type
-    /// (<c>int</c>, enum, <c>Guid</c>, ...) becomes <see cref="BsonNull"/> instead of an unboxing
-    /// <see cref="NullReferenceException"/>. A null reaches such a serializer when a null parameter or list element is
-    /// compared with a non-nullable property; BSON null matches driver-LINQ (<c>{field: null}</c> matches a
-    /// missing/null field). Callers must <see cref="Coerce"/> first.
+    /// (<c>int</c>, enum, <c>Guid</c>, ...) becomes <see cref="BsonNull"/> instead of a <see cref="NullReferenceException"/>
+    /// (a null parameter or list element compared with a non-nullable property); matches driver-LINQ, where
+    /// <c>{field: null}</c> matches a missing/null field. Callers must <see cref="Coerce"/> first.
     /// </summary>
     public static BsonValue SerializeNullAware(IBsonSerializer serializer, object? value)
         => value is null && serializer.ValueType.IsValueType && Nullable.GetUnderlyingType(serializer.ValueType) is null

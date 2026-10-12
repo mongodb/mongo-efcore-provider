@@ -400,7 +400,6 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     [Fact]
     public void Sum_with_ef_property_and_field()
     {
-        // Sum of (orderFromSun + orderFromSun) across all 8 planets: (1+2+3+4+5+6+7+8)*2 = 72
         var result = _db.Planets.Sum(p => EF.Property<int>(p, "orderFromSun") + p.orderFromSun);
         Assert.Equal(72, result);
     }
@@ -408,7 +407,6 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     [Fact]
     public void Sum_with_mql_field_and_field()
     {
-        // Sum of (orderFromSun + orderFromSun) across all 8 planets: (1+2+3+4+5+6+7+8)*2 = 72
         var result = _db.Planets.Sum(p => Mql.Field(p, "orderFromSun", Int32Serializer.Instance) + p.orderFromSun);
         Assert.Equal(72, result);
     }
@@ -1328,7 +1326,6 @@ public class ProjectionTests(ReadOnlySampleGuidesFixture database)
     [Fact]
     public void Select_projection_owned_type()
     {
-        // Projecting owned entities without the owner requires AsNoTracking
         var results = _db.Planets.AsNoTracking().Select(p => new { p.name, Car = p.parkingCar }).ToList();
 
         Assert.Equal(8, results.Count);

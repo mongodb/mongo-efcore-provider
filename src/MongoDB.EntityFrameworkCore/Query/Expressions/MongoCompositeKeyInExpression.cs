@@ -24,10 +24,9 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// conjunction of key paths per listed entity (<c>$nor</c> when <see cref="Negated"/>).
 /// </summary>
 /// <remarks>
-/// A per-field conjunction rather than an <c>_id: { $in: [documents] }</c>: a sub-document match is order-sensitive, and
-/// would silently differ from driver-LINQ's per-field OR chain on documents written with another key order. The parameter's
-/// length isn't known at compile time, so the clause array is built per execution (<c>CompositeKeyClauses</c>) and the
-/// template stays compiled once.
+/// A per-field conjunction rather than <c>_id: { $in: [documents] }</c>: a sub-document match is order-sensitive and
+/// would differ from driver-LINQ on documents written with another key order. The parameter's length isn't known at
+/// compile time, so the clause array is built per execution (<c>CompositeKeyClauses</c>).
 /// </remarks>
 internal sealed class MongoCompositeKeyInExpression : MongoExpression
 {
@@ -38,7 +37,6 @@ internal sealed class MongoCompositeKeyInExpression : MongoExpression
         Negated = negated;
     }
 
-    /// <summary>The composite key's properties, in key order.</summary>
     public IReadOnlyList<IProperty> KeyProperties { get; }
 
     /// <summary>
@@ -47,7 +45,6 @@ internal sealed class MongoCompositeKeyInExpression : MongoExpression
     /// </summary>
     public MongoExpression Values { get; }
 
-    /// <summary>Whether the test is for the entity not being in the list.</summary>
     public bool Negated { get; }
 
     /// <inheritdoc />

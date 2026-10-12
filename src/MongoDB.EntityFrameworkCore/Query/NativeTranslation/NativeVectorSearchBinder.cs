@@ -19,27 +19,14 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// Binds a <c>MongoQueryableExtensions.VectorSearch</c> call into <see cref="MongoSelectDefinition.VectorSearch"/>;
-/// the native counterpart of the driver-LINQ bridge's <c>ProcessVectorSearch</c>.
+/// Binds a <c>VectorSearch</c> call into <see cref="MongoSelectDefinition.VectorSearch"/>, the native counterpart of the
+/// driver-LINQ bridge's <c>ProcessVectorSearch</c>. The gate treats a bound slot as both "native" and "has a
+/// <c>$vectorSearch</c> to emit", so native without the stage (rows in insertion order) is unreachable. Declines leave the
+/// query unmutated so the fallback still sees <c>VectorSearch</c>.
 /// </summary>
-/// <remarks>
-/// The gate treats a bound slot as both "native" and "the lowerer has a <c>$vectorSearch</c> to emit", so native
-/// without the stage (rows silently in insertion order, not score order) is unreachable. Declines leave the query
-/// unmutated so the driver-LINQ fallback still sees <c>VectorSearch</c> in the captured chain.
-/// </remarks>
 internal static class NativeVectorSearchBinder
 {
-    /// <summary>
-    /// Attempts to record <paramref name="call"/> — a <c>VectorSearch</c> method call — as the native
-    /// <see cref="MongoSelectDefinition.VectorSearch"/> anchor of <paramref name="mongoQ"/>.
-    /// </summary>
-    /// <param name="mongoQ">The query expression being built. Mutated only on success.</param>
-    /// <param name="call">The <c>VectorSearch</c> call, as re-inserted by the preprocessor.</param>
-    /// <returns>
-    /// <see langword="true"/> when the slot was bound; <see langword="false"/> (no mutation) for an already-bound
-    /// slot, an untranslatable pre-filter, or a vector/limit/options argument that is neither a query parameter nor
-    /// a constant.
-    /// </returns>
+    /// <summary>Records <paramref name="call"/> as the native <c>VectorSearch</c> anchor of <paramref name="mongoQ"/> (mutated only on success).</summary>
     internal static bool TryBind(MongoQueryExpression mongoQ, MethodCallExpression call)
     {
         // Fail closed on a second VectorSearch (unreachable via the public API); rebinding would drop the first.
@@ -63,8 +50,7 @@ internal static class NativeVectorSearchBinder
             }
         }
 
-        // Vector, limit and options are resolved per execution at Build time; decline now any shape that
-        // MongoPipelineFactory.ResolveVectorSearchArgument can't resolve, rather than throw later.
+        // Vector, limit and options are resolved at Build time; decline shapes MongoPipelineFactory.ResolveVectorSearchArgument can't resolve.
         if (!IsResolvableArgument(call.Arguments[3])
             || !IsResolvableArgument(call.Arguments[4])
             || !IsResolvableArgument(call.Arguments[5]))

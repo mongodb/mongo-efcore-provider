@@ -41,9 +41,7 @@ public class MongoPipelineFactoryDeferredSlotTests
             QueryLogger: null!,
             additionalState ?? new Dictionary<string, object>());
 
-    // ------------------------------------------------------------------
     // (a) The deferred document lands at its own stage position
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Deferred_slot_document_lands_at_its_stage_position()
@@ -95,9 +93,7 @@ public class MongoPipelineFactoryDeferredSlotTests
         Assert.Equal(2, secondState["built"]);
     }
 
-    // ------------------------------------------------------------------
     // (b) Sentinels inside the deferred document are substituted by the same pass
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Sentinels_inside_a_deferred_document_are_substituted_by_the_same_pass()
@@ -144,9 +140,7 @@ public class MongoPipelineFactoryDeferredSlotTests
         Assert.Equal(BsonDocument.Parse("{ $match: { Age: { $gt: 21 } } }"), result[1]);
     }
 
-    // ------------------------------------------------------------------
     // (c) The parameter-values-only overload refuses a template with a deferred slot
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Build_with_parameter_values_throws_when_a_deferred_slot_is_present()
@@ -203,9 +197,7 @@ public class MongoPipelineFactoryDeferredSlotTests
         Assert.Equal(BsonDocument.Parse("{ $match: { Age: { $gt: 40 } } }"), second[1]);
     }
 
-    // ------------------------------------------------------------------
     // (d) Paging validation keys on a top-level $limit/$skip only
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Paging_validation_ignores_a_limit_nested_one_level_down()

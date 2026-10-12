@@ -105,7 +105,6 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
         Assert.Equal(["Alice", "Bob"], names);
     }
 
-    // Baseline differential across zero/one/many related rows, with no other operator composed.
     [Fact]
     public void Differential_native_result_matches_in_memory_oracle_across_related_row_counts()
     {
@@ -125,7 +124,6 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
         Assert.Equal(oracleNames, nativeNames);
     }
 
-    // ── Retroactive Route decline ────────────────────────────────────────────────────────────────────
     //
     // The predicate binder registers its $lookup eagerly, before a later Union/Concat, projected Distinct or Join is
     // known. Those MongoSelectLowerer branches don't flush PostJoinOps where this $match needs it, so
@@ -276,7 +274,6 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
                 .ToList());
     }
 
-    // ── Count predicate on a join's inner side ──────────────────────────────────────────────────────
     //
     // The predicate lives in the inner MongoSelectDefinition.PostJoinOps, so IsBareCollectionScan must check
     // PostJoinOps; otherwise the inner reads as bare and the filter is silently dropped in every mode (including
@@ -321,7 +318,6 @@ public class NativeReferenceCollectionCountPredicateTests(TemporaryDatabaseFixtu
             .ToList());
     }
 
-    // ── Paged Include on the same navigation as the count predicate ───────────────────────────────────
     //
     // The predicate registers a bare `_lookup_<Nav>` (NativeCorrelationMatcher.TryBuildReferenceCollectionCountLookup);
     // the Include later registers a paged lookup for the same alias. MongoQueryExpression.AddLookup's bare-then-

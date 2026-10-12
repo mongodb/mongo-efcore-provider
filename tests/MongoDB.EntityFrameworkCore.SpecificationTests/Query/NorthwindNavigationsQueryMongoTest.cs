@@ -30,7 +30,6 @@ public class NorthwindNavigationsQueryMongoTest : NorthwindNavigationsQueryTestB
         : base(fixture)
     {
         fixture.TestMqlLoggerFactory.Clear();
-        //fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]

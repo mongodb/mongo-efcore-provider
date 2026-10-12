@@ -910,16 +910,13 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
             native.Select(r => (r.Country, r.Count, r.Total, r.Max)).ToArray());
     }
 
-    // ---------------------------------------------------------------------------------------------------
     // Scalar aggregates / reducers after a finalized GroupBy(key).Select(anon) must fall back. Unguarded,
     // Cardinality on a grouped select flips Route to ScalarAggregate while the lowerer still emits
     // [$group, $project] with no terminal stage, so the scalar shaper crashes with KeyNotFoundException ("v").
-    // ---------------------------------------------------------------------------------------------------
 
     [Fact]
     public void GroupBy_then_Count_matches_driver_linq()
     {
-        // Post-group Count() over GroupBy(key).Select(anon): must fall back so Native == DriverLinq (3 groups).
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native, nameof(GroupBy_then_Count_matches_driver_linq) + "N");
@@ -1060,7 +1057,6 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_then_Single_matches_driver_linq()
     {
-        // A post-group Single over a filtered-to-one grouped result falls back and matches DriverLinq.
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native, nameof(GroupBy_then_Single_matches_driver_linq) + "N");
@@ -1083,7 +1079,6 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_then_Any_matches_driver_linq()
     {
-        // Post-group Any falls back and stays correct.
         var seed = SeedOrders();
 
         using var nativeDb = CreateContext(seed, MongoQueryMode.Native, nameof(GroupBy_then_Any_matches_driver_linq) + "N");
@@ -1139,15 +1134,12 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         Assert.NotNull(Run(driverDb));   // DriverLinq throws the same way — no Native-vs-DriverLinq divergence
     }
 
-    // ---------------------------------------------------------------------------------------------------
     // GroupBy(key).{Count()|LongCount()|Any()|Any(pred)|All(pred)|Count(pred)|LongCount(pred)} with no
     // intervening Select — the spec suite's "GroupBy_without_aggregate" family. NativeOnly success is the proof.
-    // ---------------------------------------------------------------------------------------------------
 
     [Fact]
     public void GroupBy_then_bare_Count_goes_native()
     {
-        // Number of distinct groups (US, UK, FR) => 3.
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_then_bare_Count_goes_native));
 
@@ -1446,7 +1438,6 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
     [Fact]
     public void GroupBy_empty_key_bare_aggregate_goes_native()
     {
-        // GroupBy(o => new { }) puts every row in one group (zero-part key).
         using var db = CreateContext(SeedOrders(), MongoQueryMode.NativeOnly,
             nameof(GroupBy_empty_key_bare_aggregate_goes_native));
 
@@ -2964,12 +2955,10 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         Assert.Equal(expected.Sum, nativeOnly.Sum);
     }
 
-    // ---------------------------------------------------------------------------------------------------------------
     // Relational comparisons over a possibly-null group operand. In the aggregation dialect null (and missing) orders
     // below every value, so a bare $lt/$lte answers true for null, where C# lifted semantics (null < c) answer false.
     // Expectations are hand-computed: driver-LINQ gets several of these wrong (noted per test), so it is only used as
     // an oracle where it is right.
-    // ---------------------------------------------------------------------------------------------------------------
 
     private class RankedOwner
     {
@@ -3211,11 +3200,9 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         Assert.Equal([((int?)null, 0), (7, 1), (20, 1), (50, 1), (150, 0)], result);
     }
 
-    // ---------------------------------------------------------------------------------------------------------------
     // Post-group Where over a keyed GroupBy(key).Select(...)'s projected aliases, and the post-group terminal-aggregate
     // path's alias resolution. Members resolve against the Select's output alias, never a key-part name or the entity.
     // SeedOrders: US {100, 200}, UK {50, 25}, FR {300}.
-    // ---------------------------------------------------------------------------------------------------------------
 
     private List<T> RunOrders<T>(MongoQueryMode mode, string name, Func<IQueryable<Order>, List<T>> query)
     {
@@ -3586,11 +3573,9 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         Assert.Equal([], result);
     }
 
-    // ---------------------------------------------------------------------------------------------------------------
     // $push list projection members: g.Select(e => e.X).ToList() / ToArray(). Element order inside a list follows the
     // $group's input order, which is unspecified without a prior sort (as for driver-LINQ), so every list is compared
     // sorted. SeedOrders: US {2020 100, 2021 200}, UK {2020 50, 2020 25}, FR {2021 300}.
-    // ---------------------------------------------------------------------------------------------------------------
 
     // Formats a list order-insensitively, with null spelled out and decimals normalized (Decimal128 may keep a scale).
     private static string SortedList<T>(IEnumerable<T>? items)
@@ -3850,12 +3835,10 @@ public class NativeGroupByTests(TemporaryDatabaseFixture database) : IClassFixtu
         Assert.Equal([("FR", "New"), ("UK", "New,Shipped"), ("US", "New,Shipped")], result);
     }
 
-    // ---------------------------------------------------------------------------------------------------------------
     // A bare terminal aggregate on a GroupBy nested over a keyed GroupBy(key).Select(...). The nested GroupBy must bind
     // its own key: a stale prior Grouping once routed it through the post-GroupBy.Select aggregate path, which
     // re-emitted the first $group and dropped the nested key. Seed: countries A, B, C have one order each and D has
     // two, so N is {1, 1, 1, 2}.
-    // ---------------------------------------------------------------------------------------------------------------
 
     private static Order[] SeedNestedGroups() =>
     [

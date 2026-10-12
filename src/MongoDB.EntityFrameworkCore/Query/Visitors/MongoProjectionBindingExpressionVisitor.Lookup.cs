@@ -38,13 +38,10 @@ namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 internal sealed partial class MongoProjectionBindingExpressionVisitor : ExpressionVisitor
 {
     /// <summary>
-    /// Detects and binds a projected cross-collection collection navigation such as
-    /// <c>select new { ..., Orders = c.Orders.ToList() }</c>. EF Core lowers the projected collection to
-    /// <c>Enumerable.ToList(Queryable.Select(Queryable.Where(DbSet&lt;Target&gt;(), joinPredicate), selector))</c>
-    /// where there is no enclosing <see cref="IncludeExpression"/> to register the $lookup. This binds the
-    /// projection to a <see cref="CollectionShaperExpression"/> over a dedicated <c>_lookup_&lt;Nav&gt;</c>
-    /// array (added as a $lookup on the query), mirroring the cross-collection Include path including any
-    /// nested ThenInclude $lookups carried by the selector.
+    /// Binds a projected cross-collection collection navigation (<c>Orders = c.Orders.ToList()</c>), which EF lowers to
+    /// <c>ToList(Select(Where(DbSet&lt;Target&gt;(), joinPredicate), selector))</c> with no enclosing
+    /// <see cref="IncludeExpression"/>, to a <see cref="CollectionShaperExpression"/> over a dedicated
+    /// <c>_lookup_&lt;Nav&gt;</c> array, mirroring the Include path (including nested ThenInclude $lookups).
     /// </summary>
     private bool TryBindProjectedCollectionNavigation(
         MethodCallExpression methodCallExpression,
@@ -52,7 +49,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     {
         result = null!;
 
-        // Unwrap the materializing terminal operator (ToList / ToArray / ToHashSet).
         if (methodCallExpression.Method.DeclaringType != typeof(Enumerable)
             || methodCallExpression.Arguments.Count != 1)
         {
@@ -69,7 +65,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 return false;
         }
 
-        // Expect Queryable.Select(source, selector).
         if (methodCallExpression.Arguments[0] is not MethodCallExpression
             {
                 Method: { Name: nameof(Queryable.Select), DeclaringType: var selectDeclaring }
@@ -79,19 +74,16 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             return false;
         }
 
-        // The selector must materialize the navigation's element entity itself: an identity projection
-        // (o => o) optionally wrapped in ThenInclude IncludeExpressions (o => Include(o, ...)). Anything
-        // else (e.g. o => o.OrderID, o => o.OrderDate) is an arbitrary correlated subquery projection, not
-        // a navigation materialization, and must not be rerouted through a $lookup here.
+        // The selector must materialize the element entity itself (identity, optionally wrapped in ThenInclude
+        // IncludeExpressions). Anything else (o => o.OrderID) is an arbitrary correlated subquery, not a navigation
+        // materialization, and must not be rerouted through a $lookup.
         var selectorBody = UnwrapLambdaBody(selectCall.Arguments[1], out var selectorParameter);
         if (selectorParameter == null || !IsEntityMaterializingSelector(selectorBody, selectorParameter))
         {
             return false;
         }
 
-        // The source between the Select and the root must be exactly the single navigation-join Where
-        // (DbSet.Where(fkEquality)). Additional operators (extra Where/OrderBy/Skip/Take with custom
-        // keys) indicate an arbitrary subquery rather than a plain projected collection navigation.
+        // The source must be exactly the single navigation-join Where; extra operators indicate an arbitrary subquery.
         if (selectCall.Arguments[0] is not MethodCallExpression
             {
                 Method: { Name: nameof(Queryable.Where), DeclaringType: var whereDeclaring },
@@ -104,8 +96,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
         var targetEntityType = rootExpression.EntityType;
 
-        // Find the outer entity shaper referenced by the join predicate and the collection navigation
-        // (off the outer entity) whose target is this DbSet.
         var outerShaper = FindOuterShaper(whereCall.Arguments[1]);
         if (outerShaper?.StructuralType is not IEntityType outerEntityType)
         {
@@ -118,17 +108,14 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             return false;
         }
 
-        // Register the $lookup for the projected collection, carrying any filtered-Include pipeline stages
-        // and nested ThenInclude $lookups extracted from the selector.
         var lookup = new LookupExpression(navigation);
         ExtractFilteredIncludePipeline(selectCall.Arguments[0], lookup, targetEntityType);
         ExtractThenIncludesFromSubquery(selectCall, lookup);
         _queryExpression.AddLookup(lookup);
 
-        // On the native projection route, Visit(outerShaper) would hit VisitExtension's whole-root-entity leaf arm, which
-        // registers any root-typed shaper under the current ProjectionMember; inside VisitNew's per-argument loop that would
-        // replace this member's array-leaf mapping with the whole entity. Resolve the EntityProjectionExpression directly.
-        // Other routes never reach that arm and keep the plain Visit.
+        // On the native route, Visit(outerShaper) would hit VisitExtension's whole-root-entity leaf arm and, inside
+        // VisitNew's per-argument loop, replace this member's array-leaf mapping with the whole entity: resolve the
+        // EntityProjectionExpression directly. Other routes never reach that arm.
         _includedNavigations.Push(navigation);
         EntityProjectionExpression outerEntityProjection;
         if (_queryExpression.Select.Route == NativeRoute.Projection)
@@ -147,8 +134,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             }
             else
             {
-                // Index-bound to a different query expression: practically unreachable, but
-                // GetMappedProjection(null) would throw, so decline.
+                // Index-bound to a different query expression: practically unreachable; GetMappedProjection(null) would throw.
                 _includedNavigations.Pop();
                 return false;
             }
@@ -175,8 +161,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         Expression innerShaperExpression = CreateNullableEntityShaper(
             navigation.TargetEntityType, objectArrayProjection.InnerProjection);
 
-        // Wrap the inner shaper with nested ThenInclude collection includes so the shaper reads the
-        // nested $lookup arrays from each element document.
         innerShaperExpression = WrapSelectorWithNestedCollectionIncludes(
             selectorBody, innerShaperExpression, objectArrayProjection);
 
@@ -194,12 +178,10 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     }
 
     /// <summary>
-    /// Detects and binds a projected cross-collection collection-navigation Count such as
-    /// <c>select new { ..., TotalOrders = c.Orders.Count }</c>. EF Core lowers the count to
-    /// <c>Queryable.Count(Queryable.Where(DbSet&lt;Target&gt;(), joinPredicate))</c> (no predicate on the
-    /// Count). This registers a dedicated <c>_lookup_&lt;Nav&gt;</c> $lookup (flagged to be injected right
-    /// after the root collection source) and binds the count as a scalar projection. The EF-to-driver
-    /// translator rewrites the same subtree into a server-side <c>{ $size: "$_lookup_&lt;Nav&gt;" }</c>.
+    /// Binds a projected cross-collection collection-navigation Count (<c>c.Orders.Count</c>), which EF lowers to
+    /// <c>Count(Where(DbSet&lt;Target&gt;(), joinPredicate))</c>. Registers a dedicated <c>_lookup_&lt;Nav&gt;</c> $lookup
+    /// (injected right after the root source) and binds the count as a scalar projection; the EF-to-driver translator
+    /// rewrites the subtree to <c>{ $size: "$_lookup_&lt;Nav&gt;" }</c>.
     /// </summary>
     private bool TryBindProjectedCollectionNavigationCount(
         MethodCallExpression methodCallExpression,
@@ -207,7 +189,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     {
         result = null!;
 
-        // Expect Queryable.Count(source) / Queryable.LongCount(source) with NO predicate.
         if (methodCallExpression.Method.DeclaringType != typeof(Queryable)
             || methodCallExpression.Arguments.Count != 1)
         {
@@ -223,7 +204,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 return false;
         }
 
-        // The source must be exactly the single navigation-join Where (DbSet.Where(fkEquality)).
         if (methodCallExpression.Arguments[0] is not MethodCallExpression
             {
                 Method: { Name: nameof(Queryable.Where), DeclaringType: var whereDeclaring },
@@ -236,8 +216,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
         var targetEntityType = rootExpression.EntityType;
 
-        // Find the outer entity shaper referenced by the join predicate and the collection navigation
-        // (off the outer entity) whose target is this DbSet.
         var outerShaper = FindOuterShaper(whereCall.Arguments[1]);
         if (outerShaper?.StructuralType is not IEntityType outerEntityType)
         {
@@ -250,24 +228,22 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             return false;
         }
 
-        // Register the $lookup, flagged so the EF-to-driver translator injects it right after the root
-        // source (before the user's downstream $match/$sort/$project that read the _lookup_<Nav> array).
+        // Flagged so the EF-to-driver translator injects it right after the root source, before downstream stages that
+        // read the _lookup_<Nav> array.
         var lookup = new LookupExpression(navigation) { InjectAfterRoot = true };
         _queryExpression.AddLookup(lookup);
 
-        // Bind the count as a scalar projection mapped to the original Count(Where(...)) subtree. Keeping
-        // it a plain MethodCallExpression in the projection mapping leaves the projection push-down-able
+        // Keeping a plain MethodCallExpression in the mapping leaves the projection push-down-able
         // (ProjectionAnalyzer.CanPushDown stays true); the EF-to-driver translator rewrites it to $size.
         result = BindWholeLeaf(methodCallExpression);
         return true;
     }
 
     /// <summary>
-    /// Whether <paramref name="call"/> is a quantifier or aggregate (<c>Any</c>/<c>All</c>/<c>Count</c>/<c>LongCount</c>/<c>Sum</c>/
-    /// <c>Min</c>/<c>Max</c>/<c>Average</c>) over <c>Queryable.Where(DbSet&lt;Target&gt;(), predicate)</c>: the lowering of an
-    /// operator applied to a cross-collection collection navigation. Structural only; whether the correlation is the navigation's
-    /// foreign key is decided by the native binder (<c>NativeProjectionBinder.ResolveReferencedCollection</c>), which must have
-    /// accepted the projection before this is consulted.
+    /// Whether <paramref name="call"/> is a quantifier or aggregate (<c>Any</c>/<c>All</c>/<c>Count</c>/<c>LongCount</c>/
+    /// <c>Sum</c>/<c>Min</c>/<c>Max</c>/<c>Average</c>) over <c>Where(DbSet&lt;Target&gt;(), predicate)</c>. Structural
+    /// only: whether the correlation is the navigation's foreign key is decided by the native binder
+    /// (<c>ResolveReferencedCollection</c>), which must have accepted the projection before this is consulted.
     /// </summary>
     private static bool IsReferencedCollectionAggregateLeaf(MethodCallExpression call)
         => call.Method.DeclaringType == typeof(Queryable)
@@ -281,9 +257,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
            }, ..]
            && whereDeclaring == typeof(Queryable);
 
-    /// <summary>
-    /// Unwrap a (possibly quoted) lambda selector, returning its body and single parameter.
-    /// </summary>
     private static Expression UnwrapLambdaBody(Expression selector, out ParameterExpression parameter)
     {
         var unwrapped = selector.UnwrapQuote();
@@ -298,20 +271,17 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     }
 
     /// <summary>
-    /// Whether the selector body materializes the element entity itself — either the identity parameter
-    /// or an <see cref="IncludeExpression"/> chain (ThenInclude) whose innermost entity is that parameter.
+    /// Whether the selector body materializes the element entity itself: the identity parameter or a ThenInclude chain
+    /// whose innermost entity is that parameter.
     /// </summary>
     private static bool IsEntityMaterializingSelector(Expression body, ParameterExpression parameter)
         => body.UnwrapIncludes() == parameter;
 
     /// <summary>
-    /// Locate the outer entity <see cref="StructuralTypeShaperExpression"/> — the principal side of the join —
-    /// referenced inside a projected collection navigation's FK-correlation predicate (e.g. the <c>c</c> in
-    /// <c>o =&gt; o.CustomerId == c.Id</c>). The shaper can sit at any depth within the predicate tree, so we
-    /// walk the tree with <see cref="ShaperFinder"/> and keep the first shaper that is bound through a
-    /// <see cref="ProjectionBindingExpression"/> — that one is an entity projected by the enclosing query (the
-    /// outer entity we want), as opposed to any transient shaper introduced inside the subquery itself.
-    /// Returns <see langword="null"/> when no such shaper is present.
+    /// Locates the outer (principal-side) <see cref="StructuralTypeShaperExpression"/> referenced inside a projected
+    /// collection navigation's FK-correlation predicate (the <c>c</c> in <c>o =&gt; o.CustomerId == c.Id</c>). Keeps the
+    /// first shaper bound through a <see cref="ProjectionBindingExpression"/> (an entity projected by the enclosing
+    /// query, not a transient shaper inside the subquery), or <see langword="null"/>.
     /// </summary>
     private static StructuralTypeShaperExpression FindOuterShaper(Expression predicate)
     {
@@ -328,23 +298,17 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     }
 
     /// <summary>
-    /// A minimal <see cref="ExpressionVisitor"/> that surfaces every <see cref="StructuralTypeShaperExpression"/>
-    /// in a subtree by invoking the supplied callback for each one. A visitor (rather than a positional
-    /// pattern-match) is required because a shaper node — EF Core's representation of a materialized entity — is
-    /// an <see cref="ExpressionType.Extension"/> node that can be nested at arbitrary depth inside a predicate
-    /// (under <c>==</c>, <c>&amp;&amp;</c>, conversions, <c>EF.Property</c> calls, …), with no fixed position to
-    /// match against, so the whole tree must be traversed. Reporting every match through a callback (instead of
-    /// returning one) lets the caller apply its own selection policy — see <see cref="FindOuterShaper"/>.
+    /// Reports every <see cref="StructuralTypeShaperExpression"/> in a subtree through a callback, so the caller applies
+    /// its own selection policy (<see cref="FindOuterShaper"/>); a shaper can sit at any depth in a predicate.
     /// </summary>
     private sealed class ShaperFinder(Action<StructuralTypeShaperExpression> onFound) : ExpressionVisitor
     {
         protected override Expression VisitExtension(Expression node)
         {
-            // StructuralTypeShaperExpression is an Extension node, so VisitExtension is where it surfaces.
             if (node is StructuralTypeShaperExpression shaper)
             {
                 onFound(shaper);
-                return node; // A shaper is a leaf for our purposes — don't descend into its own subtree.
+                return node;
             }
 
             return base.VisitExtension(node);
@@ -352,18 +316,15 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     }
 
     /// <summary>
-    /// Resolve the collection navigation off <paramref name="outerEntityType"/> whose target is
-    /// <paramref name="targetEntityType"/> AND whose foreign-key correlation <paramref name="correlationPredicate"/> is. Returns
-    /// <see langword="null"/> unless the predicate is exactly that correlation, in which case the caller declines the
-    /// <c>$lookup</c> fast-path rather than guess.
+    /// Resolves the collection navigation off <paramref name="outerEntityType"/> whose target is
+    /// <paramref name="targetEntityType"/> AND whose foreign-key correlation <paramref name="correlationPredicate"/> is;
+    /// <see langword="null"/> otherwise, in which case the caller declines the <c>$lookup</c> fast-path.
     /// </summary>
     /// <remarks>
-    /// The target entity type alone is not enough, even when a single collection navigation points at it: binding the
-    /// navigation emits <c>$lookup {localField: principalKey, foreignField: fk}</c>, so any other predicate
-    /// (<c>Orders.Where(o =&gt; o.Total &gt; 5).Count()</c>, a <c>GroupJoin</c> on <c>Name == Tag</c>, a correlation on a
-    /// non-key outer member) would silently answer with the foreign-key rows. This is the same strict match the native binders
-    /// use (<see cref="NativeTranslation.NativeCorrelationMatcher.TryMatchCorrelatedCollection"/>), with the outer entity read
-    /// through <paramref name="outerShaper"/>, the shaper the binder has substituted for the lambda parameter.
+    /// The target type alone is not enough: binding emits <c>$lookup {localField: principalKey, foreignField: fk}</c>, so any
+    /// other predicate (<c>Orders.Where(o =&gt; o.Total &gt; 5).Count()</c>, a <c>GroupJoin</c> on <c>Name == Tag</c>, a
+    /// non-key outer member) would silently answer with the foreign-key rows. Same strict match as the native binders
+    /// (<see cref="NativeTranslation.NativeCorrelationMatcher.TryMatchCorrelatedCollection"/>).
     /// </remarks>
     internal static INavigation ResolveCollectionNavigation(
         StructuralTypeShaperExpression outerShaper,
@@ -376,10 +337,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             : null;
 
     /// <summary>
-    /// Wrap an element shaper with nested ThenInclude collection includes extracted from the selector lambda
-    /// body of a projected collection navigation (the <c>o =&gt; Include(o, nav, ...)</c> body of the
-    /// <c>Select(source, …)</c> call). <paramref name="selectorBody"/> is the lambda body the caller has
-    /// already unwrapped and validated as an entity-materializing selector.
+    /// Wraps an element shaper with the nested ThenInclude collection includes carried by the (already unwrapped and
+    /// validated) selector body of a projected collection navigation.
     /// </summary>
     private Expression WrapSelectorWithNestedCollectionIncludes(
         Expression selectorBody,
@@ -428,9 +387,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// <summary>
     /// For a collection Include whose declaring entity is a joined entity read from a root-level cross-collection
     /// <see cref="ObjectAccessExpression"/> (the Inner side of <c>Owners.LeftJoin(Orders.Include(r =&gt; r.OrderLines), ...)</c>),
-    /// returns the pending forced-unwind <c>$lookup</c> producing that sub-document (matched by alias), so the
-    /// Include's <c>$lookup</c> can nest in its sub-pipeline. Returns <see langword="null"/> otherwise, leaving the
-    /// caller's type-based matching in charge.
+    /// returns the pending forced-unwind <c>$lookup</c> (matched by alias) so the Include's <c>$lookup</c> can nest in its
+    /// sub-pipeline; <see langword="null"/> leaves the caller's type-based matching in charge.
     /// </summary>
     private LookupExpression TryGetDeclaringJoinLookup(IncludeExpression includeExpression)
     {
@@ -454,9 +412,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     }
 
     /// <summary>
-    /// For cross-collection collection Include (e.g., Customer.Include(c => c.Orders)),
-    /// build an IncludeExpression with a CollectionShaperExpression that reads from the $lookup array.
-    /// The $lookup stage is appended via AppendLookupStages in the LINQ translator.
+    /// Builds the IncludeExpression with a <see cref="CollectionShaperExpression"/> reading the $lookup array of a
+    /// cross-collection collection Include.
     /// </summary>
     private Expression RewriteCollectionIncludeForLookup(
         IncludeExpression includeExpression,
@@ -466,9 +423,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         _includedNavigations.Push(navigation);
         var visitedEntity = Visit(includeExpression.EntityExpression);
 
-        // A reference Include off the same root may already wrap the entity in IncludeExpressions (e.g.
-        // Include(o => o.Customer).Include(o => o.OrderDetails)). Unwrap to the StructuralTypeShaperExpression that carries the
-        // projection index; visitedEntity is passed through to Update below to preserve the wrapping.
+        // A reference Include off the same root may already wrap the entity in IncludeExpressions: unwrap to the shaper
+        // carrying the projection index; visitedEntity is passed to Update below to preserve the wrapping.
         var shaperCandidate = visitedEntity.UnwrapIncludes();
 
         EntityProjectionExpression outerEntityProjection;
@@ -490,9 +446,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         Expression innerShaperExpression = CreateNullableEntityShaper(
             navigation.TargetEntityType, objectArrayProjection.InnerProjection);
 
-        // For ThenInclude on collection-then-collection paths, wrap the inner shaper
-        // with IncludeExpressions for nested collections so the binding remover
-        // processes them when iterating each parent document.
+        // Wrap with IncludeExpressions for nested collections (ThenInclude) so the binding remover processes them per
+        // parent document.
         innerShaperExpression = WrapWithNestedCollectionIncludes(
             includeExpression.NavigationExpression, innerShaperExpression, objectArrayProjection);
 
@@ -509,54 +464,46 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     }
 
     /// <summary>
-    /// Process the NavigationExpression of an Include, extracting:
-    /// - Nested ThenInclude $lookups (added as pipeline stages on the parent lookup)
-    /// - Filtered Include operations (OrderBy, Skip, Take)
+    /// Extracts nested ThenInclude $lookups (as pipeline stages on the parent lookup) and filtered-Include operations
+    /// (OrderBy, Skip, Take) from an Include's NavigationExpression.
     /// </summary>
     private static void ExtractNestedIncludePipeline(
         Expression navigationExpression,
         LookupExpression parentLookup,
         IEntityType targetEntityType)
     {
-        // Unwrap nested IncludeExpressions (ThenInclude on collections)
         while (navigationExpression is IncludeExpression nestedInclude
                && nestedInclude.Navigation is INavigation nestedNav
                && !nestedNav.IsEmbedded() && nestedNav.IsCollection)
         {
             var nestedLookup = new LookupExpression(nestedNav);
-            // Recurse for deeper nesting
             ExtractNestedIncludePipeline(nestedInclude.NavigationExpression, nestedLookup, nestedNav.TargetEntityType);
 
             parentLookup.PipelineStages.Add(BuildLookupDocument(nestedLookup));
-            // PipelineKind is write-once: don't overwrite an earlier DiscriminatorNarrowed (TPH-narrowed target) or
-            // FilteredInclude claim.
+            // PipelineKind is write-once: don't overwrite DiscriminatorNarrowed or FilteredInclude.
             if (parentLookup.PipelineKind == LookupPipelineKind.None)
             {
                 parentLookup.PipelineKind = LookupPipelineKind.NestedInclude;
             }
 
-            // Continue with the entity expression (which may have more wrapping)
             navigationExpression = nestedInclude.EntityExpression;
         }
 
-        // Extract filtered Include operations and nested ThenIncludes from MaterializeCollectionNavigation subquery
         if (navigationExpression is MaterializeCollectionNavigationExpression materialize)
         {
             var subquery = materialize.Subquery;
             ExtractFilteredIncludePipeline(subquery, parentLookup, targetEntityType);
 
-            // Check for ThenInclude inside Select(source, o => Include(o, nestedNav, ...))
             ExtractThenIncludesFromSubquery(subquery, parentLookup);
         }
     }
 
     /// <summary>
-    /// Look for IncludeExpressions inside a Select lambda of a collection Include subquery.
-    /// These represent ThenInclude on collection-then-collection paths.
+    /// Finds IncludeExpressions inside a Select lambda of a collection Include subquery: ThenInclude on
+    /// collection-then-collection paths.
     /// </summary>
     private static void ExtractThenIncludesFromSubquery(Expression subquery, LookupExpression parentLookup)
     {
-        // The subquery is Select(Where(source, pred), o => Include(o, nav, navExpr))
         if (subquery is not MethodCallExpression { Method.Name: "Select" } selectCall)
             return;
 
@@ -565,7 +512,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         if (selectorArg is not LambdaExpression { Body: IncludeExpression includeExpr })
             return;
 
-        // Walk nested IncludeExpressions
         var current = (Expression)includeExpr;
         while (current is IncludeExpression nested
                && nested.Navigation is INavigation nav
@@ -573,7 +519,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         {
             var nestedLookup = new LookupExpression(nav);
 
-            // Check for deeper nesting inside this ThenInclude's NavigationExpression
             if (nested.NavigationExpression is MaterializeCollectionNavigationExpression innerMaterialize)
             {
                 ExtractThenIncludesFromSubquery(innerMaterialize.Subquery, nestedLookup);
@@ -581,7 +526,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             }
 
             parentLookup.PipelineStages.Add(BuildLookupDocument(nestedLookup));
-            // See the matching guard/comment in ExtractNestedIncludePipeline above.
+            // Write-once, as in ExtractNestedIncludePipeline.
             if (parentLookup.PipelineKind == LookupPipelineKind.None)
             {
                 parentLookup.PipelineKind = LookupPipelineKind.NestedInclude;
@@ -590,10 +535,9 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             current = nested.EntityExpression;
         }
 
-        // Reference ThenInclude on a collection item (e.g. Product.OrderDetails.ThenInclude(od => od.Order)).
-        // EF lowers the reference to a Join inside the collection subquery; emit it as a nested
-        // $lookup + $unwind inside the parent lookup's pipeline so each collection element carries
-        // its single referenced document under "_lookup_<RefNav>".
+        // Reference ThenInclude on a collection item (`od => od.Order`): EF lowers it to a Join inside the collection
+        // subquery; emit a nested $lookup + $unwind in the parent pipeline so each element carries the document under
+        // "_lookup_<RefNav>".
         while (current is IncludeExpression { Navigation: INavigation refNav } nestedRef
                && !refNav.IsEmbedded() && !refNav.IsCollection)
         {
@@ -603,20 +547,18 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     }
 
     /// <summary>
-    /// Add the $lookup + $unwind stages for a cross-collection reference ThenInclude nested under a
-    /// collection Include into the parent lookup's pipeline. The referenced document is unwound
-    /// (preserving null) so each parent element carries a single "_lookup_&lt;RefNav&gt;" sub-document.
+    /// Adds the $lookup + $unwind stages for a reference ThenInclude nested under a collection Include to the parent
+    /// lookup's pipeline.
     /// </summary>
     private static void AddReferenceLookupStages(LookupExpression parentLookup, INavigation referenceNavigation)
     {
         var refLookup = new LookupExpression(referenceNavigation);
 
         parentLookup.PipelineStages.Add(BuildLookupDocument(refLookup));
-        // Always preserving, unlike the flat-lookup path (which follows PreserveNullAndEmptyArrays): this
-        // $unwind runs inside the parent collection lookup's sub-pipeline, so a non-preserving one would drop
-        // collection elements, and an Include must never change the result set.
+        // Always preserving, unlike the flat-lookup path: this $unwind runs inside the parent's sub-pipeline, so a
+        // non-preserving one would drop collection elements, and an Include must never change the result set.
         parentLookup.PipelineStages.Add(refLookup.ToUnwindStageDocument(preserveNullAndEmptyArrays: true));
-        // See the matching guard/comment in ExtractNestedIncludePipeline above.
+        // Write-once, as in ExtractNestedIncludePipeline.
         if (parentLookup.PipelineKind == LookupPipelineKind.None)
         {
             parentLookup.PipelineKind = LookupPipelineKind.NestedInclude;
@@ -624,25 +566,22 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     }
 
     /// <summary>
-    /// Builds the <c>$lookup</c> stage for a nested lookup. Every nested-lookup construction site must
-    /// go through this, or a lookup carrying <see cref="LookupExpression.PipelineStages"/> gets silently
-    /// flattened and loses them (EF-374).
+    /// Builds the <c>$lookup</c> stage for a nested lookup. Every nested-lookup construction site must go through this,
+    /// or a lookup carrying <see cref="LookupExpression.PipelineStages"/> is silently flattened and loses them (EF-374).
     /// </summary>
     private static BsonDocument BuildLookupDocument(LookupExpression lookup)
         => lookup.ToLookupStageDocument();
 
     /// <summary>
-    /// Extract filtered Include operations (OrderBy, Skip, Take) from a subquery expression
-    /// and add them as pipeline stages to the LookupExpression.
+    /// Extracts filtered Include operations (OrderBy, Skip, Take) from a subquery into pipeline stages on the lookup.
     /// </summary>
     private static void ExtractFilteredIncludePipeline(
         Expression navigationExpression,
         LookupExpression lookup,
         IEntityType targetEntityType)
     {
-        // Walk from the outermost call inward, collecting stages in reverse order. Consecutive
-        // OrderBy/ThenBy keys are buffered in sortKeys and flushed as one $sort stage, since a
-        // later $sort would otherwise re-sort from scratch and discard earlier keys.
+        // Walks outermost-first; consecutive OrderBy/ThenBy keys are buffered and flushed as one $sort, since a later
+        // $sort would re-sort from scratch and discard earlier keys.
         var stages = new List<BsonDocument>();
         var sortKeys = new List<(string Field, int Direction)>();
         var current = navigationExpression;
@@ -683,10 +622,9 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 case "Where":
                     FlushSortKeys(sortKeys, stages);
 
-                    // The collection-Include subquery's synthetic FK-correlation Where is dropped (the $lookup localField/foreignField
-                    // handles it). A user filtered-Include predicate or a HasQueryFilter on the dependent also lowers to a Where but is
-                    // NOT translated into the $lookup sub-pipeline $match; dropping it would return wrong data (e.g. bypass a
-                    // soft-delete or tenant filter), so fail loudly.
+                    // The synthetic FK-correlation Where is dropped ($lookup localField/foreignField handles it). A user
+                    // filtered-Include predicate or HasQueryFilter also lowers to a Where but is NOT translated into the
+                    // sub-pipeline $match; dropping it would return wrong data (bypassing a soft-delete/tenant filter): fail.
                     if (IsFkCorrelationPredicate(methodCall.Arguments[1].UnwrapLambdaFromQuote()))
                     {
                         current = methodCall.Arguments[0];
@@ -696,7 +634,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                     throw new InvalidOperationException(CoreStrings.TranslationFailed(navigationExpression.Print()));
 
                 default:
-                    // Hit the base (EntityQueryRootExpression or similar) — stop.
                     current = null;
                     break;
             }
@@ -704,14 +641,13 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
         FlushSortKeys(sortKeys, stages);
 
-        // Stages were collected outermost-first; reverse so they execute in the right order.
         stages.Reverse();
         if (stages.Count > 0)
         {
             lookup.PipelineStages.AddRange(stages);
 
-            // Don't overwrite a DiscriminatorNarrowed set by the constructor (TPH-narrowed target with its own $match):
-            // that combination isn't validated for the native FilteredInclude path.
+            // Don't overwrite DiscriminatorNarrowed (TPH-narrowed target with its own $match): that combination isn't
+            // validated for the native FilteredInclude path.
             if (lookup.PipelineKind == LookupPipelineKind.None)
             {
                 lookup.PipelineKind = LookupPipelineKind.FilteredInclude;
@@ -719,10 +655,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         }
     }
 
-    /// <summary>
-    /// Emits one $sort stage from the buffered sort keys, if any, and clears the buffer.
-    /// </summary>
-    /// <remarks>Keys are buffered last-first, so they're walked in reverse to restore key order.</remarks>
+    /// <summary>Emits one $sort stage from the buffered keys (buffered last-first, so walked in reverse), then clears them.</summary>
     private static void FlushSortKeys(List<(string Field, int Direction)> sortKeys, List<BsonDocument> stages)
     {
         if (sortKeys.Count == 0)
@@ -741,17 +674,13 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     }
 
     /// <summary>
-    /// Determines whether a Where predicate lowered into a collection-Include subquery is the synthetic
-    /// FK-correlation predicate (the join condition between the parent and the dependent) rather than a
-    /// user-supplied filtered-Include predicate or a dependent-side query filter.
+    /// Whether a Where lowered into a collection-Include subquery is the synthetic FK-correlation predicate rather than a
+    /// user filtered-Include predicate or a dependent-side query filter.
     /// </summary>
     /// <remarks>
-    /// The FK-correlation predicate references the OUTER (parent) entity — EF lowers that reference as a
-    /// <see cref="StructuralTypeShaperExpression"/> (and/or a <see cref="ParameterExpression"/> that is not
-    /// the predicate lambda's own parameter). A self-contained user filter / query filter references only
-    /// the lambda's own element parameter plus constants / captured closure values. Classifying
-    /// conservatively: only a predicate that references the parent is treated as the (droppable) correlation;
-    /// anything self-contained is reported as an (untranslated) filter so it is never silently dropped.
+    /// The correlation references the OUTER entity (a <see cref="StructuralTypeShaperExpression"/> and/or a parameter that
+    /// is not the lambda's own); a self-contained filter references only its element parameter plus constants/closures.
+    /// Conservative: only a predicate referencing the parent is droppable, so a filter is never silently dropped.
     /// </remarks>
     private static bool IsFkCorrelationPredicate(LambdaExpression predicate)
     {
@@ -761,13 +690,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     }
 
     /// <summary>
-    /// Walks a predicate body to decide whether it references the OUTER (parent) query — the hallmark of an
-    /// FK-correlation/join predicate, as opposed to a self-contained filter on the dependent element. Two
-    /// things count as an outer reference: a <see cref="StructuralTypeShaperExpression"/> (a materialized
-    /// parent entity), or a <see cref="ParameterExpression"/> the predicate lambda did not itself declare
-    /// (a parameter captured from an enclosing scope). A visitor is needed because either can appear at any
-    /// depth in the tree; the walk short-circuits via <see cref="ReferencesOuter"/> as soon as one is found,
-    /// so the rest of the tree is skipped.
+    /// Decides whether a predicate body references the OUTER query: a <see cref="StructuralTypeShaperExpression"/> or a
+    /// <see cref="ParameterExpression"/> the lambda did not declare. Short-circuits via <see cref="ReferencesOuter"/>.
     /// </summary>
     private sealed class OuterReferenceDetector(IReadOnlyList<ParameterExpression> ownParameters) : ExpressionVisitor
     {
@@ -775,13 +699,11 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
         public override Expression Visit(Expression node)
         {
-            // Short-circuit: once an outer reference is found there's nothing left to learn, so stop walking.
             if (ReferencesOuter || node == null)
             {
                 return node;
             }
 
-            // A materialized parent entity appearing in the predicate is itself an outer reference.
             if (node is StructuralTypeShaperExpression)
             {
                 ReferencesOuter = true;
@@ -793,7 +715,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
 
         protected override Expression VisitParameter(ParameterExpression node)
         {
-            // A parameter the predicate lambda didn't declare must come from an enclosing (outer) scope.
             if (!ownParameters.Contains(node))
             {
                 ReferencesOuter = true;
@@ -803,26 +724,22 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         }
     }
 
-    /// <summary>
-    /// Extract the sort field name from an OrderBy/OrderByDescending method call.
-    /// </summary>
+    /// <summary>Extracts the sort field name from an OrderBy/OrderByDescending call.</summary>
     private static string GetSortField(MethodCallExpression orderByCall, IEntityType entityType)
     {
-        // The key selector is the second argument: e.g., o => o.OrderID
         var name = orderByCall.Arguments[1].UnwrapLambdaFromQuote().Body.TryGetSimplePropertyName();
         if (name == null)
         {
-            // Not a simple property access — fail loudly rather than silently sorting by "_id".
+            // Not a simple property access: fail loudly rather than silently sorting by "_id".
             throw new InvalidOperationException(CoreStrings.TranslationFailed(orderByCall.Print()));
         }
 
         var property = entityType.FindProperty(name);
         if (property == null)
         {
-            // A member access that isn't a mapped property of the target entity (e.g. "o.Label.Length", or a
-            // member reached through an embedded document, where only the outermost member name survives).
-            // There is no element to sort on: using the raw member name would $sort on a field absent from the
-            // documents, which MongoDB treats as all-equal and returns in an arbitrary order. Fail loudly.
+            // Not a mapped property of the target (`o.Label.Length`, or a member reached through an embedded document where
+            // only the outermost name survives): a raw-name $sort would hit a field absent from the documents, which
+            // MongoDB treats as all-equal (arbitrary order). Fail loudly.
             throw new InvalidOperationException(CoreStrings.TranslationFailed(orderByCall.Print()));
         }
 
@@ -830,9 +747,8 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     }
 
     /// <summary>
-    /// For ThenInclude on collection-then-collection paths, extract the nested IncludeExpressions
-    /// from the subquery's Select lambda and wrap them around the inner shaper so the shaper
-    /// reads the nested $lookup arrays from each parent document.
+    /// For ThenInclude on collection-then-collection paths, wraps the nested IncludeExpressions from the subquery's Select
+    /// lambda around the inner shaper so it reads the nested $lookup arrays from each parent document.
     /// </summary>
     private Expression WrapWithNestedCollectionIncludes(
         Expression navigationExpression,
@@ -842,7 +758,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         if (navigationExpression is not MaterializeCollectionNavigationExpression materialize)
             return innerShaper;
 
-        // Look for Select(source, o => Include(o, nav, navExpr))
         if (materialize.Subquery is not MethodCallExpression { Method.Name: "Select" } selectCall)
             return innerShaper;
 
@@ -851,7 +766,6 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         if (selectorArg is not LambdaExpression lambda)
             return innerShaper;
 
-        // Collect nested IncludeExpressions from the lambda body
         var includes = new List<IncludeExpression>();
         var body = lambda.Body;
         while (body is IncludeExpression include)
@@ -863,14 +777,12 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
         if (includes.Count == 0)
             return innerShaper;
 
-        // Wrap the inner shaper with Include expressions (innermost first)
         var result = innerShaper;
         for (var i = includes.Count - 1; i >= 0; i--)
         {
             var include = includes[i];
             if (include.Navigation is INavigation nav && !nav.IsEmbedded() && nav.IsCollection)
             {
-                // Build a CollectionShaperExpression for this nested collection Include
                 var nestedLookupAlias = LookupExpression.GetLookupAlias(nav);
                 var nestedArrayProjection = new ObjectArrayProjectionExpression(
                     nav, parentArrayProjection.InnerProjection.ParentAccessExpression, nestedLookupAlias, null);
@@ -878,10 +790,9 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
                 var nestedInnerShaper = CreateNullableEntityShaper(
                     nav.TargetEntityType, nestedArrayProjection.InnerProjection);
 
-                // Recurse so this collection's deeper ThenIncludes are wrapped onto its element shaper; otherwise the deepest
-                // navigation is never materialized and comes back null. Reads the "_lookup_<Nav>" sub-documents relative to THIS
-                // collection's element (nestedArrayProjection), matching the pipeline from ExtractThenIncludesFromSubquery /
-                // AddReferenceLookupStages.
+                // Recurse so deeper ThenIncludes are wrapped onto this element shaper, else the deepest navigation comes
+                // back null. Reads "_lookup_<Nav>" sub-documents relative to THIS collection's element, matching the
+                // pipeline from ExtractThenIncludesFromSubquery / AddReferenceLookupStages.
                 var wrappedNestedInnerShaper = WrapWithNestedCollectionIncludes(
                     include.NavigationExpression, nestedInnerShaper, nestedArrayProjection);
 
@@ -895,9 +806,9 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             }
             else if (include.Navigation is INavigation refNav && !refNav.IsEmbedded())
             {
-                // Reference ThenInclude on a collection item (e.g. od.Order): the referenced document is unwound under
-                // "_lookup_<RefNav>" in each parent element (see AddReferenceLookupStages). Build a shaper reading that sub-document
-                // relative to the parent element; visiting the raw EF Join field gives a non-materializable scalar binding.
+                // Reference ThenInclude on a collection item (`od.Order`): the document is unwound under "_lookup_<RefNav>" in
+                // each parent element (AddReferenceLookupStages). Visiting the raw EF Join field gives a non-materializable
+                // scalar binding, so build the shaper reading it relative to the parent element.
                 var refAccess = new NavigationObjectAccessExpression(
                     refNav,
                     parentArrayProjection.InnerProjection.ParentAccessExpression,

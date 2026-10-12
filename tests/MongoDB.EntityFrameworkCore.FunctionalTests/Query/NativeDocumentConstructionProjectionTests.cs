@@ -104,17 +104,12 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         return database.MongoDatabase.GetCollection<Book>(coll.CollectionNamespace.CollectionName);
     }
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  Goes native: a constructed sub-entity leaf mixed with a plain field sibling
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-
     [Fact]
     public void Document_construction_leaf_goes_native_and_reads_correct_values()
     {
         var collection = SeedBooks(nameof(Document_construction_leaf_goes_native_and_reads_correct_values));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // NativeOnly: success here (rather than NativeTranslationNotSupportedException) is the routing proof.
         var results = db.Entities.AsNoTracking()
             .Select(b => new { Copy = new BookCopy { Id = b.Id, Title = b.Title, Author = b.Author }, b.Rank })
             .OrderBy(r => r.Copy.Title)
@@ -272,11 +267,9 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         }
     }
 
-    // ════════════════════════════════════════════════════════════════════════════════════════════
-    //  A ternary whose branches are client-only constructions: only the test is projected (a bool leaf) and the
-    //  conditional is evaluated client-side. Server-side document construction would be wrong here: IdName.Id maps
-    //  to "_id" in the driver's class map, while a native sub-document would carry "Id".
-    // ════════════════════════════════════════════════════════════════════════════════════════════
+    // A ternary whose branches are client-only constructions: only the test is projected (a bool leaf) and the
+    // conditional is evaluated client-side. Server-side construction would be wrong: IdName.Id maps to "_id" in the
+    // driver's class map, while a native sub-document would carry "Id".
 
     private class Place
     {
@@ -432,7 +425,6 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         });
         Assert.Equal(["Alpha|Alpha", "REC|Rec", "REC|Rec", "REC|Rec"], withinBranch);
 
-        // The shared read is staged once.
         using var logged = CreateContextWithLogging(collection, MongoQueryMode.NativeOnly, null, out var spyLogger);
         _ = logged.Entities.AsNoTracking()
             .Select(p => p.City == "Seattle"
@@ -491,8 +483,8 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         Assert.Equal(["PAY|Alpha", "REC|UK", "REC|DE", "REC|FR"], results);
     }
 
-    // The latent crash: the wrapped form was admitted as a server-side $cond over sub-documents carrying "Id", and the
-    // read back through IdName's class map (which expects "_id") threw FormatException.
+    // The latent crash: the wrapped form was admitted as a server-side $cond over sub-documents carrying "Id", which
+    // IdName's class map (expecting "_id") then failed to read back with FormatException.
     [Fact]
     public void Wrapped_ternary_over_constant_constructions_goes_native_with_parity()
     {
@@ -637,8 +629,8 @@ public class NativeDocumentConstructionProjectionTests(TemporaryDatabaseFixture 
         spyLogger.AssertExecutedMqlContains("\"then\" : { \"Text\" : \"$Name\" }, \"else\" : { \"Text\" : \"$Country\" }");
     }
 
-    // Over a join scope the ternary is staged by NativeJoinScopeProjectionBinder, whose computed leaf is read back whole
-    // through IdName's class map (Id -> _id): it used to throw FormatException in NativeOnly and Native. Declines now.
+    // Over a join scope the ternary is staged by NativeJoinScopeProjectionBinder and read back whole through IdName's
+    // class map (Id -> _id), which threw FormatException; it declines now.
     [Fact]
     public void Join_scope_ternary_over_constructions_the_class_map_misreads_declines()
     {

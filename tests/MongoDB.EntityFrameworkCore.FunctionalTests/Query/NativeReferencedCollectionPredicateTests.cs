@@ -29,8 +29,7 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 
 /// <summary>
 /// An aggregate or quantifier over a cross-document collection reached through a collection navigation, in a <c>Where</c>
-/// or an <c>OrderBy</c>/<c>ThenBy</c> (design: <c>docs/superpowers/specs/2026-10-08-native-referenced-collection-aggregates-design.md</c>,
-/// slice 2). Hand-computed over raw seeds with an empty group and orders whose customer is dangling or null.
+/// or an <c>OrderBy</c>/<c>ThenBy</c> Hand-computed over raw seeds with an empty group and orders whose customer is dangling or null.
 /// <para>
 /// <see cref="MongoQueryMode.NativeOnly"/> and <see cref="MongoQueryMode.Native"/> must answer exactly. The explicit
 /// <see cref="MongoQueryMode.DriverLinq"/> leg may answer correctly or refuse loudly, never answer wrongly.
@@ -98,7 +97,6 @@ public class NativeReferencedCollectionPredicateTests(TemporaryDatabaseFixture d
             }
             catch (Exception) when (mode == MongoQueryMode.DriverLinq)
             {
-                // The bridge may refuse these for now (never answer wrongly).
             }
 
             if (rows is not null)
@@ -115,8 +113,6 @@ public class NativeReferencedCollectionPredicateTests(TemporaryDatabaseFixture d
     private static List<string> Ids(IQueryable<Cust> q) => q.AsEnumerable().Select(c => c.Id).ToList();
 
     private static List<string> SortedIds(IQueryable<Cust> q) => q.AsEnumerable().Select(c => c.Id).OrderBy(s => s).ToList();
-
-    // ---- Where ----
 
     [Fact]
     public void Where_Any_with_a_predicate()
@@ -165,12 +161,9 @@ public class NativeReferencedCollectionPredicateTests(TemporaryDatabaseFixture d
     {
         var names = Seed();
 
-        // One context and one lambda shape, so the second run hits the compiled-query cache.
         using var db = Create(names, mode);
         NativeModeAssert.TwiceWithDifferentValues(v => CountAbove(db, (int)v!), 15, ["A1", "A2", "B1"], 650, ["A2"]);
     }
-
-    // ---- OrderBy / ThenBy ----
 
     [Fact]
     public void OrderBy_Count_descending_then_key()
@@ -191,8 +184,6 @@ public class NativeReferencedCollectionPredicateTests(TemporaryDatabaseFixture d
         => Assert3(db => Ids(db.Set<Cust>().OrderBy(c => c.Name).ThenByDescending(c => c.Orders.Sum(o => o.Total))),
             ["A1", "A2", "B1", "C0"]);
 
-    // ---- combinations ----
-
     [Fact]
     public void Where_Any_then_OrderBy_Count_then_Take()
         => Assert3(db => Ids(db.Set<Cust>().Where(c => c.Orders.Any()).OrderByDescending(c => c.Orders.Count).ThenBy(c => c.Id).Take(2)),
@@ -200,7 +191,6 @@ public class NativeReferencedCollectionPredicateTests(TemporaryDatabaseFixture d
 
     [Fact]
     public void Take_then_Where_Any_pages_before_filtering()
-        // The page is the first three customers by id (A1, A2, B1); the filter then drops B1.
         => Assert3(db => SortedIds(db.Set<Cust>().OrderBy(c => c.Id).Take(3).Where(c => c.Orders.Any(o => o.Total > 100))), ["A1", "A2"]);
 
     private Ctx Create(string[] names, MongoQueryMode mode)

@@ -24,12 +24,6 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 internal sealed class MongoUnaryExpression : MongoExpression
 {
-    /// <summary>
-    /// Creates a <see cref="MongoUnaryExpression"/>.
-    /// </summary>
-    /// <param name="op">The unary operator.</param>
-    /// <param name="operand">The operand expression.</param>
-    /// <param name="resultType">The result type, or <see langword="null"/> to use the default for <paramref name="op"/>.</param>
     public MongoUnaryExpression(MongoUnaryOperator op, MongoExpression operand, Type? resultType = null)
     {
         Operator = op;
@@ -37,10 +31,8 @@ internal sealed class MongoUnaryExpression : MongoExpression
         _resultType = resultType;
     }
 
-    /// <summary>The unary operator.</summary>
     public MongoUnaryOperator Operator { get; }
 
-    /// <summary>The operand expression.</summary>
     public MongoExpression Operand { get; }
 
     /// <inheritdoc />
@@ -49,10 +41,7 @@ internal sealed class MongoUnaryExpression : MongoExpression
 
     private readonly Type? _resultType;
 
-    /// <summary>
-    /// Returns a new <see cref="MongoUnaryExpression"/> if the operand changed;
-    /// otherwise returns <see langword="this"/>.
-    /// </summary>
+    /// <summary>Returns a new expression if the operand changed, otherwise <see langword="this"/>.</summary>
     public MongoUnaryExpression Update(MongoExpression operand)
         => ReferenceEquals(operand, Operand)
             ? this

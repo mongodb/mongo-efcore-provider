@@ -61,8 +61,6 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── Reverse ────────────────────────────────────────────────────────────────
-
     [Fact]
     public void Reverse_over_explicit_order_goes_native_and_reverses_the_rows()
     {
@@ -80,7 +78,6 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
         var collection = Seed([1, 2, 3], nameof(Reverse_over_descending_order_flips_to_ascending_in_the_emitted_sort));
         using var db = CreateContext(collection, MongoQueryMode.NativeOnly);
 
-        // A Reverse that failed to flip the $sort would return [3,2,1].
         var result = db.Entities.OrderByDescending(e => e.Value).Reverse().Select(e => e.Value).ToList();
 
         Assert.Equal([1, 2, 3], result);
@@ -120,7 +117,6 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
     {
         var collection = Seed([1, 2, 3], nameof(Reverse_after_a_composed_operator_following_the_sort_still_hard_fails_in_every_mode));
 
-        // The trailing op is a $match, not a $sort, so there is nothing to flip.
         using var nativeDb = CreateContext(collection, MongoQueryMode.Native);
         Assert.Throws<ExpressionNotSupportedException>(
             () => nativeDb.Entities.OrderBy(e => e.Value).Where(e => e.Value > 0).Reverse().ToList());
@@ -129,8 +125,6 @@ public class NativeReverseLastTests(TemporaryDatabaseFixture database) : IClassF
         Assert.Throws<NativeTranslationNotSupportedException>(
             () => nativeOnlyDb.Entities.OrderBy(e => e.Value).Where(e => e.Value > 0).Reverse().ToList());
     }
-
-    // ── Last / LastOrDefault ──────────────────────────────────────────────────
 
     [Fact]
     public void Last_over_ordered_source_goes_native_and_returns_the_max()

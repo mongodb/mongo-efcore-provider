@@ -41,9 +41,7 @@ namespace MongoDB.EntityFrameworkCore.Storage;
 /// </summary>
 internal static class MongoBulkOperationExecutor
 {
-    // Dispatch on the (strategy, kind) pair. A new MongoBulkStrategy (e.g. a future $merge path) adds an arm here;
-    // the explicit-arms-plus-throw shape routes any unhandled combination to a loud failure rather than silently
-    // falling through to single-command/delete.
+    // Explicit arms plus throw: a new MongoBulkStrategy must add an arm rather than fall through to single-command/delete.
     public static int Execute(QueryContext queryContext, MongoBulkPlan plan)
         => (plan.Strategy, plan.Kind) switch
         {
@@ -63,8 +61,6 @@ internal static class MongoBulkOperationExecutor
             (MongoBulkStrategy.TwoPhase, MongoBulkOperationKind.Update) => ExecuteTwoPhaseUpdateAsync(queryContext, plan),
             _ => throw new ArgumentOutOfRangeException(nameof(plan), $"Unsupported bulk plan: {plan.Strategy}/{plan.Kind}.")
         };
-
-    // ---- Single-command path: one atomic deleteMany/updateMany, no transaction. ----
 
     private static int ExecuteDelete(QueryContext queryContext, MongoBulkPlan plan)
     {
@@ -114,7 +110,6 @@ internal static class MongoBulkOperationExecutor
             : collection.UpdateMany(session, filter, update);
 
         updateLogger.ExecutedBulkUpdate(stopwatch.Elapsed, collection.CollectionNamespace, result.ModifiedCount);
-        // (ExecutedBulkUpdate reports ModifiedCount — the genuinely-modified subset.)
         return checked((int)result.MatchedCount);
     }
 
@@ -136,8 +131,6 @@ internal static class MongoBulkOperationExecutor
         updateLogger.ExecutedBulkUpdate(stopwatch.Elapsed, collection.CollectionNamespace, result.ModifiedCount);
         return checked((int)result.MatchedCount);
     }
-
-    // ---- Two-phase path: collect target _ids inside a transaction, then act by { _id: { $in: ids } }. ----
 
     private static int ExecuteTwoPhaseDelete(QueryContext queryContext, MongoBulkPlan plan)
         => RunInBulkTransaction(queryContext, () =>
@@ -274,11 +267,9 @@ internal static class MongoBulkOperationExecutor
         return ids;
     }
 
-    // ---- Transaction orchestration. Phase 1 (read) and phase 2 (write) share one transaction so they observe a
-    // single snapshot. If the user already opened one we join it (and never commit it). Otherwise we auto-start one,
-    // commit on success, abort on failure. AutoTransactionBehavior.Never means "I manage transactions" — refuse to
-    // auto-start. database.BeginTransaction() routes through MongoTransactionManager -> MongoTransaction, so
-    // commit/rollback logging and the transaction id are preserved. ----
+    // Both phases share one transaction (one snapshot). A user-opened transaction is joined and never committed here;
+    // otherwise one is auto-started, unless AutoTransactionBehavior.Never. Starting via database.BeginTransaction()
+    // keeps commit/rollback logging and the transaction id.
 
     private static int RunInBulkTransaction(QueryContext queryContext, Func<int> body)
     {
@@ -392,10 +383,9 @@ internal static class MongoBulkOperationExecutor
             + "as a two-phase operation requiring a transaction. The current MongoDB deployment does not support "
             + "multi-document transactions (a replica set or sharded cluster is required).", inner);
 
-    // Multi-document transactions are rejected when the deployment doesn't support them; the failure surfaces in
-    // three shapes: (1) MongoTransaction.Start's NotSupportedException ("does not support transactions"); (2) a raw
-    // driver MongoCommandException (code 20 / IllegalOperation); (3) "Transaction numbers are only allowed on a
-    // replica set member or mongos". Match all three; match conservatively so unrelated failures propagate untouched.
+    // Unsupported deployments fail in three shapes: MongoTransaction.Start's NotSupportedException, a raw
+    // MongoCommandException (code 20), or "Transaction numbers are only allowed on a replica set member or mongos".
+    // Match conservatively so unrelated failures propagate.
     private static bool IsTransactionsUnsupported(Exception exception)
         => exception is MongoCommandException { Code: 20 }
            || (exception is MongoException && exception.Message.Contains("Transaction numbers are only allowed", StringComparison.Ordinal))

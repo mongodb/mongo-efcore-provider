@@ -31,10 +31,9 @@ using MongoDB.EntityFrameworkCore.Storage;
 namespace MongoDB.EntityFrameworkCore.Query.Visitors;
 
 /// <summary>
-/// Extends <see cref="MongoProjectionBindingRemovingExpressionVisitor"/> to handle mixed projections
-/// (containing both entity references and scalar properties). In this path, the LINQ V3 query
-/// returns full BsonDocuments (Select is stripped), and scalars are read from the document that
-/// owns the mapped property using the property's actual serialization info.
+/// Extends <see cref="MongoProjectionBindingRemovingExpressionVisitor"/> for mixed projections (entity references plus
+/// scalars). The LINQ V3 query returns full BsonDocuments (Select stripped); scalars are read from the document owning
+/// the mapped property using the property's actual serialization info.
 /// </summary>
 internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     : MongoProjectionBindingRemovingExpressionVisitor
@@ -46,14 +45,14 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     private readonly bool _ownerKeyMayBeAbsent;
     private readonly bool _pushedDownSelectRetained;
 
-    /// <param name="rootEntityType">The root entity type of the query.</param>
-    /// <param name="queryExpression">The query being shaped.</param>
-    /// <param name="docParameter">The shaper's <see cref="BsonDocument"/> parameter.</param>
-    /// <param name="trackingBehavior">The query's tracking behavior.</param>
+    /// <param name="rootEntityType">The root entity type being materialized.</param>
+    /// <param name="queryExpression">The query being materialized.</param>
+    /// <param name="docParameter">The parameter holding the current document.</param>
+    /// <param name="trackingBehavior">The query tracking behavior.</param>
     /// <param name="pushedDownSelectRetained">
-    /// <see langword="true"/> when the projecting <c>Select</c> could not be stripped because an operator composes
-    /// over its result (<c>Distinct</c>, <c>Union</c>, <c>Concat</c>, ...). The driver then returns projected
-    /// documents keyed by member name, which carry an owned-reference leaf's sub-document but not its owner's key.
+    /// <see langword="true"/> when the projecting <c>Select</c> could not be stripped because an operator composes over its
+    /// result (<c>Distinct</c>, <c>Union</c>, ...). The driver then returns projected documents keyed by member name, which
+    /// carry an owned-reference leaf's sub-document but not its owner's key.
     /// </param>
     public MongoMixedProjectionBindingRemovingExpressionVisitor(
         IEntityType rootEntityType,
@@ -92,8 +91,8 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         {
             if (projectionBindingExpression.ProjectionMember != null)
             {
-                // A member-less construction whose arguments all registered under this one member: each would read
-                // as the last one registered, so decline loudly rather than return another argument's value.
+                // A member-less construction whose arguments all registered under this one member would read each as the
+                // last: decline loudly rather than return another argument's value.
                 if (_queryExpression.AliasedConstructionMembers.TryGetValue(
                         projectionBindingExpression.ProjectionMember, out var aliasedConstructionType))
                 {
@@ -108,8 +107,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                 var mappedExpression = _queryExpression.GetMappedProjection(
                     projectionBindingExpression.ProjectionMember);
 
-                // Resolve the source expression: after ApplyProjection it's wrapped as Constant(index),
-                // so we unwrap to get the actual stored expression; otherwise use it directly.
+                // After ApplyProjection the mapping is Constant(index): unwrap to the stored expression; otherwise use it directly.
                 Expression? sourceExpression;
                 string? alias;
                 if (mappedExpression is ConstantExpression { Value: int })
@@ -119,17 +117,16 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                     sourceExpression = projection.Expression;
                     if (alias is null)
                     {
-                        // A null alias usually means the binding is the whole document/entity
-                        // (e.g. select new { o }) — hand back the BsonDocument for the entity shaper.
-                        // But a scalar root-property binding (e.g. select p.name.ToArray()) also has no
-                        // alias; resolve it to a field read instead of returning the whole document.
+                        // A null alias usually means the whole document/entity (`select new { o }`): hand back the
+                        // BsonDocument for the entity shaper. A scalar root-property binding (`select p.name.ToArray()`) also
+                        // has no alias: resolve it to a field read.
                         if (TryBindArithmeticLeaf(sourceExpression, projectionBindingExpression.Type, out var rootArithmeticRead))
                         {
                             return rootArithmeticRead;
                         }
 
-                        // The bare-body spelling of the string-to-char-sequence leaf (`select p.Name.AsEnumerable()`);
-                        // TryResolveFieldAccess can't resolve an Enumerable.* call and would return the whole document.
+                        // Bare-body string-to-char-sequence leaf; TryResolveFieldAccess can't resolve an Enumerable.* call and
+                        // would return the whole document.
                         if (TryBindStringSequenceLeaf(sourceExpression, projectionBindingExpression.Type,
                                 out var rootStringSequenceRead))
                         {
@@ -154,45 +151,38 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                     sourceExpression = mappedExpression;
                 }
 
-                // A scalar member on a singleton (reference) navigation, e.g. select o.Customer.City. The property belongs to the
-                // navigation target, not the query root, so read it from the joined sub-document (the driver's LeftJoin places the
-                // lone joined reference under "_inner").
+                // A scalar member on a singleton (reference) navigation (`select o.Customer.City`): the property belongs to
+                // the navigation target, so read it from the joined sub-document (driver LeftJoin: "_inner").
                 if (TryBindNavigationMemberAccess(sourceExpression, projectionBindingExpression.Type, out var navMemberRead))
                 {
                     return navMemberRead;
                 }
 
-                // A constructed sub-entity leaf (`new { Book = new Book { Id = e.Id, ... } }`), registered as a single
-                // leaf keyed to NativeProjectionBinder's MongoDocumentConstructionExpression. The document here is
-                // whole (no $project alias), so each member is read at its natural root-relative path via
-                // ReadDocumentConstructionMember.
+                // A constructed sub-entity leaf (MongoDocumentConstructionExpression). The document is whole (no $project
+                // alias), so each member is read at its natural root-relative path via ReadDocumentConstructionMember.
                 if (sourceExpression is MongoDocumentConstructionExpression documentConstruction)
                 {
                     return BuildDocumentConstructionExpression(documentConstruction, alias!);
                 }
 
-                // A computed scalar leaf (`new { U = p.Name.ToUpper(), I = p.Name.IndexOf(p.Code) }`,
-                // `p.Name.Trim().Length + 1`), registered whole by MongoProjectionBindingExpressionVisitor
-                // (IsClientComputedLeaf). Re-evaluate it client-side over its own property reads; resolving it as a
-                // member path would read an element named after the member ("Length"), and operand by operand every
-                // operand would read the same value. Before the arithmetic arm on purpose (it subsumes it).
+                // A computed scalar leaf (`p.Name.ToUpper()`, `p.Name.Trim().Length + 1`) registered whole by
+                // MongoProjectionBindingExpressionVisitor (IsClientComputedLeaf). Re-evaluate it client-side over its own
+                // property reads: a member path would read an element named after the member ("Length"), and operand by
+                // operand every operand would read the same value. Before the arithmetic arm on purpose (it subsumes it).
                 if (TryBindClientComputedLeaf(sourceExpression, projectionBindingExpression.Type, out var clientLeafRead))
                 {
                     return clientLeafRead;
                 }
 
-                // A computed-arithmetic leaf (e.g. select new { c, Total = c.Age * c.Score }) beside a whole entity. It is registered
-                // as one raw binary-expression leaf (see MongoProjectionBindingExpressionVisitor's arithmetic case); resolve each
-                // operand against the materialized document and rebuild the arithmetic client-side, since the driver Select was
-                // stripped in this mixed path.
+                // A computed-arithmetic leaf beside a whole entity, registered as one raw binary leaf: resolve each operand
+                // against the materialized document and rebuild the arithmetic client-side (the driver Select was stripped).
                 if (TryBindArithmeticLeaf(sourceExpression, projectionBindingExpression.Type, out var arithmeticRead))
                 {
                     return arithmeticRead;
                 }
 
-                // A string-to-char-sequence leaf (`select new { P = b.City.AsEnumerable(), b.Posts }`) mixed with an
-                // owned reference. The Select was stripped, so re-apply the operator client-side over a whole-document
-                // read; the alias read below would throw "Document element 'P' is missing but required".
+                // A string-to-char-sequence leaf mixed with an owned reference: the Select was stripped, so re-apply the
+                // operator over a whole-document read; the alias read below would throw "Document element 'P' is missing".
                 if (TryBindStringSequenceLeaf(sourceExpression, projectionBindingExpression.Type,
                         out var stringSequenceRead))
                 {
@@ -243,22 +233,15 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     }
 
     /// <summary>
-    /// Resolves an index-bound scalar projection leaf against the whole document by its root-relative path rather
-    /// than by its projection alias.
+    /// Resolves an index-bound scalar projection leaf against the whole document by its root-relative path rather than its
+    /// projection alias.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// Index-bound leaves (from a natively-bound <c>Join</c>'s <c>BindResultMember</c>) otherwise fall through to the
-    /// base visitor's alias read, which is right for the native <c>$project</c> but wrong against a whole document
-    /// when alias and path differ: <c>new { o, r.Total }</c> throws "Document element 'Total' is missing", and
-    /// <c>new { N = o.Name, r }</c> silently reads <see langword="null"/>.
-    /// </para>
-    /// <para>
-    /// The path is root-relative by construction (<c>MongoFieldExpression.ElementName</c>). Only the last segment
-    /// is read through the leaf's <c>IProperty</c>; a missing intermediate yields <see langword="null"/>, so an
-    /// unmatched left-outer row reads as a null scalar. No-op when alias equals path or when
-    /// <c>UsesDriverJoinFields</c> (a different document shape).
-    /// </para>
+    /// Index-bound leaves (from a native <c>Join</c>'s <c>BindResultMember</c>) otherwise fall to the base visitor's alias
+    /// read, wrong against a whole document when alias and path differ: <c>new { o, r.Total }</c> throws "Document element
+    /// 'Total' is missing", <c>new { N = o.Name, r }</c> silently reads <see langword="null"/>. Only the last path segment
+    /// is read through the leaf's <c>IProperty</c>; a missing intermediate yields <see langword="null"/> (an unmatched
+    /// left-outer row reads as a null scalar). No-op when alias equals path or with <c>UsesDriverJoinFields</c>.
     /// </remarks>
     private bool TryBindNativeFieldLeafAsDocumentPath(
         ProjectionBindingExpression projectionBindingExpression, out Expression result)
@@ -266,8 +249,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         result = null!;
 
         // Gated on the join, not just alias/path disagreement: BindProjectionByAlias and BindGroupMember also produce
-        // index-bound leaves, and for them a path read would silently return a raw field where the alias read
-        // currently fails loudly.
+        // index-bound leaves, where a path read would silently return a raw field instead of failing loudly.
         if (_queryExpression.Select.JoinScope is null || _queryExpression.UsesDriverJoinFields)
         {
             return false;
@@ -279,8 +261,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
             return false;
         }
 
-        // MongoOuterFieldExpression (a join scope's outer-side scalar) is as root-relative as MongoFieldExpression,
-        // matching NativeJoinScopeProjectionBinder's whole-document-readable gate.
+        // MongoOuterFieldExpression (a join scope's outer-side scalar) is as root-relative as MongoFieldExpression.
         (IProperty Property, string ElementName)? field = null;
         foreach (var staged in _queryExpression.Select.Projection)
         {
@@ -301,27 +282,24 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
             return false;
         }
 
-        // Same property/binding-type invariant as the base visitor's alias read. Nullability may differ either way
-        // (e.g. a `Nullable<T>.Value` leaf stages the nullable property), so compare unwrapped types; a genuine
-        // mismatch would silently deserialize through the wrong serializer.
+        // Same invariant as the base alias read. Nullability may differ either way (a `Nullable<T>.Value` leaf stages the
+        // nullable property), so compare unwrapped types; a genuine mismatch would deserialize through the wrong serializer.
         ThrowIfAliasedTypeMismatch(fieldInfo.Property, projectionBindingExpression.Type);
 
-        // No BsonArray/BsonDocument arms, unlike CreateGetValueExpression: a bare field leaf is always a scalar
-        // IProperty. Add them if a raw-BSON field leaf ever becomes possible.
+        // No BsonArray/BsonDocument arms (unlike CreateGetValueExpression): a bare field leaf is always a scalar IProperty.
         var valueExpression = BsonBinding.CreateGetPropertyValueAtPath(
             _docParameter, fieldInfo.ElementName.Split('.'), fieldInfo.Property, projectionBindingExpression.Type);
 
-        // Mandatory: for a `.Value`-peeled leaf (`x.o.Rank.Value` over `int? Rank`) the read is typed `int?` but the
-        // binding expects `int`, a shaper-compile type mismatch. Pinned by
-        // NativeJoinTests.Whole_entity_leaf_beside_a_renamed_or_dotted_scalar_leaf_reads_correctly.
+        // Mandatory: a `.Value`-peeled leaf (`x.o.Rank.Value` over `int? Rank`) reads `int?` but the binding expects `int`
+        // (shaper-compile type mismatch). Pinned by NativeJoinTests.Whole_entity_leaf_beside_a_renamed_or_dotted_scalar_leaf_reads_correctly.
         result = valueExpression.ConvertIfRequired(projectionBindingExpression.Type);
         return true;
     }
 
     /// <inheritdoc />
     /// <remarks>
-    /// Ignores <paramref name="alias"/> and reads <paramref name="field"/> at its natural root-relative location,
-    /// redirected through "_outer" when <see cref="MongoQueryExpression.UsesDriverJoinFields"/>.
+    /// Ignores <paramref name="alias"/> and reads <paramref name="field"/> at its natural root-relative location (through
+    /// "_outer" when <see cref="MongoQueryExpression.UsesDriverJoinFields"/>).
     /// </remarks>
     protected override Expression ReadDocumentConstructionMember(
         MongoDocumentConstructionExpression construction, string alias, string memberName, MongoFieldExpression field,
@@ -329,10 +307,9 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     {
         var docExpr = ResolveSourceDocument(null);
 
-        // A join-scope member's ElementName is a dotted path relative to docExpr (e.g. "_lookup_Customer.CustomerID"),
-        // so walk it with the multi-segment helper, which treats an absent intermediate (unmatched left-outer row)
-        // as null. Dispatching on the dot is safe only because NativeProjectionBinder.TryGetDocumentConstructionLeaf
-        // declines dotted root-relative members; if that's relaxed, this must carry provenance instead.
+        // A join-scope member's ElementName is a dotted path relative to docExpr ("_lookup_Customer.CustomerID"): walk it with
+        // the multi-segment helper (an absent intermediate, an unmatched left-outer row, reads null). Dispatching on the dot is
+        // safe only because TryGetDocumentConstructionLeaf declines dotted root-relative members; if relaxed, carry provenance.
         if (field.ElementName.Contains('.'))
         {
             return BsonBinding.CreateGetPropertyValueAtPath(docExpr, field.ElementName.Split('.'), field.Property, memberType);
@@ -342,10 +319,9 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     }
 
     /// <summary>
-    /// Binds a scalar property access on a reference navigation in a mixed projection
-    /// (<c>select new { A = o.Customer, B = o.Customer.City }</c>, or <c>EF.Property</c> for a shadow property),
-    /// reading it from the driver LeftJoin's <c>"_inner"</c> sub-document. Returns <see langword="false"/> for
-    /// anything else so the caller can try its other resolution paths.
+    /// Binds a scalar property access on a reference navigation in a mixed projection (<c>o.Customer.City</c>, or
+    /// <c>EF.Property</c> for a shadow property) by reading the driver LeftJoin's <c>"_inner"</c> sub-document;
+    /// <see langword="false"/> for anything else.
     /// </summary>
     private bool TryBindNavigationMemberAccess(Expression? mappedExpression, Type resultType, out Expression result)
     {
@@ -376,15 +352,14 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                 return false;
         }
 
-        // Only a joined navigation target. A root-entity property (select new { o, o.CustomerID }) is read from
-        // "_outer" by TryResolveFieldAccess; reading it from "_inner" would return the joined document's value.
+        // Only a joined navigation target: a root-entity property (`select new { o, o.CustomerID }`) is read from "_outer" by
+        // TryResolveFieldAccess; "_inner" would return the joined document's value.
         if (property == null || shaper.StructuralType == _rootEntityType)
         {
             return false;
         }
 
-        // Only the driver-native single-reference join shape (joined document under "_inner") is supported
-        // here; other shapes fall through to the existing resolution paths / translation failure.
+        // Only the driver-native single-reference join shape (joined document under "_inner") is supported here.
         if (!_queryExpression.UsesDriverJoinFields)
         {
             return false;
@@ -395,32 +370,20 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         return true;
     }
 
-    /// <summary>
-    /// Binds a string-to-char-sequence leaf (<c>select new { P = b.City.AsEnumerable(), b.Posts }</c>, and
-    /// <c>.ToList()</c>/<c>.ToArray()</c>) against the whole document, reading the source property at its natural
-    /// location instead of a <c>$project</c> alias (cf. <see cref="MongoProjectionBindingRemovingExpressionVisitor"/>).
-    /// </summary>
-    /// <remarks>
-    /// Reads through the source <see cref="IProperty"/> so converters and <c>BsonRepresentation</c> apply, then
-    /// rebuilds the original call around that read. Returns <see langword="false"/> if not such a leaf or the
-    /// argument doesn't resolve to a property.
-    /// </remarks>
-    // See the call site. Every scalar property access in the leaf becomes a document read and the rest (string/Math
-    // calls, Length, arithmetic, comparisons, casts, conditionals, coalesces) runs client-side as written, so every
-    // operand reads its own value. C# answers what EF answers except where EF propagates a null that C# dereferences:
-    // a string instance call on a null receiver answers null where its result is nullable
-    // (NullPropagatingReceiverRewriter), and where the value is read nullable (a nullable cast in the leaf, or the
-    // leaf's own reference type) the cast answers null when a document read it null-propagates from is null
-    // (NullPropagatingCastRewriter). A non-nullable value over a null (`p.Name.Length`) throws, as EF does.
-    // Declines (returns false) if any entity reference is left, and over a retained pushed-down Select (Distinct, a set
-    // op): the driver then returns projected documents, which don't hold the properties the leaf reads, so every read
-    // would answer null.
+    // Client-evaluated computed leaf. Every scalar property access becomes a document read and the rest (string/Math calls,
+    // Length, arithmetic, comparisons, casts, conditionals, coalesces) runs client-side as written, so every operand reads
+    // its own value. C# answers what EF answers except where EF propagates a null that C# dereferences: a string instance
+    // call on a null receiver answers null where its result is nullable (NullPropagatingReceiverRewriter), and where the
+    // value is read nullable (a nullable cast, or the leaf's own reference type) the cast answers null when a document
+    // read it null-propagates from is null (NullPropagatingCastRewriter). A non-nullable value over a null
+    // (`p.Name.Length`) throws, as EF does. Declines if any entity reference is left, and over a retained pushed-down
+    // Select (Distinct, set op): the driver then returns projected documents lacking the properties the leaf reads.
     private bool TryBindClientComputedLeaf(Expression? mappedExpression, Type resultType, out Expression result)
     {
         result = null!;
 
-        // Stricter than TryBindArithmeticLeaf's guard, which admits a driver Join's whole { _outer, _inner } documents:
-        // here any retained Select declines, leaving a Join's arithmetic leaf to TryBindArithmeticLeaf after this arm.
+        // Stricter than TryBindArithmeticLeaf's guard (which admits a driver Join's whole { _outer, _inner } documents): any
+        // retained Select declines here, leaving a Join's arithmetic leaf to TryBindArithmeticLeaf after this arm.
         if (_pushedDownSelectRetained
             || mappedExpression is null || !MongoProjectionBindingExpressionVisitor.IsClientComputedLeaf(mappedExpression))
         {
@@ -447,9 +410,8 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         return true;
     }
 
-    // `receiver == null ? null : receiver.M(args)` for every string instance call with a nullable result
-    // (`p.Name.Trim()`, `p.Name.ToUpper()`, `p.Name.Replace("b", p.Code)`), evaluating the receiver once. Document reads
-    // are left alone.
+    // `receiver == null ? null : receiver.M(args)` for every string instance call with a nullable result, evaluating the
+    // receiver once. Document reads are left alone.
     private sealed class NullPropagatingReceiverRewriter(IReadOnlySet<Expression> reads) : ExpressionVisitor
     {
         public override Expression? Visit(Expression? node)
@@ -478,12 +440,11 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         }
     }
 
-    // Makes each nullable cast `(int?)e` in a client-evaluated leaf answer null when EF's value of `e` is null, which is
-    // derivable (and sound) only from document reads that force it: a read, and every null-propagating operator over
-    // one (Length, the native string operators, arithmetic, numeric casts, ToString). Anything else (a conditional, a
-    // coalesce, a concatenation, a comparison) contributes no read, so it is evaluated as written - still EF's answer
-    // unless C# throws. Null-checking the reads rather than an operator's receiver keeps the check itself from
-    // dereferencing a null (`(int?)p.Name.Trim().Length`).
+    // Makes each nullable cast `(int?)e` in a client-evaluated leaf answer null when EF's value of `e` is null, derivable
+    // (and sound) only from document reads that force it: a read, and every null-propagating operator over one (Length, the
+    // native string operators, arithmetic, numeric casts, ToString). Anything else (conditional, coalesce, concatenation,
+    // comparison) contributes no read and is evaluated as written. Null-checking the reads rather than an operator's
+    // receiver keeps the check itself from dereferencing a null (`(int?)p.Name.Trim().Length`).
     private sealed class NullPropagatingCastRewriter(IReadOnlySet<Expression> reads) : ExpressionVisitor
     {
         private static readonly HashSet<string> NullPropagatingStringMethods =
@@ -504,7 +465,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                 : visited;
         }
 
-        // `original` is the pre-rewrite operand (whose read nodes are shared with `rewritten`); `rewritten` is nullable.
+        // `original` is the pre-rewrite operand (its read nodes are shared with `rewritten`, which is nullable).
         internal Expression Guard(Expression original, Expression rewritten)
         {
             var anyNull = NullForcingReads(original).Distinct()
@@ -545,13 +506,12 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     private static bool IsStringLength(MemberExpression member)
         => member.Member.Name == nameof(string.Length) && member.Member.DeclaringType == typeof(string);
 
-    // Replaces each scalar property access with its document read (as ResolveArithmeticOperand does); anything else
-    // that still references an entity (a shaper, parameter or unresolvable member) marks the leaf unresolved.
+    // Replaces each scalar property access with its document read; anything else still referencing an entity marks the
+    // leaf unresolved.
     private sealed class ClientPropertyReadRewriter(MongoMixedProjectionBindingRemovingExpressionVisitor owner) : ExpressionVisitor
     {
         internal bool Unresolved { get; private set; }
 
-        // The document reads substituted for property accesses (reference identity).
         internal HashSet<Expression> Reads { get; } = [];
 
         protected override Expression VisitMember(MemberExpression node)
@@ -589,9 +549,8 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         }
     }
 
-    // The document a resolved field access reads from: its own document, else the root. When using the driver's
-    // native Join, scalar properties read from the root entity live in the "_outer" sub-document, not at the
-    // document root; the resolver returns the root doc parameter for such accesses, so redirect it to "_outer".
+    // The document a resolved field access reads from: its own, else the root. Under the driver's native Join, root-entity
+    // scalars live in "_outer" but the resolver returns the root doc parameter for them, so redirect it.
     private Expression ResolveSourceDocument(Expression? documentExpression)
     {
         var docExpr = documentExpression ?? _docParameter;
@@ -600,8 +559,8 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
             : docExpr;
     }
 
-    // Reads a scalar property access (member or EF.Property, on the root entity or a joined navigation target) from
-    // the materialized document, as a standalone scalar leaf would be read. False if node is no such access.
+    // Reads a scalar property access (member or EF.Property, on the root entity or a joined navigation target) from the
+    // materialized document.
     private bool TryReadScalarProperty(Expression node, Type type, out Expression read)
     {
         if (TryBindNavigationMemberAccess(node, type, out read))
@@ -620,6 +579,8 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
         return true;
     }
 
+    // Binds a string-to-char-sequence leaf (`select new { P = b.City.AsEnumerable(), b.Posts }`, also ToList/ToArray) against
+    // the whole document: reads through the source IProperty (converters/BsonRepresentation apply) and rebuilds the call.
     private bool TryBindStringSequenceLeaf(Expression? mappedExpression, Type resultType, out Expression result)
     {
         result = null!;
@@ -636,11 +597,10 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
             return false;
         }
 
-        // The emit side only admits string-typed sources, so a non-string property means the two sides disagree.
+        // The emit side only admits string-typed sources: a non-string property means the two sides disagree.
         Debug.Assert(property.ClrType == typeof(string),
             $"String-sequence projection leaf resolved to non-string property '{property.Name}' of type '{property.ClrType}'.");
 
-        // The driver's native Join places root scalars under "_outer", as elsewhere in this visitor.
         result = Expression.Call(
             call.Method, CreateGetValueExpression(ResolveSourceDocument(fieldAccess.DocumentExpression), property, typeof(string)));
         result = result.ConvertIfRequired(resultType);
@@ -649,26 +609,20 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     }
 
     /// <summary>
-    /// Binds a computed-arithmetic projection leaf (e.g. <c>select new { c, Total = c.Age * c.Score }</c>).
-    /// <see cref="MongoProjectionBindingExpressionVisitor"/> registers such a leaf as the raw
-    /// <see cref="BinaryExpression"/> (not decomposed into independent operand bindings — see its arithmetic
-    /// case), because the mapped projection is stored once per <c>ProjectionMember</c> and decomposing would
-    /// have both operands clobber that single slot. In this mixed path the driver-LINQ Select was stripped
-    /// (full <see cref="BsonDocument"/>s come back), so the arithmetic must be evaluated client-side: each
-    /// operand is resolved to a document read (recursing for nested arithmetic) and the same operator is
-    /// rebuilt over the resolved reads. Returns <see langword="false"/> for anything that is not such an
-    /// arithmetic leaf so the caller can fall back to its other resolution paths.
+    /// Binds a computed-arithmetic leaf (<c>new { c, Total = c.Age * c.Score }</c>), which
+    /// <see cref="MongoProjectionBindingExpressionVisitor"/> registers as one raw <see cref="BinaryExpression"/> (the mapped
+    /// projection is stored once per <c>ProjectionMember</c>, so decomposing would clobber the slot). The driver Select was
+    /// stripped, so each operand is resolved to a document read (recursing for nested arithmetic) and the operator is
+    /// rebuilt over them. <see langword="false"/> for anything else.
     /// </summary>
     private bool TryBindArithmeticLeaf(Expression? mappedExpression, Type resultType, out Expression result)
     {
         result = null!;
 
-        // Over a retained pushed-down Select the driver returns projected documents ({ R, V }), which don't hold the
-        // operands' source elements: every operand would read as missing (null, or "" for a concatenation) and the
-        // leaf answer a silently wrong value (EF-460). Decline, so the caller fails the query loudly. The projected
-        // value can't be read by name instead: $concat answers null where C# treats a null operand as empty.
-        // The flag is also set for a driver Join, whose result isn't an entity document either but whose documents are
-        // whole ({ _outer, _inner }), so those keep the client-side re-evaluation.
+        // Over a retained pushed-down Select the driver returns projected documents ({ R, V }) lacking the operands' source
+        // elements: every operand would read as missing and the leaf answer a silently wrong value (EF-460). Decline so the
+        // query fails loudly (the projected value can't be read by name: $concat answers null where C# treats null as empty).
+        // The flag is also set for a driver Join, whose documents are whole ({ _outer, _inner }) and keep client re-evaluation.
         if (_pushedDownSelectRetained && _queryExpression.Select.JoinScope is null && !_queryExpression.UsesDriverJoinFields)
         {
             return false;
@@ -691,10 +645,8 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     }
 
     /// <summary>
-    /// Resolves one operand of a computed-arithmetic projection leaf (see <see cref="TryBindArithmeticLeaf"/>)
-    /// to an expression that reads its value from the materialized document. Constants pass through unchanged;
-    /// nested arithmetic recurses; a scalar property access (member or <c>EF.Property</c>, on the root entity
-    /// or a joined navigation target) is resolved the same way a standalone scalar leaf would be.
+    /// Resolves one operand of a computed-arithmetic leaf to a document read: constants pass through, nested arithmetic
+    /// recurses, a scalar property access resolves like a standalone scalar leaf.
     /// </summary>
     private Expression ResolveArithmeticOperand(Expression operand)
     {

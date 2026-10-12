@@ -33,8 +33,6 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 /// </summary>
 public class MongoExpressionTranslatorTests
 {
-    // --- Entity model used across tests ---
-
     // Identity-like-convert fixture (plain enum). These tests pin classification only; enum-as-string
     // constants are covered by NativeCastTests.Enum_as_string_comparison_goes_native_and_returns_the_right_values.
     private enum Tier { Bronze, Silver, Gold }
@@ -194,7 +192,6 @@ public class MongoExpressionTranslatorTests
         return db.Model.FindEntityType(typeof(OwnedBlog))!;
     }
 
-    // b => b.Address.City style selectors (value-type members get a Convert-to-object wrapper; strip it).
     private static Expression FieldBody<T>(Expression<Func<T, object?>> selector)
         => selector.Body is UnaryExpression { NodeType: ExpressionType.Convert } u ? u.Operand : selector.Body;
 
@@ -227,16 +224,11 @@ public class MongoExpressionTranslatorTests
             }
         });
         var entityType = db.Model.FindEntityType(typeof(T))!;
-        // Strip the implicit Convert-to-object so the body matches what EF hands the translator.
         var body = valueSelector.Body is UnaryExpression { NodeType: ExpressionType.Convert } unary
             ? unary.Operand
             : valueSelector.Body;
         return (new MongoExpressionTranslator(entityType), body);
     }
-
-    // ------------------------------------------------------------------
-    // Test 1: simple comparison → MongoBinaryExpression(GreaterThan, ...)
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Translates_simple_comparison_to_field_op()
@@ -256,10 +248,6 @@ public class MongoExpressionTranslatorTests
         Assert.Equal(21, constant.Value);
     }
 
-    // ------------------------------------------------------------------
-    // Test 2: conjunction → top-level MongoBinaryExpression(AndAlso, ...)
-    // ------------------------------------------------------------------
-
     [Fact]
     public void Conjunction_maps_to_AndAlso()
     {
@@ -276,14 +264,9 @@ public class MongoExpressionTranslatorTests
         Assert.IsType<MongoBinaryExpression>(bin.Right);
     }
 
-    // ------------------------------------------------------------------
-    // Test 3: method call → returns false, result null
-    // ------------------------------------------------------------------
-
     [Fact]
     public void Unsupported_method_call_reports_not_translatable()
     {
-        // PadLeft has no native translation.
         var entityType = GetEntityType<Customer>();
         var body = PredicateBody<Customer>(c => c.Name.PadLeft(3) == "A");
         var translator = NewTranslator(entityType);
@@ -294,18 +277,14 @@ public class MongoExpressionTranslatorTests
         Assert.Null(result);
     }
 
-    // ------------------------------------------------------------------
-    // Test 4: query parameter → MongoParameterExpression (B2 invariant)
     // Constructs a parameterized body by hand, mimicking what EF emits for
     // a captured local in `var minAge = 21; ctx.Set<Customer>().Where(c => c.Age > minAge)`.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Query_parameter_becomes_MongoParameterExpression_not_constant()
     {
         var entityType = GetEntityType<Customer>();
 
-        // Build: c.Age > <query-parameter>  — shape differs by EF version.
         var cParam = Expression.Parameter(typeof(Customer), "c");
         var ageMember = Expression.MakeMemberAccess(cParam, typeof(Customer).GetProperty(nameof(Customer.Age))!);
 
@@ -333,12 +312,8 @@ public class MongoExpressionTranslatorTests
         Assert.Equal(paramName, mongoParam.Name);
     }
 
-    // ------------------------------------------------------------------
-    // Test 4b: bare boolean query parameter predicate root → MongoParameterExpression
-    //
     // EF hoists a predicate subtree that doesn't reference the source (e.g. `data.Contains(x + "c")`) into one
     // bool parameter; it must translate like a literal true/false root, not decline.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Bare_boolean_query_parameter_predicate_root_translates_to_parameter_expression()
@@ -361,10 +336,6 @@ public class MongoExpressionTranslatorTests
         Assert.Equal(paramName, mongoParam.Name);
     }
 
-    // ------------------------------------------------------------------
-    // Test 5: bare boolean field → MongoFieldExpression (bool)
-    // ------------------------------------------------------------------
-
     [Fact]
     public void Bare_boolean_field_translates_to_field_expression()
     {
@@ -378,10 +349,6 @@ public class MongoExpressionTranslatorTests
         var field = Assert.IsType<MongoFieldExpression>(result);
         Assert.Equal("Active", field.ElementName);
     }
-
-    // ------------------------------------------------------------------
-    // Test 6: negated boolean field → MongoUnaryExpression(Not, ...)
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Negated_boolean_field_translates_to_Not_unary()
@@ -399,10 +366,6 @@ public class MongoExpressionTranslatorTests
         Assert.Equal("Active", field.ElementName);
     }
 
-    // ------------------------------------------------------------------
-    // Test 7: OrElse → MongoBinaryExpression(OrElse, ...)
-    // ------------------------------------------------------------------
-
     [Fact]
     public void OrElse_maps_to_OrElse()
     {
@@ -416,10 +379,6 @@ public class MongoExpressionTranslatorTests
         var bin = Assert.IsType<MongoBinaryExpression>(result);
         Assert.Equal(MongoBinaryOperator.OrElse, bin.Operator);
     }
-
-    // ------------------------------------------------------------------
-    // Test 8: composite-PK property → resolves under "_id.<element>"
-    // ------------------------------------------------------------------
 
     private class OrderLine
     {
@@ -439,7 +398,6 @@ public class MongoExpressionTranslatorTests
     [Fact]
     public void Composite_PK_property_access_resolves_natively()
     {
-        // Build a model where (OrderId, ProductId) form the composite primary key.
         using var db = SingleEntityDbContext.Create<OrderLine>(mb =>
             mb.Entity<OrderLine>().HasKey(e => new { e.OrderId, e.ProductId }));
         var entityType = db.Model.FindEntityType(typeof(OrderLine))!;
@@ -465,10 +423,6 @@ public class MongoExpressionTranslatorTests
         Assert.False(translator.TryTranslate(predicate.Body, out _));
     }
 
-    // ------------------------------------------------------------------
-    // Test 9: nullable-property equality → MongoBinaryExpression(Equal, ...)
-    // ------------------------------------------------------------------
-
     [Fact]
     public void Translates_nullable_equality()
     {
@@ -480,10 +434,6 @@ public class MongoExpressionTranslatorTests
         var binary = Assert.IsType<MongoBinaryExpression>(result);
         Assert.Equal(MongoBinaryOperator.Equal, binary.Operator);
     }
-
-    // ------------------------------------------------------------------
-    // Test 10: `== null` → MongoBinaryExpression(Equal, field, null constant)
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Translates_is_null()
@@ -497,10 +447,6 @@ public class MongoExpressionTranslatorTests
         var constant = Assert.IsType<MongoConstantExpression>(binary.Right);
         Assert.Null(constant.Value);
     }
-
-    // ------------------------------------------------------------------
-    // Test 11: `!= null` → MongoBinaryExpression(NotEqual, field, null constant)
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Translates_is_not_null()
@@ -516,10 +462,7 @@ public class MongoExpressionTranslatorTests
         Assert.Null(constant.Value);
     }
 
-    // ------------------------------------------------------------------
-    // Test 11b-11d: instance Equals(...) translates like `==`, but only for the IEquatable<T>.Equals(T)
     // overload, never Equals(object).
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Equals_method_call_translates_to_equal_binary()
@@ -606,10 +549,7 @@ public class MongoExpressionTranslatorTests
         Assert.Equal(false, constant.Value);
     }
 
-    // ------------------------------------------------------------------
-    // Test 11e-11f: static object.Equals(a, b). Both arguments are always boxed, so (as in the driver-LINQ
     // bridge) one boxing layer is peeled from each and the unboxed types must match.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Static_object_equals_translates_to_equal_binary()
@@ -642,10 +582,7 @@ public class MongoExpressionTranslatorTests
         Assert.Equal(false, constant.Value);
     }
 
-    // ------------------------------------------------------------------
-    // Test 12: bare nullable-bool member access reports not translatable
     // (three-valued semantics the query dialect doesn't match).
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Bare_nullable_bool_field_reports_not_translatable()
@@ -663,10 +600,7 @@ public class MongoExpressionTranslatorTests
         Assert.Null(result);
     }
 
-    // ------------------------------------------------------------------
-    // Test 13: `!c.NullableFlag` reports not translatable (same guard, via
     // the `!` path).
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Not_over_nullable_bool_reports_not_translatable()
@@ -684,10 +618,6 @@ public class MongoExpressionTranslatorTests
         Assert.False(translated);
         Assert.Null(result);
     }
-
-    // ------------------------------------------------------------------
-    // Test 14: static Enumerable.Contains over an inline array → MongoInExpression
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Static_enumerable_contains_over_inline_array_translates_to_in()
@@ -712,10 +642,6 @@ public class MongoExpressionTranslatorTests
         var constant = Assert.IsType<MongoConstantExpression>(inExpr.Values);
         Assert.Same(ages, constant.Value);
     }
-
-    // ------------------------------------------------------------------
-    // Test 15: instance List<T>.Contains → MongoInExpression
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Instance_list_contains_translates_to_in()
@@ -765,10 +691,6 @@ public class MongoExpressionTranslatorTests
         Assert.Empty((System.Collections.IEnumerable)values.Value!);
     }
 
-    // ------------------------------------------------------------------
-    // Test 16: Contains over a query-parameter collection → MongoParameterExpression values
-    // ------------------------------------------------------------------
-
     [Fact]
     public void Contains_over_query_parameter_collection_translates_to_parameter_values()
     {
@@ -798,10 +720,7 @@ public class MongoExpressionTranslatorTests
         Assert.Equal(paramName, parameter.Name);
     }
 
-    // ------------------------------------------------------------------
-    // Test 16b: `args[i]` into a query-parameter array → MongoParameterExpression with ArrayElementIndex.
     // EF10 rewrites the indexer to Enumerable.ElementAt(source, index); both that and ArrayIndex are covered.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void ElementAt_over_query_parameter_array_translates_to_array_element_parameter()
@@ -897,10 +816,6 @@ public class MongoExpressionTranslatorTests
         Assert.Equal(0, parameter.ArrayElementIndex);
     }
 
-    // ------------------------------------------------------------------
-    // Test 17: negated Contains → MongoInExpression with Negated == true ($nin)
-    // ------------------------------------------------------------------
-
     [Fact]
     public void Negated_contains_translates_to_negated_in()
     {
@@ -921,10 +836,7 @@ public class MongoExpressionTranslatorTests
         Assert.Equal("Age", inExpr.Field.ElementName);
     }
 
-    // ------------------------------------------------------------------
-    // Test 17b: `customers.Contains(c)` over a parameter entity list → MongoInExpression over the primary key,
     // with keys extracted per element at runtime (ExtractEntityKeyFromArrayElements).
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Contains_over_entity_list_query_parameter_translates_to_key_in()
@@ -979,10 +891,6 @@ public class MongoExpressionTranslatorTests
         Assert.Equal([null, other.Id], keys);
     }
 
-    // ------------------------------------------------------------------
-    // Test 18: Contains with a non-field item argument → falls back (null)
-    // ------------------------------------------------------------------
-
     [Fact]
     public void Contains_with_non_field_item_reports_not_translatable()
     {
@@ -996,10 +904,6 @@ public class MongoExpressionTranslatorTests
         Assert.False(translated);
         Assert.Null(result);
     }
-
-    // ------------------------------------------------------------------
-    // Test 18b: inline array-literal Contains (NewArrayInit, as on EF8) → MongoInExpression
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Contains_over_new_array_init_translates_to_in()
@@ -1025,10 +929,7 @@ public class MongoExpressionTranslatorTests
         Assert.Equal([10, 30], values);
     }
 
-    // ------------------------------------------------------------------
-    // Test 18f: `new[] { prm1, prm2 }.Contains(c.CustomerID)` with separately captured locals: each element is
     // its own parameter inside a NewArrayInit → MongoInExpression over a MongoValueListExpression of parameters.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Contains_over_new_array_init_of_separate_query_parameters_translates_to_value_list()
@@ -1069,10 +970,7 @@ public class MongoExpressionTranslatorTests
         Assert.Equal(paramName1, p1.Name);
     }
 
-    // ------------------------------------------------------------------
-    // Test 18g: Contains over a computed item → MongoComputedInExpression ($expr array-form $in), since there
     // is no bare field for a query-dialect $in.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Contains_over_string_concat_item_translates_to_computed_in()
@@ -1126,10 +1024,7 @@ public class MongoExpressionTranslatorTests
         Assert.True(computedIn.Negated);
     }
 
-    // ------------------------------------------------------------------
-    // Test 18c-18f: arrayField.Contains(constant), the mirror of $in: a stored array field and a constant item
     // → MongoArrayContainsExpression (implicit element match { field: value }).
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Array_field_contains_constant_translates_to_array_contains_expression()
@@ -1199,10 +1094,6 @@ public class MongoExpressionTranslatorTests
         public ObjectId Id { get; set; }
         public List<Tier> Ratings { get; set; } = [];
     }
-
-    // ------------------------------------------------------------------
-    // Test 19-23: string.StartsWith/EndsWith/Contains → MongoRegexExpression
-    // ------------------------------------------------------------------
 
     [Fact]
     public void StartsWith_translates_to_regex_expression()
@@ -1422,10 +1313,6 @@ public class MongoExpressionTranslatorTests
         Assert.IsType<MongoFieldExpression>(regex.Term);
     }
 
-    // ------------------------------------------------------------------
-    // Test 24-31: field-to-field and arithmetic-operand comparisons → $expr-shaped trees
-    // ------------------------------------------------------------------
-
     [Fact]
     public void Translates_field_to_field_comparison()
     {
@@ -1556,7 +1443,6 @@ public class MongoExpressionTranslatorTests
         var convert = Assert.IsType<MongoConvertExpression>(cmp.Left);
         Assert.Equal(typeof(double), convert.Type);
         Assert.IsType<MongoFieldExpression>(convert.Operand);
-        // c.Score implicitly widens to double too.
         var rightConvert = Assert.IsType<MongoConvertExpression>(cmp.Right);
         Assert.Equal(typeof(double), rightConvert.Type);
         Assert.IsType<MongoFieldExpression>(rightConvert.Operand);
@@ -1574,7 +1460,6 @@ public class MongoExpressionTranslatorTests
         Assert.Equal(MongoBinaryOperator.GreaterThan, cmp.Operator);
         var add = Assert.IsType<MongoBinaryExpression>(cmp.Left);
         Assert.Equal(MongoBinaryOperator.Add, add.Operator);
-        // Both operands widen to double for the +.
         var leftConvert = Assert.IsType<MongoConvertExpression>(add.Left);
         Assert.Equal(typeof(double), leftConvert.Type);
         Assert.IsType<MongoFieldExpression>(leftConvert.Operand);
@@ -2003,7 +1888,6 @@ public class MongoExpressionTranslatorTests
 
         Assert.True(translator.TryTranslate(predicate.Body, out var result));
         var bin = Assert.IsType<MongoBinaryExpression>(result);
-        // Mirrored: `21 < c.Age` becomes `c.Age > 21` with the field on Left.
         Assert.Equal(MongoBinaryOperator.GreaterThan, bin.Operator);
         var field = Assert.IsType<MongoFieldExpression>(bin.Left);
         Assert.Equal("Age", field.ElementName);
@@ -2011,9 +1895,7 @@ public class MongoExpressionTranslatorTests
         Assert.Equal(21, constant.Value);
     }
 
-    // ------------------------------------------------------------------
     // Two-scope (correlated) resolution
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Two_scope_correlated_comparison_routes_inner_prefixed_and_outer_root()
@@ -2093,9 +1975,7 @@ public class MongoExpressionTranslatorTests
         Assert.Equal("Threshold", Assert.IsType<MongoOuterFieldExpression>(bin.Right).ElementName);
     }
 
-    // ------------------------------------------------------------------
     // TryTranslateValue: numeric computed-leaf value expressions
-    // ------------------------------------------------------------------
 
     [Fact]
     public void TryTranslateValue_multiply_of_two_int_fields_translates_to_binary_multiply()
@@ -2244,9 +2124,7 @@ public class MongoExpressionTranslatorTests
         Assert.False(translator.TryTranslateValue(body, out _));
     }
 
-    // ------------------------------------------------------------------
     // Owned single-reference dotted-path resolution
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Owned_single_ref_subproperty_resolves_to_dotted_field()
@@ -2328,9 +2206,7 @@ public class MongoExpressionTranslatorTests
         Assert.Equal("Address.City", field!.ElementName);
     }
 
-    // ------------------------------------------------------------------
     // Owned-collection quantifiers → $elemMatch
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Owned_collection_Any_with_predicate_translates_to_elem_match()
@@ -2343,7 +2219,6 @@ public class MongoExpressionTranslatorTests
         Assert.Equal("Posts", elemMatch.ArrayPath);
         Assert.False(elemMatch.Negated);
         var comparison = Assert.IsType<MongoBinaryExpression>(elemMatch.ElementPredicate);
-        // Element-relative: "Heading", not "Posts.Heading".
         Assert.Equal("Heading", Assert.IsType<MongoFieldExpression>(comparison.Left).ElementName);
     }
 
@@ -2470,7 +2345,6 @@ public class MongoExpressionTranslatorTests
     [Fact]
     public void Whole_element_equality_Any_is_declined()
     {
-        // The element parameter itself has no member access to resolve.
         var translator = NewTranslator(GetOwnedBlogEntityType());
         var target = new OwnedComment { Text = "t" };
         var body = PredicateBody<OwnedBlog>(b => b.Posts.Any(p => p.Comments.Any(c => c == target)));
@@ -2514,9 +2388,7 @@ public class MongoExpressionTranslatorTests
         Assert.Equal(1, Assert.IsType<MongoConstantExpression>(comparison.Right).Value);
     }
 
-    // ------------------------------------------------------------------
     // Correlated element predicates are declined
-    // ------------------------------------------------------------------
     //
     // The element-scoped translator resolves members by name, so an enclosing-scope member with a same-named
     // element member would silently retarget the condition (wrong rows). OwnedPost.Title/IsActive make that
@@ -2599,9 +2471,7 @@ public class MongoExpressionTranslatorTests
         Assert.Equal("Comments", inner.ArrayPath);
     }
 
-    // ------------------------------------------------------------------
     // Owned-collection All → negated $elemMatch
-    // ------------------------------------------------------------------
     //
     // These render full MQL because the point is the negated-complement shape ($not/$elemMatch over the
     // De Morgan'd predicate).
@@ -2680,9 +2550,7 @@ public class MongoExpressionTranslatorTests
         Assert.Null(TryTranslateBlogPredicate(b => b.Posts.All(p => b.Title == "x")));
     }
 
-    // ------------------------------------------------------------------
     // Owned-collection Count in a predicate goes native
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Translates_owned_collection_Count_greater_than_constant()
@@ -2869,10 +2737,8 @@ public class MongoExpressionTranslatorTests
         Assert.Null(result);
     }
 
-    // ------------------------------------------------------------------
     // A top-level EF.Property leaf resolves in all three positions
     // (predicate / sort key / projection value).
-    // ------------------------------------------------------------------
 
     [Fact]
     public void EF_Property_top_level_leaf_resolves_in_predicate_position()
@@ -2967,10 +2833,8 @@ public class MongoExpressionTranslatorTests
         Assert.Equal("Label", ok!.ElementName);
     }
 
-    // ------------------------------------------------------------------
     // Nullable<T>.Value peels to the underlying field; Nullable<T>.HasValue
     // becomes the "!= null" node.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Nullable_Value_peels_to_the_underlying_field_in_predicate_position()
@@ -3061,9 +2925,7 @@ public class MongoExpressionTranslatorTests
         Assert.Equal("Amount", amount!.ElementName);
     }
 
-    // ------------------------------------------------------------------
     // A cast-bearing sort key must not be stripped to the raw field
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Sort_key_keeps_a_narrowing_cast_so_it_declines_rather_than_sorting_by_the_raw_value()
@@ -3087,10 +2949,8 @@ public class MongoExpressionTranslatorTests
         Assert.Equal("Age", boxed!.ElementName);
     }
 
-    // ------------------------------------------------------------------
     // Constructed-tuple comparison (`new Tuple<string>(c.Name) == new Tuple<string>("A")`, as in
     // Where_compare_tuple_constructed_equal): must be recognized before the general field-to-field/$expr path.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Single_value_tuple_equality_translates_to_binary_of_tuples()
@@ -3137,9 +2997,7 @@ public class MongoExpressionTranslatorTests
         Assert.Equal("B", Assert.IsType<MongoConstantExpression>(right.Elements[1]).Value);
     }
 
-    // ------------------------------------------------------------------
     // The `Tuple.Create(...)` spelling: a MethodCallExpression, not a NewExpression, so it needs its own arm.
-    // ------------------------------------------------------------------
 
     [Fact]
     public void Tuple_create_multi_value_equality_translates_to_binary_of_tuples()

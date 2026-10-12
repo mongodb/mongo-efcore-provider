@@ -110,7 +110,6 @@ public class DictionaryChangeTrackingTests(TemporaryDatabaseFixture database)
         using (var db = SingleEntityDbContext.Create(collection))
         {
             var entity = db.Entities.First();
-            // Read but don't modify
             _ = entity.tags["key"];
             var changes = db.ChangeTracker.HasChanges();
             Assert.False(changes);

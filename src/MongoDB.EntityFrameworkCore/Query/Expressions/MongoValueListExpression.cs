@@ -26,19 +26,11 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// </summary>
 internal sealed class MongoValueListExpression : MongoExpression
 {
-    /// <summary>
-    /// Creates a <see cref="MongoValueListExpression"/> wrapping <paramref name="elements"/>.
-    /// </summary>
-    /// <param name="elements">
-    /// The per-element value nodes, each a <see cref="MongoConstantExpression"/> or
-    /// <see cref="MongoParameterExpression"/>.
-    /// </param>
     public MongoValueListExpression(IReadOnlyList<MongoExpression> elements)
     {
         Elements = elements;
     }
 
-    /// <summary>The per-element value nodes.</summary>
     public IReadOnlyList<MongoExpression> Elements { get; }
 
     /// <inheritdoc />

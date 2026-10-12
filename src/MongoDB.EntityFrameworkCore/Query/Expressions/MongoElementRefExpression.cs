@@ -32,9 +32,8 @@ internal sealed class MongoElementRefExpression(
     /// </summary>
     /// <remarks>
     /// Shared by <c>NativeProjectionBinder.TryTranslateLeaf</c> (emit) and
-    /// <c>MongoProjectionBindingRemovingExpressionVisitor.IsWholeRootEntityAlias</c> (read). If they drift, the
-    /// fallback null-out stops firing and only the <c>DriverLinq</c> mode fails
-    /// (<c>Field 'c' required but not present</c>), which a default-mode test run would miss.
+    /// <c>MongoProjectionBindingRemovingExpressionVisitor.IsWholeRootEntityAlias</c> (read). If they drift, only
+    /// <c>DriverLinq</c> mode fails (<c>Field 'c' required but not present</c>), which a default run would miss.
     /// </remarks>
     internal const string WholeRootDocumentPath = "$ROOT";
 
@@ -50,26 +49,21 @@ internal sealed class MongoElementRefExpression(
 
     /// <summary>
     /// When <see langword="true"/>, the renderer wraps the reference in <c>$ifNull: [..., null]</c> so a missing
-    /// element (e.g. an unset owned reference) compares equal to <c>null</c>; <c>$expr</c>'s <c>$eq</c> otherwise
-    /// treats missing and <c>null</c> differently. Opt-in so existing callers' MQL is unchanged.
+    /// element compares equal to <c>null</c> (<c>$expr</c>'s <c>$eq</c> otherwise treats them differently).
     /// </summary>
     public bool NullSafe { get; } = nullSafe;
 
     /// <summary>
-    /// The property backing the element's value, when the producer knows it: a correlated reducer's reduced member
-    /// under <c>_lookup_&lt;Nav&gt;.&lt;Element&gt;</c> (its unchanged stored value), or the <c>DateTimeOffset</c>
-    /// property whose <c>.DateTime</c> sub-field a <c>UtcDateTime</c> read reaches. Otherwise <see langword="null"/>.
-    /// Lets the read side decide whether a configured <c>DateTimeKind</c> applies
-    /// (<see cref="NativeTranslation.NativeDateTimeKindReadBack"/>).
+    /// The property backing the element's value, when the producer knows it (a correlated reducer's reduced member, or
+    /// the <c>DateTimeOffset</c> property behind a <c>UtcDateTime</c> read). Lets the read side decide whether a
+    /// configured <c>DateTimeKind</c> applies (<see cref="NativeTranslation.NativeDateTimeKindReadBack"/>).
     /// </summary>
     public IProperty? ValueProperty { get; } = valueProperty;
 
     /// <summary>
-    /// The element is an upstream alias the emit side flagged <see cref="MongoProjection.ThrowsOnNull"/> (a projected
-    /// Distinct's flattened key, a bare Select's output, a set-op operand's): a null-propagated value behind a
-    /// non-nullable type. Carried from that flag, never re-derived, so an operator reducing or keying over the
-    /// reference sees it (<c>MongoAggregationExpressionRenderer.MayBeNullBehindNonNullableType</c>) instead of an
-    /// opaque non-nullable element.
+    /// The element is an upstream alias flagged <see cref="MongoProjection.ThrowsOnNull"/>: a null-propagated value
+    /// behind a non-nullable type. Carried from that flag, never re-derived, so reducing/keying operators see it
+    /// (<c>MongoAggregationExpressionRenderer.MayBeNullBehindNonNullableType</c>).
     /// </summary>
     public bool ThrowsOnNull { get; } = throwsOnNull;
 

@@ -24,19 +24,15 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// path, e.g. <c>Total</c> → <c>_lookup_Refs.Total</c> for a reference SelectMany's unwound element.
 /// </summary>
 /// <remarks>
-/// Declines, never throws, on an unhandled node kind, so a node kind added to <c>TryTranslateValue</c> without an
-/// arm here falls back rather than crashing every <c>MongoQueryMode</c>. <c>MongoExpressionNodeCoverageTests</c>
-/// pins which kinds reach the decline.
+/// Declines, never throws, on an unhandled node kind, so a kind added to <c>TryTranslateValue</c> without an arm here
+/// falls back rather than crashing. <c>MongoExpressionNodeCoverageTests</c> pins which kinds reach the decline.
 /// </remarks>
 internal static class MongoFieldPrefixRewriter
 {
     /// <summary>
-    /// Prefixes every document path in <paramref name="expr"/> with <paramref name="prefix"/>, or returns
-    /// <see langword="false"/> if the tree contains a node kind with no prefixing rule.
+    /// Prefixes every document path in <paramref name="expr"/>, or returns <see langword="false"/> for a node kind with no
+    /// prefixing rule. The recursion throws internally to decline; the throw is caught here.
     /// </summary>
-    /// <remarks>
-    /// The recursion uses a throw as its internal decline channel, caught here; it never escapes this class.
-    /// </remarks>
     public static bool TryRewrite(MongoExpression expr, string prefix, [NotNullWhen(true)] out MongoExpression? result)
     {
         try

@@ -33,10 +33,8 @@ internal sealed class MongoDictionaryContainsKeyExpression : MongoExpression
         Negated = negated;
     }
 
-    /// <summary>The entry's dotted document path, <c>&lt;dictionary document path&gt;.&lt;key&gt;</c>.</summary>
     public string Path { get; }
 
-    /// <summary>Whether the test is for the key being absent.</summary>
     public bool Negated { get; }
 
     /// <inheritdoc />

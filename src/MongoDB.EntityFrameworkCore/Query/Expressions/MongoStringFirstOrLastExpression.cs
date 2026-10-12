@@ -32,30 +32,18 @@ internal enum MongoStringFirstOrLastKind
 /// <see cref="Source"/>, or <c>'\0'</c> when <see cref="Source"/> is empty.
 /// </summary>
 /// <remarks>
-/// <para>
-/// A dedicated node because composing <see cref="MongoConditionalExpression"/> over a raw <c>$substrCP</c> would
-/// give the branches disagreeing static types, and no existing node renders a bare <c>$substrCP</c>.
-/// </para>
-/// <para>
-/// Renders as <c>$cond</c> on <c>$strLenCP(Source) == 0</c> so the <c>else</c> branch's <c>$substrCP</c> never
-/// sees a negative start (<c>Last</c> over <c>""</c> would compute -1, a hard server error).
-/// </para>
-/// <para>
-/// Both branches render as a one-character BSON string (the empty case as <c>"\0"</c>, not Int32 <c>0</c>), so
-/// a comparison against <c>'\0'</c> agrees with a non-empty source whose first/last char is an embedded NUL.
-/// A mixed String/Int32 representation would compare across BSON type brackets and answer false.
-/// </para>
-/// <para>
-/// Value-only: must never be admitted by <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>.
-/// </para>
+/// A dedicated node because composing <see cref="MongoConditionalExpression"/> over a raw <c>$substrCP</c> would give
+/// the branches disagreeing static types. Renders as <c>$cond</c> on <c>$strLenCP(Source) == 0</c> so the
+/// <c>$substrCP</c> never sees a negative start (<c>Last</c> over <c>""</c> would be a hard server error). Both
+/// branches render as a one-character BSON string (the empty case as <c>"\0"</c>, not Int32 <c>0</c>), or a comparison
+/// against <c>'\0'</c> would cross BSON type brackets and answer false. Value-only: must never be admitted by
+/// <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>.
 /// </remarks>
 internal sealed class MongoStringFirstOrLastExpression(MongoExpression source, MongoStringFirstOrLastKind kind)
     : MongoExpression
 {
-    /// <summary>The string-valued expression whose first/last character is extracted.</summary>
     public MongoExpression Source { get; } = source;
 
-    /// <summary>Which end of <see cref="Source"/> is extracted.</summary>
     public MongoStringFirstOrLastKind Kind { get; } = kind;
 
     /// <inheritdoc />

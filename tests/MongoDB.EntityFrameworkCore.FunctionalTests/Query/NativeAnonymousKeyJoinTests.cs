@@ -63,7 +63,6 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
         public int Price { get; set; }
     }
 
-    // Composite primary key: both components live under `_id`.
     private class Slot
     {
         public int Zone { get; set; }
@@ -107,7 +106,6 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
         public Kind K2 { get; set; }
     }
 
-    // Default storage: K and Code as ints.
     private class KindQ
     {
         public int Id { get; set; }
@@ -116,7 +114,6 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
         public int Code { get; set; }
     }
 
-    // K stored as a string, like KindP.
     private class KindR
     {
         public int Id { get; set; }
@@ -277,16 +274,12 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
                 (s, r) => (S: s.Id, R: r.Id))
             .OrderBy(x => x).ToList();
 
-        // Pins that the oracle actually exercises null == null and null == missing.
         Assert.Equal([(1, 10), (1, 11), (2, 12), (3, 13), (4, 14), (4, 15)], expected);
         Assert.Equal(expected, actual);
 
-        // Every mode reads the registered composite $lookup (a confirmed join registers it at translation time).
         spy.AssertExecutedMqlContains("\"$and\"");
-        // A nullable pair (Region) is null-normalized on both sides so null and missing compare equal.
         spy.AssertExecutedMqlContains("\"k0\" : { \"$ifNull\" : [\"$Region\", null] }");
         spy.AssertExecutedMqlContains("\"$eq\" : [{ \"$ifNull\" : [\"$Region\", null] }, \"$$k0\"]");
-        // A non-nullable pair (Zone) is compared bare so an index on it stays usable.
         spy.AssertExecutedMqlContains("\"$eq\" : [\"$Zone\", \"$$k1\"]");
     }
 
@@ -479,22 +472,18 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
                 .Join(rates, s => new { s.Region, s.Zone, s.Bay }, r => new { r.Region, r.Zone, r.Bay }, (s, r) => new { s, r })
                 .Join(slots, x => new { x.s.Zone, x.r.Bay }, sl => new { sl.Zone, Bay = (int?)sl.Bay },
                     (x, sl) => $"{x.s.Id}:{x.r.Id}:{sl.Label}"),
-            // Reference equality: a plain class key never matches in LINQ-to-objects.
             "NonAnonymousKey" => shipments
                 .Join(rates, s => new KeyHolder { Region = s.Region }, r => new KeyHolder { Region = r.Region },
                     (s, r) => $"{s.Id}:{r.Id}"),
             "NestedAnonymous" => shipments
                 .Join(rates, s => new { s.Zone, N = new { s.Region } }, r => new { r.Zone, N = new { r.Region } },
                     (s, r) => $"{s.Id}:{r.Id}"),
-            // List<int> compares by reference: no match, although the stored arrays overlap or are equal.
             "PrimitiveCollection" => tagPs
                 .Join(tagQs, p => new { p.Tags }, q => new { q.Tags }, (p, q) => $"{p.Id}:{q.Id}"),
             "PrimitiveCollectionWithScalar" => tagPs
                 .Join(tagQs, p => new { p.Zone, p.Tags }, q => new { q.Zone, q.Tags }, (p, q) => $"{p.Id}:{q.Id}"),
-            // K is "B" (string) on one side and 1 (int) on the other: equal in C#, never equal as stored.
             "OneSideConverted" => kindPs
                 .Join(kindQs, p => new { p.Zone, p.K }, q => new { q.Zone, q.K }, (p, q) => $"{p.Id}:{q.Id}"),
-            // Code is "7" on one side and 7 on the other.
             "RepresentationMismatch" => kindPs
                 .Join(kindQs, p => new { p.Zone, p.Code }, q => new { q.Zone, q.Code }, (p, q) => $"{p.Id}:{q.Id}"),
             // Code 7 is stored "7" on one side and "70" on the other; Flag true is "Y" vs "T".
@@ -788,7 +777,6 @@ public class NativeAnonymousKeyJoinTests(TemporaryDatabaseFixture database) : IC
             });
         }
 
-        // Each call captures `prefix` in a new closure object.
         private static void HasPrefixedConversion(PropertyBuilder<int> property, string prefix)
             => property.HasConversion(v => prefix + v, v => int.Parse(v.Substring(prefix.Length)));
     }

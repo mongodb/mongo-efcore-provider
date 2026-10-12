@@ -16,7 +16,7 @@
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 
 /// <summary>
-/// Base class for typed aggregation pipeline stages; each subclass carries the expressions needed to render one stage.
+/// Base class for typed aggregation pipeline stages.
 /// </summary>
 internal abstract class MongoPipelineStage
 {

@@ -84,8 +84,6 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
                 new MongoDbContextOptionsBuilder(b).UseQueryMode(mode);
             });
 
-    // ── (a) whole-entity no-track: streamed set == DOM AsNoTracking set, and native ──────
-
     [Fact]
     public void Whole_entity_no_track_streamed_equals_DOM_and_succeeds_under_NativeOnly()
     {
@@ -119,14 +117,12 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
             Assert.Equal(d.Active, n.Active);
         }
 
-        // Genuinely native (streaming one-pass); a fallback shape would throw under NativeOnly.
         using (var ctx = CreateContext(collection, MongoQueryMode.NativeOnly))
         {
             Assert.Equal(25, ctx.Entities.AsNoTracking().ToList().Count);
         }
     }
 
-    // ── (b) whole-entity tracked: entities are tracked; mutate + SaveChanges round-trips ───────────
     // The driver materializes (and tracks) cursor batch 1 inside collection.Aggregate(...), so the state manager
     // must be initialized before that call or this NREs.
 
@@ -148,7 +144,6 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
             var loaded = ctx.Entities.OrderBy(e => e.Count).ToList();
             Assert.Equal(10, loaded.Count);
 
-            // Tracked: the change tracker holds an entry per row.
             Assert.Equal(10, ctx.ChangeTracker.Entries<SimpleItem>().Count());
 
             var first = loaded[0];
@@ -157,7 +152,6 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
             ctx.SaveChanges();
         }
 
-        // Re-read (no tracking) and confirm the mutation persisted.
         using (var ctx = CreateContext(collection, MongoQueryMode.Native))
         {
             var reread = ctx.Entities.AsNoTracking().Single(e => e.Id == targetId);
@@ -165,7 +159,6 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
         }
     }
 
-    // ── (c) owned reference AND owned collection materialize correct nested values ─────────────────
     // Mixes an owned reference (ShipTo) with an owned collection (Lines); asserts Native == DriverLinq nested values
     // and that the shape routes native.
 
@@ -238,14 +231,12 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
             AssertNesting(ctx.Entities.AsNoTracking().OrderBy(o => o.Customer).ToList(), id1);
         }
 
-        // Proves the mixed owned shape routes native.
         using (var nativeOnly = CreateContext(collection, MongoQueryMode.NativeOnly, model))
         {
             AssertNesting(nativeOnly.Entities.AsNoTracking().ToList(), id1);
         }
     }
 
-    // ── (e) wide mixed-type entity: every typed read (typed-generic + boxed-fallback) is byte-identical ──
     // Guards against a mis-positioned reader or wrong typed cast silently corrupting a value. Covers every primitive
     // and its nullable, a non-default BsonRepresentation (int stored as string), and a value converter.
 
@@ -325,7 +316,6 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
             Assert.Equal(e.Converted, a.Converted);
         }
 
-        // Native (streaming one-pass) values must be byte-identical to the seed and to the DOM path.
         List<WideEntity> native;
         using (var ctx = CreateContext(collection, MongoQueryMode.Native, model))
         {
@@ -346,14 +336,12 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
             AssertEqualRow(driver[i], native[i]);
         }
 
-        // Genuinely native (streaming one-pass); a fallback shape would throw under NativeOnly.
         using (var ctx = CreateContext(collection, MongoQueryMode.NativeOnly, model))
         {
             Assert.Equal(2, ctx.Entities.AsNoTracking().ToList().Count);
         }
     }
 
-    // ── (f) an IDisposable entity type must NOT be disposed by ReleaseCurrentRow ─────────────────────
     // With one-pass streaming the shaper is identity, so _currentRow and Current are the same reference;
     // ReleaseCurrentRow must not dispose a mapped entity (possibly now owned by the state manager). Only the
     // RawBsonDocument fallback row type may be released.
@@ -394,7 +382,6 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
             Assert.False(native[i].Disposed);
         }
 
-        // Native one-pass (where _currentRow is the returned entity); a fallback shape would throw under NativeOnly.
         using (var ctx = CreateContext(collection, MongoQueryMode.NativeOnly))
         {
             var nativeOnly = ctx.Entities.AsNoTracking().OrderBy(e => e.Value).ToList();
@@ -421,8 +408,6 @@ public class NativeMaterializerOnePassTests(TemporaryDatabaseFixture database)
         Assert.Equal(5, ctx.ChangeTracker.Entries<DisposableItem>().Count());
         Assert.All(tracked, e => Assert.False(e.Disposed));
     }
-
-    // ── (d) required-but-missing field throws the same exception the DOM path throws ───────────────
 
     [Fact]
     public void Missing_required_field_throws_same_as_DOM()

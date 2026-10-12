@@ -107,7 +107,6 @@ public class TransactionTests(TemporaryDatabaseFixture database)
             transaction.Commit();
         }
 
-        // Verify logging including read concern
         var beginTransactionMessage = spyLogger.GetLogMessageByEventId(MongoEventId.TransactionStarting);
         Assert.Contains("Beginning transaction", beginTransactionMessage);
         Assert.Contains(" ReadConcern '{ \"level\" : \"majority\" }'", beginTransactionMessage);
@@ -144,7 +143,6 @@ public class TransactionTests(TemporaryDatabaseFixture database)
             await transaction.CommitAsync();
         }
 
-        // Verify logging including read concern
         var beginTransactionMessage = spyLogger.GetLogMessageByEventId(MongoEventId.TransactionStarting);
         Assert.Contains("Beginning transaction", beginTransactionMessage);
         Assert.Contains(" ReadConcern '{ \"level\" : \"majority\" }'", beginTransactionMessage);
@@ -220,11 +218,9 @@ public class TransactionTests(TemporaryDatabaseFixture database)
     {
         var collection = database.CreateCollection<SimpleEntity>();
 
-        // Pre-insert a conflicting document to cause duplicate key on the second insert
         var conflictingId = ObjectId.GenerateNewId();
         collection.InsertOne(new SimpleEntity { _id = conflictingId, name = "existing" });
 
-        // Ensure implicit transactions are enabled when needed (default is WhenNeeded)
         using (var db = SingleEntityDbContext.Create(collection))
         {
             db.Database.AutoTransactionBehavior = AutoTransactionBehavior.WhenNeeded;
@@ -233,11 +229,9 @@ public class TransactionTests(TemporaryDatabaseFixture database)
                 new SimpleEntity { _id = ObjectId.GenerateNewId(), name = "ok-1" }, // will succeed if executed alone
                 new SimpleEntity { _id = conflictingId, name = "dup-key-should-fail" }); // will throw duplicate key
 
-            // SaveChanges should throw and roll back the successful first insert due to implicit transaction
             Assert.ThrowsAny<Exception>(() => db.SaveChanges());
         }
 
-        // Only the original pre-insert should remain; the attempted batch should be fully rolled back
         using (var dbCheck = SingleEntityDbContext.Create(collection))
         {
             var all = dbCheck.Entities.ToList();
@@ -323,7 +317,6 @@ public class TransactionTests(TemporaryDatabaseFixture database)
         db.Entities.Add(new SimpleEntity { name = "second" });
         db.SaveChanges();
 
-        // Changes should not be visible outside the transaction
         using (var other = SingleEntityDbContext.Create(collection))
         {
             Assert.Empty(other.Entities);
@@ -367,7 +360,6 @@ public class TransactionTests(TemporaryDatabaseFixture database)
     {
         var collection = database.CreateCollection<SimpleEntity>();
 
-        // Pre-insert to cause duplicate key on second insert inside the transaction
         var conflictingId = ObjectId.GenerateNewId();
         collection.InsertOne(new SimpleEntity { _id = conflictingId, name = "existing" });
 
@@ -378,7 +370,6 @@ public class TransactionTests(TemporaryDatabaseFixture database)
             new SimpleEntity { _id = ObjectId.GenerateNewId(), name = "transaction-ok" },
             new SimpleEntity { _id = conflictingId, name = "transaction-dup" });
 
-        // Act: SaveChanges should throw, but nothing should become visible to other contexts yet.
         Assert.ThrowsAny<Exception>(() => db.SaveChanges());
 
         // The same DbContext (same transaction) can still see its own pending changes if it were to query
@@ -391,7 +382,6 @@ public class TransactionTests(TemporaryDatabaseFixture database)
             Assert.DoesNotContain("transaction-dup", names);
         }
 
-        // Rollback explicitly; the staged writes should be discarded.
         transaction.Rollback();
 
         using var check = SingleEntityDbContext.Create(collection);
@@ -442,21 +432,17 @@ public class TransactionTests(TemporaryDatabaseFixture database)
         db.Entities.Add(new SimpleEntity { name = "first" });
         db.SaveChanges();
 
-        // Same context in same transaction sees the inserted doc
         Assert.Equal("first", Assert.Single(db.Entities).name);
 
         db.Entities.Add(new SimpleEntity { name = "second" });
         db.SaveChanges();
 
-        // Projections visible inside same transaction
         Assert.Equal(["first", "second"], db.Entities.Select(e => e.name).OrderBy(n => n));
         Assert.Equal(2, db.Entities.Count());
 
-        // Entity reads visible inside same transaction
         Assert.Single(db.Entities, e => e.name == "first");
         Assert.Single(db.Entities, e => e.name == "second");
 
-        // Other context still does not see them
         using (var outsider = SingleEntityDbContext.Create(collection))
         {
             Assert.Empty(outsider.Entities);
@@ -478,21 +464,17 @@ public class TransactionTests(TemporaryDatabaseFixture database)
         await db.Entities.AddAsync(new SimpleEntity { name = "first" });
         await db.SaveChangesAsync();
 
-        // Same context in same transaction sees the inserted doc
         Assert.Equal("first", Assert.Single(db.Entities).name);
 
         await db.Entities.AddAsync(new SimpleEntity { name = "second" });
         await db.SaveChangesAsync();
 
-        // Projections visible inside same transaction
         Assert.Equal(["first", "second"], db.Entities.Select(e => e.name).OrderBy(n => n));
         Assert.Equal(2, await db.Entities.CountAsync());
 
-        // Entity reads visible inside same transaction
         Assert.Single(db.Entities, e => e.name == "first");
         Assert.Single(db.Entities, e => e.name == "second");
 
-        // Other context still does not see them
         await using (var outsider = SingleEntityDbContext.Create(collection))
         {
             Assert.Empty(outsider.Entities);
@@ -539,11 +521,9 @@ public class TransactionTests(TemporaryDatabaseFixture database)
 
         using var db = SingleEntityDbContext.Create(collection);
 
-        // Seed one entity outside any transaction
         db.Entities.Add(new SimpleEntity { name = "seed" });
         db.SaveChanges();
 
-        // First explicit transaction - commit
         using (var transaction = db.Database.BeginTransaction())
         {
             db.Entities.Add(new SimpleEntity { name = "transaction-committed" });
@@ -551,11 +531,9 @@ public class TransactionTests(TemporaryDatabaseFixture database)
             transaction.Commit();
         }
 
-        // Reuse the same context without an explicit transaction
         db.Entities.Add(new SimpleEntity { name = "post-commit-no-transaction" });
         db.SaveChanges();
 
-        // Validate all expected entities are present
         using var check = SingleEntityDbContext.Create(collection);
         var names = check.Entities.Select(e => e.name).OrderBy(n => n).ToList();
         Assert.Equal(["post-commit-no-transaction", "seed", "transaction-committed"], names);
@@ -568,7 +546,6 @@ public class TransactionTests(TemporaryDatabaseFixture database)
 
         using var db = SingleEntityDbContext.Create(collection);
 
-        // Start explicit transaction - rollback
         using (var transaction = db.Database.BeginTransaction())
         {
             db.Entities.Add(new SimpleEntity { name = "transaction-rolled-back" });
@@ -576,7 +553,6 @@ public class TransactionTests(TemporaryDatabaseFixture database)
             transaction.Rollback();
         }
 
-        // Reuse the same context without an explicit transaction
         db.Entities.Add(new SimpleEntity { name = "post-rollback-no-transaction" });
         db.SaveChanges();
 
@@ -665,7 +641,6 @@ public class TransactionTests(TemporaryDatabaseFixture database)
             }
             catch (Exception ex) when (ex.Message == "Expected failure")
             {
-                // We expect this to fail
             }
         }
 
@@ -703,7 +678,6 @@ public class TransactionTests(TemporaryDatabaseFixture database)
             }
             catch (Exception ex) when (ex.Message == "Expected failure")
             {
-                // We expect this to fail
             }
         }
 

@@ -54,7 +54,6 @@ public class NativeTphTypeTestTests(TemporaryDatabaseFixture database) : IClassF
 
     public class Supplier : Party
     {
-        // Same CLR name as the sibling's member, a different stored element.
         public string CustomerName { get; set; } = "";
     }
 

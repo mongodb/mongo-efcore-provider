@@ -21,13 +21,9 @@ using MongoDB.EntityFrameworkCore.Query.Expressions;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// <see cref="MongoExpressionTranslator"/> — <c>root is T</c> for a root entity type with no hierarchy.
+/// <see cref="MongoExpressionTranslator"/> — <c>root is T</c>; sibling of <c>MongoExpressionTranslator.EntityType.cs</c>.
+/// Without a hierarchy it folds to a constant; a TPH hierarchy takes <see cref="MongoDiscriminatorPredicate"/>.
 /// </summary>
-/// <remarks>
-/// Sibling of <c>MongoExpressionTranslator.EntityType.cs</c>. With no base or derived types the root can only be
-/// exactly that CLR type, so <c>root is T</c> folds to a constant. A TPH hierarchy takes the discriminator test of
-/// <see cref="MongoDiscriminatorPredicate"/>, shared with <c>OfType&lt;T&gt;()</c>.
-/// </remarks>
 internal sealed partial class MongoExpressionTranslator
 {
     private bool TryTranslateTypeIs(TypeBinaryExpression typeBinary, out MongoExpression? result)
@@ -52,9 +48,8 @@ internal sealed partial class MongoExpressionTranslator
     }
 
     /// <summary>
-    /// <c>root is T</c> (<paramref name="exact"/> false: <c>T</c> and its subtypes) or <c>root.GetType() ==/!= typeof(T)</c>
-    /// (<paramref name="exact"/> true) over a TPH hierarchy, as a discriminator test shared with <c>OfType&lt;T&gt;()</c>
-    /// (<see cref="MongoDiscriminatorPredicate"/>).
+    /// <c>root is T</c> (<paramref name="exact"/> false: <c>T</c> and subtypes) or <c>root.GetType() ==/!= typeof(T)</c>
+    /// (<paramref name="exact"/> true) over a TPH hierarchy, via <see cref="MongoDiscriminatorPredicate"/>.
     /// </summary>
     private bool TryTranslateHierarchyTypeTest(Type operand, bool exact, bool negated, out MongoExpression? result)
     {

@@ -17,16 +17,12 @@ using System;
 
 namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 
-/// <summary>
-/// The date-part components translated natively.
-/// </summary>
+/// <summary>The date-part components translated natively.</summary>
 /// <remarks>
-/// <see cref="TimeOfDay"/> is produced only as a whole projection leaf over a plain <c>DateTime</c> field
-/// (<c>MongoExpressionTranslator.TryTranslateTimeOfDayLeaf</c>), never by the general value translator: it renders
-/// as milliseconds since midnight, so only a read through
-/// <c>BsonSerializerFactory.TimeOfDayMillisecondsSerializer</c> gives the right <see cref="TimeSpan"/>, and a filter,
-/// group key or accumulator would compare or read those milliseconds as a <see cref="TimeSpan"/> in its own
-/// representation.
+/// <see cref="TimeOfDay"/> is produced only as a whole projection leaf (<c>TryTranslateTimeOfDayLeaf</c>), never by
+/// the general value translator: it renders as milliseconds since midnight, so only a read through
+/// <c>BsonSerializerFactory.TimeOfDayMillisecondsSerializer</c> gives the right <see cref="TimeSpan"/>; a filter, group
+/// key or accumulator would misread those milliseconds.
 /// </remarks>
 internal enum MongoDatePart
 {
@@ -44,28 +40,19 @@ internal enum MongoDatePart
 }
 
 /// <summary>
-/// Extracts one <see cref="MongoDatePart"/> from a datetime-valued <see cref="Operand"/> via the matching MQL date
-/// operator (<c>$year</c>, <c>$month</c>, …, <c>$dateTrunc</c> for <see cref="MongoDatePart.Date"/>, or the driver's
-/// <c>$dateDiff</c> from the day-truncated date in milliseconds for <see cref="MongoDatePart.TimeOfDay"/>).
-/// </summary>
-/// <remarks>
-/// <see cref="Operand"/> is any date-valued expression, so it can wrap a
-/// <see cref="MongoDateTimeOffsetLocalExpression"/> as well as a <c>DateTime</c> field. Aggregation dialect only;
+/// Extracts one <see cref="MongoDatePart"/> from a datetime-valued <see cref="Operand"/> (which may wrap a
+/// <see cref="MongoDateTimeOffsetLocalExpression"/>) via the matching MQL date operator. Aggregation dialect only;
 /// must never be admitted by <c>MongoQueryLanguageRenderer.IsQueryDialectRenderable</c>.
-/// </remarks>
+/// </summary>
 internal sealed class MongoDatePartExpression(MongoExpression operand, MongoDatePart part) : MongoExpression
 {
-    /// <summary>The datetime-valued expression to extract a component from.</summary>
     public MongoExpression Operand { get; } = operand;
 
-    /// <summary>Which component to extract.</summary>
     public MongoDatePart Part { get; } = part;
 
     /// <summary>
-    /// Whether <paramref name="node"/> is a <see cref="MongoDatePart.TimeOfDay"/> leaf: milliseconds, not a
-    /// <see cref="TimeSpan"/>'s default stored form. The one predicate the emit side's declines
-    /// (<c>AllFieldsDefaultSerialized</c>, the projected Distinct, set-op <c>OperandSerializationsMatch</c>) and the read side
-    /// (<c>MongoSelectDefinition.IsTimeOfDayProjection</c>) share.
+    /// Whether <paramref name="node"/> is a <see cref="MongoDatePart.TimeOfDay"/> leaf (milliseconds, not a
+    /// <see cref="TimeSpan"/>'s default stored form). The one predicate the emit-side declines and the read side share.
     /// </summary>
     internal static bool IsTimeOfDay(MongoExpression node)
         => node is MongoDatePartExpression { Part: MongoDatePart.TimeOfDay };

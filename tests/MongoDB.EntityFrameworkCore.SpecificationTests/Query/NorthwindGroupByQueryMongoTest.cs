@@ -33,7 +33,6 @@ public class NorthwindGroupByQueryMongoTest : NorthwindGroupByQueryTestBase<
         : base(fixture)
     {
         Fixture.TestMqlLoggerFactory.Clear();
-        //Fixture.TestMqlLoggerFactory.SetTestOutputHelper(testOutputHelper);
     }
 
     [ConditionalFact]
@@ -2463,7 +2462,6 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "Sum" : { "$sum" : { "$add" : ["$_i
         }
     }
 
-    //AssertMql(" ");
     public override async Task Complex_query_with_group_by_in_subquery5(bool async)
     {
         // Fails: GroupBy issue EF-149. The accepted types stay widened here: the driver tries to BSON-serialize

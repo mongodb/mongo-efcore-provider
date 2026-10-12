@@ -23,10 +23,9 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// (<c>Dictionary.key</c>): a dictionary is always stored as a BSON document, so an entry is a sub-field.
 /// </summary>
 /// <remarks>
-/// Not a <see cref="MongoFieldExpression"/>, which requires an <see cref="IProperty"/> whose serializer is the
-/// element's own: here the only property is the dictionary's, and an entry is serialized by that dictionary
-/// serializer's <em>value</em> serializer. A sibling type rather than a flag, because it needs different handling at
-/// several sites (query-dialect rendering, negation, prefixing, the aggregation dialect declining it).
+/// Not a <see cref="MongoFieldExpression"/>: the only property is the dictionary's, and an entry is serialized by
+/// that serializer's <em>value</em> serializer. A sibling type rather than a flag, since it needs different handling
+/// at several sites (query-dialect rendering, negation, prefixing, the aggregation dialect declining it).
 /// </remarks>
 internal sealed class MongoDictionaryEntryExpression : MongoExpression
 {
@@ -37,10 +36,8 @@ internal sealed class MongoDictionaryEntryExpression : MongoExpression
         Type = valueType;
     }
 
-    /// <summary>The dictionary property the entry belongs to.</summary>
     public IProperty DictionaryProperty { get; }
 
-    /// <summary>The entry's dotted document path, <c>&lt;dictionary document path&gt;.&lt;key&gt;</c>.</summary>
     public string Path { get; }
 
     /// <inheritdoc />

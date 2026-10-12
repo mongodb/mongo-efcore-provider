@@ -18,15 +18,10 @@ using System;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// Thrown by the native translator for an unsupported query shape. Under
-/// <see cref="MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.Native"/> the compile-time gate catches it
-/// and falls back to driver-LINQ; under
-/// <see cref="MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.NativeOnly"/> it propagates to the caller.
+/// Thrown by the native translator for an unsupported query shape; the compile-time gate falls back to driver-LINQ under
+/// <see cref="MongoDB.EntityFrameworkCore.Infrastructure.MongoQueryMode.Native"/>, and it propagates under <c>NativeOnly</c>.
+/// Internal: the exception type for an unsupported shape isn't public contract.
 /// </summary>
-/// <remarks>
-/// Intentionally <c>internal</c>: the exception type for an unsupported shape isn't public contract, so making it
-/// public is a deliberate API decision.
-/// </remarks>
 internal sealed class NativeTranslationNotSupportedException : Exception
 {
     public NativeTranslationNotSupportedException(string message) : base(message)

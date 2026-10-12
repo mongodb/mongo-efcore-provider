@@ -22,16 +22,14 @@ using MongoDB.EntityFrameworkCore.Serializers;
 namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 
 /// <summary>
-/// Builds the <c>$or</c>/<c>$nor</c> clause array of a composite-key <c>Contains</c>. One builder serves the
-/// compile-time render of a constant list and the per-execution substitution of a parameter list
-/// (<see cref="MongoPipelineFactory"/>), so the two cannot disagree.
+/// Builds the <c>$or</c>/<c>$nor</c> clause array of a composite-key <c>Contains</c>, shared by the constant-list render
+/// and the per-execution parameter substitution (<see cref="MongoPipelineFactory"/>) so the two cannot disagree.
 /// </summary>
 internal static class CompositeKeyClauses
 {
     /// <summary>
     /// One <c>{ "_id.K1": v1, "_id.K2": v2 }</c> clause per non-null entity. Never empty: an empty (or all-null) list
-    /// yields one always-false clause, because <c>$or: []</c> and <c>$nor: []</c> are server errors (<c>$or</c> then
-    /// matches nothing and <c>$nor</c> everything, as <c>Contains</c> and <c>!Contains</c> over an empty list must).
+    /// yields one always-false clause, because <c>$or: []</c> and <c>$nor: []</c> are server errors.
     /// </summary>
     internal static BsonArray Build(IEnumerable entities, IReadOnlyList<IProperty> keys)
     {

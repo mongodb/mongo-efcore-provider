@@ -25,8 +25,7 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 internal sealed partial class MongoExpressionTranslator
 {
     /// <summary>
-    /// <c>a.CompareTo(b) OP k</c> / <c>string.Compare(a, b) OP k</c> with a constant int <c>k</c>. Folds to a plain
-    /// comparison or a constant where exact; otherwise compares <c>$cmp</c> to <c>k</c>.
+    /// Constant int <c>k</c>: folds to a plain comparison or constant where exact; otherwise compares <c>$cmp</c> to <c>k</c>.
     /// </summary>
     private bool TryTranslateStringCompare(BinaryExpression comparison, out MongoExpression? result)
     {

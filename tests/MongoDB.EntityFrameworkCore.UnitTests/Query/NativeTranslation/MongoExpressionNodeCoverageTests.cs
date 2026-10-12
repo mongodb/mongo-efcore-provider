@@ -51,8 +51,6 @@ namespace MongoDB.EntityFrameworkCore.UnitTests.Query.NativeTranslation;
 /// </remarks>
 public class MongoExpressionNodeCoverageTests
 {
-    // --- Entity model used to source real IProperty instances ---
-
     private class Blog
     {
         public ObjectId Id { get; set; }
@@ -98,7 +96,6 @@ public class MongoExpressionNodeCoverageTests
             .FindNavigation(nameof(Blog.Posts))!.TargetEntityType.FindProperty(propertyName)!;
     }
 
-    // ------------------------------------------------------------------
     // Node discovery + samples
 
     private static IReadOnlyList<Type> AllConcreteNodeTypes()
@@ -181,7 +178,6 @@ public class MongoExpressionNodeCoverageTests
         return samples.ToDictionary(s => s.GetType());
     }
 
-    // ------------------------------------------------------------------
     // Dispatcher probes
 
     private const string QueryRenderer = "QL.Render";
@@ -246,7 +242,6 @@ public class MongoExpressionNodeCoverageTests
         }
     }
 
-    // ------------------------------------------------------------------
     // Tests
 
     [Fact]
@@ -373,7 +368,6 @@ public class MongoExpressionNodeCoverageTests
         Assert.Equal("true", Probe(Negator, fieldToFieldRegex));
     }
 
-    // ------------------------------------------------------------------
     // The baked-in matrix.
 
     /// <summary>
