@@ -713,7 +713,7 @@ Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null,
 
         AssertMql(
             """
-Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Order_CustomerID__id" } }, { "$group" : { "_id" : null, "_v" : { "$sum" : { "$sum" : "$_lookup_Order_CustomerID__id._id" } } } }, { "$project" : { "_id" : 0 } }
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$group" : { "_id" : null, "v" : { "$sum" : { "$sum" : "$_lookup_Orders._id" } } } }
 """);
     }
 
@@ -749,7 +749,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
         AssertMql(
             """
-Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Order_CustomerID__id" } }, { "$group" : { "_id" : null, "_v" : { "$sum" : { "$sum" : "$_lookup_Order_CustomerID__id._id" } } } }, { "$project" : { "_id" : 0 } }
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$group" : { "_id" : null, "v" : { "$sum" : { "$sum" : "$_lookup_Orders._id" } } } }
 """);
     }
 
@@ -865,7 +865,7 @@ Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null,
 
         AssertMql(
             """
-Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Order_CustomerID__id" } }, { "$group" : { "_id" : null, "_v" : { "$avg" : { "$sum" : "$_lookup_Order_CustomerID__id._id" } } } }, { "$project" : { "_id" : 0 } }
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$group" : { "_id" : null, "v" : { "$avg" : { "$sum" : "$_lookup_Orders._id" } } } }
 """);
     }
 
@@ -886,7 +886,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
         AssertMql(
             """
-Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Order_CustomerID__id" } }, { "$group" : { "_id" : null, "_v" : { "$avg" : { "$sum" : "$_lookup_Order_CustomerID__id._id" } } } }, { "$project" : { "_id" : 0 } }
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$group" : { "_id" : null, "v" : { "$avg" : { "$sum" : "$_lookup_Orders._id" } } } }
 """);
     }
 
@@ -973,7 +973,7 @@ Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null,
 
         AssertMql(
             """
-Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Order_CustomerID__id" } }, { "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : { "$sum" : "$_lookup_Order_CustomerID__id._id" } } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$group" : { "_id" : null, "v" : { "$min" : { "_v" : { "$sum" : "$_lookup_Orders._id" } } } } }
 """);
     }
 
@@ -994,7 +994,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
         AssertMql(
             """
-Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Order_CustomerID__id" } }, { "$group" : { "_id" : null, "_min" : { "$min" : { "_v" : { "$sum" : "$_lookup_Order_CustomerID__id._id" } } } } }, { "$replaceRoot" : { "newRoot" : "$_min" } }
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$group" : { "_id" : null, "v" : { "$min" : { "_v" : { "$sum" : "$_lookup_Orders._id" } } } } }
 """);
     }
 
@@ -1048,7 +1048,7 @@ Products.{ "$match" : { "_id" : { "$lt" : 40 } } }, { "$group" : { "_id" : null,
 
         AssertMql(
             """
-Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Order_CustomerID__id" } }, { "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : { "$sum" : "$_lookup_Order_CustomerID__id._id" } } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$group" : { "_id" : null, "v" : { "$max" : { "_v" : { "$sum" : "$_lookup_Orders._id" } } } } }
 """);
     }
 
@@ -1069,7 +1069,7 @@ Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField
 
         AssertMql(
             """
-Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Order_CustomerID__id" } }, { "$group" : { "_id" : null, "_max" : { "$max" : { "_v" : { "$sum" : "$_lookup_Order_CustomerID__id._id" } } } } }, { "$replaceRoot" : { "newRoot" : "$_max" } }
+Customers.{ "$lookup" : { "from" : "Orders", "localField" : "_id", "foreignField" : "CustomerID", "as" : "_lookup_Orders" } }, { "$group" : { "_id" : null, "v" : { "$max" : { "_v" : { "$sum" : "$_lookup_Orders._id" } } } } }
 """);
     }
 

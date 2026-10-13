@@ -231,6 +231,70 @@ public class NativeReferencedCollectionBridgeTests(TemporaryDatabaseFixture data
         }
     }
 
+    // ---- a scalar aggregate whose selector is an aggregate over the cross-document collection
+    // `Customers.Sum(c => c.Orders.Sum(o => o.Total))`: the per-customer sums are A1 630, A2 700, B1 30 and C0 0 (the empty group).
+
+    private void StrictScalar<T>(Func<Ctx, T> query, T expected)
+    {
+        var names = Seed();
+        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = Create(names, mode);
+            Assert.True(Equals(expected, query(db)), $"{mode} returned {query(db)}, expected {expected}");
+        }
+    }
+
+    [Fact]
+    public void Sum_of_a_Sum_over_the_group()
+        => StrictScalar(db => db.Set<Cust>().Sum(c => c.Orders.Sum(o => o.Total)), 1360);
+
+    [Fact]
+    public void Average_of_a_Sum_over_the_group_counts_the_empty_group_as_zero()
+        => StrictScalar(db => db.Set<Cust>().Average(c => c.Orders.Sum(o => o.Total)), 340.0);
+
+    [Fact]
+    public void Min_of_a_Sum_over_the_group_is_the_empty_groups_zero()
+        => StrictScalar(db => db.Set<Cust>().Min(c => c.Orders.Sum(o => o.Total)), 0);
+
+    [Fact]
+    public void Max_of_a_Sum_over_the_group()
+        => StrictScalar(db => db.Set<Cust>().Max(c => c.Orders.Sum(o => o.Total)), 700);
+
+    [Fact]
+    public void Sum_of_a_Count_over_the_group()
+        => StrictScalar(db => db.Set<Cust>().Sum(c => c.Orders.Count(o => o.Total > 15)), 4);
+
+    [Fact]
+    public void Sum_of_a_Sum_after_a_Where_on_the_customer()
+        => StrictScalar(db => db.Set<Cust>().Where(c => c.Id != "A2").Sum(c => c.Orders.Sum(o => o.Total)), 660);
+
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    public void Min_of_a_nullable_Min_over_the_group_skips_the_empty_group(MongoQueryMode mode)
+    {
+        // Not asserted under explicit DriverLinq: the driver's own translation of this shape answers null (it did before the native path
+        // handled it), where the nullable Min skips the empty group's null and answers 10.
+        using var db = Create(Seed(), mode);
+        Assert.Equal((int?)10, db.Set<Cust>().Min(c => c.Orders.Min(o => (int?)o.Total)));
+    }
+
+    [Fact]
+    public void Sum_of_a_Sum_over_no_customers_is_zero()
+        => StrictScalar(db => db.Set<Cust>().Where(c => c.Id == "none").Sum(c => c.Orders.Sum(o => o.Total)), 0);
+
+    [Fact]
+    public void Max_of_a_Sum_over_no_customers_throws_as_LINQ_does()
+    {
+        var names = Seed();
+        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
+        {
+            using var db = Create(names, mode);
+            Assert.ThrowsAny<InvalidOperationException>(
+                () => db.Set<Cust>().Where(c => c.Id == "none").Max(c => c.Orders.Sum(o => o.Total)));
+        }
+    }
+
     private Ctx Create(string[] names, MongoQueryMode mode)
     {
         var options = new DbContextOptionsBuilder<Ctx>()

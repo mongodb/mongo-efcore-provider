@@ -76,6 +76,25 @@ internal static class NativeReferencedCollectionBinder
         return true;
     }
 
+    /// <summary>
+    /// Translates <paramref name="body"/> as the operand of a scalar <c>Sum</c>/<c>Min</c>/<c>Max</c>/<c>Average</c> over the query root
+    /// (<c>Customers.Sum(c =&gt; c.Orders.Sum(o =&gt; o.Id))</c>): the per-row value is the aggregate over the looked-up array, reduced again by the
+    /// <c>$group</c>. Stages nothing: the caller commits <paramref name="lookups"/> with <see cref="CommitStaged"/> once its own checks have
+    /// passed, so a later decline leaves no lookup behind.
+    /// </summary>
+    internal static bool TryTranslateAggregateOperand(
+        MongoQueryExpression mongoQ,
+        ParameterExpression outerParameter,
+        Expression body,
+        [NotNullWhen(true)] out MongoExpression? operand,
+        out List<LookupExpression> lookups,
+        out List<LookupExpression> stamps)
+        => TryTranslate(mongoQ, outerParameter, body, valueMode: true, out operand, out lookups, out stamps);
+
+    /// <summary>Commits the lookups a successful <see cref="TryTranslateAggregateOperand"/> staged.</summary>
+    internal static void CommitStaged(MongoQueryExpression mongoQ, List<LookupExpression> lookups, List<LookupExpression> stamps)
+        => Commit(mongoQ, lookups, stamps);
+
     private static bool TryTranslate(
         MongoQueryExpression mongoQ,
         ParameterExpression outerParameter,

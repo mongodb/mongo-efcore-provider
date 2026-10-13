@@ -14,6 +14,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -233,6 +234,8 @@ internal static class NativeCardinalityBinder
             translator.ProjectedAliasScope = new MongoProjectedAliasScope(aliasParameter, select.Projection);
 
         MongoExpression? operand = null;
+        List<LookupExpression> referencedLookups = [];
+        List<LookupExpression> referencedStamps = [];
         if (op is MongoAggregateOperator.Sum or MongoAggregateOperator.Min
                or MongoAggregateOperator.Max or MongoAggregateOperator.Average)
         {
@@ -260,10 +263,18 @@ internal static class NativeCardinalityBinder
             else if (!translator.TryTranslateValue(selector.Body, out operand))
             {
                 // A value-converted / represented field TryTranslateValue declines still reduces correctly when its stored value preserves the CLR answer.
-                if (!translator.TryTranslateStoredAggregateField(selector.Body, op, out var storedField))
-                    return false; // untranslatable selector shape (e.g. a correlated method call) — fall back
-
-                operand = storedField;
+                if (translator.TryTranslateStoredAggregateField(selector.Body, op, out var storedField))
+                {
+                    operand = storedField;
+                }
+                else if (isPostGroupTerminalAggregate
+                         || !NativeReferencedCollectionBinder.TryTranslateAggregateOperand(
+                             mongoQ, selector.Parameters[0], selector.Body, out operand, out referencedLookups, out referencedStamps))
+                {
+                    // Neither a stored field nor an aggregate over a cross-document collection (`c.Orders.Sum(o => o.Id)`): a correlated
+                    // method call or another shape the translator has no arm for — fall back.
+                    return false;
+                }
             }
 
             // Min/Max reduce the stored value, so an operand whose server ordering differs from the CLR one (a string-stored TimeSpan) declines (NativeAggregateReadBack).
@@ -317,6 +328,9 @@ internal static class NativeCardinalityBinder
         {
             NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQ, select.JoinScope!);
         }
+
+        // Staged by the operand's translation and committed only here, past every decline above.
+        NativeReferencedCollectionBinder.CommitStaged(mongoQ, referencedLookups, referencedStamps);
 
         var cardinality = CreateAggregateCardinality(op, operand, resultType);
 
