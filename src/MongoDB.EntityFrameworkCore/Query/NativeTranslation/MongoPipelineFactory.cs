@@ -419,9 +419,13 @@ internal sealed class MongoPipelineFactory
         // table and is read per execution instead of frozen into the cached plan. Stages nested by an inner-side collection Include
         // follow the filter. Same indexable localField/foreignField + pipeline form as CorrelatedReducer.
         // An element sort or limit (a keyed array behind `OrderBy(..).ToList()`/`FirstOrDefault()`) uses the same shape.
-        if (lookup.InnerPredicate is not null || lookup.HasElementStages)
+        if (lookup.InnerPredicate is not null || lookup.HasElementStages || lookup.HasOuterConditions)
         {
             var stages = new BsonArray();
+
+            // A condition on the outer row is constant per outer row: a `let` of its field and a `$match` on it, so a group the condition
+            // rejects is empty. The `let` is merged into whichever form carries the key below.
+            var (outerLet, outerGate) = RenderOuterGate(lookup, placeholders);
 
             // A composite key matches every pair in the let/$expr form, ahead of the filter.
             BsonDocument? compositeLet = null;
@@ -431,6 +435,9 @@ internal sealed class MongoPipelineFactory
                 compositeLet = let;
                 stages.Add(new BsonDocument("$match", new BsonDocument("$expr", match)));
             }
+
+            if (outerGate is not null)
+                stages.Add(outerGate);
 
             // A null local key that must match nothing needs the let form; the filter then follows the key match.
             if (lookup.ExcludesNullLocalKey)
@@ -458,6 +465,7 @@ internal sealed class MongoPipelineFactory
 
             if (compositeLet is not null)
             {
+                compositeLet.AddRange(outerLet);
                 return new BsonDocument("$lookup", new BsonDocument
                 {
                     { "from", lookup.From },
@@ -469,23 +477,29 @@ internal sealed class MongoPipelineFactory
 
             if (lookup.ExcludesNullLocalKey)
             {
+                var nullExcludingLet = lookup.NullExcludingLet();
+                nullExcludingLet.AddRange(outerLet);
                 return new BsonDocument("$lookup", new BsonDocument
                 {
                     { "from", lookup.From },
-                    { "let", lookup.NullExcludingLet() },
+                    { "let", nullExcludingLet },
                     { "pipeline", stages },
                     { "as", lookup.As }
                 });
             }
 
-            return new BsonDocument("$lookup", new BsonDocument
+            var plain = new BsonDocument
             {
                 { "from", lookup.From },
                 { "localField", lookup.LocalField },
-                { "foreignField", lookup.ForeignField },
-                { "pipeline", stages },
-                { "as", lookup.As }
-            });
+                { "foreignField", lookup.ForeignField }
+            };
+            if (outerLet.ElementCount > 0)
+                plain.Add("let", outerLet);
+
+            plain.Add("pipeline", stages);
+            plain.Add("as", lookup.As);
+            return new BsonDocument("$lookup", plain);
         }
 
         // CorrelatedReducer uses localField/foreignField plus a pipeline ($match/$sort/$limit:1): an indexable
@@ -505,6 +519,33 @@ internal sealed class MongoPipelineFactory
         }
 
         return lookup.ToLookupStageDocument();
+    }
+
+    /// <summary>
+    /// The <c>let</c> variables and the <c>$match</c> of a lookup's <see cref="LookupExpression.OuterConditions"/>: each outer field
+    /// null-normalized (a missing field reads as C# reads it, null), compared with the rendered value, and with a guard also not null.
+    /// </summary>
+    private static (BsonDocument Let, BsonDocument? Gate) RenderOuterGate(LookupExpression lookup, PlaceholderTable placeholders)
+    {
+        var let = new BsonDocument();
+        if (!lookup.HasOuterConditions)
+            return (let, null);
+
+        var conditions = new BsonArray();
+        for (var i = 0; i < lookup.OuterConditions.Count; i++)
+        {
+            var condition = lookup.OuterConditions[i];
+            var variable = $"o{i}";
+            let.Add(variable, new BsonDocument("$ifNull", new BsonArray { $"${condition.LocalField}", BsonNull.Value }));
+
+            if (condition.Guarded)
+                conditions.Add(new BsonDocument("$ne", new BsonArray { $"$${variable}", BsonNull.Value }));
+
+            conditions.Add(new BsonDocument("$eq",
+                new BsonArray { $"$${variable}", MongoAggregationExpressionRenderer.RenderBranch(condition.Value, placeholders) }));
+        }
+
+        return (let, new BsonDocument("$match", new BsonDocument("$expr", new BsonDocument("$and", conditions))));
     }
 
     private static BsonDocument RenderUnwind(LookupExpression lookup, bool preserveNullAndEmptyArrays)

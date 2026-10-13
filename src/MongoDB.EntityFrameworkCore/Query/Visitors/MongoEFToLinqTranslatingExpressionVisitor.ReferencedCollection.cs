@@ -171,16 +171,27 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
 
         // No navigation for this correlation (a GroupJoin on arbitrary keys, an explicit subquery, a model with no collection navigation):
         // the plain keyed array the binder staged for exactly the two properties the predicate compares.
+        // An equality on the element alone (`r.Zone == 1`) is an element filter, applied over the plain array. One on the outer row alone
+        // (`s.Zone == 1`) would gate the array, which only the native lookup does: left unresolved, so the query fails at translation.
         if (FindEntityType(outerParameter.Type) is { } outerEntityType
-            && NativeTranslation.NativeCorrelationMatcher.TryMatchCorrelationKeys(
-                predicate.Body, outerEntityType, outerParameter, targetEntityType, out var keyParts))
+            && NativeTranslation.NativeCorrelationMatcher.TryMatchCorrelation(
+                predicate.Body, outerEntityType, outerParameter, targetEntityType, out var keyParts, out var conditions)
+            && conditions.Outer.Count == 0)
         {
             var alias = NativeTranslation.NativeCorrelationMatcher.BuildCorrelatedArrayLookup(targetEntityType, keyParts).As;
             if (_pendingLookups.Where(l => l.IsBridgeReadableArray).Concat(_bridgeOwnedLookups).FirstOrDefault(l => l.As == alias) is { } keyedLookup)
             {
+                var elementType = targetEntityType.ClrType;
                 array = MqlField(
-                    Visit(outerReference)!, typeof(List<>).MakeGenericType(targetEntityType.ClrType), keyedLookup.As,
+                    Visit(outerReference)!, typeof(List<>).MakeGenericType(elementType), keyedLookup.As,
                     _bsonSerializerFactory.GetEntityListSerializer(targetEntityType));
+
+                foreach (var elementCondition in conditions.Element)
+                {
+                    array = Expression.Call(
+                        null, EnumerableWhere.MakeGenericMethod(elementType), array, VisitElementLambda(elementCondition));
+                }
+
                 return true;
             }
         }
@@ -235,8 +246,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
 
                 if (outerParameter is ParameterExpression
                     && owner.FindEntityType(outerParameter.Type) is { } outerEntityType
-                    && NativeTranslation.NativeCorrelationMatcher.TryMatchCorrelationKeys(
-                        predicate.Body, outerEntityType, outerParameter, root.EntityType, out var keyParts))
+                    && NativeTranslation.NativeCorrelationMatcher.TryMatchCorrelation(
+                        predicate.Body, outerEntityType, outerParameter, root.EntityType, out var keyParts, out var conditions)
+                    && conditions.Outer.Count == 0)
                 {
                     var plain = NativeTranslation.NativeCorrelationMatcher.BuildCorrelatedArrayLookup(root.EntityType, keyParts);
 
@@ -304,6 +316,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
     }
 
     private int _referencedElementLambdaDepth;
+
+    private static readonly MethodInfo EnumerableWhere = typeof(Enumerable).GetMethods(BindingFlags.Public | BindingFlags.Static)
+        .Single(m => m.Name == nameof(Enumerable.Where) && m.GetParameters()[1].ParameterType.GetGenericArguments().Length == 2);
 
     private Expression VisitElementLambda(Expression argument)
     {

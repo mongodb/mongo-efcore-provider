@@ -36,6 +36,28 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation;
 /// </summary>
 internal readonly record struct CorrelationKeyPart(IProperty Outer, IProperty Inner, bool Guarded);
 
+/// <summary>
+/// An equality of a correlation that reads the outer row alone: <c>c.City == "London"</c>, an outer property against a constant or a
+/// query parameter. It is constant per outer row, so it gates the whole group (<see cref="LookupOuterCondition"/>).
+/// </summary>
+/// <param name="Property">The outer property.</param>
+/// <param name="Value">The constant or query parameter it is compared with.</param>
+/// <param name="Guarded">Whether the predicate also guards the outer property against null (EF's <c>GroupJoin</c> rewrite does).</param>
+internal readonly record struct CorrelationOuterCondition(IProperty Property, Expression Value, bool Guarded);
+
+/// <summary>
+/// The equalities of a correlation that are not between an outer and an inner property: conditions on the outer row alone, and
+/// conditions on the subquery's element alone (<c>r.Zone == 1</c>, <c>1996 == r.OrderDate.Value.Year</c>), each a lambda over the
+/// element that the keyed lookup applies as an element filter.
+/// </summary>
+internal sealed record CorrelationConditions(
+    IReadOnlyList<CorrelationOuterCondition> Outer, IReadOnlyList<LambdaExpression> Element)
+{
+    public static readonly CorrelationConditions None = new([], []);
+
+    public bool IsEmpty => Outer.Count == 0 && Element.Count == 0;
+}
+
 internal static class NativeCorrelationMatcher
 {
     /// <summary>
@@ -122,14 +144,14 @@ internal static class NativeCorrelationMatcher
         var side1Root = GetRootExpression(side1);
         var side2Root = GetRootExpression(side2);
 
-        if (ReferenceEquals(side2Root, outerRoot) && side1Root is ParameterExpression && !ReferenceEquals(side1Root, outerRoot))
+        if (ReferenceEquals(side2Root, outerRoot) && IsDependentRoot(side1Root, outerRoot))
         {
             dependentSide = side1;
             outerSide = side2;
             return true;
         }
 
-        if (ReferenceEquals(side1Root, outerRoot) && side2Root is ParameterExpression && !ReferenceEquals(side2Root, outerRoot))
+        if (ReferenceEquals(side1Root, outerRoot) && IsDependentRoot(side2Root, outerRoot))
         {
             dependentSide = side2;
             outerSide = side1;
@@ -138,6 +160,10 @@ internal static class NativeCorrelationMatcher
 
         return false;
     }
+
+    // The subquery's own lambda parameter. On EF8 and EF9 a query parameter is also a ParameterExpression, but it is a value, not the element.
+    private static bool IsDependentRoot(Expression? root, Expression outerRoot)
+        => root is ParameterExpression && !ReferenceEquals(root, outerRoot) && !NativeQueryParameter.TryGetQueryParameterName(root, out _);
 
     /// <summary>
     /// Matches <paramref name="whereBody"/> as an equality between one scalar property of the subquery's entity and one of the outer
@@ -230,8 +256,25 @@ internal static class NativeCorrelationMatcher
         Expression outerRoot,
         IEntityType targetEntityType,
         [NotNullWhen(true)] out IReadOnlyList<CorrelationKeyPart>? parts)
+        => TryMatchCorrelation(whereBody, outerEntityType, outerRoot, targetEntityType, out parts, out var conditions)
+           && conditions.IsEmpty;
+
+    /// <summary>
+    /// <see cref="TryMatchCorrelationKeys"/>, also admitting an equality that is not between an outer and an inner property: an
+    /// outer property against a constant or query parameter (<see cref="CorrelationConditions.Outer"/>), and an expression over the
+    /// element alone against a constant or query parameter (<see cref="CorrelationConditions.Element"/>). At least one outer/inner key
+    /// pair must remain. Only equalities: any other conjunct, however it reads, declines, so it is never dropped.
+    /// </summary>
+    internal static bool TryMatchCorrelation(
+        Expression whereBody,
+        IEntityType outerEntityType,
+        Expression outerRoot,
+        IEntityType targetEntityType,
+        [NotNullWhen(true)] out IReadOnlyList<CorrelationKeyPart>? parts,
+        out CorrelationConditions conditions)
     {
         parts = null;
+        conditions = CorrelationConditions.None;
 
         if (TryMatchRawKeyCorrelation(whereBody, outerEntityType, outerRoot, targetEntityType, out var outerProperty, out var innerProperty, out var guarded))
         {
@@ -243,6 +286,8 @@ internal static class NativeCorrelationMatcher
         FlattenAndAlso(whereBody, conjuncts);
 
         var keyParts = new List<CorrelationKeyPart>();
+        var outerConditions = new List<CorrelationOuterCondition>();
+        var elementConditions = new List<LambdaExpression>();
         var guards = new List<Expression>();
         foreach (var conjunct in conjuncts)
         {
@@ -254,20 +299,25 @@ internal static class NativeCorrelationMatcher
                 var pairs = TryExpandAnonymousKeys(left, right, out var memberPairs) ? memberPairs : [(left, right)];
                 foreach (var (leftSide, rightSide) in pairs)
                 {
-                    if (!TryAssignSides(leftSide, rightSide, outerRoot, out var dependentSide, out var outerSide)
-                        || !TryResolveKeyProperties(dependentSide, outerSide, outerEntityType, outerRoot, targetEntityType, out var outer, out var dependent))
+                    if (TryAssignSides(leftSide, rightSide, outerRoot, out var dependentSide, out var outerSide))
+                    {
+                        if (!TryResolveKeyProperties(dependentSide, outerSide, outerEntityType, outerRoot, targetEntityType, out var outer, out var dependent))
+                            return false;
+
+                        keyParts.Add(new CorrelationKeyPart(outer, dependent, Guarded: false));
+                    }
+                    else if (!TryClassifyCondition(leftSide, rightSide, outerEntityType, outerRoot, outerConditions, elementConditions))
                     {
                         return false;
                     }
-
-                    keyParts.Add(new CorrelationKeyPart(outer, dependent, Guarded: false));
                 }
             }
             else if (TryGetNullGuardedOperand(stripped, out var guardedOperand))
             {
                 // `!(new { s.A, s.B } == null)`, EF8/EF9's guard on the whole key: an object built in the query is never null, so it
                 // excludes nothing.
-                if (guardedOperand.RemoveConvert() is not NewExpression)
+                // Nor does a guard on a non-null constant (`!(1 == null)`, which EF's GroupJoin rewrite writes for a constant key part).
+                if (guardedOperand.RemoveConvert() is not (NewExpression or ConstantExpression { Value: not null }))
                     guards.Add(guardedOperand);
             }
             else
@@ -286,14 +336,167 @@ internal static class NativeCorrelationMatcher
         foreach (var guard in guards)
         {
             var index = keyParts.FindIndex(p => !p.Guarded && IsOuterProperty(guard, outerRoot, outerEntityType, p.Outer));
-            if (index < 0)
+            if (index >= 0)
+            {
+                keyParts[index] = keyParts[index] with { Guarded = true };
+                continue;
+            }
+
+            // A guard on the property of an outer condition: a null outer value matches nothing, whatever the condition's value.
+            var conditionIndex = outerConditions.FindIndex(c => !c.Guarded && IsOuterProperty(guard, outerRoot, outerEntityType, c.Property));
+            if (conditionIndex < 0)
                 return false;
 
-            keyParts[index] = keyParts[index] with { Guarded = true };
+            outerConditions[conditionIndex] = outerConditions[conditionIndex] with { Guarded = true };
         }
 
         parts = keyParts;
+        conditions = new CorrelationConditions(outerConditions, elementConditions);
         return true;
+    }
+
+    /// <summary>
+    /// Classifies an equality that is not between an outer and an inner property: an outer property against a constant or query
+    /// parameter (a condition on the outer row), or an expression over the element alone against one (an element filter). Anything else
+    /// (both sides on the element, a computed outer side, a null constant, an outer-and-element mix) declines.
+    /// </summary>
+    private static bool TryClassifyCondition(
+        Expression left, Expression right, IEntityType outerEntityType, Expression outerRoot,
+        List<CorrelationOuterCondition> outerConditions, List<LambdaExpression> elementConditions)
+    {
+        // EF's GroupJoin rewrite compares the parts as `object.Equals((object)x, (object)y)`: compare the values themselves.
+        left = StripObjectConversion(left);
+        right = StripObjectConversion(right);
+
+        var leftReads = ConditionReads.Of(left, outerRoot);
+        var rightReads = ConditionReads.Of(right, outerRoot);
+
+        if (leftReads.IsOpaque || rightReads.IsOpaque)
+            return false;
+
+        // The side that is only a value: a constant or a query parameter, never null (null equality has its own semantics).
+        var (valueSide, otherSide, otherReads) = rightReads.IsValue ? (right, left, leftReads) : (left, right, rightReads);
+        if (!(leftReads.IsValue ^ rightReads.IsValue) || IsNullConstant(valueSide))
+            return false;
+
+        if (otherReads is { ReadsOuter: true, ReadsElement: false })
+        {
+            if (!otherSide.RemoveConvert().TryGetMemberOrEFProperty(out var receiver, out var name)
+                || !ReferenceEquals(receiver.RemoveConvert(), outerRoot)
+                || outerEntityType.FindProperty(name) is not { } property
+                || property.IsPrimitiveCollection
+                || !IsScalarClrType(property.ClrType))
+            {
+                return false;
+            }
+
+            outerConditions.Add(new CorrelationOuterCondition(property, valueSide, Guarded: false));
+            return true;
+        }
+
+        if (otherReads is { ReadsElement: true, ReadsOuter: false, ElementParameter: { } parameter })
+        {
+            Expression equality;
+            try
+            {
+                var l = left;
+                var r = right;
+                if (l.Type != r.Type)
+                {
+                    // `int? == int` and the like: lift both to the nullable type, as the C# compiler does.
+                    var common = l.Type.IsNullableType() ? l.Type : r.Type.IsNullableType() ? r.Type : null;
+                    if (common is null || Nullable.GetUnderlyingType(common) != (Nullable.GetUnderlyingType(l.Type) ?? l.Type)
+                        || Nullable.GetUnderlyingType(common) != (Nullable.GetUnderlyingType(r.Type) ?? r.Type))
+                    {
+                        return false;
+                    }
+
+                    l = Expression.Convert(l, common);
+                    r = Expression.Convert(r, common);
+                }
+
+                equality = Expression.Equal(l, r);
+            }
+            catch (InvalidOperationException)
+            {
+                return false;
+            }
+
+            elementConditions.Add(Expression.Lambda(equality, parameter));
+            return true;
+        }
+
+        return false;
+    }
+
+    private static Expression StripObjectConversion(Expression expression)
+        => expression is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked, Type: var type } conversion
+           && type == typeof(object)
+            ? conversion.Operand
+            : expression;
+
+    private static bool IsScalarClrType(Type clrType)
+    {
+        var underlying = Nullable.GetUnderlyingType(clrType) ?? clrType;
+        return underlying.IsValueType || underlying == typeof(string);
+    }
+
+    /// <summary>What one side of an equality reads: the outer row, the subquery's element, or nothing but constants and query parameters.</summary>
+    private sealed class ConditionReads : ExpressionVisitor
+    {
+        private readonly Expression _outerRoot;
+        private readonly HashSet<ParameterExpression> _parameters = [];
+
+        private ConditionReads(Expression outerRoot) => _outerRoot = outerRoot;
+
+        public bool ReadsOuter { get; private set; }
+
+        /// <summary>Whether it reads something that is neither (an unknown node), so the side is not classifiable.</summary>
+        public bool IsOpaque { get; private set; }
+
+        public bool ReadsElement => _parameters.Count > 0;
+
+        /// <summary>The one lambda parameter the side reads, if it reads exactly one.</summary>
+        public ParameterExpression? ElementParameter => _parameters.Count == 1 ? _parameters.First() : null;
+
+        public bool IsValue => !ReadsOuter && !ReadsElement && !IsOpaque;
+
+        public static ConditionReads Of(Expression side, Expression outerRoot)
+        {
+            var reads = new ConditionReads(outerRoot);
+            reads.Visit(side);
+            return reads;
+        }
+
+        public override Expression? Visit(Expression? node)
+        {
+            if (node is null)
+                return null;
+
+            if (ReferenceEquals(node, _outerRoot))
+            {
+                ReadsOuter = true;
+                return node;
+            }
+
+            if (NativeQueryParameter.TryGetQueryParameterName(node, out _))
+                return node;
+
+            return base.Visit(node);
+        }
+
+        protected override Expression VisitParameter(ParameterExpression node)
+        {
+            _parameters.Add(node);
+            return node;
+        }
+
+        protected override Expression VisitExtension(Expression node)
+        {
+            // An unknown node (another entity shaper, a subquery): not a property read, a constant or a parameter.
+            IsOpaque = true;
+            return node;
+        }
     }
 
     /// <summary>
@@ -341,10 +544,11 @@ internal static class NativeCorrelationMatcher
     internal static LookupExpression BuildCorrelatedArrayLookup(
         IEntityType targetEntityType, IProperty outerProperty, IProperty innerProperty, bool guarded,
         IReadOnlyList<LambdaExpression>? filters = null, MongoExpression? filterPredicate = null, string aliasSuffix = "",
-        IReadOnlyList<(string Field, int Direction)>? elementSort = null, MongoExpression? elementLimit = null, MongoExpression? elementSkip = null)
+        IReadOnlyList<(string Field, int Direction)>? elementSort = null, MongoExpression? elementLimit = null, MongoExpression? elementSkip = null,
+        IReadOnlyList<LookupOuterCondition>? outerConditions = null)
         => BuildCorrelatedArrayLookup(
             targetEntityType, [new CorrelationKeyPart(outerProperty, innerProperty, guarded)], filters, filterPredicate, aliasSuffix,
-            elementSort, elementLimit, elementSkip);
+            elementSort, elementLimit, elementSkip, outerConditions);
 
     /// <summary>
     /// <see cref="BuildCorrelatedArrayLookup(IEntityType, IProperty, IProperty, bool, IReadOnlyList{LambdaExpression}?, MongoExpression?, string, IReadOnlyList{ValueTuple{string, int}}?, int?, int?)"/>
@@ -354,7 +558,8 @@ internal static class NativeCorrelationMatcher
     internal static LookupExpression BuildCorrelatedArrayLookup(
         IEntityType targetEntityType, IReadOnlyList<CorrelationKeyPart> parts,
         IReadOnlyList<LambdaExpression>? filters = null, MongoExpression? filterPredicate = null, string aliasSuffix = "",
-        IReadOnlyList<(string Field, int Direction)>? elementSort = null, MongoExpression? elementLimit = null, MongoExpression? elementSkip = null)
+        IReadOnlyList<(string Field, int Direction)>? elementSort = null, MongoExpression? elementLimit = null, MongoExpression? elementSkip = null,
+        IReadOnlyList<LookupOuterCondition>? outerConditions = null)
     {
         LookupExpression lookup;
         if (parts.Count == 1)
@@ -378,7 +583,8 @@ internal static class NativeCorrelationMatcher
                 ElementFilters = filters ?? [],
                 ElementSort = elementSort ?? [],
                 ElementLimit = elementLimit,
-                ElementSkip = elementSkip
+                ElementSkip = elementSkip,
+                OuterConditions = outerConditions ?? []
             };
         }
         else
@@ -406,7 +612,8 @@ internal static class NativeCorrelationMatcher
                 ElementFilters = filters ?? [],
                 ElementSort = elementSort ?? [],
                 ElementLimit = elementLimit,
-                ElementSkip = elementSkip
+                ElementSkip = elementSkip,
+                OuterConditions = outerConditions ?? []
             };
         }
 

@@ -285,6 +285,22 @@ internal sealed class LookupExpression
         };
 
     /// <summary>
+    /// The conditions on the outer row a keyed array lookup applies as a gate (<c>c.City == "London"</c>): the group is empty for an outer
+    /// row that fails any of them. Rendered by <c>MongoPipelineFactory.RenderLookup</c> from a <c>let</c> of the outer fields.
+    /// </summary>
+    public IReadOnlyList<LookupOuterCondition> OuterConditions { get; init; } = [];
+
+    /// <summary>Whether the lookup gates its group on the outer row (<see cref="OuterConditions"/>).</summary>
+    public bool HasOuterConditions => OuterConditions.Count > 0;
+
+    /// <summary>Whether two sets of outer conditions are the same: the same fields, the same guards, equal constants or the same query parameters.</summary>
+    public static bool SameOuterConditions(IReadOnlyList<LookupOuterCondition> left, IReadOnlyList<LookupOuterCondition> right)
+        => left.Count == right.Count
+           && left.Zip(right).All(pair => pair.First.LocalField == pair.Second.LocalField
+                                          && pair.First.Guarded == pair.Second.Guarded
+                                          && SameElementCount(pair.First.Value, pair.Second.Value));
+
+    /// <summary>
     /// Whether the sub-pipeline sorts or limits the array. Like <see cref="HasInnerPredicate"/>, only the native renderer honors it, so
     /// a non-native consumer must not read such an array as the whole group.
     /// </summary>
@@ -302,7 +318,7 @@ internal sealed class LookupExpression
     /// it as a plain array for an aggregate; it renders an element leaf's lookup natively and copies it to the leaf's alias, and refuses a
     /// lookup with element stages but no leaf, so it never returns an empty or unfiltered list. Evaluated after the projection binder's commit.
     /// </summary>
-    public bool IsNativeOnlyArray => HasInnerPredicate || HasElementStages || ElementLeafAliases.Count > 0;
+    public bool IsNativeOnlyArray => HasInnerPredicate || HasElementStages || HasOuterConditions || ElementLeafAliases.Count > 0;
 
     /// <summary>
     /// Whether the driver-LINQ bridge can read this lookup's array: a plain keyed array behind a correlated subquery
@@ -316,7 +332,7 @@ internal sealed class LookupExpression
     /// and that no element leaf reads. The bridge reads the aggregate from its own plain array and applies the filter as an
     /// <c>Enumerable.Where</c> over it, so emitting this one would only add an unread array.
     /// </summary>
-    public bool IsBridgeIgnorable => IsCorrelatedArraySource && HasInnerPredicate && ElementLeafAliases.Count == 0;
+    public bool IsBridgeIgnorable => IsCorrelatedArraySource && (HasInnerPredicate || HasOuterConditions) && ElementLeafAliases.Count == 0;
 
     /// <summary>The <c>let</c> of the null-excluding form: the local key, null-normalized.</summary>
     internal BsonDocument NullExcludingLet()
@@ -522,6 +538,12 @@ internal sealed class LookupExpression
             { "preserveNullAndEmptyArrays", preserveNullAndEmptyArrays }
         });
 }
+
+/// <summary>
+/// A condition on the outer row that gates a keyed array lookup: the local field equals <paramref name="Value"/> (a constant or a query
+/// parameter, never null), and with <paramref name="Guarded"/> the field is also not null.
+/// </summary>
+internal readonly record struct LookupOuterCondition(string LocalField, MongoExpression Value, bool Guarded);
 
 /// <summary>
 /// One local/foreign field pair of a <see cref="LookupExpression.CompositeKey"/>. <see cref="MayBeNull"/> when either

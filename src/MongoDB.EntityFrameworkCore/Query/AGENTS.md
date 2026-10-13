@@ -105,8 +105,20 @@ Scope, joins, grouping:
   - **A correlation on several properties** (an anonymous-type `GroupJoin` key, or `r.A == s.A && r.B == s.B`) is a composite-key
     keyed array: `NativeCorrelationMatcher.TryMatchCorrelationKeys` returns `CorrelationKeyPart`s (the single-pair match is its one-part
     case). The predicate must be a pure conjunction of equalities, each compared property used once per side, plus at most one null guard
-    per compared OUTER property; a guard on a property not compared, a further conjunct, a constant side or an `||` declines. A guarded
-    part excludes a null outer value (`LookupKeyPair.ExcludesNullLocal`), an unguarded part equates null with null, as in a `Join`.
+    per compared OUTER property (or per outer condition, below); a guard on a property not compared, a conjunct that is not an equality
+    or an `||` declines. A guarded part excludes a null outer value (`LookupKeyPair.ExcludesNullLocal`), an unguarded part equates null
+    with null, as in a `Join`.
+    - **An equality that is not outer-vs-inner is a condition on one side** (`TryMatchCorrelation`; `TryMatchCorrelationKeys` is the
+      strict form that admits none). On the ELEMENT alone against a constant or query parameter (`r.Zone == 1`, `1996 == r.OrderDate.Year`,
+      `r.Zone + 1 == 2`, `== p`) it becomes an element filter (`CorrelationConditions.Element`, a lambda into `InnerPredicate`). On the OUTER
+      row alone (`c.City == "London"`, an outer property against a non-null constant or parameter) it gates the group
+      (`LookupExpression.OuterConditions`): `RenderLookup` adds a `let` of the outer field (`$ifNull`-normalized) and a `$match $expr`, so the
+      group is empty for an outer row that fails it, a parameter read per execution. At least one outer/inner key pair must remain, and
+      only equalities are admitted: `r.Price > 100` is still never dropped. EF's GroupJoin rewrite writes the parts as
+      `object.Equals((object)x, (object)y)` and guards a constant (`!(1 == null)`, ignored); both are normalized by the matcher. The
+      driver-LINQ bridge applies element conditions as `Enumerable.Where` over its plain array and leaves an outer gate UNRESOLVED (it
+      fails at translation, never empty): a gated lookup is `IsNativeOnlyArray`/`IsBridgeIgnorable`, and an element leaf's gated lookup is
+      rendered natively like any other (`RenderElementLeafLookup`). Each distinct gate gets its own `_fN` alias.
     EF10's GroupJoin rewrite guards every outer part, so the group is EMPTY for an outer row with a null part. EF8/EF9 keep the key whole
     (`Equals(new { s.A, s.B }, new { r.A, r.B })` behind a guard on a constructed object that is never false): member-wise, null equals
     null; `TryExpandAnonymousKeys` expands it to unguarded pairs. Each version's own rewrite is answered, so the two differ for a null

@@ -1994,20 +1994,22 @@ internal static class NativeProjectionBinder
             var correlated = new List<int>();
             for (var i = 0; i < wheres.Count; i++)
             {
-                if (NativeCorrelationMatcher.TryMatchCorrelationKeys(
-                        wheres[i].Body, mongoQ.CollectionExpression.EntityType, outerParameter, root.EntityType, out _))
+                if (NativeCorrelationMatcher.TryMatchCorrelation(
+                        wheres[i].Body, mongoQ.CollectionExpression.EntityType, outerParameter, root.EntityType, out _, out _))
                 {
                     correlated.Add(i);
                 }
             }
 
             if (correlated.Count == 1
-                && NativeCorrelationMatcher.TryMatchCorrelationKeys(
+                && NativeCorrelationMatcher.TryMatchCorrelation(
                     wheres[correlated[0]].Body, mongoQ.CollectionExpression.EntityType, outerParameter, root.EntityType,
-                    out var keyParts)
+                    out var keyParts, out var conditions)
+                && TryTranslateOuterConditions(conditions, out var outerConditions)
                 && TryStageKeyedArrayLookup(
                     mongoQ, outerParameter, root.EntityType, keyParts,
-                    wheres.Where((_, i) => i != correlated[0]).ToList(), pendingLookups, pendingBareCountStamps, out var stagedKeyed))
+                    wheres.Where((_, i) => i != correlated[0]).Concat(conditions.Element).ToList(), pendingLookups, pendingBareCountStamps,
+                    out var stagedKeyed, outerConditions: outerConditions))
             {
                 return new MongoExpressionTranslator.ReferencedCollectionSource(stagedKeyed.As, root.EntityType);
             }
@@ -2032,10 +2034,12 @@ internal static class NativeProjectionBinder
         [NotNullWhen(true)] out LookupExpression? staged,
         IReadOnlyList<(string Field, int Direction)>? elementSort = null,
         MongoExpression? elementLimit = null,
-        MongoExpression? elementSkip = null)
+        MongoExpression? elementSkip = null,
+        IReadOnlyList<LookupOuterCondition>? outerConditions = null)
     {
         staged = null;
         elementSort ??= [];
+        outerConditions ??= [];
 
         // A TPH-derived target needs the lookup narrowed by discriminator, as the navigation lookup's constructor does; a keyed lookup has no such stage and would count sibling-type documents. Declined.
         if (targetEntityType.BaseType is not null)
@@ -2045,7 +2049,7 @@ internal static class NativeProjectionBinder
         var aliasSuffix = "";
 
         // An element sort or limit changes what the array holds, so it too needs its own alias.
-        var hasElementStages = elementSort.Count > 0 || elementLimit is not null || elementSkip is not null;
+        var hasElementStages = elementSort.Count > 0 || elementLimit is not null || elementSkip is not null || outerConditions.Count > 0;
 
         if (filters.Count > 0 || hasElementStages)
         {
@@ -2064,19 +2068,20 @@ internal static class NativeProjectionBinder
 
             var baseAlias = NativeCorrelationMatcher.BuildCorrelatedArrayLookup(targetEntityType, keyParts).As;
             var existing = pendingLookups.Concat(mongoQ.GetPendingLookups())
-                .Where(l => l.IsCorrelatedArraySource && (l.ElementFilters.Count > 0 || l.HasElementStages)
+                .Where(l => l.IsCorrelatedArraySource && (l.ElementFilters.Count > 0 || l.HasElementStages || l.HasOuterConditions)
                             && l.As.StartsWith(baseAlias + "_f", StringComparison.Ordinal))
                 .ToList();
             var same = existing.FirstOrDefault(
                 l => SameFilters(l.ElementFilters, filters) && l.ElementSort.SequenceEqual(elementSort) && LookupExpression.SameElementCount(l.ElementLimit, elementLimit)
-                     && LookupExpression.SameElementCount(l.ElementSkip, elementSkip));
+                     && LookupExpression.SameElementCount(l.ElementSkip, elementSkip)
+                     && LookupExpression.SameOuterConditions(l.OuterConditions, outerConditions));
             aliasSuffix = same is not null
                 ? same.As[baseAlias.Length..]
                 : "_f" + (existing.Select(l => l.As).Distinct().Count() + 1);
         }
 
         var keyed = NativeCorrelationMatcher.BuildCorrelatedArrayLookup(
-            targetEntityType, keyParts, filters, filterPredicate, aliasSuffix, elementSort, elementLimit, elementSkip);
+            targetEntityType, keyParts, filters, filterPredicate, aliasSuffix, elementSort, elementLimit, elementSkip, outerConditions);
         if (!NativeCorrelationMatcher.TryStageNativeCollectionLookup(mongoQ, keyed, pendingLookups, out staged))
             return false;
 
@@ -2179,8 +2184,9 @@ internal static class NativeProjectionBinder
             return false;
         }
 
-        if (!NativeCorrelationMatcher.TryMatchCorrelationKeys(
-                shape.Correlation.Body, mongoQ.CollectionExpression.EntityType, outerParameter, target, out var keyParts))
+        if (!NativeCorrelationMatcher.TryMatchCorrelation(
+                shape.Correlation.Body, mongoQ.CollectionExpression.EntityType, outerParameter, target, out var keyParts, out var conditions)
+            || !TryTranslateOuterConditions(conditions, out var outerConditions))
         {
             return false;
         }
@@ -2206,14 +2212,37 @@ internal static class NativeProjectionBinder
         if ((shape.Take is not null && !shape.IsFirst && limit is null)
             || (shape.Skip is not null && skip is null)
             || !TryStageKeyedArrayLookup(
-                mongoQ, outerParameter, target, keyParts, shape.Filters.ToList(),
-                pendingLookups, pendingBareCountStamps, out var staged, sort, limit, skip))
+                mongoQ, outerParameter, target, keyParts, shape.Filters.Concat(conditions.Element).ToList(),
+                pendingLookups, pendingBareCountStamps, out var staged, sort, limit, skip, outerConditions))
         {
             return false;
         }
 
         pendingElementLeaves.Add((staged, alias));
         result = new MongoElementRefExpression(staged.As, target.ClrType);
+        return true;
+    }
+
+    /// <summary>
+    /// The conditions on the outer row of a correlation as lookup gates: each value a constant or query parameter serialized through the
+    /// outer property, so it is compared in the form the property is stored in.
+    /// </summary>
+    private static bool TryTranslateOuterConditions(CorrelationConditions conditions, out IReadOnlyList<LookupOuterCondition> translated)
+    {
+        var result = new List<LookupOuterCondition>();
+        translated = result;
+
+        foreach (var condition in conditions.Outer)
+        {
+            if (!NativeGroupByBinder.HasDefaultKeySerialization(condition.Property)
+                || NativeQueryParameter.TranslateConstantOrParameter(condition.Value.RemoveConvert(), condition.Property) is not { } value)
+            {
+                return false;
+            }
+
+            result.Add(new LookupOuterCondition(LookupExpression.GetFieldPath(condition.Property), value, condition.Guarded));
+        }
+
         return true;
     }
 
