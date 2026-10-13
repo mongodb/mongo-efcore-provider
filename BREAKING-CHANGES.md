@@ -4,6 +4,33 @@ Please note that this provider **does not follow traditional semantic versioning
 
 In order to evolve the provider as we introduce new features, we will be using the minor version number for breaking and significant changes to our EF Core provider. Please bear this in mind when upgrading to newer versions of the MongoDB EF Core Provider and ensure you read the release notes and this document for the latest in breaking change information.
 
+## Breaking changes in 8.5.0 / 9.2.0 / 10.1.0
+
+### Server-side date parts and calendar adds over a `HasDateTimeKind(DateTimeKind.Local)` property now throw
+
+#### Old behavior
+
+For a `DateTime` property configured with `HasDateTimeKind(DateTimeKind.Local)`, the date parts the driver translates (`Hour`, `Date`, `Year`, `Month`, `Day`, `DayOfWeek`, `DayOfYear`, `Minute`, `Second`, `Millisecond`) and `AddYears`/`AddMonths`/`AddDays`/`AddHours`/`AddMinutes`/`AddSeconds`/`AddMilliseconds` were evaluated by the server on the stored UTC instant:
+
+```c#
+context.Orders.Select(o => o.LocalDate.Hour);
+context.Orders.Where(o => o.LocalDate.AddDays(1) > cutoff);
+```
+
+The entity materializes as local time, so the server-computed value matched the C# value only where the local UTC offset is zero, and for the `Add*` methods only when no DST change or month-end clamping intervenes. Otherwise the query silently returned a wrong value or wrong rows.
+
+#### New behavior
+
+These queries throw `InvalidOperationException` naming the property. The same members over a `DateTime` member of a projected tuple, `ValueTuple` or record also throw, because the source property cannot be determined and may be Local-kind (this includes `Utc`-kind sources). Comparisons, and all of the above on `Utc`-kind or unconfigured `DateTime` properties are otherwise unchanged. Members the driver never translated (`Ticks`, `TimeOfDay`) already failed and now fail with this message.
+
+#### Why
+
+The MongoDB C# driver's LINQ translation renders these date operators without a `timezone`, so the provider cannot make the server evaluate them in local time. Failing is better than a silently wrong answer.
+
+#### Mitigations
+
+Use a `Utc`-kind (or default) property for the date arithmetic, or apply the date operation before projecting into a tuple or record, or bring the rows to the client first: `context.Orders.AsEnumerable().Select(o => o.LocalDate.Hour)`.
+
 ### Entity types with their own `DbSet` are no longer embedded when reached by a navigation
 
 #### Old behavior
