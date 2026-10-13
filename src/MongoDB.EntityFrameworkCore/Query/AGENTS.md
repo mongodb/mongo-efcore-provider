@@ -120,8 +120,11 @@ Scope, joins, grouping:
     `InnerPredicate`; ordering, `Skip` and the limit are the typed `ElementSort`/`ElementSkip`/`ElementLimit`, rendered by `RenderLookup`
     after the filter (not `PipelineStages`: `HasPipeline` would make the lookup non-native). A filter moved ahead of the ordering is
     equivalent, but `Skip`/`Take` must be the OUTERMOST operators: a `Where` after them filters the page, so it declines. `Take` on a
-    `FirstOrDefault`, a non-positive `Take`, a second `OrderBy` and a sort key that is not a default-stored scalar in CLR order also
-    decline. Each distinct (filters, sort, skip, limit) gets its own `_fN` alias.
+    `FirstOrDefault`, a non-positive CONSTANT `Take`, a second `OrderBy` and a sort key that is not a default-stored scalar in CLR order
+    also decline. `Skip`/`Take` may be a constant or a query parameter (`LookupExpression.ElementSkip`/`ElementLimit` are
+    `MongoExpression`s rendered through the placeholder table, so the value is read per execution); a parameter's value is checked at
+    `Build` (zero is an empty array, a negative count throws), see Paging below. Each distinct (filters, sort, skip, limit) gets its own
+    `_fN` alias; parameters are told apart by name (`LookupExpression.SameElementCount`), never by value.
     - The read side finds the lookup by the member's alias in `LookupExpression.ElementLeafAliases` (written at the binder's commit),
       never by re-deriving it (`TryBindReferencedElementLeaf`, native route only). The shaper is a `CollectionShaperExpression` with NO
       navigation over an `ArrayAliasProjectionExpression`: the list is assigned plainly and never fixed up into the principal's own
@@ -293,7 +296,7 @@ Shapers and projections:
   `IsNativeRepresentableSlotOperator`. QMTEV's `TranslateWhere/OrderBy/ThenBy/Skip/Take` are deliberately inert
   (`=> null`); routing them through the switch double-populates slots.
 - **Paging:** MongoDB rejects `{$limit: 0}`, so `Build` rewrites it to an always-false `$match`; negative values throw.
-  Normalization covers top level and `$unionWith`, not `$lookup` sub-pipelines.
+  Normalization covers top level, `$unionWith` and `$lookup` sub-pipelines (an element leaf's parameterized `Take`).
 - **One discriminator test for `OfType<T>`, `x is T` and `x.GetType() ==/!= typeof(T)`**
   (`MongoDiscriminatorPredicate.TryBuild`): values go through the discriminator property's serializer, and an abstract type
   contributes no value (its `null` in `$in` would match a document with no discriminator). A `GetType()` test against a

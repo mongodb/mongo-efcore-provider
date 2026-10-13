@@ -2031,8 +2031,8 @@ internal static class NativeProjectionBinder
         List<LookupExpression> pendingBareCountStamps,
         [NotNullWhen(true)] out LookupExpression? staged,
         IReadOnlyList<(string Field, int Direction)>? elementSort = null,
-        int? elementLimit = null,
-        int? elementSkip = null)
+        MongoExpression? elementLimit = null,
+        MongoExpression? elementSkip = null)
     {
         staged = null;
         elementSort ??= [];
@@ -2068,8 +2068,8 @@ internal static class NativeProjectionBinder
                             && l.As.StartsWith(baseAlias + "_f", StringComparison.Ordinal))
                 .ToList();
             var same = existing.FirstOrDefault(
-                l => SameFilters(l.ElementFilters, filters) && l.ElementSort.SequenceEqual(elementSort) && l.ElementLimit == elementLimit
-                     && l.ElementSkip == elementSkip);
+                l => SameFilters(l.ElementFilters, filters) && l.ElementSort.SequenceEqual(elementSort) && LookupExpression.SameElementCount(l.ElementLimit, elementLimit)
+                     && LookupExpression.SameElementCount(l.ElementSkip, elementSkip));
             aliasSuffix = same is not null
                 ? same.As[baseAlias.Length..]
                 : "_f" + (existing.Select(l => l.As).Distinct().Count() + 1);
@@ -2201,9 +2201,13 @@ internal static class NativeProjectionBinder
             sort.Add((keyField.ElementName, ascending ? 1 : -1));
         }
 
-        if (!TryStageKeyedArrayLookup(
+        var limit = shape.IsFirst ? new MongoConstantExpression(1, forSerialization: null) : TranslateElementCount(shape.Take);
+        var skip = TranslateElementCount(shape.Skip);
+        if ((shape.Take is not null && !shape.IsFirst && limit is null)
+            || (shape.Skip is not null && skip is null)
+            || !TryStageKeyedArrayLookup(
                 mongoQ, outerParameter, target, keyParts, shape.Filters.ToList(),
-                pendingLookups, pendingBareCountStamps, out var staged, sort, shape.IsFirst ? 1 : shape.Take, shape.Skip))
+                pendingLookups, pendingBareCountStamps, out var staged, sort, limit, skip))
         {
             return false;
         }
@@ -2212,6 +2216,9 @@ internal static class NativeProjectionBinder
         result = new MongoElementRefExpression(staged.As, target.ClrType);
         return true;
     }
+
+    internal static MongoExpression? TranslateElementCount(Expression? count)
+        => count is null ? null : NativeQueryParameter.TranslateConstantOrParameter(count, forSerialization: null);
 
     private static bool TryTranslateProjectedCollectionCount(
         MongoQueryExpression mongoQ,

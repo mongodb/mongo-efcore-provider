@@ -260,12 +260,29 @@ internal sealed class LookupExpression
     public IReadOnlyList<(string Field, int Direction)> ElementSort { get; init; } = [];
 
     /// <summary>
-    /// The number of elements a keyed array lookup keeps (<c>FirstOrDefault</c> keeps one), applied after <see cref="ElementSort"/>.
+    /// The number of elements a keyed array lookup keeps (<c>FirstOrDefault</c> keeps one), applied after <see cref="ElementSort"/>: a
+    /// constant or a query parameter, rendered through the placeholder table so a parameter is read per execution.
     /// </summary>
-    public int? ElementLimit { get; init; }
+    public MongoExpression? ElementLimit { get; init; }
 
-    /// <summary>The number of leading elements a keyed array lookup drops (<c>Skip</c>), applied after <see cref="ElementSort"/>.</summary>
-    public int? ElementSkip { get; init; }
+    /// <summary>
+    /// The number of leading elements a keyed array lookup drops (<c>Skip</c>), applied after <see cref="ElementSort"/>: a constant or a
+    /// query parameter.
+    /// </summary>
+    public MongoExpression? ElementSkip { get; init; }
+
+    /// <summary>
+    /// Whether two element limits or skips are the same: equal constants, or the same query parameter (by name, never by value: the value is
+    /// per execution, so two parameters are two arrays).
+    /// </summary>
+    public static bool SameElementCount(MongoExpression? left, MongoExpression? right)
+        => (left, right) switch
+        {
+            (null, null) => true,
+            (MongoConstantExpression l, MongoConstantExpression r) => Equals(l.Value, r.Value),
+            (MongoParameterExpression l, MongoParameterExpression r) => l.Name == r.Name,
+            _ => false
+        };
 
     /// <summary>
     /// Whether the sub-pipeline sorts or limits the array. Like <see cref="HasInnerPredicate"/>, only the native renderer honors it, so

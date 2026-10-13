@@ -188,7 +188,7 @@ public class NativeProjectedCollectionListLeafTests
         var mongoQ = BindAccepted(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderBy(o => o.Id).Take(2).ToList() }));
 
         var lookup = Assert.Single(mongoQ.GetPendingLookups());
-        Assert.Equal(2, lookup.ElementLimit);
+        Assert.Equal(2, Assert.IsType<MongoConstantExpression>(lookup.ElementLimit).Value);
         Assert.Null(lookup.ElementSkip);
         Assert.Equal(1, Assert.Single(lookup.ElementSort).Direction);
     }
@@ -199,8 +199,8 @@ public class NativeProjectedCollectionListLeafTests
         var mongoQ = BindAccepted(q => q.Select(c => new { c.Name, Orders = c.Orders.OrderByDescending(o => o.Id).Skip(1).Take(2).ToList() }));
 
         var lookup = Assert.Single(mongoQ.GetPendingLookups());
-        Assert.Equal(1, lookup.ElementSkip);
-        Assert.Equal(2, lookup.ElementLimit);
+        Assert.Equal(1, Assert.IsType<MongoConstantExpression>(lookup.ElementSkip).Value);
+        Assert.Equal(2, Assert.IsType<MongoConstantExpression>(lookup.ElementLimit).Value);
         Assert.Equal(-1, Assert.Single(lookup.ElementSort).Direction);
     }
 
@@ -210,8 +210,8 @@ public class NativeProjectedCollectionListLeafTests
         var mongoQ = BindAccepted(q => q.Select(c => new { c.Name, First = c.Orders.OrderBy(o => o.Id).Skip(1).FirstOrDefault() }));
 
         var lookup = Assert.Single(mongoQ.GetPendingLookups());
-        Assert.Equal(1, lookup.ElementSkip);
-        Assert.Equal(1, lookup.ElementLimit);
+        Assert.Equal(1, Assert.IsType<MongoConstantExpression>(lookup.ElementSkip).Value);
+        Assert.Equal(1, Assert.IsType<MongoConstantExpression>(lookup.ElementLimit).Value);
     }
 
     [Fact]

@@ -1510,8 +1510,10 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             l => l.IsCorrelatedArraySource
                  && l.TargetEntityType == targetType
                  && l.ElementLeafAliases.Contains(arrayAlias)
-                 && l.ElementLimit == (shape.IsFirst ? 1 : shape.Take)
-                 && l.ElementSkip == shape.Skip);
+                 && LookupExpression.SameElementCount(
+                     l.ElementLimit,
+                     shape.IsFirst ? new MongoConstantExpression(1, forSerialization: null) : NativeProjectionBinder.TranslateElementCount(shape.Take))
+                 && LookupExpression.SameElementCount(l.ElementSkip, NativeProjectionBinder.TranslateElementCount(shape.Skip)));
         if (lookup is null)
             return false;
 

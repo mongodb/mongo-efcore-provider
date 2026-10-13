@@ -49,11 +49,11 @@ internal sealed class ReferencedElementShape
     /// </summary>
     public LambdaExpression? Selector { get; init; }
 
-    /// <summary>The constant <c>Skip</c> applied after the ordering, or <see langword="null"/>.</summary>
-    public int? Skip { get; init; }
+    /// <summary>The <c>Skip</c> count applied after the ordering (a constant or a query parameter), or <see langword="null"/>.</summary>
+    public Expression? Skip { get; init; }
 
-    /// <summary>The constant <c>Take</c> applied after the skip (a <c>ToList</c> only), or <see langword="null"/>.</summary>
-    public int? Take { get; init; }
+    /// <summary>The <c>Take</c> count applied after the skip (a constant or a query parameter; a <c>ToList</c> only), or <see langword="null"/>.</summary>
+    public Expression? Take { get; init; }
 }
 
 /// <summary>
@@ -111,19 +111,23 @@ internal static class NativeReferencedElementMatcher
                 selector = selectLambda;
         }
 
-        // Constant paging, outermost: `OrderBy(..).Skip(1).Take(2).ToList()`. A Where above it would filter the page, not the group, and is
-        // declined by the loop below (it meets Skip/Take where it expects a filter or an ordering).
-        int? take = null;
-        int? skip = null;
-        if (!isFirst && TryPeelConstantPaging(ref source, nameof(Queryable.Take), out var takeCount))
+        // Paging, outermost: `OrderBy(..).Skip(1).Take(2).ToList()`, each count a constant or a query parameter. A Where above it would filter
+        // the page, not the group, and is declined by the loop below (it meets Skip/Take where it expects a filter or an ordering).
+        Expression? take = null;
+        Expression? skip = null;
+        if (!isFirst && TryPeelPaging(ref source, nameof(Queryable.Take), out var takeCount))
             take = takeCount;
 
-        if (TryPeelConstantPaging(ref source, nameof(Queryable.Skip), out var skipCount))
+        if (TryPeelPaging(ref source, nameof(Queryable.Skip), out var skipCount))
             skip = skipCount;
 
-        // Take(n) keeps a positive count ($limit: 0 is a server error); a negative Skip throws in LINQ.
-        if (take is <= 0 || skip is < 0)
+        // A constant Take keeps a positive count and a constant Skip is not negative; a parameter's value is checked per execution, where
+        // zero is an empty list and a negative count throws, as in LINQ.
+        if (take is ConstantExpression { Value: int constantTake and <= 0 }
+            || skip is ConstantExpression { Value: int constantSkip and < 0 })
+        {
             return false;
+        }
 
         var wheres = new List<LambdaExpression>();
         var sorts = new List<(LambdaExpression Key, bool Ascending)>();
@@ -201,20 +205,21 @@ internal static class NativeReferencedElementMatcher
         return true;
     }
 
-    private static bool TryPeelConstantPaging(ref Expression source, string methodName, out int count)
+    private static bool TryPeelPaging(ref Expression source, string methodName, [NotNullWhen(true)] out Expression? count)
     {
-        count = 0;
+        count = null;
 
         if (source is MethodCallExpression
             {
                 Method: { DeclaringType: var declaring } method,
-                Arguments: [var inner, ConstantExpression { Value: int constant }]
+                Arguments: [var inner, var argument]
             }
             && declaring == typeof(Queryable)
-            && method.Name == methodName)
+            && method.Name == methodName
+            && (argument is ConstantExpression { Value: int } || NativeQueryParameter.TryGetQueryParameterName(argument, out _)))
         {
             source = inner;
-            count = constant;
+            count = argument;
             return true;
         }
 

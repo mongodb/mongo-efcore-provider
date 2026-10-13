@@ -459,7 +459,7 @@ public class NativeCorrelatedReducerLeafTests
         Assert.Empty(mongoQ.CorrelatedReducerLeaves);
         var lookup = Assert.Single(mongoQ.GetPendingLookups());
         Assert.True(lookup.IsCorrelatedArraySource);
-        Assert.Equal(1, lookup.ElementLimit);
+        Assert.Equal(1, Assert.IsType<MongoConstantExpression>(lookup.ElementLimit).Value);
     }
 
     /// <summary>

@@ -449,10 +449,10 @@ internal sealed class MongoPipelineFactory
             }
 
             if (lookup.ElementSkip is { } skip)
-                stages.Add(new BsonDocument("$skip", skip));
+                stages.Add(new BsonDocument("$skip", MongoValueRenderer.RenderValue(skip, placeholders)));
 
             if (lookup.ElementLimit is { } limit)
-                stages.Add(new BsonDocument("$limit", limit));
+                stages.Add(new BsonDocument("$limit", MongoValueRenderer.RenderValue(limit, placeholders)));
 
             stages.AddRange(lookup.PipelineStages);
 
@@ -673,12 +673,18 @@ internal sealed class MongoPipelineFactory
                         $"Skip must be non-negative; got {skip}.");
             }
 
-            if (stage.TryGetValue("$unionWith", out var unionWithValue)
-                && unionWithValue.AsBsonDocument.TryGetValue("pipeline", out var innerPipeline))
+            // A $lookup sub-pipeline (an element leaf's Skip/Take) needs the same rules: `$limit: 0` is a server error there too.
+            foreach (var nested in new[] { "$unionWith", "$lookup" })
             {
-                var innerArray = innerPipeline.AsBsonArray.Select(d => d.AsBsonDocument).ToArray();
-                NormalizePagingStages(innerArray);
-                unionWithValue.AsBsonDocument["pipeline"] = new BsonArray(innerArray);
+                if (stage.TryGetValue(nested, out var nestedValue)
+                    && nestedValue.IsBsonDocument
+                    && nestedValue.AsBsonDocument.TryGetValue("pipeline", out var innerPipeline)
+                    && innerPipeline.IsBsonArray)
+                {
+                    var innerArray = innerPipeline.AsBsonArray.Select(d => d.AsBsonDocument).ToArray();
+                    NormalizePagingStages(innerArray);
+                    nestedValue.AsBsonDocument["pipeline"] = new BsonArray(innerArray);
+                }
             }
         }
     }

@@ -341,7 +341,7 @@ internal static class NativeCorrelationMatcher
     internal static LookupExpression BuildCorrelatedArrayLookup(
         IEntityType targetEntityType, IProperty outerProperty, IProperty innerProperty, bool guarded,
         IReadOnlyList<LambdaExpression>? filters = null, MongoExpression? filterPredicate = null, string aliasSuffix = "",
-        IReadOnlyList<(string Field, int Direction)>? elementSort = null, int? elementLimit = null, int? elementSkip = null)
+        IReadOnlyList<(string Field, int Direction)>? elementSort = null, MongoExpression? elementLimit = null, MongoExpression? elementSkip = null)
         => BuildCorrelatedArrayLookup(
             targetEntityType, [new CorrelationKeyPart(outerProperty, innerProperty, guarded)], filters, filterPredicate, aliasSuffix,
             elementSort, elementLimit, elementSkip);
@@ -354,7 +354,7 @@ internal static class NativeCorrelationMatcher
     internal static LookupExpression BuildCorrelatedArrayLookup(
         IEntityType targetEntityType, IReadOnlyList<CorrelationKeyPart> parts,
         IReadOnlyList<LambdaExpression>? filters = null, MongoExpression? filterPredicate = null, string aliasSuffix = "",
-        IReadOnlyList<(string Field, int Direction)>? elementSort = null, int? elementLimit = null, int? elementSkip = null)
+        IReadOnlyList<(string Field, int Direction)>? elementSort = null, MongoExpression? elementLimit = null, MongoExpression? elementSkip = null)
     {
         LookupExpression lookup;
         if (parts.Count == 1)
