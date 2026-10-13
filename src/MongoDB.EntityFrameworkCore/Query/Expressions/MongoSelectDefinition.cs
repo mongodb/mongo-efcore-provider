@@ -31,6 +31,14 @@ namespace MongoDB.EntityFrameworkCore.Query.Expressions;
 /// A plain data-holder, not an <see cref="System.Linq.Expressions.Expression"/> (hence <c>Definition</c>).
 /// Cross-collection <c>$lookup</c> state stays on <see cref="MongoQueryExpression"/> because it is entangled with
 /// the driver-LINQ fallback shaper.
+/// <para>
+/// The <c>Has*</c>/<c>Is*</c> members come in three kinds, which the name alone does not tell apart:
+/// <b>derived</b> (a getter over the recorded ops or projections, e.g. <see cref="HasPaging"/>, <see cref="Route"/>; never stored),
+/// <b>recorded</b> (a set-once fact with a private backing field and a <c>Mark*</c> method, read-only outside, e.g.
+/// <see cref="HasConfirmedJoinLookup"/>, <see cref="HasUnsupportedOperator"/>; it cannot be unset, so a recognizer stages locally and
+/// records only after every gate passes), and <b>shape flags</b> (plain <c>{ get; set; }</c> projection-shape facts a binder assigns at
+/// its commit point, e.g. <see cref="HasArrayProjectionLeaf"/>).
+/// </para>
 /// </remarks>
 internal sealed class MongoSelectDefinition
 {
