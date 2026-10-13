@@ -19,7 +19,9 @@ public static class TestDatabaseNamer
 {
     public const string TestDatabasePrefix = "EFTest-";
 
-    private static readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
+    // The process ID keeps names unique when several test assemblies run concurrently against one server.
+    private static readonly string TimeStamp
+        = $"{DateTime.Now.ToString("s").Replace(':', '-')}-p{Environment.ProcessId}";
     private static int DbCount;
 
     public static string GetUniqueDatabaseName(string? staticName = null)
