@@ -283,6 +283,85 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
             v => FirstAbove(db, (int)v!), 15, ["A1:2", "A2:4", "B1:5", "C0:null"], 650, ["A1:null", "A2:4", "B1:null", "C0:null"]);
     }
 
+    private static List<string> Taking(Ctx db, int n)
+        => db.Set<Cust>().Select(c => new { c.Id, Os = c.Orders.OrderBy(o => o.Id).Take(n).ToList() })
+            .AsEnumerable().Select(z => z.Id + ":" + Ids(z.Os)).OrderBy(s => s).ToList();
+
+    private static List<string> Skipping(Ctx db, int n)
+        => db.Set<Cust>().Select(c => new { c.Id, Os = c.Orders.OrderBy(o => o.Id).Skip(n).ToList() })
+            .AsEnumerable().Select(z => z.Id + ":" + Ids(z.Os)).OrderBy(s => s).ToList();
+
+    private static List<string> SkippingThenTakingOne(Ctx db, int skip)
+        => db.Set<Cust>().Select(c => new { c.Id, Os = c.Orders.OrderBy(o => o.Id).Skip(skip).Take(1).ToList() })
+            .AsEnumerable().Select(z => z.Id + ":" + Ids(z.Os)).OrderBy(s => s).ToList();
+
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Parameterized_Take_is_read_per_execution(MongoQueryMode mode)
+    {
+        var names = Seed();
+
+        // One context and one lambda shape, so every run after the first hits the compiled-query cache.
+        using var db = Create(names, mode, withNavigation: true);
+        NativeModeAssert.TwiceWithDifferentValues(
+            v => Taking(db, (int)v!), 2, ["A1:1,2", "A2:4", "B1:5", "C0:"], 1, ["A1:1", "A2:4", "B1:5", "C0:"]);
+
+        // Take(0) is an empty list, not a server error ($limit: 0 is invalid inside a $lookup too).
+        Assert.Equal(["A1:", "A2:", "B1:", "C0:"], Taking(db, 0));
+
+        // A negative Take throws, as LINQ does.
+        Assert.ThrowsAny<Exception>(() => Taking(db, -1));
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Parameterized_Skip_is_read_per_execution(MongoQueryMode mode)
+    {
+        var names = Seed();
+        using var db = Create(names, mode, withNavigation: true);
+
+        NativeModeAssert.TwiceWithDifferentValues(
+            v => Skipping(db, (int)v!), 1, ["A1:2,3", "A2:", "B1:", "C0:"], 0, ["A1:1,2,3", "A2:4", "B1:5", "C0:"]);
+
+        Assert.Equal(["A1:", "A2:", "B1:", "C0:"], Skipping(db, 10));
+        Assert.ThrowsAny<Exception>(() => Skipping(db, -1));
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void Parameterized_Skip_with_a_constant_Take_is_read_per_execution(MongoQueryMode mode)
+    {
+        var names = Seed();
+        using var db = Create(names, mode, withNavigation: true);
+
+        NativeModeAssert.TwiceWithDifferentValues(
+            v => SkippingThenTakingOne(db, (int)v!), 1, ["A1:2", "A2:", "B1:", "C0:"], 2, ["A1:3", "A2:", "B1:", "C0:"]);
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.Native)]
+    public void Two_leaves_with_different_Take_parameters_do_not_share_an_array(MongoQueryMode mode)
+    {
+        // The parameters are told apart by name, not by value: two leaves over one group with different parameters get their own arrays.
+        var names = Seed();
+        using var db = Create(names, mode, withNavigation: true);
+        var first = 1;
+        var second = 2;
+
+        var rows = db.Set<Cust>()
+            .Select(c => new { c.Id, A = c.Orders.OrderBy(o => o.Id).Take(first).ToList(), B = c.Orders.OrderBy(o => o.Id).Take(second).ToList() })
+            .AsEnumerable().Select(z => z.Id + ":" + Ids(z.A) + ":" + Ids(z.B)).OrderBy(s => s).ToList();
+
+        Assert.Equal(["A1:1:1,2", "A2:4:4", "B1:5:5", "C0::"], rows);
+    }
+
     private Ctx Create(string[] names, MongoQueryMode mode, bool withNavigation)
     {
         var options = new DbContextOptionsBuilder<Ctx>()
