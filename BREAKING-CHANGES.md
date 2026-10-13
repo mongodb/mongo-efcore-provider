@@ -4,6 +4,24 @@ Please note that this provider **does not follow traditional semantic versioning
 
 In order to evolve the provider as we introduce new features, we will be using the minor version number for breaking and significant changes to our EF Core provider. Please bear this in mind when upgrading to newer versions of the MongoDB EF Core Provider and ensure you read the release notes and this document for the latest in breaking change information.
 
+### Range, sort and aggregate queries over a numeric property stored as a string now fail on non-numeric stored values
+
+#### Old behavior
+
+For a `int`, `long`, `double` or `decimal` property (nullable or not) stored as a BSON string — through `HasBsonRepresentation(BsonType.String)` or `HasConversion<string>()` — range comparisons, sorting and aggregates ran against the stored string. `Sum` returned `0`, `Min`/`Max`/`OrderBy` compared lexicographically (`"10"` sorts before `"9"`), and `Where(e => e.Price > 50)` matched the wrong documents. A stored value that was not a number was silently ignored or misordered.
+
+#### New behavior
+
+These operations convert the stored string to the property's CLR type on the server (`$convert`), so results are numerically correct. A stored value that is not a valid number (for example `""`, `"abc"`, `"1,000"` or `" 5 "`) now causes the query to fail with a server error. Null and missing values are unaffected. Equality, inequality, `Equals` and `Contains` still compare the stored form and are unchanged.
+
+#### Why
+
+The previous results were silently wrong. Failing on malformed data is preferred to hiding it.
+
+#### Mitigations
+
+Documents written by EF Core always hold valid numbers and are unaffected. If other tools wrote non-numeric values to the property, clean them up first, or filter them out of the query. Range, sort and aggregate predicates over these properties can no longer use an index on the field.
+
 ### Entity types with their own `DbSet` are no longer embedded when reached by a navigation
 
 #### Old behavior
