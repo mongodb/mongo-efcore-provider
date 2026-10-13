@@ -792,8 +792,174 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     private static bool AreMismatchedExactEqualityTypes(Type left, Type right)
         => left != right && ExactTypeEqualityTypes.Contains(left) && ExactTypeEqualityTypes.Contains(right);
 
+    protected override Expression VisitMember(MemberExpression node)
+    {
+        // A server-side date part (Hour, Date, Year, ...) of a Local-kind DateTime property is extracted from the stored
+        // UTC instant, but the entity materializes as local time, so the value would silently disagree (EF-459).
+        if (node.Expression is { } receiver
+            && node.Member.DeclaringType == typeof(DateTime)
+            && node.Member.Name != nameof(DateTime.Kind))
+        {
+            ThrowIfLocalKindDateTime(receiver, node.Member.Name);
+        }
+
+        return base.VisitMember(node);
+    }
+
+    // Throws when `expression` is, or is computed from, a DateTime property configured HasDateTimeKind(Local), or when it is
+    // a member of a projected non-entity type (tuple, record) whose source we cannot see, so cannot rule out Local.
+    private void ThrowIfLocalKindDateTime(Expression expression, string operation)
+    {
+        var unresolved = false;
+        if (FindLocalKindProperty(expression, ref unresolved) is { } property)
+        {
+            throw new InvalidOperationException(
+                $"'{operation}' over the Local-kind DateTime property '{property.DeclaringType.DisplayName()}.{property.Name}' "
+                + "cannot be translated to a MongoDB query: the server evaluates it in UTC, so the result would differ from "
+                + "the local time the property materializes as. Server-side date arithmetic on a property configured with "
+                + "HasDateTimeKind(DateTimeKind.Local) is not supported; use a Utc-kind property or evaluate the date part "
+                + "on the client, for example after AsEnumerable().");
+        }
+
+        if (unresolved)
+        {
+            throw new InvalidOperationException(
+                $"'{operation}' over a DateTime member of a projected '{expression.Type.ShortDisplayName()}' cannot be translated "
+                + "to a MongoDB query: the member may come from a property configured with HasDateTimeKind(DateTimeKind.Local), "
+                + "which the server would evaluate in UTC, and the source property cannot be determined here. Apply the date "
+                + "operation before projecting into a tuple or record, or evaluate it on the client, for example after "
+                + "AsEnumerable().");
+        }
+    }
+
+    // Walks the nodes that carry a DateTime through unchanged in kind: casts, Nullable.Value, .Date, AddXxx, ??, ?:.
+    // Sets `unresolved` for a member of a non-entity owner (tuple, record) that is not a captured value: its source is unknown.
+    private IProperty? FindLocalKindProperty(Expression? expression, ref bool unresolved)
+    {
+        switch (expression)
+        {
+            case UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked or ExpressionType.TypeAs } convert:
+                return FindLocalKindProperty(convert.Operand, ref unresolved);
+
+            case MemberExpression { Expression: { } inner, Member.Name: "Value" or nameof(DateTime.Date) }
+                when Nullable.GetUnderlyingType(inner.Type) == typeof(DateTime) || inner.Type == typeof(DateTime):
+                return FindLocalKindProperty(inner, ref unresolved);
+
+            case MethodCallExpression { Object: { } target } call
+                when call.Method.DeclaringType == typeof(DateTime) && call.Method.Name.StartsWith("Add", StringComparison.Ordinal):
+                return FindLocalKindProperty(target, ref unresolved);
+
+            case BinaryExpression { NodeType: ExpressionType.Coalesce } coalesce:
+                return FindLocalKindProperty(coalesce.Left, ref unresolved) ?? FindLocalKindProperty(coalesce.Right, ref unresolved);
+
+            case ConditionalExpression conditional:
+                return FindLocalKindProperty(conditional.IfTrue, ref unresolved)
+                       ?? FindLocalKindProperty(conditional.IfFalse, ref unresolved);
+
+            case MethodCallExpression { Method: var method, Arguments: [{ } source, ConstantExpression { Value: string name }, ..] }
+                when method.IsEFPropertyMethod():
+                return FindLocalKindProperty(ResolveEntityTypes(source), name);
+
+            case MemberExpression { Expression: { } owner, Member: { MemberType: MemberTypes.Property or MemberTypes.Field } member }:
+                var ownerTypes = ResolveEntityTypes(owner);
+                if (ownerTypes.Count == 0)
+                {
+                    unresolved |= IsProjectionContainer(owner.Type) && IsQuerySourced(owner);
+                    return null;
+                }
+
+                return FindLocalKindProperty(ownerTypes, member.Name);
+
+            default:
+                return null;
+        }
+    }
+
+    private static IProperty? FindLocalKindProperty(IReadOnlyList<IEntityType> entityTypes, string propertyName)
+    {
+        foreach (var entityType in entityTypes)
+        {
+            if (entityType.FindProperty(propertyName) is { } property
+                && property.ClrType.UnwrapNullableType() == typeof(DateTime)
+                && property.GetDateTimeKind() == DateTimeKind.Local)
+            {
+                return property;
+            }
+        }
+
+        return null;
+    }
+
+    // The entity types `expression` can be: following navigations from its owner, so a type shared by several owners
+    // (an owned type used under two navigations) resolves to the one actually reached, else by CLR type.
+    private IReadOnlyList<IEntityType> ResolveEntityTypes(Expression expression)
+    {
+        var (owner, navigationName) = expression switch
+        {
+            MemberExpression { Expression: { } memberOwner, Member: var member } => (memberOwner, member.Name),
+            MethodCallExpression { Method: var method, Arguments: [{ } source, ConstantExpression { Value: string name }, ..] }
+                when method.IsEFPropertyMethod() => (source, name),
+            _ => (null, null)
+        };
+
+        if (owner != null)
+        {
+            var targets = ResolveEntityTypes(owner)
+                .Select(t => t.FindNavigation(navigationName!)?.TargetEntityType)
+                .OfType<IEntityType>()
+                .ToList();
+            if (targets.Count > 0)
+            {
+                return targets;
+            }
+        }
+
+        return _queryContext.Context.Model.FindEntityTypes(expression.Type).ToList();
+    }
+
+    // A type a Select can project a DateTime into: a tuple, or a user-defined type (record, class, struct). BCL value types such as
+    // DateTimeOffset have DateTime members but cannot carry a Local-kind property.
+    private static bool IsProjectionContainer(Type type)
+    {
+        type = type.UnwrapNullableType();
+        return type.Namespace is not { } ns
+               || !ns.StartsWith("System", StringComparison.Ordinal)
+               || type.FullName?.StartsWith("System.Tuple", StringComparison.Ordinal) == true
+               || type.FullName?.StartsWith("System.ValueTuple", StringComparison.Ordinal) == true;
+    }
+
+    // False for a captured variable or query parameter (a client value, whatever its kind); true for anything built from the
+    // query (a lambda parameter, or a tuple/record created from one), whose DateTime members we cannot trace to a property.
+    private static bool IsQuerySourced(Expression expression)
+    {
+        while (expression is MemberExpression { Expression: { } owner })
+        {
+            expression = owner;
+        }
+
+        return expression switch
+        {
+            ConstantExpression => false,
+#if EF8 || EF9
+            ParameterExpression { Name: { } name } when name.StartsWith(QueryCompilationContext.QueryParameterPrefix, StringComparison.Ordinal)
+                => false,
+#else
+            QueryParameterExpression => false,
+#endif
+            _ => true
+        };
+    }
+
     protected override Expression VisitMethodCall(MethodCallExpression node)
     {
+        // Calendar arithmetic (day/month/year) over a Local-kind DateTime property is evaluated by the server in UTC.
+        if (node is { Object: { } addReceiver }
+            && node.Method.DeclaringType == typeof(DateTime)
+            && node.Method.Name is nameof(DateTime.AddYears) or nameof(DateTime.AddMonths) or nameof(DateTime.AddDays))
+        {
+            ThrowIfLocalKindDateTime(addReceiver, node.Method.Name);
+        }
+
         if (node.Method.Name == nameof(Enumerable.Contains))
         {
             var rewrite = VisitContainsMethod(node);
