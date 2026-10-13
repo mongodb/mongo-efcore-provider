@@ -139,7 +139,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         // This bridge peels a join to a flat $lookup + $unwind and drops the join's inner source, and with it any filter on it (M22). A lookup
         // with an InnerPredicate can only be honored by the native renderer, so refuse rather than return unfiltered rows. Reached from
         // explicit DriverLinq and from a Native-mode fallback after a late native decline.
-        if (_pendingLookups.FirstOrDefault(l => l.HasInnerPredicate && !l.IsCorrelatedArraySource) is { } filteredJoinLookup)
+        if (_pendingLookups.FirstOrDefault(l => l.IsJoinWithNativeOnlyInnerFilter) is { } filteredJoinLookup)
         {
             throw new NativeTranslation.NativeTranslationNotSupportedException(
                 $"The join onto '{filteredJoinLookup.TargetEntityType.DisplayName()}' filters its inner side, which the "
@@ -150,7 +150,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         // The sort, skip or limit of an element stage belongs to a projected list or first element (`c.Orders.OrderBy(..).ToList()`), which
         // EmitLookupStages renders natively and copies to the leaf's alias. Stages with no leaf behind them have nothing that reads the array,
         // so the list would come back empty or unfiltered.
-        if (_pendingLookups.FirstOrDefault(l => l.HasElementStages && l.ElementLeafAliases.Count == 0) is { } nativeOnlyArray)
+        if (_pendingLookups.FirstOrDefault(l => l.HasElementStagesWithoutLeaf) is { } nativeOnlyArray)
         {
             throw new NativeTranslation.NativeTranslationNotSupportedException(
                 $"The projected collection of '{nativeOnlyArray.TargetEntityType.DisplayName()}' entities is only supported by the "

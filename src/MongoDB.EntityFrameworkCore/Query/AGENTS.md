@@ -71,8 +71,8 @@ Scope, joins, grouping:
   read per execution; never bake it into `PipelineStages`. The predicate is relative to the joined document: nothing is
   re-rooted (a translated predicate cannot be rebased).
   - **No non-native consumer may see such a lookup.** The driver-LINQ bridge drops a join's inner source and with it the
-    filter; `MongoEFToLinqTranslatingExpressionVisitor`'s constructor refuses any pending lookup with `HasInnerPredicate`.
-    Call that one predicate; don't restate it.
+    filter; `MongoEFToLinqTranslatingExpressionVisitor`'s constructor refuses any pending lookup with `IsJoinWithNativeOnlyInnerFilter`
+    (or `HasElementStagesWithoutLeaf`). Call those predicates; don't restate them.
   - **A TPH-derived entity set is narrowed in the preprocessor** (`DerivedEntityRootNarrower`:
     `Set<Dog>()` -> `Set<Animal>().OfType<Dog>()` before nav-expansion), so one discriminator predicate applies in every
     mode, on any join side or subquery. Not applied with a vector search.

@@ -321,6 +321,19 @@ internal sealed class LookupExpression
     public bool IsNativeOnlyArray => HasInnerPredicate || HasElementStages || HasOuterConditions || ElementLeafAliases.Count > 0;
 
     /// <summary>
+    /// Whether this lookup is a join whose inner filter (<see cref="InnerPredicate"/>) only the native renderer honors. The driver-LINQ
+    /// bridge peels a join to a flat <c>$lookup</c> + <c>$unwind</c> and drops its inner source, so it must refuse rather than return
+    /// unfiltered rows. A correlated array's predicate is an element filter the bridge applies itself.
+    /// </summary>
+    public bool IsJoinWithNativeOnlyInnerFilter => HasInnerPredicate && !IsCorrelatedArraySource;
+
+    /// <summary>
+    /// Whether the sub-pipeline sorts, skips or limits an array that no element leaf reads, so nothing could apply those stages
+    /// outside the native renderer: the bridge must refuse rather than return an empty or unfiltered list.
+    /// </summary>
+    public bool HasElementStagesWithoutLeaf => HasElementStages && ElementLeafAliases.Count == 0;
+
+    /// <summary>
     /// Whether the driver-LINQ bridge can read this lookup's array: a plain keyed array behind a correlated subquery
     /// (<see cref="IsCorrelatedArraySource"/>) that filters, sorts and limits nothing. The bridge emits it right after the root, as it
     /// does an <see cref="InjectAfterRoot"/> lookup, so a projection above can read it.
