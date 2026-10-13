@@ -506,7 +506,7 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
 
         static bool HasCaseMappingLambda(MethodCallExpression call)
             => call.Arguments.Select(a => a.UnwrapQuote()).OfType<LambdaExpression>()
-                .Any(l => NativeGroupByBinder.ContainsCaseMappingCall(l.Body));
+                .Any(l => NativeCaseMapping.ContainsCaseMappingCall(l.Body));
 
         // A case mapping in any lambda anywhere in an ungrouped source, through every source argument (both sides of a set op or join).
         static bool HasCaseMappingInSource(Expression source)

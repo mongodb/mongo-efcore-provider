@@ -167,7 +167,7 @@ internal sealed partial class MongoExpressionTranslator
         var preserved = mqlOperator is "$sum" or "$avg"
             ? StoredOrdering.PreservesClrValueForNumericReduction(property)
             : StoredOrdering.PreservesClrOrderingForAggregateAndSort(property);
-        if (!preserved || (property.GetValueConverter() is not null && !NativeGroupByBinder.HasDefaultKeySerialization(property)))
+        if (!preserved || (property.GetValueConverter() is not null && !StoredSerialization.HasDefaultKeySerialization(property)))
             return null;
 
         return new MongoArrayReduceExpression(
@@ -211,7 +211,7 @@ internal sealed partial class MongoExpressionTranslator
             MongoFieldExpression field
                 => !field.Property.IsShadowProperty()
                    && IsNumericClrType(field.Property.ClrType)
-                   && NativeGroupByBinder.HasDefaultKeySerialization(field.Property)
+                   && StoredSerialization.HasDefaultKeySerialization(field.Property)
                    && (numericReduction
                        ? StoredOrdering.PreservesClrValueForNumericReduction(field.Property)
                        : StoredOrdering.PreservesClrOrderingForAggregateAndSort(field.Property)),

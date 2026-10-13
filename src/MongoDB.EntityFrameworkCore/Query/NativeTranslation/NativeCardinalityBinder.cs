@@ -324,7 +324,7 @@ internal static class NativeCardinalityBinder
         // is needed), so TranslateSelect's confirming arms never run; confirm here. Placed just before success so a later decline can't leave
         // HasConfirmedJoinLookup set on a query that falls back.
         if (!select.HasConfirmedJoinLookup
-            && Visitors.MongoQueryableMethodTranslatingExpressionVisitor.IsSingleEligibleNativeJoinScope(mongoQ, out _))
+            && NativeJoinScopeGate.IsSingleEligibleNativeJoinScope(mongoQ, out _))
         {
             NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQ, select.JoinScope!);
         }

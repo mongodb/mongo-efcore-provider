@@ -286,7 +286,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             // ToLower/ToUpper over a string: $toLower/$toUpper are ASCII-only, so the call always runs client-side over
             // the bound receiver (the binder stages only the receiver), null-propagated; also kept off driver-LINQ
             // push-down (ProjectionAnalyzer.HasCaseMappingProjectedValue).
-            case MethodCallExpression caseMappingCall when NativeProjectionBinder.IsCaseMappingCall(caseMappingCall):
+            case MethodCallExpression caseMappingCall when NativeCaseMapping.IsCaseMappingCall(caseMappingCall):
                 return NullPropagatingStringCall(caseMappingCall, NullPropagatingReceiver(Visit(caseMappingCall.Object)!));
 
             // DateTimeOffset.ToString(...): the driver would render the stored sub-document as BSON JSON (EF-217). Bind
@@ -300,7 +300,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             // Projection route only; the driver-LINQ fallback still sees the original call.
             case MethodCallExpression dateTimeToString
                 when _queryExpression.Select.Route == NativeRoute.Projection
-                     && NativeProjectionBinder.IsDateTimeToString(dateTimeToString):
+                     && NativeCaseMapping.IsDateTimeToString(dateTimeToString):
                 return Expression.Call(
                     VisitThroughConversions(dateTimeToString.Object!), dateTimeToString.Method,
                     dateTimeToString.Arguments.Select(a => Visit(a)!));
@@ -427,7 +427,7 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// </summary>
     internal static bool IsClientCaseMapping(Expression expression)
         => expression is BlockExpression { Result: ConditionalExpression { IfFalse: MethodCallExpression call } }
-           && NativeProjectionBinder.IsCaseMappingCall(call);
+           && NativeCaseMapping.IsCaseMappingCall(call);
 
     /// <summary>
     /// True for <c>ToString(...)</c> on a <see cref="DateTimeOffset"/> (or nullable), also through a boxing conversion;

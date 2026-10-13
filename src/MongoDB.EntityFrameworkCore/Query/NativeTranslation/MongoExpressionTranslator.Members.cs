@@ -153,7 +153,7 @@ internal sealed partial class MongoExpressionTranslator
             return false;
         }
 
-        if (!NativeGroupByBinder.HasDefaultKeySerialization(property) || property.GetBinaryVectorDataType() != null)
+        if (!StoredSerialization.HasDefaultKeySerialization(property) || property.GetBinaryVectorDataType() != null)
             return false;
 
         var serializer = BsonSerializerFactory.GetPropertySerializationInfo(property).Serializer;
@@ -201,7 +201,7 @@ internal sealed partial class MongoExpressionTranslator
         var resolved = byElement[0];
         if ((Nullable.GetUnderlyingType(mqlField.Type) ?? mqlField.Type)
             != (Nullable.GetUnderlyingType(resolved.ClrType) ?? resolved.ClrType)
-            || !NativeGroupByBinder.HasDefaultKeySerialization(resolved))
+            || !StoredSerialization.HasDefaultKeySerialization(resolved))
         {
             return false;
         }

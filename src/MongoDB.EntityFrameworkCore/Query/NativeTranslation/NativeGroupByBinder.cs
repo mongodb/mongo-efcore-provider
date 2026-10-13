@@ -172,14 +172,6 @@ internal static class NativeGroupByBinder
         return true;
     }
 
-    // The key is read back from _id through a generic CLR-type serializer (no backing IProperty), which only reproduces default/identity serialization; a value
-    // converter or non-default BsonRepresentation would throw or return the raw stored value, so such keys fall back. Accumulator operands are held to the same
-    // rule ($sum/$max reduce the stored form). Also used by TranslateOfType's discriminator guard and as the strict half of StoredOrdering.PreservesClrOrdering (EF-337).
-    internal static bool HasDefaultKeySerialization(IProperty property)
-        => property.GetValueConverter() == null
-           && property.GetTypeMapping().Converter == null
-           && property.GetBsonRepresentation() == null;
-
     /// <summary>
     /// Parses the <c>Select</c> result selector against the pending key, finalizing <see cref="MongoSelectDefinition.Grouping"/>. Each member (or the bare body)
     /// must be a key access (<c>g.Key</c> / <c>g.Key.&lt;Sub&gt;</c>), a supported aggregate over a translatable value, or a supported computed/nested shape. A wrapped
@@ -252,7 +244,7 @@ internal static class NativeGroupByBinder
         foreach (var (memberName, projectedValue) in bindings)
         {
             // A client case mapping (`g.Key.ToUpper()`) stages only its receiver; the shaper re-applies the call (BindGroupMember), since $toUpper/$toLower are ASCII-only.
-            var valueExpr = PeelResultMemberCaseMapping(projectedValue);
+            var valueExpr = NativeCaseMapping.PeelResultMemberCaseMapping(projectedValue);
             hasCaseMappedMember |= !ReferenceEquals(valueExpr, projectedValue);
 
             if (!TryBindGroupMemberValue(
@@ -286,49 +278,6 @@ internal static class NativeGroupByBinder
             bareLeafAlias = NativeProjectionBinder.SyntheticBareProjectionAlias;
         ConfirmGroupByJoinScope(mongoQ);
         return true;
-    }
-
-    /// <summary>
-    /// The value a grouped result member (or bare body) stages when it projects a client case mapping (<c>g.Key.ToUpper()</c>, also under a <c>Convert</c>): the
-    /// mapping's receiver, whose raw value the <c>$group</c> output holds while the shaper re-applies the .NET call; otherwise <paramref name="value"/>. Driver-LINQ
-    /// would compute it with the ASCII-only, null-as-<c>""</c> <c>$toUpper</c>/<c>$toLower</c>, so <see cref="ContainsCaseMappingCall"/> declines it.
-    /// </summary>
-    internal static Expression PeelResultMemberCaseMapping(Expression value)
-        => value is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert
-           && PeelResultMemberCaseMapping(convert.Operand) is var receiver
-           && !ReferenceEquals(receiver, convert.Operand)
-            ? receiver
-            : NativeProjectionBinder.PeelCaseMapping(value);
-
-    /// <summary>True when <paramref name="expression"/> holds a case-mapping call (<see cref="NativeProjectionBinder.IsCaseMappingCall"/>) anywhere; the shaped-query compiler declines a grouped query holding one rather than run it on driver-LINQ (ASCII-only, null-as-<c>""</c> <c>$toUpper</c>/<c>$toLower</c>).</summary>
-    internal static bool ContainsCaseMappingCall(Expression expression)
-    {
-        var finder = new CaseMappingCallFinder();
-        finder.Visit(expression);
-        return finder.Found;
-    }
-
-    private sealed class CaseMappingCallFinder : ExpressionVisitor
-    {
-        public bool Found { get; private set; }
-
-        public override Expression? Visit(Expression? node)
-            => Found ? node : base.Visit(node);
-
-        protected override Expression VisitMethodCall(MethodCallExpression node)
-        {
-            if (NativeProjectionBinder.IsCaseMappingCall(node))
-            {
-                Found = true;
-                return node;
-            }
-
-            return base.VisitMethodCall(node);
-        }
-
-        // Query roots and other provider nodes carry no case mapping, and not all can visit children.
-        protected override Expression VisitExtension(Expression node)
-            => node;
     }
 
     // The flattening read of a key member. A whole composite g.Key is normally lifted as one sub-document and read through the key type's class map, whose DateTime
@@ -1058,7 +1007,7 @@ internal static class NativeGroupByBinder
         // count needs only injective serialization, which every serializer is.
         if (selectCall.Arguments[1].UnwrapLambdaFromQuote() is not { Body: MemberExpression } selector
             || !scope.Translator.TryTranslateField(selector.Body, out var selectorField)
-            || (!isSize && !HasDefaultKeySerialization(selectorField.Property)))
+            || (!isSize && !StoredSerialization.HasDefaultKeySerialization(selectorField.Property)))
             return false;
 
         MongoExpression operand = selectorField;
@@ -1473,7 +1422,7 @@ internal static class NativeGroupByBinder
         foreach (var projection in select.Projection)
         {
             // A bare field needs the default-serialization guard (or is a bare converted key); a computed key part has no IProperty, so no converter applies.
-            if (projection.Expression is MongoFieldExpression field && !HasDefaultKeySerialization(field.Property)
+            if (projection.Expression is MongoFieldExpression field && !StoredSerialization.HasDefaultKeySerialization(field.Property)
                 && !IsBareValueConvertedDistinctKey(select, field))
                 return false;
 
@@ -1601,7 +1550,7 @@ internal static class NativeGroupByBinder
 
         // A value-converted key (admitted by IsBareValueConvertedDistinctKey) would reduce the stored values and read the result back through a generic CLR serializer: Max over an
         // enum stored as a string throws, Average over an int stored as a string answers 0. The ungrouped Select(o => o.X).Max() declines the same operand.
-        if (keyPart.FieldRef is MongoFieldExpression keyField && !HasDefaultKeySerialization(keyField.Property))
+        if (keyPart.FieldRef is MongoFieldExpression keyField && !StoredSerialization.HasDefaultKeySerialization(keyField.Property))
             return false;
 
         var operand = new MongoElementRefExpression(keyPart.Name, keyPart.FieldRef.Type, throwsOnNull: keyPart.ThrowsOnNull);

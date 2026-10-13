@@ -107,7 +107,7 @@ internal static class NativeProjectionBinder
                 hasClientEvaluatedLeaf |= selector.Body is MemberInitExpression { NewExpression.Arguments.Count: > 0 };
                 foreach (var (memberName, member) in FlattenNestedConstructions(translator, wrappedMembers))
                 {
-                    var memberValue = PeelCaseMapping(member, includeDateTimeToString: true);
+                    var memberValue = NativeCaseMapping.PeelCaseMapping(member, includeDateTimeToString: true);
                     hasCaseMappingLeaf |= !ReferenceEquals(memberValue, member);
                     var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], memberValue, memberName);
                     if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, pendingElementLeaves, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, out var throwsOnNull, allowWholeRootEntityLeaf: true))
@@ -180,7 +180,7 @@ internal static class NativeProjectionBinder
                 && IsScalarPositionalConstruction(mongoQ, selector.Body, positionalMembers, selector.Parameters[0]):
                 foreach (var (memberName, member) in positionalMembers)
                 {
-                    var memberValue = PeelCaseMapping(member);
+                    var memberValue = NativeCaseMapping.PeelCaseMapping(member);
                     hasCaseMappingLeaf |= !ReferenceEquals(memberValue, member);
                     var alias = DeriveWrappedLeafAlias(mongoQ, selector.Parameters[0], memberValue, memberName);
                     if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], memberValue, alias, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, pendingElementLeaves, out var leaf, out var isArrayLeaf, out var isOwnedNavEntityLeaf, out var throwsOnNull, allowWholeRootEntityLeaf: true))
@@ -205,7 +205,7 @@ internal static class NativeProjectionBinder
                 foreach (var (elementName, element) in containerElements)
                 {
                     var elementOperand = UnwrapContainerElementBoxing(element);
-                    var elementValue = PeelCaseMapping(elementOperand);
+                    var elementValue = NativeCaseMapping.PeelCaseMapping(elementOperand);
                     hasCaseMappingLeaf |= !ReferenceEquals(elementValue, elementOperand);
                     if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], elementValue, elementName, pendingLookups, pendingReducerLeaves, pendingBareCountStamps, pendingElementLeaves, out var leaf, out var isArrayLeaf, out _, out var throwsOnNull))
                         return false;
@@ -284,7 +284,7 @@ internal static class NativeProjectionBinder
         // Shared by the bare-body and single-argument ctor-only arms; mutates this method's locals. Tier 1 (document path) before tier 2 (synthetic `_v`) so the late-fallback strip works.
         bool TryBindAsBareProjection(Expression bareLikeExpr, string provisionalAlias, bool allowWholeRootEntityLeafForThis)
         {
-            var peeled = PeelCaseMapping(bareLikeExpr, includeDateTimeToString: true);
+            var peeled = NativeCaseMapping.PeelCaseMapping(bareLikeExpr, includeDateTimeToString: true);
             hasCaseMappingLeaf |= !ReferenceEquals(peeled, bareLikeExpr);
             bareLikeExpr = peeled;
             if (!TryTranslateLeaf(mongoQ, translator, selector.Parameters[0], bareLikeExpr, provisionalAlias,
@@ -653,7 +653,7 @@ internal static class NativeProjectionBinder
         if (cast.NodeType is not (ExpressionType.Convert or ExpressionType.ConvertChecked)
             || property.GetValueConverter() != null
             || property.GetTypeMapping().Converter != null
-            || NativeGroupByBinder.HasDefaultKeySerialization(property))
+            || StoredSerialization.HasDefaultKeySerialization(property))
         {
             return false;
         }
@@ -707,33 +707,6 @@ internal static class NativeProjectionBinder
 
     private static bool IsEnumType(Type type)
         => (Nullable.GetUnderlyingType(type) ?? type).IsEnum;
-
-    /// <summary>True for zero-argument <c>ToLower</c>/<c>ToUpper</c>/<c>ToLowerInvariant</c>/<c>ToUpperInvariant</c> on a <see langword="string"/>. Server forms are ASCII-only, so a leaf stages only the receiver (<see cref="PeelCaseMapping"/>) and the call is re-applied client-side.</summary>
-    internal static bool IsCaseMappingCall(MethodCallExpression call)
-        => call is { Object.Type: var objectType, Arguments.Count: 0 }
-           && objectType == typeof(string)
-           && call.Method.DeclaringType == typeof(string)
-           && call.Method.Name is nameof(string.ToLower) or nameof(string.ToUpper)
-               or nameof(string.ToLowerInvariant) or nameof(string.ToUpperInvariant);
-
-    /// <summary>
-    /// The receiver of a (possibly repeated) case-mapping call, which is what the leaf stages; the call stays in the shaper (<c>MongoProjectionBindingExpressionVisitor.Visit</c>;
-    /// positional-ctor: <c>BindPositionalCtorProjectionMember</c>). <paramref name="includeDateTimeToString"/> also peels <see cref="IsDateTimeToString"/> (plain-<c>Select</c> callers only: their read side re-applies it).
-    /// </summary>
-    internal static Expression PeelCaseMapping(Expression leafExpression, bool includeDateTimeToString = false)
-    {
-        while (leafExpression is MethodCallExpression call
-               && (IsCaseMappingCall(call) || includeDateTimeToString && IsDateTimeToString(call)))
-            leafExpression = call.Object!;
-
-        return leafExpression;
-    }
-
-    /// <summary>True for <c>ToString()</c>/<c>ToString("format")</c> on a <see cref="DateTime"/> (or nullable). No server form matches .NET's culture-sensitive output (driver-LINQ pushes down an ISO <c>$toString</c>, wrong on main), so a leaf stages only the receiver and the call is re-applied client-side, as for <c>DateTimeOffset.ToString</c> (D-TOSTRING).</summary>
-    internal static bool IsDateTimeToString(MethodCallExpression call)
-        => call is { Method.Name: nameof(ToString), Object: { } receiver }
-           && receiver.Type.UnwrapNullableType() == typeof(DateTime)
-           && call.Arguments is [] or [ConstantExpression { Value: string }];
 
     /// <summary>
     /// True for a numeric computed leaf the server evaluates whole: <c>-x</c> (Negate/NegateChecked over a numeric operand), or a widening numeric cast over such a negation or an
@@ -992,7 +965,7 @@ internal static class NativeProjectionBinder
             && IsEnumType(castUnary.Operand.Type)
             && IsEnumType(castUnary.Type)
             && TryTranslatePlainField(translator, castUnary.Operand, out var castField)
-            && NativeGroupByBinder.HasDefaultKeySerialization(castField.Property))
+            && StoredSerialization.HasDefaultKeySerialization(castField.Property))
         {
             result = castField;
             return true;
@@ -2199,7 +2172,7 @@ internal static class NativeProjectionBinder
                 || !new MongoExpressionTranslator(target, key.Parameters[0]).TryTranslateField(key.Body, out var keyField)
                 || keyField.ElementName.Contains('.')
                 || !StoredOrdering.PreservesClrOrderingForAggregateAndSort(keyField.Property)
-                || !NativeGroupByBinder.HasDefaultKeySerialization(keyField.Property))
+                || !StoredSerialization.HasDefaultKeySerialization(keyField.Property))
             {
                 return false;
             }
@@ -2234,7 +2207,7 @@ internal static class NativeProjectionBinder
 
         foreach (var condition in conditions.Outer)
         {
-            if (!NativeGroupByBinder.HasDefaultKeySerialization(condition.Property)
+            if (!StoredSerialization.HasDefaultKeySerialization(condition.Property)
                 || NativeQueryParameter.TranslateConstantOrParameter(condition.Value.RemoveConvert(), condition.Property) is not { } value)
             {
                 return false;
@@ -2528,7 +2501,7 @@ internal static class NativeProjectionBinder
             || !elementTranslator.TryTranslateField(memberBody, out var memberField)
             || memberField.ElementName.Contains('.')
             // Read back by alias with no IProperty, so value converters/non-default representations can't be honored.
-            || !NativeGroupByBinder.HasDefaultKeySerialization(memberField.Property))
+            || !StoredSerialization.HasDefaultKeySerialization(memberField.Property))
         {
             return false;
         }
@@ -2579,7 +2552,7 @@ internal static class NativeProjectionBinder
                     .TryTranslateField(sortKeySelector.Body, out var sortField)
                 || sortField.ElementName.Contains('.')
                 // $sort uses the stored representation; a converted key (enum stored as string) may sort differently from the CLR order and pick a different "first" row.
-                || !NativeGroupByBinder.HasDefaultKeySerialization(sortField.Property))
+                || !StoredSerialization.HasDefaultKeySerialization(sortField.Property))
             {
                 return false;
             }

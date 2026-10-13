@@ -288,7 +288,7 @@ internal class MongoProjectionBindingRemovingExpressionVisitor : ExpressionVisit
 
                         var valueExpression = (_queryExpression.Select.Route == NativeRoute.Projection
                                                || _queryExpression.Select is { Route: NativeRoute.GroupBy, IsDistinct: true, IsGroupBy: false }
-                                               && NativeGroupByBinder.HasDefaultKeySerialization(fieldAccess.Property))
+                                               && StoredSerialization.HasDefaultKeySerialization(fieldAccess.Property))
                             && !ReadsUnprojectedDocuments
                             && fieldAccess.Property.ClrType.UnwrapNullableType() != typeof(BsonDocument)
                             && fieldAccess.Property.ClrType.UnwrapNullableType() != typeof(BsonArray)
