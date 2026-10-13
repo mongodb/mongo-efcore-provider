@@ -3456,15 +3456,11 @@ OrderDetails.
 
     public override async Task OrderBy_ThenBy_same_column_different_direction(bool async)
     {
-        // Fails: Multiple ordering issue EF-253
-        Assert.Contains(
-            "Duplicate element name '_id'.",
-            (await Assert.ThrowsAsync<InvalidOperationException>(() => base.OrderBy_ThenBy_same_column_different_direction(async)))
-            .Message);
+        await base.OrderBy_ThenBy_same_column_different_direction(async);
 
         AssertMql(
             """
-            Customers.
+            Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^A", "options" : "s" } } } }, { "$sort" : { "_id" : 1 } }, { "$project" : { "_v" : "$_id", "_id" : 0 } }
             """);
     }
 
