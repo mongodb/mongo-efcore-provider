@@ -2456,7 +2456,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ 
         await AssertTranslationFailed(() =>
             base.Where_datetimeoffset_now_component(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -2468,7 +2468,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ 
         await AssertTranslationFailed(() =>
             base.Where_datetimeoffset_utcnow_component(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -2570,7 +2570,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : [{ "$
         await AssertTranslationFailed(() =>
             base.Like_with_non_string_column_using_ToString(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -2582,7 +2582,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : [{ "$
         await AssertTranslationFailed(() =>
             base.Like_with_non_string_column_using_double_cast(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -2609,6 +2609,10 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : [{ "$
     }
 
 #endif
+
+    // A translation refusal logs MQL only when the driver-LINQ fallback attempts the query first; NativeOnly refuses before that.
+    private void AssertMqlLoggedByFallback(params string[] expected)
+        => AssertMql(MongoSpecTestHelpers.IsNativeOnly ? [] : expected);
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);

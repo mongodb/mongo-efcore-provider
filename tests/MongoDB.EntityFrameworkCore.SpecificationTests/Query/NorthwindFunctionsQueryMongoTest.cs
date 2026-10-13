@@ -444,7 +444,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ 
         // Fails: String.Join issue EF-245
         await AssertTranslationFailed(() => base.String_Join_over_non_nullable_column(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Customers.
             """);
@@ -455,7 +455,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ 
         // Fails: String.Join issue EF-245
         await AssertTranslationFailed(() => base.String_Join_over_nullable_column(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Customers.
             """);
@@ -466,7 +466,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ 
         // Fails: String.Join issue EF-245
         await AssertTranslationFailed(() => base.String_Join_with_predicate(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Customers.
             """);
@@ -477,7 +477,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$cond" : { "if" : { "$eq" : [{ 
         // Fails: String.Join issue EF-245
         await AssertTranslationFailed(() => base.String_Join_with_ordering(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Customers.
             """);
@@ -501,7 +501,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$concat" : [{ "$ifNull" : ["$Co
         // Fails: GroupBy issue EF-149
         await AssertTranslationFailed(() => base.String_Concat(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Customers.
             """);
@@ -1387,7 +1387,7 @@ OrderDetails.{ "$match" : { "$and" : [{ "UnitPrice" : { "$lt" : { "$numberDecima
         await AssertTranslationFailed(() =>
             base.Where_mathf_floor(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             OrderDetails.
             """);
@@ -1419,7 +1419,7 @@ OrderDetails.{ "$match" : { "$expr" : { "$gt" : [{ "$pow" : ["$Discount", 2.0] }
         await AssertTranslationFailed(() =>
             base.Where_mathf_round2(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             OrderDetails.
             """);
@@ -1441,7 +1441,7 @@ OrderDetails.{ "$match" : { "$expr" : { "$gt" : [{ "$pow" : ["$Discount", 2.0] }
         await AssertTranslationFailed(() =>
             base.Select_mathf_round2(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             OrderDetails.
             """);
@@ -1453,7 +1453,7 @@ OrderDetails.{ "$match" : { "$expr" : { "$gt" : [{ "$pow" : ["$Discount", 2.0] }
         await AssertTranslationFailed(() =>
             base.Where_mathf_truncate(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             OrderDetails.
             """);
@@ -1465,7 +1465,7 @@ OrderDetails.{ "$match" : { "$expr" : { "$gt" : [{ "$pow" : ["$Discount", 2.0] }
         await AssertTranslationFailed(() =>
             base.Select_mathf_truncate(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             OrderDetails.
             """);
@@ -1679,7 +1679,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$pow" : [{ "$cond" : { "if" : {
         await AssertTranslationFailed(() =>
             base.Convert_ToBoolean(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -1691,7 +1691,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$pow" : [{ "$cond" : { "if" : {
         await AssertTranslationFailed(() =>
             base.Convert_ToByte(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -1703,7 +1703,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$pow" : [{ "$cond" : { "if" : {
         await AssertTranslationFailed(() =>
             base.Convert_ToDecimal(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -1715,7 +1715,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$pow" : [{ "$cond" : { "if" : {
         await AssertTranslationFailed(() =>
             base.Convert_ToDouble(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -1727,7 +1727,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$pow" : [{ "$cond" : { "if" : {
         await AssertTranslationFailed(() =>
             base.Convert_ToInt16(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -1739,7 +1739,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$pow" : [{ "$cond" : { "if" : {
         await AssertTranslationFailed(() =>
             base.Convert_ToInt32(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -1751,7 +1751,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$pow" : [{ "$cond" : { "if" : {
         await AssertTranslationFailed(() =>
             base.Convert_ToInt64(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -1763,7 +1763,7 @@ Customers.{ "$match" : { "$expr" : { "$eq" : [{ "$pow" : [{ "$cond" : { "if" : {
         await AssertTranslationFailed(() =>
             base.Convert_ToString(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -2144,7 +2144,7 @@ Customers.{ "$set" : { "__sort0" : { "$cond" : { "if" : { "$eq" : [{ "$ifNull" :
         await AssertTranslationFailed(() =>
             base.Where_DateOnly_FromDateTime(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -2206,7 +2206,7 @@ Orders.{ "$match" : { "_id" : { "$lt" : 10250 } } }, { "$set" : { "__sort0" : { 
         await AssertTranslationFailed(() =>
             base.Datetime_subtraction_TotalDays(async));
 
-        AssertMql(
+        AssertMqlLoggedByFallback(
             """
             Orders.
             """);
@@ -2330,6 +2330,10 @@ Customers.
     }
 
 #endif
+
+    // A translation refusal logs MQL only when the driver-LINQ fallback attempts the query first; NativeOnly refuses before that.
+    private void AssertMqlLoggedByFallback(params string[] expected)
+        => AssertMql(MongoSpecTestHelpers.IsNativeOnly ? [] : expected);
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);

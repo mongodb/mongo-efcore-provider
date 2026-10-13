@@ -551,7 +551,7 @@ internal static class NativeCorrelationMatcher
             elementSort, elementLimit, elementSkip, outerConditions);
 
     /// <summary>
-    /// <see cref="BuildCorrelatedArrayLookup(IEntityType, IProperty, IProperty, bool, IReadOnlyList{LambdaExpression}?, MongoExpression?, string, IReadOnlyList{ValueTuple{string, int}}?, int?, int?)"/>
+    /// <see cref="BuildCorrelatedArrayLookup(IEntityType, IProperty, IProperty, bool, IReadOnlyList{LambdaExpression}?, MongoExpression?, string, IReadOnlyList{ValueTuple{string, int}}?, MongoExpression?, MongoExpression?, IReadOnlyList{LookupOuterCondition}?)"/>
     /// over one or several key pairs. Several pairs are a composite-key lookup (the <c>let</c> + <c>$expr</c> form), each pair
     /// null-normalized when either property is nullable and optionally excluding a null outer value.
     /// </summary>

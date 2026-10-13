@@ -583,7 +583,7 @@ Customers.
             () => base.Left_join_with_tautology_predicate_doesnt_convert_to_cross_join(async));
 
 #if EF8 || EF9
-        AssertMql(
+        AssertMqlLoggedByFallback(
     """
             Customers.
             """);
@@ -829,6 +829,10 @@ Customers.{ "$match" : { "_id" : { "$regularExpression" : { "pattern" : "^F", "o
     }
 
 #endif
+
+    // A translation refusal logs MQL only when the driver-LINQ fallback attempts the query first; NativeOnly refuses before that.
+    private void AssertMqlLoggedByFallback(params string[] expected)
+        => AssertMql(MongoSpecTestHelpers.IsNativeOnly ? [] : expected);
 
     private void AssertMql(params string[] expected)
         => Fixture.TestMqlLoggerFactory.AssertBaseline(expected);
