@@ -34,8 +34,8 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Query;
 /// Hand-computed over raw seeds, including a customer with no orders (the empty group: <c>FirstOrDefault</c> is null,
 /// <c>ToList</c> is empty) and orders whose customer is dangling or null (never in any group).
 /// <para>
-/// <see cref="MongoQueryMode.NativeOnly"/> and <see cref="MongoQueryMode.Native"/> must answer exactly. The explicit
-/// <see cref="MongoQueryMode.DriverLinq"/> leg may answer correctly or refuse loudly, never answer wrongly.
+/// Every mode must answer exactly, including the explicit <see cref="MongoQueryMode.DriverLinq"/> one. A shape the bridge
+/// cannot answer must fail loudly, never come back empty.
 /// </para>
 /// </summary>
 [XUnitCollection("QueryTests")]
@@ -86,30 +86,14 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
         return names;
     }
 
-    private void Assert3<T>(bool withNavigation, Func<Ctx, IQueryable<T>> query, Func<T, string> format, List<string> expected)
+    private void Strict3<T>(bool withNavigation, Func<Ctx, IQueryable<T>> query, Func<T, string> format, List<string> expected)
     {
         var names = Seed();
         foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native, MongoQueryMode.DriverLinq })
         {
             using var db = Create(names, mode, withNavigation);
-            List<string>? rows = null;
-            try
-            {
-                rows = query(db).AsEnumerable().Select(format).OrderBy(s => s).ToList();
-            }
-            catch (Exception) when (mode == MongoQueryMode.DriverLinq)
-            {
-                // The bridge may refuse these leaves for now (never answer wrongly).
-            }
-
-            if (rows is not null)
-            {
-                Assert.True(expected.SequenceEqual(rows), $"{mode} returned [{string.Join(", ", rows)}], expected [{string.Join(", ", expected)}]");
-            }
-            else
-            {
-                Assert.Equal(MongoQueryMode.DriverLinq, mode);
-            }
+            var rows = query(db).AsEnumerable().Select(format).OrderBy(s => s).ToList();
+            Assert.True(expected.SequenceEqual(rows), $"{mode} returned [{string.Join(", ", rows)}], expected [{string.Join(", ", expected)}]");
         }
     }
 
@@ -121,77 +105,77 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
 
     [Fact]
     public void Navigation_FirstOrDefault_of_an_ordered_group()
-        => Assert3(true, db => db.Set<Cust>().Select(c => new { c.Id, F = c.Orders.OrderBy(o => o.Id).FirstOrDefault() }),
+        => Strict3(true, db => db.Set<Cust>().Select(c => new { c.Id, F = c.Orders.OrderBy(o => o.Id).FirstOrDefault() }),
             z => z.Id + ":" + Id(z.F), ["A1:1", "A2:4", "B1:5", "C0:null"]);
 
     [Fact]
     public void Navigation_FirstOrDefault_descending_is_the_last_by_the_ordering()
-        => Assert3(true, db => db.Set<Cust>().Select(c => new { c.Id, F = c.Orders.OrderByDescending(o => o.Total).FirstOrDefault() }),
+        => Strict3(true, db => db.Set<Cust>().Select(c => new { c.Id, F = c.Orders.OrderByDescending(o => o.Total).FirstOrDefault() }),
             z => z.Id + ":" + Id(z.F), ["A1:3", "A2:4", "B1:5", "C0:null"]);
 
     [Fact]
     public void Navigation_FirstOrDefault_with_a_predicate()
-        => Assert3(true, db => db.Set<Cust>().Select(c => new { c.Id, F = c.Orders.OrderBy(o => o.Id).FirstOrDefault(o => o.Total > 15) }),
+        => Strict3(true, db => db.Set<Cust>().Select(c => new { c.Id, F = c.Orders.OrderBy(o => o.Id).FirstOrDefault(o => o.Total > 15) }),
             z => z.Id + ":" + Id(z.F), ["A1:2", "A2:4", "B1:5", "C0:null"]);
 
     [Fact]
     public void Navigation_FirstOrDefault_is_null_when_the_predicate_matches_nothing()
-        => Assert3(true, db => db.Set<Cust>().Select(c => new { c.Id, F = c.Orders.OrderBy(o => o.Id).FirstOrDefault(o => o.Total > 650) }),
+        => Strict3(true, db => db.Set<Cust>().Select(c => new { c.Id, F = c.Orders.OrderBy(o => o.Id).FirstOrDefault(o => o.Total > 650) }),
             z => z.Id + ":" + Id(z.F), ["A1:null", "A2:4", "B1:null", "C0:null"]);
 
     [Fact]
     public void Navigation_ToList_of_a_filtered_ordered_group()
-        => Assert3(true, db => db.Set<Cust>().Select(c => new { c.Id, Os = c.Orders.Where(o => o.Total > 15).OrderBy(o => o.Id).ToList() }),
+        => Strict3(true, db => db.Set<Cust>().Select(c => new { c.Id, Os = c.Orders.Where(o => o.Total > 15).OrderBy(o => o.Id).ToList() }),
             z => z.Id + ":" + Ids(z.Os), ["A1:2,3", "A2:4", "B1:5", "C0:"]);
 
     [Fact]
     public void Navigation_ToList_of_the_ordered_group_keeps_the_ordering()
-        => Assert3(true, db => db.Set<Cust>().Select(c => new { c.Id, Os = c.Orders.OrderByDescending(o => o.Id).ToList() }),
+        => Strict3(true, db => db.Set<Cust>().Select(c => new { c.Id, Os = c.Orders.OrderByDescending(o => o.Id).ToList() }),
             z => z.Id + ":" + Ids(z.Os), ["A1:3,2,1", "A2:4", "B1:5", "C0:"]);
 
     [Fact]
     public void Navigation_ToList_of_a_scalar_projection()
-        => Assert3(true, db => db.Set<Cust>().Select(c => new { c.Id, Ts = c.Orders.OrderBy(o => o.Id).Select(o => o.Total).ToList() }),
+        => Strict3(true, db => db.Set<Cust>().Select(c => new { c.Id, Ts = c.Orders.OrderBy(o => o.Id).Select(o => o.Total).ToList() }),
             z => z.Id + ":" + string.Join(",", z.Ts), ["A1:10,20,600", "A2:700", "B1:30", "C0:"]);
 
     [Fact]
     public void Navigation_ToList_with_an_aggregate_beside_it()
-        => Assert3(true, db => db.Set<Cust>().Select(c => new { c.Id, N = c.Orders.Count, Os = c.Orders.OrderBy(o => o.Id).ToList() }),
+        => Strict3(true, db => db.Set<Cust>().Select(c => new { c.Id, N = c.Orders.Count, Os = c.Orders.OrderBy(o => o.Id).ToList() }),
             z => z.Id + ":" + z.N + ":" + Ids(z.Os), ["A1:3:1,2,3", "A2:1:4", "B1:1:5", "C0:0:"]);
 
     // ---- a GroupJoin on a model with no navigation (G12, G13)
 
     [Fact]
     public void GroupJoin_FirstOrDefault_of_an_ordered_group()
-        => Assert3(false,
+        => Strict3(false,
             db => db.Set<Cust>().GroupJoin(db.Set<Ord>(), c => c.Id, o => o.CustId,
                 (c, g) => new { c.Id, F = g.OrderBy(o => o.Id).FirstOrDefault() }),
             z => z.Id + ":" + Id(z.F), ["A1:1", "A2:4", "B1:5", "C0:null"]);
 
     [Fact]
     public void GroupJoin_FirstOrDefault_with_a_predicate()
-        => Assert3(false,
+        => Strict3(false,
             db => db.Set<Cust>().GroupJoin(db.Set<Ord>(), c => c.Id, o => o.CustId,
                 (c, g) => new { c.Id, F = g.OrderBy(o => o.Id).FirstOrDefault(o => o.Total > 15) }),
             z => z.Id + ":" + Id(z.F), ["A1:2", "A2:4", "B1:5", "C0:null"]);
 
     [Fact]
     public void GroupJoin_ToList_of_the_ordered_group()
-        => Assert3(false,
+        => Strict3(false,
             db => db.Set<Cust>().GroupJoin(db.Set<Ord>(), c => c.Id, o => o.CustId,
                 (c, g) => new { c.Id, Os = g.OrderBy(o => o.Id).ToList() }),
             z => z.Id + ":" + Ids(z.Os), ["A1:1,2,3", "A2:4", "B1:5", "C0:"]);
 
     [Fact]
     public void GroupJoin_ToList_of_a_filtered_group()
-        => Assert3(false,
+        => Strict3(false,
             db => db.Set<Cust>().GroupJoin(db.Set<Ord>(), c => c.Id, o => o.CustId,
                 (c, g) => new { c.Id, Os = g.Where(o => o.Total > 15).OrderBy(o => o.Id).ToList() }),
             z => z.Id + ":" + Ids(z.Os), ["A1:2,3", "A2:4", "B1:5", "C0:"]);
 
     [Fact]
     public void Two_entity_leaves_over_the_same_group_in_one_projection()
-        => Assert3(true,
+        => Strict3(true,
             db => db.Set<Cust>().Select(c => new
             {
                 c.Id,
@@ -204,27 +188,27 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
 
     [Fact]
     public void Navigation_ToList_with_Take()
-        => Assert3(true, db => db.Set<Cust>().Select(c => new { c.Id, Os = c.Orders.OrderBy(o => o.Id).Take(2).ToList() }),
+        => Strict3(true, db => db.Set<Cust>().Select(c => new { c.Id, Os = c.Orders.OrderBy(o => o.Id).Take(2).ToList() }),
             z => z.Id + ":" + Ids(z.Os), ["A1:1,2", "A2:4", "B1:5", "C0:"]);
 
     [Fact]
     public void Navigation_ToList_with_Skip_and_Take()
-        => Assert3(true, db => db.Set<Cust>().Select(c => new { c.Id, Os = c.Orders.OrderBy(o => o.Id).Skip(1).Take(1).ToList() }),
+        => Strict3(true, db => db.Set<Cust>().Select(c => new { c.Id, Os = c.Orders.OrderBy(o => o.Id).Skip(1).Take(1).ToList() }),
             z => z.Id + ":" + Ids(z.Os), ["A1:2", "A2:", "B1:", "C0:"]);
 
     [Fact]
     public void Navigation_ToList_with_a_filter_before_the_paging()
-        => Assert3(true, db => db.Set<Cust>().Select(c => new { c.Id, Os = c.Orders.Where(o => o.Total > 15).OrderBy(o => o.Id).Skip(1).ToList() }),
+        => Strict3(true, db => db.Set<Cust>().Select(c => new { c.Id, Os = c.Orders.Where(o => o.Total > 15).OrderBy(o => o.Id).Skip(1).ToList() }),
             z => z.Id + ":" + Ids(z.Os), ["A1:3", "A2:", "B1:", "C0:"]);
 
     [Fact]
     public void Navigation_FirstOrDefault_after_Skip()
-        => Assert3(true, db => db.Set<Cust>().Select(c => new { c.Id, F = c.Orders.OrderBy(o => o.Id).Skip(1).FirstOrDefault() }),
+        => Strict3(true, db => db.Set<Cust>().Select(c => new { c.Id, F = c.Orders.OrderBy(o => o.Id).Skip(1).FirstOrDefault() }),
             z => z.Id + ":" + Id(z.F), ["A1:2", "A2:null", "B1:null", "C0:null"]);
 
     [Fact]
     public void GroupJoin_ToList_with_Take()
-        => Assert3(false,
+        => Strict3(false,
             db => db.Set<Cust>().GroupJoin(db.Set<Ord>(), c => c.Id, o => o.CustId,
                 (c, g) => new { c.Id, Os = g.OrderByDescending(o => o.Id).Take(2).ToList() }),
             z => z.Id + ":" + Ids(z.Os), ["A1:3,2", "A2:4", "B1:5", "C0:"]);
@@ -239,6 +223,28 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
 
         Assert.ThrowsAny<Exception>(() => db.Set<Cust>()
             .Select(c => new { c.Id, Os = c.Orders.OrderBy(o => o.Id).Take(2).Where(o => o.Total > 15).ToList() })
+            .AsEnumerable().ToList());
+    }
+
+    // ---- shapes the driver-LINQ bridge declines
+
+    [Fact]
+    public void A_query_parameter_in_an_element_filter_is_refused_by_the_bridge_not_answered_empty()
+    {
+        // The bridge re-applies the filter to the materialized group with a lambda compiled outside the query, which cannot read a
+        // query parameter. It must refuse; the native modes still answer.
+        var names = Seed();
+        var cutoff = 15;
+        using (var native = Create(names, MongoQueryMode.NativeOnly, withNavigation: true))
+        {
+            var rows = native.Set<Cust>().Select(c => new { c.Id, Os = c.Orders.Where(o => o.Total > cutoff).OrderBy(o => o.Id).ToList() })
+                .AsEnumerable().Select(z => z.Id + ":" + Ids(z.Os)).OrderBy(s => s).ToList();
+            Assert.Equal(["A1:2,3", "A2:4", "B1:5", "C0:"], rows);
+        }
+
+        using var driver = Create(names, MongoQueryMode.DriverLinq, withNavigation: true);
+        Assert.ThrowsAny<Exception>(() => driver.Set<Cust>()
+            .Select(c => new { c.Id, Os = c.Orders.Where(o => o.Total > cutoff).OrderBy(o => o.Id).ToList() })
             .AsEnumerable().ToList());
     }
 
