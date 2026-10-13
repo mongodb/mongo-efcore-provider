@@ -17,11 +17,18 @@ namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
 public static class TestDatabaseNamer
 {
-    public const string TestDatabasePrefix = "EFTest-";
+    // Distinct per assembly and EF version so concurrent test processes sharing a server never collide or clean up each other's databases.
+#if EF8
+    public const string TestDatabasePrefix = "EFSpecTest-EF8-";
+#elif EF9
+    public const string TestDatabasePrefix = "EFSpecTest-EF9-";
+#elif EF10
+    public const string TestDatabasePrefix = "EFSpecTest-EF10-";
+#else
+    public const string TestDatabasePrefix = "EFSpecTest-";
+#endif
 
-    // The process ID keeps names unique when several test assemblies run concurrently against one server.
-    private static readonly string TimeStamp
-        = $"{DateTime.Now.ToString("s").Replace(':', '-')}-p{Environment.ProcessId}";
+    private static readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
     private static int DbCount;
 
     public static string GetUniqueDatabaseName(string? staticName = null)
