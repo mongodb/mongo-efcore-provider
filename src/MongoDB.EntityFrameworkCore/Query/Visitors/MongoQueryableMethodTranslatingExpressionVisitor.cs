@@ -1621,12 +1621,12 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         {
             var valueLambda = valueExpression.UnwrapLambdaFromQuote();
             value = valueLambda.Body;
-            isSelfReferencing = ParameterFinder.ContainsAny(value, valueLambda.Parameters);
+            isSelfReferencing = valueLambda.Parameters.Any(p => value.ReferencesParameter(p));
         }
         else
         {
             value = valueExpression;
-            isSelfReferencing = ParameterFinder.ContainsAny(value, propertySelector.Parameters);
+            isSelfReferencing = propertySelector.Parameters.Any(p => value.ReferencesParameter(p));
         }
 
         if (isSelfReferencing && property.GetTypeMapping().Converter != null)
@@ -1653,33 +1653,6 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         }
 
         return expression == parameter;
-    }
-
-    /// <summary>Whether an expression references any of the given parameters (a self-referencing setter value).</summary>
-    private sealed class ParameterFinder : ExpressionVisitor
-    {
-        private readonly IReadOnlyCollection<ParameterExpression> _parameters;
-        private bool _found;
-
-        private ParameterFinder(IReadOnlyCollection<ParameterExpression> parameters)
-            => _parameters = parameters;
-
-        public static bool ContainsAny(Expression expression, IReadOnlyCollection<ParameterExpression> parameters)
-        {
-            var finder = new ParameterFinder(parameters);
-            finder.Visit(expression);
-            return finder._found;
-        }
-
-        protected override Expression VisitParameter(ParameterExpression node)
-        {
-            if (_parameters.Contains(node))
-            {
-                _found = true;
-            }
-
-            return base.VisitParameter(node);
-        }
     }
 
     /// <summary>

@@ -2028,7 +2028,7 @@ internal static class NativeProjectionBinder
         {
             foreach (var filter in filters)
             {
-                if (ReferencesParameter(filter, outerParameter)
+                if (filter.ReferencesParameter(outerParameter)
                     || !new MongoExpressionTranslator(targetEntityType, filter.Parameters[0]).TryTranslate(filter.Body, out var translated))
                 {
                     return false;
@@ -2093,24 +2093,6 @@ internal static class NativeProjectionBinder
     private sealed class ParameterRenamer(ParameterExpression from, ParameterExpression to) : ExpressionVisitor
     {
         protected override Expression VisitParameter(ParameterExpression node) => ReferenceEquals(node, from) ? to : node;
-    }
-
-    private static bool ReferencesParameter(Expression expression, ParameterExpression parameter)
-    {
-        var finder = new ParameterReferenceFinder(parameter);
-        finder.Visit(expression);
-        return finder.Found;
-    }
-
-    private sealed class ParameterReferenceFinder(ParameterExpression parameter) : ExpressionVisitor
-    {
-        public bool Found { get; private set; }
-
-        protected override Expression VisitParameter(ParameterExpression node)
-        {
-            Found |= ReferenceEquals(node, parameter);
-            return node;
-        }
     }
 
     /// <summary>

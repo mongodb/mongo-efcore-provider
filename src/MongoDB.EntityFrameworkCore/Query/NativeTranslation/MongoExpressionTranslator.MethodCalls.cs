@@ -412,7 +412,8 @@ internal sealed partial class MongoExpressionTranslator
         }
     }
 
-    private static Expression UnwrapAsQueryable(Expression source)
+    /// <summary>The source of an <c>AsQueryable()</c> call (<c>Queryable.AsQueryable</c> only), else <paramref name="source"/>.</summary>
+    internal static Expression UnwrapAsQueryable(Expression source)
     {
         if (source is MethodCallExpression { Arguments: [var inner] } call
             && call.Method.Name == nameof(Queryable.AsQueryable)
