@@ -123,7 +123,7 @@ internal sealed class LookupExpression
     /// Get the full MongoDB field path for a property, accounting for composite keys
     /// stored under the _id document.
     /// </summary>
-    private static string GetFieldPath(IReadOnlyProperty property)
+    internal static string GetFieldPath(IReadOnlyProperty property)
     {
         var elementName = property.GetElementName();
 
