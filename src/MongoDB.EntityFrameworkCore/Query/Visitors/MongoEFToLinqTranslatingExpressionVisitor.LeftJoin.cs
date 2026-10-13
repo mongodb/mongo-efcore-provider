@@ -1222,6 +1222,16 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     private bool IsInjectedEarly(LookupExpression lookup)
         => lookup.InjectAfterRoot || lookup.IsBridgeReadableArray || _injectedEarlyLookups.Contains(lookup);
 
+    private BsonDocument[] RenderElementLeafLookup(LookupExpression lookup)
+        => NativeTranslation.MongoPipelineFactory.Create(
+                [new NativeTranslation.Stages.MongoLookupStage(lookup)], new NativeTranslation.MongoQueryLanguageRenderer())
+            .Build(
+#if EF8 || EF9
+                _queryContext.ParameterValues);
+#else
+                _queryContext.Parameters);
+#endif
+
     private Expression EmitLookupStages(Expression query, IEnumerable<LookupExpression> lookups)
     {
         var lookupList = lookups as IReadOnlyList<LookupExpression> ?? lookups.ToList();
@@ -1234,6 +1244,19 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
         foreach (var lookup in lookupList)
         {
+            if (lookup.ElementLeafAliases.Count > 0)
+            {
+                // An element leaf's array, rendered as the native pipeline would (filter, ordering and paging inside the sub-pipeline, parameters
+                // read from this execution), then copied to each leaf's projection alias, which is where the shaper reads it.
+                foreach (var stage in RenderElementLeafLookup(lookup))
+                    query = AppendRawStage(query, sourceType, stage);
+
+                foreach (var leafAlias in lookup.ElementLeafAliases)
+                    query = AppendRawStage(query, sourceType, new BsonDocument("$set", new BsonDocument(leafAlias, "$" + lookup.As)));
+
+                continue;
+            }
+
             query = AppendRawStage(query, sourceType, lookup.ToLookupStageDocument());
 
             if (lookup.ShouldUnwind)

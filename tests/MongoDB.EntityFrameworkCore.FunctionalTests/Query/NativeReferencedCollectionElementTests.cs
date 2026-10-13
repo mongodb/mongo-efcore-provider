@@ -140,8 +140,23 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
 
     [Fact]
     public void Navigation_ToList_with_an_aggregate_beside_it()
-        => Strict3(true, db => db.Set<Cust>().Select(c => new { c.Id, N = c.Orders.Count, Os = c.Orders.OrderBy(o => o.Id).ToList() }),
-            z => z.Id + ":" + z.N + ":" + Ids(z.Os), ["A1:3:1,2,3", "A2:1:4", "B1:1:5", "C0:0:"]);
+    {
+        // The driver-LINQ shaper reads whole documents, so a computed sibling leaf (the Count) cannot be read there: it fails loudly at
+        // compile time rather than answering. The native modes answer.
+        var names = Seed();
+        foreach (var mode in new[] { MongoQueryMode.NativeOnly, MongoQueryMode.Native })
+        {
+            using var db = Create(names, mode, withNavigation: true);
+            var rows = db.Set<Cust>().Select(c => new { c.Id, N = c.Orders.Count, Os = c.Orders.OrderBy(o => o.Id).ToList() })
+                .AsEnumerable().Select(z => z.Id + ":" + z.N + ":" + Ids(z.Os)).OrderBy(s => s).ToList();
+            Assert.Equal(["A1:3:1,2,3", "A2:1:4", "B1:1:5", "C0:0:"], rows);
+        }
+
+        using var driver = Create(names, MongoQueryMode.DriverLinq, withNavigation: true);
+        Assert.ThrowsAny<Exception>(() => driver.Set<Cust>()
+            .Select(c => new { c.Id, N = c.Orders.Count, Os = c.Orders.OrderBy(o => o.Id).ToList() })
+            .AsEnumerable().ToList());
+    }
 
     // ---- a GroupJoin on a model with no navigation (G12, G13)
 
@@ -229,22 +244,21 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
     // ---- shapes the driver-LINQ bridge declines
 
     [Fact]
-    public void A_query_parameter_in_an_element_filter_is_refused_by_the_bridge_not_answered_empty()
+    public void A_member_named_like_a_stored_field_is_refused_by_the_bridge_not_overwritten()
     {
-        // The bridge re-applies the filter to the materialized group with a lambda compiled outside the query, which cannot read a
-        // query parameter. It must refuse; the native modes still answer.
+        // The driver-LINQ translation copies the group's array to the member's alias in the whole document; `Name` is also a stored field of
+        // the customer, so that would clobber it. The native modes project under the alias and are unaffected.
         var names = Seed();
-        var cutoff = 15;
         using (var native = Create(names, MongoQueryMode.NativeOnly, withNavigation: true))
         {
-            var rows = native.Set<Cust>().Select(c => new { c.Id, Os = c.Orders.Where(o => o.Total > cutoff).OrderBy(o => o.Id).ToList() })
-                .AsEnumerable().Select(z => z.Id + ":" + Ids(z.Os)).OrderBy(s => s).ToList();
-            Assert.Equal(["A1:2,3", "A2:4", "B1:5", "C0:"], rows);
+            var rows = native.Set<Cust>().Select(c => new { c.Id, Name = c.Orders.OrderBy(o => o.Id).ToList() })
+                .AsEnumerable().Select(z => z.Id + ":" + Ids(z.Name)).OrderBy(s => s).ToList();
+            Assert.Equal(["A1:1,2,3", "A2:4", "B1:5", "C0:"], rows);
         }
 
         using var driver = Create(names, MongoQueryMode.DriverLinq, withNavigation: true);
         Assert.ThrowsAny<Exception>(() => driver.Set<Cust>()
-            .Select(c => new { c.Id, Os = c.Orders.Where(o => o.Total > cutoff).OrderBy(o => o.Id).ToList() })
+            .Select(c => new { c.Id, Name = c.Orders.OrderBy(o => o.Id).ToList() })
             .AsEnumerable().ToList());
     }
 
@@ -257,6 +271,7 @@ public class NativeReferencedCollectionElementTests(TemporaryDatabaseFixture dat
     [Theory]
     [InlineData(MongoQueryMode.NativeOnly)]
     [InlineData(MongoQueryMode.Native)]
+    [InlineData(MongoQueryMode.DriverLinq)]
     public void Parameterized_FirstOrDefault_predicate_is_read_per_execution(MongoQueryMode mode)
     {
         var names = Seed();

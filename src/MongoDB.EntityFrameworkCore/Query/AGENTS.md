@@ -147,8 +147,13 @@ Scope, joins, grouping:
       referenced terminal fails at translation (`MultiBranchNavigationCountFinder`), not at the server.
     - A relational comparison of a nullable rewritten aggregate is null-guarded (`VisitBinary`): the aggregation dialect orders null
       below every number, so `Max(..) < 650` would match the empty group.
-    - Element leaves still refuse in the bridge (`ElementLeafAliases`/`HasElementStages`), as does a join-inner predicate; the emit
-      side stages these lookups in every mode, so without the refusal `DriverLinq` read an empty array.
+    - **Element leaves are answered by the native lookup, not by driver LINQ.** The emit side stages their keyed lookups in every mode and
+      the shaper reads them from the member's alias in a whole document, so the bridge renders each one as the native pipeline would
+      (`RenderElementLeafLookup`: a one-stage `MongoPipelineFactory`, built with this execution's parameters, so a filter parameter is
+      read per execution) and copies its array to every alias in `ElementLeafAliases` with `$set`. The bridge's constructor refuses a
+      lookup that has element stages but no leaf, a join-inner predicate, and an alias that is a stored field of the root or dotted
+      (the `$set` would overwrite what another leaf reads). A computed sibling leaf (`N = c.Orders.Count`) beside an element leaf cannot
+      be read from whole documents and fails at compile time under `DriverLinq`; the native modes answer it.
 - **Navigation-less joins** are native iff `RebindInnerShaperToOuterQuery`'s raw-key branch resolved both keys
   (`JoinInfo.Lookup != null`); a non-simple key declines. Composite-PK components live at `_id.<Name>`
   (`LookupExpression.GetFieldPath`). "Simple" includes an anonymous key of scalar properties (same anonymous type both

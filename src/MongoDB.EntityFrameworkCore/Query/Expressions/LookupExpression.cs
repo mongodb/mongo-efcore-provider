@@ -280,10 +280,10 @@ internal sealed class LookupExpression
     public List<string> ElementLeafAliases { get; } = [];
 
     /// <summary>
-    /// Whether this lookup is an array only the native reader can use: one a projected element leaf is read from
-    /// (<see cref="ElementLeafAliases"/>, whose sub-pipeline may also sort, limit or filter it). The driver-LINQ bridge renders a
-    /// pending lookup as a plain <c>$lookup</c> and reads nothing back for it, so it must refuse such a query with this one predicate
-    /// rather than return empty or unfiltered lists. Evaluated at refusal time, after the projection binder's commit.
+    /// Whether this lookup is an array that is not the plain, whole group: one a projected element leaf is read from
+    /// (<see cref="ElementLeafAliases"/>, whose sub-pipeline may also sort, limit or filter it). The driver-LINQ bridge cannot read
+    /// it as a plain array for an aggregate; it renders an element leaf's lookup natively and copies it to the leaf's alias, and refuses a
+    /// lookup with element stages but no leaf, so it never returns an empty or unfiltered list. Evaluated after the projection binder's commit.
     /// </summary>
     public bool IsNativeOnlyArray => HasInnerPredicate || HasElementStages || ElementLeafAliases.Count > 0;
 

@@ -147,14 +147,39 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 + "honors it; use MongoQueryMode.Native or NativeOnly, or filter after the join.");
         }
 
-        // A projected list or first element of another collection (`c.Orders.OrderBy(..).ToList()`) is read from an array only the native
-        // reader materializes; here the lookup would be a plain $lookup nothing reads, so the list would come back empty.
-        if (_pendingLookups.FirstOrDefault(l => l.ElementLeafAliases.Count > 0 || l.HasElementStages) is { } nativeOnlyArray)
+        // The sort, skip or limit of an element stage belongs to a projected list or first element (`c.Orders.OrderBy(..).ToList()`), which
+        // EmitLookupStages renders natively and copies to the leaf's alias. Stages with no leaf behind them have nothing that reads the array,
+        // so the list would come back empty or unfiltered.
+        if (_pendingLookups.FirstOrDefault(l => l.HasElementStages && l.ElementLeafAliases.Count == 0) is { } nativeOnlyArray)
         {
             throw new NativeTranslation.NativeTranslationNotSupportedException(
                 $"The projected collection of '{nativeOnlyArray.TargetEntityType.DisplayName()}' entities is only supported by the "
                 + "native translator; the driver-LINQ translation would return an empty or unfiltered list. "
                 + "Use MongoQueryMode.Native or NativeOnly.");
+        }
+
+        // An element leaf's array is copied to the member's projection alias in the whole document the shaper reads; an alias that is also a
+        // stored field of the root would overwrite what another leaf (or the whole entity) reads from it.
+        if (_pendingLookups.Any(l => l.ElementLeafAliases.Count > 0)
+            && source.Type.TryGetItemType() is { } rootClrType
+            && FindEntityType(rootClrType) is { } rootEntityType)
+        {
+            var storedNames = rootEntityType.GetProperties().Select(p => p.GetElementName())
+                .Concat(rootEntityType.GetNavigations().Where(n => n.IsEmbedded()).Select(n => n.TargetEntityType.GetContainingElementName()))
+                .ToHashSet();
+
+            foreach (var lookup in _pendingLookups)
+            {
+                foreach (var alias in lookup.ElementLeafAliases)
+                {
+                    if (alias.Contains('.') || storedNames.Contains(alias))
+                    {
+                        throw new NativeTranslation.NativeTranslationNotSupportedException(
+                            $"The projected collection '{alias}' has the same name as a stored field of '{rootEntityType.DisplayName()}', "
+                            + "which the driver-LINQ translation would overwrite. Rename the projection member, or use MongoQueryMode.Native or NativeOnly.");
+                    }
+                }
+            }
         }
     }
 
