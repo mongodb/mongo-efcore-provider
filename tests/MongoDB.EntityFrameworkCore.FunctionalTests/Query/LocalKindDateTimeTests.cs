@@ -118,11 +118,39 @@ public class LocalKindDateTimeTests(TemporaryDatabaseFixture database)
     }
 
     [Fact]
-    public void AddHours_and_comparison_over_local_kind_property_still_work()
+    public void Select_AddHours_throws()
     {
         using var db = CreateContext();
-        Assert.Single(db.Entities.Where(e => e.Local.AddHours(1) == Stored.AddHours(1)).ToList());
-        Assert.Empty(db.Entities.Where(e => e.Local.AddHours(1) == Stored.AddHours(2)).ToList());
+        AssertThrowsLocal(() => db.Entities.Select(e => e.Local.AddHours(1)).ToList(), "AddHours");
+    }
+
+    [Fact]
+    public void Where_AddMinutes_throws()
+    {
+        using var db = CreateContext();
+        AssertThrowsLocal(() => db.Entities.Where(e => e.Local.AddMinutes(1) > Stored).ToList(), "AddMinutes");
+    }
+
+    [Fact]
+    public void Select_AddSeconds_throws()
+    {
+        using var db = CreateContext();
+        AssertThrowsLocal(() => db.Entities.Select(e => e.Local.AddSeconds(1)).ToList(), "AddSeconds");
+    }
+
+    [Fact]
+    public void Select_AddMilliseconds_throws()
+    {
+        using var db = CreateContext();
+        AssertThrowsLocal(() => db.Entities.Select(e => e.Local.AddMilliseconds(1)).ToList(), "AddMilliseconds");
+    }
+
+    [Fact]
+    public void AddHours_over_utc_kind_property_and_local_comparison_still_work()
+    {
+        using var db = CreateContext();
+        Assert.Single(db.Entities.Where(e => e.Utc.AddHours(1) == Stored.AddHours(1)).ToList());
+        Assert.Empty(db.Entities.Where(e => e.Utc.AddHours(1) == Stored.AddHours(2)).ToList());
         Assert.Single(db.Entities.Where(e => e.Local == Stored.ToLocalTime()).ToList());
     }
 
@@ -189,6 +217,15 @@ public class LocalKindDateTimeTests(TemporaryDatabaseFixture database)
     {
         using var db = CreateContext();
         AssertThrowsUnresolved(() => db.Entities.Select(e => new DateRecord(e.Local)).Where(x => x.D.Hour == 11).ToList(), "Hour");
+    }
+
+    [Fact]
+    public void Record_in_namespace_starting_with_System_still_declined()
+    {
+        // Framework types are identified by assembly, so a user type in "Systems.Domain" is not mistaken for a BCL type.
+        using var db = CreateContext();
+        AssertThrowsUnresolved(
+            () => db.Entities.Select(e => new Systems.Domain.SystemsRecord(e.Local)).Where(x => x.D.Hour == 11).ToList(), "Hour");
     }
 
     [Fact]

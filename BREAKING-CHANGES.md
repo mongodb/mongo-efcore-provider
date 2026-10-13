@@ -10,18 +10,18 @@ In order to evolve the provider as we introduce new features, we will be using t
 
 #### Old behavior
 
-For a `DateTime` property configured with `HasDateTimeKind(DateTimeKind.Local)`, the date parts the driver translates (`Hour`, `Date`, `Year`, `Month`, `Day`, `DayOfWeek`, `DayOfYear`, `Minute`, `Second`, `Millisecond`) and `AddYears`/`AddMonths`/`AddDays` were evaluated by the server on the stored UTC instant:
+For a `DateTime` property configured with `HasDateTimeKind(DateTimeKind.Local)`, the date parts the driver translates (`Hour`, `Date`, `Year`, `Month`, `Day`, `DayOfWeek`, `DayOfYear`, `Minute`, `Second`, `Millisecond`) and `AddYears`/`AddMonths`/`AddDays`/`AddHours`/`AddMinutes`/`AddSeconds`/`AddMilliseconds` were evaluated by the server on the stored UTC instant:
 
 ```c#
 context.Orders.Select(o => o.LocalDate.Hour);
 context.Orders.Where(o => o.LocalDate.AddDays(1) > cutoff);
 ```
 
-The entity materializes as local time, so the server-computed value matched the C# value only where the local UTC offset is zero, and for `AddDays`/`AddMonths`/`AddYears` only when no DST change or month-end clamping intervenes. Otherwise the query silently returned a wrong value or wrong rows.
+The entity materializes as local time, so the server-computed value matched the C# value only where the local UTC offset is zero, and for the `Add*` methods only when no DST change or month-end clamping intervenes. Otherwise the query silently returned a wrong value or wrong rows.
 
 #### New behavior
 
-These queries throw `InvalidOperationException` naming the property. The same members over a `DateTime` member of a projected tuple, `ValueTuple` or record also throw, because the source property cannot be determined and may be Local-kind (this includes `Utc`-kind sources). `AddHours`/`AddMinutes`/`AddSeconds`/`AddMilliseconds`, comparisons, and all of the above on `Utc`-kind or unconfigured `DateTime` properties are otherwise unchanged. Members the driver never translated (`Ticks`, `TimeOfDay`) already failed and now fail with this message.
+These queries throw `InvalidOperationException` naming the property. The same members over a `DateTime` member of a projected tuple, `ValueTuple` or record also throw, because the source property cannot be determined and may be Local-kind (this includes `Utc`-kind sources). Comparisons, and all of the above on `Utc`-kind or unconfigured `DateTime` properties are otherwise unchanged. Members the driver never translated (`Ticks`, `TimeOfDay`) already failed and now fail with this message.
 
 #### Why
 

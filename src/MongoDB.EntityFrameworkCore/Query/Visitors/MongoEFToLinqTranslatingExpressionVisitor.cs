@@ -18,6 +18,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
@@ -917,15 +918,13 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         return _queryContext.Context.Model.FindEntityTypes(expression.Type).ToList();
     }
 
-    // A type a Select can project a DateTime into: a tuple, or a user-defined type (record, class, struct). BCL value types such as
-    // DateTimeOffset have DateTime members but cannot carry a Local-kind property.
+    // A type a Select can project a DateTime into: a tuple, or a user-defined type (record, class, struct). Framework types are
+    // identified by assembly, not namespace, so a user type in a namespace such as "Systems.Domain" is still covered. BCL value
+    // types such as DateTimeOffset have DateTime members but cannot carry a Local-kind property.
     private static bool IsProjectionContainer(Type type)
     {
         type = type.UnwrapNullableType();
-        return type.Namespace is not { } ns
-               || !ns.StartsWith("System", StringComparison.Ordinal)
-               || type.FullName?.StartsWith("System.Tuple", StringComparison.Ordinal) == true
-               || type.FullName?.StartsWith("System.ValueTuple", StringComparison.Ordinal) == true;
+        return type.Assembly != typeof(object).Assembly || typeof(ITuple).IsAssignableFrom(type);
     }
 
     // False for a captured variable or query parameter (a client value, whatever its kind); true for anything built from the
@@ -952,10 +951,13 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
     protected override Expression VisitMethodCall(MethodCallExpression node)
     {
-        // Calendar arithmetic (day/month/year) over a Local-kind DateTime property is evaluated by the server in UTC.
+        // Calendar and duration arithmetic over a Local-kind DateTime property is evaluated by the server on the UTC instant,
+        // which diverges from local-time arithmetic across a DST transition.
         if (node is { Object: { } addReceiver }
             && node.Method.DeclaringType == typeof(DateTime)
-            && node.Method.Name is nameof(DateTime.AddYears) or nameof(DateTime.AddMonths) or nameof(DateTime.AddDays))
+            && node.Method.Name is nameof(DateTime.AddYears) or nameof(DateTime.AddMonths) or nameof(DateTime.AddDays)
+                or nameof(DateTime.AddHours) or nameof(DateTime.AddMinutes) or nameof(DateTime.AddSeconds)
+                or nameof(DateTime.AddMilliseconds))
         {
             ThrowIfLocalKindDateTime(addReceiver, node.Method.Name);
         }
