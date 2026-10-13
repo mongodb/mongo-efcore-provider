@@ -1,8 +1,9 @@
 # Handoff: referenced-collection aggregates (EF-322c), follow-ups
 
-**Branch** `EF-322c`, pushed; HEAD `2bffc78f`, working tree clean, **nothing pending a user decision**. At that commit EF8, EF9 and EF10
-build with 0 warnings and pass every project (unit 1,708 / 1,708 / 1,701; spec 4,714 / 5,027 / 4,768; functional 6,736 / 6,782 / 6,857;
-skips are the expected encryption and Atlas-gated ones).
+**Branch** `EF-322c`, HEAD `0fb65273`, working tree clean, **nothing pending a user decision**. Follow-ups 1, 3 and 4 below are DONE
+(commits `cf7ef2a0`, `426bd2f2`, `0fb65273`, each preceded by its failing-tests commit); only follow-up 2 remains, and the advice is not to do it.
+At HEAD EF8, EF9 and EF10 build with 0 warnings and pass every project (passed: unit 1,708 / 1,708 / 1,701; spec 4,714 / 5,027 /
+4,768; functional 6,770 / 6,816 / 6,891; skips are the expected encryption and Atlas-gated ones).
 
 The design is `docs/superpowers/specs/2026-10-08-native-referenced-collection-aggregates-design.md` (see its **Status and deviations**
 section). The invariants, with the reasoning, are in `src/MongoDB.EntityFrameworkCore/Query/AGENTS.md` under *Aggregates and quantifiers
@@ -50,37 +51,18 @@ length would be read as 0 where LINQ throws). They will not flip however many of
 
 ---
 
-## 1. Element leaves in the driver-LINQ bridge  (largest; the only item where a mode refuses something it should answer)
+## 1. Element leaves in the driver-LINQ bridge  (DONE, `cf7ef2a0`)
 
-**Today.** `c.Orders.Where(f).OrderBy(k).Skip(n).Take(m).ToList()`, `.FirstOrDefault(pred)` and `Select(o => o.X).ToList()` over a group
-run natively. Under explicit `MongoQueryMode.DriverLinq` (and a `Native` fallback) they throw: `MongoEFToLinqTranslatingExpressionVisitor`'s
-constructor refuses any pending lookup with `ElementLeafAliases.Count > 0 || HasElementStages`. The refusal exists because the bridge
-renders a lookup as a plain `$lookup` and nothing reads it; before the guard it returned **empty lists silently**.
+Not done as the client-side tail this section proposed. The shaper the bridge feeds is the NATIVE one (it reads each leaf from the member's
+alias in a whole document), so a tail would have had to be applied only on the bridge path, and `Skip` is not idempotent over an
+already-paged array. Instead the bridge renders each element leaf's lookup natively (`RenderElementLeafLookup`: a one-stage
+`MongoPipelineFactory`, built with this execution's parameters) and copies its array to every alias in `ElementLeafAliases` with `$set`
+(`EmitLookupStages`). A filter parameter is therefore read per execution and ordering is the server's. The constructor refuses a lookup
+with element stages but no leaf, and an alias that is dotted or a stored field of the root (the `$set` would overwrite it).
+`NativeReferencedCollectionElementTests` runs every shape strictly in all three modes.
 
-**What the bridge does for a plain navigation list.** `Orders = c.Orders.ToList()` works in every mode through
-`MongoProjectionBindingExpressionVisitor.Lookup.cs` `TryBindProjectedCollectionNavigation`: a `CollectionShaperExpression` over an
-`ObjectArrayProjectionExpression` reading the `_lookup_<Nav>` array. It accepts only `ToList(Select(Where(root, corr), identity))`. Filtered
-and ordered lists reach `ExtractFilteredIncludePipeline`, which turns `OrderBy/ThenBy/Skip/Take` with constant arguments into baked
-`PipelineStages` and **throws `TranslationFailed` for any `Where`** (a filtered Include).
-
-**Approaches.**
-* *Client-side tail (smallest).* In the bridge, give the shaper the PLAIN array (the bridge already stages its own plain arrays,
-  `StageBridgeOwnedLookups`) and re-apply `Where`/`OrderBy`/`Skip`/`Take`/`FirstOrDefault` over the materialized entities, as the native read side
-  already does for a scalar `Select` (`IsSelfContainedLambda`). Costs: it fetches whole groups; the lambdas must be compiled outside a
-  query, so a **query parameter in a filter or key cannot be used** (decline those; a constant filter is fine); ordering of strings
-  would be CLR ordering, not the server's, so decline ordering by a string or compare to the native answer.
-* *Server-side.* Teach `ExtractFilteredIncludePipeline` to carry a translated `Where` (there is no native translator on that path) or build the stages
-  with the native translator when the query is otherwise bridge-bound. Larger, and the parameter story is the hard part
-  (`InnerPredicate` is rendered through the placeholder table; `PipelineStages` are baked).
-
-**Where to change.** The refusal in the bridge constructor (narrow it to the shapes you do not answer); `TryBindReferencedElementLeaf`
-returns `false` unless `Select.Route == NativeRoute.Projection`, so the non-native route needs its own arm; the staged lookup's alias is
-`ElementLeafAliases`-keyed and the bridge owns plain lookups with different aliases, so the read side needs the plain alias for the
-correlation.
-
-**Tests.** `NativeReferencedCollectionElementTests` runs every case through `Assert3`, which tolerates a `DriverLinq` refusal. Once a shape is
-answered, make that case strict (see `Strict3` in `NativeReferencedCollectionBridgeTests`); keep a test that the shapes you still decline fail
-loudly, never empty. Mutation-check the guard (remove it and see the empty-list failure).
+Known limit: a computed sibling leaf (`N = c.Orders.Count`) beside an element leaf cannot be read from whole documents, so it fails at
+compile time under `DriverLinq` (loud; the native modes answer it). Fixing it means reading computed leaves in the mixed reader.
 
 ## 2. Sharing one lookup array across element leaves  (optimization; probably do NOT do)
 
@@ -99,53 +81,26 @@ group transfers three documents, not the group. Deriving from a full array would
 regression in the common case to save an extra `$lookup` in the uncommon one. Only do it with a measured case, and keep the pushed-down
 form when a limit or an element filter is present.
 
-## 3. Constant and computed key parts  (adds capability; flips no pin)
+## 3. Constant and computed key parts  (DONE, `0fb65273`)
 
-**Shapes.** EF10 rewrites `GroupJoin(o, c => new { c.CustomerID, c.City }, o => new { o.CustomerID, City = "London" })` into
-`!(c.CustomerID == null) && !(c.City == null) && c.CustomerID == o.CustomerID && c.City == "London"`, and
-`new { c.CustomerID, Year = 1996 } equals new { o.CustomerID, Year = o.OrderDate.Value.Year }` into
-`... && 1996 == o.OrderDate.Value.Year`. EF8/EF9 keep the anonymous objects whole (`TryExpandAnonymousKeys` already expands the members).
+`NativeCorrelationMatcher.TryMatchCorrelation` classifies each equality of a correlation that is not outer-vs-inner: on the ELEMENT alone
+against a constant or query parameter it is an element filter (`r.Zone == 1`, `1996 == r.OrderDate.Year`, `r.Zone + 1 == 2`); on the OUTER row
+alone (`c.City == "London"`) it gates the group (`LookupExpression.OuterConditions`, rendered as a `let` plus a `$match $expr` in
+`RenderLookup`). Only equalities are admitted, so `r.Price > 100` is still never dropped. EF10's GroupJoin rewrite spelling
+(`object.Equals((object)x, (object)y)`, a guard on a constant) is normalized. The bridge applies element filters over its plain array and leaves
+an outer gate unresolved, so it fails loudly under `DriverLinq`.
 
-**Today.** `NativeCorrelationMatcher.TryMatchCorrelationKeys` requires every equality to be (outer property, inner property); `TryAssignSides`
-fails when one side is a constant or a computed expression, so the whole correlation declines (loud in NativeOnly, "could not be
-translated" otherwise).
+Still declined: a computed expression on BOTH sides (`c.Year == o.OrderDate.Year`: a key part with a computed inner side), a null constant, and
+any non-equality conjunct. The `GroupJoin_aggregate_anonymous_key_selectors*` pins stay: they also aggregate `Sum(o => o.CustomerID.Length)`.
+Gotcha found on EF8/EF9: a query parameter is a `ParameterExpression` there, so `TryAssignSides` must not take it for the element
+(`IsDependentRoot`).
 
-**Design sketch.** Classify each conjunct by what it reads:
-* reads only the outer row (`c.City == "London"`): a condition on the outer document, constant per outer row. Put it in the composite
-  `let`/`$expr` match as `$eq: ["$$kI", <value>]` (add the local field to the `let`), or gate the array to `[]`. A parameterized value goes
-  through the placeholder table.
-* reads only the element (`1996 == o.OrderDate.Value.Year`): an element filter. Translate it with the element translator
-  (`new MongoExpressionTranslator(targetEntityType, param)`) and AND it into `InnerPredicate`.
-* property vs property: the existing key part.
-Null semantics: an outer-only condition with the `!= null` guard means null matches nothing; keep it as a guard on the part.
+## 4. Parameterized `Skip` / `Take` on an element leaf  (DONE, `426bd2f2`)
 
-**Cautions.** The bridge's own plain arrays (`StageBridgeOwnedLookups`) cannot carry either kind; an element filter is applied as
-`Enumerable.Where` after the plain array, but an outer-only condition needs the array gated. A constant part makes the key a composite one
-even with a single property pair, so the alias and `IsBridgeReadableArray` logic must account for it. Add tests in
-`NativeAnonymousKeyJoinTests` next to the composite ones, and keep `Malformed_composite_correlations_decline_loudly` for what must still decline
-(`ComparedToAConstant` there is exactly this shape, and would need to move).
-
-## 4. Parameterized `Skip` / `Take` on an element leaf
-
-**Today.** `NativeReferencedElementMatcher.TryPeelConstantPaging` accepts only a `ConstantExpression`. `Take(n)` with a captured variable is a
-query parameter (EF8/EF9 a prefixed `ParameterExpression`, EF10 a `QueryParameterExpression`; `NativeQueryParameter` hides the difference),
-so the shape declines. The values are baked ints on the lookup (`ElementSkip`, `ElementLimit`) rendered into the cached template.
-
-**What is needed.**
-1. Carry the parameter on the lookup (a `MongoExpression`, like `InnerPredicate`) instead of an `int?`, and render `$skip`/`$limit` through
-   the placeholder table in `RenderLookup`.
-2. **`$limit: 0` is a server error and a negative value is invalid.** The top-level pipeline normalizes this at `Build` time
-   (`Query/AGENTS.md`, *Paging*: "Normalization covers top level and `$unionWith`, not `$lookup` sub-pipelines"), so the lookup form needs
-   the same per-execution rule: a zero limit must produce an EMPTY array (an always-false `$match` stage), a negative `Take` throws as LINQ does.
-   This is the part to design first.
-3. The alias identity (`_fN`) must tell parameters apart, not only their values (compare the parameter names / expressions, as the filters
-   are compared); `TryBindReferencedElementLeaf` compares `l.ElementLimit == ...` and must change with it.
-4. Keep the "outermost operators only" rule: a `Where` after `Skip`/`Take` filters the page and must still decline.
-
-**Tests.** Extend `NativeReferencedCollectionElementTests` with `NativeModeAssert.TwiceWithDifferentValues` over `Take(n)` with values `3`,
-`0` and (loud) `-1`, on one context so the second run hits the compiled-query cache, in NativeOnly and Native.
-
----
+`ElementSkip`/`ElementLimit` are `MongoExpression`s (a constant or a query parameter) rendered through the placeholder table; parameters are
+told apart by name (`LookupExpression.SameElementCount`). `MongoPipelineFactory.NormalizePagingStages` now recurses into `$lookup`
+sub-pipelines: zero is an empty array, a negative count throws. A non-positive CONSTANT `Take` still declines. The bridge gets it through the
+native rendering. Tests: `Parameterized_Take/Skip_*` in `NativeReferencedCollectionElementTests`, all three modes.
 
 ## Not in scope here / known and accepted
 

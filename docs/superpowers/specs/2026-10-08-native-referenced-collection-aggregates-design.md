@@ -247,4 +247,5 @@ empty for an outer row with a null part; that is EF's rewritten query and is fol
 anonymous key. The upstream spec pins `GroupJoin_aggregate_anonymous_key_selectors*` stay, for three reasons that are not the key shape: a CONSTANT key
 part (`new { c.CustomerID, c.City } equals new { o.CustomerID, City = "London" }`, `Year = 1996`: a condition on the outer row alone), a
 COMPUTED inner key part (`o.OrderDate.Value.Year`), and an aggregate over a computed selector (`Sum(o => o.CustomerID.Length)`; the
-aggregate arms take one numeric element property). Each is a separate extension.
+aggregate arms take one numeric element property). The constant and the computed-inner part were added later (`TryMatchCorrelation`; element filters
+and outer-row gates); the string `Length` selector stays declined, so the pins stay.
