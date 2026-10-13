@@ -839,7 +839,7 @@ internal sealed class MongoSelectDefinition
     /// <summary>
     /// <see langword="true"/> once a <c>Skip</c>/<c>Take</c> was recorded while no join existed, i.e. it genuinely pages
     /// the outer sequence (<c>Customers.Take(1).GroupJoin(...)</c>) rather than being hoisted forward by EF Core.
-    /// Deferring it past the join would change which rows it keeps, so <c>IsSingleEligibleNativeJoinScope</c> keeps it
+    /// Deferring it past the join would change which rows it keeps, so <c>TryAdmitSingleEligibleNativeJoinScope</c> keeps it
     /// ahead of the <c>$lookup</c> when a join may multiply rows (or declines if <see cref="HasPagingRecordedAfterAJoin"/> is also set).
     /// </summary>
     internal bool HasPagingRecordedBeforeAnyJoin => _hasPagingRecordedBeforeAnyJoin;
@@ -876,7 +876,7 @@ internal sealed class MongoSelectDefinition
     /// <see langword="true"/> once a <c>Skip</c>/<c>Take</c> was recorded while a join already existed (EF-hoisted
     /// <c>Join(...).Take(n)</c>, which pages the JOINED rows). With <see cref="HasPagingRecordedBeforeAnyJoin"/> also set,
     /// paging belongs on BOTH sides of the <c>$lookup</c>, which neither keeping nor deferring it can represent, so
-    /// <c>IsSingleEligibleNativeJoinScope</c> declines.
+    /// <c>TryAdmitSingleEligibleNativeJoinScope</c> declines.
     /// </summary>
     internal bool HasPagingRecordedAfterAJoin => _hasPagingRecordedAfterAJoin;
 
@@ -899,7 +899,7 @@ internal sealed class MongoSelectDefinition
     /// (<c>Join(a, …).Skip(1).Take(2).Join(b, …)</c>), i.e. recorded while fewer than <paramref name="finalJoinCount"/>
     /// joins existed. The single deferred <see cref="PostLookupPagingOps"/> snapshot runs after EVERY join's
     /// <c>$lookup</c>, so it would page the fully joined result: silently wrong rows whenever a later join changes the row
-    /// count. <c>IsSingleEligibleNativeJoinScope</c> declines such a chain.
+    /// count. <c>TryAdmitSingleEligibleNativeJoinScope</c> declines such a chain.
     /// </summary>
     internal bool HasPagingRecordedBetweenJoins(int finalJoinCount)
         => _minJoinCountAtPagingAfterAJoin is { } min && min < finalJoinCount;

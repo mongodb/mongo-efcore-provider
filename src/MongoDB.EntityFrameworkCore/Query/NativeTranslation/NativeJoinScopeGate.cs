@@ -31,7 +31,8 @@ internal static class NativeJoinScopeGate
     /// Shared admissibility gate for the join-scope <c>Select</c> arms in <see cref="Visitors.MongoQueryableMethodTranslatingExpressionVisitor"/>.<c>TranslateSelect</c>, also used by
     /// <see cref="NativeTranslation.NativeCardinalityBinder.TryBindAggregate"/> (a bare <c>Any()</c>/<c>Count()</c> after a
     /// join has no trailing <c>Select</c>, so it needs a second confirming site). On success <paramref name="joinInfo"/> is
-    /// the last join in the chain.
+    /// the last join in the chain. <b>Mutates on success</b> (defers recorded pipeline ops past the join when paging requires it), so call it
+    /// after every pure check; <see cref="EvaluateSingleJoinScope"/> is the non-mutating form.
     /// </summary>
     /// <remarks>
     /// <c>scope.Levels.Count == Joins.Count</c> means every join is individually eligible (<c>TranslateJoinCore</c> stops
@@ -44,10 +45,31 @@ internal static class NativeJoinScopeGate
     /// which is also true merely because this join is unconfirmed. <c>HasTerminalOperator</c>/<c>UnwindSource</c> are
     /// excluded because the <c>$lookup</c> would be emitted at a different point than these arms assume.
     /// </remarks>
-    internal static bool IsSingleEligibleNativeJoinScope(
+    internal static bool TryAdmitSingleEligibleNativeJoinScope(
         MongoQueryExpression mongoQueryExpression, [NotNullWhen(true)] out JoinInfo? joinInfo)
     {
+        if (!EvaluateSingleJoinScope(mongoQueryExpression, out joinInfo, out var defersPipelineOps))
+        {
+            return false;
+        }
+
+        if (defersPipelineOps)
+        {
+            mongoQueryExpression.Select.DeferPipelineOpsPastConfirmedJoin();
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// The pure half of <see cref="TryAdmitSingleEligibleNativeJoinScope"/>: whether the query is a single eligible join scope, and whether admitting it
+    /// requires deferring the recorded pipeline ops past the join. Mutates nothing, so a caller can ask without committing to the deferral.
+    /// </summary>
+    internal static bool EvaluateSingleJoinScope(
+        MongoQueryExpression mongoQueryExpression, [NotNullWhen(true)] out JoinInfo? joinInfo, out bool defersPipelineOps)
+    {
         joinInfo = null;
+        defersPipelineOps = false;
 
         if (!HasCompleteJoinScope(mongoQueryExpression, out _))
         {
@@ -120,7 +142,7 @@ internal static class NativeJoinScopeGate
                 }
                 else
                 {
-                    mongoQueryExpression.Select.DeferPipelineOpsPastConfirmedJoin();
+                    defersPipelineOps = true;
                 }
             }
         }
@@ -130,7 +152,7 @@ internal static class NativeJoinScopeGate
     }
 
     /// <summary>
-    /// The structural core shared by <see cref="IsSingleEligibleNativeJoinScope"/> and <see cref="TryGetGroupByJoinScope"/>:
+    /// The structural core shared by <see cref="TryAdmitSingleEligibleNativeJoinScope"/> and <see cref="TryGetGroupByJoinScope"/>:
     /// one level per join, no unsupported or terminal operator, no unwind source, a resolved <c>Lookup</c> on every join. Pure.
     /// </summary>
     internal static bool HasCompleteJoinScope(
@@ -164,7 +186,7 @@ internal static class NativeJoinScopeGate
 
     /// <summary>
     /// The join scope a <c>GroupBy</c> may resolve through, or <see langword="null"/> to keep root-entity resolution.
-    /// Pure: unlike <see cref="IsSingleEligibleNativeJoinScope"/> it never defers recorded ops. Called before <c>IsGroupBy</c> is set.
+    /// Pure: unlike <see cref="TryAdmitSingleEligibleNativeJoinScope"/> it never defers recorded ops. Called before <c>IsGroupBy</c> is set.
     /// </summary>
     /// <remarks>
     /// Paging recorded ahead of the grouped join is kept only when every join is 1:1; any other paging declines rather than

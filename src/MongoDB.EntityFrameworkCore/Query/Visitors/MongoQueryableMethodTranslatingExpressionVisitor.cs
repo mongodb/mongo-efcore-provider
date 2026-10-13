@@ -458,7 +458,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                         includeChainScope, selector.Parameters[0], collectionInclude.EntityExpression, out var includeScopeIndex)
                     && includeScopeIndex == 0
                     && !select.HasPagingDeferredPastAChainJoin
-                    && NativeJoinScopeGate.IsSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
+                    && NativeJoinScopeGate.TryAdmitSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
                 {
                     NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, includeChainScope);
                 }
@@ -473,7 +473,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                 var joinCollides = mongoQueryExpression.Joins is [{ Lookup: { } singleJoinLookup }]
                                    && singleJoinLookup.As == includeAlias;
                 if (!(joinCollides && select.JoinInnerAccessConfirmed)
-                    && NativeJoinScopeGate.IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var collectionJoin))
+                    && NativeJoinScopeGate.TryAdmitSingleEligibleNativeJoinScope(mongoQueryExpression, out var collectionJoin))
                 {
                     if (collectionJoin.Lookup!.As == includeAlias)
                     {
@@ -498,7 +498,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // Recording_join_scope_does_not_change_driver_LINQ_fallback_MQL). Depth-1 only; a root leaf over a chain is the next arm.
         else if (IsTransparentIdentifierMemberAccessSelector(selector)
                  && mongoQueryExpression.Select.JoinScope is { Levels.Count: 1 } bareLeafScope
-                 && NativeJoinScopeGate.IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var bareLeafJoin))
+                 && NativeJoinScopeGate.TryAdmitSingleEligibleNativeJoinScope(mongoQueryExpression, out var bareLeafJoin))
         {
             // Without confirmation, a later operator could record a native op that lowers before the $lookup and resolves against
             // the outer entity type (MongoSelectDefinition.HasConfirmedJoinLookup).
@@ -518,7 +518,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         // read-side handling, which exists only at depth 1.
         //
         // Paging in PipelineOps recorded after a join may sit BETWEEN two joins, and confirming would defer it past both
-        // $lookups, so decline. Checked before IsSingleEligibleNativeJoinScope, which may itself defer PipelineOps. Paging
+        // $lookups, so decline. Checked before TryAdmitSingleEligibleNativeJoinScope, which may itself defer PipelineOps. Paging
         // already in PostJoinOps lowers after every $lookup, correct only if no row-changing join follows; TranslateJoinCore
         // declines when one does (HasNonCommutingPostJoinOp).
         else if (mongoQueryExpression.Select.JoinScope is { Levels.Count: > 1 } chainedLeafScope
@@ -526,13 +526,13 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                      chainedLeafScope, selector.Parameters[0], selector.Body, out var chainedLeafScopeIndex)
                  && chainedLeafScopeIndex == 0
                  && !mongoQueryExpression.Select.HasPagingDeferredPastAChainJoin
-                 && NativeJoinScopeGate.IsSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
+                 && NativeJoinScopeGate.TryAdmitSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
         {
             NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, chainedLeafScope);
         }
         // A wrapped `new {...}`/MemberInit projection over the same eligible single-level join. TryBindProjection is the
         // whole gate and mutates nothing on decline, so false falls through to the projected-Select branch.
-        else if (NativeJoinScopeGate.IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var wrappedLeafJoin)
+        else if (NativeJoinScopeGate.TryAdmitSingleEligibleNativeJoinScope(mongoQueryExpression, out var wrappedLeafJoin)
                  && NativeJoinScopeProjectionBinder.TryBindProjection(mongoQueryExpression, selector, wrappedLeafJoin))
         {
             // Build the shaper by index, not via the generic fold: ApplyProjection early-returns because a join query's
@@ -552,14 +552,14 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
         }
         // A bare ternary null-checking a join scope's Inner side (`ti => ti.Inner != null ? ti.Inner.City : null`), bound as
         // a single leaf under the synthetic "_v" alias TryBindConditionalProjection staged.
-        else if (NativeJoinScopeGate.IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var conditionalLeafJoin)
+        else if (NativeJoinScopeGate.TryAdmitSingleEligibleNativeJoinScope(mongoQueryExpression, out var conditionalLeafJoin)
                  && NativeJoinScopeProjectionBinder.TryBindConditionalProjection(mongoQueryExpression, selector, conditionalLeafJoin))
         {
             return BindBareJoinScopeLeaf();
         }
         // A bare join scope null check (`ti => ti.Inner == null`) at any chain depth: a bool leaf under "_v", bound like the
         // conditional arm above; an inner join's degenerate check declines inside TryBindNullCheckProjection.
-        else if (NativeJoinScopeGate.IsSingleEligibleNativeJoinScope(mongoQueryExpression, out var nullCheckLeafJoin)
+        else if (NativeJoinScopeGate.TryAdmitSingleEligibleNativeJoinScope(mongoQueryExpression, out var nullCheckLeafJoin)
                  && NativeJoinScopeProjectionBinder.TryBindNullCheckProjection(mongoQueryExpression, selector, nullCheckLeafJoin))
         {
             return BindBareJoinScopeLeaf();
@@ -575,7 +575,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                          && !mongoQueryExpression.Select.HasPagingRecordedBeforeAnyJoin
                          && !mongoQueryExpression.Select.HasPagingRecordedAfterAJoin
                          && mongoQueryExpression.Select.PostLookupPagingOps.Count == 0))
-                 && NativeJoinScopeGate.IsSingleEligibleNativeJoinScope(mongoQueryExpression, out _)
+                 && NativeJoinScopeGate.TryAdmitSingleEligibleNativeJoinScope(mongoQueryExpression, out _)
                  && mongoQueryExpression.Select.Projection.Count == 0
                  && selector.Body is not ConditionalExpression
                  && !selector.Body.TryGetProjectionMembers(out _)
@@ -606,7 +606,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
                  && mongoQueryExpression.Select.Projection.Count == 0
                  && !selector.Body.ReferencesParameter(selector.Parameters[0])
                  && TryTranslateParameterFreeJoinProjection(parameterFreeScope, selector.Body, out var parameterFreeLeaf)
-                 && NativeJoinScopeGate.IsSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
+                 && NativeJoinScopeGate.TryAdmitSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
         {
             mongoQueryExpression.Select.AddProjection(
                 new MongoProjection(NativeProjectionBinder.SyntheticBareProjectionAlias, parameterFreeLeaf));
@@ -646,7 +646,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
             // needs the same confirm/register step as the bare pass-through arm, else Route stays Fallback.
             else if (mongoQueryExpression.Select.HasClientWrappedWholeEntityShaper
                      && mongoQueryExpression.Select.JoinScope is { Levels.Count: 1 } clientMethodScope
-                     && NativeJoinScopeGate.IsSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
+                     && NativeJoinScopeGate.TryAdmitSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
             {
                 NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, clientMethodScope);
             }
@@ -1013,7 +1013,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
     /// Recognizes <c>Select(ti =&gt; IncludeExpression(ti.Outer, nav, ...))</c> (or the <c>ti.Inner</c> mirror, or a longer
     /// <c>Outer</c>/<c>Inner</c> hop chain) : a single-level non-embedded collection <c>Include</c> over one side of a user
     /// <c>Join</c>/<c>GroupJoin</c>/<c>LeftJoin</c>. Structural only: the caller resolves which scope the hop chain names and
-    /// must gate the join through <see cref="NativeJoinScopeGate.IsSingleEligibleNativeJoinScope"/> before confirming it.
+    /// must gate the join through <see cref="NativeJoinScopeGate.TryAdmitSingleEligibleNativeJoinScope"/> before confirming it.
     /// </summary>
     internal static IncludeExpression? TryGetCollectionIncludeOverJoinScope(LambdaExpression selector)
     {
@@ -3370,7 +3370,7 @@ internal sealed class MongoQueryableMethodTranslatingExpressionVisitor : Queryab
 
     // A projected source1 over a single-level join scope whose confirming Select registered the join's $lookup.
     // HasConfirmedJoinLookup is set on a projected, ungrouped, unreduced select only by TranslateSelect's join-scope arms, each
-    // gated by IsSingleEligibleNativeJoinScope, so this reuses that decision rather than re-running it (it may defer
+    // gated by TryAdmitSingleEligibleNativeJoinScope, so this reuses that decision rather than re-running it (it may defer
     // PipelineOps). MongoSelectLowerer's OperandsProjected branch emits the join like the non-set-op path: $lookup/$unwind,
     // then PostJoinOps and PostLookupPagingOps, all ahead of source1's $project. The gate and that emission must move
     // together, else the inner-side $match is silently dropped.
