@@ -441,56 +441,7 @@ internal sealed partial class MongoQueryableMethodTranslatingExpressionVisitor :
                  && (collectionInclude.EntityExpression is MemberExpression { Member.Name: "Outer", Expression: ParameterExpression }
                      || mongoQueryExpression.Select.JoinScope is { Levels.Count: > 1 }))
         {
-            var select = mongoQueryExpression.Select;
-            var includeNavigation = (INavigation)collectionInclude.Navigation!;
-
-            // A join level the Include binding would mistake for the Include's intermediate document (an unwound
-            // reference/navigation-less hop targeting the root's type; matched by type) nests the root Include's $lookup under
-            // that join's alias while the reader reads it at root. Same predicate as the binding, which has this known gap.
-            if (mongoQueryExpression.Joins.Any(
-                    j => j.Lookup?.IsCollectionIncludeIntermediateFor(includeNavigation.DeclaringEntityType) == true))
-            {
-                select.MarkNotNativelyRepresentable();
-            }
-            else if (select.JoinScope is { Levels.Count: > 1 } includeChainScope)
-            {
-                if (NativeJoinScopeTranslator.TryResolveBareScopeLeaf(
-                        includeChainScope, selector.Parameters[0], collectionInclude.EntityExpression, out var includeScopeIndex)
-                    && includeScopeIndex == 0
-                    && !select.HasPagingDeferredPastAChainJoin
-                    && NativeJoinScopeGate.TryAdmitSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
-                {
-                    NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, includeChainScope);
-                }
-                else
-                {
-                    select.MarkNotNativelyRepresentable();
-                }
-            }
-            else
-            {
-                var includeAlias = LookupExpression.GetLookupAlias(includeNavigation);
-                var joinCollides = mongoQueryExpression.Joins is [{ Lookup: { } singleJoinLookup }]
-                                   && singleJoinLookup.As == includeAlias;
-                if (!(joinCollides && select.JoinInnerAccessConfirmed)
-                    && NativeJoinScopeGate.TryAdmitSingleEligibleNativeJoinScope(mongoQueryExpression, out var collectionJoin))
-                {
-                    if (collectionJoin.Lookup!.As == includeAlias)
-                    {
-                        var renamedAlias = mongoQueryExpression.GetUnusedLookupAlias($"{collectionJoin.Lookup.As}_join");
-                        collectionJoin.Alias = renamedAlias;
-                        collectionJoin.Lookup.As = renamedAlias;
-                    }
-
-                    mongoQueryExpression.AddLookup(collectionJoin.Lookup);
-                    select.MarkReferenceIncludeConfirmed();
-                    select.MarkJoinLookupConfirmed();
-                }
-                else
-                {
-                    select.MarkNotNativelyRepresentable();
-                }
-            }
+            BindCollectionIncludeOverJoinScope(mongoQueryExpression, selector, collectionInclude);
         }
         // A bare `x.Outer`/`x.Inner` selector over an eligible single-level join, recorded as an unconfirmed candidate.
         // Confirming here rather than in TranslateJoinCore defers AddLookup until the consuming Select is known; registering
@@ -567,30 +518,7 @@ internal sealed partial class MongoQueryableMethodTranslatingExpressionVisitor :
         // A bare scalar/computed body over a join scope (`ti => ti.Inner.City`, what EF's null-check removal leaves of
         // `nav != null ? nav.Member : null`). A chain re-roots the leaf onto the one scope it resolves to, by hop chain and
         // never by CLR type; a leaf spanning scopes declines.
-        else if (mongoQueryExpression.Select.JoinScope is { } bareValueScope
-                 // Over a chain, paging or ordering recorded before/after/between joins may be placed past a row-dropping or
-                 // row-multiplying join (and the stage-position pins of Ef373InterleavedPagingTests expect the fallback layout): decline.
-                 && (bareValueScope.Levels.Count == 1
-                     || (!mongoQueryExpression.Select.HasPaging && !mongoQueryExpression.Select.HasOrdering
-                         && !mongoQueryExpression.Select.HasPagingRecordedBeforeAnyJoin
-                         && !mongoQueryExpression.Select.HasPagingRecordedAfterAJoin
-                         && mongoQueryExpression.Select.PostLookupPagingOps.Count == 0))
-                 && NativeJoinScopeGate.TryAdmitSingleEligibleNativeJoinScope(mongoQueryExpression, out _)
-                 && mongoQueryExpression.Select.Projection.Count == 0
-                 && selector.Body is not ConditionalExpression
-                 && !selector.Body.TryGetProjectionMembers(out _)
-                 && (bareValueScope.Levels.Count == 1
-                     ? NativeJoinScopeTranslator.TryTranslateValue(
-                         bareValueScope, selector.Parameters[0], selector.Body, out var bareValueLeaf)
-                     : NativeJoinScopeTranslator.TryTranslateSingleScope(
-                         bareValueScope, selector.Parameters[0], selector.Body, valueMode: true, out bareValueLeaf))
-                 // Read back whole by alias; see NativeProjectionBinder.IsMisreadWholeValueLeaf.
-                 && !NativeProjectionBinder.IsMisreadWholeValueLeaf(bareValueLeaf!)
-                 // A non-nullable Length/IndexOf over an unmatched (or null) inner string: throw on null, or decline
-                 // where an operator may absorb the null; the same single classification as the wrapped arm.
-                 && MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
-                     NativeSlotPopulator.UnwrapBoxingToObjectType(selector.Body), bareValueLeaf!) is var bareValueRead
-                 && bareValueRead != NonNullableValueRead.Decline)
+        else if (TryStageBareJoinScopeValue(mongoQueryExpression, selector, out var bareValueLeaf, out var bareValueRead))
         {
             mongoQueryExpression.Select.AddProjection(
                 new MongoProjection(NativeProjectionBinder.SyntheticBareProjectionAlias, bareValueLeaf!,
@@ -703,6 +631,96 @@ internal sealed partial class MongoQueryableMethodTranslatingExpressionVisitor :
         var newShaper = _projectionBindingExpressionVisitor.Translate(mongoQueryExpression, newSelectorBody);
 
         return source.UpdateShaperExpression(newShaper);
+    }
+
+    // A collection Include directly over a join scope: confirms and registers the join's $lookup(s), or marks the query non-representable.
+    private static void BindCollectionIncludeOverJoinScope(
+        MongoQueryExpression mongoQueryExpression, LambdaExpression selector, IncludeExpression collectionInclude)
+    {
+        var select = mongoQueryExpression.Select;
+        var includeNavigation = (INavigation)collectionInclude.Navigation!;
+
+        // A join level the Include binding would mistake for the Include's intermediate document (an unwound
+        // reference/navigation-less hop targeting the root's type; matched by type) nests the root Include's $lookup under
+        // that join's alias while the reader reads it at root. Same predicate as the binding, which has this known gap.
+        if (mongoQueryExpression.Joins.Any(
+                j => j.Lookup?.IsCollectionIncludeIntermediateFor(includeNavigation.DeclaringEntityType) == true))
+        {
+            select.MarkNotNativelyRepresentable();
+        }
+        else if (select.JoinScope is { Levels.Count: > 1 } includeChainScope)
+        {
+            if (NativeJoinScopeTranslator.TryResolveBareScopeLeaf(
+                    includeChainScope, selector.Parameters[0], collectionInclude.EntityExpression, out var includeScopeIndex)
+                && includeScopeIndex == 0
+                && !select.HasPagingDeferredPastAChainJoin
+                && NativeJoinScopeGate.TryAdmitSingleEligibleNativeJoinScope(mongoQueryExpression, out _))
+            {
+                NativeJoinScopeProjectionBinder.ConfirmEntireChain(mongoQueryExpression, includeChainScope);
+            }
+            else
+            {
+                select.MarkNotNativelyRepresentable();
+            }
+        }
+        else
+        {
+            var includeAlias = LookupExpression.GetLookupAlias(includeNavigation);
+            var joinCollides = mongoQueryExpression.Joins is [{ Lookup: { } singleJoinLookup }]
+                               && singleJoinLookup.As == includeAlias;
+            if (!(joinCollides && select.JoinInnerAccessConfirmed)
+                && NativeJoinScopeGate.TryAdmitSingleEligibleNativeJoinScope(mongoQueryExpression, out var collectionJoin))
+            {
+                if (collectionJoin.Lookup!.As == includeAlias)
+                {
+                    var renamedAlias = mongoQueryExpression.GetUnusedLookupAlias($"{collectionJoin.Lookup.As}_join");
+                    collectionJoin.Alias = renamedAlias;
+                    collectionJoin.Lookup.As = renamedAlias;
+                }
+
+                mongoQueryExpression.AddLookup(collectionJoin.Lookup);
+                select.MarkReferenceIncludeConfirmed();
+                select.MarkJoinLookupConfirmed();
+            }
+            else
+            {
+                select.MarkNotNativelyRepresentable();
+            }
+        }
+    }
+
+    // The Select-over-join-scope arm for a bare scalar or computed body (`ti => ti.Inner.City`). TryAdmitSingleEligibleNativeJoinScope
+    // may defer recorded ops before a later conjunct declines; that ordering is unchanged from when this was inline in TranslateSelect.
+    private static bool TryStageBareJoinScopeValue(
+        MongoQueryExpression mongoQueryExpression, LambdaExpression selector,
+        [NotNullWhen(true)] out MongoExpression? bareValueLeaf, out NonNullableValueRead bareValueRead)
+    {
+        bareValueLeaf = null;
+        bareValueRead = NonNullableValueRead.Plain;
+        return mongoQueryExpression.Select.JoinScope is { } bareValueScope
+             // Over a chain, paging or ordering recorded before/after/between joins may be placed past a row-dropping or
+             // row-multiplying join (and the stage-position pins of Ef373InterleavedPagingTests expect the fallback layout): decline.
+             && (bareValueScope.Levels.Count == 1
+                 || (!mongoQueryExpression.Select.HasPaging && !mongoQueryExpression.Select.HasOrdering
+                     && !mongoQueryExpression.Select.HasPagingRecordedBeforeAnyJoin
+                     && !mongoQueryExpression.Select.HasPagingRecordedAfterAJoin
+                     && mongoQueryExpression.Select.PostLookupPagingOps.Count == 0))
+             && NativeJoinScopeGate.TryAdmitSingleEligibleNativeJoinScope(mongoQueryExpression, out _)
+             && mongoQueryExpression.Select.Projection.Count == 0
+             && selector.Body is not ConditionalExpression
+             && !selector.Body.TryGetProjectionMembers(out _)
+             && (bareValueScope.Levels.Count == 1
+                 ? NativeJoinScopeTranslator.TryTranslateValue(
+                     bareValueScope, selector.Parameters[0], selector.Body, out bareValueLeaf)
+                 : NativeJoinScopeTranslator.TryTranslateSingleScope(
+                     bareValueScope, selector.Parameters[0], selector.Body, valueMode: true, out bareValueLeaf))
+             // Read back whole by alias; see NativeProjectionBinder.IsMisreadWholeValueLeaf.
+             && !NativeProjectionBinder.IsMisreadWholeValueLeaf(bareValueLeaf!)
+             // A non-nullable Length/IndexOf over an unmatched (or null) inner string: throw on null, or decline
+             // where an operator may absorb the null; the same single classification as the wrapped arm.
+             && MongoAggregationExpressionRenderer.ClassifyNonNullableValueRead(
+                 NativeSlotPopulator.UnwrapBoxingToObjectType(selector.Body), bareValueLeaf!) is var read
+             && (bareValueRead = read) != NonNullableValueRead.Decline;
     }
 
     // True when the shaper holds an entity shaper bound through a ProjectionBindingExpression (a whole-entity or
