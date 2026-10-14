@@ -508,6 +508,11 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
         var elementBreak = Expression.Label("__elemDone_" + collection.Element.EntityType.ShortName());
 
+        // Element locals (scalars, owned references' presence flags and locals, nested collection state) are reused across iterations, so
+        // each element starts from the same defaults a fresh row does: a missing member must not read the previous element's value.
+        var elementInitializers = new List<Expression>();
+        CollectLocals(collection.Element, [], elementInitializers);
+
         var arrayBody = Expression.Block(
             Expression.Assign(collection.Counter, Expression.Constant(0)),
             Expression.Assign(collection.List, Expression.New(listType)),
@@ -518,6 +523,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                         Expression.Call(_reader, ReadBsonTypeMethod),
                         Expression.Constant(BsonType.EndOfDocument, typeof(BsonType))),
                     Expression.Block(
+                        elementInitializers.Count == 0 ? Expression.Empty() : Expression.Block(elementInitializers),
                         Expression.Call(_reader, ReadStartDocumentMethod),
                         BuildFillLoop(collection.Element),
                         Expression.Call(_reader, ReadEndDocumentMethod),

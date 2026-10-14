@@ -279,6 +279,29 @@ public class StreamingEligibilityTests
         Assert.False(StreamingEligibility.IsEligible(entityType));
     }
 
+    private class ShipWithOwnerBackReference
+    {
+        public string Carrier { get; set; } = "";
+        public EntityWithBackReferencingOwnedReference Order { get; set; } = null!;
+    }
+
+    private class EntityWithBackReferencingOwnedReference
+    {
+        public int Id { get; set; }
+        public ShipWithOwnerBackReference Ship { get; set; } = null!;
+    }
+
+    [Fact]
+    public void Entity_WithOwnedReference_ThatNavigatesBackToItsOwner_IsEvaluatedWithoutRecursingForever()
+    {
+        // An owned type's navigation back to its owner makes the navigation graph cyclic: the eligibility walk must terminate.
+        var entityType = GetEntityType<EntityWithBackReferencingOwnedReference>(mb =>
+        {
+            mb.Entity<EntityWithBackReferencingOwnedReference>().OwnsOne(e => e.Ship, s => s.WithOwner(x => x.Order));
+        });
+        Assert.True(StreamingEligibility.IsEligible(entityType));
+    }
+
     private static IEntityType GetEntityType<T>(Action<ModelBuilder>? configure = null) where T : class
     {
         using var db = SingleEntityDbContext.Create<T>(configure);

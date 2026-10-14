@@ -48,6 +48,12 @@ public class NativeReferenceIncludeBesideOwnedTests(TemporaryDatabaseFixture dat
         public string Name { get; set; } = "";
     }
 
+    public class Product
+    {
+        public ObjectId Id { get; set; }
+        public string Name { get; set; } = "";
+    }
+
     public class Reply
     {
         public ObjectId Id { get; set; }
@@ -84,6 +90,8 @@ public class NativeReferenceIncludeBesideOwnedTests(TemporaryDatabaseFixture dat
         public string Sku { get; set; }
         public LineMeta Meta { get; set; }
         public List<Discount> Discounts { get; set; }
+        public ObjectId? ProductId { get; set; }
+        public Product Product { get; set; }
     }
 
     public class LineMeta
@@ -104,6 +112,7 @@ public class NativeReferenceIncludeBesideOwnedTests(TemporaryDatabaseFixture dat
         public DbSet<Account> Accounts { get; set; } = null!;
         public DbSet<Carrier> Carriers { get; set; } = null!;
         public DbSet<Reply> Replies { get; set; } = null!;
+        public DbSet<Product> Products { get; set; } = null!;
 
         public BesideDbContext(TemporaryDatabaseFixture database, string suffix, MongoQueryMode mode)
             : base(new DbContextOptionsBuilder<BesideDbContext>()
@@ -120,6 +129,7 @@ public class NativeReferenceIncludeBesideOwnedTests(TemporaryDatabaseFixture dat
             mb.Entity<Account>().ToCollection("accounts" + _suffix);
             mb.Entity<Carrier>().ToCollection("carriers" + _suffix);
             mb.Entity<Reply>().ToCollection("replies" + _suffix);
+            mb.Entity<Product>().ToCollection("products" + _suffix);
             mb.Entity<Item>(i =>
             {
                 i.ToCollection("items" + _suffix);
@@ -133,6 +143,7 @@ public class NativeReferenceIncludeBesideOwnedTests(TemporaryDatabaseFixture dat
                     l.OwnsOne(x => x.Meta);
                     l.Navigation(x => x.Meta).IsRequired(false);
                     l.OwnsMany(x => x.Discounts);
+                    l.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId);
                 });
             });
         }
@@ -140,6 +151,7 @@ public class NativeReferenceIncludeBesideOwnedTests(TemporaryDatabaseFixture dat
 
     private static readonly ObjectId Acme = new("000000000000000000000a01");
     private static readonly ObjectId Globex = new("000000000000000000000a02");
+    private static readonly ObjectId Widget = new("000000000000000000000c01");
     private static readonly ObjectId FastCo = new("000000000000000000000b01");
 
     private string Seed(string test)
@@ -150,11 +162,13 @@ public class NativeReferenceIncludeBesideOwnedTests(TemporaryDatabaseFixture dat
             new BsonDocument { { "_id", Acme }, { "Name", "acme" } },
             new BsonDocument { { "_id", Globex }, { "Name", "globex" } }
         ]);
+        db.GetCollection<BsonDocument>("products" + suffix).InsertOne(new BsonDocument { { "_id", Widget }, { "Name", "widget" } });
         db.GetCollection<BsonDocument>("carriers" + suffix).InsertOne(new BsonDocument { { "_id", FastCo }, { "Name", "fastco" } });
 
         BsonDocument Line(string sku, string? note, params string[] codes)
         {
             var d = new BsonDocument("Sku", sku);
+            d.Add("ProductId", sku == "s1" ? Widget : BsonNull.Value);
             if (note is not null)
             {
                 d.Add("Meta", new BsonDocument("Note", note));
@@ -219,7 +233,7 @@ public class NativeReferenceIncludeBesideOwnedTests(TemporaryDatabaseFixture dat
             i.Account?.Name ?? "-",
             i.Shipping is null ? "-" : i.Shipping.Method + "/" + (i.Shipping.Carrier?.Name ?? "-"),
             string.Join(",", (i.Tags ?? []).Select(t => t.Label)),
-            string.Join(";", (i.Lines ?? []).Select(l => $"{l.Sku}:{l.Meta?.Note ?? "-"}:" + string.Join(",", (l.Discounts ?? []).Select(d => d.Code)))),
+            string.Join(";", (i.Lines ?? []).Select(l => $"{l.Sku}:{l.Meta?.Note ?? "-"}{(l.Product is null ? "" : "@" + l.Product.Name)}:" + string.Join(",", (l.Discounts ?? []).Select(d => d.Code)))),
             string.Join(",", (i.Replies ?? []).Select(r => r.Text).Order()));
 
     // Runs `query` in every mode and returns the NativeOnly rows; Native and DriverLinq must produce the same rows.
@@ -370,6 +384,40 @@ public class NativeReferenceIncludeBesideOwnedTests(TemporaryDatabaseFixture dat
             var oracle = Run(MongoQueryMode.DriverLinq, thenInclude);
             Assert.StartsWith("t1|acme|air/fastco|", oracle[0]);
             Assert.Equal(oracle, Run(MongoQueryMode.Native, thenInclude));
+        }
+    }
+
+    [Fact]
+    public void A_reference_hosted_by_an_owned_collection_element_beside_the_reference_Include_loads_the_product()
+    {
+        // Include(Account) beside Lines.ThenInclude(Product): the product reference lives in an owned collection element. Whatever path
+        // the query takes, the product must load exactly as in the oracle: an admission that treated the owned collection as transparent
+        // would leave Product null.
+        var suffix = Seed(nameof(A_reference_hosted_by_an_owned_collection_element_beside_the_reference_Include_loads_the_product));
+
+        string[] Run(MongoQueryMode mode)
+        {
+            using var db = new BesideDbContext(database, suffix, mode);
+            return db.Items.Include(i => i.Account).Include(i => i.Lines).ThenInclude(l => l.Product).OrderBy(i => i.Title).ToList()
+                .Select(Describe).ToArray();
+        }
+
+        // Driver-LINQ cannot translate a ThenInclude through an owned collection; Native must refuse it too rather than return rows
+        // whose Product is silently null (an admission treating the owned collection as transparent would).
+        string[]? oracle = null;
+        var oracleFailure = Record.Exception(() => oracle = Run(MongoQueryMode.DriverLinq));
+        string[]? native = null;
+        var nativeFailure = Record.Exception(() => native = Run(MongoQueryMode.Native));
+
+        if (oracleFailure is null)
+        {
+            Assert.Null(nativeFailure);
+            Assert.Contains("s1:n1@widget:", oracle![0]);
+            Assert.Equal(oracle, native);
+        }
+        else
+        {
+            Assert.NotNull(nativeFailure);
         }
     }
 }

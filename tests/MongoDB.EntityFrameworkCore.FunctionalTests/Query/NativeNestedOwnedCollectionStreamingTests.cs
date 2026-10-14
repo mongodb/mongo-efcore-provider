@@ -54,7 +54,7 @@ public class NativeNestedOwnedCollectionStreamingTests(TemporaryDatabaseFixture 
 
     public class LineItem
     {
-        public string Sku { get; set; }
+        public string? Sku { get; set; }
         public int Qty { get; set; }
         public LineMeta Meta { get; set; }
         public List<Discount> Discounts { get; set; }
@@ -286,5 +286,24 @@ public class NativeNestedOwnedCollectionStreamingTests(TemporaryDatabaseFixture 
 
         var ex = Assert.Throws<InvalidOperationException>(() => db.Entities.AsNoTracking().ToList());
         Assert.Contains("Field 'Meta' required but not present", ex.Message);
+    }
+
+    [Theory]
+    [InlineData(MongoQueryMode.NativeOnly)]
+    [InlineData(MongoQueryMode.DriverLinq)]
+    public void An_element_does_not_inherit_the_previous_elements_owned_reference_or_scalar(MongoQueryMode mode)
+    {
+        // Element state is reused across iterations: a later element without Meta/Sku must not read the earlier element's values.
+        var coll = database.MongoDatabase.GetCollection<BsonDocument>(UniqueCollectionName(nameof(An_element_does_not_inherit_the_previous_elements_owned_reference_or_scalar) + mode));
+        coll.InsertOne(Row("stale", new BsonArray
+        {
+            Line("s1", 1, new BsonDocument("Note", "n1"), new BsonArray { Disc("x", 5) }),
+            new BsonDocument("Qty", 2),
+            Line("s3", 3, BsonNull.Value, discounts: null)
+        }));
+
+        using var db = CreateContext(database.MongoDatabase.GetCollection<Order>(coll.CollectionNamespace.CollectionName), mode);
+
+        Assert.Equal(["stale|c-stale|s1:1:n1:x/5;:2:-:;s3:3:-:"], db.Entities.AsNoTracking().ToList().Select(Describe).ToArray());
     }
 }

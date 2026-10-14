@@ -73,7 +73,8 @@ internal static class StreamingEligibility
 
             // RewriteOwnedNavigation reads an owned reference's sub-document with only single owned references beneath it, so a collection
             // anywhere below an owned reference stays on the DOM shaper.
-            if (!navigation.IsCollection && navigation.TargetEntityType.IsOwned() && OwnsCollectionBelow(navigation.TargetEntityType))
+            if (!IsOwnerBackReference(navigation) && !navigation.IsCollection && navigation.TargetEntityType.IsOwned()
+                && OwnsCollectionBelow(navigation.TargetEntityType))
             {
                 return false;
             }
@@ -94,9 +95,14 @@ internal static class StreamingEligibility
         return true;
     }
 
+    // Both walks skip an owned type's navigation back to its owner: it makes the graph cyclic and is not part of the owned subtree.
+    private static bool IsOwnerBackReference(INavigation navigation)
+        => navigation.IsOnDependent && navigation.ForeignKey.IsOwnership;
+
     private static bool HasNonOwnedNavigation(IEntityType entityType)
-        => entityType.GetNavigations().Any(n => !n.TargetEntityType.IsOwned() || HasNonOwnedNavigation(n.TargetEntityType));
+        => entityType.GetNavigations().Any(
+            n => !IsOwnerBackReference(n) && (!n.TargetEntityType.IsOwned() || HasNonOwnedNavigation(n.TargetEntityType)));
 
     private static bool OwnsCollectionBelow(IEntityType entityType)
-        => entityType.GetNavigations().Any(n => n.IsCollection || OwnsCollectionBelow(n.TargetEntityType));
+        => entityType.GetNavigations().Any(n => !IsOwnerBackReference(n) && (n.IsCollection || OwnsCollectionBelow(n.TargetEntityType)));
 }
