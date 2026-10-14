@@ -1,4 +1,4 @@
-using BenchmarkDotNet.Attributes;
+﻿using BenchmarkDotNet.Attributes;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
@@ -30,7 +30,7 @@ public class ExtendedBenchmarks
 
     // Typed POCO for DriverComplexQuery output: carries the full Order graph (all fields)
     // plus the looked-up Account, matching the same shape EF materializes via Include(o => o.Account).
-    private sealed class OrderFull
+    internal sealed class OrderFull
     {
         [BsonId] public ObjectId Id { get; set; }
         public string Code { get; set; } = "";
@@ -126,7 +126,9 @@ public class ExtendedBenchmarks
     // The $lookup sits after $skip/$limit, so only ~1500 documents are joined — identical to EF's behaviour.
     // OrderFull carries every Order field (Id, Code, AccountId, Shipping+Address, Lines+Meta+Discounts) plus the
     // looked-up Account, so the typed graph is fully materialized with .ToList() — same work as EF's Include.
-    private int DriverComplexQuery()
+    private int DriverComplexQuery() => DriverComplexQuery(_orderColl);
+
+    internal static int DriverComplexQuery(IMongoCollection<Order> orderColl)
     {
         var matchStage  = new BsonDocument("$match", new BsonDocument
         {
@@ -151,7 +153,7 @@ public class ExtendedBenchmarks
         var pipeline = PipelineDefinition<Order, OrderFull>.Create(
             new[] { matchStage, sortStage, skipStage, limitStage, lookupStage, unwindStage });
 
-        return _orderColl.Aggregate(pipeline).ToList().Count;
+        return orderColl.Aggregate(pipeline).ToList().Count;
     }
 
     [Benchmark] public int ComplexQuery_DriverOnly() => DriverComplexQuery();

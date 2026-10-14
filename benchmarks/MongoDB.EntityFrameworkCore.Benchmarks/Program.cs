@@ -1,7 +1,10 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Benchmarks;
 using MongoDB.EntityFrameworkCore.Infrastructure;
+
+if (args.Contains("--profile"))
+    return ProfileHarness.Run(args);
 
 if (args.Contains("--verify-native"))
 {
@@ -103,7 +106,7 @@ if (args.Contains("--verify-native"))
         using var ctx = new BenchmarkDbContext(seedOptions);
         ctx.Database.EnsureDeleted();
     }
-    return;
+    return 0;
 }
 
 if (args.Contains("--extended-smoke"))
@@ -144,7 +147,7 @@ if (args.Contains("--extended-smoke"))
         using var ctx = new BenchmarkDbContext(options);
         ctx.Database.EnsureDeleted();
     }
-    return;
+    return 0;
 }
 
 if (args.Contains("--smoke"))
@@ -188,13 +191,12 @@ if (args.Contains("--smoke"))
         using var ctx = new BenchmarkDbContext(options);
         ctx.Database.EnsureDeleted();
     }
-    return;
+    return 0;
 }
 
-if (args.Contains("--extended"))
-{
-    BenchmarkDotNet.Running.BenchmarkRunner.Run<ExtendedBenchmarks>();
-    return;
-}
-
-BenchmarkDotNet.Running.BenchmarkRunner.Run<HeadlineBenchmarks>();
+// Remaining args (--filter, --job, ...) go to BenchmarkDotNet. --extended selects the extended class.
+var bdnArgs = args.Where(a => a != "--extended").ToArray();
+BenchmarkDotNet.Running.BenchmarkSwitcher
+    .FromTypes(args.Contains("--extended") ? new[] { typeof(ExtendedBenchmarks) } : new[] { typeof(HeadlineBenchmarks) })
+    .Run(bdnArgs);
+return 0;
