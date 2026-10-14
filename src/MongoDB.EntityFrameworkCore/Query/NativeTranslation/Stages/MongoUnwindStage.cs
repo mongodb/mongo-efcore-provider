@@ -20,10 +20,11 @@ namespace MongoDB.EntityFrameworkCore.Query.NativeTranslation.Stages;
 /// <summary>An <c>$unwind</c> aggregation stage over a lookup's array field.</summary>
 internal sealed class MongoUnwindStage : MongoPipelineStage
 {
-    public MongoUnwindStage(LookupExpression lookup, bool preserveNullAndEmptyArrays = true)
+    public MongoUnwindStage(LookupExpression lookup, bool preserveNullAndEmptyArrays = true, bool atMostOneMatch = false)
     {
         Lookup = lookup;
         PreserveNullAndEmptyArrays = preserveNullAndEmptyArrays;
+        AtMostOneMatch = atMostOneMatch;
     }
 
     public LookupExpression Lookup { get; }
@@ -33,4 +34,12 @@ internal sealed class MongoUnwindStage : MongoPipelineStage
     /// Reference-Include passes <see cref="LookupExpression.PreserveNullAndEmptyArrays"/> (the navigation's requiredness).
     /// </summary>
     public bool PreserveNullAndEmptyArrays { get; }
+
+    /// <summary>
+    /// Whether the lookup yields at most one document per outer row (see <see cref="LookupExpression.MatchesAtMostOneDocument"/>), so
+    /// unwinding it is the same as taking its first element. The factory then renders the cheaper <c>$match</c> + <c>$set</c>
+    /// form: a <c>$lookup</c> followed by <c>$unwind</c> is absorbed by the server into a form that cannot use its slot-based
+    /// <c>$lookup</c>, which is 2-6x slower on 8.x for the same documents.
+    /// </summary>
+    public bool AtMostOneMatch { get; }
 }

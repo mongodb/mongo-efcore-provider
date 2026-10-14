@@ -47,7 +47,7 @@ internal static class ServerOnly
             var al = "_lookup_Product";
             var matchNe = new BsonDocument("$match", new BsonDocument(al, new BsonDocument("$ne", new BsonArray())));
             var matchSize = new BsonDocument("$match", new BsonDocument(al + ".0", new BsonDocument("$exists", true)));
-            var setFirst = new BsonDocument("$set", new BsonDocument(al, new BsonDocument("$first", "$" + al)));
+            var setFirst = new BsonDocument("$set", new BsonDocument(al, new BsonDocument("$arrayElemAt", new BsonArray { "$" + al, 0 })));
             var matchGt = new BsonDocument("$match", new BsonDocument("$expr", new BsonDocument("$gt", new BsonArray { new BsonDocument("$size", "$" + al), 0 })));
             Time("lookup only (raw docs)", () => Raw(new[] { Lookup(al) }));
             Time("lookup + $match {as:{$ne:[]}}", () => Raw(new[] { Lookup(al), matchNe }));
