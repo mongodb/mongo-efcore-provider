@@ -19,12 +19,14 @@ public class ExtendedBenchmarks
     private const int AccountN = 200;
     private const int OrderN = 10_000;
     private const int WideN = 5_000;
+    private const int MediumN = 10_000;
     private const int ZipThreshold = 10_500;
 
     private DbContextOptions<BenchmarkDbContext> _efOptions = null!;       // DriverLinq (also used for seed/cleanup)
     private DbContextOptions<BenchmarkDbContext> _efOptionsNative = null!;
     private IMongoCollection<Order> _orderColl = null!;
     private IMongoCollection<WideEntity> _wideColl = null!;
+    private IMongoCollection<MediumEntity> _mediumColl = null!;
     private MongoClient _client = null!;
     private string _dbName = null!;
 
@@ -57,11 +59,12 @@ public class ExtendedBenchmarks
             .Options;
 
         using (var ctx = new BenchmarkDbContext(_efOptions))
-            BenchmarkSeeder.SeedExtended(ctx, AccountN, OrderN, WideN);
+            BenchmarkSeeder.SeedExtended(ctx, AccountN, OrderN, WideN, MediumN);
 
         var db = _client.GetDatabase(_dbName);
         _orderColl = db.GetCollection<Order>("Orders");
         _wideColl = db.GetCollection<WideEntity>("Wides");
+        _mediumColl = db.GetCollection<MediumEntity>("Mediums");
 
         Validate();
     }
@@ -183,4 +186,14 @@ public class ExtendedBenchmarks
 
     [Benchmark] public int NestedWholeEntity_EF_Native()
     { using var ctx = new BenchmarkDbContext(_efOptionsNative); return ctx.Orders.AsNoTracking().ToList().Count; }
+
+    // ----- Case D (new): 40-property entity whole-entity ToList (a realistic width between FlatItem's 5 and WideEntity's 400) -----
+    [Benchmark] public int MediumWholeEntity_DriverOnly()
+        => _mediumColl.AsQueryable().ToList().Count;
+
+    [Benchmark] public int MediumWholeEntity_EF_DriverLinq()
+    { using var ctx = new BenchmarkDbContext(_efOptions); return ctx.Mediums.AsNoTracking().ToList().Count; }
+
+    [Benchmark] public int MediumWholeEntity_EF_Native()
+    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return ctx.Mediums.AsNoTracking().ToList().Count; }
 }

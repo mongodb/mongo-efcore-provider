@@ -18,7 +18,7 @@ internal static class ProfileHarness
     public static readonly string[] Shapes =
     {
         "WhereToList", "WhereNone", "WholeEntityToList", "WholeEntityTracked", "Take1", "OrderByTake",
-        "ReferenceInclude", "ComplexQuery", "WideWholeEntity", "NestedWholeEntity",
+        "ReferenceInclude", "ComplexQuery", "WideWholeEntity", "MediumWholeEntity", "NestedWholeEntity",
         "WhereToListAsync", "WholeEntityToListAsync", "ReferenceIncludeAsync",
     };
 
@@ -31,7 +31,7 @@ internal static class ProfileHarness
         var rows = Int(args, "--rows", 10_000);
         var warmup = Int(args, "--warmup", 200);
         var minOps = Int(args, "--minops", 1);
-        var extended = shape is "ComplexQuery" or "WideWholeEntity" or "NestedWholeEntity";
+        var extended = shape is "ComplexQuery" or "WideWholeEntity" or "MediumWholeEntity" or "NestedWholeEntity";
         var extRows = args.Contains("--rows") ? rows : -1;
 
         var conn = Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017";
@@ -61,7 +61,7 @@ internal static class ProfileHarness
             using (var ctx = new BenchmarkDbContext(dl))
             {
                 if (extended)
-                    BenchmarkSeeder.SeedExtended(ctx, 200, extRows < 0 ? 10_000 : extRows, extRows < 0 ? 5_000 : extRows);
+                    BenchmarkSeeder.SeedExtended(ctx, 200, extRows < 0 ? 10_000 : extRows, extRows < 0 ? 5_000 : extRows, extRows < 0 ? 10_000 : extRows);
                 else
                     BenchmarkSeeder.Seed(ctx, rows, 100, rows);
             }
@@ -72,6 +72,7 @@ internal static class ProfileHarness
             var products = db.GetCollection<Product>("Products");
             var orders = db.GetCollection<Order>("Orders");
             var wides = db.GetCollection<WideEntity>("Wides");
+            var mediums = db.GetCollection<MediumEntity>("Mediums");
 
             var opts = config == "native" ? nat : dl;
             Func<int>? sync = null;
@@ -87,6 +88,7 @@ internal static class ProfileHarness
                 case ("driver", "ReferenceInclude"): sync = () => HeadlineBenchmarks.DriverReviewInclude(reviews, products); break;
                 case ("driver", "ComplexQuery"): sync = () => ExtendedBenchmarks.DriverComplexQuery(orders); break;
                 case ("driver", "WideWholeEntity"): sync = () => wides.AsQueryable().ToList().Count; break;
+                case ("driver", "MediumWholeEntity"): sync = () => mediums.AsQueryable().ToList().Count; break;
                 case ("driver", "NestedWholeEntity"): sync = () => orders.AsQueryable().ToList().Count; break;
                 case ("driver", "WhereToListAsync"): async = async () => (await MongoQueryable.ToListAsync(flat.AsQueryable().Where(f => f.Active))).Count; break;
                 case ("driver", "WholeEntityToListAsync"): async = async () => (await MongoQueryable.ToListAsync(flat.AsQueryable())).Count; break;
@@ -100,6 +102,7 @@ internal static class ProfileHarness
                 case (_, "ReferenceInclude"): sync = () => { using var c = new BenchmarkDbContext(opts); return c.Reviews.AsNoTracking().Include(r => r.Product).ToList().Count; }; break;
                 case (_, "ComplexQuery"): sync = () => { using var c = new BenchmarkDbContext(opts); return c.Orders.AsNoTracking().Where(o => o.Shipping.Address.Zip > 10_500 && o.Code != null).Include(o => o.Account).OrderByDescending(o => o.Shipping.Address.City).ThenBy(o => o.Id).Skip(50).Take(1500).ToList().Count; }; break;
                 case (_, "WideWholeEntity"): sync = () => { using var c = new BenchmarkDbContext(opts); return c.Wides.AsNoTracking().ToList().Count; }; break;
+                case (_, "MediumWholeEntity"): sync = () => { using var c = new BenchmarkDbContext(opts); return c.Mediums.AsNoTracking().ToList().Count; }; break;
                 case (_, "NestedWholeEntity"): sync = () => { using var c = new BenchmarkDbContext(opts); return c.Orders.AsNoTracking().ToList().Count; }; break;
                 case (_, "WhereToListAsync"): async = async () => { using var c = new BenchmarkDbContext(opts); return (await EntityFrameworkQueryableExtensions.ToListAsync(c.FlatItems.AsNoTracking().Where(f => f.Active))).Count; }; break;
                 case (_, "WholeEntityToListAsync"): async = async () => { using var c = new BenchmarkDbContext(opts); return (await EntityFrameworkQueryableExtensions.ToListAsync(c.FlatItems.AsNoTracking())).Count; }; break;

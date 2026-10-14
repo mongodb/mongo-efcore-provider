@@ -57,6 +57,14 @@ internal static class ServerOnly
             Time("lookup + $set first (optional form)", () => Raw(new[] { Lookup(al), setFirst }));
             var unwindPreserve = UnwindP(al);
             Time("lookup + $unwind preserve=true", () => Raw(new[] { Lookup(al), unwindPreserve }));
+            // A filter on a joined field after the join: $lookup+$unwind+$match is coalesced into the lookup on the server.
+            var filter = new BsonDocument("$match", new BsonDocument(al + ".Title", "product-5"));
+            Time("FILTER lookup+unwind+$match(joined field)", () => Raw(new[] { Lookup(al), unwind, filter }));
+            Time("FILTER lookup+$match+$set first+$match(joined field)", () => Raw(new[] { Lookup(al), matchSize, setFirst, filter }));
+            var sortStage = new BsonDocument("$sort", new BsonDocument(al + ".Title", 1));
+            var limit = new BsonDocument("$limit", 100);
+            Time("SORT lookup+unwind+$sort(joined)+$limit", () => Raw(new[] { Lookup(al), unwind, sortStage, limit }));
+            Time("SORT lookup+$match+$set first+$sort(joined)+$limit", () => Raw(new[] { Lookup(al), matchSize, setFirst, sortStage, limit }));
             Time("lookup (as Products) only (raw docs)", () => Raw(lookupOnly));
             Time("lookup+unwind (raw docs)", () => Raw(lookupUnwind));
 
