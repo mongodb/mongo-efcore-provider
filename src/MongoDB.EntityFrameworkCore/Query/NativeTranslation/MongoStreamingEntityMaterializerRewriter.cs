@@ -184,7 +184,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
     /// <summary>
     /// Builds a plan for <paramref name="entityType"/> (recursively for owned navigations). Rejects a non-owned collection navigation
-    /// with <see cref="NativeTranslationNotSupportedException"/>; an owned collection element with a further navigation is rejected earlier by <see cref="StreamingEligibility"/>.
+    /// with <see cref="NativeTranslationNotSupportedException"/>; a non-owned navigation inside an owned collection element is rejected earlier by <see cref="StreamingEligibility"/>.
     /// </summary>
     private EntityPlan BuildPlan(
         IEntityType entityType,
@@ -540,7 +540,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     /// to <paramref name="plan"/>'s locals; an IncludeExpression's entity block uses the parent plan and each owned navigation block its
     /// child plan, with its <c>bsonDocN == null</c> guard replaced by <c>!present</c>.
     /// </summary>
-    private Expression RewriteMaterializer(Expression body, EntityPlan plan, CollectionPlan? collection = null)
+    private Expression RewriteMaterializer(
+        Expression body, EntityPlan plan, IReadOnlyList<CollectionPlan>? enclosing = null)
     {
         if (body is IncludeExpression include)
         {
@@ -554,17 +555,17 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
 
             if (navigation.IsCollection)
             {
-                var entityBlockForCollection = (BlockExpression)RewriteMaterializer(include.EntityExpression, plan, collection);
+                var entityBlockForCollection = (BlockExpression)RewriteMaterializer(include.EntityExpression, plan, enclosing);
                 var collectionPlan = FindCollectionPlan(plan, navigation);
 
                 // Locate the CollectionShaperExpression and build the per-element construction (stored on the
                 // plan for the array loop to emit); splice the fixup into the parent block, fed List<TElement>.
-                BuildCollectionElementConstructor(include.NavigationExpression, collectionPlan);
+                BuildCollectionElementConstructor(include.NavigationExpression, collectionPlan, enclosing);
 
                 return SpliceInclude(entityBlockForCollection, navigation, collectionPlan.List, include.SetLoaded);
             }
 
-            var entityBlock = (BlockExpression)RewriteMaterializer(include.EntityExpression, plan, collection);
+            var entityBlock = (BlockExpression)RewriteMaterializer(include.EntityExpression, plan, enclosing);
 
             // A non-owned single reference from the cross-collection $lookup field (`_lookup_<Nav>`): same IncludeExpression/fixup shape as an
             // owned reference, spliced via SpliceInclude; only the joined entity's materialization differs.
@@ -578,16 +579,16 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             }
 
             var child = FindChildPlan(plan, navigation);
-            var navExpression = RewriteOwnedNavigation(include.NavigationExpression, navigation, child);
+            var navExpression = RewriteOwnedNavigation(include.NavigationExpression, navigation, child, enclosing);
 
             return SpliceInclude(entityBlock, navigation, navExpression, include.SetLoaded);
         }
 
         // Plain entity block: { bsonDocN; bsonDocN = projection as BsonDocument; bsonDocN == null ? null : <block> }. The root row is always
         // present, so drop the local + null guard and redirect the block to this plan's locals. For a collection element, `collection` carries
-        // the loop counter so the synthesized ordinal key resolves to counter+1.
+        // the enclosing collection plans (innermost last) so a synthesized ordinal key resolves to its loop counter+1.
         var materializerBlock = ExtractMaterializerBlock(body, plan.EntityType);
-        return new ConstructionRewriter(plan.AllLocals, collection).Visit(materializerBlock);
+        return new ConstructionRewriter(plan.AllLocals, enclosing).Visit(materializerBlock);
     }
 
     /// <summary>
@@ -625,16 +626,36 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     /// Locates the <see cref="CollectionShaperExpression"/> inside an owned-collection navigation expression and builds the per-element
     /// construction expression (element locals + ordinal counter -> CLR element), storing it on <paramref name="collectionPlan"/> for <c>list.Add(...)</c>.
     /// </summary>
-    private void BuildCollectionElementConstructor(Expression navExpression, CollectionPlan collectionPlan)
+    private void BuildCollectionElementConstructor(
+        Expression navExpression, CollectionPlan collectionPlan, IReadOnlyList<CollectionPlan>? enclosing)
     {
-        var shaper = FindCollectionShaper(navExpression)
-                     ?? throw new NativeTranslationNotSupportedException(
-                         $"Unexpected owned-collection materializer shape for '{collectionPlan.Element.EntityType.DisplayName()}'.");
+        // The per-element materializer; it may itself be an IncludeExpression (element owns further navigations), which RewriteMaterializer
+        // handles recursively with the enclosing collection plans threaded through for the ordinal keys.
+        var elementShaper = FindElementShaper(navExpression)
+                            ?? throw new NativeTranslationNotSupportedException(
+                                $"Unexpected owned-collection materializer shape for '{collectionPlan.Element.EntityType.DisplayName()}'.");
 
-        // The inner shaper is the per-element materializer; it may itself be an IncludeExpression (element owns further navigations), which
-        // RewriteMaterializer handles recursively with the collection context threaded through for the ordinal key.
         collectionPlan.ElementConstructor =
-            RewriteMaterializer(shaper.InnerShaper, collectionPlan.Element, collectionPlan);
+            RewriteMaterializer(elementShaper, collectionPlan.Element, [.. enclosing ?? [], collectionPlan]);
+    }
+
+    /// <summary>
+    /// The per-element materializer of an owned-collection navigation expression. A flat element's expression holds the
+    /// <see cref="CollectionShaperExpression"/> directly; an element that owns further navigations is
+    /// <c>Convert(&lt;block holding the shaper&gt;.Select(o =&gt; IncludeExpression(...)), List&lt;T&gt;)</c>, so the selector's include chain,
+    /// with its parameter replaced by the shaper's inner shaper, is the element materializer.
+    /// </summary>
+    private static Expression? FindElementShaper(Expression navExpression)
+    {
+        var expression = navExpression is UnaryExpression { NodeType: ExpressionType.Convert } convert ? convert.Operand : navExpression;
+        if (expression is MethodCallExpression { Method.Name: nameof(Enumerable.Select), Arguments: [var source, LambdaExpression { Body: IncludeExpression } selector] })
+        {
+            return FindCollectionShaper(source) is { } nested
+                ? ReplacingExpressionVisitor.Replace(selector.Parameters[0], nested.InnerShaper, selector.Body)
+                : null;
+        }
+
+        return FindCollectionShaper(navExpression)?.InnerShaper;
     }
 
     private static CollectionShaperExpression? FindCollectionShaper(Expression expression)
@@ -681,7 +702,8 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     /// wrapped in an <see cref="IncludeExpression"/> when the owned type owns further references. The value source is redirected to the
     /// child plan's locals, nested fixups are spliced in, and the null test is replaced with <c>!present</c>.
     /// </summary>
-    private Expression RewriteOwnedNavigation(Expression navExpression, INavigation navigation, EntityPlan child)
+    private Expression RewriteOwnedNavigation(
+        Expression navExpression, INavigation navigation, EntityPlan child, IReadOnlyList<CollectionPlan>? enclosing)
     {
         // Locate the owned-entity block carrying the `bsonDocN == null ? null : <block>` guard: the IncludeExpression's EntityExpression when
         // the owned type has its own owned references, else the navigation expression itself.
@@ -697,7 +719,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         }
 
         // Redirect to the child's locals (the owned subtree shares the root's scope, so owned-type keys still resolve to the principal's local).
-        var rewrittenBlock = (BlockExpression)new ConstructionRewriter(child.AllLocals).Visit(materializerBlock);
+        var rewrittenBlock = (BlockExpression)new ConstructionRewriter(child.AllLocals, enclosing).Visit(materializerBlock);
 
         if (navExpression is IncludeExpression include)
         {
@@ -709,7 +731,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             }
 
             var nestedChild = FindChildPlan(child, nestedNavigation);
-            var nestedNavExpression = RewriteOwnedNavigation(include.NavigationExpression, nestedNavigation, nestedChild);
+            var nestedNavExpression = RewriteOwnedNavigation(include.NavigationExpression, nestedNavigation, nestedChild, enclosing);
             rewrittenBlock = SpliceInclude(rewrittenBlock, nestedNavigation, nestedNavExpression, include.SetLoaded);
         }
 
@@ -904,12 +926,13 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     private sealed class ConstructionRewriter : System.Linq.Expressions.ExpressionVisitor
     {
         private readonly Dictionary<IProperty, ParameterExpression> _locals;
-        private readonly CollectionPlan? _collection;
+        private readonly IReadOnlyList<CollectionPlan> _enclosing;
 
-        public ConstructionRewriter(Dictionary<IProperty, ParameterExpression> locals, CollectionPlan? collection = null)
+        public ConstructionRewriter(
+            Dictionary<IProperty, ParameterExpression> locals, IReadOnlyList<CollectionPlan>? enclosing = null)
         {
             _locals = locals;
-            _collection = collection;
+            _enclosing = enclosing ?? [];
         }
 
         protected override Expression VisitMethodCall(MethodCallExpression node)
@@ -921,11 +944,10 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                 var property = node.Arguments[2].GetConstantValue<IProperty>();
 
                 // The synthesized owned-collection ordinal key isn't stored in BSON: it's the loop counter + 1 (matching the DOM path's `ordinal + 1`).
-                if (_collection != null
-                    && property.DeclaringType == _collection.Element.EntityType
-                    && property.IsOwnedTypeOrdinalKey())
+                // A key of a type owned by an element (reference or nested collection) is a copy of the enclosing element's ordinal key, so
+                // follow the principal chain to the ordinal key of the enclosing collection plan it ends at.
+                if (TryResolveOrdinal(property) is { } ordinal)
                 {
-                    Expression ordinal = Expression.Add(_collection.Counter, Expression.Constant(1));
                     return ordinal.ConvertIfRequired(node.Type);
                 }
 
@@ -940,6 +962,34 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             }
 
             return base.VisitMethodCall(node);
+        }
+
+        private Expression? TryResolveOrdinal(IProperty property)
+        {
+            var current = property;
+            while (true)
+            {
+                if (current.IsOwnedTypeOrdinalKey())
+                {
+                    // Innermost first: the nearest enclosing collection whose element declares this key.
+                    for (var i = _enclosing.Count - 1; i >= 0; i--)
+                    {
+                        if (_enclosing[i].Element.EntityType == current.DeclaringType)
+                        {
+                            return Expression.Add(_enclosing[i].Counter, Expression.Constant(1));
+                        }
+                    }
+
+                    return null;
+                }
+
+                if (!current.IsOwnedTypeKey() || current.FindFirstPrincipal() is not { } principal || principal == current)
+                {
+                    return null;
+                }
+
+                current = principal;
+            }
         }
 
         /// <summary>
