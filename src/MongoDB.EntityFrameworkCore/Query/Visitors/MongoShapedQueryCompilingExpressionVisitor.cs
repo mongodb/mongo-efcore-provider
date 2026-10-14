@@ -567,7 +567,11 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
         MongoNonQueryExpression.Setter setter)
     {
         var translator = new MongoEFToLinqTranslatingExpressionVisitor(
-            queryContext, Expression.Constant(null, typeof(IQueryable<TSource>)), bsonSerializerFactory);
+            queryContext, Expression.Constant(null, typeof(IQueryable<TSource>)), bsonSerializerFactory)
+        {
+            // The value is written back to the document, so it must stay in the stored representation (EF-337).
+            ReadStoredForm = true
+        };
         var translatedBody = translator.Visit(setter.ValueExpression)!;
 
         // The translated body still references the original setter parameter(s); rebind to the shared parameter.
