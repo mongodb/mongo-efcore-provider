@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
 using MongoDB.EntityFrameworkCore.Infrastructure;
@@ -35,7 +36,17 @@ internal static class ProfileHarness
 
         var conn = Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017";
         var dbName = "ef_bench_profile_" + Guid.NewGuid().ToString("N");
-        var client = new MongoClient(conn);
+        var settings = MongoClientSettings.FromConnectionString(conn);
+        if (args.Contains("--print-commands"))
+        {
+            var seen = new HashSet<string>();
+            settings.ClusterConfigurator = b => b.Subscribe<MongoDB.Driver.Core.Events.CommandStartedEvent>(e =>
+            {
+                if (e.CommandName is "aggregate" or "find" && seen.Add(e.Command.ToJson()))
+                    Console.WriteLine("COMMAND " + e.Command.ToJson());
+            });
+        }
+        var client = new MongoClient(settings);
         DbContextOptions<BenchmarkDbContext> Options(MongoQueryMode mode) => new DbContextOptionsBuilder<BenchmarkDbContext>()
             .UseMongoDB(client, dbName, o => o.UseQueryMode(mode))
             .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)).Options;
@@ -58,9 +69,6 @@ internal static class ProfileHarness
             var products = db.GetCollection<Product>("Products");
             var orders = db.GetCollection<Order>("Orders");
             var wides = db.GetCollection<WideEntity>("Wides");
-
-            if (args.Contains("--explain"))
-                return 0;
 
             var opts = config == "native" ? nat : dl;
             Func<int>? sync = null;

@@ -64,8 +64,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         typeof(IBsonReader).GetMethod(nameof(IBsonReader.ReadBsonType))!;
 
     private static readonly MethodInfo ReadNameMethod =
-        typeof(IBsonReaderExtensions).GetMethod(
-            nameof(IBsonReaderExtensions.ReadName), [typeof(IBsonReader)])!;
+        typeof(IBsonReader).GetMethod(nameof(IBsonReader.ReadName), [typeof(INameDecoder)])!;
 
     private static readonly MethodInfo GetCurrentBsonTypeMethod =
         typeof(IBsonReader).GetMethod(nameof(IBsonReader.GetCurrentBsonType))!;
@@ -396,7 +395,11 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                     Expression.Call(_reader, ReadBsonTypeMethod),
                     Expression.Constant(BsonType.EndOfDocument, typeof(BsonType))),
                 Expression.Block(
-                    Expression.Assign(_name, Expression.Call(ReadNameMethod, _reader)),
+                    Expression.Assign(
+                        _name,
+                        Expression.Call(
+                            _reader, ReadNameMethod,
+                            Expression.Constant(new MongoElementNameDecoder(entries.Select(e => e.ElementName)), typeof(INameDecoder)))),
                     dispatch),
                 Expression.Break(breakTarget)),
             breakTarget);

@@ -3,6 +3,9 @@ using MongoDB.Driver;
 using MongoDB.EntityFrameworkCore.Benchmarks;
 using MongoDB.EntityFrameworkCore.Infrastructure;
 
+if (args.Contains("--server-only"))
+    return ServerOnly.Run();
+
 if (args.Contains("--profile"))
     return ProfileHarness.Run(args);
 
