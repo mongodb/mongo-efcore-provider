@@ -34,11 +34,11 @@ if (args.Contains("--verify-native"))
                 if (expectFallback)
                     Console.WriteLine($"{label}: FALLBACK CONFIRMED (NativeTranslationNotSupportedException)");
                 else
-                    Console.WriteLine($"{label}: FALLBACK (unexpected) — {ex.Message[..Math.Min(80, ex.Message.Length)]}");
+                    Console.WriteLine($"{label}: FALLBACK (unexpected) — {ex.Message[..Math.Min(600, ex.Message.Length)]}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"{label}: ERROR — {ex.GetType().Name}: {ex.Message[..Math.Min(80, ex.Message.Length)]}");
+                Console.WriteLine($"{label}: ERROR — {ex.GetType().Name}: {ex.Message[..Math.Min(600, ex.Message.Length)]}");
             }
         }
 
@@ -72,6 +72,28 @@ if (args.Contains("--verify-native"))
             using var ctx = new BenchmarkDbContext(nativeOnlyOptions);
             var count = ctx.Reviews.AsNoTracking().Include(r => r.Product).ToList().Count;
             Console.WriteLine($"ReferenceInclude:  NATIVE OK (count={count})");
+        });
+
+        using (var ctx = new BenchmarkDbContext(seedOptions))
+            BenchmarkSeeder.SeedExtended(ctx, accountCount: 10, orderCount: 50, wideCount: 100);
+
+        RunShape("ComplexQuery:     ", () =>
+        {
+            using var ctx = new BenchmarkDbContext(nativeOnlyOptions);
+            var count = ctx.Orders.AsNoTracking()
+                .Where(o => o.Shipping.Address.Zip > 10_000 && o.Code != null).Include(o => o.Account)
+                .OrderByDescending(o => o.Shipping.Address.City).ThenBy(o => o.Id).Skip(5).Take(30).ToList().Count;
+            Console.WriteLine($"ComplexQuery:      NATIVE OK (count={count})");
+        });
+        RunShape("WideWholeEntity:  ", () =>
+        {
+            using var ctx = new BenchmarkDbContext(nativeOnlyOptions);
+            Console.WriteLine($"WideWholeEntity:   NATIVE OK (count={ctx.Wides.AsNoTracking().ToList().Count})");
+        });
+        RunShape("NestedWholeEntity:", () =>
+        {
+            using var ctx = new BenchmarkDbContext(nativeOnlyOptions);
+            Console.WriteLine($"NestedWholeEntity: NATIVE OK (count={ctx.Orders.AsNoTracking().ToList().Count})");
         });
 
         Console.WriteLine("=== verification done ===");

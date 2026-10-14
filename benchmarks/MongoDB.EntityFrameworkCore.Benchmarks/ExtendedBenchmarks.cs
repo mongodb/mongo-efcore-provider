@@ -4,10 +4,12 @@ using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
 using MongoDB.Driver.Linq;
+using MongoDB.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace MongoDB.EntityFrameworkCore.Benchmarks;
 
-// Heavier cases (DriverOnly floor + EF current provider). One shared MongoClient (fairness).
+// Heavier cases, three configs: DriverOnly floor, EF_DriverLinq (UseQueryMode(DriverLinq)), EF_Native (UseQueryMode(Native)). One shared MongoClient (fairness).
 //   Case A  ComplexQuery     - Where(nested-owned + own) + Include(Account) + OrderByDesc/ThenBy + Skip/Take
 //   Case B  WideWholeEntity  - 400-property entity, whole-entity ToList
 //   Case C  NestedWholeEntity- deep owned graph (owned-in-owned, collection-in-collection), whole-entity ToList
@@ -19,7 +21,8 @@ public class ExtendedBenchmarks
     private const int WideN = 5_000;
     private const int ZipThreshold = 10_500;
 
-    private DbContextOptions<BenchmarkDbContext> _efOptions = null!;
+    private DbContextOptions<BenchmarkDbContext> _efOptions = null!;       // DriverLinq (also used for seed/cleanup)
+    private DbContextOptions<BenchmarkDbContext> _efOptionsNative = null!;
     private IMongoCollection<Order> _orderColl = null!;
     private IMongoCollection<WideEntity> _wideColl = null!;
     private MongoClient _client = null!;
@@ -44,7 +47,14 @@ public class ExtendedBenchmarks
         var conn = Environment.GetEnvironmentVariable("MONGODB_URI") ?? "mongodb://localhost:27017";
         _dbName = "ef_bench_ext_" + Guid.NewGuid().ToString("N");
         _client = new MongoClient(conn);
-        _efOptions = new DbContextOptionsBuilder<BenchmarkDbContext>().UseMongoDB(_client, _dbName).Options;
+        _efOptions = new DbContextOptionsBuilder<BenchmarkDbContext>()
+            .UseMongoDB(_client, _dbName, o => o.UseQueryMode(MongoQueryMode.DriverLinq))
+            .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+            .Options;
+        _efOptionsNative = new DbContextOptionsBuilder<BenchmarkDbContext>()
+            .UseMongoDB(_client, _dbName, o => o.UseQueryMode(MongoQueryMode.Native))
+            .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+            .Options;
 
         using (var ctx = new BenchmarkDbContext(_efOptions))
             BenchmarkSeeder.SeedExtended(ctx, AccountN, OrderN, WideN);
@@ -81,6 +91,16 @@ public class ExtendedBenchmarks
             throw new InvalidOperationException($"Discount count mismatch: driver={driverDiscounts}, ef={efDiscounts}, expected {OrderN * 6}.");
         if (driverComplex != efComplex)
             throw new InvalidOperationException($"ComplexQuery count mismatch: driver={driverComplex}, ef={efComplex}.");
+
+        // Correctness gate: native must return the same counts.
+        using var efN = new BenchmarkDbContext(_efOptionsNative);
+        var nComplex = EfComplexQuery(efN).Count;
+        var nWide = efN.Wides.AsNoTracking().ToList().Count;
+        var nOrders = efN.Orders.AsNoTracking().ToList();
+        if (nComplex != efComplex || nWide != WideN || nOrders.Count != OrderN
+            || nOrders.Sum(o => o.Lines.Count) != OrderN * 3
+            || nOrders.Sum(o => o.Lines.Sum(l => l.Discounts.Count)) != OrderN * 6)
+            throw new InvalidOperationException($"Native mismatch: complex={nComplex}/{efComplex}, wide={nWide}, orders={nOrders.Count}.");
     }
 
     [GlobalCleanup]
@@ -136,20 +156,29 @@ public class ExtendedBenchmarks
 
     [Benchmark] public int ComplexQuery_DriverOnly() => DriverComplexQuery();
 
-    [Benchmark] public int ComplexQuery_EF()
+    [Benchmark] public int ComplexQuery_EF_DriverLinq()
     { using var ctx = new BenchmarkDbContext(_efOptions); return EfComplexQuery(ctx).Count; }
+
+    [Benchmark] public int ComplexQuery_EF_Native()
+    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return EfComplexQuery(ctx).Count; }
 
     // ----- Case B: wide entity (400 props) whole-entity ToList -----
     [Benchmark] public int WideWholeEntity_DriverOnly()
         => _wideColl.AsQueryable().ToList().Count;
 
-    [Benchmark] public int WideWholeEntity_EF()
+    [Benchmark] public int WideWholeEntity_EF_DriverLinq()
     { using var ctx = new BenchmarkDbContext(_efOptions); return ctx.Wides.AsNoTracking().ToList().Count; }
+
+    [Benchmark] public int WideWholeEntity_EF_Native()
+    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return ctx.Wides.AsNoTracking().ToList().Count; }
 
     // ----- Case C: deep owned graph whole-entity ToList -----
     [Benchmark] public int NestedWholeEntity_DriverOnly()
         => _orderColl.AsQueryable().ToList().Count;
 
-    [Benchmark] public int NestedWholeEntity_EF()
+    [Benchmark] public int NestedWholeEntity_EF_DriverLinq()
     { using var ctx = new BenchmarkDbContext(_efOptions); return ctx.Orders.AsNoTracking().ToList().Count; }
+
+    [Benchmark] public int NestedWholeEntity_EF_Native()
+    { using var ctx = new BenchmarkDbContext(_efOptionsNative); return ctx.Orders.AsNoTracking().ToList().Count; }
 }
