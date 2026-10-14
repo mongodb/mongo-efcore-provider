@@ -81,9 +81,6 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
             nameof(IBsonSerializer.Deserialize),
             [typeof(BsonDeserializationContext), typeof(BsonDeserializationArgs)])!;
 
-    private static readonly MethodInfo StringEqualsMethod =
-        typeof(string).GetMethod(nameof(string.Equals), [typeof(string), typeof(string)])!;
-
     /// <summary>
     /// A per-entity-instance materialization plan: typed locals for scalar properties, an optional "present" flag local
     /// (owned sub-documents only), and plans for its owned reference navigations.
@@ -344,7 +341,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
     /// </summary>
     private Expression BuildFillLoop(EntityPlan plan)
     {
-        var ifChain = (Expression)Expression.Call(_reader, SkipValueMethod);
+        var entries = new List<(string ElementName, Expression Body)>();
 
         foreach (var property in plan.EntityType.GetProperties())
         {
@@ -363,7 +360,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                     read);
             }
 
-            ifChain = Dispatch(property.GetElementName(), read, ifChain);
+            entries.Add((property.GetElementName(), read));
         }
 
         foreach (var (navigation, child) in plan.OwnedNavigations)
@@ -372,14 +369,14 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                               ?? throw new NativeTranslationNotSupportedException(
                                   $"Owned navigation '{navigation.DeclaringEntityType.DisplayName()}.{navigation.Name}' has no element name.");
 
-            ifChain = Dispatch(elementName, BuildNullGuardedDescent(child), ifChain);
+            entries.Add((elementName, BuildNullGuardedDescent(child)));
         }
 
         foreach (var lookup in plan.LookupReferences)
         {
             // The joined sub-document is a root-level `_lookup_<Nav>` element. Same null-guarded descent as an owned reference, keyed by
             // the lookup alias; BSON Null (no $lookup match) -> present = false -> null navigation.
-            ifChain = Dispatch(lookup.ElementName, BuildNullGuardedDescent(lookup.Target), ifChain);
+            entries.Add((lookup.ElementName, BuildNullGuardedDescent(lookup.Target)));
         }
 
         foreach (var collection in plan.OwnedCollections)
@@ -388,9 +385,10 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                               ?? throw new NativeTranslationNotSupportedException(
                                   $"Owned collection '{collection.Navigation.DeclaringEntityType.DisplayName()}.{collection.Navigation.Name}' has no element name.");
 
-            ifChain = Dispatch(elementName, BuildCollectionLoop(collection), ifChain);
+            entries.Add((elementName, BuildCollectionLoop(collection)));
         }
 
+        var dispatch = BuildDispatch(entries);
         var breakTarget = Expression.Label("__fillDone_" + plan.EntityType.ShortName());
         var loop = Expression.Loop(
             Expression.IfThenElse(
@@ -399,7 +397,7 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
                     Expression.Constant(BsonType.EndOfDocument, typeof(BsonType))),
                 Expression.Block(
                     Expression.Assign(_name, Expression.Call(ReadNameMethod, _reader)),
-                    ifChain),
+                    dispatch),
                 Expression.Break(breakTarget)),
             breakTarget);
 
@@ -449,13 +447,32 @@ internal sealed class MongoStreamingEntityMaterializerRewriter
         return Expression.Block(body);
     }
 
-    // One link of the fill loop's element-name dispatch: run `body` when the current element is `elementName`,
-    // else fall through to `chain`.
-    private Expression Dispatch(string elementName, Expression body, Expression chain)
-        => Expression.IfThenElse(
-            Expression.Call(StringEqualsMethod, _name, Expression.Constant(elementName, typeof(string))),
-            body,
-            chain);
+    // The fill loop's element-name dispatch: one switch on the current element name (a hash/binary-search jump), so the cost per
+    // element does not grow with the entity's width; an unmapped element is skipped. When two members map to the same element name
+    // the LAST one added wins, as it did when the dispatch was a chain wrapped last-first; Expression.Switch rejects duplicate cases.
+    private Expression BuildDispatch(List<(string ElementName, Expression Body)> entries)
+    {
+        var skip = (Expression)Expression.Call(_reader, SkipValueMethod);
+        if (entries.Count == 0)
+        {
+            return skip;
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var cases = new List<SwitchCase>(entries.Count);
+        for (var i = entries.Count - 1; i >= 0; i--)
+        {
+            if (seen.Add(entries[i].ElementName))
+            {
+                cases.Add(
+                    Expression.SwitchCase(
+                        Expression.Block(typeof(void), entries[i].Body),
+                        Expression.Constant(entries[i].ElementName, typeof(string))));
+            }
+        }
+
+        return Expression.Switch(typeof(void), _name, Expression.Block(typeof(void), skip), comparison: null, cases);
+    }
 
     private Expression IsCurrentNull()
         => Expression.Equal(
