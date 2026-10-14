@@ -10,27 +10,45 @@ most rows and up to about 8% in the worst (OrderByTake driver 3.07-3.53 ms acros
 roughly 8% should be read as noise. Times from earlier result files came from an Apple M4 Max and are not comparable
 with these; allocations are.
 
-## Baseline vs final (same machine, native vs hand-written driver floor)
+## Main vs EF-322c vs driver-only (same machine, same container)
 
-Baseline is the build at `6ce7f707`; final is `90d5930d`. Final numbers are the mean of two BDN runs
-(`scratchpad/out/final/head{1,2}.txt`, `ext{1,2}.txt`).
+Three states, all Release EF10, all measured today:
 
-| Shape | Baseline native | Final native | Driver floor | Final vs floor |
+- **main** (`66d2bcb1`, built in a separate worktree): EF with the driver-LINQ path. Main has no native translator, so this
+  is what a user gets today. Mean of two BDN runs.
+- **EF-322c start** (`6ce7f707`, native): the branch before this work. Mean of two runs, taken earlier in the day.
+- **EF-322c final** (`90d5930d`, native): mean of two runs.
+- **Driver-only (hand-written)**: the benchmarks' hand-written `IMongoCollection`/driver-LINQ code. This is a reference
+  point, **not a lower bound**: it uses the driver's own serializers and POCO materialization, a different machinery from
+  the provider's compiled shaper, so native can and does beat it on some shapes. Main-sitting and branch-sitting
+  driver-only runs agree within noise (e.g. Wide 383-384 vs 396 ms), so one value from the branch sitting is shown.
+
+| Shape | main (EF, driver-LINQ) | EF-322c start (native) | EF-322c final (native) | Driver-only (hand-written) |
 |---|---|---|---|---|
-| WhereToList | 10.0 ms / 2753 KB | 9.7 ms / 1776 KB | 9.7 ms / 1590 KB | +0 ms, +12% alloc |
-| WholeEntity no-track | 18.9 ms / 5430 KB | 16.3 ms / 3477 KB | 17.1 ms / 3132 KB | -5% time, +11% alloc |
-| WholeEntity tracked | ~33 ms / 11518 KB | 31.0 ms / 9565 KB | n/a | EF tracking, see F3 |
-| OrderByTake100 | 3.4 ms / 110 KB | 3.2 ms / 91 KB | 3.1 ms / 63 KB | +3% time |
-| ReferenceInclude | 126-128 ms / 9648 KB | 66.6 ms / 3867 KB | 57.6 ms / 7331 KB | +16% time, alloc half the floor |
-| ComplexQuery | 50.3 ms / 11.28 MB | 40.0 ms / 3.73 MB | 46.8 ms / 5.97 MB | below floor |
-| WideWholeEntity | 421-430 ms / 104.3 MB | 379 ms / 27.8 MB | 396 ms / 63.8 MB | below floor |
-| NestedWholeEntity | 166-171 ms / 68.5 MB | 119 ms / 23.2 MB | 149 ms / 37.9 MB | below floor |
-| MediumWholeEntity (new, 40 props) | n/a | 81 ms / 7.99 MB | 87 ms / 14.1 MB | below floor |
-| Async Where / WholeEntity / RefInclude | n/a | 9.6 / 16.0 / 66.2 ms | 9.5 / 16.9 / n/a | equal to sync |
+| WhereToList | 26.7 ms / 22.1 MB | 10.0 ms / 2.69 MB | 9.7 ms / 1.73 MB | 9.7 ms / 1.55 MB |
+| WholeEntity, no tracking | 51.9 ms / 44.1 MB | 18.9 ms / 5.30 MB | 16.3 ms / 3.40 MB | 17.1 ms / 3.06 MB |
+| WholeEntity, tracked | 67.2 ms / 50.0 MB | ~33 ms / 11.2 MB | 31.0 ms / 9.34 MB | none |
+| OrderByTake100 | 3.48 ms / 0.51 MB | 3.4 ms / 0.11 MB | 3.2 ms / 0.09 MB | 3.1 ms / 0.06 MB |
+| ReferenceInclude | 178.8 ms / 50.4 MB | 127 ms / 9.4 MB | 66.6 ms / 3.78 MB | 57.6 ms / 7.16 MB |
+| ComplexQuery | 108.3 ms / 56.8 MB | 50.3 ms / 11.3 MB | 40.0 ms / 3.7 MB | 46.8 ms / 6.0 MB |
+| WideWholeEntity | 1222 ms / 1342 MB | ~425 ms / 104 MB | 379 ms / 27.8 MB | 396 ms / 63.8 MB |
+| NestedWholeEntity | 457 ms / 348 MB | ~168 ms / 68.5 MB | 119 ms / 23.2 MB | 149 ms / 37.9 MB |
+| MediumWholeEntity (40 props, added here) | not on main | not measured | 81 ms / 8.0 MB | 87 ms / 14.1 MB |
+| Async Where / WholeEntity / RefInclude | not on main | not measured | 9.6 / 16.0 / 66.2 ms | 9.5 / 16.9 ms / n/a |
 
-Driver-LINQ (EF with `UseQueryMode(DriverLinq)`) for reference, final: Where 27 ms / 22.0 MB, WholeEntity 53.7 ms /
-44.0 MB, ReferenceInclude 153 ms / 45 MB, Complex 95.5 ms / 51 MB, Wide 1250 ms / 1.3 GB, Nested 374 ms / 316 MB.
-Native is 2.3-3.3x faster on every shape except OrderByTake100 (1.1x, fixed-cost dominated), and allocates 6-48x less.
+(Allocations in the table are KB/1024 for the headline shapes; the sources are the BDN tables in
+`scratchpad/out/{main,final}/` and the earlier baselines in `scratchpad/out/`.)
+
+Final native against main: 2.7x faster on Where, 3.2x WholeEntity, 2.2x tracked, 1.1x OrderByTake100 (fixed-cost
+dominated), 2.7x ReferenceInclude, 2.7x Complex, 3.2x Wide, 3.8x Nested; allocation 13x, 13x, 5.4x, 5.7x, 13x, 15x,
+48x and 15x lower. Versus the hand-written driver code, final native is within about 4% in time on Where, WholeEntity
+and OrderByTake100, 16% slower on ReferenceInclude (the server-side form, see below), and faster on Complex, Wide, Nested
+and Medium.
+
+Branch-sitting driver-LINQ (EF `DriverLinq` mode on the branch, for reference): Where 27 ms / 22.0 MB, WholeEntity
+53.7 ms / 44.0 MB, ReferenceInclude 153 ms / 45 MB, Complex 95.5 ms / 51 MB, Wide 1250 ms / 1.3 GB, Nested 374 ms /
+316 MB. Its allocation matches main on flat shapes and is lower on Include shapes (Fix 2 and the shared materializer
+changes apply to it too, Nested is 316 vs 348 MB).
 
 `--verify-native`: NATIVE OK on all seven shapes. `--smoke` and `--extended-smoke` pass.
 
@@ -42,7 +60,7 @@ Native is 2.3-3.3x faster on every shape except OrderByTake100 (1.1x, fixed-cost
 | `a877c2b4` | `MongoElementNameDecoder`: trie-backed `INameDecoder` replaces the string-allocating `ReadName` in the streaming materializer | WholeEntity 5430 to 3476 KB; Wide 106.8 to 28.5 MB, median 432 to 389 ms; Where 2753 to 1776 KB; Nested 70.1 to 56.1 MB |
 | `852962aa` | `MongoIncludeFixups` skips EF's `SetIsLoadedWhenNoTracking` unless an `ILazyLoader` service property exists | Nested 56.1 to 23.7 MB, 165 to 127 ms; Complex 9.2 to 3.8 MB; RefInclude 7.46 to 3.86 MB |
 | `c6f2cc01` | 40-property `MediumEntity` benchmarks, `--server-only`, profile flags | shows no dispatch regression at realistic width |
-| `90d5930d` | A reference `$lookup` on `_id` renders `$match{as.0:{$exists:true}}` + `$set{as:{$arrayElemAt:[..,0]}}` (inner) or `$set` only (left-outer) instead of `$unwind` | RefInclude 120 to 67 ms (floor 56 ms); Complex 44.1 to 39.7 ms |
+| `90d5930d` | A reference `$lookup` on `_id` renders `$match{as.0:{$exists:true}}` + `$set{as:{$arrayElemAt:[..,0]}}` (inner) or `$set` only (left-outer) instead of `$unwind` | RefInclude 120 to 67 ms (driver-only 56 ms); Complex 44.1 to 39.7 ms |
 
 Tests per fix: new unit tests (name decoder 5, lazy-loader 3, lookup factory 2, lowerer 2) with a mutation check on each
 gate; 278 + 2 spec baselines and 9 functional assertions updated for the new `$lookup` shape. Full Unit + Functional +
@@ -52,9 +70,9 @@ Spec on EF8 (13,245 passed), EF9 (13,604) and EF10 (13,413), 0 failed.
 
 ### WhereToList, WholeEntityToList (flat)
 Hot frames after the fixes: driver cursor and BSON read dominate; provider materializer is a small share. Allocation
-floor gap is now 186 KB (Where) and 345 KB (WholeEntity) at 10k rows, about 35 B/row for WholeEntity. Before fix 1 the top
+gap to the driver-only run is now 186 KB (Where) and 345 KB (WholeEntity) at 10k rows, about 35 B/row for WholeEntity. Before fix 1 the top
 allocator was the per-element-name `string` from `ReadName` (about 2.3 MB at 10k rows). The remaining overhead is EF's
-`ConcurrencyDetector` (F2). Where time is at the floor.
+`ConcurrencyDetector` (F2). Where time equals the driver-only run.
 
 ### WholeEntity tracked
 31 ms against 16 ms no-track. The whole difference (+6 MB, +14 ms at 10k) is EF `StateManager.StartTrackingFromQuery`:
@@ -76,18 +94,18 @@ slot-based `$lookup` and fall back to the classic engine. Raw timings, 10k rows:
 Native scaled linearly before the fix (2.5 / 13.7 / 123 ms at 100 / 1000 / 10,000 rows vs driver 1.4 / 6.7 / 55.5),
 so there was no client fixed or quadratic term. With a filter on the joined field after the join the old form took 328
 ms vs 50 ms for the new one; with sort+limit 103 vs 50 ms. The semantics of the new form were checked in mongosh
-including empty arrays, null and missing foreign keys. Allocations (3.9 MB) are now below the 7.3 MB hand-written floor; the cause was not investigated.
+including empty arrays, null and missing foreign keys. Allocations (3.9 MB) are now below the 7.3 MB driver-only run; the cause was not investigated (a different materialization path, not a better result than a limit).
 
 ### ComplexQuery
-Native since the earlier slice; after fixes 2 and 3 it is below the floor (3.7 vs 6.0 MB, 40 vs 47 ms).
+Native since the earlier slice; after fixes 2 and 3 it is below the driver-only run (3.7 vs 6.0 MB, 40 vs 47 ms).
 
 ### WideWholeEntity, MediumWholeEntity
-Wide: element-name strings (H1) were the 40 MB gap; now 27.8 MB, below the 63.8 MB floor, and time is 4% under it.
+Wide: element-name strings (H1) were the 40 MB gap; now 27.8 MB against 63.8 MB for the driver-only run, and time is 4% under it.
 Medium (40 properties, closest to a realistic entity): 8.0 MB / 81 ms vs 14.1 MB / 87 ms; no dispatch regression.
 
 ### NestedWholeEntity
 Per-include `SetIsLoadedWhenNoTracking` iterators (about 355 B per include per entity) plus name strings were the
-38 MB gap. Now 23.2 MB vs 37.9 MB floor, 119 vs 149 ms.
+38 MB gap. Now 23.2 MB vs 37.9 MB driver-only, 119 vs 149 ms.
 
 ### Async
 Refuted (H7): async twins equal sync in time and bytes on Where, WholeEntity and ReferenceInclude.
@@ -99,7 +117,7 @@ Refuted (H7): async twins equal sync in time and bytes on Where, WholeEntity and
    unwinds, reference joins on a non-`_id` key, owned-declared navigations, and the driver-LINQ bridge.
 2. **EF `ConcurrencyDetector` per `MoveNext` (F2).** Allocates an AsyncLocal `ExecutionContext` +
    `OneElementAsyncLocalValueMap` + boxed Int32 on every row (about 190 B/row), which is 55% of the remaining native
-   allocation on flat shapes. With `EnableThreadSafetyChecks(false)`: WholeEntity 3476 to 1601 KB (below the floor),
+   allocation on flat shapes. With `EnableThreadSafetyChecks(false)`: WholeEntity 3476 to 1601 KB (below the driver-only run),
    Where 1776 to 838 KB, Tracked 9565 to 7689 KB and 29 to 22 ms.
 3. **EF identity tracking (F3).** Tracked queries are 2x time and 2.7x allocation of no-track, all EF.
 4. **Per-query fixed cost (F4).** Native 1-row query is about 55 KB and 0.73 ms vs 25 KB / 0.60 ms driver-only.
