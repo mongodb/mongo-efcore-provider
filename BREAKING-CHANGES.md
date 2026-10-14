@@ -21,6 +21,27 @@ The previous results were silently wrong. Failing on malformed data is preferred
 #### Mitigations
 
 Documents written by EF Core always hold valid numbers and are unaffected. If other tools wrote non-numeric values to the property, clean them up first, or filter them out of the query. Range, sort and aggregate predicates over these properties can no longer use an index on the field.
+||||||| parent of e987353e (EF-469: ToUpper/ToLower/Substring of a null or missing string returns "" instead of null)
+
+### `ToUpper`, `ToLower`, `ToUpperInvariant`, `ToLowerInvariant` and `Substring` of a null or missing string now produce `null`
+
+#### Old behavior
+
+When a string property that was `null` (or absent from the document) was passed to `ToUpper()`, `ToLower()`, `ToUpperInvariant()`, `ToLowerInvariant()` or `Substring(...)` anywhere the result is returned as data — a `Select` projection, a grouping key, an aggregate selector, a join result selector — MongoDB's `$toUpper`, `$toLower` and `$substrCP` operators returned an empty string. A null value was indistinguishable from an empty string in the results, and `Distinct()` merged the two.
+
+#### New behavior
+
+These calls now return `null` for a null or missing operand, as other EF Core providers do. Stored documents are unchanged; only query results are affected. A chain such as `s.ToUpper().Substring(0, 2)` is guarded once, on its root.
+
+Calls inside predicate lambdas (`Where`, `Any`, `All`, `Count`, `First`/`Single`/`Last` with a predicate, ...) are not rewritten: the empty string cannot surface as data there, and rewriting would defeat the index-friendly forms the driver renders for comparisons such as `ToUpper() == "X"`.
+
+#### Why
+
+The old behavior silently turned null data into an empty string.
+
+#### Mitigations
+
+Code that relied on receiving `""` should handle `null`, for example `(x.S ?? "").ToUpper()` or `x.S == null ? "" : x.S.ToUpper()` in the projection, or `?? ""` / `string.IsNullOrEmpty` on the client. In particular, a further operator applied to the result of one of these calls can now receive `null`: for example `Select(x => x.S.ToUpper().Length)` previously returned `0` for a null `S` and now fails with a server error (`$strLenCP requires a string argument`) instead of returning a wrong value. Also check `Distinct`/`GroupBy` counts over these projections.
 
 ### Entity types with their own `DbSet` are no longer embedded when reached by a navigation
 

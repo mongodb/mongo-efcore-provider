@@ -125,6 +125,20 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         _innerSources = innerSources ?? new Dictionary<IEntityType, Expression>();
     }
 
+    private int _predicateDepth;
+    private bool _forceNullGuard;
+
+    private static readonly MethodInfo IsNullOrMissingMethod =
+        typeof(Mql).GetMethod(nameof(Mql.IsNullOrMissing))!;
+
+    private static readonly HashSet<string> PredicateMethodNames =
+    [
+        nameof(Queryable.Where), nameof(Queryable.Any), nameof(Queryable.All), nameof(Queryable.Count),
+        nameof(Queryable.LongCount), nameof(Queryable.First), nameof(Queryable.FirstOrDefault),
+        nameof(Queryable.Single), nameof(Queryable.SingleOrDefault), nameof(Queryable.Last),
+        nameof(Queryable.LastOrDefault), nameof(Queryable.SkipWhile), nameof(Queryable.TakeWhile)
+    ];
+
     public Dictionary<string, object> AdditionalState { get; } = new();
 
     /// <summary>
@@ -865,6 +879,31 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return zeroTakeRewrite;
         }
 
+        if (node.Method.DeclaringType == typeof(Queryable) || node.Method.DeclaringType == typeof(Enumerable))
+        {
+            if (PredicateMethodNames.Contains(node.Method.Name) && node.Arguments.Count > 1)
+            {
+                // The lambda arguments of these methods are predicates, where the "" a null string operand
+                // produces cannot surface as data (see TryRewriteNullPropagatingStringCall).
+                var source = Visit(node.Arguments[0]);
+                _predicateDepth++;
+                try
+                {
+                    return node.Update(null, [source, .. node.Arguments.Skip(1).Select(Visit)]);
+                }
+                finally
+                {
+                    _predicateDepth--;
+                }
+            }
+        }
+
+        var nullSafeStringRewrite = TryRewriteNullPropagatingStringCall(node);
+        if (nullSafeStringRewrite != null)
+        {
+            return nullSafeStringRewrite;
+        }
+
         return base.VisitMethodCall(node);
     }
 
@@ -878,6 +917,57 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
                 MarkJoinKeyOperands(argument);
         }
     }
+
+    /// <summary>
+    /// Rewrites <c>s.ToUpper()</c>, <c>s.ToLower()</c> and <c>s.Substring(...)</c> (and chains of them) into
+    /// <c>Mql.IsNullOrMissing(s) ? null : s.F(...)</c> (EF-469). MongoDB's <c>$toUpper</c>, <c>$toLower</c> and
+    /// <c>$substrCP</c> return <c>""</c> for a null <i>or missing</i> operand rather than null, which silently
+    /// turns a null column into an empty string in projections, grouping keys and aggregates. A chain such as
+    /// <c>s.ToUpper().Substring(0, 2)</c> is guarded once on its root, since each call propagates null.
+    /// Predicate lambdas (<c>Where</c>, <c>Any</c>, ...) are not rewritten: the "" cannot surface as data there,
+    /// and rewriting would defeat the index-friendly forms the driver renders for e.g. <c>ToUpper() == "X"</c>.
+    /// The other string operators the provider translates already propagate null.
+    /// </summary>
+    private Expression? TryRewriteNullPropagatingStringCall(MethodCallExpression node)
+    {
+        if ((_predicateDepth > 0 && !_forceNullGuard) || !IsNullBlindStringCall(node))
+        {
+            return null;
+        }
+
+        var call = BuildUnguardedChain(node, out var root);
+        if (root is ConstantExpression { Value: not null })
+        {
+            return call;
+        }
+
+        var isNullOrMissing = Expression.Call(IsNullOrMissingMethod.MakeGenericMethod(typeof(string)), root);
+        return Expression.Condition(
+            isNullOrMissing,
+            Expression.Constant(null, typeof(string)),
+            call);
+    }
+
+    private Expression BuildUnguardedChain(MethodCallExpression node, out Expression root)
+    {
+        Expression target;
+        if (node.Object is MethodCallExpression inner && IsNullBlindStringCall(inner))
+        {
+            target = BuildUnguardedChain(inner, out root);
+        }
+        else
+        {
+            root = target = Visit(node.Object)!;
+        }
+
+        return Expression.Call(target, node.Method, node.Arguments.Select(Visit));
+    }
+
+    private static bool IsNullBlindStringCall(MethodCallExpression node)
+        => node.Object != null
+           && node.Method.DeclaringType == typeof(string)
+           && node.Method.Name is nameof(string.ToUpper) or nameof(string.ToLower)
+               or nameof(string.ToUpperInvariant) or nameof(string.ToLowerInvariant) or nameof(string.Substring);
 
     /// <summary>
     /// Rewrites <c>source.Take(0)</c> (constant or parameterized) into <c>source.Where(_ => false)</c>.
@@ -1173,7 +1263,23 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
         var rewrite = TryRewriteEntityContains(collectionExpr, itemExpr)
                       ?? TryRewriteScalarProjectedContains(collectionExpr, itemExpr);
-        return rewrite != null ? Visit(rewrite)! : null;
+        if (rewrite == null)
+        {
+            return null;
+        }
+
+        // The Any a scalar-projected Contains is rewritten to compares a projected value, so unlike a
+        // user-written predicate its operand surfaces as data and must keep the null guard.
+        var savedForce = _forceNullGuard;
+        _forceNullGuard = true;
+        try
+        {
+            return Visit(rewrite)!;
+        }
+        finally
+        {
+            _forceNullGuard = savedForce;
+        }
     }
 
     /// <summary>
