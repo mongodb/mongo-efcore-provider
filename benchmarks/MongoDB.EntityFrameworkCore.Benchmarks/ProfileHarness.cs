@@ -47,9 +47,12 @@ internal static class ProfileHarness
             });
         }
         var client = new MongoClient(settings);
-        DbContextOptions<BenchmarkDbContext> Options(MongoQueryMode mode) => new DbContextOptionsBuilder<BenchmarkDbContext>()
-            .UseMongoDB(client, dbName, o => o.UseQueryMode(mode))
-            .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning)).Options;
+        var useConnectionString = args.Contains("--connstr");
+        DbContextOptions<BenchmarkDbContext> Options(MongoQueryMode mode) => (useConnectionString
+                ? new DbContextOptionsBuilder<BenchmarkDbContext>().UseMongoDB(conn, dbName, o => o.UseQueryMode(mode))
+                : new DbContextOptionsBuilder<BenchmarkDbContext>().UseMongoDB(client, dbName, o => o.UseQueryMode(mode)))
+            .ConfigureWarnings(w => w.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+            .EnableThreadSafetyChecks(!args.Contains("--nothreadsafety")).Options;
         var dl = Options(MongoQueryMode.DriverLinq);
         var nat = Options(MongoQueryMode.Native);
 
@@ -126,11 +129,14 @@ internal static class ProfileHarness
             sw.Stop();
             var bytes = GC.GetTotalAllocatedBytes(true) - bytes0;
             perOp.Sort();
-            Console.WriteLine(
+            var line =
                 $"PROFILE shape={shape} config={config} rows={(extended ? extRows : rows)} result={result} ops={ops} " +
                 $"ms_mean={sw.Elapsed.TotalMilliseconds / ops:F3} ms_median={perOp[perOp.Count / 2]:F3} ms_min={perOp[0]:F3} " +
                 $"kb_op={bytes / 1024.0 / ops:F1} gen0={(GC.CollectionCount(0) - g0) / (double)ops:F3} " +
-                $"gen1={(GC.CollectionCount(1) - g1) / (double)ops:F3} gen2={(GC.CollectionCount(2) - g2) / (double)ops:F3}");
+                $"gen1={(GC.CollectionCount(1) - g1) / (double)ops:F3} gen2={(GC.CollectionCount(2) - g2) / (double)ops:F3}";
+            Console.WriteLine(line);
+            if (Environment.GetEnvironmentVariable("PROFILE_OUT") is { Length: > 0 } outFile)
+                File.AppendAllText(outFile, line + Environment.NewLine);
             return 0;
         }
         finally
