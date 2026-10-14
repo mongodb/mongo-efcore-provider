@@ -66,7 +66,12 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     private readonly bool _threadSafetyChecksEnabled;
     private readonly BsonSerializerFactory _bsonSerializerFactory;
 
-    /// <summary>Creates a <see cref="MongoShapedQueryCompilingExpressionVisitor"/>.</summary>
+    /// <summary>
+    /// Create a <see cref="MongoShapedQueryCompilingExpressionVisitor"/> with the required dependencies and compilation context.
+    /// </summary>
+    /// <param name="dependencies">The <see cref="ShapedQueryCompilingExpressionVisitorDependencies"/> used by this visitor.</param>
+    /// <param name="mongoDependencies">MongoDB-specific dependencies used by this visitor.</param>
+    /// <param name="queryCompilationContext">The <see cref="QueryCompilationContext"/> for this specific query.</param>
     public MongoShapedQueryCompilingExpressionVisitor(
         ShapedQueryCompilingExpressionVisitorDependencies dependencies,
         MongoShapedQueryCompilingExpressionVisitorDependencies mongoDependencies,
@@ -387,10 +392,11 @@ internal sealed class MongoShapedQueryCompilingExpressionVisitor : ShapedQueryCo
     }
 
     /// <summary>
-    /// Removes the projection <c>Select</c> from the captured chain so the shaper runs client-side over full
-    /// <see cref="BsonDocument"/>s. The Select may be outermost or under a single no-arg cardinality terminator
-    /// (<c>First</c>, <c>Single</c>, from <c>AssertFirst</c> etc.), which is kept with its generic argument retargeted to
-    /// the Select's source element type.
+    /// Remove the projection <c>Select</c> from the captured query chain so the shaper runs client-side
+    /// over full <see cref="BsonDocument"/>s. The Select may be the outermost node, or wrapped by a single
+    /// no-arg cardinality terminator (e.g. <c>First</c>, <c>Single</c>) emitted by EF Core for cardinality
+    /// reducers such as <c>AssertFirst</c>. The terminal operator is preserved with its generic argument
+    /// retargeted to the Select's source element type.
     /// </summary>
     private static Expression? StripPushedDownSelect(Expression? captured)
     {

@@ -40,6 +40,7 @@ public class VectorIndexBuilder(IMutableIndex index, VectorIndexOptions indexOpt
     /// Configures Type of automatic vector quantization for your vectors. Use this setting only if your embeddings are float or double vectors.
     /// </summary>
     /// <param name="quantization">Type of automatic vector quantization for your vectors.</param>
+    /// <returns>The same builder instance so that multiple configuration calls can be chained.</returns>
     public VectorIndexBuilder HasQuantization(VectorQuantization? quantization)
     {
         Index.SetVectorIndexOptions(IndexOptions = IndexOptions with { Quantization = quantization });
@@ -51,6 +52,7 @@ public class VectorIndexBuilder(IMutableIndex index, VectorIndexOptions indexOpt
     /// </summary>
     /// <param name="maxEdges">Maximum number of edges (or connections) that a node can have in the Hierarchical Navigable Small Worlds graph.</param>
     /// <param name="numEdgeCandidates">Analogous to numCandidates at query-time, this parameter controls the maximum number of nodes to evaluate to find the closest neighbors to connect to a new node.</param>
+    /// <returns>The same builder instance so that multiple configuration calls can be chained.</returns>
     public VectorIndexBuilder HasEdgeOptions(int maxEdges, int numEdgeCandidates)
     {
         Index.SetVectorIndexOptions(IndexOptions =
@@ -62,6 +64,7 @@ public class VectorIndexBuilder(IMutableIndex index, VectorIndexOptions indexOpt
     /// Adds the given property to those that can be used to filter in vector queries with this index.
     /// </summary>
     /// <param name="propertyPath">The name of the property that may be used for filters.</param>
+    /// <returns>The same builder instance so that multiple configuration calls can be chained.</returns>
     public VectorIndexBuilder AllowsFiltersOn(string propertyPath)
     {
         var newPaths = IndexOptions.FilterPaths?.ToList() ?? new List<string>();

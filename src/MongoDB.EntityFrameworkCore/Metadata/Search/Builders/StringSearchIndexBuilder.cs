@@ -39,6 +39,7 @@ public class StringSearchIndexBuilder(SearchIndexStringDefinition definition)
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/"/>.
     /// </remarks>
     /// <param name="analyzerName">The name of a well-known or custom analyzer.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public StringSearchIndexBuilder UseAnalyzer(string analyzerName)
     {
         definition.AnalyzerName = analyzerName;
@@ -53,6 +54,7 @@ public class StringSearchIndexBuilder(SearchIndexStringDefinition definition)
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/"/>.
     /// </remarks>
     /// <param name="analyzer">The well-known analyzer to use, as defined by <see cref="BuiltInSearchAnalyzer"/>.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public StringSearchIndexBuilder UseAnalyzer(BuiltInSearchAnalyzer analyzer)
         => UseAnalyzer(SearchIndexBuilder.ToAnalyzerName(analyzer));
 
@@ -67,6 +69,7 @@ public class StringSearchIndexBuilder(SearchIndexStringDefinition definition)
     /// The name for this alternate analyzer in the index. This must be referenced from the search to use this analyzer.
     /// </param>
     /// <param name="analyzerName">The name of a well-known or custom analyzer.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public StringSearchIndexBuilder AddAlternateAnalyzer(string name, string analyzerName)
     {
         definition.AlternateAnalyzers[name] = analyzerName;
@@ -86,6 +89,7 @@ public class StringSearchIndexBuilder(SearchIndexStringDefinition definition)
     /// The name for this alternate analyzer in the index. This must be referenced from the search to use this analyzer.
     /// </param>
     /// <param name="analyzer">The well-known analyzer to use, as defined by <see cref="BuiltInSearchAnalyzer"/>.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public StringSearchIndexBuilder AddAlternateAnalyzer(string name, BuiltInSearchAnalyzer analyzer)
         => AddAlternateAnalyzer(name, SearchIndexBuilder.ToAnalyzerName(analyzer));
 
@@ -101,6 +105,7 @@ public class StringSearchIndexBuilder(SearchIndexStringDefinition definition)
     /// algorithm.
     /// </param>
     /// <param name="similarityAlgorithm">The <see cref="SearchSimilarityAlgorithm"/> to use.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public StringSearchIndexBuilder AddAlternateSimilarity(string name, SearchSimilarityAlgorithm similarityAlgorithm)
     {
         definition.AlternateSimilarityAlgorithms[name] = similarityAlgorithm;
@@ -120,6 +125,7 @@ public class StringSearchIndexBuilder(SearchIndexStringDefinition definition)
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/"/>.
     /// </remarks>
     /// <param name="analyzerName">The name of a well-known or custom analyzer.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public StringSearchIndexBuilder UseSearchAnalyzer(string analyzerName)
     {
         definition.SearchAnalyzerName = analyzerName;
@@ -138,6 +144,7 @@ public class StringSearchIndexBuilder(SearchIndexStringDefinition definition)
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/analyzers/"/>.
     /// </remarks>
     /// <param name="analyzer">The well-known analyzer to use, as defined by <see cref="BuiltInSearchAnalyzer"/>.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public StringSearchIndexBuilder UseSearchAnalyzer(BuiltInSearchAnalyzer analyzer)
         => UseSearchAnalyzer(SearchIndexBuilder.ToAnalyzerName(analyzer));
 
@@ -145,6 +152,7 @@ public class StringSearchIndexBuilder(SearchIndexStringDefinition definition)
     /// Configured the amount of information to store for the indexed field, as defined by <see cref="StringSearchIndexAmount"/>.
     /// </summary>
     /// <param name="indexAmount">Information to store, defined by <see cref="StringSearchIndexAmount"/>.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public StringSearchIndexBuilder WithIndexAmount(StringSearchIndexAmount indexAmount)
     {
         definition.IndexAmount = indexAmount;
@@ -161,6 +169,7 @@ public class StringSearchIndexBuilder(SearchIndexStringDefinition definition)
     /// more, see <see href="https://www.mongodb.com/docs/atlas/atlas-search/performance/index-performance/#std-label-index-perf"/>
     /// </remarks>
     /// <param name="store">If <see langword="false"/>, then document text is not stored, otherwise it is.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public StringSearchIndexBuilder StoreDocumentText(bool store = true)
     {
         definition.StoreDocumentText = store;
@@ -172,6 +181,7 @@ public class StringSearchIndexBuilder(SearchIndexStringDefinition definition)
     /// field value is greater than the specified number of characters.
     /// </summary>
     /// <param name="characterCount">The maximum number of characters in the value of the field to index.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public StringSearchIndexBuilder IgnoreAbove(int characterCount)
     {
         definition.IgnoreAbove = characterCount;
@@ -186,6 +196,7 @@ public class StringSearchIndexBuilder(SearchIndexStringDefinition definition)
     /// <see href="https://www.mongodb.com/docs/atlas/atlas-search/score/get-details/#std-label-fts-similarity-algorithms"/>
     /// </remarks>
     /// <param name="similarityAlgorithm">The <see cref="SearchSimilarityAlgorithm"/> to use.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public StringSearchIndexBuilder UseSimilarity(SearchSimilarityAlgorithm similarityAlgorithm)
     {
         definition.SimilarityAlgorithm = similarityAlgorithm;
@@ -203,6 +214,7 @@ public class StringSearchIndexBuilder(SearchIndexStringDefinition definition)
     /// higher than the document with the longer field length.
     /// </remarks>
     /// <param name="include">If <see langword="false"/>, then the field length is omitted, otherwise it is included.</param>
+    /// <returns>This builder, so that method calls can be chained.</returns>
     public StringSearchIndexBuilder IncludeFieldLength(bool include = true)
     {
         definition.IncludeFieldLength = include;

@@ -57,6 +57,9 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
     /// Perform translation of the <paramref name="expression" /> that belongs to the
     /// supplied <paramref name="queryExpression"/>.
     /// </summary>
+    /// <param name="queryExpression">The <see cref="MongoQueryExpression"/> the expression being translated belongs to.</param>
+    /// <param name="expression">The <see cref="Expression"/> being translated.</param>
+    /// <returns>The translated expression tree.</returns>
     public Expression Translate(
         MongoQueryExpression queryExpression,
         Expression expression)
@@ -1707,8 +1710,10 @@ internal sealed partial class MongoProjectionBindingExpressionVisitor : Expressi
             expression, node => node is StructuralTypeShaperExpression or ProjectionBindingExpression or EntityProjectionExpression);
 
     /// <summary>
-    /// Whether a method call is a scalar property access to store in the projection mapping like a
-    /// <see cref="MemberExpression"/> (<c>EF.Property</c> on a non-navigation, or <c>Mql.Field</c>).
+    /// Checks whether a method call expression represents a scalar property access that should
+    /// be stored in the projection mapping (like <see cref="MemberExpression"/>), rather than
+    /// being fully visited. This covers <c>EF.Property</c> (for non-navigation properties) and
+    /// <c>Mql.Field</c> calls.
     /// </summary>
     private static bool IsScalarMethodPropertyAccess(MethodCallExpression methodCallExpression)
     {

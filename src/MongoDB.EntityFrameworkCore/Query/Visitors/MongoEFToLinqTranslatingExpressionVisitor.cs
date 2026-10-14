@@ -185,7 +185,10 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
 
     public Dictionary<string, object> AdditionalState { get; } = new();
 
-    /// <summary>Translates a projected query (anonymous types with entity members).</summary>
+    /// <summary>
+    /// Translate a projected query (anonymous types with entity members).
+    /// Strips joins for lookup-based queries and appends any pending $lookup stages.
+    /// </summary>
     public Expression TranslateProjected(Expression? efQueryExpression)
     {
         if (efQueryExpression != null)
@@ -919,8 +922,12 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     /// <summary>
-    /// Rewrites <c>source.Take(0)</c> (constant or parameterized) into <c>source.Where(_ => false)</c>, since
-    /// the driver rejects <c>$limit: 0</c>. Parameters are already resolved to constants by this point.
+    /// Rewrites <c>source.Take(0)</c> (constant or parameterized) into <c>source.Where(_ => false)</c>.
+    /// The driver's <c>AstLimitStage</c> rejects a limit of 0 (EF-254) — a MongoDB <c>$limit</c> stage of 0
+    /// is meaningless server-side, so the driver's guard is correct and shouldn't be relaxed. The provider
+    /// already knows the concrete count by translation time (EF query parameters are resolved to constants
+    /// upstream of this visitor), so it can short-circuit to the equivalent empty-result shape itself
+    /// without ever emitting <c>$limit</c>.
     /// </summary>
     private Expression? TryRewriteZeroTake(MethodCallExpression node)
     {
@@ -944,10 +951,17 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     /// <summary>
-    /// Rewrites <c>Queryable.Count(Queryable.Where(DbSet&lt;Target&gt;(), fkPredicate))</c> (and <c>LongCount</c>), the lowered form of
-    /// <c>c.Orders.Count</c>, into <c>Enumerable.Count(Mql.Field(outerDoc, "_lookup_&lt;Nav&gt;", navSerializer))</c> (a server-side <c>$size</c>) over the
-    /// array of the matching <see cref="LookupExpression.InjectAfterRoot"/> $lookup. Only fires when exactly one such lookup is pending: under a
-    /// set operation only one branch's root $lookup is injected and rewriting would fail at runtime ("$size must be an array").
+    /// Rewrites <c>Queryable.Count(Queryable.Where(DbSet&lt;Target&gt;(), fkPredicate))</c> (and the
+    /// <c>LongCount</c> variant) — the lowered form of a projected/filtered collection-navigation count
+    /// such as <c>c.Orders.Count</c> — into <c>Enumerable.Count(Mql.Field(outerDoc, "_lookup_&lt;Nav&gt;",
+    /// navSerializer))</c>. The collection array is materialized by the matching <see
+    /// cref="LookupExpression.InjectAfterRoot"/> $lookup; the driver renders the count as a server-side
+    /// <c>{ $size: "$_lookup_&lt;Nav&gt;" }</c>.
+    ///
+    /// Guard: only fires when there is exactly one <see cref="LookupExpression.InjectAfterRoot"/> lookup
+    /// pending. Multiple such lookups arise under a set operation (e.g. Union of two nav-count branches)
+    /// where only one branch's root $lookup is injected; rewriting then would produce a runtime
+    /// "$size must be an array" error, so we leave the subtree untranslated (translation failure) instead.
     /// </summary>
     private static readonly HashSet<string> SetOperationMethodNames =
         new(StringComparer.Ordinal) { "Union", "Concat", "Except", "Intersect" };
@@ -970,10 +984,13 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     /// <summary>
-    /// A projected collection-navigation count reads a single root-level <c>$lookup</c>. Under a set operation where
-    /// more than one branch reads it, the non-leading branch is a <c>$unionWith</c> sub-pipeline that can't see that
-    /// <c>$lookup</c> and would fail at runtime ("argument to $size must be an array"). Fails translation cleanly
-    /// (<see cref="InvalidOperationException"/>) instead.
+    /// A projected collection-navigation count is materialized by a single <c>$lookup</c> injected right
+    /// after the root source. Under a set operation (e.g. <c>Union</c>) where more than one branch reads
+    /// the looked-up collection, the non-leading branch becomes a <c>$unionWith</c> sub-pipeline that does
+    /// not see that root-level <c>$lookup</c>, so its server-side <c>{ $size: "$_lookup_&lt;Nav&gt;" }</c>
+    /// would fail at runtime with "argument to $size must be an array". Detect that shape and fail
+    /// translation cleanly (an <see cref="InvalidOperationException"/>) instead of emitting a pipeline that
+    /// crashes on the server.
     /// </summary>
     private void GuardAgainstMultiBranchNavigationCount(Expression? efQueryExpression)
     {
@@ -993,16 +1010,29 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     /// <summary>
-    /// When <see cref="StripJoinForLookup"/> declines, the Join chain survives and the driver renders it as nested <c>_outer</c>/<c>_inner</c>.
+    /// When <see cref="StripJoinForLookup"/> declines a shape (returns <see langword="null"/>), the Join
+    /// chain survives in the translated tree and the driver renders it natively as nested
+    /// <c>_outer</c>/<c>_inner</c> documents - see the call sites' comments.
     /// <para>
-    /// An ENTITY-shaped result (<paramref name="isEntityShaped"/>, via <see cref="Translate"/>) materializes via an alias keyed off
-    /// <see cref="Expressions.MongoQueryExpression.UsesDriverJoinFields"/> (flat <c>_lookup_&lt;Alias&gt;</c> with 2+ forced-unwind lookups, or
-    /// <c>_inner</c> for one reference join). The nested shape is valid for only ONE level, so with 2+ lookups reject always.
+    /// An ENTITY-shaped result (<paramref name="isEntityShaped"/>, i.e. reached via <see cref="Translate"/>
+    /// rather than <see cref="TranslateProjected"/>) materializes via an alias keyed off
+    /// <see cref="Expressions.MongoQueryExpression.UsesDriverJoinFields"/> — a flat <c>_lookup_&lt;Alias&gt;</c>
+    /// field when 2+ forced-unwind lookups are registered, or the driver-native <c>_inner</c> field for a
+    /// single reference join. The native fallback here produces neither: it's the UNMODIFIED nested
+    /// <c>_outer</c>/<c>_inner</c> shape, valid for only ONE level of driver-native nesting. With 2+
+    /// registered lookups declined, that mismatch is unconditionally wrong regardless of join kind - reject
+    /// it always, not only when a join happens to be left-outer.
     /// </para>
     /// <para>
-    /// A scalar/anonymous projection never reads that alias (leaf fields are baked in as structural paths), so two native levels are fine for
-    /// plain inner joins. It still breaks when an un-reattached join is left-outer (<c>LeftJoin</c>/<c>GroupJoin</c> + <c>DefaultIfEmpty</c>): the
-    /// null-preserving <c>$unwind</c> re-nests under another <c>_outer</c> and materializes null entities instead of failing (EF-X024).
+    /// A scalar/anonymous projection (<c>!isEntityShaped</c>) never reads through that alias — its leaf
+    /// fields are baked in as literal structural paths (e.g. <c>Outer.Outer._id</c>) that match whatever
+    /// shape the driver's native rendering actually produces, so chaining native rendering two levels deep
+    /// is fine there as long as every join involved is a plain inner <c>Join</c> (see
+    /// <c>NorthwindMiscellaneousQueryMongoTest.Join_Customers_Orders_Orders_Skip_Take_Same_Properties</c>).
+    /// It still breaks when one of the un-reattached joins is left-outer (<c>LeftJoin</c>/<c>GroupJoin</c> +
+    /// <c>DefaultIfEmpty</c>) - the second level's null-preserving <c>$unwind</c> re-nests under another
+    /// <c>_outer</c> that those baked-in paths never expected, materializing null entities instead of
+    /// failing loudly (see EF-X024).
     /// </para>
     /// </summary>
     private void GuardAgainstUnstrippableMultiJoin(Expression? stripped, Expression fullQuery, bool isEntityShaped)
@@ -1139,7 +1169,12 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         return true;
     }
 
-    /// <summary>The outer-entity reference in an FK-equality predicate body: the sub-expression rooted at a parameter other than the inner Where's.</summary>
+    /// <summary>
+    /// Find the outer-entity reference in an FK-equality predicate body — the sub-expression rooted at a
+    /// parameter other than the inner Where lambda parameter (e.g. <c>c</c> in
+    /// <c>o => c.CustomerID == o.CustomerID</c>). Returns the outer parameter or member access whose
+    /// ultimate parameter is the outer one.
+    /// </summary>
     private static Expression? FindOuterReference(Expression body, ParameterExpression innerParam)
     {
         var finder = new OuterReferenceFinder(innerParam);
@@ -1275,7 +1310,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
         }
     }
 
-    /// <summary>Finds an entity type in the model, preferring owned types (which require searching all entity types).</summary>
+    /// <summary>
+    /// Find an entity type in the model, preferring owned types (which require searching all entity types).
+    /// </summary>
     private IEntityType? FindEntityType(Type clrType)
         => _queryContext.Context.Model.GetEntityTypes().FirstOrDefault(e => e.ClrType == clrType && e.IsOwned())
            ?? _queryContext.Context.Model.FindEntityType(clrType);
@@ -1336,6 +1373,9 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             : Expression.OrElse);
     }
 
+    /// <summary>
+    /// Combine a list of expressions into a balanced binary tree using the given combiner.
+    /// </summary>
     private static Expression CombineBalanced(IReadOnlyList<Expression> expressions,
         Func<Expression, Expression, BinaryExpression> combiner)
     {

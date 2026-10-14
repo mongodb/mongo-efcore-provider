@@ -41,7 +41,11 @@ internal sealed partial class MongoQueryableMethodTranslatingExpressionVisitor :
     private readonly MongoProjectionBindingExpressionVisitor _projectionBindingExpressionVisitor = new();
     private Expression? _finalExpression;
 
-    /// <summary>Creates a <see cref="MongoQueryableMethodTranslatingExpressionVisitor"/>.</summary>
+    /// <summary>
+    /// Create a <see cref="MongoQueryableMethodTranslatingExpressionVisitor"/>.
+    /// </summary>
+    /// <param name="dependencies">The <see cref="QueryableMethodTranslatingExpressionVisitorDependencies"/> this visitor depends upon.</param>
+    /// <param name="queryCompilationContext">The <see cref="QueryCompilationContext"/> this visitor should use to correctly translate the expressions.</param>
     public MongoQueryableMethodTranslatingExpressionVisitor(
         QueryableMethodTranslatingExpressionVisitorDependencies dependencies,
         QueryCompilationContext queryCompilationContext)
@@ -189,7 +193,13 @@ internal sealed partial class MongoQueryableMethodTranslatingExpressionVisitor :
         return membersA is [var memberA] && membersB is [var memberB] && memberA == memberB;
     }
 
-    /// <summary>Captures cardinality and the final expression when visiting a <see cref="Queryable"/> method.</summary>
+    /// <summary>
+    /// Visit the <see cref="MethodCallExpression"/> to capture the cardinality and final expression
+    /// when found on a <see cref="Queryable"/> method.
+    /// </summary>
+    /// <param name="methodCallExpression">The <see cref="MethodCallExpression"/> to visit.</param>
+    /// <returns>A <see cref="ShapedQueryExpression"/> if this method was on a <see cref="Queryable"/>,
+    /// otherwise <see cref="QueryCompilationContext.NotTranslatedExpression"/>.</returns>
     protected override Expression VisitMethodCall(MethodCallExpression methodCallExpression)
     {
         _finalExpression ??= ElideRedundantOrderings(methodCallExpression);
