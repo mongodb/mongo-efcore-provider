@@ -21,7 +21,6 @@ The previous results were silently wrong. Failing on malformed data is preferred
 #### Mitigations
 
 Documents written by EF Core always hold valid numbers and are unaffected. If other tools wrote non-numeric values to the property, clean them up first, or filter them out of the query. Range, sort and aggregate predicates over these properties can no longer use an index on the field.
-||||||| parent of e987353e (EF-469: ToUpper/ToLower/Substring of a null or missing string returns "" instead of null)
 
 ### `ToUpper`, `ToLower`, `ToUpperInvariant`, `ToLowerInvariant` and `Substring` of a null or missing string now produce `null`
 

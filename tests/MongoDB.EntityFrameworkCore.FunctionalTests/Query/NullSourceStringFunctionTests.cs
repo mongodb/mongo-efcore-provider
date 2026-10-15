@@ -152,4 +152,15 @@ public class NullSourceStringFunctionTests(TemporaryDatabaseFixture database)
         Assert.False(db.Set<Row>().Select(x => x.S!.ToUpper()).Contains(""));
         Assert.True(db.Set<Row>().Select(x => x.S!.ToUpper()).Contains("AB"));
     }
+
+    [Fact]
+    public void Scalar_projected_Contains_leaves_predicates_in_its_source_unguarded()
+    {
+        using var db = Seed();
+
+        // Substring(0, 0) is "" for every row when unguarded, null and missing included, so the Where keeps all
+        // three rows and the guarded projection then yields a null. Had the Where predicate been guarded too, the
+        // null and missing rows would be filtered out and Contains(null) would be false.
+        Assert.True(db.Set<Row>().Where(x => x.S!.Substring(0, 0) == "").Select(x => x.S!.ToUpper()).Contains(null));
+    }
 }
