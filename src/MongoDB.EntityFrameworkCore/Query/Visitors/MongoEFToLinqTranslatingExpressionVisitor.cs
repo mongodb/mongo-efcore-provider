@@ -126,7 +126,6 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     }
 
     private int _predicateDepth;
-    private bool _forceNullGuard;
 
     private static readonly MethodInfo IsNullOrMissingMethod =
         typeof(Mql).GetMethod(nameof(Mql.IsNullOrMissing))!;
@@ -885,11 +884,11 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             {
                 // The lambda arguments of these methods are predicates, where the "" a null string operand
                 // produces cannot surface as data (see TryRewriteNullPropagatingStringCall).
-                var source = Visit(node.Arguments[0]);
+                var source = Visit(node.Arguments[0])!;
                 _predicateDepth++;
                 try
                 {
-                    return node.Update(null, [source, .. node.Arguments.Skip(1).Select(Visit)]);
+                    return node.Update(null, [source, .. node.Arguments.Skip(1).Select(a => Visit(a)!)]);
                 }
                 finally
                 {
@@ -930,7 +929,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
     /// </summary>
     private Expression? TryRewriteNullPropagatingStringCall(MethodCallExpression node)
     {
-        if ((_predicateDepth > 0 && !_forceNullGuard) || !IsNullBlindStringCall(node))
+        if (_predicateDepth > 0 || !IsNullBlindStringCall(node))
         {
             return null;
         }
@@ -960,7 +959,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             root = target = Visit(node.Object)!;
         }
 
-        return Expression.Call(target, node.Method, node.Arguments.Select(Visit));
+        return Expression.Call(target, node.Method, node.Arguments.Select(a => Visit(a)!));
     }
 
     private static bool IsNullBlindStringCall(MethodCallExpression node)
@@ -1261,24 +1260,31 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor : System
             return null;
         }
 
-        var rewrite = TryRewriteEntityContains(collectionExpr, itemExpr)
-                      ?? TryRewriteScalarProjectedContains(collectionExpr, itemExpr);
-        if (rewrite == null)
+        var entityRewrite = TryRewriteEntityContains(collectionExpr, itemExpr);
+        if (entityRewrite != null)
+        {
+            return Visit(entityRewrite)!;
+        }
+
+        if (TryRewriteScalarProjectedContains(collectionExpr, itemExpr) is not MethodCallExpression any)
         {
             return null;
         }
 
         // The Any a scalar-projected Contains is rewritten to compares a projected value, so unlike a
-        // user-written predicate its operand surfaces as data and must keep the null guard.
-        var savedForce = _forceNullGuard;
-        _forceNullGuard = true;
+        // user-written predicate its operand surfaces as data and must keep the null guard (EF-469). Only the
+        // generated comparison gets that treatment: the source is visited as written, so predicates in it
+        // (e.g. Where(x => x.S.ToUpper() == "")) stay unguarded.
+        var source = Visit(any.Arguments[0])!;
+        var savedPredicateDepth = _predicateDepth;
+        _predicateDepth = 0;
         try
         {
-            return Visit(rewrite)!;
+            return any.Update(null, [source, Visit(any.Arguments[1])!]);
         }
         finally
         {
-            _forceNullGuard = savedForce;
+            _predicateDepth = savedPredicateDepth;
         }
     }
 
