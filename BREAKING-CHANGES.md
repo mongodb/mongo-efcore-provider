@@ -317,11 +317,11 @@ Unchanged:
 
 Store the property in a form that orders like the .NET value (for example remove `HasConversion<string>()` from an enum or number, or use a numeric `BsonRepresentation`), or sort, compare or aggregate on the client: `context.Products.AsEnumerable().OrderBy(p => p.Price)`.
 
-### `Random.Next` and `Guid.NewGuid` calls inside a query now throw
+### `Random` and `Guid.NewGuid`/`Guid.CreateVersion7` calls inside a query now throw
 
 #### Old behavior
 
-A call to `Random.Next(...)` (on any `Random` instance, including `Random.Shared` and a seeded `new Random(seed)`) or to `Guid.NewGuid()` inside a predicate, ordering or projection was evaluated **once**, while the query was translated, and the single value was used for every row:
+A call to `Random.Next(...)`, `NextDouble()`, `NextSingle()` or `NextInt64(...)` (on any `Random` instance, including `Random.Shared` and a seeded `new Random(seed)`) or to `Guid.NewGuid()` or `Guid.CreateVersion7()` inside a predicate, ordering or projection was evaluated **once**, while the query was translated, and the single value was used for every row:
 
 ```c#
 context.Orders.Where(o => o.Priority > Random.Shared.Next(0, 10));   // one random threshold for all rows
@@ -340,7 +340,6 @@ These queries throw `InvalidOperationException` in the default and `DriverLinq` 
 Unchanged:
 
 * `DateTime.Now` and `DateTime.UtcNow`: they are evaluated afresh on every execution of the query.
-* Calls that EF Core itself evaluates into a query parameter before the provider sees them, such as `Random.Shared.NextDouble()`, `NextInt64(...)` or `Guid.CreateVersion7()`: as with other EF Core providers, these are evaluated once per execution.
 
 #### Mitigations
 
