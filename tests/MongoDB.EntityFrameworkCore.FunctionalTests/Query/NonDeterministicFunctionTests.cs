@@ -353,6 +353,50 @@ public class NonDeterministicFunctionTests(TemporaryDatabaseFixture database)
             () => db.Entities.Select(o => new { o.Foo, R = Random.Shared.Next() }).ToList());
     }
 
+    // EF-464: EF parameterizes these calls before the provider sees the tree, so the per-call check never fires and the
+    // one value read per execution is used for every row.
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
+    public void Random_NextDouble_in_projection_throws(MongoQueryMode mode)
+    {
+        using var db = CreateContext(mode, $"nd_{mode}");
+        Assert.Throws<InvalidOperationException>(
+            () => db.Entities.Select(o => new { o.Foo, R = Random.Shared.NextDouble() }).ToList());
+    }
+
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
+    public void Random_NextDouble_in_predicate_throws(MongoQueryMode mode)
+    {
+        using var db = CreateContext(mode, $"np_{mode}");
+        Assert.Throws<InvalidOperationException>(
+            () => db.Entities.Where(o => o.Foo > Random.Shared.NextDouble()).ToList());
+    }
+
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
+    public void Random_NextSingle_in_projection_throws(MongoQueryMode mode)
+    {
+        using var db = CreateContext(mode, $"ns_{mode}");
+        Assert.Throws<InvalidOperationException>(
+            () => db.Entities.Select(o => new { o.Foo, R = Random.Shared.NextSingle() }).ToList());
+    }
+
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
+    public void Random_NextInt64_in_ordering_throws(MongoQueryMode mode)
+    {
+        using var db = CreateContext(mode, $"ni_{mode}");
+        Assert.Throws<InvalidOperationException>(
+            () => db.Entities.OrderBy(o => Random.Shared.NextInt64()).ToList());
+    }
+
+#if !EF8 && !EF9
+    [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
+    public void Guid_CreateVersion7_in_projection_throws(MongoQueryMode mode)
+    {
+        using var db = CreateContext(mode, $"g7_{mode}");
+        Assert.Throws<InvalidOperationException>(
+            () => db.Entities.Select(o => new { o.Foo, G = Guid.CreateVersion7() }).ToList());
+    }
+#endif
+
     [Theory, InlineData(MongoQueryMode.Native), InlineData(MongoQueryMode.NativeOnly), InlineData(MongoQueryMode.DriverLinq)]
     public void Random_evaluated_client_side_before_the_query_works(MongoQueryMode mode)
     {
