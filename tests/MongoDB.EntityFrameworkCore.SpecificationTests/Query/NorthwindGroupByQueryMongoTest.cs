@@ -2207,7 +2207,7 @@ Orders.{ "$match" : { "_id" : { "$gt" : 10500 } } }, { "$group" : { "_id" : "$Cu
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "CustomerID" : { "$ifNull" : ["$CustomerID", null] }, "Year" : { "$ifNull" : [{ "$year" : "$OrderDate" }, null] } } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "Year" : "$_id.Year", "_id" : 0 } }, { "$group" : { "_id" : "$CustomerID", "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "CustomerID" : "$CustomerID", "Year" : { "$year" : "$OrderDate" } } } }, { "$project" : { "CustomerID" : "$_id.CustomerID", "Year" : "$_id.Year", "_id" : 0 } }, { "$group" : { "_id" : "$CustomerID", "__agg0" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$__agg0", "_id" : 0 } }
 """);
     }
 
@@ -2263,7 +2263,7 @@ Orders.{ "$group" : { "_id" : "$CustomerID", "Data" : { "$push" : { "$ifNull" : 
 
         AssertMql(
             """
-Orders.{ "$group" : { "_id" : { "$dayOfMonth" : "$OrderDate" }, "Count" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$Count", "_id" : 0 } }
+Orders.{ "$group" : { "_id" : { "$dayOfMonth" : "$OrderDate" }, "__agg0" : { "$sum" : 1 } } }, { "$project" : { "Key" : "$_id", "Count" : "$__agg0", "_id" : 0 } }
 """);
     }
 
