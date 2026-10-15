@@ -19,13 +19,13 @@ public static class TestDatabaseNamer
 {
     // Distinct per assembly and EF version so concurrent test processes sharing a server never collide or clean up each other's databases.
 #if EF8
-    public const string TestDatabasePrefix = "EFSpecTest-EF8-";
+    public const string TestDatabasePrefix = "EF8-SpecTest-";
 #elif EF9
-    public const string TestDatabasePrefix = "EFSpecTest-EF9-";
+    public const string TestDatabasePrefix = "EF9-SpecTest-";
 #elif EF10
-    public const string TestDatabasePrefix = "EFSpecTest-EF10-";
+    public const string TestDatabasePrefix = "EF10-SpecTest-";
 #else
-    public const string TestDatabasePrefix = "EFSpecTest-";
+    public const string TestDatabasePrefix = "EF-SpecTest-";
 #endif
 
     private static readonly string TimeStamp = DateTime.Now.ToString("s").Replace(':', '-');
