@@ -50,6 +50,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         public int Num { get; set; }
         public Color Color { get; set; }
         public int Wide { get; set; }
+        public bool Flag { get; set; }
     }
 
     public enum Color
@@ -75,6 +76,10 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         ["Where_modulo"] = q => q.Where(x => x.Num % 2 == 1).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
         ["Where_plus_equal"] = q => q.Where(x => x.Num + 1 == 3).Select(x => x.Seq).ToList(),
         ["Where_Math_Abs_equal"] = q => q.Where(x => Math.Abs(x.Num) == 2).Select(x => x.Seq).ToList(),
+        // A converted bool tested by truthiness: the stored "True"/"False" are both truthy (EF-466).
+        ["Where_conditional_truth"] = q => q.Where(x => x.Flag ? x.Seq > 1 : x.Seq > 2).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
+        ["Where_conditional_value"] = q => q.Where(x => (x.Flag ? 1 : 0) == 0).Select(x => x.Seq).ToList(),
+        ["Count_conditional_value"] = q => q.Count(x => (x.Flag ? 1 : 0) == 1),
         ["Select_Length"] = q => q.OrderBy(x => x.Seq).Select(x => x.Name.Length).ToList(),
         ["Select_plus"] = q => q.OrderBy(x => x.Seq).Select(x => x.Num + 1).ToList(),
         ["Select_concat"] = q => q.OrderBy(x => x.Seq).Select(x => x.Name + "!").ToList(),
@@ -87,6 +92,9 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
     private static readonly Dictionary<string, Func<IQueryable<Item>, object>> AllowedQueries = new()
     {
         ["Where_equal"] = q => q.Where(x => x.Name == "ab").Select(x => x.Seq).ToList(),
+        ["Where_Flag"] = q => q.Where(x => x.Flag).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
+        ["Where_not_Flag"] = q => q.Where(x => !x.Flag).Select(x => x.Seq).ToList(),
+        ["Where_Flag_equal_false"] = q => q.Where(x => x.Flag == false).Select(x => x.Seq).ToList(),
         ["Where_not_equal"] = q => q.Where(x => x.Num != 2).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
         ["Where_in_list"] = q =>
         {
@@ -151,7 +159,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         }
         else
         {
-            Assert.Matches(@"Item.(Name|Num)'", Assert.IsType<NotSupportedException>(ex).Message);
+            Assert.Matches(@"Item.(Name|Num|Flag)'", Assert.IsType<NotSupportedException>(ex).Message);
         }
     }
 
@@ -194,6 +202,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
                 { "Name", "pfx-" + r.Name },
                 { "Num", r.Num * 2 },
                 { "Color", ColorOf(r.Seq).ToString() },
+                { "Flag", r.Seq != 2 ? "1" : "0" },
                 { "Wide", (long)r.Seq }
             }));
 
@@ -221,6 +230,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
                 mb.Entity<Item>().Property(e => e.Num).HasConversion(v => v * 2, v => v / 2);
                 mb.Entity<Item>().Property(e => e.Color).HasConversion<string>();
                 mb.Entity<Item>().Property(e => e.Wide).HasConversion<long>();
+                mb.Entity<Item>().Property(e => e.Flag).HasConversion<string>();
             },
             optionsBuilderAction: b =>
             {

@@ -218,8 +218,10 @@ Rendering (null/missing/dialect semantics):
     (`ThrowIfComputedFromStoredValue`, the walker with `StoredOrderingUse.Computation`); native computed leaves already
     require `AllFieldsDefaultSerialized`, and `IsRegexSearchableString` (Contains/StartsWith/EndsWith/Like/case-folded
     equality) declines any converter. Reading the property and equality stay exact. Not covered: properties of EF complex types
-    (`FindMappedProperties` only sees entity types; the ordering checks share the gap) and `list.Contains(x.Converted)` against a
-    differently-stored list (EF-467).
+    (`FindMappedProperties` only sees entity types; the ordering checks share the gap).
+  - **A converted bool as a conditional test is refused** (EF-466): `$cond` tests by truthiness, so the renderer
+    (`RenderConditionTest`, `CanRender`) declines an `IsUnsafeTruthinessRoot` test and the bridge refuses a conditional whose test
+    reads a non-preserving property.
 - **Non-default-serialized bools are truthiness-tested wrongly** (`HasConversion<string>()` stores `"True"`/`"False"`, both
   truthy): gate `$not`/`$and`/`$or` operands and bare boolean roots via `MongoExpressionTranslator.IsUnsafeTruthinessRoot`.
 - **Negator, dialect classifier and both renderers must agree** (`MongoExpressionNodeCoverageTests` checks every

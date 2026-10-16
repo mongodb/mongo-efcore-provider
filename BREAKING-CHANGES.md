@@ -351,6 +351,26 @@ Unchanged:
 
 Store the property in a form the function can run over, or bring the rows to the client first: `context.Items.AsEnumerable().Where(x => x.Name.Contains("x"))`. A property whose converter is order-preserving cannot opt in yet (see EF-472).
 
+### A value-converted `bool` tested by truthiness in a conditional now throws
+
+#### Old behavior
+
+A `bool` property with a value converter (for example `HasConversion<string>()`, which stores `"1"` and `"0"`) used as the test of a conditional inside a filter, a count predicate or a projection was evaluated by the server against the stored value. Both stored strings are truthy, so the first branch was always taken:
+
+```c#
+context.Items.Where(x => x.Flag ? x.Seq > 1 : x.Seq > 2);   // behaved as x.Seq > 1
+context.Items.Where(x => (x.Flag ? 1 : 0) == 0);            // matched no row
+context.Items.Count(x => (x.Flag ? 1 : 0) == 1);            // counted every row
+```
+
+#### New behavior
+
+These queries throw `NotSupportedException` naming the property (default and `DriverLinq` query modes; `NativeOnly` throws `NativeTranslationNotSupportedException`). Unchanged: `Where(x => x.Flag)`, `Where(x => !x.Flag)`, `Where(x => x.Flag == false)`, and conditionals over a default-stored `bool`.
+
+#### Mitigations
+
+Compare the property explicitly (`x.Flag == true ? ... : ...` is still a truthiness test of the comparison's result, which is exact), or evaluate the conditional on the client after `AsEnumerable()`.
+
 ### `Random` and `Guid.NewGuid`/`Guid.CreateVersion7` calls inside a query now throw
 
 #### Old behavior

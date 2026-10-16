@@ -198,6 +198,11 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
                 ThrowIfReadsStoredOrdering(unary.Operand, StoredOrderingUse.Computation, unary.NodeType.ToString());
                 break;
 
+            // A bool tested by truthiness: a converted one (stored "1"/"0", both truthy) takes the wrong branch (EF-466).
+            case ConditionalExpression conditional:
+                ThrowIfReadsStoredOrdering(conditional.Test, StoredOrderingUse.Computation, "conditional test");
+                break;
+
             case MemberExpression { Expression: { } memberOwner, Member: var member }
                 when IsComputedMember(memberOwner, member):
                 ThrowIfReadsStoredOrdering(memberOwner, StoredOrderingUse.Computation, member.Name);
