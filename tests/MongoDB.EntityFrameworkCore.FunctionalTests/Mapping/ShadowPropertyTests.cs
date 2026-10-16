@@ -15,9 +15,11 @@
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
+using MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 using MongoDB.EntityFrameworkCore.Metadata.Conventions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Mapping;
@@ -321,12 +323,12 @@ public class ShadowPropertyTests(TemporaryDatabaseFixture database)
     {
         var staleAuthor = new Author {Name = "Damien"};
 
-        var staleDb = new BloggingContext(For(database.MongoDatabase).Options, ModelConfiguration);
+        var staleDb = new BloggingContext(RowVersionOptions(), ModelConfiguration);
         staleDb.Authors.Add(staleAuthor);
         staleDb.SaveChanges();
 
         {
-            var freshDb = new BloggingContext(For(database.MongoDatabase).Options, ModelConfiguration);
+            var freshDb = new BloggingContext(RowVersionOptions(), ModelConfiguration);
             var freshAuthor = freshDb.Authors.First(a => a.Id == staleAuthor.Id);
             freshAuthor.Name = "Damien Modified Fresh";
             freshDb.SaveChanges();
@@ -334,6 +336,13 @@ public class ShadowPropertyTests(TemporaryDatabaseFixture database)
 
         staleAuthor.Name = "Damien Modified Stale";
         Assert.Throws<DbUpdateConcurrencyException>(() => staleDb.SaveChanges());
+
+        // The model differs from other tests' BloggingContext model, so it must not share a cache entry.
+        DbContextOptions RowVersionOptions()
+            => For(database.MongoDatabase)
+                .ReplaceService<IModelCacheKeyFactory, IgnoreCacheKeyFactory>()
+                .ConfigureWarnings(x => x.Ignore(CoreEventId.ManyServiceProvidersCreatedWarning))
+                .Options;
 
         void ModelConfiguration(ModelBuilder mb) => mb.Entity<Author>().Property<long>("RowVersion").IsRowVersion();
     }

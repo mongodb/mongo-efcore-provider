@@ -126,14 +126,15 @@ public class CollectionSerializationTests(TemporaryDatabaseFixture database)
         public string[] aStringArray { get; set; }
     }
 
-    public static readonly TheoryData<string[][]> ArrayOfArraysData =
-    [
-        [],
-        [
+    public static readonly TheoryData<string[][]> ArrayOfArraysData = new()
+    {
+        Array.Empty<string[]>(),
+        new[]
+        {
             new[] {"a", "b", "c"},
             new[] {"d"}
-        ]
-    ];
+        }
+    };
 
     [Theory]
     [MemberData(nameof(ArrayOfArraysData))]

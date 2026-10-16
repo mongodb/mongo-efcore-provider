@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 
+using System.Runtime.CompilerServices;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.Driver.Encryption;
@@ -203,10 +204,16 @@ public class AutoEncryptionTests(TemporaryDatabaseFixture database)
 
     protected class EncryptionTheory : TheoryAttribute
     {
-        public override string? Skip
-            => TestServer.SupportsEncryption
-                ? null
-                : "Requires encryption library to be present.";
+        public EncryptionTheory(
+            [CallerFilePath] string? sourceFilePath = null,
+            [CallerLineNumber] int sourceLineNumber = -1)
+            : base(sourceFilePath, sourceLineNumber)
+        {
+            if (!TestServer.SupportsEncryption)
+            {
+                Skip = "Requires encryption library to be present.";
+            }
+        }
     }
 
     public enum EncryptionMode

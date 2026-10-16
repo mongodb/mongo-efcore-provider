@@ -104,12 +104,12 @@ public abstract class TemporaryDatabaseFixtureBase : IAsyncLifetime
             "Test was unable to determine a suitable collection name, please pass one to CreateTemporaryCollection");
     }
 
-    public virtual Task InitializeAsync()
+    public virtual ValueTask InitializeAsync()
     {
         _mongoDatabase = Client.GetDatabase(TestDatabaseNamer.GetUniqueDatabaseName());
-        return Task.CompletedTask;
+        return ValueTask.CompletedTask;
     }
 
-    public virtual Task DisposeAsync()
-        => Task.CompletedTask;
+    public virtual ValueTask DisposeAsync()
+        => ValueTask.CompletedTask;
 }

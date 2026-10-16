@@ -16,7 +16,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
 using MongoDB.Driver.Core.Misc;
-using Xunit.Abstractions;
 
 namespace MongoDB.EntityFrameworkCore.FunctionalTests.Utilities;
 
@@ -166,9 +165,9 @@ public abstract class TestServer : IAsyncLifetime
             ConnectTimeout = TimeSpan.FromSeconds(1)
         });
 
-    public virtual Task InitializeAsync()
-        => Task.CompletedTask;
+    public virtual ValueTask InitializeAsync()
+        => ValueTask.CompletedTask;
 
-    public virtual Task DisposeAsync()
-        => Task.CompletedTask;
+    public virtual ValueTask DisposeAsync()
+        => ValueTask.CompletedTask;
 }
