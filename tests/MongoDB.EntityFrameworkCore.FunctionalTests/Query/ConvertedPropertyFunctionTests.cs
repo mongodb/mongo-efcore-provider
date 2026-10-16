@@ -51,6 +51,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         public Color Color { get; set; }
         public int Wide { get; set; }
         public bool Flag { get; set; }
+        public bool? NFlag { get; set; }
         public List<int> Scores { get; set; } = [];
     }
 
@@ -81,6 +82,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         ["Where_conditional_truth"] = q => q.Where(x => x.Flag ? x.Seq > 1 : x.Seq > 2).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
         ["Where_conditional_value"] = q => q.Where(x => (x.Flag ? 1 : 0) == 0).Select(x => x.Seq).ToList(),
         ["Count_conditional_value"] = q => q.Count(x => (x.Flag ? 1 : 0) == 1),
+        ["Where_conditional_coalesce_truth"] = q => q.Where(x => (x.NFlag ?? false) ? x.Seq > 1 : x.Seq > 2).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
         // Two operands stored differently: a default-stored list against a converted property compares the stored forms (EF-467).
         ["Where_stored_list_Contains_converted"] = q => q.Where(x => x.Scores.Contains(x.Num)).Select(x => x.Seq).ToList(),
         ["Where_stored_list_Any_equal_converted"] = q => q.Where(x => x.Scores.Any(s => s == x.Num)).Select(x => x.Seq).ToList(),
@@ -164,7 +166,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         }
         else
         {
-            Assert.Matches(@"Item.(Name|Num|Flag|Scores)'", Assert.IsType<NotSupportedException>(ex).Message);
+            Assert.Matches(@"Item.(Name|Num|Flag|NFlag|Scores)'", Assert.IsType<NotSupportedException>(ex).Message);
         }
     }
 
@@ -208,6 +210,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
                 { "Num", r.Num * 2 },
                 { "Color", ColorOf(r.Seq).ToString() },
                 { "Flag", r.Seq != 2 ? "1" : "0" },
+                { "NFlag", r.Seq == 3 ? BsonNull.Value : (BsonValue)(r.Seq == 1 ? "1" : "0") },
                 { "Scores", new BsonArray { r.Seq == 1 ? 9 : r.Seq == 2 ? 4 : 3 } },
                 { "Wide", (long)r.Seq }
             }));
@@ -237,6 +240,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
                 mb.Entity<Item>().Property(e => e.Color).HasConversion<string>();
                 mb.Entity<Item>().Property(e => e.Wide).HasConversion<long>();
                 mb.Entity<Item>().Property(e => e.Flag).HasConversion<string>();
+                mb.Entity<Item>().Property(e => e.NFlag).HasConversion<string>();
             },
             optionsBuilderAction: b =>
             {

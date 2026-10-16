@@ -355,7 +355,7 @@ Store the property in a form the function can run over, or bring the rows to the
 
 #### Old behavior
 
-A `bool` property with a value converter (for example `HasConversion<string>()`, which stores `"1"` and `"0"`) used as the test of a conditional inside a filter, a count predicate or a projection was evaluated by the server against the stored value. Both stored strings are truthy, so the first branch was always taken:
+A `bool` property with a value converter (for example `HasConversion<string>()`, which stores `"1"` and `"0"`) used as the test of a conditional inside a filter or a count predicate was evaluated by the server against the stored value. A stored string such as `"1"` or `"0"` is always truthy, so the first branch was always taken:
 
 ```c#
 context.Items.Where(x => x.Flag ? x.Seq > 1 : x.Seq > 2);   // behaved as x.Seq > 1
@@ -369,13 +369,13 @@ These queries throw `NotSupportedException` naming the property (default and `Dr
 
 #### Mitigations
 
-Compare the property explicitly (`x.Flag == true ? ... : ...` is still a truthiness test of the comparison's result, which is exact), or evaluate the conditional on the client after `AsEnumerable()`.
+Evaluate the conditional on the client after `AsEnumerable()`, or keep the `bool` default-stored. Any converted `bool` is refused, including one whose stored values would happen to test correctly (for example a `0`/`1` converter), as for `!x.Flag` operands elsewhere.
 
 ### Equality and `Contains` between two operands stored differently now throw
 
 #### Old behavior
 
-When both sides of an equality, or the list and the item of a `Contains`, were stored properties (not a constant or a parameter) and one had a value converter or non-default `BsonRepresentation`, the server compared the stored forms:
+When both sides of an equality, or the list and the item of a `Contains`, were stored properties (not a constant or a parameter) whose converter or `BsonRepresentation` differed, the server compared the stored forms. The answer was wrong unless the two encodings happened to coincide:
 
 ```c#
 // Scores is a default-stored List<int>; Num has HasConversion(v => v * 2, v => v / 2)
@@ -389,7 +389,7 @@ These throw `NotSupportedException` naming both properties. Operands stored alik
 
 #### Mitigations
 
-Store both operands the same way, or compare on the client after `AsEnumerable()`.
+Store both operands the same way (sharing one converter instance), or compare on the client after `AsEnumerable()`. Operands that happened to encode alike but are configured differently, such as an enum stored as its name against a plain string property, are refused too.
 
 ### `Random` and `Guid.NewGuid`/`Guid.CreateVersion7` calls inside a query now throw
 

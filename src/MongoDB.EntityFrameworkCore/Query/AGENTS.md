@@ -226,6 +226,8 @@ Rendering (null/missing/dialect semantics):
     and a stored primitive collection (or its element) with different converter/representation compare stored forms, unless both
     store the CLR value (`PreservesClrValueForComputation`). A constant, parameter or captured list goes through the property's
     own serializer and is exact.
+    Best-effort: operands reached through `Where`/`Distinct` receivers, anonymous projections, `g.Key` or dictionary values are not
+    resolved for this check.
 - **Non-default-serialized bools are truthiness-tested wrongly** (`HasConversion<string>()` stores `"True"`/`"False"`, both
   truthy): gate `$not`/`$and`/`$or` operands and bare boolean roots via `MongoExpressionTranslator.IsUnsafeTruthinessRoot`.
 - **Negator, dialect classifier and both renderers must agree** (`MongoExpressionNodeCoverageTests` checks every

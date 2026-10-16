@@ -203,6 +203,14 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
             // A bool tested by truthiness: a converted one (stored "1"/"0", both truthy) takes the wrong branch (EF-466).
             case ConditionalExpression conditional:
                 ThrowIfReadsStoredOrdering(conditional.Test, StoredOrderingUse.Computation, "conditional test");
+
+                // `(x.NFlag ?? false) ? a : b`: the coalesce yields the stored value of a converted bool? when it is present.
+                if (StripConverts(conditional.Test) is BinaryExpression { NodeType: ExpressionType.Coalesce } coalesceTest)
+                {
+                    ThrowIfReadsStoredOrdering(coalesceTest.Left, StoredOrderingUse.Computation, "conditional test");
+                    ThrowIfReadsStoredOrdering(coalesceTest.Right, StoredOrderingUse.Computation, "conditional test");
+                }
+
                 break;
 
             case MemberExpression { Expression: { } memberOwner, Member: var member }
