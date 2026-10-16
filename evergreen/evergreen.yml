@@ -160,7 +160,7 @@ functions:
           OS=${OS} \
           MONGODB_URI="${MONGODB_URI}" \
           ATLAS_URI="${ATLAS_URI}" \
-          MONGODB_VERSION="${version}" \
+          MONGODB_VERSION="${VERSION}" \
           CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
           BUILD_CONFIGURATION="Debug EF8" \
             ./evergreen/run-tests.sh
@@ -174,7 +174,7 @@ functions:
           OS=${OS} \
           MONGODB_URI="${MONGODB_URI}" \
           ATLAS_URI="${ATLAS_URI}" \
-          MONGODB_VERSION="${version}" \
+          MONGODB_VERSION="${VERSION}" \
           CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
           BUILD_CONFIGURATION="Debug EF9" \
             ./evergreen/run-tests.sh
@@ -188,7 +188,7 @@ functions:
           OS=${OS} \
           MONGODB_URI="${MONGODB_URI}" \
           ATLAS_URI="${ATLAS_URI}" \
-          MONGODB_VERSION="${version}" \
+          MONGODB_VERSION="${VERSION}" \
           CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
           BUILD_CONFIGURATION="Debug EF10" \
             ./evergreen/run-tests.sh
@@ -204,7 +204,7 @@ functions:
           OS=${OS} \
           MONGODB_URI="${MONGODB_URI}" \
           ATLAS_URI="${ATLAS_URI}" \
-          MONGODB_VERSION="${version}" \
+          MONGODB_VERSION="${VERSION}" \
           CRYPT_SHARED_LIB_PATH=${CRYPT_SHARED_LIB_PATH} \
           BUILD_CONFIGURATION="Debug EF10" \
             ./evergreen/run-tests.sh
