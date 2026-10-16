@@ -212,6 +212,12 @@ Rendering (null/missing/dialect semantics):
   `StoredOrdering.PreservesClrOrdering` and `PreservesClrOrderingForAggregateAndSort`; equality is never gated. Native
   aggregates stay on `HasDefaultKeySerialization`. The bridge walks the whole key/operand; an unclassifiable construct is
   refused if the query reads such a property.
+  - **A function computed from such a property is refused too** (EF-465): a string method, `Length`/date part, arithmetic
+    or `Math` over it, in a filter, projection or group key. Predicate: `StoredOrdering.PreservesClrValueForComputation`
+    (default storage, or a number the server holds exactly). The bridge runs it per node
+    (`ThrowIfComputedFromStoredValue`, the walker with `StoredOrderingUse.Computation`); native computed leaves already
+    require `AllFieldsDefaultSerialized`, and `IsRegexSearchableString` (Contains/StartsWith/EndsWith/Like/case-folded
+    equality) declines any converter. Reading the property and equality stay exact.
 - **Non-default-serialized bools are truthiness-tested wrongly** (`HasConversion<string>()` stores `"True"`/`"False"`, both
   truthy): gate `$not`/`$and`/`$or` operands and bare boolean roots via `MongoExpressionTranslator.IsUnsafeTruthinessRoot`.
 - **Negator, dialect classifier and both renderers must agree** (`MongoExpressionNodeCoverageTests` checks every
