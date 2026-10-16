@@ -371,6 +371,26 @@ These queries throw `NotSupportedException` naming the property (default and `Dr
 
 Compare the property explicitly (`x.Flag == true ? ... : ...` is still a truthiness test of the comparison's result, which is exact), or evaluate the conditional on the client after `AsEnumerable()`.
 
+### Equality and `Contains` between two operands stored differently now throw
+
+#### Old behavior
+
+When both sides of an equality, or the list and the item of a `Contains`, were stored properties (not a constant or a parameter) and one had a value converter or non-default `BsonRepresentation`, the server compared the stored forms:
+
+```c#
+// Scores is a default-stored List<int>; Num has HasConversion(v => v * 2, v => v / 2)
+context.Items.Where(x => x.Scores.Contains(x.Num));          // matched where Scores held the doubled value
+context.Items.Where(x => x.Scores.Any(s => s == x.Num));     // the same
+```
+
+#### New behavior
+
+These throw `NotSupportedException` naming both properties. Operands stored alike (same converter and representation), and operands that both store the .NET value itself (for example `int` and a `long`-casting converter), are unchanged, as are comparisons against a constant, a parameter or a captured list, which go through the property's own serializer.
+
+#### Mitigations
+
+Store both operands the same way, or compare on the client after `AsEnumerable()`.
+
 ### `Random` and `Guid.NewGuid`/`Guid.CreateVersion7` calls inside a query now throw
 
 #### Old behavior

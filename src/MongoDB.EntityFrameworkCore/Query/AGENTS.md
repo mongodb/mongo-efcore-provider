@@ -222,6 +222,10 @@ Rendering (null/missing/dialect semantics):
   - **A converted bool as a conditional test is refused** (EF-466): `$cond` tests by truthiness, so the renderer
     (`RenderConditionTest`, `CanRender`) declines an `IsUnsafeTruthinessRoot` test and the bridge refuses a conditional whose test
     reads a non-preserving property.
+  - **Equality or `Contains` between two stored operands must be stored alike** (EF-467, `ThrowIfStoredDifferently`): a property
+    and a stored primitive collection (or its element) with different converter/representation compare stored forms, unless both
+    store the CLR value (`PreservesClrValueForComputation`). A constant, parameter or captured list goes through the property's
+    own serializer and is exact.
 - **Non-default-serialized bools are truthiness-tested wrongly** (`HasConversion<string>()` stores `"True"`/`"False"`, both
   truthy): gate `$not`/`$and`/`$or` operands and bare boolean roots via `MongoExpressionTranslator.IsUnsafeTruthinessRoot`.
 - **Negator, dialect classifier and both renderers must agree** (`MongoExpressionNodeCoverageTests` checks every

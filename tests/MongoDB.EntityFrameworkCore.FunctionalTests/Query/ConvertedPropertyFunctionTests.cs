@@ -51,6 +51,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         public Color Color { get; set; }
         public int Wide { get; set; }
         public bool Flag { get; set; }
+        public List<int> Scores { get; set; } = [];
     }
 
     public enum Color
@@ -80,6 +81,9 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         ["Where_conditional_truth"] = q => q.Where(x => x.Flag ? x.Seq > 1 : x.Seq > 2).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
         ["Where_conditional_value"] = q => q.Where(x => (x.Flag ? 1 : 0) == 0).Select(x => x.Seq).ToList(),
         ["Count_conditional_value"] = q => q.Count(x => (x.Flag ? 1 : 0) == 1),
+        // Two operands stored differently: a default-stored list against a converted property compares the stored forms (EF-467).
+        ["Where_stored_list_Contains_converted"] = q => q.Where(x => x.Scores.Contains(x.Num)).Select(x => x.Seq).ToList(),
+        ["Where_stored_list_Any_equal_converted"] = q => q.Where(x => x.Scores.Any(s => s == x.Num)).Select(x => x.Seq).ToList(),
         ["Select_Length"] = q => q.OrderBy(x => x.Seq).Select(x => x.Name.Length).ToList(),
         ["Select_plus"] = q => q.OrderBy(x => x.Seq).Select(x => x.Num + 1).ToList(),
         ["Select_concat"] = q => q.OrderBy(x => x.Seq).Select(x => x.Name + "!").ToList(),
@@ -120,6 +124,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
     {
         ["Where_ToString_StartsWith"] = q => q.Where(x => x.Color.ToString().StartsWith("R")).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
         ["Where_ToString_Length"] = q => q.Where(x => x.Color.ToString().Length == 3).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
+        ["Where_stored_list_Contains_alike"] = q => q.Where(x => x.Scores.Contains(x.Seq)).Select(x => x.Seq).ToList(),
         ["Where_numeric_cast_modulo"] = q => q.Where(x => x.Wide % 2 == 1).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
         ["Select_numeric_cast_plus"] = q => q.OrderBy(x => x.Seq).Select(x => x.Wide + 1).ToList()
     };
@@ -159,7 +164,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         }
         else
         {
-            Assert.Matches(@"Item.(Name|Num|Flag)'", Assert.IsType<NotSupportedException>(ex).Message);
+            Assert.Matches(@"Item.(Name|Num|Flag|Scores)'", Assert.IsType<NotSupportedException>(ex).Message);
         }
     }
 
@@ -203,6 +208,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
                 { "Num", r.Num * 2 },
                 { "Color", ColorOf(r.Seq).ToString() },
                 { "Flag", r.Seq != 2 ? "1" : "0" },
+                { "Scores", new BsonArray { r.Seq == 1 ? 9 : r.Seq == 2 ? 4 : 3 } },
                 { "Wide", (long)r.Seq }
             }));
 
