@@ -343,6 +343,15 @@ public class MixedReaderClientLeafTests(TemporaryDatabaseFixture database) : ICl
                 .AsEnumerable().Select(x => Show(x.R?.W) + ":" + Show(x.V)),
             ["<null>:<null>", "<null>:<null>", "b:<null>", "<null>:Abc", "b:Abc"]);
 
+    [Theory]
+    [InlineData(nameof(MongoQueryMode.DriverLinq))]
+    [InlineData(nameof(MongoQueryMode.Native))]
+    public void Owned_reference_and_scalar_under_a_retained_Union(string mode)
+        => AssertRows(mode, q => q.Select(x => new { R = x.O, V = x.S })
+                .Union(q.Select(x => new { R = x.O, V = x.S }))
+                .AsEnumerable().Select(x => Show(x.R?.W) + ":" + Show(x.V)),
+            ["<null>:<null>", "<null>:<null>", "b:<null>", "<null>:Abc", "b:Abc"]);
+
     // The server's $toUpper answers "" for a null S where C# answers null, and the projected document no longer holds the raw
     // value to re-apply the mapping to: fail loudly rather than answer "" (EF-469).
     [Theory]

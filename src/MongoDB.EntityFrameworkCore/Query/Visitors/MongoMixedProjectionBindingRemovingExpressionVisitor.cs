@@ -83,7 +83,8 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     protected override string? ResolveProjectedOwnedReferenceAlias(INavigation navigation)
     {
         if (!_pushedDownSelectRetained || _queryExpression.Select.JoinScope is not null || _queryExpression.UsesDriverJoinFields
-            || _queryExpression.CapturedExpression is not { } captured)
+            || _queryExpression.CapturedExpression is not { } captured
+            || !_rootEntityType.IsAssignableFrom(navigation.DeclaringEntityType))
         {
             return null;
         }
@@ -97,6 +98,17 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     private sealed class RetainedSelectCaseMappingFinder(string member) : System.Linq.Expressions.ExpressionVisitor
     {
         private bool _found;
+
+        // Whether any Select in the chain assigns a member named `member`: the key the driver writes it under. A Select that was
+        // stripped (the outer rename) leaves the documents keyed by the inner Select's names.
+        public static bool AssignsMember(Expression captured, string member)
+        {
+            var finder = new RetainedSelectCaseMappingFinder(member) { _collectAny = true };
+            finder.Visit(captured);
+            return finder._found;
+        }
+
+        private bool _collectAny;
 
         public static bool Maps(Expression captured, string member)
         {
@@ -140,7 +152,7 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                 value = convert.Operand;
             }
 
-            if (name == member && value is MethodCallExpression call && NativeCaseMapping.IsCaseMappingCall(call))
+            if (name == member && (_collectAny || (value is MethodCallExpression call && NativeCaseMapping.IsCaseMappingCall(call))))
             {
                 _found = true;
             }
@@ -199,7 +211,8 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
 
             if (matches)
             {
-                if (Alias is not null)
+                // The same member in two Selects (a Union of identical projections) is one key; a different one is ambiguous.
+                if (Alias is not null && Alias != member)
                 {
                     Ambiguous = true;
                 }
@@ -345,6 +358,8 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                     && _queryExpression.Select.JoinScope is null
                     && !_queryExpression.UsesDriverJoinFields
                     && fieldAccess.Property != null
+                    && _queryExpression.CapturedExpression is { } retainedMembers
+                    && RetainedSelectCaseMappingFinder.AssignsMember(retainedMembers, alias)
                     && (fieldAccess.DocumentExpression is null || ReferenceEquals(fieldAccess.DocumentExpression, _docParameter)))
                 {
                     return BsonBinding.CreateGetPropertyValueAtPath(
