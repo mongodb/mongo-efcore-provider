@@ -391,6 +391,26 @@ These throw `NotSupportedException` naming both properties. Operands stored alik
 
 Store both operands the same way (sharing one converter instance), or compare on the client after `AsEnumerable()`. Operands that happened to encode alike but are configured differently, such as an enum stored as its name against a plain string property, are refused too.
 
+### A case mapping under a retained projection now throws; owned references and scalars beside it read correctly
+
+#### Old behavior
+
+When `Distinct` or a set operation composes over a `Select` that mixes an owned reference with other leaves, the server returns the projected documents and the reader mis-read them:
+
+```c#
+context.Rows.Select(x => new { R = x.O }).Distinct();                      // R.W read null for every row
+context.Rows.Select(x => new { R = x.O, V = x.S }).Distinct();             // V read null for every row
+context.Rows.Select(x => new { R = x.O, V = x.S.ToUpper() }).Distinct();   // V read "" for a null S
+```
+
+#### New behavior
+
+The owned reference and the plain scalar are read from the projected document under their member names and return the right values. The case mapping (`ToUpper`, `ToLower`) in the last query throws `InvalidOperationException`: the server's `$toUpper` answers an empty string for a null source where .NET answers null, and the projected document no longer holds the raw value to apply it to.
+
+#### Mitigations
+
+Apply the case mapping after `AsEnumerable()`: `context.Rows.Select(x => new { R = x.O, x.S }).Distinct().AsEnumerable().Select(a => new { a.R, V = a.S?.ToUpper() })`.
+
 ### `Random` and `Guid.NewGuid`/`Guid.CreateVersion7` calls inside a query now throw
 
 #### Old behavior

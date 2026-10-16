@@ -79,6 +79,136 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
     /// <inheritdoc />
     protected override bool OwnerKeyMayBeAbsent => _ownerKeyMayBeAbsent;
 
+    /// <inheritdoc />
+    protected override string? ResolveProjectedOwnedReferenceAlias(INavigation navigation)
+    {
+        if (!_pushedDownSelectRetained || _queryExpression.Select.JoinScope is not null || _queryExpression.UsesDriverJoinFields
+            || _queryExpression.CapturedExpression is not { } captured)
+        {
+            return null;
+        }
+
+        var finder = new RetainedSelectMemberFinder(navigation.Name);
+        finder.Visit(captured);
+        return finder.Ambiguous ? null : finder.Alias;
+    }
+
+    // Whether the retained Select assigns `member` a case-mapping call (`V = x.S.ToUpper()`).
+    private sealed class RetainedSelectCaseMappingFinder(string member) : System.Linq.Expressions.ExpressionVisitor
+    {
+        private bool _found;
+
+        public static bool Maps(Expression captured, string member)
+        {
+            var finder = new RetainedSelectCaseMappingFinder(member);
+            finder.Visit(captured);
+            return finder._found;
+        }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (node.Method.Name == nameof(Queryable.Select) && node.Arguments.Count == 2
+                && node.Arguments[1].UnwrapLambdaFromQuote() is { Parameters.Count: 1 } selector)
+            {
+                switch (selector.Body)
+                {
+                    case NewExpression { Members: { } members } newExpression:
+                        for (var i = 0; i < members.Count; i++)
+                        {
+                            Check(members[i].Name, newExpression.Arguments[i]);
+                        }
+
+                        break;
+
+                    case MemberInitExpression memberInit:
+                        foreach (var binding in memberInit.Bindings.OfType<MemberAssignment>())
+                        {
+                            Check(binding.Member.Name, binding.Expression);
+                        }
+
+                        break;
+                }
+            }
+
+            return base.VisitMethodCall(node);
+        }
+
+        private void Check(string name, Expression value)
+        {
+            while (value is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
+            {
+                value = convert.Operand;
+            }
+
+            if (name == member && value is MethodCallExpression call && NativeCaseMapping.IsCaseMappingCall(call))
+            {
+                _found = true;
+            }
+        }
+    }
+
+    // The member the retained `Select(x => new { R = x.O, ... })` assigns the navigation `O` to: the key the driver's $project writes it under.
+    private sealed class RetainedSelectMemberFinder(string navigationName) : System.Linq.Expressions.ExpressionVisitor
+    {
+        public string? Alias { get; private set; }
+
+        public bool Ambiguous { get; private set; }
+
+        protected override Expression VisitMethodCall(MethodCallExpression node)
+        {
+            if (node.Method.Name == nameof(Queryable.Select) && node.Arguments.Count == 2
+                && node.Arguments[1].UnwrapLambdaFromQuote() is { Parameters.Count: 1 } selector)
+            {
+                switch (selector.Body)
+                {
+                    case NewExpression { Members: { } members } newExpression:
+                        for (var i = 0; i < members.Count; i++)
+                        {
+                            Record(members[i].Name, newExpression.Arguments[i], selector.Parameters[0]);
+                        }
+
+                        break;
+
+                    case MemberInitExpression memberInit:
+                        foreach (var binding in memberInit.Bindings.OfType<MemberAssignment>())
+                        {
+                            Record(binding.Member.Name, binding.Expression, selector.Parameters[0]);
+                        }
+
+                        break;
+                }
+            }
+
+            return base.VisitMethodCall(node);
+        }
+
+        private void Record(string member, Expression value, ParameterExpression parameter)
+        {
+            while (value is UnaryExpression { NodeType: ExpressionType.Convert or ExpressionType.ConvertChecked } convert)
+            {
+                value = convert.Operand;
+            }
+
+            var matches = value switch
+            {
+                MemberExpression { Expression: var owner, Member.Name: var name } => owner == parameter && name == navigationName,
+                MethodCallExpression { Method: var efProperty, Arguments: [{ } source, ConstantExpression { Value: string efName }, ..] }
+                    => efProperty.IsEFPropertyMethod() && source == parameter && efName == navigationName,
+                _ => false
+            };
+
+            if (matches)
+            {
+                if (Alias is not null)
+                {
+                    Ambiguous = true;
+                }
+
+                Alias = member;
+            }
+        }
+    }
+
     protected override Expression VisitExtension(Expression extensionExpression)
     {
         // Whole documents come back here (no $project), so the server-computed alias doesn't exist: evaluate the
@@ -191,6 +321,37 @@ internal sealed class MongoMixedProjectionBindingRemovingExpressionVisitor
                 }
 
                 var fieldAccess = TryResolveFieldAccess(sourceExpression);
+
+                // A case mapping the driver's retained Select evaluates server-side answers "" for a null source where C# (and EF's null
+                // propagation) answers null; the projected document no longer holds the raw value to re-apply it to (EF-469). Fail loudly.
+                if (_pushedDownSelectRetained
+                    && alias is not null
+                    && _queryExpression.Select.JoinScope is null
+                    && !_queryExpression.UsesDriverJoinFields
+                    && _queryExpression.CapturedExpression is { } retainedCaptured
+                    && RetainedSelectCaseMappingFinder.Maps(retainedCaptured, alias))
+                {
+                    throw new InvalidOperationException(
+                        $"The projected value '{alias}' applies ToLower/ToUpper to a string under a Select that an operator (Distinct, a set "
+                        + "operation) composes over: the server answers an empty string for a null source where .NET answers null. Apply the case "
+                        + "mapping after 'AsEnumerable()' instead.");
+                }
+
+                // Over a retained pushed-down Select the driver returns projected documents keyed by member name, so a plain root
+                // property reads from its member's key through the property's own serializer (EF-469); its natural element name
+                // (`S` for `V = x.S`) is absent. Only a bare field: a computed leaf declined above.
+                if (_pushedDownSelectRetained
+                    && alias is not null
+                    && _queryExpression.Select.JoinScope is null
+                    && !_queryExpression.UsesDriverJoinFields
+                    && fieldAccess.Property != null
+                    && (fieldAccess.DocumentExpression is null || ReferenceEquals(fieldAccess.DocumentExpression, _docParameter)))
+                {
+                    return BsonBinding.CreateGetPropertyValueAtPath(
+                            _docParameter, [alias], fieldAccess.Property, projectionBindingExpression.Type)
+                        .ConvertIfRequired(projectionBindingExpression.Type);
+                }
+
                 if (fieldAccess.Property != null)
                 {
                     if (fieldAccess.DocumentExpression is ParameterExpression parameterExpression
