@@ -343,6 +343,8 @@ Unchanged:
 * Reading the property (`Select(x => x.Name)`, an anonymous projection of it), equality (`==`, `!=`, `Contains` on a list of values) and `??`/`?:` over it.
 * Properties stored as themselves, including a `BsonRepresentation` equal to the type's default, and numbers the server holds exactly: EF Core's numeric casting and enum-to-number converters, and a numeric `BsonRepresentation` that represents every value (for example `int` as `Int64`, `Double` or `Decimal128`).
 * A string stored as `ObjectId` and an `ObjectId` stored as `String` still compare, sort and test for equality, but a string function over them now throws.
+* `ToString()` of a property stored as that very string (EF Core's built-in enum, Guid or number to-string converters on a non-nullable property), and string functions of it (`x.Color.ToString().StartsWith("R")`). A nullable such property, or an enum with `BsonRepresentation(String)`, is not exempt and now throws.
+* Arithmetic over EF Core's numeric casting converters, including integral narrowing (`long` stored as `int`).
 * A string function applied to a top-level projected value (`Select(x => x.Name.ToUpper())`), which is evaluated on the client after the value is read.
 
 #### Mitigations

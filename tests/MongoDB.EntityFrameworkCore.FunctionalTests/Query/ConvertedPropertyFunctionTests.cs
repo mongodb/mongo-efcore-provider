@@ -48,9 +48,19 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         public int Seq { get; set; }
         public string Name { get; set; } = "";
         public int Num { get; set; }
+        public Color Color { get; set; }
+        public int Wide { get; set; }
+    }
+
+    public enum Color
+    {
+        Red = 1,
+        Green = 2
     }
 
     private static readonly (int Seq, string Name, int Num)[] Rows = [(1, "abcdef", 1), (2, "ab", 2), (3, "abc", 3)];
+
+    private static Color ColorOf(int seq) => seq == 2 ? Color.Green : Color.Red;
 
     // Computed from the converted property: refused.
     private static readonly Dictionary<string, Func<IQueryable<Item>, object>> RefusedQueries = new()
@@ -91,15 +101,28 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
 
         // A top-level projected string function is applied client-side to the materialized value (the case mapping is never pushed down).
         ["Select_ToUpper"] = q => q.OrderBy(x => x.Seq).Select(x => x.Name.ToUpper()).ToList(),
-        ["Select_Name_Length_of_unconverted"] = q => q.OrderBy(x => x.Seq).Select(x => x.Seq.ToString().Length).ToList(),
-        ["Count_equal"] = q => q.Count(x => x.Name == "abc"),
+        ["Select_Name_Length_of_unconverted"] = q => q.OrderBy(x => x.Seq).Select(x => x.Seq.ToString().Length).ToList(),        ["Count_equal"] = q => q.Count(x => x.Name == "abc"),
         ["Whole_entity_Where_equal"] = q => q.Where(x => x.Num == 3).AsEnumerable().Select(x => x.Name).ToList()
+    };
+
+    // Shapes the stored-form guard must not refuse: a function of a property stored as its own ToString() (EF built-in enum-to-string
+    // converter), and arithmetic over EF built-in casting converter to a wider type (int stored as long). The native translator or the
+    // driver may still decline them loudly for other reasons; the answer, when there is one, is right.
+    private static readonly Dictionary<string, Func<IQueryable<Item>, object>> NotRefusedQueries = new()
+    {
+        ["Where_ToString_StartsWith"] = q => q.Where(x => x.Color.ToString().StartsWith("R")).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
+        ["Where_ToString_Length"] = q => q.Where(x => x.Color.ToString().Length == 3).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
+        ["Where_numeric_cast_modulo"] = q => q.Where(x => x.Wide % 2 == 1).OrderBy(x => x.Seq).Select(x => x.Seq).ToList(),
+        ["Select_numeric_cast_plus"] = q => q.OrderBy(x => x.Seq).Select(x => x.Wide + 1).ToList()
     };
 
     private static readonly MongoQueryMode[] Modes = [MongoQueryMode.Native, MongoQueryMode.NativeOnly, MongoQueryMode.DriverLinq];
 
     public static IEnumerable<object[]> RefusedCases()
         => from query in RefusedQueries.Keys from mode in Modes select new object[] { query, mode };
+
+    public static IEnumerable<object[]> NotRefusedCases()
+        => from query in NotRefusedQueries.Keys from mode in Modes select new object[] { query, mode };
 
     public static IEnumerable<object[]> AllowedCases()
         => from query in AllowedQueries.Keys from mode in Modes select new object[] { query, mode };
@@ -128,7 +151,7 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         }
         else
         {
-            Assert.Matches(@"Item\.(Name|Num)'", Assert.IsType<NotSupportedException>(ex).Message);
+            Assert.Matches(@"Item.(Name|Num)'", Assert.IsType<NotSupportedException>(ex).Message);
         }
     }
 
@@ -139,6 +162,22 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
         var (oracle, run) = Arrange(query, AllowedQueries[query], mode);
 
         Assert.Equal(oracle, run());
+    }
+
+    [Theory]
+    [MemberData(nameof(NotRefusedCases))]
+    public void Function_over_exactly_stored_property_is_not_refused(string query, MongoQueryMode mode)
+    {
+        var (oracle, run) = Arrange(query, NotRefusedQueries[query], mode);
+
+        var ex = Record.Exception(run);
+        if (ex is null)
+        {
+            Assert.Equal(oracle, run());
+            return;
+        }
+
+        Assert.DoesNotContain("value converter or a BsonRepresentation", ex.Message);
     }
 
     private (string Oracle, Func<string> Run) Arrange(string query, Func<IQueryable<Item>, object> shape, MongoQueryMode mode)
@@ -153,7 +192,9 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
                 { "_id", ObjectId.GenerateNewId() },
                 { "Seq", r.Seq },
                 { "Name", "pfx-" + r.Name },
-                { "Num", r.Num * 2 }
+                { "Num", r.Num * 2 },
+                { "Color", ColorOf(r.Seq).ToString() },
+                { "Wide", (long)r.Seq }
             }));
 
         var collection = database.MongoDatabase.GetCollection<Item>(name);
@@ -178,6 +219,8 @@ public class ConvertedPropertyFunctionTests(TemporaryDatabaseFixture database) :
             {
                 mb.Entity<Item>().Property(e => e.Name).HasConversion(v => "pfx-" + v, v => v.Substring(4));
                 mb.Entity<Item>().Property(e => e.Num).HasConversion(v => v * 2, v => v / 2);
+                mb.Entity<Item>().Property(e => e.Color).HasConversion<string>();
+                mb.Entity<Item>().Property(e => e.Wide).HasConversion<long>();
             },
             optionsBuilderAction: b =>
             {

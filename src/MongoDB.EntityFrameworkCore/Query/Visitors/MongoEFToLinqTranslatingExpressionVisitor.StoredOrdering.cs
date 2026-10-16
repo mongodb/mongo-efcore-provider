@@ -256,10 +256,7 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
             return false;
         }
 
-        if (method.Name == nameof(ToString) && call.Arguments.Count == 0 && call.Object is { } receiver
-            && StripConverts(receiver) is var target
-            && TryFindDirectProperties(target) is { Count: > 0 } properties
-            && properties.All(StoredOrdering.IsStoredAsToString))
+        if (method.Name == nameof(ToString) && call.Arguments.Count == 0 && call.Object is { } receiver && IsStoredAsToStringRead(receiver))
         {
             return false;
         }
@@ -267,6 +264,11 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
         return !(Nullable.GetUnderlyingType(method.DeclaringType ?? typeof(object)) != null
                  && method.Name is nameof(Nullable<int>.GetValueOrDefault));
     }
+
+    // A bare property read (x.P / EF.Property) whose stored value is exactly its ToString().
+    private bool IsStoredAsToStringRead(Expression receiver)
+        => TryFindDirectProperties(StripConverts(receiver)) is { Count: > 0 } properties
+           && properties.All(StoredOrdering.IsStoredAsToString);
 
     // The mapped properties a bare `x.P` / EF.Property(x, "P") reads, or null for anything else.
     private List<IProperty>? TryFindDirectProperties(Expression expression)
@@ -587,6 +589,11 @@ internal sealed partial class MongoEFToLinqTranslatingExpressionVisitor
                     }
 
                     return;
+                // `x.P.ToString()` of a property stored as that very string is the stored field itself (EF-465).
+                case MethodCallExpression { Method.Name: nameof(ToString), Object: { } toStringReceiver, Arguments.Count: 0 }
+                    when use == StoredOrderingUse.Computation && owner.IsStoredAsToStringRead(toStringReceiver):
+                    return;
+
 
                 case MethodCallExpression call
                     when IsQueryableOrEnumerable(call.Method):
